@@ -4,7 +4,6 @@ from pathlib import Path
 from TRITON_SWMM_toolkit.constants import (
     APP_NAME,
     NORFOLK_EX,
-    DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST,
     NORFOLK_SYSTEM_CONFIG,
     NORFOLK_SINGLE_SIM_EXP_CONFIG,
     NORFOLK_BENCHMARKING_EXP_CONFIG,
@@ -46,7 +45,7 @@ def download_data_from_hydroshare(
     res_identifier: str,
     target: Path,
     hs,
-    download_if_exists=DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST,
+    download_if_exists=False,
     validate=False,
 ):
     if target.exists() and download_if_exists:
@@ -93,12 +92,16 @@ def sign_into_hydroshare():
     return hs
 
 
-download_if_exists = DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST
+import sys
 
 
 def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
     cfg_filled = fill_template(cfg_template, mapping)
-    cfg_filled_yaml = yaml.safe_load(cfg_filled)
+    try:
+        cfg_filled_yaml = yaml.safe_load(cfg_filled)
+    except:
+        print(cfg_filled)
+        sys.exit("failed to load yaml")
     return cfg_filled_yaml
 
 
@@ -107,13 +110,15 @@ def get_norfolk_data_and_package_directory_mapping_dict():
     data_dir = hydroshare_root_dir / "data" / "contents"
     package_dir = get_package_root(APP_NAME) / "examples" / NORFOLK_EX
     mapping = dict(
-        DATA_DIR=data_dir, PACKAGE_DIR=package_dir, HYDROSHARE_ROOT=hydroshare_root_dir
+        DATA_DIR=str(data_dir),
+        PACKAGE_DIR=str(package_dir),
+        HYDROSHARE_ROOT=str(hydroshare_root_dir),
     )
     return mapping
 
 
 def load_norfolk_system_config(
-    download_if_exists=DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST,
+    download_if_exists,
 ):
     case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
@@ -122,13 +127,13 @@ def load_norfolk_system_config(
     cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
     model = load_system_config(cfg_filled_yaml)
     # download data if it doesn't exist
-    if mapping["DATA_DIR"].exists() and not download_if_exists:
+    if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
         pass
     else:
         hs = sign_into_hydroshare()
         download_data_from_hydroshare(
             res_identifier,
-            mapping["HYDROSHARE_ROOT"],
+            Path(mapping["HYDROSHARE_ROOT"]),
             hs,
             download_if_exists=download_if_exists,
         )

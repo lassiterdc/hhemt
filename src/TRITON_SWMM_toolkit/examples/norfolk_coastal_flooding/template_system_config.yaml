@@ -1,36 +1,36 @@
 # FILEPATHS
-variable_boundary_condition: "${DATA_DIR}/shp_boundary_condition/variable_bc.shp"
-watershed_shapefile: "${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp"
-system_directory: "${DATA_DIR}/system"
-DEM_fullres: "${DATA_DIR}/fullres_dem_m.tif"
-landuse_lookup_file: "${DATA_DIR}/landuse_lookup_tables.csv"
-SWMM_hydraulics: "${DATA_DIR}/swmm/hague_hydraulics_model_template.inp"
-SWMM_hydrology: "${DATA_DIR}/swmm/hague_hydrology_model_template.inp"
-SWMM_full: "${DATA_DIR}/swmm/hague_full_model_template.inp"
-landuse_raster: "${DATA_DIR}/landuse_clipped_to_triton_extent.tif"
-TRITONSWMM_software_directory: "${DATA_DIR}/software"
-TRITON_SWMM_software_compilation_script: "${PACKAGE_DIR}/template_compile_triton_swmm.sh"
-weather_timeseries: "${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_coverage.nc"
-weather_event_summary_csv: "${DATA_DIR}/obs_event_summaries_from_yrs_with_complete_coverage.csv"
-subcatchment_raingage_mapping: "${DATA_DIR}/b_sub_ids_and_mrms_rain_col.csv"
-triton_swmm_configuration_template: "${DATA_DIR}/TRITON_SWMM_definition_template.cfg"
+variable_boundary_condition: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
+watershed_shapefile: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
+system_directory: '${DATA_DIR}/system'
+DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'
+landuse_lookup_file: '${DATA_DIR}/landuse_lookup_tables.csv'
+SWMM_hydraulics: '${DATA_DIR}/swmm/hague_hydraulics_model_template.inp'
+SWMM_hydrology: '${DATA_DIR}/swmm/hague_hydrology_model_template.inp'
+SWMM_full: '${DATA_DIR}/swmm/hague_full_model_template.inp'
+landuse_raster: '${DATA_DIR}/landuse_clipped_to_triton_extent.tif'
+TRITONSWMM_software_directory: '${DATA_DIR}/software'
+TRITON_SWMM_software_compilation_script: '${PACKAGE_DIR}/template_compile_triton_swmm.sh'
+weather_timeseries: '${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_coverage.nc'
+weather_event_summary_csv: '${DATA_DIR}/obs_event_summaries_from_yrs_with_complete_coverage.csv'
+subcatchment_raingage_mapping: '${DATA_DIR}/b_sub_ids_and_mrms_rain_col.csv'
+triton_swmm_configuration_template: '${DATA_DIR}/TRITON_SWMM_definition_template.cfg'
 # ATTRIBUTE NAMES
-landuse_description_colname: "original_description"
-landuse_lookup_class_id_colname: "CLASS_ID"
-landuse_lookup_mannings_colname: "mannings"
-landuse_plot_color_colname: "plot_color"
-weather_event_indices: ["year", "event_type", "event_id"]
-weather_time_series_storm_tide_datavar: "waterlevel_m"
-weather_time_series_timestep_dimension_name: "timestep"
-subcatchment_raingage_mapping_gage_id_colname: "raingage_id"
+landuse_description_colname: 'original_description'
+landuse_lookup_class_id_colname: 'CLASS_ID'
+landuse_lookup_mannings_colname: 'mannings'
+landuse_plot_color_colname: 'plot_color'
+weather_event_indices: ['year', 'event_type', 'event_id']
+weather_time_series_storm_tide_datavar: 'waterlevel_m'
+weather_time_series_timestep_dimension_name: 'timestep'
+subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
 # CONSTANTS
 dem_outside_watershed_height: 9999 # meters
 dem_building_height: 80 # meters
-rainfall_units: "mm/hr"
-storm_tide_units: "m"
+rainfall_units: 'mm/hr'
+storm_tide_units: 'm'
 # PARAMETERS
 target_dem_resolution: 3.5 # meters
-TRITON_output_type: "bin" # bin or asc
+TRITON_output_type: 'bin' # bin or asc
 use_constant_mannings: False
 manhole_diameter: 1.2
 manhole_loss_coefficient: 0.1
