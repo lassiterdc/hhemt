@@ -1,9 +1,10 @@
 # src/TRITON_SWMM_toolkit/config_model.py
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, constr
 from pathlib import Path
 import yaml
 import numpy as np
-from typing import Literal
+from typing import Literal, Annotated
+import re
 
 
 class system_config(BaseModel):
@@ -12,12 +13,11 @@ class system_config(BaseModel):
         "n/a",
         description="Path to shapefile representing extent of variable water level boundary condition.",
     )
-    mannings_file: Path = Field(
+    system_directory: Path = Field(
         "n/a",
-        description="manning's roughness filepath (required if a constant mannings is not defined)",
+        description="Path where TRITON-SWMM system outputs will be stored.",
     )
     watershed_shapefile: Path = Field("n/a", description="Directory to store outputs")
-    DEM_processed: Path = Field("n/a", description="DEM formatted for TRITON")
     DEM_fullres: Path = Field(
         "n/a", description="DEM to be formatted and, if desired, coarsened, for TRITON"
     )
@@ -44,6 +44,10 @@ class system_config(BaseModel):
     TRITONSWMM_software_directory: Path = Field(
         "n/a",
         description="Folder containing the TRITON-SWMM model version used for a particular simulation.",
+    )
+    TRITON_SWMM_software_compilation_script: Path = Field(
+        "n/a",
+        description="Folder containing script to build experiment-specific version of TRITON-SWMM.",
     )
     weather_timeseries: Path = Field(
         "n/a",
@@ -150,7 +154,15 @@ class system_config(BaseModel):
     )
 
 
-class benchmarking_experiment_config(BaseModel):
+class experiment_config(BaseModel):
+    experiment_id: Annotated[
+        str,
+        Field(
+            default="default_experiment_name",
+            description="Experiment identifier",
+            pattern=r"^[A-Za-z][A-Za-z0-9_.]*$",
+        ),
+    ]
     benchmarking_experiment: Path = Field(
         "n/a",
         description="Benchmarking experimental design.",
@@ -167,6 +179,18 @@ class benchmarking_experiment_config(BaseModel):
         "n/a",
         description="Folder in which simulation scenarios will be generated and run.",
     )
+    TRITON_SWMM_make_command: Path = Field(
+        "hpc_swmm_omp",
+        description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
+    )
+
+    @field_validator("experiment_id")
+    def validate_experiment_id(cls, v):
+        if not re.match(r"^[A-Za-z][A-Za-z0-9_.]*$", v):
+            raise ValueError(
+                "experiment_id must start with a letter and contain only letters, digits, underscores, or periods"
+            )
+        return v
 
 
 def load_system_config(cfg):
@@ -174,6 +198,11 @@ def load_system_config(cfg):
     return cfg
 
 
-def load_benchmarking_experiment_config_config(cfg):
-    cfg = benchmarking_experiment_config.model_validate(cfg)
+def load_experiment_config(cfg):
+    cfg = experiment_config.model_validate(cfg)
     return cfg
+
+
+# def load_benchmarking_experiment_config_config(cfg):
+#     cfg = benchmarking_experiment_config.model_validate(cfg)
+#     return cfg

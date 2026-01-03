@@ -11,8 +11,12 @@ from pathlib import Path
 import xarray as xr
 from typing import Optional
 from matplotlib.axes import Axes
-from TRITON_SWMM_toolkit.system_setup import create_mannings_raster
-
+from TRITON_SWMM_toolkit.system_setup import create_mannings_raster, define_system_paths
+import json
+import sys
+import os
+from typing import Union, Iterable, Optional
+from collections import defaultdict
 
 def plot_polygon_boundary_on_ax(ax, shp_path: Path, color="black", linewidth=1):
     gdf = gpd.read_file(shp_path)
@@ -185,13 +189,15 @@ def plot_fullres_vs_coarse_dem(
     dem_outside_watershed_height,
     dem_building_height,
     dem_unprocessed,
-    dem_processed,
     watershed_shapefile,
+    system_directory,
     vmin=None,
     vmax=None,
 ):
+    sys_paths = define_system_paths(system_directory)
+
     rds_dem_unprocessed = rxr.open_rasterio(dem_unprocessed)
-    rds_dem_processed = rxr.open_rasterio(dem_processed)
+    rds_dem_processed = rxr.open_rasterio(sys_paths["dem_processed"])
 
     rds_dem_fullres_for_plotting = process_dem_for_plotting(
         rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
@@ -231,17 +237,18 @@ def plot_fullres_vs_coarse_dem(
 
 
 def plot_fullres_vs_coarse_mannings(
-    mannings_processed,
     landuse_lookup,
     landuse_raster,
     landuse_colname,
     mannings_colname,
+    system_directory,
     watershed_shapefile,
 ):
+    sys_paths = define_system_paths(system_directory)
     rds_mannings = create_mannings_raster(
         landuse_lookup, landuse_raster, landuse_colname, mannings_colname
     )
-    rds_mannings_processed = rxr.open_rasterio(mannings_processed)
+    rds_mannings_processed = rxr.open_rasterio(sys_paths['mannings_processed'])
 
     vmin = rds_mannings.min()
     vmax = rds_mannings.max()
@@ -274,3 +281,107 @@ def plot_fullres_vs_coarse_mannings(
 
 # TODO
 # - include the boundary condition shapefile in plots; add an option to include a callout with a description
+
+
+def print_json_file_tree(
+    json_path: Union[str, Path],
+    base_dir: Optional[Union[str, Path]] = None,
+    *,
+    show_missing: bool = True,
+) -> None:
+    """
+    Print a directory tree of file paths found in a JSON file.
+
+    If base_dir is None, the common root directory is auto-detected.
+
+    Parameters
+    ----------
+    json_path : str | Path
+        Path to the JSON file containing file paths.
+    base_dir : str | Path | None
+        Common base directory shared by all files.
+        If None, the root is auto-detected.
+    show_missing : bool, optional
+        If False, paths that do not exist on disk are skipped.
+    """
+
+    json_path = Path(json_path)
+
+    with json_path.open("r") as f:
+        data = json.load(f)
+
+    # -------------------------
+    # Extract paths recursively
+    # -------------------------
+    def is_path_like(s: str) -> bool:
+        return os.path.isabs(s) or "\\" in s or "/" in s or Path(s).suffix != ""
+
+    def extract_paths(obj) -> list[Path]:
+        if isinstance(obj, str) and is_path_like(obj):
+            return [Path(obj).expanduser()]
+        elif isinstance(obj, dict):
+            paths = []
+            for v in obj.values():
+                paths.extend(extract_paths(v))
+            return paths
+        elif isinstance(obj, list):
+            paths = []
+            for v in obj:
+                paths.extend(extract_paths(v))
+            return paths
+        return []
+
+    paths = extract_paths(data)
+    if not paths:
+        print("(no paths found)")
+        return
+
+    paths = [p.resolve() for p in paths]
+
+    # -------------------------
+    # Auto-detect base directory
+    # -------------------------
+    if base_dir is None:
+        common_parts = list(zip(*(p.parts for p in paths)))
+        root_parts = []
+        for parts in common_parts:
+            if len(set(parts)) == 1:
+                root_parts.append(parts[0])
+            else:
+                break
+        base_dir = Path(*root_parts)
+
+    base_dir = Path(base_dir)
+
+    # -------------------------
+    # Build directory tree
+    # -------------------------
+    def build_tree(paths: Iterable[Path]):
+        tree = lambda: defaultdict(tree)
+        root = tree()
+
+        for p in paths:
+            try:
+                rel = p.relative_to(base_dir)
+            except ValueError:
+                continue
+
+            current = root
+            for part in rel.parts:
+                current = current[part]
+
+        return root
+
+    def print_tree(tree, prefix=""):
+        items = list(tree.items())
+        for i, (name, subtree) in enumerate(items):
+            is_last = i == len(items) - 1
+            connector = "└── " if is_last else "├── "
+            print(prefix + connector + name)
+            extension = "    " if is_last else "│   "
+            print_tree(subtree, prefix + extension)
+
+    tree = build_tree(paths)
+
+    print(base_dir)
+    print_tree(tree)

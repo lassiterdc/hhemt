@@ -1,3 +1,5 @@
+experiment_id: "norfolk_irene_singlesim"
 weather_event_indexers: {"year":9, "event_type":"compound", "event_id":1}
 event_description: "Hurricane Irene 8-27-2011"
 experiment_folder: "{DATA}/single_sim"
+TRITON_SWMM_make_command: "hpc_swmm_omp"

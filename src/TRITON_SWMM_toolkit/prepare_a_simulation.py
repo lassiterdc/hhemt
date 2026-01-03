@@ -6,16 +6,23 @@ import xarray as xr
 from pathlib import Path
 from rasterio.enums import Resampling
 import sys
-import json
 import shutil
-from string import Template
-import re
 from pyswmm import Simulation, Output
 import geopandas as gpd
 import swmmio
 import warnings
 from swmm.toolkit.shared_enum import NodeAttribute
 from scipy.stats import rankdata
+from TRITON_SWMM_toolkit.system_setup import define_system_paths
+from TRITON_SWMM_toolkit.utils import (
+    load_json,
+    write_json,
+    create_logfile,
+    update_logfile,
+    find_all_keys_in_template,
+    create_from_template,
+)
+from TRITON_SWMM_toolkit.prepare_an_experiment import define_experiment_paths
 
 
 def return_tstep_in_hrs(time_indexed_pd_obj):
@@ -31,33 +38,6 @@ def return_tstep_in_hrs_for_weather_time_series(
         weather_time_series_timestep_dimension_name
     ].to_dataframe()
     return return_tstep_in_hrs(time_indexed_pd_obj)
-
-
-def load_json(file: Path):
-    with open(file) as f:
-        log = json.load(f)
-    return log
-
-
-def write_json(data: dict, file: Path):
-    with open(file, "w") as f:
-        json.dump(data, f, indent=2, default=str)
-
-
-def create_logfile(inital_data: dict, file: Path):
-    if file.exists():
-        log = load_json(file)
-        print(log)
-        sys.exit("handle when logfile already exists")
-    log = inital_data.copy()
-    log["logfile"] = str(file)
-    write_json(log, file)
-    return log
-
-
-def update_logfile(log):
-    write_json(log, Path(log["logfile"]))
-    return load_json(Path(log["logfile"]))
 
 
 def retrieve_sim_id_str(weather_event_indexers):
@@ -139,7 +119,7 @@ def define_simulation_paths(simulation_folder, weather_event_indexers):
     hyg_locs = simulation_folder / "strmflow" / f"{sim_id_str}.txt"
     # TRITON-SWMM cfg file
     triton_swmm_cfg = simulation_folder / f"{sim_id_str}.cfg"
-    sim_triton_swmm_build_folder = simulation_folder / f"build"
+    sim_tritonswmm_executable = simulation_folder / "build" / "triton"
 
     ## combine into dic
     sim_paths = dict(
@@ -153,7 +133,7 @@ def define_simulation_paths(simulation_folder, weather_event_indexers):
         hyg_timeseries=hyg_timeseries,
         hyg_locs=hyg_locs,
         triton_swmm_cfg=triton_swmm_cfg,
-        sim_triton_swmm_build_folder=sim_triton_swmm_build_folder,
+        sim_tritonswmm_executable=sim_tritonswmm_executable,
     )
     return sim_paths
 
@@ -252,23 +232,6 @@ def write_swmm_waterlevel_dat_files(
     log["water_level"] = f_out_swmm_wlevel
     log = update_logfile(log)
     return log
-
-
-def create_from_template(f_template: Path, mapping: dict, f_out: Path):
-    with open(f_template, "r") as T:
-        template = Template(T.read())
-        new_in = template.safe_substitute(mapping)
-        f_out.parent.mkdir(parents=True, exist_ok=True)
-        with open(f_out, "w+") as f1:
-            f1.write(new_in)
-
-
-def find_all_keys_in_template(f_template):
-    with open(f_template, "r") as f:
-        text = f.read()
-    keys = re.findall(r"\{([^}]+)\}", text)
-    unique_keys = list(dict.fromkeys(keys))
-    return unique_keys
 
 
 def create_swmm_model_from_template(
@@ -828,9 +791,23 @@ def generate_TRITON_SWMM_cfg(
     return log
 
 
+def copy_tritonswmm_build_folder_to_sim(
+    log, compiled_software_directory: Path, sim_tritonswmm_executable: Path
+):
+    src_build_fpath = compiled_software_directory / "build/"
+    target_build_fpath = sim_tritonswmm_executable.parent
+    if target_build_fpath.exists():
+        shutil.rmtree(target_build_fpath)
+    shutil.copytree(src_build_fpath, target_build_fpath)
+    log["sim_tritonswmm_executable"] = sim_tritonswmm_executable
+    log = update_logfile(log)
+    return log
+
+
 def prepare_simulation(
     overwrite_scenario,
-    simulation_folder,
+    system_directory,
+    experiment_id,
     weather_event_indexers,
     weather_timeseries,
     subcatchment_raingage_mapping,
@@ -842,25 +819,33 @@ def prepare_simulation(
     weather_time_series_timestep_dimension_name,
     SWMM_hydraulics,
     SWMM_full,
-    dem_processed,
     variable_boundary_condition,
     use_constant_mannings,
     manhole_diameter,
     manhole_loss_coefficient,
     TRITON_output_type,
-    mannings_processed,
     constant_mannings,
     hydraulic_timestep_s,
     TRITON_reporting_timestep_s,
     open_boundaries,
     triton_swmm_configuration_template,
 ):
+    exp_paths = define_experiment_paths(experiment_id, system_directory)
+    simulation_folder = exp_paths["simulation_directory"]
+
+    compiled_software_directory = exp_paths["compiled_software_directory"]
+
+    sys_paths = define_system_paths(system_directory)
+    dem_processed = sys_paths["dem_processed"]
+    mannings_processed = sys_paths["mannings_processed"]
+
     if overwrite_scenario:
         if simulation_folder.exists():
             shutil.rmtree(simulation_folder)
     simulation_folder.mkdir(parents=True, exist_ok=True)
 
     sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_tritonswmm_executable = sim_paths["sim_tritonswmm_executable"]
 
     if sim_paths["f_log"].exists():
         log = load_json(sim_paths["f_log"])
@@ -958,5 +943,8 @@ def prepare_simulation(
         TRITON_reporting_timestep_s,
         open_boundaries,
         triton_swmm_configuration_template,
+    )
+    log = copy_tritonswmm_build_folder_to_sim(
+        log, compiled_software_directory, sim_tritonswmm_executable
     )
     return log

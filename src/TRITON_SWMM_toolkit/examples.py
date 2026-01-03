@@ -6,11 +6,11 @@ from TRITON_SWMM_toolkit.constants import (
     NORFOLK_EX,
     DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST,
     NORFOLK_SYSTEM_CONFIG,
-    NORFOLK_SINGLE_SIM_EXP,
-    NORFOLK_BENCHMARKING_EXP,
+    NORFOLK_SINGLE_SIM_EXP_CONFIG,
+    NORFOLK_BENCHMARKING_EXP_CONFIG,
     NORFOLK_CASE_CONFIG,
 )
-from platformdirs import user_data_dir
+
 from importlib.resources import files
 import yaml
 from zipfile import ZipFile
@@ -18,7 +18,13 @@ import bagit
 import shutil
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
-    load_benchmarking_experiment_config_config,
+    load_experiment_config,
+)
+from TRITON_SWMM_toolkit.utils import (
+    get_package_root,
+    get_package_data_root,
+    create_from_template,
+    fill_template,
 )
 
 try:
@@ -27,12 +33,12 @@ except ImportError:
     HydroShare = None
 
 
-def get_data_root() -> Path:
-    return Path(user_data_dir(APP_NAME))
+def load_config_filepath(case_study_name: str, filename: str) -> Path:
+    return files(APP_NAME).joinpath(f"examples/{case_study_name}/{filename}")  # type: ignore
 
 
-def load_config_file(case_study_name: str, filename: str) -> dict:
-    path = files(APP_NAME).joinpath(f"examples/{case_study_name}/{filename}")
+def load_config_file_as_dic(case_study_name: str, filename: str) -> dict:
+    path = load_config_filepath(case_study_name, filename)
     return yaml.safe_load(path.read_text())
 
 
@@ -90,60 +96,59 @@ def sign_into_hydroshare():
 download_if_exists = DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST
 
 
+def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
+    cfg_filled = fill_template(cfg_template, mapping)
+    cfg_filled_yaml = yaml.safe_load(cfg_filled)
+    return cfg_filled_yaml
+
+
+def get_norfolk_data_and_package_directory_mapping_dict():
+    hydroshare_root_dir = get_package_data_root(APP_NAME) / "examples" / NORFOLK_EX
+    data_dir = hydroshare_root_dir / "data" / "contents"
+    package_dir = get_package_root(APP_NAME) / "examples" / NORFOLK_EX
+    mapping = dict(
+        DATA_DIR=data_dir, PACKAGE_DIR=package_dir, HYDROSHARE_ROOT=hydroshare_root_dir
+    )
+    return mapping
+
+
 def load_norfolk_system_config(
     download_if_exists=DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST,
 ):
-    case_details = load_config_file(NORFOLK_EX, NORFOLK_CASE_CONFIG)
+    case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
-    target = get_data_root() / "examples" / NORFOLK_EX
-    data_dir = target / "data" / "contents"
-    cfg_template = load_config_file(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
-    cfg_filled = {
-        key: (
-            value.format(DATA_DIR=str(data_dir), DATA=str(data_dir))
-            if isinstance(value, str)
-            else value
-        )
-        for key, value in cfg_template.items()
-    }
-    model = load_system_config(cfg_filled)
-    if target.exists() and not download_if_exists:
+    mapping = get_norfolk_data_and_package_directory_mapping_dict()
+    cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
+    cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
+    model = load_system_config(cfg_filled_yaml)
+    # download data if it doesn't exist
+    if mapping["DATA_DIR"].exists() and not download_if_exists:
         pass
     else:
         hs = sign_into_hydroshare()
         download_data_from_hydroshare(
-            res_identifier, target, hs, download_if_exists=download_if_exists
+            res_identifier,
+            mapping["HYDROSHARE_ROOT"],
+            hs,
+            download_if_exists=download_if_exists,
         )
-
         zipped_software = Path(str(model.TRITONSWMM_software_directory) + ".zip")
-
         with ZipFile(zipped_software, "r") as z:
             z.extractall(model.TRITONSWMM_software_directory.parent)
-
         zipped_software.unlink()
-
     return model
 
 
-def load_experiment_config(experiment_config_filename: str):
-    case_details = load_config_file(NORFOLK_EX, NORFOLK_CASE_CONFIG)
-    target = get_data_root() / "examples" / NORFOLK_EX
-    data_dir = target / "data" / "contents"
-    cfg_template = load_config_file(NORFOLK_EX, experiment_config_filename)
-    cfg_filled = {
-        key: (
-            value.format(DATA_DIR=str(data_dir), DATA=str(data_dir))
-            if isinstance(value, str)
-            else value
-        )
-        for key, value in cfg_template.items()
-    }
-    return load_benchmarking_experiment_config_config(cfg_filled)
+def load_example_experiment_config(system_name: str, experiment_config_filename: str):
+    mapping = get_norfolk_data_and_package_directory_mapping_dict()
+    cfg_template = load_config_filepath(system_name, experiment_config_filename)
+    cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
+    return load_experiment_config(cfg_filled_yaml)
 
 
 def load_norfolk_benchmarking_config():
-    return load_experiment_config(NORFOLK_BENCHMARKING_EXP)
+    return load_example_experiment_config(NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG)
 
 
 def load_norfolk_single_sim_experiment():
-    return load_experiment_config(NORFOLK_SINGLE_SIM_EXP)
+    return load_example_experiment_config(NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG)

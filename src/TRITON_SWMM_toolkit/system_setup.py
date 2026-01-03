@@ -8,8 +8,16 @@ from pathlib import Path
 from rasterio.enums import Resampling
 import sys
 
-# TODO - define a function like define_simulation_paths in preparing_simulations.py that will generate a system folder and system-specific processed outputs like DEM and mannings;
-#           - remove those from the system config file and pydantic model
+
+def define_system_paths(system_directory):
+    dem_processed = system_directory / "elevation.dem"
+    mannings_processed = system_directory / "mannings.dem"
+    ## combine into dic
+    sys_paths = dict(
+        dem_processed=dem_processed,
+        mannings_processed=mannings_processed,
+    )
+    return sys_paths
 
 
 def create_mannings_raster(
@@ -189,22 +197,23 @@ def write_raster_formatted_for_TRITON(
         write_raster(output, rds)
 
 
-def create_dem_for_TRITON(dem_processed, dem_unprocessed, target_resolution):
+def create_dem_for_TRITON(dem_unprocessed, target_resolution, system_directory):
     rds_dem_coarse = coarsen_dem(dem_unprocessed, target_resolution)
+    sys_paths = define_system_paths(system_directory)
     write_raster_formatted_for_TRITON(
-        rds_dem_coarse, dem_processed, include_metadata=True
+        rds_dem_coarse, sys_paths["dem_processed"], include_metadata=True
     )
     return rds_dem_coarse
 
 
 def create_mannings_file_for_TRITON(
-    mannings_processed,
     landuse_lookup,
     landuse_raster,
     landuse_colname,
     mannings_colname,
     dem_unprocessed,
     target_resolution,
+    system_directory,
 ):
     rds_mannings_coarse = create_mannings_raster_matching_dem(
         landuse_lookup,
@@ -214,7 +223,8 @@ def create_mannings_file_for_TRITON(
         dem_unprocessed,
         target_resolution,
     )
+    sys_paths = define_system_paths(system_directory)
     write_raster_formatted_for_TRITON(
-        rds_mannings_coarse, mannings_processed, include_metadata=True
+        rds_mannings_coarse, sys_paths["mannings_processed"], include_metadata=True
     )
     return rds_mannings_coarse

@@ -2,3 +2,4 @@ benchmarking_experiment: "{DATA}/benchmarking_experiment.xlsx"
 weather_event_indexers: {"year":9, "event_type":"compound", "event_id":1}
 event_description: "Hurricane Irene 8-27-2011"
 experiment_folder: "{DATA}/benchmarking_experiment"
+TRITONSWMM_software_compilation_script: "${PACKAGE_DIR}/compile_tritonswmm_wsl.sh"
