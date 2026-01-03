@@ -214,6 +214,7 @@ def create_mannings_file_for_TRITON(
     dem_unprocessed,
     target_resolution,
     system_directory,
+    include_metadata,
 ):
     rds_mannings_coarse = create_mannings_raster_matching_dem(
         landuse_lookup,
@@ -225,6 +226,8 @@ def create_mannings_file_for_TRITON(
     )
     sys_paths = define_system_paths(system_directory)
     write_raster_formatted_for_TRITON(
-        rds_mannings_coarse, sys_paths["mannings_processed"], include_metadata=True
+        rds_mannings_coarse,
+        sys_paths["mannings_processed"],
+        include_metadata=include_metadata,
     )
     return rds_mannings_coarse

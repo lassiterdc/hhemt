@@ -9,7 +9,7 @@ def define_experiment_paths(experiment_id: str, system_directory: Path):
     compiled_software_directory.mkdir(parents=True, exist_ok=True)
     TRITON_build_dir = compiled_software_directory / "build"
     compilation_script = compiled_software_directory / "compile.sh"
-    simulation_directory = system_directory / "simulations"
+    simulation_directory = system_directory / experiment_id / "simulations"
 
     exp_paths = dict(
         compiled_software_directory=compiled_software_directory,

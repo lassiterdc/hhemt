@@ -97,29 +97,32 @@ def find_closest_dem_coord(x_val, y_val, BC_side, rds_dem):
     return x_coord, y_coord
 
 
-def define_simulation_paths(simulation_folder, weather_event_indexers):
+def define_simulation_paths(simulations_folder, weather_event_indexers):
     sim_id_str = retrieve_sim_id_str(weather_event_indexers)
-    f_log = simulation_folder / "log_scenario_creation.json"
+    sim_folder = simulations_folder / sim_id_str
+    f_log = sim_folder / "log_scenario_creation.json"
     # swmm time series
-    dir_weather_datfiles = simulation_folder / "dats"
+    dir_weather_datfiles = sim_folder / "dats"
     dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
     # swmm models
-    swmm_folder = simulation_folder / "swmm"
+    swmm_folder = sim_folder / "swmm"
     swmm_folder.mkdir(parents=True, exist_ok=True)
     inp_hydro = swmm_folder / f"{sim_id_str}_hydro.inp"
     inp_hydraulics = swmm_folder / f"{sim_id_str}_hydraulics.inp"
     inp_full = swmm_folder / f"{sim_id_str}_full.inp"
     # external boundary conditions
-    extbc_tseries = simulation_folder / "extbc" / f"{sim_id_str}.txt"
+    extbc_tseries = sim_folder / "extbc" / f"{sim_id_str}.txt"
     extbc_tseries.parent.mkdir(parents=True, exist_ok=True)
-    extbc_loc = simulation_folder / "extbc" / f"{sim_id_str}.extbc"
+    extbc_loc = sim_folder / "extbc" / f"{sim_id_str}.extbc"
     # inflow hydrographs
-    hyg_timeseries = simulation_folder / "strmflow" / f"{sim_id_str}.hyg"
+    hyg_timeseries = sim_folder / "strmflow" / f"{sim_id_str}.hyg"
     hyg_timeseries.parent.mkdir(parents=True, exist_ok=True)
-    hyg_locs = simulation_folder / "strmflow" / f"{sim_id_str}.txt"
-    # TRITON-SWMM cfg file
-    triton_swmm_cfg = simulation_folder / f"{sim_id_str}.cfg"
-    sim_tritonswmm_executable = simulation_folder / "build" / "triton"
+    hyg_locs = sim_folder / "strmflow" / f"{sim_id_str}.txt"
+    # TRITON-SWMM
+    triton_swmm_cfg = sim_folder / f"{sim_id_str}.cfg"
+    sim_tritonswmm_executable = sim_folder / "build" / "triton"
+    tritonswmm_logfile_dir = sim_folder / "tritonswmm_sim_logfiles"
+    tritonswmm_logfile_dir.mkdir(parents=True, exist_ok=True)
 
     ## combine into dic
     sim_paths = dict(
@@ -134,6 +137,7 @@ def define_simulation_paths(simulation_folder, weather_event_indexers):
         hyg_locs=hyg_locs,
         triton_swmm_cfg=triton_swmm_cfg,
         sim_tritonswmm_executable=sim_tritonswmm_executable,
+        tritonswmm_logfile_dir=tritonswmm_logfile_dir,
     )
     return sim_paths
 

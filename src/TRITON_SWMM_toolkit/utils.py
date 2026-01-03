@@ -6,6 +6,7 @@ from platformdirs import user_data_dir
 from string import Template
 import re
 import sys
+from datetime import datetime
 
 
 def get_package_root(package_name: str) -> Path:
@@ -67,3 +68,26 @@ def create_logfile(inital_data: dict, file: Path):
 def update_logfile(log):
     write_json(log, Path(log["logfile"]))
     return load_json(Path(log["logfile"]))
+
+
+def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
+    """
+    Replace all occurrences of old_substring with new_substring in a text file.
+
+    Parameters:
+        file_path (str): Path to the text file.
+        old_substring (str): The substring to be replaced.
+        new_substring (str): The substring to replace with.
+    """
+    # Read the file
+    with open(file_path, "r", encoding="utf-8") as f:
+        content = f.read()
+
+    # Replace substring
+    content = content.replace(old_substring, new_substring)
+
+    # Write back to the file
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    if verbose:
+        print(f"Replaced '{old_substring}' with '{new_substring}' in {file_path}")
