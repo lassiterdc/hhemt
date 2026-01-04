@@ -91,3 +91,30 @@ def replace_substring_in_file(file_path, old_substring, new_substring, verbose=F
         f.write(content)
     if verbose:
         print(f"Replaced '{old_substring}' with '{new_substring}' in {file_path}")
+
+
+def read_text_file_as_string(file):
+    with open(file) as f:
+        contents = f.read()
+    return contents
+
+
+def current_datetime_string():
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def read_header(file, nlines):
+    lst_lines = []
+    with open(file, "r") as f:
+        for i in range(nlines):
+            line = f.readline()
+            if not line:
+                break  # Stop if file has fewer than 6 lines
+            lst_lines.append(line)
+    return lst_lines
+
+
+def read_text_file_as_list_of_strings(file):
+    with open(file) as f:
+        contents = f.readlines()
+    return contents

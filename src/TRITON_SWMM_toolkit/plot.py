@@ -11,12 +11,17 @@ from pathlib import Path
 import xarray as xr
 from typing import Optional
 from matplotlib.axes import Axes
-from TRITON_SWMM_toolkit.system_setup import create_mannings_raster, define_system_paths
+from TRITON_SWMM_toolkit.system_setup import (
+    create_mannings_raster,
+    define_system_paths,
+    open_processed_mannings_as_rds,
+)
 import json
 import sys
 import os
 from typing import Union, Iterable, Optional
 from collections import defaultdict
+
 
 def plot_polygon_boundary_on_ax(ax, shp_path: Path, color="black", linewidth=1):
     gdf = gpd.read_file(shp_path)
@@ -244,11 +249,13 @@ def plot_fullres_vs_coarse_mannings(
     system_directory,
     watershed_shapefile,
 ):
-    sys_paths = define_system_paths(system_directory)
+    # sys_paths = define_system_paths(system_directory)
     rds_mannings = create_mannings_raster(
         landuse_lookup, landuse_raster, landuse_colname, mannings_colname
     )
-    rds_mannings_processed = rxr.open_rasterio(sys_paths['mannings_processed'])
+
+    # rds_mannings_processed = rxr.open_rasterio(f_mannings)
+    rds_mannings_processed = open_processed_mannings_as_rds(system_directory)
 
     vmin = rds_mannings.min()
     vmax = rds_mannings.max()

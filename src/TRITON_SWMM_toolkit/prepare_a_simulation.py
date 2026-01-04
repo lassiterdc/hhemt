@@ -127,6 +127,7 @@ def define_simulation_paths(simulations_folder, weather_event_indexers):
     ## combine into dic
     sim_paths = dict(
         f_log=f_log,
+        sim_folder=sim_folder,
         dir_weather_datfiles=dir_weather_datfiles,
         inp_hydro=inp_hydro,
         inp_hydraulics=inp_hydraulics,
@@ -142,19 +143,30 @@ def define_simulation_paths(simulations_folder, weather_event_indexers):
     return sim_paths
 
 
+def combine_sys_exp_and_sim_paths(
+    system_directory, experiment_id, weather_event_indexers
+):
+    sys_paths = define_system_paths(system_directory)
+    exp_paths = define_experiment_paths(experiment_id, system_directory)
+    simulation_folders = exp_paths["simulation_directory"]
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
+    sim_master_paths = sys_paths | exp_paths | sim_paths
+    return sim_master_paths
+
+
 def write_swmm_rainfall_dat_files(
     weather_timeseries,
     weather_event_indexers,
     subcatchment_raingage_mapping,
     subcatchment_raingage_mapping_gage_id_colname,
     rainfall_units,
-    simulation_folder,
+    simulation_folders,
 ):
     ds_event_weather_series = xr.open_dataset(weather_timeseries)
     ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
     df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)
     sim_id_str = retrieve_sim_id_str(weather_event_indexers)
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
     log = load_json(sim_paths["f_log"])
 
     # retreieve dataframe of rainfall time series
@@ -199,13 +211,13 @@ def write_swmm_waterlevel_dat_files(
     weather_time_series_storm_tide_datavar,
     weather_timeseries,
     weather_event_indexers,
-    simulation_folder,
+    simulation_folders,
 ):
     ds_event_weather_series = xr.open_dataset(weather_timeseries)
     ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
     # df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)
     sim_id_str = retrieve_sim_id_str(weather_event_indexers)
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
     log = load_json(sim_paths["f_log"])
 
     s_wlevel = (
@@ -241,7 +253,7 @@ def write_swmm_waterlevel_dat_files(
 def create_swmm_model_from_template(
     swmm_model_template,
     destination_sim_path_key,
-    simulation_folder,
+    simulation_folders,
     weather_timeseries,
     weather_event_indexers,
     log,
@@ -287,7 +299,7 @@ def create_swmm_model_from_template(
             print(f"All expected keys: {template_keys}")
             print(f"All keys accounted for: {mapping.keys()}")
             sys.exit()
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
     destination = sim_paths[destination_sim_path_key]
     create_from_template(swmm_model_template, mapping, destination)
     log[destination_sim_path_key] = sim_paths[destination_sim_path_key]
@@ -297,12 +309,12 @@ def create_swmm_model_from_template(
 
 def run_swmm_hydro_model(
     log,
-    simulation_folder,
+    simulation_folders,
     weather_event_indexers,
     destination_sim_path_key="inp_hydro",
     verbose=False,
 ):
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
     if not (
         "hydro_swmm_sim_completed" in log.keys()
         and log["hydro_swmm_sim_completed"] == True
@@ -323,7 +335,7 @@ def create_external_boundary_condition_files(
     weather_timeseries,
     weather_event_indexers,
     weather_time_series_storm_tide_datavar,
-    simulation_folder,
+    simulation_folders,
     storm_tide_units,
     dem_processed,
     variable_boundary_condition,
@@ -344,7 +356,7 @@ def create_external_boundary_condition_files(
     df_water_levels.set_index("time_hr", inplace=True)
 
     sim_id_str = retrieve_sim_id_str(weather_event_indexers)
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
 
     wlevel_first_line = f"%{sim_id_str} Water Level Boundary Condition\n"
     wlevel_second_line = f"%Time(hr) water_elevation ({storm_tide_units})\n"
@@ -446,7 +458,7 @@ def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=Fal
 
 
 def write_hydrograph_files(
-    log, weather_event_indexers, dem_processed, simulation_folder
+    log, weather_event_indexers, dem_processed, simulation_folders
 ):
     sim_id_str = retrieve_sim_id_str(weather_event_indexers)
     hydro_outfile = log["inp_hydro"].replace(".inp", ".out")
@@ -454,7 +466,7 @@ def write_hydrograph_files(
     df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
         log["inp_hydro"], dem_processed
     )
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
     d_time_series = dict()
     lst_nodes_with_inflow = []
     with Output(hydro_outfile) as out:
@@ -721,7 +733,7 @@ def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
 
 def generate_TRITON_SWMM_cfg(
     log,
-    simulation_folder,
+    simulation_folders,
     weather_event_indexers,
     use_constant_mannings,
     dem_processed,
@@ -735,7 +747,7 @@ def generate_TRITON_SWMM_cfg(
     open_boundaries,
     triton_swmm_configuration_template,
 ):
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
 
     if use_constant_mannings:
         const_man_toggle = ""
@@ -809,7 +821,7 @@ def copy_tritonswmm_build_folder_to_sim(
 
 
 def prepare_simulation(
-    overwrite_scenario,
+    overwrite_sim,
     system_directory,
     experiment_id,
     weather_event_indexers,
@@ -835,7 +847,7 @@ def prepare_simulation(
     triton_swmm_configuration_template,
 ):
     exp_paths = define_experiment_paths(experiment_id, system_directory)
-    simulation_folder = exp_paths["simulation_directory"]
+    simulation_folders = exp_paths["simulation_directory"]
 
     compiled_software_directory = exp_paths["compiled_software_directory"]
 
@@ -843,22 +855,26 @@ def prepare_simulation(
     dem_processed = sys_paths["dem_processed"]
     mannings_processed = sys_paths["mannings_processed"]
 
-    if overwrite_scenario:
-        if simulation_folder.exists():
-            shutil.rmtree(simulation_folder)
-    simulation_folder.mkdir(parents=True, exist_ok=True)
+    sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
+    sim_folder = sim_paths["sim_folder"]
 
-    sim_paths = define_simulation_paths(simulation_folder, weather_event_indexers)
+    if overwrite_sim:
+        if sim_folder.exists():
+            shutil.rmtree(sim_folder)
+    sim_folder.mkdir(parents=True, exist_ok=True)
+
     sim_tritonswmm_executable = sim_paths["sim_tritonswmm_executable"]
 
     if sim_paths["f_log"].exists():
         log = load_json(sim_paths["f_log"])
+        log["f_log"] = sim_paths["f_log"]  # make sure this stays up to date
+        log = update_logfile(log)
     else:
         log = create_logfile(weather_event_indexers, sim_paths["f_log"])
-        log["simulation_folder"] = str(simulation_folder)
+        log["simulation_folder"] = str(sim_folder)
         log["created_tritonswmm_input_inps"] = False
         log["simulation_creation_status"] = "not_started"
-        update_logfile(log)
+        log = update_logfile(log)
 
     # halt if the scenario was successfully created
     if log["simulation_creation_status"] == "complete":
@@ -874,19 +890,19 @@ def prepare_simulation(
         subcatchment_raingage_mapping,
         subcatchment_raingage_mapping_gage_id_colname,
         rainfall_units,
-        simulation_folder,
+        simulation_folders,
     )
     log = write_swmm_waterlevel_dat_files(
         storm_tide_units,
         weather_time_series_storm_tide_datavar,
         weather_timeseries,
         weather_event_indexers,
-        simulation_folder,
+        simulation_folders,
     )
     log = create_swmm_model_from_template(
         SWMM_hydrology,
         "inp_hydro",
-        simulation_folder,
+        simulation_folders,
         weather_timeseries,
         weather_event_indexers,
         log,
@@ -895,7 +911,7 @@ def prepare_simulation(
     log = create_swmm_model_from_template(
         SWMM_hydraulics,
         "inp_hydraulics",
-        simulation_folder,
+        simulation_folders,
         weather_timeseries,
         weather_event_indexers,
         log,
@@ -904,7 +920,7 @@ def prepare_simulation(
     log = create_swmm_model_from_template(
         SWMM_full,
         "inp_full",
-        simulation_folder,
+        simulation_folders,
         weather_timeseries,
         weather_event_indexers,
         log,
@@ -912,7 +928,7 @@ def prepare_simulation(
     )
     log = run_swmm_hydro_model(
         log,
-        simulation_folder,
+        simulation_folders,
         weather_event_indexers,
         destination_sim_path_key="inp_hydro",
     )
@@ -921,20 +937,20 @@ def prepare_simulation(
         weather_timeseries,
         weather_event_indexers,
         weather_time_series_storm_tide_datavar,
-        simulation_folder,
+        simulation_folders,
         storm_tide_units,
         dem_processed,
         variable_boundary_condition,
     )
     log = write_hydrograph_files(
-        log, weather_event_indexers, dem_processed, simulation_folder
+        log, weather_event_indexers, dem_processed, simulation_folders
     )
     log = update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
         log, dem_processed, verbose=False
     )
     generate_TRITON_SWMM_cfg(
         log,
-        simulation_folder,
+        simulation_folders,
         weather_event_indexers,
         use_constant_mannings,
         dem_processed,
@@ -952,3 +968,6 @@ def prepare_simulation(
         log, compiled_software_directory, sim_tritonswmm_executable
     )
     return log
+
+
+# %%

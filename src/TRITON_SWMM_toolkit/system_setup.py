@@ -7,6 +7,9 @@ import xarray as xr
 from pathlib import Path
 from rasterio.enums import Resampling
 import sys
+from TRITON_SWMM_toolkit.utils import read_header, read_text_file_as_string
+from rasterio.io import MemoryFile
+import tempfile
 
 
 def define_system_paths(system_directory):
@@ -231,3 +234,24 @@ def create_mannings_file_for_TRITON(
         include_metadata=include_metadata,
     )
     return rds_mannings_coarse
+
+
+def open_processed_mannings_as_rds(system_directory):
+
+    sys_paths = define_system_paths(system_directory)
+
+    f_mannings = sys_paths["mannings_processed"]
+    f_dem = sys_paths["dem_processed"]
+
+    dem_header = "".join(read_header(f_dem, 6))
+    mannings_header = "".join(read_header(f_mannings, 6))
+    if dem_header != mannings_header:
+        mannings_data = read_text_file_as_string(f_mannings)
+        mannings_with_header = dem_header + mannings_data
+        with tempfile.NamedTemporaryFile(suffix=".asc") as tmp:
+            tmp.write(mannings_with_header.encode("utf-8"))
+            tmp.flush()
+            rds_mannings_processed = rxr.open_rasterio(tmp.name).load()  # type: ignore
+    else:
+        rds_mannings_processed = rxr.open_rasterio(f_mannings)
+    return rds_mannings_processed
