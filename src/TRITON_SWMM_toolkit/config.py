@@ -167,10 +167,6 @@ class cfgBaseModel(BaseModel):
 
 class system_config(cfgBaseModel):
     # FILEPATHS
-    storm_tide_boundary_line_gis: Optional[Path] = Field(
-        None,
-        description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",
-    )
     system_directory: Path = Field(
         ...,
         description="Path where TRITON-SWMM system outputs will be stored.",
@@ -209,14 +205,6 @@ class system_config(cfgBaseModel):
         ...,
         description="Folder containing script to build experiment-specific version of TRITON-SWMM.",
     )
-    weather_timeseries: Path = Field(
-        ...,
-        description="Netcdf containing weather event time series data. Events must share indices with weather_event_summary_csv.",
-    )
-    weather_event_summary_csv: Optional[Path] = Field(
-        None,
-        description="CSV file with weather event summary statistics. Events must share indices with weather_timeseries.",
-    )
     subcatchment_raingage_mapping: Optional[Path] = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
@@ -242,18 +230,6 @@ class system_config(cfgBaseModel):
         None,
         description="column name in the landuse_lookup_file corresponding to target plot colors by landuse.",
     )
-    weather_event_indices: list = Field(
-        ...,
-        description="List of one or more strings corresponding to fields used for indexing unique weather events. These must match what is in weather_timeseries and weather_event_summary_csv.",
-    )
-    weather_time_series_storm_tide_datavar: Optional[str] = Field(
-        None,
-        description="Data variables in weather_timeseries corresponding to storm tide.",
-    )
-    weather_time_series_timestep_dimension_name: str = Field(
-        ...,
-        description="Dimension in weather_timeseries corresponding to timestep.",
-    )
     subcatchment_raingage_mapping_gage_id_colname: Optional[str] = Field(
         None,
         description="Column name in subcatchment_raingage_mapping_gage corresponding to the rain gage ids.",
@@ -267,22 +243,10 @@ class system_config(cfgBaseModel):
         None,
         description="DEM height applied to DEM gridcells overlapping buildings. Used for scaling DEM plot colorbars.",
     )
-    rainfall_units: str = Field(
-        ...,
-        description="Rainfall units in weather_timeseries, e.g,. mm/hr, mm, in, in/hr. Must align with specifications in SWMM_hydrology model.",
-    )
-    storm_tide_units: Optional[str] = Field(
-        None,
-        description="Storm tide units, e.g., ft, m. Must align with units used DEM.",
-    )
     # TOGGLES
     toggle_use_swmm_for_hydrology: bool = Field(
         ...,
         description="Determines whether a hydrology-only SWMM model will be used for rainfall-runoff calculations.",
-    )
-    toggle_storm_tide_boundary: bool = Field(
-        ...,
-        description="If True, a boundary condition representing storm tide will be applied to the model.",
     )
     toggle_use_constant_mannings: bool = Field(
         ...,
@@ -297,33 +261,9 @@ class system_config(cfgBaseModel):
         ...,
         description="Target DEM resolution for TRITON-SWMM in the native resolution of the provided DEM.",
     )
-    TRITON_output_type: Literal["bin", "asc"] = Field(
-        "bin",
-        description="TRITON output type, asc or bin.",
-    )
     constant_mannings: Optional[float] = Field(
         None,
         description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
-    )
-    manhole_diameter: float = Field(
-        ...,
-        description="Manhole diameter of TRITON-SWMM interaction nodes.",
-    )
-    manhole_loss_coefficient: float = Field(
-        ...,
-        description="Loss coefficient of TRITON-SWMM interactions occuring at manholes.",
-    )
-    hydraulic_timestep_s: float = Field(
-        ...,
-        description="Timestep for hydraulic computations in seconds.",
-    )
-    TRITON_reporting_timestep_s: float = Field(
-        ...,
-        description="Reporting timestep in seconds.",
-    )
-    open_boundaries: int = Field(
-        ...,
-        description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
     )
 
     # VALIDATING DEPENDENCIES BASED ON TOGGLES
@@ -353,17 +293,6 @@ class system_config(cfgBaseModel):
             lst_rqrd_if_false=[""],
         )
         cls.toggle_tests.append(swmm_hydro_test)
-        ### toggle_storm_tide_boundary
-        storm_tide_boundary_test = dict(
-            toggle_varname="toggle_storm_tide_boundary",
-            lst_rqrd_if_true=[
-                "storm_tide_boundary_line_gis",
-                "weather_time_series_storm_tide_datavar",
-                "storm_tide_units",
-            ],
-            lst_rqrd_if_false=[""],
-        )
-        cls.toggle_tests.append(storm_tide_boundary_test)
         ### toggle_full_swmm_model
         full_swmm_model_test = dict(
             toggle_varname="toggle_full_swmm_model",
@@ -375,7 +304,7 @@ class system_config(cfgBaseModel):
 
 
 class experiment_config(cfgBaseModel):
-    # REQUIRED PARAMETERS
+    # REQUIRED INPUTS
     experiment_id: Annotated[
         str,
         Field(
@@ -384,12 +313,48 @@ class experiment_config(cfgBaseModel):
             pattern=r"^[A-Za-z][A-Za-z0-9_.]*$",
         ),
     ]
+    weather_event_indices: list = Field(
+        ...,
+        description="List of one or more strings corresponding to fields used for indexing unique weather events. These must match what is in weather_timeseries and weather_event_summary_csv.",
+    )
+    weather_timeseries: Path = Field(
+        ...,
+        description="Netcdf containing weather event time series data. Events must share indices with weather_event_summary_csv.",
+    )
+    weather_time_series_timestep_dimension_name: str = Field(
+        ...,
+        description="Dimension in weather_timeseries corresponding to timestep.",
+    )
+    rainfall_units: str = Field(
+        ...,
+        description="Rainfall units in weather_timeseries, e.g,. mm/hr, mm, in, in/hr. Must align with specifications in SWMM_hydrology model.",
+    )
     # TOGGLES
     toggle_benchmarking_experiment: bool = Field(
         ...,
         description="Whether or not this is a benchmarking study. If so, a .csv file is required for input benchmarking_experiment defining the experimental setup.",
     )
-    # OPTIONAL OR DEPENDENT PARAMETERS
+    toggle_storm_tide_boundary: bool = Field(
+        ...,
+        description="If True, a boundary condition representing storm tide will be applied to the model.",
+    )
+    # OPTIONAL OR DEPENDENT
+    storm_tide_boundary_line_gis: Optional[Path] = Field(
+        None,
+        description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",
+    )
+    storm_tide_units: Optional[str] = Field(
+        None,
+        description="Storm tide units, e.g., ft, m. Must align with units used DEM.",
+    )
+    weather_event_summary_csv: Optional[Path] = Field(
+        None,
+        description="CSV file with weather event summary statistics. Events must share indices with weather_timeseries.",
+    )
+    weather_time_series_storm_tide_datavar: Optional[str] = Field(
+        None,
+        description="Data variables in weather_timeseries corresponding to storm tide.",
+    )
     benchmarking_experiment: Optional[Path] = Field(
         None,
         description="Benchmarking experimental design csv file.",
@@ -406,6 +371,31 @@ class experiment_config(cfgBaseModel):
         "hpc_swmm_omp",
         description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
     )
+    # TRITON-SWMM PARAMETERS
+    TRITON_output_type: Literal["bin", "asc"] = Field(
+        "bin",
+        description="TRITON output type, asc or bin.",
+    )
+    manhole_diameter: float = Field(
+        ...,
+        description="Manhole diameter of TRITON-SWMM interaction nodes.",
+    )
+    manhole_loss_coefficient: float = Field(
+        ...,
+        description="Loss coefficient of TRITON-SWMM interactions occuring at manholes.",
+    )
+    hydraulic_timestep_s: float = Field(
+        ...,
+        description="Timestep for hydraulic computations in seconds.",
+    )
+    TRITON_reporting_timestep_s: float = Field(
+        ...,
+        description="Reporting timestep in seconds.",
+    )
+    open_boundaries: int = Field(
+        ...,
+        description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
+    )
 
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("experiment_id")
@@ -419,13 +409,24 @@ class experiment_config(cfgBaseModel):
     # VALIDATING DEPENDENCIES BASED ON TOGGLES
     @classmethod
     def get_toggle_tests(cls):
-        ### toggle_use_constant_mannings
+        ### toggle_benchmarking_experiment
         bm_test = dict(
-            toggle_varname="toggle_use_constant_mannings",
+            toggle_varname="toggle_benchmarking_experiment",
             lst_rqrd_if_true=["benchmarking_experiment"],
             lst_rqrd_if_false=[],
         )
         cls.toggle_tests.append(bm_test)
+        ### toggle_storm_tide_boundary
+        storm_tide_boundary_test = dict(
+            toggle_varname="toggle_storm_tide_boundary",
+            lst_rqrd_if_true=[
+                "storm_tide_boundary_line_gis",
+                "weather_time_series_storm_tide_datavar",
+                "storm_tide_units",
+            ],
+            lst_rqrd_if_false=[""],
+        )
+        cls.toggle_tests.append(storm_tide_boundary_test)
 
 
 def load_system_config(cfg):

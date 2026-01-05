@@ -1,24 +1,117 @@
-# tests/test_TRITON_SWMM_toolkit.py
-# %%
+# %% tests/test_TRITON_SWMM_toolkit.py
+# load all libraries and constants
 from TRITON_SWMM_toolkit.constants import (
     NORFOLK_EX,
     NORFOLK_CASE_CONFIG,
     NORFOLK_SYSTEM_CONFIG,
     NORFOLK_SINGLE_SIM_EXP_CONFIG,
 )
-import shutil
 from TRITON_SWMM_toolkit.examples import (
     load_config_file_as_dic,
     get_norfolk_data_and_package_directory_mapping_dict,
     load_config_filepath,
     return_filled_template_yaml_dictionary,
+    load_norfolk_system_config,
+    load_norfolk_single_sim_experiment,
 )
 from TRITON_SWMM_toolkit.config import load_system_config, load_experiment_config
-from TRITON_SWMM_toolkit.utils import load_json
 from pathlib import Path
+from TRITON_SWMM_toolkit.system_setup import define_system_paths
+from TRITON_SWMM_toolkit.prepare_an_experiment import define_experiment_paths
+from TRITON_SWMM_toolkit.prepare_a_simulation import (
+    retrieve_weather_indexer_using_integer_index,
+    initialize_sim_logfile,
+    define_simulation_paths,
+)
+from TRITON_SWMM_toolkit.utils_for_testing import (
+    create_reduced_weather_file_for_testing_if_it_does_not_exist,
+)
 
+
+# PARAMETERS AND CONSTANTS
 TST_DIR_SUFFIX = "test"
 DUR_MIN = 10  # for testing
+
+# LOADING FROM SYSTEM CONFIG
+cfg_system = load_norfolk_system_config(download_if_exists=False)
+
+cfg_system.system_directory = (  # update system directory for testing
+    cfg_system.system_directory.parent / f"sys_{TST_DIR_SUFFIX}"
+)
+landuse_lookup = cfg_system.landuse_lookup_file
+landuse_raster = cfg_system.landuse_raster
+landuse_colname = cfg_system.landuse_lookup_class_id_colname
+mannings_colname = cfg_system.landuse_lookup_mannings_colname
+watershed_shapefile = cfg_system.watershed_gis_polygon
+system_directory = cfg_system.system_directory
+dem_unprocessed = cfg_system.DEM_fullres
+target_resolution = cfg_system.target_dem_resolution
+dem_outside_watershed_height = cfg_system.dem_outside_watershed_height
+dem_building_height = cfg_system.dem_building_height
+TRITONSWMM_software_directory = cfg_system.TRITONSWMM_software_directory
+TRITON_SWMM_software_compilation_script = (
+    cfg_system.TRITON_SWMM_software_compilation_script
+)
+subcatchment_raingage_mapping = cfg_system.subcatchment_raingage_mapping
+subcatchment_raingage_mapping_gage_id_colname = (
+    cfg_system.subcatchment_raingage_mapping_gage_id_colname
+)
+SWMM_hydrology = cfg_system.SWMM_hydrology
+SWMM_hydraulics = cfg_system.SWMM_hydraulics
+SWMM_full = cfg_system.SWMM_full
+use_constant_mannings = cfg_system.toggle_use_constant_mannings
+constant_mannings = cfg_system.constant_mannings
+triton_swmm_configuration_template = cfg_system.triton_swmm_configuration_template
+
+# LOADING FROM EXPERIMENT CONFIG
+cfg_exp_1sim = load_norfolk_single_sim_experiment()
+experiment_id = cfg_exp_1sim.experiment_id
+TRITON_SWMM_make_command = cfg_exp_1sim.TRITON_SWMM_make_command
+weather_time_series_storm_tide_datavar = (
+    cfg_exp_1sim.weather_time_series_storm_tide_datavar
+)
+weather_time_series_timestep_dimension_name = (
+    cfg_exp_1sim.weather_time_series_timestep_dimension_name
+)
+rainfall_units = cfg_exp_1sim.rainfall_units
+storm_tide_units = cfg_exp_1sim.storm_tide_units
+storm_tide_boundary_line_gis = cfg_exp_1sim.storm_tide_boundary_line_gis
+TRITON_output_type = cfg_exp_1sim.TRITON_output_type
+manhole_diameter = cfg_exp_1sim.manhole_diameter
+manhole_loss_coefficient = cfg_exp_1sim.manhole_loss_coefficient
+hydraulic_timestep_s = cfg_exp_1sim.hydraulic_timestep_s
+TRITON_reporting_timestep_s = cfg_exp_1sim.TRITON_reporting_timestep_s
+open_boundaries = cfg_exp_1sim.open_boundaries
+weather_events_to_simulate = cfg_exp_1sim.weather_events_to_simulate
+weather_event_indices = cfg_exp_1sim.weather_event_indices
+
+# SUBSETTING WEATHER DATA FOR TESTING
+og_weather_timeseries = cfg_exp_1sim.weather_timeseries
+weather_timeseries = system_directory / "weather_subset.nc"
+create_reduced_weather_file_for_testing_if_it_does_not_exist(
+    og_weather_timeseries,
+    weather_timeseries,
+    weather_events_to_simulate,
+    weather_event_indices,
+    weather_time_series_timestep_dimension_name,
+    dur_min=DUR_MIN,
+)
+
+
+# LOADING VARS BASED ON CONFIGS
+exp_paths = define_experiment_paths(experiment_id, system_directory)
+simulation_folders = exp_paths["simulation_directory"]
+compiled_software_directory = exp_paths["compiled_software_directory"]
+
+sys_paths = define_system_paths(system_directory)
+mannings_processed = sys_paths["mannings_processed"]
+dem_processed = sys_paths["dem_processed"]
+
+weather_event_indexers = retrieve_weather_indexer_using_integer_index(
+    0, weather_events_to_simulate, weather_event_indices
+)
+sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
+sim_tritonswmm_executable = sim_paths["sim_tritonswmm_executable"]
 
 
 def test_load_system_config():
@@ -37,34 +130,6 @@ def test_load_experiment_config():
     cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG)
     cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
     cfg_experiment = load_experiment_config(cfg_filled_yaml)
-
-
-# load vars needed for testing sim set up and running
-from TRITON_SWMM_toolkit.examples import load_norfolk_system_config
-
-cfg_system = load_norfolk_system_config(download_if_exists=False)
-# update system directory for testing
-cfg_system.system_directory = (
-    cfg_system.system_directory.parent / f"sys_{TST_DIR_SUFFIX}"
-)
-# remove testing directory
-# if cfg_system.system_directory.exists():
-#     shutil.rmtree(cfg_system.system_directory)
-# cfg_system.system_directory.mkdir()
-
-# cfg_system.display_tabulate_cfg()
-
-# retrieving field valus:
-landuse_lookup = cfg_system.landuse_lookup_file
-landuse_raster = cfg_system.landuse_raster
-landuse_colname = cfg_system.landuse_lookup_class_id_colname
-mannings_colname = cfg_system.landuse_lookup_mannings_colname
-watershed_shapefile = cfg_system.watershed_gis_polygon
-system_directory = cfg_system.system_directory
-dem_unprocessed = cfg_system.DEM_fullres
-target_resolution = cfg_system.target_dem_resolution
-dem_outside_watershed_height = cfg_system.dem_outside_watershed_height
-dem_building_height = cfg_system.dem_building_height
 
 
 def test_create_mannings_file_for_TRITON():
@@ -90,17 +155,6 @@ def test_create_dem_for_TRITON():
     )
 
 
-from TRITON_SWMM_toolkit.examples import load_norfolk_single_sim_experiment
-
-cfg_exp_1sim = load_norfolk_single_sim_experiment()
-experiment_id = cfg_exp_1sim.experiment_id
-TRITON_SWMM_make_command = cfg_exp_1sim.TRITON_SWMM_make_command
-TRITONSWMM_software_directory = cfg_system.TRITONSWMM_software_directory
-TRITON_SWMM_software_compilation_script = (
-    cfg_system.TRITON_SWMM_software_compilation_script
-)
-
-
 def test_compile_TRITONSWMM_for_cpu_sims():
     from TRITON_SWMM_toolkit.prepare_an_experiment import compile_TRITON_SWMM
 
@@ -113,76 +167,6 @@ def test_compile_TRITONSWMM_for_cpu_sims():
     )
     assert "[100%] Built target runswmm" in compilation_log
     assert "Building finished: triton" in compilation_log
-
-
-#  defining variables for setting up and runnings sims
-# from TRITON_SWMM_toolkit.prepare_a_simulation import prepare_simulation
-
-weather_events_to_simulate = cfg_exp_1sim.weather_events_to_simulate
-overwrite_scenario = True
-
-
-weather_time_series_storm_tide_datavar = (
-    cfg_system.weather_time_series_storm_tide_datavar
-)
-subcatchment_raingage_mapping = cfg_system.subcatchment_raingage_mapping
-weather_time_series_timestep_dimension_name = (
-    cfg_system.weather_time_series_timestep_dimension_name
-)
-subcatchment_raingage_mapping_gage_id_colname = (
-    cfg_system.subcatchment_raingage_mapping_gage_id_colname
-)
-rainfall_units = cfg_system.rainfall_units
-storm_tide_units = cfg_system.storm_tide_units
-SWMM_hydrology = cfg_system.SWMM_hydrology
-SWMM_hydraulics = cfg_system.SWMM_hydraulics
-SWMM_full = cfg_system.SWMM_full
-storm_tide_boundary_line_gis = cfg_system.storm_tide_boundary_line_gis
-TRITON_output_type = cfg_system.TRITON_output_type
-use_constant_mannings = cfg_system.toggle_use_constant_mannings
-constant_mannings = cfg_system.constant_mannings
-triton_swmm_configuration_template = cfg_system.triton_swmm_configuration_template
-manhole_diameter = cfg_system.manhole_diameter
-manhole_loss_coefficient = cfg_system.manhole_loss_coefficient
-hydraulic_timestep_s = cfg_system.hydraulic_timestep_s
-TRITON_reporting_timestep_s = cfg_system.TRITON_reporting_timestep_s
-open_boundaries = cfg_system.open_boundaries
-from TRITON_SWMM_toolkit.prepare_an_experiment import define_experiment_paths
-
-exp_paths = define_experiment_paths(experiment_id, system_directory)
-simulation_folders = exp_paths["simulation_directory"]
-
-from TRITON_SWMM_toolkit.prepare_a_simulation import (
-    retrieve_weather_indexer_using_integer_index,
-    initialize_sim_logfile,
-)
-
-#  create a shortened weather time series file so the tests run quickly
-
-from TRITON_SWMM_toolkit.utils_for_testing import (
-    create_reduced_weather_file_for_testing_if_it_does_not_exist,
-)
-
-og_weather_timeseries = cfg_system.weather_timeseries
-new_weather_timeseries = system_directory / "weather_subset.nc"
-weather_event_indices = cfg_system.weather_event_indices
-
-create_reduced_weather_file_for_testing_if_it_does_not_exist(
-    og_weather_timeseries,
-    new_weather_timeseries,
-    weather_events_to_simulate,
-    weather_event_indices,
-    weather_time_series_timestep_dimension_name,
-    dur_min=DUR_MIN,
-)
-
-cfg_system.weather_timeseries = new_weather_timeseries
-weather_timeseries = new_weather_timeseries
-
-
-weather_event_indexers = retrieve_weather_indexer_using_integer_index(
-    0, weather_events_to_simulate, weather_event_indices
-)
 
 
 def test_initialize_sim_logfile():
@@ -264,12 +248,6 @@ def test_run_swmm_hydro_model():
     assert len(outfiles) == 1
 
 
-from TRITON_SWMM_toolkit.system_setup import define_system_paths
-
-sys_paths = define_system_paths(system_directory)
-dem_processed = sys_paths["dem_processed"]
-
-
 def test_create_external_boundary_condition_files():
     from TRITON_SWMM_toolkit.prepare_a_simulation import (
         create_external_boundary_condition_files,
@@ -309,9 +287,6 @@ def test_update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell():
     assert log["inflow_nodes_in_hydraulic_inp_assigned"] == True
 
 
-mannings_processed = sys_paths["mannings_processed"]
-
-
 def test_generate_TRITON_SWMM_cfg():
     from TRITON_SWMM_toolkit.prepare_a_simulation import generate_TRITON_SWMM_cfg
 
@@ -331,13 +306,6 @@ def test_generate_TRITON_SWMM_cfg():
         triton_swmm_configuration_template,
     )
     assert Path(log["triton_swmm_cfg"]).exists()
-
-
-from TRITON_SWMM_toolkit.prepare_a_simulation import define_simulation_paths
-
-compiled_software_directory = exp_paths["compiled_software_directory"]
-sim_paths = define_simulation_paths(simulation_folders, weather_event_indexers)
-sim_tritonswmm_executable = sim_paths["sim_tritonswmm_executable"]
 
 
 def test_copy_tritonswmm_build_folder_to_sim():
@@ -420,9 +388,3 @@ def test_run_singlecore_simulation():
         system_directory, experiment_id, weather_event_indexers
     )
     assert sim_status == "simulation completed"
-
-
-# %% debuggign
-
-# with open(tritonswmm_logfile) as f:
-#     print(f.read())
