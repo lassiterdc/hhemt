@@ -17,6 +17,7 @@ documentation for details.
 
    installation
    usage
-   tutorial_norfolk_case_study.ipynb
+   running a simulation.ipynb
+   processing_sim_outputs.ipynb
    diagram.rst
 
