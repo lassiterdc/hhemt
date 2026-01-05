@@ -6,12 +6,8 @@
 Tools for running and processing TRITON-SWMM models.
 
 * PyPI package: https://pypi.org/project/TRITON-SWMM_toolkit/
-* Free software: MIT License
+* License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 * Documentation: https://TRITON-SWMM-toolkit.readthedocs.io.
-
-## Features
-
-* TODO
 
 ## Credits
 
