@@ -46,3 +46,4 @@ dependencies:
       - hsclient
       - pyswmm
       - swmmio
+      - tabulate

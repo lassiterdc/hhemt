@@ -58,3 +58,8 @@ TRITON_SWMM_toolkit = [
     "examples/*.xlsx",
     "examples/*.csv"
 ]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
+]

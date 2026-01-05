@@ -1,7 +1,9 @@
 import subprocess
 import shutil
-from TRITON_SWMM_toolkit.utils import create_from_template
+from TRITON_SWMM_toolkit.utils import create_from_template, read_text_file_as_string
 from pathlib import Path
+
+# pytest -x --pdb --tb=short
 
 
 def define_experiment_paths(experiment_id: str, system_directory: Path):
@@ -40,4 +42,27 @@ def compile_TRITON_SWMM(
         mapping,
         exp_paths["compilation_script"],
     )
-    subprocess.run(["/bin/bash", str(exp_paths["compilation_script"])], check=True)
+    # subprocess.run(["/bin/bash", str(exp_paths["compilation_script"])], check=True)
+
+    compilation_logfile = sftwr_cmpld / f"compilation.log"
+
+    with open(compilation_logfile, "w") as logfile:
+        proc = subprocess.run(  # type: ignore
+            ["/bin/bash", str(exp_paths["compilation_script"])],
+            stdout=logfile,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+
+    import time
+
+    start_time = time.time()
+    compilation_log = read_text_file_as_string(compilation_logfile)
+    while "Building finished: triton" not in compilation_log:
+        time.sleep(0.1)
+        compilation_log = read_text_file_as_string(compilation_logfile)
+        elapsed = time.time() - start_time
+        time.sleep(0.1)
+        if elapsed > 5:
+            break
+    return compilation_log

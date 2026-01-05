@@ -1,6 +1,6 @@
 # FILEPATHS
-variable_boundary_condition: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
-watershed_shapefile: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
+storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
+watershed_gis_polygon: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
 system_directory: '${DATA_DIR}/system'
 DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'
 landuse_lookup_file: '${DATA_DIR}/landuse_lookup_tables.csv'
@@ -23,6 +23,11 @@ weather_event_indices: ['year', 'event_type', 'event_id']
 weather_time_series_storm_tide_datavar: 'waterlevel_m'
 weather_time_series_timestep_dimension_name: 'timestep'
 subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
+# TOGGLES
+toggle_use_constant_mannings: False
+toggle_storm_tide_boundary: True
+toggle_use_swmm_for_hydrology: True
+toggle_full_swmm_model: True
 # CONSTANTS
 dem_outside_watershed_height: 9999 # meters
 dem_building_height: 80 # meters
@@ -31,7 +36,6 @@ storm_tide_units: 'm'
 # PARAMETERS
 target_dem_resolution: 3.5 # meters
 TRITON_output_type: 'bin' # bin or asc
-use_constant_mannings: False
 manhole_diameter: 1.2
 manhole_loss_coefficient: 0.1
 hydraulic_timestep_s: 0.01

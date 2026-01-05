@@ -9,7 +9,19 @@ from TRITON_SWMM_toolkit.constants import (
     NORFOLK_BENCHMARKING_EXP_CONFIG,
     NORFOLK_CASE_CONFIG,
 )
+import warnings
 
+with warnings.catch_warnings():
+    # Only ignore the pkg_resources deprecation warning
+    warnings.filterwarnings(
+        "ignore",
+        category=UserWarning,
+        message=r".*pkg_resources is deprecated.*",
+    )
+    try:
+        from hsclient import HydroShare
+    except ImportError:
+        HydroShare = None
 from importlib.resources import files
 import yaml
 from zipfile import ZipFile
@@ -25,11 +37,6 @@ from TRITON_SWMM_toolkit.utils import (
     create_from_template,
     fill_template,
 )
-
-try:
-    from hsclient import HydroShare
-except ImportError:
-    HydroShare = None
 
 
 def load_config_filepath(case_study_name: str, filename: str) -> Path:
