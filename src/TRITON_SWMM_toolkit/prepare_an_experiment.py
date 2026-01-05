@@ -3,8 +3,6 @@ import shutil
 from TRITON_SWMM_toolkit.utils import create_from_template, read_text_file_as_string
 from pathlib import Path
 
-# pytest -x --pdb --tb=short
-
 
 def define_experiment_paths(experiment_id: str, system_directory: Path):
     compiled_software_directory = system_directory / experiment_id / "compiled_software"

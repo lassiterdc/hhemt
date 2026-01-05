@@ -1,5 +1,5 @@
-experiment_id: 'norfolk_irene_singlesim'
-weather_event_indexers: {'year':9, 'event_type':'compound', 'event_id':1}
-event_description: 'Hurricane Irene 8-27-2011'
-experiment_folder: '{DATA}/single_sim'
+experiment_id: 'single_sim' # experiment folder name; will be created if it doesn't exist
+weather_events_to_simulate: '${DATA_DIR}/hurricane_irene_event_index.csv'
+experiment_description: 'Single Simulation of Hurricane Irene 8-27-2011'
 TRITON_SWMM_make_command: 'hpc_swmm_omp'
+toggle_benchmarking_experiment: False
