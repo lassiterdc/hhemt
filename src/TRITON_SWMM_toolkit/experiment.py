@@ -8,17 +8,15 @@ from TRITON_SWMM_toolkit.utils import (
 )
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_experiment_config
-from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 import pandas as pd
 from typing import Literal
 from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
+from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run_sim
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot import print_json_file_tree
 
-
-# from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 from typing import TYPE_CHECKING
 
@@ -27,21 +25,18 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_experiment:
-
     def __init__(
         self,
         experiment_config_yaml: Path,
-        ts_system: "TRITONSWMM_system",
+        system: "TRITONSWMM_system",
     ) -> None:
-        self._system = ts_system
-        self._sys_paths = ts_system.sys_paths
-        self._cfg_system = ts_system.cfg_system
+        self._system = system
         self.experiment_config_yaml = experiment_config_yaml
         cfg_exp = load_experiment_config(experiment_config_yaml)
         self.cfg_exp = cfg_exp
         # define additional paths not defined in cfg
         compiled_software_directory = (
-            self._cfg_system.system_directory
+            self._system.cfg_system.system_directory
             / self.cfg_exp.experiment_id
             / "compiled_software"
         )
@@ -50,7 +45,7 @@ class TRITONSWMM_experiment:
             compiled_software_directory=compiled_software_directory,
             TRITON_build_dir=compiled_software_directory / "build",
             compilation_script=compiled_software_directory / "compile.sh",
-            simulation_directory=self._cfg_system.system_directory
+            simulation_directory=self._system.cfg_system.system_directory
             / self.cfg_exp.experiment_id
             / "sims",
             compilation_logfile=compiled_software_directory / f"compilation.log",
@@ -65,26 +60,10 @@ class TRITONSWMM_experiment:
         if self.exp_paths.compilation_logfile.exists():
             self._validate_compilation()
 
-    def plot_dem_and_mannings(self):
-        self._system.plot_dem_and_mannings()
-
-    def plot_processed_mannings(self):
-        self._system.plot_processed_mannings()
-
-    def plot_processed_dem(self):
-        self._system.plot_processed_dem()
-
-    def create_system_level_inputs(
-        self, overwrite_if_exists: bool = False, verbose: bool = False
-    ):
-        self._system.create_dem_for_TRITON(overwrite_if_exists, verbose)
-        if not self._cfg_system.toggle_use_constant_mannings:
-            self._system.create_mannings_file_for_TRITON(overwrite_if_exists, verbose)
-
     def print_cfg(self, which: Literal["system", "experiment", "both"] = "both"):
         if which == ["system", "both"]:
             print("=== System Configuration ===")
-            self._cfg_system.display_tabulate_cfg()
+            self._system.cfg_system.display_tabulate_cfg()
         if which == "both":
             print("\n")
         if which in ["experiment", "both"]:
@@ -92,12 +71,12 @@ class TRITONSWMM_experiment:
             self.cfg_exp.display_tabulate_cfg()
 
     def print_all_yaml_defined_input_files(self):
-        dic_exp = self._cfg_system.model_dump()
+        dic_exp = self._system.cfg_system.model_dump()
         dic_sys = self.cfg_exp.model_dump()
         print_json_file_tree(dic_exp | dic_sys)
 
     def print_all_sim_files(self, sim_iloc):
-        dic_syspaths = self._sys_paths.as_dict()
+        dic_syspaths = self._system.sys_paths.as_dict()
         dic_exp_paths = self.exp_paths.as_dict()
         dic_sim_paths = self.scenarios[sim_iloc].sim_paths.as_dict()
         dic_all_paths = dic_syspaths | dic_exp_paths | dic_sim_paths
@@ -203,10 +182,12 @@ class TRITONSWMM_experiment:
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
         compiled_software_directory = self.exp_paths.compiled_software_directory
         compilation_script = self.exp_paths.compilation_script
-        TRITONSWMM_software_directory = self._cfg_system.TRITONSWMM_software_directory
+        TRITONSWMM_software_directory = (
+            self._system.cfg_system.TRITONSWMM_software_directory
+        )
         TRITON_SWMM_make_command = self.cfg_exp.TRITON_SWMM_make_command
         TRITON_SWMM_software_compilation_script = (
-            self._cfg_system.TRITON_SWMM_software_compilation_script
+            self._system.cfg_system.TRITON_SWMM_software_compilation_script
         )
         if compiled_software_directory.exists():
             shutil.rmtree(compiled_software_directory)

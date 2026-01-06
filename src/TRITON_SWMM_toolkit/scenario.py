@@ -33,18 +33,19 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_scenario:
-    def __init__(self, sim_iloc: int, ts_exp: "TRITONSWMM_experiment") -> None:
+    def __init__(self, sim_iloc: int, experiment: "TRITONSWMM_experiment") -> None:
         self.sim_iloc = sim_iloc
+        self._experiment = experiment
         self.weather_event_indexers = (
-            ts_exp._retrieve_weather_indexer_using_integer_index(sim_iloc)
+            self._experiment._retrieve_weather_indexer_using_integer_index(sim_iloc)
         )
-        self._exp_paths = ts_exp.exp_paths
-        self._cfg_exp = ts_exp.cfg_exp
-        self._sys_paths = ts_exp._sys_paths
-        self._cfg_system = ts_exp._cfg_system
+        # self._experiment.exp_paths = self._experiment.exp_paths
+        # self._experiment.cfg_exp = self._experiment.cfg_exp
+        # self._experiment._system.sys_paths = self._experiment.system.sys_paths
+        # self._experiment._system.cfg_system = self._experiment._experiment._system.cfg_system
 
         # define sim specific filepaths
-        simulations_folder = self._exp_paths.simulation_directory
+        simulations_folder = self._experiment.exp_paths.simulation_directory
         self.sim_id_str = self._retrieve_sim_id_str()
         sim_folder = simulations_folder / self.sim_id_str
         swmm_folder = sim_folder / "swmm"
@@ -86,13 +87,16 @@ class TRITONSWMM_scenario:
         return f"{self.sim_iloc}-{sim_id_str}"
 
     def _write_swmm_rainfall_dat_files(self):
-        weather_timeseries = self._cfg_exp.weather_timeseries
+
+        weather_timeseries = self._experiment.cfg_exp.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
-        subcatchment_raingage_mapping = self._cfg_system.subcatchment_raingage_mapping
-        subcatchment_raingage_mapping_gage_id_colname = (
-            self._cfg_system.subcatchment_raingage_mapping_gage_id_colname
+        subcatchment_raingage_mapping = (
+            self._experiment._system.cfg_system.subcatchment_raingage_mapping
         )
-        rainfall_units = self._cfg_exp.rainfall_units
+        subcatchment_raingage_mapping_gage_id_colname = (
+            self._experiment._system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
+        )
+        rainfall_units = self._experiment.cfg_exp.rainfall_units
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
@@ -142,11 +146,11 @@ class TRITONSWMM_scenario:
         return log
 
     def _write_swmm_waterlevel_dat_files(self):
-        storm_tide_units = self._cfg_exp.storm_tide_units
+        storm_tide_units = self._experiment.cfg_exp.storm_tide_units
         weather_time_series_storm_tide_datavar = (
-            self._cfg_exp.weather_time_series_storm_tide_datavar
+            self._experiment.cfg_exp.weather_time_series_storm_tide_datavar
         )
-        weather_timeseries = self._cfg_exp.weather_timeseries
+        weather_timeseries = self._experiment.cfg_exp.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -190,10 +194,10 @@ class TRITONSWMM_scenario:
     def _create_swmm_model_from_template(
         self, swmm_model_template, destination_sim_path_key, destination
     ):
-        weather_timeseries = self._cfg_exp.weather_timeseries
+        weather_timeseries = self._experiment.cfg_exp.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
         weather_time_series_timestep_dimension_name = (
-            self._cfg_exp.weather_time_series_timestep_dimension_name
+            self._experiment.cfg_exp.weather_time_series_timestep_dimension_name
         )
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -264,15 +268,18 @@ class TRITONSWMM_scenario:
         return log
 
     def _create_external_boundary_condition_files(self):
-        weather_timeseries = self._cfg_exp.weather_timeseries
+        weather_timeseries = self._experiment.cfg_exp.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
         weather_time_series_storm_tide_datavar = (
-            self._cfg_exp.weather_time_series_storm_tide_datavar
+            self._experiment.cfg_exp.weather_time_series_storm_tide_datavar
         )
-        simulation_folders = self._exp_paths.simulation_directory
-        storm_tide_units = self._cfg_exp.storm_tide_units
-        dem_processed = self._sys_paths.dem_processed
-        storm_tide_boundary_line_gis = self._cfg_exp.storm_tide_boundary_line_gis
+        simulation_folders = self._experiment.exp_paths.simulation_directory
+        storm_tide_units = self._experiment.cfg_exp.storm_tide_units
+
+        dem_processed = self._experiment._system.sys_paths.dem_processed
+        storm_tide_boundary_line_gis = (
+            self._experiment.cfg_exp.storm_tide_boundary_line_gis
+        )
 
         log = self._retrieve_simlogfile()
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -334,7 +341,7 @@ class TRITONSWMM_scenario:
         return log
 
     def _write_hydrograph_files(self):
-        dem_processed = self._sys_paths.dem_processed
+        dem_processed = self._experiment._system.sys_paths.dem_processed
 
         log = self._retrieve_simlogfile()
         sim_id_str = self.sim_id_str
@@ -435,9 +442,9 @@ class TRITONSWMM_scenario:
     def _update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
         self, verbose=False
     ):
-        dem_processed = self._sys_paths.dem_processed
+        dem_processed = self._experiment._system.sys_paths.dem_processed
 
-        # simulation_folders = self._exp_paths.simulation_directory
+        # simulation_folders = self._experiment.exp_paths.simulation_directory
         # weather_event_indexers = self.weather_event_indexers
         """
         Makes the most downstream node in each TRITON grid cell into an 'inflow' node by assigning a dummy zerod out time series.
@@ -588,18 +595,22 @@ class TRITONSWMM_scenario:
         return update_logfile(log)
 
     def _generate_TRITON_SWMM_cfg(self):
-        use_constant_mannings = self._cfg_system.toggle_use_constant_mannings
-        dem_processed = self._sys_paths.dem_processed
-        manhole_diameter = self._cfg_exp.manhole_diameter
-        manhole_loss_coefficient = self._cfg_exp.manhole_loss_coefficient
-        TRITON_output_type = self._cfg_exp.TRITON_output_type
-        mannings_processed = self._sys_paths.mannings_processed
-        constant_mannings = self._cfg_system.constant_mannings
-        hydraulic_timestep_s = self._cfg_exp.hydraulic_timestep_s
-        TRITON_reporting_timestep_s = self._cfg_exp.TRITON_reporting_timestep_s
-        open_boundaries = self._cfg_exp.open_boundaries
+        use_constant_mannings = (
+            self._experiment._system.cfg_system.toggle_use_constant_mannings
+        )
+        dem_processed = self._experiment._system.sys_paths.dem_processed
+        manhole_diameter = self._experiment.cfg_exp.manhole_diameter
+        manhole_loss_coefficient = self._experiment.cfg_exp.manhole_loss_coefficient
+        TRITON_output_type = self._experiment.cfg_exp.TRITON_output_type
+        mannings_processed = self._experiment._system.sys_paths.mannings_processed
+        constant_mannings = self._experiment._system.cfg_system.constant_mannings
+        hydraulic_timestep_s = self._experiment.cfg_exp.hydraulic_timestep_s
+        TRITON_reporting_timestep_s = (
+            self._experiment.cfg_exp.TRITON_reporting_timestep_s
+        )
+        open_boundaries = self._experiment.cfg_exp.open_boundaries
         triton_swmm_configuration_template = (
-            self._cfg_system.triton_swmm_configuration_template
+            self._experiment._system.cfg_system.triton_swmm_configuration_template
         )
 
         log = self._retrieve_simlogfile()
@@ -661,7 +672,9 @@ class TRITONSWMM_scenario:
         return log
 
     def _copy_tritonswmm_build_folder_to_sim(self):
-        compiled_software_directory = self._exp_paths.compiled_software_directory
+        compiled_software_directory = (
+            self._experiment.exp_paths.compiled_software_directory
+        )
         sim_tritonswmm_executable = self.sim_paths.sim_tritonswmm_executable
         log = self._retrieve_simlogfile()
         src_build_fpath = compiled_software_directory / "build/"
@@ -711,17 +724,21 @@ class TRITONSWMM_scenario:
         self._write_swmm_rainfall_dat_files()
         self._write_swmm_waterlevel_dat_files()
         self._create_swmm_model_from_template(
-            self._cfg_system.SWMM_hydraulics,
+            self._experiment._system.cfg_system.SWMM_hydraulics,
             "inp_hydraulics",
             self.sim_paths.inp_hydraulics,
         )
-        if self._cfg_system.toggle_full_swmm_model:
+        if self._experiment._system.cfg_system.toggle_full_swmm_model:
             self._create_swmm_model_from_template(
-                self._cfg_system.SWMM_full, "inp_full", self.sim_paths.inp_full
+                self._experiment._system.cfg_system.SWMM_full,
+                "inp_full",
+                self.sim_paths.inp_full,
             )
-        if self._cfg_system.toggle_use_swmm_for_hydrology:
+        if self._experiment._system.cfg_system.toggle_use_swmm_for_hydrology:
             self._create_swmm_model_from_template(
-                self._cfg_system.SWMM_hydrology, "inp_hydro", self.sim_paths.inp_hydro
+                self._experiment._system.cfg_system.SWMM_hydrology,
+                "inp_hydro",
+                self.sim_paths.inp_hydro,
             )
             self._run_swmm_hydro_model(
                 rerun_if_exists=rerun_swmm_hydro_if_outputs_exist, verbose=False

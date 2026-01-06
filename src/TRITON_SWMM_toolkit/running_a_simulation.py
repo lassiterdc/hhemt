@@ -15,27 +15,30 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
+# WORK
+# from TRI
+# single_sim_single_core = TRITON_SWMM_testcase(
+#     norfolk_system_yaml, norfolk_1sim_1core_experiment_yaml, "sys_test"
+# )
+# single_sim_single_core.ts_exp.print_logfile_for_scenario(0)
+# END WORK
+
 
 class TRITONSWMM_run_sim:
     def __init__(
-        self, weather_event_indexers: dict, ts_scenario: "TRITONSWMM_scenario"
+        self, weather_event_indexers: dict, scenario: "TRITONSWMM_scenario"
     ) -> None:
+        self._scenario = scenario
         self.weather_event_indexers = weather_event_indexers
-        self._exp_paths = ts_scenario._exp_paths
-        self._cfg_exp = ts_scenario._cfg_exp
-        self._sys_paths = ts_scenario._sys_paths
-        self._cfg_system = ts_scenario._cfg_system
-        self._sim_paths = ts_scenario.sim_paths
-        self._scenario = ts_scenario
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()
         log = self._scenario._retrieve_simlogfile()
-        tritonswmm_logfile_dir = self._sim_paths.tritonswmm_logfile_dir
+        tritonswmm_logfile_dir = self._scenario.sim_paths.tritonswmm_logfile_dir
 
         start_time = time.perf_counter()
-        exe = self._sim_paths.sim_tritonswmm_executable
-        cfg = self._sim_paths.triton_swmm_cfg
+        exe = self._scenario.sim_paths.sim_tritonswmm_executable
+        cfg = self._scenario.sim_paths.triton_swmm_cfg
         sim_start_reporting_tstep = 0
         if pickup_where_leftoff:
             status, f_last_cfg = self._check_simulation_run_status()
@@ -51,8 +54,9 @@ class TRITONSWMM_run_sim:
                     print(print(f"cfg: {cfg}"))
 
         # update environment with SWMM executable
+
         swmm_path = (
-            self._exp_paths.compiled_software_directory
+            self._scenario._experiment.exp_paths.compiled_software_directory
             / "Stormwater-Management-Model"
             / "build"
             / "bin"
@@ -110,9 +114,11 @@ class TRITONSWMM_run_sim:
         return simlog["status"]
 
     def _triton_swmm_raw_output_directory(self):
-        tritonswmm_output_dir = self._sim_paths.sim_folder / "output"
+        tritonswmm_output_dir = self._scenario.sim_paths.sim_folder / "output"
         if not tritonswmm_output_dir.exists():
-            tritonswmm_output_dir = self._sim_paths.sim_folder / "build" / "output"
+            tritonswmm_output_dir = (
+                self._scenario.sim_paths.sim_folder / "build" / "output"
+            )
             # if not tritonswmm_output_dir.exists():
             #     sys.exit("TRITON-SWMM output folder not found")
         return tritonswmm_output_dir
@@ -123,7 +129,7 @@ class TRITONSWMM_run_sim:
         perf_txt = tritonswmm_output_dir / "performance.txt"
         tritonswmm_output_cfg_dir = tritonswmm_output_dir / "cfg"
         cfgs = list(tritonswmm_output_cfg_dir.glob("*.cfg"))
-        f_last_cfg = self._sim_paths.triton_swmm_cfg
+        f_last_cfg = self._scenario.sim_paths.triton_swmm_cfg
         dic_cfgs = dict(step=[], f_cfg=[])
         perf_txt_exists = perf_txt.exists()
         if len(cfgs) > 0:

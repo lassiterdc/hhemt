@@ -10,18 +10,41 @@ import sys
 from TRITON_SWMM_toolkit.utils import read_header, read_text_file_as_string
 import tempfile
 from TRITON_SWMM_toolkit.paths import SysPaths
+from typing import Optional
+from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
 
 
 class TRITONSWMM_system:
     def __init__(self, system_config_yaml: Path) -> None:
         self.system_config_yaml = system_config_yaml
-        cfg_system = load_system_config(system_config_yaml)
-        self.cfg_system = cfg_system
+        self.cfg_system = load_system_config(system_config_yaml)
         # define additional paths
         self.sys_paths = SysPaths(
             dem_processed=self.cfg_system.system_directory / "elevation.dem",
             mannings_processed=self.cfg_system.system_directory / "mannings.dem",
         )
+        self._experiment: Optional["TRITONSWMM_experiment"] = None
+
+    @property
+    def experiment(self) -> "TRITONSWMM_experiment":
+        if self._experiment is None:
+            raise RuntimeError("No experiment defined. Call add_experiment() first.")
+        return self._experiment
+
+    def add_experiment(self, experiment_config_yaml: Path):
+        # from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
+
+        exp = TRITONSWMM_experiment(experiment_config_yaml, self)
+        exp_name = exp.cfg_exp.experiment_id
+        self._experiment = exp
+        return
+
+    def process_system_level_inputs(
+        self, overwrite_if_exists: bool = False, verbose: bool = False
+    ):
+        self.create_dem_for_TRITON(overwrite_if_exists, verbose)
+        if not self.cfg_system.toggle_use_constant_mannings:
+            self.create_mannings_file_for_TRITON(overwrite_if_exists, verbose)
 
     def create_dem_for_TRITON(
         self, overwrite_if_exists: bool = False, verbose: bool = False

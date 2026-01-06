@@ -471,7 +471,7 @@ def load_system_config(cfg_yaml: Path):
     return cfg
 
 
-def load_experiment_config(cfg_yaml):
+def load_experiment_config(cfg_yaml: Path):
     cfg = yaml.safe_load(cfg_yaml.read_text())
     cfg = experiment_config.model_validate(cfg)
     return cfg
