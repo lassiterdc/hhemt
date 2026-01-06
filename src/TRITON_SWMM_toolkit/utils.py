@@ -8,6 +8,7 @@ import re
 import sys
 from datetime import datetime
 import yaml
+from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 
 
 def read_yaml(f_yaml: Path | str):
@@ -110,8 +111,8 @@ def read_text_file_as_string(file):
     return contents
 
 
-def current_datetime_string():
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+def current_datetime_string(format=DATETIME_STRING_FORMAT):
+    return datetime.now().strftime(format)
 
 
 def read_header(file, nlines):

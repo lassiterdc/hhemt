@@ -14,6 +14,7 @@ class ExpPaths:
     TRITON_build_dir: Path
     compilation_script: Path
     simulation_directory: Path
+    compilation_logfile: Path
 
 
 @dataclass

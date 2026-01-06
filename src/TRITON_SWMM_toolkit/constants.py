@@ -1,5 +1,14 @@
 # from pathlib import Path
+from enum import Enum
 
+
+class Mode(str, Enum):
+    SINGLE_CORE = "single_core"
+
+
+DATETIME_STRING_FORMAT = "%Y%m%d_%H%M%S"
+
+# TESTING
 APP_NAME = "TRITON_SWMM_toolkit"
 NORFOLK_EX = "norfolk_coastal_flooding"
 # DOWNLOAD_EXAMPLES_IF_ALREADY_EXIST = True

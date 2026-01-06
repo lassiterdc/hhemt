@@ -70,10 +70,14 @@ class TRITONSWMM_scenario:
             sim_tritonswmm_executable=sim_folder / "build" / "triton",
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
         )
+        self._create_directories()
+
+    def _create_directories(self):
         self.sim_paths.dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
         self.sim_paths.extbc_tseries.parent.mkdir(parents=True, exist_ok=True)
         self.sim_paths.hyg_timeseries.parent.mkdir(parents=True, exist_ok=True)
         self.sim_paths.tritonswmm_logfile_dir.mkdir(parents=True, exist_ok=True)
+        return
 
     def _retrieve_sim_id_str(self):
         sim_id_str = "_".join(
@@ -120,7 +124,7 @@ class TRITONSWMM_scenario:
                 )
             )
             # define filepaths and write
-            fname_raindat = "{}_grid-ind{}.dat".format(sim_id_str, gage)
+            fname_raindat = "grid-ind{}.dat".format(gage)
             f_out_swmm_rainfall = self.sim_paths.dir_weather_datfiles / fname_raindat
             with open(f_out_swmm_rainfall, "w+") as file:
                 file.write(f";;rain gage {gage} for sim {sim_id_str} \n")
@@ -236,7 +240,7 @@ class TRITONSWMM_scenario:
                 sys.exit()
 
         create_from_template(swmm_model_template, mapping, destination)
-        log[destination_sim_path_key] = destination
+        log[f"{destination_sim_path_key}_model_created_successfully"] = True
         log = update_logfile(log)
         return log
 
@@ -296,7 +300,7 @@ class TRITONSWMM_scenario:
 
         df_water_levels.to_csv(self.sim_paths.extbc_tseries, mode="a", header=False)
 
-        log["extbc_tseries"] = self.sim_paths.extbc_tseries
+        log["extbc_tseries_created"] = True
         # write external boundary condition location file
         rds_dem = rxr.open_rasterio(dem_processed)
         gdf_bc = gpd.read_file(storm_tide_boundary_line_gis)  # type: ignore
@@ -334,10 +338,10 @@ class TRITONSWMM_scenario:
 
         log = self._retrieve_simlogfile()
         sim_id_str = self._retrieve_sim_id_str()
-        hydro_outfile = log["inp_hydro"].replace(".inp", ".out")
+        hydro_outfile = str(self.sim_paths.inp_hydro).replace(".inp", ".out")
         rds_dem = rxr.open_rasterio(dem_processed)
         df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            log["inp_hydro"], dem_processed
+            self.sim_paths.inp_hydro, dem_processed
         )
 
         d_time_series = dict()
@@ -382,7 +386,7 @@ class TRITONSWMM_scenario:
             df_node_inflow.to_csv(
                 self.sim_paths.hyg_timeseries, mode="a", index=False, header=False
             )
-            log["hyg_timeseries"] = self.sim_paths.hyg_timeseries
+            log["hyg_timeseries_created"] = True
             log = update_logfile(log)
             # write hydrograph location file
             str_first_line = "%X-Location,Y-Location"
@@ -394,7 +398,7 @@ class TRITONSWMM_scenario:
                     x = col[0]
                     y = col[1]
                     f.write("{},{}\n".format(x, y))
-            log["hyg_locs"] = self.sim_paths.hyg_locs
+            log["hyg_locs_created"] = True
             log = update_logfile(log)
             # verifying that all nodes are within the DEM
             xllcorner = rds_dem.x.values.min()  # type: ignore
@@ -432,6 +436,7 @@ class TRITONSWMM_scenario:
         self, verbose=False
     ):
         dem_processed = self._sys_paths.dem_processed
+
         # simulation_folders = self._exp_paths.simulation_directory
         # weather_event_indexers = self.weather_event_indexers
         """
@@ -439,7 +444,7 @@ class TRITONSWMM_scenario:
         """
         log = self._retrieve_simlogfile()
         df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            log["inp_hydraulics"], dem_processed, verbose=verbose
+            self.sim_paths.inp_hydraulics, dem_processed, verbose=verbose
         )
         lst_grps_more_than_1_node = []
         # gridcell_id = []
@@ -459,7 +464,7 @@ class TRITONSWMM_scenario:
         df_overlapping_nodes = pd.concat(lst_grps_more_than_1_node)
         # loop through to identify overlapping nodes
         # count = -1
-        model = swmmio.Model(log["inp_hydraulics"])
+        model = swmmio.Model(str(self.sim_paths.inp_hydraulics))
         links = model.links.dataframe
         nodes = model.nodes.dataframe
         inflows = model.inp.inflows
@@ -556,7 +561,7 @@ class TRITONSWMM_scenario:
         if verbose:
             print("Removing {} inflow nodes.".format(len(all_upstream_nodes_to_drop)))
         # write new swmm model, removing outflow that won't be used by TRITON-SWMM
-        with open(log["inp_hydraulics"], "r") as fp:
+        with open(self.sim_paths.inp_hydraulics, "r") as fp:
             # read an store all lines into list
             lines = fp.readlines()
         for idx_line, line in enumerate(lines):
@@ -575,7 +580,7 @@ class TRITONSWMM_scenario:
                 line_nums_to_remove.append(inflow_line)
                 lines_to_remove.append(line)
         # overwrite hydaulics model
-        with open(log["inp_hydraulics"], "w") as fp:
+        with open(self.sim_paths.inp_hydraulics, "w") as fp:
             for number, line in enumerate(lines):
                 if number not in line_nums_to_remove:
                     fp.write(line)
@@ -664,7 +669,7 @@ class TRITONSWMM_scenario:
         if target_build_fpath.exists():
             shutil.rmtree(target_build_fpath)
         shutil.copytree(src_build_fpath, target_build_fpath)
-        log["sim_tritonswmm_executable"] = sim_tritonswmm_executable
+        log["sim_tritonswmm_executable_copied"] = True
         log = update_logfile(log)
         return log
 
@@ -689,10 +694,11 @@ class TRITONSWMM_scenario:
         if overwrite_sim:
             if sim_folder.exists():
                 shutil.rmtree(sim_folder)
+            self._create_directories()
         sim_folder.mkdir(parents=True, exist_ok=True)
         log = self._initialize_sim_logfile()
         # halt if the scenario was successfully created
-        if log["simulation_creation_status"] == "complete":
+        if log["simulation_creation_status"] == "success":
             print(
                 "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=False."
             )
@@ -723,6 +729,14 @@ class TRITONSWMM_scenario:
         )
         self._generate_TRITON_SWMM_cfg()
         log = self._copy_tritonswmm_build_folder_to_sim()
+
+        success = True
+        for key, val in log.items():
+            if isinstance(val, bool):
+                success = success and val
+        if success:
+            log["simulation_creation_status"] = "success"
+        log = update_logfile(log)
         return log
 
 
@@ -810,7 +824,7 @@ def find_lowest_inv(node_to_keep, nodes):
 
 def return_df_of_nodes_grouped_by_DEM_gridcell(f_inp, dem_processed, verbose=False):
     rds_dem = rxr.open_rasterio(dem_processed)
-    model = swmmio.Model(f_inp)
+    model = swmmio.Model(str(f_inp))
     warnings.filterwarnings(
         "ignore", category=UserWarning, module=r"swmmio\.utils\.dataframes"
     )
