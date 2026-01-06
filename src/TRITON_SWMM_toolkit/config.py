@@ -4,20 +4,19 @@ from pydantic import (
     BaseModel,
     Field,
     field_validator,
-    constr,
     ValidationError,
     model_validator,
 )
 from typing import ClassVar, List, Dict
 from pathlib import Path
 import yaml
-import numpy as np
-from typing import Literal, Annotated
+from typing import Literal, Annotated, Any
 import re
 import pandas as pd
 from tabulate import tabulate
 import pandas as pd
-from typing import Optional
+from typing import Optional, Tuple
+from TRITON_SWMM_toolkit.plot import print_json_file_tree
 
 
 class cfgBaseModel(BaseModel):
@@ -81,6 +80,9 @@ class cfgBaseModel(BaseModel):
         df_vars = pd.concat([s_descs, s_vals], axis=1)
         return df_vars
 
+    def print_files_defined_in_yaml(self):
+        print_json_file_tree(self.model_dump())
+
     def display_tabulate_cfg(self, col1_width=25, col2_width=50, col3_width=50):
         data = self.cfg_dic_to_df()
 
@@ -109,22 +111,38 @@ class cfgBaseModel(BaseModel):
     # VALIDATION
     @staticmethod
     def validate_from_toggle(
-        values, toggle_varname, lst_rqrd_if_true, lst_rqrd_if_false
-    ):
-        failing_vars = []
-        errors = []
+        values: Dict[str, Any],
+        toggle_varname: str,
+        lst_rqrd_if_true: List[str],
+        lst_rqrd_if_false: List[str],
+    ) -> Tuple[List[str], List[str]]:
+        """
+        Validate that required fields are provided depending on a toggle.
+
+        Additionally, for fields that are Path-like, validate that the file exists.
+
+        Returns:
+            failing_vars: list of field names that failed
+            errors: list of error messages
+        """
+        failing_vars: List[str] = []
+        errors: List[str] = []
         toggle = values.get(toggle_varname)
-        if toggle:
-            for var in lst_rqrd_if_true:
-                # print(f"testing {var}")
-                if values.get(var) is None:
-                    errors.append(f"{var} must be provided if {toggle_varname} is True")
-                    failing_vars.append(var)
-        else:
-            for var in lst_rqrd_if_false:
-                # print(f"testing {var}")
-                if values.get(var) is None:
-                    errors.append(f"{var} must be provided if {toggle_varname} is True")
+        required_fields = lst_rqrd_if_true if toggle else lst_rqrd_if_false
+        for var in required_fields:
+            val = values.get(var)
+            # Check for presence
+            if val is None:
+                errors.append(
+                    f"{var} must be provided if {toggle_varname} is {'True' if toggle else 'False'}"
+                )
+                failing_vars.append(var)
+                continue
+            # Check if Path exists
+            if isinstance(val, Path):
+                p = val.expanduser()
+                if not p.exists():
+                    errors.append(f"{var} path does not exist: {p}")
                     failing_vars.append(var)
         return failing_vars, errors
 
@@ -163,6 +181,24 @@ class cfgBaseModel(BaseModel):
             # print(errors)
             raise ValueError("; ".join(errors))
         return values
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _check_paths_exist(cls, v: Any, info) -> Any:
+        """
+        Validate that all Path-like fields exist.
+        Skips non-path fields automatically.
+        """
+        if v is None:
+            return v  # allow optional
+        # Only handle Path or str values
+        if isinstance(v, Path):
+            p = Path(v).expanduser()
+            if not p.exists():
+                raise ValueError(f"File does not exist: {p}")
+            return p  # convert str → Path
+        # everything else is ignored
+        return v
 
 
 class system_config(cfgBaseModel):
@@ -367,7 +403,7 @@ class experiment_config(cfgBaseModel):
         None,
         description="For readability.",
     )
-    TRITON_SWMM_make_command: Path = Field(
+    TRITON_SWMM_make_command: str = Field(
         "hpc_swmm_omp",
         description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
     )

@@ -10,10 +10,12 @@ from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
 
 # from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-# from TRITON_SWMM_toolkit.simulation import TRITONSWMM_sim
+# from TRITON_SWMM_toolkit.simulation import TRITONSWMM_run_sim
 
 TST_DIR_SUFFIX = "test"
 DUR_MIN = 10  # for testing
+norfolk_system_yaml = load_norfolk_system_config(download_if_exists=False)
+norfolk_1sim_1core_experiment_yaml = load_norfolk_single_sim_experiment()
 
 
 #  define test case class
@@ -87,11 +89,3 @@ class TRITON_SWMM_testcase:
         ds_event_weather_series.to_netcdf(new_weather_timeseries)
         print(f"created weather netcdf {new_weather_timeseries}")
         return new_weather_timeseries
-
-
-norfolk_system_yaml = load_norfolk_system_config(download_if_exists=False)
-norfolk_1sim_1core_experiment_yaml = load_norfolk_single_sim_experiment()
-
-single_sim_single_core = TRITON_SWMM_testcase(
-    norfolk_system_yaml, norfolk_1sim_1core_experiment_yaml, "sys_test"
-)

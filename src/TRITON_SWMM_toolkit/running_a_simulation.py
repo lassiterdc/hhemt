@@ -16,7 +16,7 @@ from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
 
-class TRITONSWMM_sim:
+class TRITONSWMM_run_sim:
     def __init__(
         self, weather_event_indexers: dict, ts_scenario: "TRITONSWMM_scenario"
     ) -> None:
@@ -27,24 +27,6 @@ class TRITONSWMM_sim:
         self._cfg_system = ts_scenario._cfg_system
         self._sim_paths = ts_scenario.sim_paths
         self._scenario = ts_scenario
-
-    # def _record_sim_in_logfile(self, elapsed, sim_start_reporting_tstep, sim_datetime):
-    #     """
-    #     records a 'sim_log' dictionary indexed by the datetime of each simulation attempt
-    #     """
-    #     log = self._scenario._retrieve_simlogfile()
-
-    #     # TODO - update with more fields
-    #     if "sim_log" not in log.keys():
-    #         log["sim_log"] = dict()
-    #     sim_record = dict(
-    #         time_elapsed_s=elapsed,
-    #         sim_start_reporting_tstep=sim_start_reporting_tstep,
-    #         # started from hotstart file
-    #         # simulated duration (pulled from cfg)
-    #     )
-    #     log["sim_log"][sim_datetime] = sim_record
-    #     return update_logfile(log)
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()
@@ -113,7 +95,6 @@ class TRITONSWMM_sim:
 
         return tritonswmm_log, update_logfile(log)
 
-    # %%
     def _retrieve_latest_simlog(self) -> dict:
         log = self._scenario._retrieve_simlogfile()
         if "sim_log" not in log.keys():
@@ -128,26 +109,21 @@ class TRITONSWMM_sim:
         simlog = self._retrieve_latest_simlog()
         return simlog["status"]
 
-    # %%
-
     def _triton_swmm_raw_output_directory(self):
         tritonswmm_output_dir = self._sim_paths.sim_folder / "output"
         if not tritonswmm_output_dir.exists():
             tritonswmm_output_dir = self._sim_paths.sim_folder / "build" / "output"
-            if not tritonswmm_output_dir.exists():
-                sys.exit("TRITON-SWMM output folder not found")
+            # if not tritonswmm_output_dir.exists():
+            #     sys.exit("TRITON-SWMM output folder not found")
         return tritonswmm_output_dir
 
     def _check_simulation_run_status(self):
         tritonswmm_output_dir = self._triton_swmm_raw_output_directory()
-
+        status = "simulation never started"
         perf_txt = tritonswmm_output_dir / "performance.txt"
-
         tritonswmm_output_cfg_dir = tritonswmm_output_dir / "cfg"
         cfgs = list(tritonswmm_output_cfg_dir.glob("*.cfg"))
-
         f_last_cfg = self._sim_paths.triton_swmm_cfg
-
         dic_cfgs = dict(step=[], f_cfg=[])
         perf_txt_exists = perf_txt.exists()
         if len(cfgs) > 0:
@@ -185,9 +161,6 @@ class TRITONSWMM_sim:
                 status = "simulation completed"
             else:
                 status = "simulation started but did not finish"
-        else:
-            status = "simulation never started"
-
         return status, Path(f_last_cfg)  # type: ignore
 
 

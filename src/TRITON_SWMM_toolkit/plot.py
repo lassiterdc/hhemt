@@ -1,6 +1,5 @@
 import numpy as np
-import matplotlib.cm as cm
-from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.colors import ListedColormap
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib import colormaps
@@ -11,16 +10,8 @@ from pathlib import Path
 import xarray as xr
 from typing import Optional
 from matplotlib.axes import Axes
-from TRITON_SWMM_toolkit.system import (
-    create_mannings_raster,
-    define_system_paths,
-    open_processed_mannings_as_rds,
-)
 import json
-import sys
-import os
-from typing import Union, Iterable, Optional
-from collections import defaultdict
+from typing import Union, Optional
 
 
 def plot_polygon_boundary_on_ax(ax, shp_path: Path, color="black", linewidth=1):
@@ -174,7 +165,9 @@ def plot_continuous_raster(
     return ax
 
 
-def process_dem_for_plotting(rds_dem, dem_out_of_watershed, dem_building_height):
+def process_dem_for_plotting(
+    rds_dem, dem_out_of_watershed=None, dem_building_height=None
+):
     """
     Docstring for process_dem_for_plotting
 
@@ -184,106 +177,14 @@ def process_dem_for_plotting(rds_dem, dem_out_of_watershed, dem_building_height)
 
     This assigns n/a to all dem grid cells that are outside of the watershed or represent buildings
     """
-    rds_dem_plot_ready = rds_dem.where(
-        (rds_dem != dem_out_of_watershed) & (rds_dem != dem_building_height)
-    )
+    rds_dem_plot_ready = rds_dem.copy()
+    if dem_out_of_watershed is not None:
+        mask_not_out_of_shed = rds_dem != dem_out_of_watershed
+        rds_dem_plot_ready = rds_dem_plot_ready.where(mask_not_out_of_shed)
+    if dem_building_height is not None:
+        mask_not_building = rds_dem != dem_building_height
+        rds_dem_plot_ready = rds_dem_plot_ready.where(mask_not_building)
     return rds_dem_plot_ready
-
-
-def plot_fullres_vs_coarse_dem(
-    dem_outside_watershed_height,
-    dem_building_height,
-    dem_unprocessed,
-    watershed_shapefile,
-    system_directory,
-    vmin=None,
-    vmax=None,
-):
-    sys_paths = define_system_paths(system_directory)
-
-    rds_dem_unprocessed = rxr.open_rasterio(dem_unprocessed)
-    rds_dem_processed = rxr.open_rasterio(sys_paths["dem_processed"])
-
-    rds_dem_fullres_for_plotting = process_dem_for_plotting(
-        rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
-    )
-
-    if vmin is None:
-        vmin = rds_dem_fullres_for_plotting.min()
-    if vmax is None:
-        vmax = rds_dem_fullres_for_plotting.max()
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
-    ax1 = plot_continuous_raster(
-        rds_dem_unprocessed,  # type: ignore
-        cbar_lab="elevation",
-        cmap="terrain",
-        watershed_shapefile=watershed_shapefile,
-        watershed_shapefile_color="red",
-        vmin=vmin,
-        vmax=vmax,
-        ax=axes[0],
-        set_over="white",
-        show_cbar=False,
-    )
-    ax1.set_title("full res DEM")
-    ax2 = plot_continuous_raster(
-        rds_dem_processed,  # type: ignore
-        cbar_lab="elevation",
-        cmap="terrain",
-        watershed_shapefile=watershed_shapefile,
-        watershed_shapefile_color="red",
-        vmin=vmin,
-        vmax=vmax,
-        ax=axes[1],
-        set_over="white",
-    )
-    ax2.set_title("coarsened DEM")
-    return axes
-
-
-def plot_fullres_vs_coarse_mannings(
-    landuse_lookup,
-    landuse_raster,
-    landuse_colname,
-    mannings_colname,
-    system_directory,
-    watershed_shapefile,
-):
-    # sys_paths = define_system_paths(system_directory)
-    rds_mannings = create_mannings_raster(
-        landuse_lookup, landuse_raster, landuse_colname, mannings_colname
-    )
-
-    # rds_mannings_processed = rxr.open_rasterio(f_mannings)
-    rds_mannings_processed = open_processed_mannings_as_rds(system_directory)
-
-    vmin = rds_mannings.min()
-    vmax = rds_mannings.max()
-    fig, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
-    ax1 = plot_continuous_raster(
-        rds_mannings,
-        cbar_lab="mannings",
-        cmap="viridis",
-        watershed_shapefile=watershed_shapefile,
-        watershed_shapefile_color="red",
-        vmin=vmin,
-        vmax=vmax,
-        ax=axes[0],
-        show_cbar=False,
-    )
-    ax1.set_title("full res mannings")
-    ax2 = plot_continuous_raster(
-        rds_mannings_processed,  # type: ignore
-        cbar_lab="mannings",
-        cmap="viridis",
-        watershed_shapefile=watershed_shapefile,
-        watershed_shapefile_color="red",
-        vmin=vmin,
-        vmax=vmax,
-        ax=axes[1],
-    )
-    ax2.set_title("coarsened res mannings")
-    return axes
 
 
 # TODO
@@ -291,65 +192,55 @@ def plot_fullres_vs_coarse_mannings(
 
 
 def print_json_file_tree(
-    json_path: Union[str, Path],
-    base_dir: Optional[Union[str, Path]] = None,
-    *,
-    show_missing: bool = True,
+    source: Union[str, Path, dict], base_dir: Optional[Union[str, Path]] = None
 ) -> None:
-    """
-    Print a directory tree of file paths found in a JSON file.
-
-    If base_dir is None, the common root directory is auto-detected.
-
-    Parameters
-    ----------
-    json_path : str | Path
-        Path to the JSON file containing file paths.
-    base_dir : str | Path | None
-        Common base directory shared by all files.
-        If None, the root is auto-detected.
-    show_missing : bool, optional
-        If False, paths that do not exist on disk are skipped.
-    """
-
-    json_path = Path(json_path)
-
-    with json_path.open("r") as f:
-        data = json.load(f)
 
     # -------------------------
-    # Extract paths recursively
+    # Load JSON or dict
     # -------------------------
-    def is_path_like(s: str) -> bool:
-        return os.path.isabs(s) or "\\" in s or "/" in s or Path(s).suffix != ""
+    if isinstance(source, (str, Path)):
+        with Path(source).open("r") as f:
+            data = json.load(f)
+    elif isinstance(source, dict):
+        data = source
+    else:
+        raise TypeError("source must be a path to a JSON file or a dict")
+
+    # -------------------------
+    # Extract all Path objects
+    # -------------------------
+    # def is_path_like(s: str) -> bool:
+    #     return os.path.isabs(s) or "/" in s or "\\" in s or Path(s).suffix != ""
 
     def extract_paths(obj) -> list[Path]:
-        if isinstance(obj, str) and is_path_like(obj):
-            return [Path(obj).expanduser()]
+        if isinstance(obj, Path):
+            return [obj.expanduser()]
+        # if isinstance(obj, str) and is_path_like(obj):
+        #     return [Path(obj).expanduser()]
         elif isinstance(obj, dict):
             paths = []
             for v in obj.values():
-                paths.extend(extract_paths(v))
+                if isinstance(v, Path):
+                    paths.extend(extract_paths(v))
             return paths
         elif isinstance(obj, list):
             paths = []
             for v in obj:
-                paths.extend(extract_paths(v))
+                if isinstance(v, Path):
+                    paths.extend(extract_paths(v))
             return paths
         return []
 
-    paths = extract_paths(data)
-    if not paths:
+    all_paths = extract_paths(data)
+    if not all_paths:
         print("(no paths found)")
         return
-
-    paths = [p.resolve() for p in paths]
 
     # -------------------------
     # Auto-detect base directory
     # -------------------------
     if base_dir is None:
-        common_parts = list(zip(*(p.parts for p in paths)))
+        common_parts = list(zip(*(p.parts for p in all_paths if p.parts)))
         root_parts = []
         for parts in common_parts:
             if len(set(parts)) == 1:
@@ -357,38 +248,60 @@ def print_json_file_tree(
             else:
                 break
         base_dir = Path(*root_parts)
-
     base_dir = Path(base_dir)
 
     # -------------------------
-    # Build directory tree
+    # Build tree with full Path objects
     # -------------------------
-    def build_tree(paths: Iterable[Path]):
-        tree = lambda: defaultdict(tree)
-        root = tree()
+    class Node:
+        def __init__(self, path: Path, is_file: bool):
+            self.path = path
+            self.is_file = is_file
+            self.children = {}
 
-        for p in paths:
-            try:
-                rel = p.relative_to(base_dir)
-            except ValueError:
-                continue
+    root_node = Node(base_dir, is_file=False)
 
-            current = root
-            for part in rel.parts:
-                current = current[part]
+    for p in all_paths:
+        try:
+            rel = p.relative_to(base_dir)
+        except ValueError:
+            continue
+        current = root_node
+        for i, part in enumerate(rel.parts):
+            is_leaf = i == len(rel.parts) - 1
+            sub_path = current.path / part
+            if part not in current.children:
+                current.children[part] = Node(
+                    sub_path, is_file=is_leaf and sub_path.is_file()
+                )
+            current = current.children[part]
 
-        return root
-
-    def print_tree(tree, prefix=""):
-        items = list(tree.items())
-        for i, (name, subtree) in enumerate(items):
+    # -------------------------
+    # Print tree
+    # -------------------------
+    def print_node(node: Node, prefix=""):
+        items = list(node.children.items())
+        for i, (name, child) in enumerate(items):
             is_last = i == len(items) - 1
             connector = "└── " if is_last else "├── "
-            print(prefix + connector + name)
-            extension = "    " if is_last else "│   "
-            print_tree(subtree, prefix + extension)
 
-    tree = build_tree(paths)
+            display_name = name
+            if child.is_file:
+                if not child.path.exists():
+                    display_name += " [MISSING]"
+            else:  # folder
+                if not child.path.exists():
+                    display_name += "/ [MISSING]"
+                elif not any(child.path.iterdir()):
+                    display_name += "/ [EMPTY]"
+                else:
+                    display_name += "/"
 
-    print(base_dir)
-    print_tree(tree)
+            print(prefix + connector + display_name)
+
+            if child.children:
+                extension = "    " if is_last else "│   "
+                print_node(child, prefix + extension)
+
+    print(f"{base_dir}/")
+    print_node(root_node)

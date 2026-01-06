@@ -1,17 +1,22 @@
 # %%
 import subprocess
 import shutil
-from TRITON_SWMM_toolkit.utils import create_from_template, read_text_file_as_string
+from TRITON_SWMM_toolkit.utils import (
+    create_from_template,
+    read_text_file_as_string,
+    update_logfile,
+)
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_experiment_config
-from dataclasses import dataclass
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 import pandas as pd
 from typing import Literal
 from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
-from TRITON_SWMM_toolkit.simulation import TRITONSWMM_sim
+from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run_sim
 from TRITON_SWMM_toolkit.constants import Mode
+from TRITON_SWMM_toolkit.plot import print_json_file_tree
+
 
 # from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
@@ -28,6 +33,7 @@ class TRITONSWMM_experiment:
         experiment_config_yaml: Path,
         ts_system: "TRITONSWMM_system",
     ) -> None:
+        self._system = ts_system
         self._sys_paths = ts_system.sys_paths
         self._cfg_system = ts_system.cfg_system
         self.experiment_config_yaml = experiment_config_yaml
@@ -50,14 +56,52 @@ class TRITONSWMM_experiment:
             compilation_logfile=compiled_software_directory / f"compilation.log",
         )
         self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate)
-        self._scenario_setups = {}
-        self._simulations = {}
+        self.scenarios = {}
+        self._add_all_scenarios()
+        self.sim_run_objects = {}
         self.simulation_run_status = {}
         self.run_modes = Mode
-
-        self.compilation_status = "not attempted"
+        self.compilation_successful = "not attempted"
         if self.exp_paths.compilation_logfile.exists():
             self._validate_compilation()
+
+    def plot_dem_and_mannings(self):
+        self._system.plot_dem_and_mannings()
+
+    def plot_processed_mannings(self):
+        self._system.plot_processed_mannings()
+
+    def plot_processed_dem(self):
+        self._system.plot_processed_dem()
+
+    def create_system_level_inputs(
+        self, overwrite_if_exists: bool = False, verbose: bool = False
+    ):
+        self._system.create_dem_for_TRITON(overwrite_if_exists, verbose)
+        if not self._cfg_system.toggle_use_constant_mannings:
+            self._system.create_mannings_file_for_TRITON(overwrite_if_exists, verbose)
+
+    def print_cfg(self, which: Literal["system", "experiment", "both"] = "both"):
+        if which == ["system", "both"]:
+            print("=== System Configuration ===")
+            self._cfg_system.display_tabulate_cfg()
+        if which == "both":
+            print("\n")
+        if which in ["experiment", "both"]:
+            print("=== Experiment Configuration ===")
+            self.cfg_exp.display_tabulate_cfg()
+
+    def print_all_yaml_defined_input_files(self):
+        dic_exp = self._cfg_system.model_dump()
+        dic_sys = self.cfg_exp.model_dump()
+        print_json_file_tree(dic_exp | dic_sys)
+
+    def print_all_sim_files(self, sim_iloc):
+        dic_syspaths = self._sys_paths.as_dict()
+        dic_exp_paths = self.exp_paths.as_dict()
+        dic_sim_paths = self.scenarios[sim_iloc].sim_paths.as_dict()
+        dic_all_paths = dic_syspaths | dic_exp_paths | dic_sim_paths
+        print_json_file_tree(dic_all_paths)
 
     def _retrieve_weather_indexer_using_integer_index(
         self,
@@ -68,12 +112,7 @@ class TRITONSWMM_experiment:
         return weather_event_indexers
 
     def _add_scenario(self, sim_iloc: int):
-        weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
-            sim_iloc
-        )
-        self._scenario_setups[sim_iloc] = TRITONSWMM_scenario(
-            weather_event_indexers, self
-        )
+        self.scenarios[sim_iloc] = TRITONSWMM_scenario(sim_iloc, self)
         return
 
     def _add_all_scenarios(self):
@@ -82,55 +121,85 @@ class TRITONSWMM_experiment:
         return
 
     def _prepare_scenario(
-        self, sim_iloc, overwrite_sim, rerun_swmm_hydro_if_outputs_exist
+        self,
+        sim_iloc,
+        overwrite_sim: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = False,
     ):
-        self._scenario_setups[sim_iloc]._prepare_simulation(
-            overwrite_sim, rerun_swmm_hydro_if_outputs_exist
+        self.scenarios[sim_iloc]._prepare_simulation(
+            overwrite_sim, rerun_swmm_hydro_if_outputs_exist, verbose
         )
+        log = self._retrieve_logfile_for_scenario(sim_iloc)
+        return
 
-    def prepare_all_scenarios(self, overwrite_sims, rerun_swmm_hydro_if_outputs_exist):
+    def prepare_all_scenarios(
+        self,
+        overwrite_sims: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = False,
+    ):
         self._add_all_scenarios()
         for sim_iloc in self.df_sims.index:
             self._prepare_scenario(
-                sim_iloc, overwrite_sims, rerun_swmm_hydro_if_outputs_exist
+                sim_iloc, overwrite_sims, rerun_swmm_hydro_if_outputs_exist, verbose
             )
+        return
 
     def _retrieve_logfile_for_scenario(self, sim_iloc):
-        return self._scenario_setups[sim_iloc]._retrieve_simlogfile()
+        log = self.scenarios[sim_iloc]._retrieve_simlogfile()
+        log["TRITONSWMM_compiled_successfully_for_experiment"] = (
+            self.compilation_successful
+        )
+        log = update_logfile(log)
+        return log
 
-    def _print_logfile_for_scenario(self, sim_iloc):
+    def print_logfile_for_scenario(self, sim_iloc):
         log = self._retrieve_logfile_for_scenario(sim_iloc)
         pprint(log, sort_dicts=False)
 
     def run_sim(
         self,
         sim_iloc: int,
-        mode: Mode,
+        mode: Mode | str,
         pickup_where_leftoff,
         verbose=False,
     ):
         weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
             sim_iloc
         )
-        ts_scenario = self._scenario_setups[sim_iloc]
-        log = ts_scenario._retrieve_simlogfile()
-        if log["simulation_creation_status"] == "success":
-            run = TRITONSWMM_sim(weather_event_indexers, ts_scenario)
-            if mode == "single_core":
-                run.run_singlecore_simulation(pickup_where_leftoff, verbose)
-
-                self.simulation_run_status[sim_iloc] = run.latest_sim_status()
-        else:
+        ts_scenario = self.scenarios[sim_iloc]
+        log = self._retrieve_logfile_for_scenario(sim_iloc)
+        if not log["simulation_creation_status"] == "success":
             print("Log file:")
             print(log)
             raise ValueError("simulation_creation_status must be 'success'")
+        if not self.compilation_successful:
+            print("Log file:")
+            print(log)
+            raise ValueError("TRITONSWMM has not been compiled")
+        run = self._retreive_sim_run_object(sim_iloc)
+        if mode == "single_core":
+            run.run_singlecore_simulation(pickup_where_leftoff, verbose)
+            self.simulation_run_status[sim_iloc] = run.latest_sim_status()
         return
 
-    def run_all_sims_in_series(self, mode: Mode, pickup_where_leftoff: bool):
+    def _retreive_sim_run_object(self, sim_iloc):
+        weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
+            sim_iloc
+        )
+        ts_scenario = self.scenarios[sim_iloc]
+        run = TRITONSWMM_run_sim(weather_event_indexers, ts_scenario)
+        self.sim_run_objects[sim_iloc] = run
+        return run
+
+    def run_all_sims_in_series(self, mode: Mode | str, pickup_where_leftoff: bool):
         for sim_iloc in self.df_sims.index:
             self.run_sim(sim_iloc, mode, pickup_where_leftoff)
 
-    def compile_TRITON_SWMM(self):
+    def compile_TRITON_SWMM(self, recompile_if_already_done_successfully: bool = True):
+        if self.compilation_successful and not recompile_if_already_done_successfully:
+            return
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
         compiled_software_directory = self.exp_paths.compiled_software_directory
         compilation_script = self.exp_paths.compilation_script
@@ -181,7 +250,7 @@ You can load compilation log as string using\
 retrieve_compilation_log or print it to the\
 terminal using the method print_compilation_log"
             )
-        return compilation_log
+        return
 
     def retrieve_compilation_log(self):
         return read_text_file_as_string(self.exp_paths.compilation_logfile)
@@ -194,7 +263,8 @@ terminal using the method print_compilation_log"
         swmm_check = "[100%] Built target runswmm" in compilation_log
         triton_check = "Building finished: triton" in compilation_log
         success = swmm_check and triton_check
-        self.compilation_status = "unsuccesful"
-        if success:
-            self.compilation_status = "success"
+        self.compilation_successful = success
         return success
+
+
+# %%

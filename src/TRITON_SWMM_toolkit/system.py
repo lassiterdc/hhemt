@@ -8,9 +8,7 @@ from pathlib import Path
 from rasterio.enums import Resampling
 import sys
 from TRITON_SWMM_toolkit.utils import read_header, read_text_file_as_string
-from rasterio.io import MemoryFile
 import tempfile
-from types import SimpleNamespace
 from TRITON_SWMM_toolkit.paths import SysPaths
 
 
@@ -25,16 +23,27 @@ class TRITONSWMM_system:
             mannings_processed=self.cfg_system.system_directory / "mannings.dem",
         )
 
-    def create_dem_for_TRITON(self):
+    def create_dem_for_TRITON(
+        self, overwrite_if_exists: bool = False, verbose: bool = False
+    ):
         dem_processed = self.sys_paths.dem_processed
+        if dem_processed.exists() and not overwrite_if_exists:
+            out = "DEM file already exists. Not rewriting."
         rds_dem_coarse = self._coarsen_dem()
         self._write_raster_formatted_for_TRITON(
             rds_dem_coarse, dem_processed, include_metadata=True
         )
+        out = f"wrote {str(dem_processed)}"
+        if verbose:
+            print(out)
         return
 
-    def create_mannings_file_for_TRITON(self):
+    def create_mannings_file_for_TRITON(
+        self, overwrite_if_exists: bool = False, verbose: bool = False
+    ):
         mannings_processed = self.sys_paths.mannings_processed
+        if mannings_processed.exists() and not overwrite_if_exists:
+            out = "Mannings file already exists. Not rewriting."
         include_metadata = False
         rds_mannings_coarse = self._create_mannings_raster_matching_dem()
         self._write_raster_formatted_for_TRITON(
@@ -42,6 +51,9 @@ class TRITONSWMM_system:
             mannings_processed,
             include_metadata=include_metadata,
         )
+        out = f"wrote {str(mannings_processed)}"
+        if verbose:
+            print(out)
         return
 
     def open_processed_mannings_as_rds(self):  # mannings_processed, dem_processed):
@@ -199,6 +211,80 @@ class TRITONSWMM_system:
         str_flt = flt.astype(str)
         str_flt = str_flt.apply(lambda x: x.ljust(longest_num, "0"))
         return str_flt
+
+    def plot_processed_dem(self, ax=None):
+        from TRITON_SWMM_toolkit.plot import (
+            process_dem_for_plotting,
+            plot_continuous_raster,
+        )
+        import matplotlib.pyplot as plt
+
+        dem_outside_watershed_height = self.cfg_system.dem_outside_watershed_height
+        dem_building_height = self.cfg_system.dem_building_height
+        dem_processed = self.sys_paths.dem_processed
+        dem_unprocessed = self.cfg_system.DEM_fullres
+        watershed_shapefile = self.cfg_system.watershed_gis_polygon
+        res = self.cfg_system.target_dem_resolution
+        ax_title = f"DEM ({res}m)"
+
+        rds_dem_unprocessed = rxr.open_rasterio(dem_unprocessed)
+        rds_dem_processed = rxr.open_rasterio(dem_processed)
+
+        rds_dem_fullres_for_plotting = process_dem_for_plotting(
+            rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
+        )
+        vmin = rds_dem_fullres_for_plotting.min()  # type: ignore
+        vmax = rds_dem_fullres_for_plotting.max()  # type: ignore
+        if ax is None:
+            fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
+        ax2 = plot_continuous_raster(
+            rds_dem_processed,  # type: ignore
+            cbar_lab="elevation",
+            cmap="terrain",
+            watershed_shapefile=watershed_shapefile,
+            watershed_shapefile_color="red",
+            vmin=vmin,
+            vmax=vmax,
+            ax=ax,
+            set_over="white",
+        )
+        ax2.set_title(ax_title)
+        return ax
+
+    def plot_processed_mannings(self, ax=None):
+        from TRITON_SWMM_toolkit.plot import (
+            process_dem_for_plotting,
+            plot_continuous_raster,
+        )
+        import matplotlib.pyplot as plt
+
+        rds_mannings = self.open_processed_mannings_as_rds()
+        vmin = rds_mannings.min()  # type: ignore
+        vmax = rds_mannings.max()  # type: ignore
+        watershed_shapefile = self.cfg_system.watershed_gis_polygon
+        res = self.cfg_system.target_dem_resolution
+        ax_title = f"Mannings ({res}m)"
+        if ax is None:
+            fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
+        ax2 = plot_continuous_raster(
+            rds_mannings,  # type: ignore
+            cbar_lab="mannings",
+            cmap="viridis",
+            watershed_shapefile=watershed_shapefile,
+            watershed_shapefile_color="red",
+            vmin=vmin,
+            vmax=vmax,
+            ax=ax,
+        )
+        ax2.set_title(ax_title)
+        return ax
+
+    def plot_dem_and_mannings(self):
+        import matplotlib.pyplot as plt
+
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
+        self.plot_processed_dem(ax=axes[0])
+        self.plot_processed_mannings(ax=axes[1])
 
 
 def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):

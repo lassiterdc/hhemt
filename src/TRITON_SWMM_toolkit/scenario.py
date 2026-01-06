@@ -4,7 +4,6 @@ import rioxarray as rxr
 import numpy as np
 import xarray as xr
 from pathlib import Path
-from rasterio.enums import Resampling
 import sys
 import shutil
 from pyswmm import Simulation, Output
@@ -34,10 +33,11 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_scenario:
-    def __init__(
-        self, weather_event_indexers: dict, ts_exp: "TRITONSWMM_experiment"
-    ) -> None:
-        self.weather_event_indexers = weather_event_indexers
+    def __init__(self, sim_iloc: int, ts_exp: "TRITONSWMM_experiment") -> None:
+        self.sim_iloc = sim_iloc
+        self.weather_event_indexers = (
+            ts_exp._retrieve_weather_indexer_using_integer_index(sim_iloc)
+        )
         self._exp_paths = ts_exp.exp_paths
         self._cfg_exp = ts_exp.cfg_exp
         self._sys_paths = ts_exp._sys_paths
@@ -45,28 +45,28 @@ class TRITONSWMM_scenario:
 
         # define sim specific filepaths
         simulations_folder = self._exp_paths.simulation_directory
-        sim_id_str = self._retrieve_sim_id_str()
-        sim_folder = simulations_folder / sim_id_str
+        self.sim_id_str = self._retrieve_sim_id_str()
+        sim_folder = simulations_folder / self.sim_id_str
         swmm_folder = sim_folder / "swmm"
         swmm_folder.mkdir(parents=True, exist_ok=True)
 
         self.sim_paths = SimPaths(
-            sim_folder=simulations_folder / sim_id_str,
+            sim_folder=simulations_folder / self.sim_id_str,
             f_log=sim_folder / "log_scenario_creation.json",
             # swmm time series
             dir_weather_datfiles=sim_folder / "dats",
             # swmm models
-            inp_hydro=swmm_folder / f"{sim_id_str}_hydro.inp",
-            inp_hydraulics=swmm_folder / f"{sim_id_str}_hydraulics.inp",
-            inp_full=swmm_folder / f"{sim_id_str}_full.inp",
+            inp_hydro=swmm_folder / "hydro.inp",
+            inp_hydraulics=swmm_folder / "hydraulics.inp",
+            inp_full=swmm_folder / "full.inp",
             # external boundary conditions
-            extbc_tseries=sim_folder / "extbc" / f"{sim_id_str}.txt",
-            extbc_loc=sim_folder / "extbc" / f"{sim_id_str}.extbc",
+            extbc_tseries=sim_folder / "extbc" / f"tseries.txt",
+            extbc_loc=sim_folder / "extbc" / f"loc.extbc",
             # inflow hydrographs
-            hyg_timeseries=sim_folder / "strmflow" / f"{sim_id_str}.hyg",
-            hyg_locs=sim_folder / "strmflow" / f"{sim_id_str}.txt",
+            hyg_timeseries=sim_folder / "strmflow" / "tseries.hyg",
+            hyg_locs=sim_folder / "strmflow" / "loc.txt",
             # TRITON-SWMM
-            triton_swmm_cfg=sim_folder / f"{sim_id_str}.cfg",
+            triton_swmm_cfg=sim_folder / f"TRITONSWMM.cfg",
             sim_tritonswmm_executable=sim_folder / "build" / "triton",
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
         )
@@ -83,7 +83,7 @@ class TRITONSWMM_scenario:
         sim_id_str = "_".join(
             f"{idx}.{val}" for idx, val in self.weather_event_indexers.items()
         )
-        return sim_id_str
+        return f"{self.sim_iloc}-{sim_id_str}"
 
     def _write_swmm_rainfall_dat_files(self):
         weather_timeseries = self._cfg_exp.weather_timeseries
@@ -97,7 +97,7 @@ class TRITONSWMM_scenario:
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)  # type: ignore
-        sim_id_str = self._retrieve_sim_id_str()
+        sim_id_str = self.sim_id_str
 
         log = load_json(self.sim_paths.f_log)
 
@@ -152,7 +152,7 @@ class TRITONSWMM_scenario:
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         # df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)
-        sim_id_str = self._retrieve_sim_id_str()
+        sim_id_str = self.sim_id_str
         log = self._retrieve_simlogfile()
 
         s_wlevel = (
@@ -290,7 +290,7 @@ class TRITONSWMM_scenario:
         df_water_levels["time_hr"] = tseries_diff_hrs.cumsum().values
         df_water_levels.set_index("time_hr", inplace=True)
 
-        sim_id_str = self._retrieve_sim_id_str()
+        sim_id_str = self.sim_id_str
 
         wlevel_first_line = f"%{sim_id_str} Water Level Boundary Condition\n"
         wlevel_second_line = f"%Time(hr) water_elevation ({storm_tide_units})\n"
@@ -337,7 +337,7 @@ class TRITONSWMM_scenario:
         dem_processed = self._sys_paths.dem_processed
 
         log = self._retrieve_simlogfile()
-        sim_id_str = self._retrieve_sim_id_str()
+        sim_id_str = self.sim_id_str
         hydro_outfile = str(self.sim_paths.inp_hydro).replace(".inp", ".out")
         rds_dem = rxr.open_rasterio(dem_processed)
         df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
@@ -629,7 +629,7 @@ class TRITONSWMM_scenario:
         df_src_loc = pd.read_csv(self.sim_paths.hyg_locs)
         num_srcs = len(df_src_loc)
 
-        sim_id_str = self._retrieve_sim_id_str()
+        sim_id_str = self.sim_id_str
 
         mapping = dict(
             CASE_DESC=sim_id_str,
@@ -688,7 +688,10 @@ class TRITONSWMM_scenario:
         return log
 
     def _prepare_simulation(
-        self, overwrite_sim, rerun_swmm_hydro_if_outputs_exist=False
+        self,
+        overwrite_sim: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = False,
     ):
         sim_folder = self.sim_paths.sim_folder
         if overwrite_sim:
@@ -699,9 +702,10 @@ class TRITONSWMM_scenario:
         log = self._initialize_sim_logfile()
         # halt if the scenario was successfully created
         if log["simulation_creation_status"] == "success":
-            print(
-                "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=False."
-            )
+            if verbose:
+                print(
+                    "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=False."
+                )
             return
         # everything needed for running TRITON-SWMM
         self._write_swmm_rainfall_dat_files()

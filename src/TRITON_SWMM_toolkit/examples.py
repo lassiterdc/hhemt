@@ -1,5 +1,4 @@
 # %%
-import requests
 from pathlib import Path
 from TRITON_SWMM_toolkit.constants import (
     APP_NAME,
@@ -30,16 +29,36 @@ import shutil
 
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
-    load_experiment_config,
 )
 from TRITON_SWMM_toolkit.utils import (
     get_package_root,
     get_package_data_root,
-    create_from_template,
     fill_template,
     read_yaml,
     write_yaml,
 )
+
+from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
+
+
+#  define test case class
+class TRITON_SWMM_example:
+    # LOADING FROM SYSTEM CONFIG
+    def __init__(self, cfg_system_yaml: Path, cfg_exp_1sim_yaml: Path):
+        self.ts_sys = TRITONSWMM_system(cfg_system_yaml)
+        self.ts_exp = TRITONSWMM_experiment(cfg_exp_1sim_yaml, self.ts_sys)
+        self.cfg_system_yaml = cfg_system_yaml
+        self.cfg_exp_1sim_yaml = cfg_exp_1sim_yaml
+
+
+def retrieve_norfolk_irene_testcase(download_if_exists=False):
+    norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
+    norfolk_1sim_1core_experiment_yaml = load_norfolk_single_sim_experiment()
+    norfolk_irene = TRITON_SWMM_example(
+        norfolk_system_yaml, norfolk_1sim_1core_experiment_yaml
+    )
+    return norfolk_irene
 
 
 def load_config_filepath(case_study_name: str, filename: str) -> Path:
