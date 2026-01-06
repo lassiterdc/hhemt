@@ -3,23 +3,23 @@ watershed_gis_polygon: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_
 system_directory: '${DATA_DIR}/system'
 DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'
 landuse_lookup_file: '${DATA_DIR}/landuse_lookup_tables.csv'
-SWMM_hydraulics: '${DATA_DIR}/swmm/hague_hydraulics_model_template.inp'
-SWMM_hydrology: '${DATA_DIR}/swmm/hague_hydrology_model_template.inp'
-SWMM_full: '${DATA_DIR}/swmm/hague_full_model_template.inp'
 landuse_raster: '${DATA_DIR}/landuse_clipped_to_triton_extent.tif'
 TRITONSWMM_software_directory: '${DATA_DIR}/software'
 TRITON_SWMM_software_compilation_script: '${PACKAGE_DIR}/template_compile_triton_swmm.sh'
-subcatchment_raingage_mapping: '${DATA_DIR}/b_sub_ids_and_mrms_rain_col.csv'
 triton_swmm_configuration_template: '${DATA_DIR}/TRITON_SWMM_definition_template.cfg'
+SWMM_hydraulics: '${DATA_DIR}/swmm/hague_hydraulics_model_template.inp'
+SWMM_hydrology: '${DATA_DIR}/swmm/hague_hydrology_model_template.inp'
+SWMM_full: '${DATA_DIR}/swmm/hague_full_model_template.inp'
+subcatchment_raingage_mapping: '${DATA_DIR}/b_sub_ids_and_mrms_rain_col.csv'
+subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
 # ATTRIBUTE NAMES
 landuse_description_colname: 'original_description'
 landuse_lookup_class_id_colname: 'CLASS_ID'
 landuse_lookup_mannings_colname: 'mannings'
 landuse_plot_color_colname: 'plot_color'
-subcatchment_raingage_mapping_gage_id_colname: 'raingage_id'
 # TOGGLES
-toggle_use_constant_mannings: False
 toggle_use_swmm_for_hydrology: True
+toggle_use_constant_mannings: False
 toggle_full_swmm_model: True
 # CONSTANTS
 dem_outside_watershed_height: 9999 # meters

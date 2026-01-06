@@ -27,6 +27,7 @@ import yaml
 from zipfile import ZipFile
 import bagit
 import shutil
+
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
     load_experiment_config,
@@ -36,6 +37,8 @@ from TRITON_SWMM_toolkit.utils import (
     get_package_data_root,
     create_from_template,
     fill_template,
+    read_yaml,
+    write_yaml,
 )
 
 
@@ -45,7 +48,7 @@ def load_config_filepath(case_study_name: str, filename: str) -> Path:
 
 def load_config_file_as_dic(case_study_name: str, filename: str) -> dict:
     path = load_config_filepath(case_study_name, filename)
-    return yaml.safe_load(path.read_text())
+    return read_yaml(path)
 
 
 def download_data_from_hydroshare(
@@ -131,8 +134,10 @@ def load_norfolk_system_config(
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
     mapping = get_norfolk_data_and_package_directory_mapping_dict()
     cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
-    cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
-    model = load_system_config(cfg_filled_yaml)
+    filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
+    cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
+    write_yaml(filled_yaml_data, cfg_yaml)
+    cfg_system = load_system_config(cfg_yaml)
     # download data if it doesn't exist
     if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
         pass
@@ -144,18 +149,25 @@ def load_norfolk_system_config(
             hs,
             download_if_exists=download_if_exists,
         )
-        zipped_software = Path(str(model.TRITONSWMM_software_directory) + ".zip")
+        zipped_software = Path(str(cfg_system.TRITONSWMM_software_directory) + ".zip")
         with ZipFile(zipped_software, "r") as z:
-            z.extractall(model.TRITONSWMM_software_directory.parent)
+            z.extractall(cfg_system.TRITONSWMM_software_directory.parent)
         zipped_software.unlink()
-    return model
+    return cfg_yaml
 
 
 def load_example_experiment_config(system_name: str, experiment_config_filename: str):
+    cfg_system_yaml = load_norfolk_system_config(download_if_exists=False)
+    cfg_system = load_system_config(cfg_system_yaml)
     mapping = get_norfolk_data_and_package_directory_mapping_dict()
     cfg_template = load_config_filepath(system_name, experiment_config_filename)
-    cfg_filled_yaml = return_filled_template_yaml_dictionary(cfg_template, mapping)
-    return load_experiment_config(cfg_filled_yaml)
+    filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
+    experiment_id = filled_yaml_data["experiment_id"]
+    cfg_yaml = (
+        Path(cfg_system.system_directory) / f"config_experiment_{experiment_id}.yaml"
+    )
+    write_yaml(filled_yaml_data, cfg_yaml)
+    return cfg_yaml
 
 
 def load_norfolk_benchmarking_config():

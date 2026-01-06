@@ -429,12 +429,14 @@ class experiment_config(cfgBaseModel):
         cls.toggle_tests.append(storm_tide_boundary_test)
 
 
-def load_system_config(cfg):
+def load_system_config(cfg_yaml: Path):
+    cfg = yaml.safe_load(cfg_yaml.read_text())
     cfg = system_config.model_validate(cfg)
     return cfg
 
 
-def load_experiment_config(cfg):
+def load_experiment_config(cfg_yaml):
+    cfg = yaml.safe_load(cfg_yaml.read_text())
     cfg = experiment_config.model_validate(cfg)
     return cfg
 

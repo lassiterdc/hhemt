@@ -11,7 +11,7 @@ from pathlib import Path
 import xarray as xr
 from typing import Optional
 from matplotlib.axes import Axes
-from TRITON_SWMM_toolkit.system_setup import (
+from TRITON_SWMM_toolkit.system import (
     create_mannings_raster,
     define_system_paths,
     open_processed_mannings_as_rds,

@@ -7,6 +7,17 @@ from string import Template
 import re
 import sys
 from datetime import datetime
+import yaml
+
+
+def read_yaml(f_yaml: Path | str):
+    return yaml.safe_load(Path(f_yaml).read_text())
+
+
+def write_yaml(data: dict, f_yaml: Path | str):
+    with open(f_yaml, "w") as file:
+        yaml.dump(data, file)
+    return
 
 
 def get_package_root(package_name: str) -> Path:
