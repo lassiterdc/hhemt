@@ -10,11 +10,68 @@ import rioxarray as rxr
 from typing import Literal
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
-    return_dic_zarr_encodings,
-    return_dic_autochunk,
     write_zarr,
     write_zarr_then_netcdf,
 )
+from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
+
+
+class TRITONSWMM_post_processing:
+    def __init__(self, run: TRITONSWMM_run) -> None:
+        self._run = run
+        self._scenario = run._scenario
+        self._experiment = run._scenario._experiment
+        self._system = run._scenario._experiment._system
+        self.log = self._scenario.log
+
+        if self._run.latest_sim_status() != "simulation completed":
+            raise RuntimeError(
+                f"Simulation not completed. Status message: {self._run.latest_sim_status()}"
+            )
+
+    def export_TRITON_outputs(self, verbose: bool = False, compression_level: int = 5):
+        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        dir_outputs = self._run._triton_swmm_raw_output_directory()
+        raw_out_type = self._experiment.cfg_exp.TRITON_raw_output_type
+        reporting_interval_s = self._experiment.cfg_exp.TRITON_reporting_timestep_s
+        rds_dem = self._system.open_processed_dem_as_rds()
+        self.log = self._scenario.log
+
+        start_time = time.time()
+
+        fname_out = dir_outputs / f"TRITON.{processed_out_type}"
+
+        # load the dem in order to extract the spatial coordinates and assign them to the triton outputs
+        bm_time = time.time()
+        # out_type = "bin"
+        df_outputs = return_fpath_wlevels(
+            dir_outputs, raw_out_type, reporting_interval_s
+        )
+        lst_ds_vars = []
+        for varname, files in df_outputs.items():
+            lst_ds = []
+            for tstep_min, f in files.items():
+                ds_triton_output = load_triton_output_w_xarray(
+                    rds_dem, f, varname, raw_out_type
+                )
+                lst_ds.append(ds_triton_output)
+            ds_var = xr.concat(lst_ds, dim=df_outputs.index)
+            lst_ds_vars.append(ds_var)
+        if verbose:
+            print(
+                f"Time to load {raw_out_type} triton outputs (min) {(time.time()-bm_time)/60:.2f}"
+            )
+        ds_combined = xr.merge(lst_ds_vars)
+        comp = dict(zlib=True, complevel=compression_level)
+
+        if processed_out_type == "netcdf":
+            write_zarr_then_netcdf(ds_combined, fname_out, compression_level)
+        else:
+            write_zarr(ds_combined, fname_out, compression_level)
+        if verbose:
+            print(f"finished writing {fname_out}")
+        elapsed_s = time.time() - start_time
+        return fname_out
 
 
 def return_filelist_by_tstep(
@@ -40,8 +97,10 @@ def return_filelist_by_tstep(
     return s_outputs
 
 
-def return_fpath_wlevels(dir_outputs: Path, out_type: str, reporting_interval_s: int):
-    fldr_out_triton = dir_outputs / f"{out_type}"
+def return_fpath_wlevels(
+    dir_outputs: Path, raw_out_type: str, reporting_interval_s: int | float
+):
+    fldr_out_triton = dir_outputs / f"{raw_out_type}"
     ## retrive the reporting time interval from the cfg file
     min_per_tstep = reporting_interval_s / 60
     # associate filepaths to timesteps
@@ -63,10 +122,10 @@ def return_fpath_wlevels(dir_outputs: Path, out_type: str, reporting_interval_s:
     return df_outputs
 
 
-def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, out_type):
-    if out_type == "asc":
+def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type):
+    if raw_out_type == "asc":
         df_triton_output = pd.read_csv(f_triton_output, sep=" ", header=None)
-    elif out_type == "bin":
+    elif raw_out_type == "bin":
         # Load the binary file into a NumPy array
         data = np.fromfile(f_triton_output, dtype=np.float64)
         y_dim = int(data[0])  # 513
@@ -78,7 +137,7 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, out_type):
         df_triton_output = pd.DataFrame(data_values.reshape((y_dim, x_dim)))
     else:
         sys.exit(
-            f"load_triton_output_w_xarray failed because out_type wasn't recognized ({out_type})"
+            f"load_triton_output_w_xarray failed because raw_out_type wasn't recognized ({raw_out_type})"
         )
     df_triton_output.columns = rds_dem.x.values
     df_triton_output = df_triton_output.set_index(rds_dem.y.values)
@@ -90,50 +149,3 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, out_type):
     )
     ds_triton_output = df_triton_output.to_xarray()
     return ds_triton_output
-
-
-def export_TRITON_outputs(
-    # scenario_row,
-    dir_outputs: Path,
-    out_type,
-    reporting_interval_s,
-    rds_dem,
-    complevel: int = 5,
-    export_format: Literal["zarr", "nc"] = "zarr",
-    verbose: bool = False,
-):
-    start_time = time.time()
-
-    fname_out = dir_outputs / f"TRITON.{export_format}"
-
-    # load the dem in order to extract the spatial coordinates and assign them to the triton outputs
-    bm_time = time.time()
-    # out_type = "bin"
-    df_outputs = return_fpath_wlevels(dir_outputs, out_type, reporting_interval_s)
-    lst_ds_vars = []
-    for varname, files in df_outputs.items():
-        lst_ds = []
-        for tstep_min, f in files.items():
-            ds_triton_output = load_triton_output_w_xarray(
-                rds_dem, f, varname, out_type
-            )
-            lst_ds.append(ds_triton_output)
-        ds_var = xr.concat(lst_ds, dim=df_outputs.index)
-        lst_ds_vars.append(ds_var)
-    if verbose:
-        print(
-            f"Time to load {out_type} triton outputs (min) {(time.time()-bm_time)/60:.2f}"
-        )
-    # Time to load asc triton outputs (min) 5.96
-    # Time to load bin triton outputs (min) 3.78
-    ds_combined = xr.merge(lst_ds_vars)
-    comp = dict(zlib=True, complevel=complevel)
-
-    if export_format == "netcdf":
-        write_zarr_then_netcdf(ds_combined, fname_out, compression_level)
-    else:
-        write_zarr(ds_combined, fname_out, complevel)
-    if verbose:
-        print(f"finished writing {fname_out}")
-    elapsed_s = time.time() - start_time
-    return fname_out
