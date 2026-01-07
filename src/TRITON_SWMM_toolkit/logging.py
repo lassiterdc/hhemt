@@ -1,0 +1,323 @@
+from TRITON_SWMM_toolkit.utils import write_json
+from pathlib import Path
+from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
+import json
+from typing import Type, Optional, Generic, TypeVar, Any, Dict
+
+T = TypeVar("T")  # Generic type variable
+
+
+# ----------------------------
+# Custom types with generics
+# ----------------------------
+class LogField(Generic[T]):
+    _log: "TritonSWMMLog" = PrivateAttr()
+
+    def __init__(
+        self,
+        value: Optional[T] = None,
+        expected_type: Optional[Type[T]] = None,
+    ):
+        self.value: Optional[T] = value
+        self._expected_type = expected_type
+
+    def set_log(self, log: "TritonSWMMLog"):
+        self._log = log
+
+    def set_type(self, expected_type: Type[T]):
+        self._expected_type = expected_type
+
+    def set(self, new_value: T):
+        if self._expected_type:
+            new_value = self._expected_type(new_value)  # type: ignore
+
+        self.value = new_value
+        self._log.write()
+
+    def get(self) -> Optional[T]:
+        if self.value is None or self._expected_type is None:
+            return self.value
+
+        try:
+            return self._expected_type(self.value)  # type: ignore
+        except Exception:
+            raise TypeError(
+                f"Cannot coerce {self.value!r} " f"to {self._expected_type.__name__}"
+            )
+
+    def as_dict(self):
+        return {"value": self.value}
+
+    def __repr__(self):
+        return f"LogField({self.value!r})"
+
+
+class LogFieldDict(Generic[T]):
+    _log: "TritonSWMMLog" = PrivateAttr()
+
+    def __init__(
+        self, d: Optional[Dict[Any, T]] = None, expected_type: Optional[Type[T]] = None
+    ):
+        self.value: Dict[Any, T] = d or {}
+        self._expected_type = expected_type
+
+    def set_log(self, log: "TritonSWMMLog"):
+        self._log = log
+
+    def set(self, new_dict: Dict[Any, Any]):
+        for k, v in new_dict.items():
+            if self._expected_type:
+                v = self._expected_type(v)  # type: ignore
+            self.value[k] = v
+        self._log.write()
+
+    def get(self) -> Dict[Any, T]:
+        if self._expected_type:
+            return {k: self._expected_type(v) for k, v in self.value.items()}  # type: ignore
+        return self.value
+
+    def as_dict(self):
+        return {"value": self.value}
+
+    def __repr__(self):
+        return f"LogFieldDict({self.value!r})"
+
+
+# ----------------------------
+# Simulation log entries
+# ----------------------------
+class SimEntry(BaseModel):
+    sim_datetime: str
+    sim_start_reporting_tstep: int | float
+    tritonswmm_logfile: Path
+    time_elapsed_s: float
+    status: str
+
+
+class SimLog(BaseModel):
+    _log: "TritonSWMMLog" = PrivateAttr()
+    run_attempts: Dict[str, SimEntry] = Field(default_factory=dict)
+
+    def set_log(self, log: "TritonSWMMLog"):
+        self._log = log
+
+    def update(self, entry: SimEntry):
+        self.run_attempts[entry.sim_datetime] = entry
+        self._log.write()
+
+
+# ----------------------------
+# TritonSWMMLog model
+# ----------------------------
+
+
+# assumes LogField, LogFieldDict, SimLog, SimEntry already defined
+class TritonSWMMLog(BaseModel):
+    sim_iloc: int
+    event_idx: Dict
+    logfile: Path
+    simulation_folder: Path
+
+    # ----------------------------
+    # Log fields
+    # ----------------------------
+    # SWMM stuff
+    swmm_rainfall_dat_files: LogFieldDict[Path] = Field(default_factory=LogFieldDict)
+    storm_tide_for_swmm: LogField = Field(default_factory=LogField)
+    # scenario creation
+    scenario_creation_complete: LogField[bool] = Field(default_factory=LogField)
+    inp_hydraulics_model_created_successfully: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    inp_full_model_created_successfully: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    inp_hydro_model_created_successfully: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    hydro_swmm_sim_completed: LogField[bool] = Field(default_factory=LogField)
+    extbc_tseries_created: LogField[bool] = Field(default_factory=LogField)
+    extbc_loc_created: LogField[bool] = Field(default_factory=LogField)
+    hyg_timeseries_created: LogField[bool] = Field(default_factory=LogField)
+    hyg_locs_created: LogField[bool] = Field(default_factory=LogField)
+    inflow_nodes_in_hydraulic_inp_assigned: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
+    sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
+    TRITONSWMM_compiled_successfully_for_experiment: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    sim_log: SimLog = Field(default_factory=SimLog)
+
+    # ----------------------------
+    # Pydantic config
+    # ----------------------------
+    model_config = {"arbitrary_types_allowed": True}
+
+    # ----------------------------
+    # JSON → LogField hydration
+    # ----------------------------
+    # Fields
+    @field_validator(
+        "storm_tide_for_swmm",
+        "scenario_creation_complete",
+        "inp_hydraulics_model_created_successfully",
+        "inp_full_model_created_successfully",
+        "inp_hydro_model_created_successfully",
+        "hydro_swmm_sim_completed",
+        "extbc_tseries_created",
+        "extbc_loc_created",
+        "hyg_timeseries_created",
+        "hyg_locs_created",
+        "inflow_nodes_in_hydraulic_inp_assigned",
+        "triton_swmm_cfg_created",
+        "sim_tritonswmm_executable_copied",
+        "TRITONSWMM_compiled_successfully_for_experiment",
+        mode="before",
+    )
+    @classmethod
+    def _load_logfield(cls, v: Any):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v)
+
+    # Field dicts
+    @field_validator("swmm_rainfall_dat_files", mode="before")
+    @classmethod
+    def _load_logfielddict(cls, v: Any):
+        if isinstance(v, LogFieldDict):
+            return v
+        if v is None:
+            return LogFieldDict(expected_type=Path)
+        return LogFieldDict(v, expected_type=Path)
+
+    # ----------------------------
+    # Coercing data types
+    # ----------------------------
+    @field_validator(
+        "inp_hydraulics_model_created_successfully",
+        "inp_full_model_created_successfully",
+        "inp_hydro_model_created_successfully",
+        "hydro_swmm_sim_completed",
+        "extbc_tseries_created",
+        "extbc_loc_created",
+        "hyg_timeseries_created",
+        "hyg_locs_created",
+        "inflow_nodes_in_hydraulic_inp_assigned",
+        "triton_swmm_cfg_created",
+        "sim_tritonswmm_executable_copied",
+        "TRITONSWMM_compiled_successfully_for_experiment",
+        mode="before",
+    )
+    @classmethod
+    def _load_bool_logfield(cls, v):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v, expected_type=bool)
+
+    @field_validator("storm_tide_for_swmm", mode="before")
+    @classmethod
+    def _load_path_logfield(cls, v):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v, expected_type=Path)
+
+    # ----------------------------
+    # Parent injection
+    # ----------------------------
+    def model_post_init(self, __context):
+        """
+        Bind this TritonSWMMLog instance to all child log-aware objects.
+        """
+        for value in self.__dict__.values():
+            if hasattr(value, "set_log"):
+                value.set_log(self)
+
+    # ----------------------------
+    # Serialization
+    # ----------------------------
+    @field_serializer(
+        "swmm_rainfall_dat_files",
+        "storm_tide_for_swmm",
+        "scenario_creation_complete",
+        "inp_hydraulics_model_created_successfully",
+        "inp_full_model_created_successfully",
+        "inp_hydro_model_created_successfully",
+        "hydro_swmm_sim_completed",
+        "extbc_tseries_created",
+        "extbc_loc_created",
+        "hyg_timeseries_created",
+        "hyg_locs_created",
+        "inflow_nodes_in_hydraulic_inp_assigned",
+        "triton_swmm_cfg_created",
+        "sim_tritonswmm_executable_copied",
+        "TRITONSWMM_compiled_successfully_for_experiment",
+    )
+    def serialize_logfield(self, v):
+        if isinstance(v, (LogField, LogFieldDict)):
+            return v.get()
+        if isinstance(v, Path):
+            return str(v)
+        return v
+
+    # ----------------------------
+    # Simulation entries
+    # ----------------------------
+    def add_sim_entry(
+        self,
+        sim_datetime: str,
+        sim_start_reporting_tstep: int | float,
+        tritonswmm_logfile: Path,
+        time_elapsed_s: float,
+        status: str,
+    ):
+        simlog = SimEntry(
+            sim_datetime=sim_datetime,
+            sim_start_reporting_tstep=sim_start_reporting_tstep,
+            tritonswmm_logfile=tritonswmm_logfile,
+            time_elapsed_s=time_elapsed_s,
+            status=status,
+        )
+        self.sim_log.update(simlog)
+
+    # ----------------------------
+    # Persistence helpers
+    # ----------------------------
+    def as_dict(self):
+        return self.model_dump()
+
+    def write(self):
+        write_json(self.as_dict(), self.logfile)
+
+    def _dict_for_json(self, obj):
+        if isinstance(obj, dict):
+            return {k: self._dict_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._dict_for_json(x) for x in obj]
+        elif isinstance(obj, (LogField, LogFieldDict)):
+            return self._dict_for_json(obj.get())
+        elif isinstance(obj, Path):
+            return str(obj)
+        else:
+            return obj
+
+    def _as_json(self, indent: int = 4):
+        return json.dumps(self._dict_for_json(self.as_dict()), indent=indent)
+
+    def print(self, indent: int = 4):
+        print(self._as_json(indent))
+
+    @classmethod
+    def from_json(cls, path: Path | str) -> "TritonSWMMLog":
+        path = Path(path)
+
+        with path.open() as f:
+            data = json.load(f)
+
+        log = cls.model_validate(data)
+
+        # Ensure future writes go back to the same file
+        log.logfile = path
+
+        return log

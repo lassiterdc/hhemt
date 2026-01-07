@@ -1,14 +1,11 @@
 import json
 from pathlib import Path
-import os
 import importlib.util
 from platformdirs import user_data_dir
 from string import Template
 import re
-import sys
-from datetime import datetime
+import datetime
 import yaml
-from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 import xarray as xr
 import shutil
 
@@ -68,22 +65,6 @@ def write_json(data: dict, file: Path):
         json.dump(data, f, indent=2, default=str)
 
 
-def create_logfile(inital_data: dict, file: Path):
-    if file.exists():
-        log = load_json(file)
-        print(log)
-        sys.exit("handle when logfile already exists")
-    log = inital_data.copy()
-    log["logfile"] = str(file)
-    write_json(log, file)
-    return log
-
-
-def update_logfile(log):
-    write_json(log, Path(log["logfile"]))
-    return load_json(Path(log["logfile"]))
-
-
 def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
     """
     Replace all occurrences of old_substring with new_substring in a text file.
@@ -113,8 +94,34 @@ def read_text_file_as_string(file):
     return contents
 
 
-def current_datetime_string(format=DATETIME_STRING_FORMAT):
-    return datetime.now().strftime(format)
+def current_datetime():
+    return (
+        datetime.datetime.now()
+        .astimezone()
+        .isoformat(
+            timespec="seconds",
+        )
+    )
+
+
+def current_datetime_string(filepath_friendly: bool = False):
+    """
+    Docstring for current_datetime_string
+
+    Generates a datetime string following following  ISO 8601 format conventions.
+
+    :param filepath_friendly: If True, colons are replaced with nothing, e.g., 2026-01-07T10:03:37-05:00 becomes 2026-01-07T100337-0500
+    :type filepath_friendly: bool
+    """
+    dts = current_datetime()
+    if filepath_friendly:
+        dts = dts.replace(":", "")
+
+    return dts
+
+
+def string_to_datetime(dt: str):
+    return datetime.datetime.fromisoformat(dt)
 
 
 def read_header(file, nlines):

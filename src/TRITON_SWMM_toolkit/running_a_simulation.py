@@ -2,31 +2,27 @@
 import os
 import subprocess
 import time
-import sys
 import pandas as pd
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
-    load_json,
     current_datetime_string,
     read_text_file_as_string,
-    update_logfile,
     read_text_file_as_list_of_strings,
 )
-from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
 
-class TRITONSWMM_run_sim:
+class TRITONSWMM_run:
     def __init__(
         self, weather_event_indexers: dict, scenario: "TRITONSWMM_scenario"
     ) -> None:
         self._scenario = scenario
         self._experiment = scenario._experiment
         self.weather_event_indexers = weather_event_indexers
+        self.log = scenario.log
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()
-        log = self._scenario._retrieve_simlogfile()
         tritonswmm_logfile_dir = self._scenario.sim_paths.tritonswmm_logfile_dir
 
         start_time = time.perf_counter()
@@ -58,19 +54,20 @@ class TRITONSWMM_run_sim:
         env["LD_LIBRARY_PATH"] = f"{swmm_path}:{env.get('LD_LIBRARY_PATH', '')}"
         # define logs
 
-        sim_datetime = current_datetime_string()
         tritonswmm_logfile = (
-            tritonswmm_logfile_dir / f"{sim_datetime}.log"
+            tritonswmm_logfile_dir
+            / f"{current_datetime_string(filepath_friendly=True)}.log"
         )  # individual sim log
-        if "sim_log" not in log.keys():
-            log["sim_log"] = dict()
-        log["sim_log"][sim_datetime] = {}
+        sim_datetime = current_datetime_string()
 
-        log["sim_log"][sim_datetime][
-            "sim_start_reporting_tstep"
-        ] = sim_start_reporting_tstep
-        log["sim_log"][sim_datetime]["tritonswmm_logfile"] = tritonswmm_logfile
-        # run simulation
+        self.log.add_sim_entry(
+            sim_datetime=sim_datetime,
+            sim_start_reporting_tstep=sim_start_reporting_tstep,
+            tritonswmm_logfile=tritonswmm_logfile,
+            time_elapsed_s=0,
+            status="not started",
+        )
+
         print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
         print("bash command to view progress:")
         print(f"tail -f {tritonswmm_logfile}")
@@ -86,25 +83,20 @@ class TRITONSWMM_run_sim:
         # recording time
         end_time = time.perf_counter()
         elapsed = end_time - start_time
-        log["sim_log"][sim_datetime]["time_elapsed_s"] = elapsed
+
         status, __ = self._check_simulation_run_status()
-        log["sim_log"][sim_datetime]["status"] = status
 
-        return tritonswmm_log, update_logfile(log)
-
-    def _retrieve_latest_simlog(self) -> dict:
-        log = self._scenario._retrieve_simlogfile()
-        if "sim_log" not in log.keys():
-            return {"status": "simulation has not been attempted"}
-        latest_key = max(
-            log["sim_log"].keys(),
-            key=lambda k: pd.to_datetime(k, format=DATETIME_STRING_FORMAT),
+        self.log.add_sim_entry(
+            sim_datetime=sim_datetime,
+            sim_start_reporting_tstep=sim_start_reporting_tstep,
+            tritonswmm_logfile=tritonswmm_logfile,
+            time_elapsed_s=elapsed,
+            status=status,
         )
-        return log["sim_log"][latest_key]
+        return
 
     def latest_sim_status(self):
-        simlog = self._retrieve_latest_simlog()
-        return simlog["status"]
+        return self._scenario.latest_sim_status()
 
     def _triton_swmm_raw_output_directory(self):
         tritonswmm_output_dir = self._scenario.sim_paths.sim_folder / "output"

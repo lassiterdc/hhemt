@@ -408,9 +408,13 @@ class experiment_config(cfgBaseModel):
         description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
     )
     # TRITON-SWMM PARAMETERS
-    TRITON_output_type: Literal["bin", "asc"] = Field(
+    TRITON_processed_output_type: Literal["zarr", "nc"] = Field(
+        "zarr",
+        description="TRITON processed output type, zarr or nc.",
+    )
+    TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
-        description="TRITON output type, asc or bin.",
+        description="TRITON raw output type, asc or bin.",
     )
     manhole_diameter: float = Field(
         ...,

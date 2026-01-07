@@ -50,9 +50,10 @@ class TRITON_SWMM_example:
     def __init__(self, cfg_system_yaml: Path, cfg_exp_1sim_yaml: Path):
         self.system = TRITONSWMM_system(cfg_system_yaml)
         self.system.add_experiment(cfg_exp_1sim_yaml)
+        # self.system.experiment = TRITONSWMM_experiment(cfg_exp_1sim_yaml)
 
 
-class TRITON_SWMM_testcase(TRITON_SWMM_example):
+class TRITON_SWMM_testcase:
     dur_min: int = 10
     event_iloc_for_subsetting = 0
 
@@ -60,11 +61,12 @@ class TRITON_SWMM_testcase(TRITON_SWMM_example):
     def __init__(
         self, cfg_system_yaml: Path, cfg_exp_1sim_yaml: Path, test_dirname: str
     ):
-        super().__init__(cfg_system_yaml, cfg_exp_1sim_yaml)
+        self.system = TRITONSWMM_system(cfg_system_yaml)
 
         self.system.cfg_system.system_directory = (
             self.system.cfg_system.system_directory.parent / test_dirname
         )
+        self.system.add_experiment(cfg_exp_1sim_yaml)
         new_weather_timeseries = (
             self._create_reduced_weather_file_for_testing_if_it_does_not_exist()
         )
