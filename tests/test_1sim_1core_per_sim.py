@@ -11,14 +11,14 @@ def test_load_system_and_experiment():
 
 
 # SYSTEM TESTS
-def test_create_mannings_file_for_TRITON():
+def test_create_dem_for_TRITON():
     single_sim_single_core = single_sim_single_core = retrieve_norfolk_testcase()
-    single_sim_single_core.system.create_mannings_file_for_TRITON()
-    rds = single_sim_single_core.system.open_processed_mannings_as_rds()
+    single_sim_single_core.system.create_dem_for_TRITON()
+    rds = single_sim_single_core.system.open_processed_dem_as_rds()
     assert rds.shape == (1, 537, 551)  # type: ignore
 
 
-def test_create_dem_for_TRITON():
+def test_create_mannings_file_for_TRITON():
     single_sim_single_core = single_sim_single_core = retrieve_norfolk_testcase()
     single_sim_single_core.system.create_mannings_file_for_TRITON()
     rds = single_sim_single_core.system.open_processed_mannings_as_rds()

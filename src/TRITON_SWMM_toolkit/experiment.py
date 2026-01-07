@@ -136,13 +136,10 @@ class TRITONSWMM_experiment:
     def run_sim(
         self,
         sim_iloc: int,
-        mode: Mode | str,
+        mode: Mode | Literal["single_core"],
         pickup_where_leftoff,
         verbose=False,
     ):
-        weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
-            sim_iloc
-        )
         ts_scenario = self.scenarios[sim_iloc]
 
         if not ts_scenario.log.scenario_creation_complete:
@@ -154,7 +151,11 @@ class TRITONSWMM_experiment:
             print(ts_scenario.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
         run = self._retreive_sim_run_object(sim_iloc)
+        if verbose:
+            print("run instance instantiated")
         if mode == "single_core":
+            if verbose:
+                print("calling run on run instance...")
             run.run_singlecore_simulation(pickup_where_leftoff, verbose)
         self.sim_run_status(sim_iloc)
         return
@@ -174,9 +175,20 @@ class TRITONSWMM_experiment:
         self._sim_run_objects[sim_iloc] = run
         return run
 
-    def run_all_sims_in_series(self, mode: Mode | str, pickup_where_leftoff: bool):
+    def run_all_sims_in_series(
+        self,
+        mode: Mode | Literal["single_core"],
+        pickup_where_leftoff: bool,
+        verbose: bool = False,
+    ):
+        if verbose:
+            print("Running all sims in series...")
         for sim_iloc in self.df_sims.index:
-            self.run_sim(sim_iloc, mode, pickup_where_leftoff)
+            if verbose:
+                print(
+                    f"Running sim {sim_iloc} with mode = {mode} and pickup_where_leftoff = {pickup_where_leftoff}"
+                )
+            self.run_sim(sim_iloc, mode, pickup_where_leftoff, verbose)
 
     def compile_TRITON_SWMM(self, recompile_if_already_done_successfully: bool = True):
         if self.compilation_successful and not recompile_if_already_done_successfully:

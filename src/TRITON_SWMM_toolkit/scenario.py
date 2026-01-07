@@ -17,6 +17,7 @@ from TRITON_SWMM_toolkit.utils import (
     create_from_template,
     string_to_datetime,
 )
+from datetime import datetime
 from TRITON_SWMM_toolkit.logging import TritonSWMMLog
 from TRITON_SWMM_toolkit.paths import SimPaths
 from typing import TYPE_CHECKING, Literal
@@ -72,25 +73,30 @@ class TRITONSWMM_scenario:
                 logfile=self.sim_paths.f_log,
             )
 
-    def _retrieve_latest_simlog(self) -> dict:
+    def retrieve_latest_simlog(self) -> dict:
         dic_logs = self.log.sim_log.model_dump()["run_attempts"]
+        if not dic_logs:
+            return {"status": "no sim run attempts made"}
         latest_key = max(
             dic_logs.keys(),
             key=lambda k: string_to_datetime(k),
         )
         return dic_logs[latest_key]
 
-    def latest_sim_status(self):
-        simlog = self._retrieve_latest_simlog()
+    def latest_sim_status(self) -> str:
+        simlog = self.retrieve_latest_simlog()
         return simlog["status"]
 
-    def sim_date(self, astype: Literal["dt", "str"] = "dt"):
-        simlog = self._retrieve_latest_simlog()
-        dt_str = simlog["sim_datetime"]
-        if astype == "dt":
-            return string_to_datetime(dt_str)
+    def sim_date(self, astype: Literal["dt", "str"] = "dt") -> datetime:
+        simlog = self.retrieve_latest_simlog()
+        if simlog["status"] == "no sim run attempts made":
+            return datetime.min
         else:
-            return dt_str
+            dt_str = simlog["sim_datetime"]
+            if astype == "dt":
+                return string_to_datetime(dt_str)
+            else:
+                return dt_str
 
     def _create_directories(self):
         self.sim_paths.dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
