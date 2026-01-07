@@ -1,6 +1,5 @@
 # %% tests/test_TRITON_SWMM_toolkit.py
 # from TRITON_SWMM_toolkit.system_setup import TRITONSWMM_system
-from .conftest import *
 import pytest
 from TRITON_SWMM_toolkit.examples import retrieve_norfolk_testcase
 
@@ -56,7 +55,7 @@ def test_run_sim():
         pickup_where_leftoff=False,
     )
     if (
-        not single_sim_single_core.system.experiment.simulation_run_status[0]
+        not single_sim_single_core.system.experiment.sim_run_status(0)
         == "simulation completed"
     ):
         single_sim_single_core.system.experiment.print_logfile_for_scenario(0)

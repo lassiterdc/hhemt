@@ -9,6 +9,8 @@ import sys
 from datetime import datetime
 import yaml
 from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
+import xarray as xr
+import shutil
 
 
 def read_yaml(f_yaml: Path | str):
@@ -130,3 +132,82 @@ def read_text_file_as_list_of_strings(file):
     with open(file) as f:
         contents = f.readlines()
     return contents
+
+
+def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
+    from numcodecs import Blosc
+
+    """
+    Create a dictionary of Zarr encodings for an xarray Dataset.
+
+    Uses Blosc compression for numeric variables and preserves
+    maximum string length for Unicode coordinates.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        The dataset to encode.
+    clevel : int, default=5
+        Compression level for Blosc.
+
+    Returns
+    -------
+    encoding : dict
+        Dictionary suitable for xarray.to_zarr(..., encoding=encoding)
+    """
+    encoding = {}
+
+    # Compressor for numeric data
+    import zarr
+
+    compressor = zarr.codecs.BloscCodec(  # type: ignore
+        cname="zstd", clevel=clevel, shuffle=zarr.codecs.BloscShuffle.shuffle  # type: ignore
+    )
+
+    # Handle data variables
+    for var in ds.data_vars:
+        dtype_kind = ds[var].dtype.kind
+        if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
+            encoding[var] = {"compressors": compressor}
+        # Optionally handle other types if needed
+
+    # Handle coordinate encoding
+    for coord in ds.coords:
+        dtype_kind = ds[coord].dtype.kind
+        if dtype_kind == "U":  # Unicode string coordinates
+            max_len = ds[coord].str.len().max().item()
+            encoding[coord] = {"dtype": f"<U{max_len}"}
+
+    return encoding
+
+
+def return_dic_autochunk(ds):
+    chunk_dict = {}
+    for var in ds.dims:
+        chunk_dict[var] = "auto"
+    return chunk_dict
+
+
+def write_zarr(ds, fname_out, compression_level):
+    encoding = return_dic_zarr_encodings(ds)
+    chunks = return_dic_autochunk(ds)
+    ds.chunk(chunks).to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+
+
+def write_zarr_then_netcdf(ds, fname_out, compression_level):
+    encoding = return_dic_zarr_encodings(ds)
+    chunk_dict = return_dic_autochunk(ds)
+    ds = ds.chunk(chunk_dict)
+    # first write to zarr, then write to netcdf
+    write_zarr(ds, fname_out, compression_level)
+    # open and write
+    ds = xr.open_dataset(
+        f"{fname_out}.zarr", engine="zarr", chunks="auto", consolidated=False
+    )
+    ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
+    # delete zarr
+    try:
+        shutil.rmtree(f"{fname_out}.zarr")
+    except Exception as e:
+        print(f"Could not remove zarr folder {fname_out}.zarr due to error {e}")
+    return

@@ -15,14 +15,6 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.constants import DATETIME_STRING_FORMAT
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
-# WORK
-# from TRI
-# single_sim_single_core = TRITON_SWMM_testcase(
-#     norfolk_system_yaml, norfolk_1sim_1core_experiment_yaml, "sys_test"
-# )
-# single_sim_single_core.ts_exp.print_logfile_for_scenario(0)
-# END WORK
-
 
 class TRITONSWMM_run_sim:
     def __init__(

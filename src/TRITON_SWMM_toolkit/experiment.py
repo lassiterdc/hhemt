@@ -53,8 +53,8 @@ class TRITONSWMM_experiment:
         self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate)
         self.scenarios = {}
         self._add_all_scenarios()
-        self.sim_run_objects = {}
-        self.simulation_run_status = {}
+        self._sim_run_objects = {}
+        self._simulation_run_statuses = {}
         self.run_modes = Mode
         self.compilation_successful = "not attempted"
         if self.exp_paths.compilation_logfile.exists():
@@ -160,8 +160,14 @@ class TRITONSWMM_experiment:
         run = self._retreive_sim_run_object(sim_iloc)
         if mode == "single_core":
             run.run_singlecore_simulation(pickup_where_leftoff, verbose)
-            self.simulation_run_status[sim_iloc] = run.latest_sim_status()
+        self.sim_run_status(sim_iloc)
         return
+
+    def sim_run_status(self, sim_iloc):
+        run = self._retreive_sim_run_object(sim_iloc)
+        status = run.latest_sim_status()
+        self._simulation_run_statuses[sim_iloc] = status
+        return status
 
     def _retreive_sim_run_object(self, sim_iloc):
         weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
@@ -169,7 +175,7 @@ class TRITONSWMM_experiment:
         )
         ts_scenario = self.scenarios[sim_iloc]
         run = TRITONSWMM_run_sim(weather_event_indexers, ts_scenario)
-        self.sim_run_objects[sim_iloc] = run
+        self._sim_run_objects[sim_iloc] = run
         return run
 
     def run_all_sims_in_series(self, mode: Mode | str, pickup_where_leftoff: bool):
