@@ -239,6 +239,7 @@ def load_norfolk_system_config(
     cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
     filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
     cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
+    cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(filled_yaml_data, cfg_yaml)
     cfg_system = load_system_config(cfg_yaml)
     # download data if it doesn't exist
@@ -269,6 +270,7 @@ def load_example_experiment_config(system_name: str, experiment_config_filename:
     cfg_yaml = (
         Path(cfg_system.system_directory) / f"config_experiment_{experiment_id}.yaml"
     )
+    cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(filled_yaml_data, cfg_yaml)
     return cfg_yaml
 
