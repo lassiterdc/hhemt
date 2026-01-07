@@ -21,6 +21,7 @@ class TRITONSWMM_run_sim:
         self, weather_event_indexers: dict, scenario: "TRITONSWMM_scenario"
     ) -> None:
         self._scenario = scenario
+        self._experiment = scenario._experiment
         self.weather_event_indexers = weather_event_indexers
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
@@ -48,7 +49,7 @@ class TRITONSWMM_run_sim:
         # update environment with SWMM executable
 
         swmm_path = (
-            self._scenario._experiment.exp_paths.compiled_software_directory
+            self._experiment.exp_paths.compiled_software_directory
             / "Stormwater-Management-Model"
             / "build"
             / "bin"
