@@ -13,7 +13,7 @@ from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
-from TRITON_SWMM_toolkit.post_processing import TRITONSWMM_post_processing
+from TRITON_SWMM_toolkit.processing_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_experiment_log
@@ -269,7 +269,7 @@ class TRITONSWMM_experiment:
 
     def _retrieve_sim_run_processing_object(self, sim_iloc):
         run = self._retreive_sim_run_object(sim_iloc)
-        proc = TRITONSWMM_post_processing(run)
+        proc = TRITONSWMM_sim_post_processing(run)
         self._sim_run_processing_objects[sim_iloc] = proc
         return proc
 

@@ -21,7 +21,7 @@ import re
 from datetime import datetime
 
 
-class TRITONSWMM_post_processing:
+class TRITONSWMM_sim_post_processing:
     def __init__(self, run: TRITONSWMM_run) -> None:
         self._run = run
         self._scenario = run._scenario
@@ -188,7 +188,6 @@ class TRITONSWMM_post_processing:
             )
         if clear_raw_outputs:
             self._clear_raw_SWMM_outputs()
-
         return
 
     def _write_output(
