@@ -18,7 +18,7 @@ from TRITON_SWMM_toolkit.utils import (
     string_to_datetime,
 )
 from datetime import datetime
-from TRITON_SWMM_toolkit.logging import TritonSWMMLog
+from TRITON_SWMM_toolkit.logging import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
 from typing import TYPE_CHECKING, Literal
 
@@ -71,9 +71,9 @@ class TRITONSWMM_scenario:
         )
         self._create_directories()
         if self.scen_paths.f_log.exists():
-            self.log = TritonSWMMLog.from_json(self.scen_paths.f_log)
+            self.log = TRITONSWMM_scenario_log.from_json(self.scen_paths.f_log)
         else:
-            self.log = TritonSWMMLog(
+            self.log = TRITONSWMM_scenario_log(
                 sim_iloc=self.sim_iloc,
                 event_idx=self.weather_event_indexers,
                 simulation_folder=self.scen_paths.sim_folder,
@@ -89,6 +89,9 @@ class TRITONSWMM_scenario:
             key=lambda k: string_to_datetime(k),
         )
         return dic_logs[latest_key]
+
+    def sim_run_completed(self) -> bool:
+        return "simulation completed" == self.latest_sim_status()
 
     def latest_sim_status(self) -> str:
         simlog = self.retrieve_latest_simlog()

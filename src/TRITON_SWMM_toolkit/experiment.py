@@ -15,7 +15,7 @@ from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot import print_json_file_tree
-
+from TRITON_SWMM_toolkit.logging import TRITONSWMM_experiment_log
 
 from typing import TYPE_CHECKING
 
@@ -44,6 +44,7 @@ class TRITONSWMM_experiment:
             self._system.cfg_system.system_directory / self.cfg_exp.experiment_id
         )
         self.exp_paths = ExpPaths(
+            f_log=experiment_dir / "log.json",
             experiment_dir=experiment_dir,
             compiled_software_directory=compiled_software_directory,
             TRITON_build_dir=compiled_software_directory / "build",
@@ -63,6 +64,12 @@ class TRITONSWMM_experiment:
         self._simulation_run_statuses = {}
         self.run_modes = Mode
         self.compilation_successful = False
+
+        if self.exp_paths.f_log.exists():
+            self.log = TRITONSWMM_experiment_log.from_json(self.exp_paths.f_log)
+        else:
+            self.log = TRITONSWMM_experiment_log(logfile=self.exp_paths.f_log)
+
         if self.exp_paths.compilation_logfile.exists():
             self._validate_compilation()
         self._add_all_scenarios()
@@ -105,17 +112,20 @@ class TRITONSWMM_experiment:
         return weather_event_indexers
 
     def _add_scenario(self, sim_iloc: int):
-        self.scenarios[sim_iloc] = TRITONSWMM_scenario(sim_iloc, self)
-        self.scenarios[
-            sim_iloc
-        ].log.TRITONSWMM_compiled_successfully_for_experiment.set(
-            self.compilation_successful
-        )
-        return
+        scen = TRITONSWMM_scenario(sim_iloc, self)
+        self.scenarios[sim_iloc] = scen
+        return scen
 
     def _add_all_scenarios(self):
+        all_scens_created = True
+        all_sims_run = True
         for sim_iloc in self.df_sims.index:
-            self._add_scenario(sim_iloc)
+            scen = self._add_scenario(sim_iloc)
+            all_sims_run = all_sims_run and scen.sim_run_completed
+            scen_created = bool(scen.log.scenario_creation_complete.get())
+            all_scens_created = all_scens_created and scen_created
+        self.log.all_scenarios_created.set(all_scens_created)
+        self.log.all_sims_run.set(all_scens_created)
         return
 
     def _prepare_scenario(
@@ -173,6 +183,7 @@ class TRITONSWMM_experiment:
                 print("calling run on run instance...")
             run.run_singlecore_simulation(pickup_where_leftoff, verbose)
         self.sim_run_status(sim_iloc)
+        self._add_all_scenarios()  # updates log
         return
 
     def sim_run_status(self, sim_iloc):
@@ -204,8 +215,11 @@ class TRITONSWMM_experiment:
                     f"Running sim {sim_iloc} with mode = {mode} and pickup_where_leftoff = {pickup_where_leftoff}"
                 )
             self.run_sim(sim_iloc, mode, pickup_where_leftoff, verbose)
+        self._add_all_scenarios()  # updates log
 
-    def compile_TRITON_SWMM(self, recompile_if_already_done_successfully: bool = True):
+    def compile_TRITON_SWMM(
+        self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
+    ):
         if self.compilation_successful and not recompile_if_already_done_successfully:
             print("TRITON-SWMM already compiled")
             return
@@ -254,13 +268,15 @@ class TRITONSWMM_experiment:
                 break
         self.compilation_log = compilation_log
         success = self._validate_compilation()
+        self.log.TRITONSWMM_compiled_successfully.set(success)
         if not success:
-            print(
-                "warning: TRITON-SWMM did not compile successfully.\
-You can load compilation log as string using\
-retrieve_compilation_log or print it to the\
-terminal using the method print_compilation_log"
-            )
+            if verbose:
+                print(
+                    "warning: TRITON-SWMM did not compile successfully.\
+    You can load compilation log as string using\
+    retrieve_compilation_log or print it to the\
+    terminal using the method print_compilation_log"
+                )
         return
 
     def retrieve_compilation_log(self):
@@ -275,6 +291,7 @@ terminal using the method print_compilation_log"
         triton_check = "Building finished: triton" in compilation_log
         success = swmm_check and triton_check
         self.compilation_successful = success
+        self.log.TRITONSWMM_compiled_successfully.set(success)
         return success
 
 

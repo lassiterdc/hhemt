@@ -20,6 +20,10 @@ class TRITONSWMM_run:
         self._experiment = scenario._experiment
         self.weather_event_indexers = weather_event_indexers
         self.log = scenario.log
+        if not self._experiment.compilation_successful:
+            raise RuntimeError(
+                "Cannot create TRITONSWMM_run instance if the model has not been compiled. Run TRITONSWMM_experiment.compile_TRITON_SWMM() first."
+            )
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()

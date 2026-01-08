@@ -11,7 +11,7 @@ T = TypeVar("T")  # Generic type variable
 # Custom types with generics
 # ----------------------------
 class LogField(Generic[T]):
-    _log: "TritonSWMMLog" = PrivateAttr()
+    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
 
     def __init__(
         self,
@@ -21,7 +21,7 @@ class LogField(Generic[T]):
         self.value: Optional[T] = value
         self._expected_type = expected_type
 
-    def set_log(self, log: "TritonSWMMLog"):
+    def set_log(self, log: "TRITONSWMM_scenario_log"):
         self._log = log
 
     def set_type(self, expected_type: Type[T]):
@@ -53,7 +53,7 @@ class LogField(Generic[T]):
 
 
 class LogFieldDict(Generic[T]):
-    _log: "TritonSWMMLog" = PrivateAttr()
+    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
 
     def __init__(
         self, d: Optional[Dict[Any, T]] = None, expected_type: Optional[Type[T]] = None
@@ -61,7 +61,7 @@ class LogFieldDict(Generic[T]):
         self.value: Dict[Any, T] = d or {}
         self._expected_type = expected_type
 
-    def set_log(self, log: "TritonSWMMLog"):
+    def set_log(self, log: "TRITONSWMM_scenario_log"):
         self._log = log
 
     def set(self, new_dict: Dict[Any, Any]):
@@ -95,10 +95,10 @@ class SimEntry(BaseModel):
 
 
 class SimLog(BaseModel):
-    _log: "TritonSWMMLog" = PrivateAttr()
+    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
     run_attempts: Dict[str, SimEntry] = Field(default_factory=dict)
 
-    def set_log(self, log: "TritonSWMMLog"):
+    def set_log(self, log: "TRITONSWMM_scenario_log"):
         self._log = log
 
     def update(self, entry: SimEntry):
@@ -118,10 +118,10 @@ class SimProcessingEntry(BaseModel):
 
 
 class SimProcessing(BaseModel):
-    _log: "TritonSWMMLog" = PrivateAttr()
+    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
     outputs: Dict[str, SimProcessingEntry] = Field(default_factory=dict)
 
-    def set_log(self, log: "TritonSWMMLog"):
+    def set_log(self, log: "TRITONSWMM_scenario_log"):
         self._log = log
 
     def update(self, entry: SimProcessingEntry):
@@ -130,15 +130,71 @@ class SimProcessing(BaseModel):
 
 
 # ----------------------------
-# TritonSWMMLog model
+# TRITONSWMM_scenario_log model
 # ----------------------------
+class TRITONSWMM_log(BaseModel):
+    logfile: Path
+    # ----------------------------
+    # Pydantic config
+    # ----------------------------
+    model_config = {"arbitrary_types_allowed": True}
+
+    # ----------------------------
+    # Parent injection
+    # ----------------------------
+    def model_post_init(self, __context):
+        """
+        Bind this TRITONSWMM_scenario_log instance to all child log-aware objects.
+        """
+        for value in self.__dict__.values():
+            if hasattr(value, "set_log"):
+                value.set_log(self)
+
+    # ----------------------------
+    # Persistence helpers
+    # ----------------------------
+    def as_dict(self):
+        return self.model_dump()
+
+    def write(self):
+        write_json(self.as_dict(), self.logfile)
+
+    def _dict_for_json(self, obj):
+        if isinstance(obj, dict):
+            return {k: self._dict_for_json(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._dict_for_json(x) for x in obj]
+        elif isinstance(obj, (LogField, LogFieldDict)):
+            return self._dict_for_json(obj.get())
+        elif isinstance(obj, Path):
+            return str(obj)
+        else:
+            return obj
+
+    def _as_json(self, indent: int = 4):
+        return json.dumps(self._dict_for_json(self.as_dict()), indent=indent)
+
+    def print(self, indent: int = 4):
+        print(self._as_json(indent))
+
+    @classmethod
+    def from_json(cls, path: Path | str):
+        path = Path(path)
+
+        with path.open() as f:
+            data = json.load(f)
+
+        log = cls.model_validate(data)
+
+        # Ensure future writes go back to the same file
+        log.logfile = path
+
+        return log
 
 
-# assumes LogField, LogFieldDict, SimLog, SimEntry already defined
-class TritonSWMMLog(BaseModel):
+class TRITONSWMM_scenario_log(TRITONSWMM_log):
     sim_iloc: int
     event_idx: Dict
-    logfile: Path
     simulation_folder: Path
 
     # ----------------------------
@@ -168,19 +224,10 @@ class TritonSWMMLog(BaseModel):
     )
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
-    # COMPILATION (experiment level)
-    TRITONSWMM_compiled_successfully_for_experiment: LogField[bool] = Field(
-        default_factory=LogField
-    )
     # RUNNING SIMULATIONS
     sim_log: SimLog = Field(default_factory=SimLog)
     # POST PROCESSING
     processing_log: SimProcessing = Field(default_factory=SimProcessing)
-
-    # ----------------------------
-    # Pydantic config
-    # ----------------------------
-    model_config = {"arbitrary_types_allowed": True}
 
     # ----------------------------
     # JSON → LogField hydration
@@ -200,7 +247,6 @@ class TritonSWMMLog(BaseModel):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
-        "TRITONSWMM_compiled_successfully_for_experiment",
         mode="before",
     )
     @classmethod
@@ -234,7 +280,6 @@ class TritonSWMMLog(BaseModel):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
-        "TRITONSWMM_compiled_successfully_for_experiment",
         mode="before",
     )
     @classmethod
@@ -249,17 +294,6 @@ class TritonSWMMLog(BaseModel):
         if isinstance(v, LogField):
             return v
         return LogField(v, expected_type=Path)
-
-    # ----------------------------
-    # Parent injection
-    # ----------------------------
-    def model_post_init(self, __context):
-        """
-        Bind this TritonSWMMLog instance to all child log-aware objects.
-        """
-        for value in self.__dict__.values():
-            if hasattr(value, "set_log"):
-                value.set_log(self)
 
     # ----------------------------
     # Serialization
@@ -280,7 +314,6 @@ class TritonSWMMLog(BaseModel):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
-        "TRITONSWMM_compiled_successfully_for_experiment",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):
@@ -329,43 +362,64 @@ class TritonSWMMLog(BaseModel):
         )
         self.processing_log.update(simlog)
 
+
+class TRITONSWMM_experiment_log(TRITONSWMM_log):
+    all_scenarios_created: LogField[bool] = Field(default_factory=LogField)
+    TRITONSWMM_compiled_successfully: LogField[bool] = Field(default_factory=LogField)
+    all_sims_run: LogField[bool] = Field(default_factory=LogField)
+
     # ----------------------------
-    # Persistence helpers
+    # JSON → LogField hydration
     # ----------------------------
-    def as_dict(self):
-        return self.model_dump()
-
-    def write(self):
-        write_json(self.as_dict(), self.logfile)
-
-    def _dict_for_json(self, obj):
-        if isinstance(obj, dict):
-            return {k: self._dict_for_json(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._dict_for_json(x) for x in obj]
-        elif isinstance(obj, (LogField, LogFieldDict)):
-            return self._dict_for_json(obj.get())
-        elif isinstance(obj, Path):
-            return str(obj)
-        else:
-            return obj
-
-    def _as_json(self, indent: int = 4):
-        return json.dumps(self._dict_for_json(self.as_dict()), indent=indent)
-
-    def print(self, indent: int = 4):
-        print(self._as_json(indent))
-
+    # enforces data types
+    @field_validator(
+        "all_scenarios_created",
+        "TRITONSWMM_compiled_successfully",
+        "all_sims_run",
+        mode="before",
+    )
     @classmethod
-    def from_json(cls, path: Path | str) -> "TritonSWMMLog":
-        path = Path(path)
+    def _load_logfield(cls, v: Any):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v)
 
-        with path.open() as f:
-            data = json.load(f)
+    # ----------------------------
+    # Coercing data types
+    # ----------------------------
+    # bools
+    @field_validator(
+        "all_scenarios_created",
+        "TRITONSWMM_compiled_successfully",
+        "all_sims_run",
+        mode="before",
+    )
+    @classmethod
+    def _load_bool_logfield(cls, v):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v, expected_type=bool)
 
-        log = cls.model_validate(data)
+    # paths
+    # @field_validator("storm_tide_for_swmm", mode="before")
+    # @classmethod
+    # def _load_path_logfield(cls, v):
+    #     if isinstance(v, LogField):
+    #         return v
+    #     return LogField(v, expected_type=Path)
 
-        # Ensure future writes go back to the same file
-        log.logfile = path
-
-        return log
+    # ----------------------------
+    # Serialization
+    # ----------------------------
+    # aids converting to dict and printing
+    @field_serializer(
+        "all_scenarios_created",
+        "TRITONSWMM_compiled_successfully",
+        "all_sims_run",
+    )
+    def serialize_logfield(self, v):
+        if isinstance(v, (LogField, LogFieldDict)):
+            return v.get()
+        if isinstance(v, Path):
+            return str(v)
+        return v

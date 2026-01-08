@@ -28,6 +28,7 @@ class SysPaths(MainDataClass):
 
 @dataclass
 class ExpPaths(MainDataClass):
+    f_log: Path
     experiment_dir: Path
     compiled_software_directory: Path
     TRITON_build_dir: Path
