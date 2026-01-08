@@ -80,7 +80,8 @@ class TRITONSWMM_scenario:
                 logfile=self.scen_paths.f_log,
             )
 
-    def retrieve_latest_simlog(self) -> dict:
+    @property
+    def latest_simlog(self) -> dict:
         dic_logs = self.log.sim_log.model_dump()["run_attempts"]
         if not dic_logs:
             return {"status": "no sim run attempts made"}
@@ -90,15 +91,18 @@ class TRITONSWMM_scenario:
         )
         return dic_logs[latest_key]
 
+    @property
     def sim_run_completed(self) -> bool:
-        return "simulation completed" == self.latest_sim_status()
+        success = "simulation completed" == self._latest_sim_status()
+        self.log.simulation_completed.set(success)
+        return success
 
-    def latest_sim_status(self) -> str:
-        simlog = self.retrieve_latest_simlog()
+    def _latest_sim_status(self) -> str:
+        simlog = self.latest_simlog
         return simlog["status"]
 
     def latest_sim_date(self, astype: Literal["dt", "str"] = "dt") -> datetime:
-        simlog = self.retrieve_latest_simlog()
+        simlog = self.latest_simlog
         if simlog["status"] == "no sim run attempts made":
             return datetime.min
         else:

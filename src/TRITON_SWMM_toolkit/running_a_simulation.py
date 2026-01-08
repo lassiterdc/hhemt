@@ -99,9 +99,6 @@ class TRITONSWMM_run:
         )
         return
 
-    def latest_sim_status(self):
-        return self._scenario.latest_sim_status()
-
     def _triton_swmm_raw_output_directory(self):
         tritonswmm_output_dir = self._scenario.scen_paths.sim_folder / "output"
         if not tritonswmm_output_dir.exists():

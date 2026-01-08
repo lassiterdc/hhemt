@@ -225,8 +225,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
     # RUNNING SIMULATIONS
+    simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
     # POST PROCESSING
+    timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    raw_outputs_deleted: LogField[bool] = Field(default_factory=LogField)
     processing_log: SimProcessing = Field(default_factory=SimProcessing)
 
     # ----------------------------
@@ -247,6 +250,9 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
+        "simulation_completed",
+        "timeseries_written",
+        "raw_outputs_deleted",
         mode="before",
     )
     @classmethod
@@ -280,6 +286,9 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
+        "simulation_completed",
+        "timeseries_written",
+        "raw_outputs_deleted",
         mode="before",
     )
     @classmethod
@@ -314,6 +323,9 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
+        "simulation_completed",
+        "timeseries_written",
+        "raw_outputs_deleted",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):

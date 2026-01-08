@@ -30,9 +30,9 @@ class TRITONSWMM_post_processing:
         self.log = self._scenario.log
         self.scen_paths = self._scenario.scen_paths
 
-        if self._run.latest_sim_status() != "simulation completed":
+        if not self._scenario.sim_run_completed:
             raise RuntimeError(
-                f"Simulation not completed. Status message: {self._run.latest_sim_status()}"
+                f"Simulation not completed. Log: {self._scenario.latest_simlog}"
             )
 
     def _already_written(self, f_out):

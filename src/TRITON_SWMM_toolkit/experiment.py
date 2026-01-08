@@ -188,7 +188,7 @@ class TRITONSWMM_experiment:
 
     def sim_run_status(self, sim_iloc):
         run = self._retreive_sim_run_object(sim_iloc)
-        status = run.latest_sim_status()
+        status = run._scenario.latest_simlog
         self._simulation_run_statuses[sim_iloc] = status
         return status
 
