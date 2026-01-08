@@ -54,23 +54,47 @@ def test_run_sim():
         mode=single_sim_single_core.system.experiment.run_modes.SINGLE_CORE,
         pickup_where_leftoff=False,
     )
-    status = single_sim_single_core.system.experiment.scenarios[0].latest_sim_status()
-    if status != "simulation completed":
+    success = single_sim_single_core.system.experiment.scenarios[0].sim_run_completed
+    if not success:
         single_sim_single_core.system.experiment.print_logfile_for_scenario(0)
         pytest.fail(f"Simulation did not run successfully.")
 
 
+def test_process_sim():
+    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    exp = single_sim_single_core.system.experiment
+    exp.process_all_sim_outputs()
+    success = (
+        exp.log.all_TRITON_timeseries_processed.get()
+        and exp.log.all_SWMM_timeseries_processed.get()
+    )
+    if not success:
+        exp.print_logfile_for_scenario(0)
+        pytest.fail(f"Processing TRITON and SWMM time series failed.")
+
+
 def test_run_multiple_sims_in_sequence():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=True)
-    multi_sim.system.experiment.compile_TRITON_SWMM()
-    multi_sim.system.experiment.prepare_all_scenarios(
+    exp = multi_sim.system.experiment
+    exp.compile_TRITON_SWMM()
+    exp.prepare_all_scenarios(
         overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
     )
-    multi_sim.system.experiment.run_all_sims_in_series(
-        mode=multi_sim.system.experiment.run_modes.SINGLE_CORE,
+    exp.run_all_sims_in_series(
+        mode=exp.run_modes.SINGLE_CORE,
         pickup_where_leftoff=False,
+        process_outputs_after_sim_completion=True,
     )
-    status = multi_sim.system.experiment.scenarios[0].latest_sim_status()
-    if status != "simulation completed":
-        multi_sim.system.experiment.print_logfile_for_scenario(0)
+    # verify that models ran
+    success = exp.scenarios[0].sim_run_completed
+    if not success:
+        exp.print_logfile_for_scenario(0)
         pytest.fail(f"Multi simulation did not run successfully.")
+    # verify that outputs processed
+    success = (
+        exp.log.all_TRITON_timeseries_processed.get()
+        and exp.log.all_SWMM_timeseries_processed.get()
+    )
+    if not success:
+        exp.print_logfile_for_scenario(0)
+        pytest.fail(f"Processing TRITON and SWMM time series failed.")

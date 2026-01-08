@@ -29,25 +29,72 @@ class TRITONSWMM_post_processing:
         self._system = run._scenario._experiment._system
         self.log = self._scenario.log
         self.scen_paths = self._scenario.scen_paths
+        self._log_write_status()
 
+    def _open_engine(self):
+        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        if processed_out_type == "zarr":
+            return "zarr"
+        elif processed_out_type == "nc":
+            return "h5netcdf"
+
+    def _open(self, f):
+        if f.exists():
+            return xr.open_dataset(
+                f, chunks="auto", engine=self._open_engine(), consolidated=False
+            )
+        else:
+            raise ValueError(
+                f"could not open file because it does not exist: {f}. Run method .write_timeseries_outputs() first."
+            )
+
+    @property
+    def SWMM_node_timeseries(self):
+        return self._open(self.scen_paths.output_swmm_node_time_series)
+
+    @property
+    def SWMM_link_timeseries(self):
+        return self._open(self.scen_paths.output_swmm_link_time_series)
+
+    @property
+    def TRITON_timeseries(self):
+        return self._open(self.scen_paths.output_triton_timeseries)
+
+    def write_timeseries_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
         if not self._scenario.sim_run_completed:
             raise RuntimeError(
                 f"Simulation not completed. Log: {self._scenario.latest_simlog}"
             )
 
-    def _already_written(self, f_out):
-        proc_log = self.log.processing_log.outputs
-        already_written = False
-        if f_out.name in proc_log.keys():
-            if proc_log[f_out.name].success == True:
-                already_written = True
-        return already_written
+        if (which == "both") or (which == "TRITON"):
+            self._export_TRITON_outputs(
+                overwrite_if_exist,
+                clear_raw_outputs,
+                verbose,
+                compression_level,
+            )
+        if (which == "both") or (which == "SWMM"):
+            self._export_SWMM_outputs(
+                overwrite_if_exist,
+                clear_raw_outputs,
+                verbose,
+                compression_level,
+            )
+        return
 
-    def export_TRITON_outputs(
+    def _export_TRITON_outputs(
         self,
         overwrite_if_exist: bool = False,
+        clear_raw_outputs: bool = True,
         verbose: bool = False,
-        compression_level: int = 5,
+        comp_level: int = 5,
     ):
         fname_out = self.scen_paths.output_triton_timeseries
         # dir_outputs = self._run._triton_swmm_raw_output_directory()
@@ -82,47 +129,19 @@ class TRITONSWMM_post_processing:
                 f"Time to load {raw_out_type} triton outputs (min) {(time.time()-bm_time)/60:.2f}"
             )
         ds_combined = xr.merge(lst_ds_vars)
-        self._write_output(ds_combined, fname_out, compression_level, verbose)  # type: ignore
-
+        self._write_output(ds_combined, fname_out, comp_level, verbose)  # type: ignore
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(fname_out, elapsed_s, True)
+        if clear_raw_outputs:
+            self._clear_raw_TRITON_outputs()
         return
 
-    def _write_output(
-        self,
-        ds: xr.Dataset | xr.DataArray,
-        f_out: Path,
-        compression_level: int,
-        verbose: bool,
-    ):
-        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
-
-        ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
-        ds.attrs["output_creation_date"] = current_datetime_string()
-
-        ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
-        ds.attrs["paths"] = paths_to_strings(
-            self._experiment.dict_of_all_sim_files(self._scenario.sim_iloc)
-        )
-        ds.attrs["configuration"] = paths_to_strings(
-            {
-                "system": self._system.cfg_system.model_dump(),
-                "experiment": self._experiment.cfg_exp.model_dump(),
-            }
-        )
-
-        if processed_out_type == "nc":
-            write_zarr_then_netcdf(ds, f_out, compression_level)
-        else:
-            write_zarr(ds, f_out, compression_level)
-        if verbose:
-            print(f"finished writing {f_out}")
-
-    def export_SWMM_outputs(
+    def _export_SWMM_outputs(
         self,
         overwrite_if_exist: bool = False,
-        comp_level: int = 5,
+        clear_raw_outputs: bool = True,
         verbose: bool = False,
+        comp_level: int = 5,
     ):
         start_time = time.time()
         f_out_nodes = self.scen_paths.output_swmm_node_time_series
@@ -167,7 +186,98 @@ class TRITONSWMM_post_processing:
                 True,
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
+        if clear_raw_outputs:
+            self._clear_raw_SWMM_outputs()
 
+        return
+
+    def _write_output(
+        self,
+        ds: xr.Dataset | xr.DataArray,
+        f_out: Path,
+        compression_level: int,
+        verbose: bool,
+    ):
+        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+
+        ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
+        ds.attrs["output_creation_date"] = current_datetime_string()
+
+        ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
+        ds.attrs["paths"] = paths_to_strings(
+            self._experiment.dict_of_all_sim_files(self._scenario.sim_iloc)
+        )
+        ds.attrs["configuration"] = paths_to_strings(
+            {
+                "system": self._system.cfg_system.model_dump(),
+                "experiment": self._experiment.cfg_exp.model_dump(),
+            }
+        )
+
+        if processed_out_type == "nc":
+            write_zarr_then_netcdf(ds, f_out, compression_level)
+        else:
+            write_zarr(ds, f_out, compression_level)
+        if verbose:
+            print(f"finished writing {f_out}")
+
+    def _already_written(self, f_out):
+        proc_log = self.log.processing_log.outputs
+        already_written = False
+        if f_out.name in proc_log.keys():
+            if proc_log[f_out.name].success == True:
+                already_written = True
+        return already_written
+
+    @property
+    def TRITON_outputs_processed(self):
+        triton = self._already_written(self.scen_paths.output_triton_timeseries)
+        self.log.TRITON_timeseries_written.set(triton)
+        return triton
+
+    @property
+    def _SWMM_link_outputs_processed(self):
+        swmm_links = self._already_written(self.scen_paths.output_swmm_link_time_series)
+        self.log.SWMM_link_timeseries_written.set(swmm_links)
+        return swmm_links
+
+    @property
+    def _SWMM_node_outputs_processed(self):
+        swmm_nodes = self._already_written(self.scen_paths.output_swmm_node_time_series)
+        self.log.SWMM_node_timeseries_written.set(swmm_nodes)
+        return swmm_nodes
+
+    @property
+    def SWMM_outputs_processed(self):
+        both = self._SWMM_link_outputs_processed and self._SWMM_node_outputs_processed
+        return both
+
+    def _log_write_status(self):
+        triton = self.TRITON_outputs_processed
+
+        swmm_links = self._SWMM_link_outputs_processed
+
+    def _clear_raw_TRITON_outputs(self):
+        self._log_write_status()
+        if self._run.raw_triton_output_dir.exists() and (
+            self.log.TRITON_timeseries_written.get() == True
+        ):
+            shutil.rmtree(self._run.raw_triton_output_dir)
+            self.log.raw_TRITON_outputs_cleared.set(True)
+        return
+
+    def _clear_raw_SWMM_outputs(self):
+        """
+        Only clears raw outputs if consolidated output files have already been written successfully.
+        """
+        self._log_write_status()
+        swmm_written = (
+            self.log.SWMM_link_timeseries_written.get()
+            and self.log.SWMM_node_timeseries_written.get()
+        )
+        if swmm_written and self._run.raw_swmm_output.parent.exists():
+            shutil.rmtree(self._run.raw_swmm_output.parent)
+            self.log.raw_SWMM_outputs_cleared.set(True)
         return
 
 
@@ -333,23 +443,8 @@ def return_swmm_outputs(
         nodes.index.name = "node_id"
         links = model.links.geodataframe
         links.index.name = "link_id"
-        #
-        # from shapely.geometry import LineString
-        lines = links.geometry
-        lines_wkt = np.array([line.wkt for line in lines])
-        links["geometry_wkt"] = lines_wkt
         links = links.drop(columns="geometry")
-        #
-        points = nodes.geometry
-        points_wkt = np.array([point.wkt for point in points])
-        nodes["geometry_wkt"] = points_wkt
         nodes = nodes.drop(columns="geometry")
-        # define how to create geodataframe from the saved geometry_wkt attribute
-        converting_to_gpd = """from shapely import wkt
-        df_geom = ds.geometry_wkt.to_dataframe().geometry_wkt
-        features = [wkt.loads(wkt_str) for wkt_str in df_geom]
-        gdf = gpd.GeoDataFrame(pd.DataFrame(index = df_geom.index, data=dict(geometry=features)), geometry="geometry")"""
-    #
     # assign proper data types to coordinates and data variables
     ds_node_summaries = df_node_summaries.to_xarray()
     ds_node_characteristics = nodes.to_xarray()
@@ -388,7 +483,6 @@ def return_swmm_outputs(
         ]
     )
     #
-    dict_system_results["converting_to_gpd"] = converting_to_gpd
     ds_nodes.attrs = dict_system_results
     ds_links.attrs = dict_system_results
     #

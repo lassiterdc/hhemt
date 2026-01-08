@@ -13,6 +13,7 @@ from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
+from TRITON_SWMM_toolkit.post_processing import TRITONSWMM_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_experiment_log
@@ -61,6 +62,7 @@ class TRITONSWMM_experiment:
         self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate)
         self.scenarios = {}
         self._sim_run_objects = {}
+        self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
         self.run_modes = Mode
         self.compilation_successful = False
@@ -119,13 +121,27 @@ class TRITONSWMM_experiment:
     def _add_all_scenarios(self):
         all_scens_created = True
         all_sims_run = True
+        all_TRITON_outputs_processed = True
+        all_SWMM_outputs_processed = True
         for sim_iloc in self.df_sims.index:
+            # sim run status
             scen = self._add_scenario(sim_iloc)
             all_sims_run = all_sims_run and scen.sim_run_completed
+            # sim creation status
             scen_created = bool(scen.log.scenario_creation_complete.get())
             all_scens_created = all_scens_created and scen_created
+            # sim output processing status
+            proc = self._retrieve_sim_run_processing_object(sim_iloc)
+            all_TRITON_outputs_processed = (
+                all_TRITON_outputs_processed and proc.TRITON_outputs_processed
+            )
+            all_SWMM_outputs_processed = (
+                all_SWMM_outputs_processed and proc.SWMM_outputs_processed
+            )
         self.log.all_scenarios_created.set(all_scens_created)
         self.log.all_sims_run.set(all_scens_created)
+        self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
+        self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
         return
 
     def _prepare_scenario(
@@ -163,6 +179,11 @@ class TRITONSWMM_experiment:
         sim_iloc: int,
         mode: Mode | Literal["single_core"],
         pickup_where_leftoff,
+        process_outputs_after_sim_completion: bool,
+        which: Literal["TRITON", "SWMM", "both"],
+        clear_raw_outputs: bool,
+        overwrite_if_exist: bool,
+        compression_level: int,
         verbose=False,
     ):
         ts_scenario = self.scenarios[sim_iloc]
@@ -178,12 +199,57 @@ class TRITONSWMM_experiment:
         run = self._retreive_sim_run_object(sim_iloc)
         if verbose:
             print("run instance instantiated")
-        if mode == "single_core":
-            if verbose:
-                print("calling run on run instance...")
-            run.run_singlecore_simulation(pickup_where_leftoff, verbose)
+        run.run_sim(mode, pickup_where_leftoff, verbose)
         self.sim_run_status(sim_iloc)
-        self._add_all_scenarios()  # updates log
+        self._add_all_scenarios()  # updates experiment log
+        if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
+            self.process_sim_output(
+                sim_iloc,
+                which,
+                clear_raw_outputs,
+                overwrite_if_exist,
+                verbose,
+                compression_level,
+            )
+        return
+
+    def process_sim_output(
+        self,
+        sim_iloc,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        proc = self._retrieve_sim_run_processing_object(sim_iloc=sim_iloc)
+        proc.write_timeseries_outputs(
+            which=which,
+            clear_raw_outputs=clear_raw_outputs,
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+
+    def process_all_sim_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        for sim_iloc in self.df_sims.index:
+            self.process_sim_output(
+                sim_iloc=sim_iloc,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        self._add_all_scenarios()
+
         return
 
     def sim_run_status(self, sim_iloc):
@@ -201,12 +267,33 @@ class TRITONSWMM_experiment:
         self._sim_run_objects[sim_iloc] = run
         return run
 
+    def _retrieve_sim_run_processing_object(self, sim_iloc):
+        run = self._retreive_sim_run_object(sim_iloc)
+        proc = TRITONSWMM_post_processing(run)
+        self._sim_run_processing_objects[sim_iloc] = proc
+        return proc
+
     def run_all_sims_in_series(
         self,
         mode: Mode | Literal["single_core"],
-        pickup_where_leftoff: bool,
-        verbose: bool = False,
+        pickup_where_leftoff,
+        process_outputs_after_sim_completion: bool = False,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        verbose=False,
     ):
+        """
+        Arguments passed to run:
+            - mode: Mode | Literal["single_core"]
+            - pickup_where_leftoff
+        Arguments passed to processing process_sim_outputs (and only needed if process_outputs_after_sim_completion=True):
+            - which: Literal["TRITON", "SWMM", "both"]
+            - clear_raw_outputs: bool
+            - overwrite_if_exist: bool
+            - compression_level: int
+        """
         if verbose:
             print("Running all sims in series...")
         for sim_iloc in self.df_sims.index:
@@ -214,7 +301,17 @@ class TRITONSWMM_experiment:
                 print(
                     f"Running sim {sim_iloc} with mode = {mode} and pickup_where_leftoff = {pickup_where_leftoff}"
                 )
-            self.run_sim(sim_iloc, mode, pickup_where_leftoff, verbose)
+            self.run_sim(
+                sim_iloc=sim_iloc,
+                mode=mode,
+                pickup_where_leftoff=pickup_where_leftoff,
+                verbose=verbose,
+                process_outputs_after_sim_completion=process_outputs_after_sim_completion,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+            )
         self._add_all_scenarios()  # updates log
 
     def compile_TRITON_SWMM(

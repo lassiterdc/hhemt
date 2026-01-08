@@ -228,8 +228,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
     # POST PROCESSING
-    timeseries_written: LogField[bool] = Field(default_factory=LogField)
-    raw_outputs_deleted: LogField[bool] = Field(default_factory=LogField)
+    TRITON_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_node_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     processing_log: SimProcessing = Field(default_factory=SimProcessing)
 
     # ----------------------------
@@ -251,8 +254,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
-        "timeseries_written",
-        "raw_outputs_deleted",
+        "TRITON_timeseries_written",
+        "SWMM_node_timeseries_written",
+        "SWMM_link_timeseries_written",
+        "raw_TRITON_outputs_cleared",
+        "raw_SWMM_outputs_cleared",
         mode="before",
     )
     @classmethod
@@ -287,8 +293,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
-        "timeseries_written",
-        "raw_outputs_deleted",
+        "TRITON_timeseries_written",
+        "SWMM_node_timeseries_written",
+        "SWMM_link_timeseries_written",
+        "raw_TRITON_outputs_cleared",
+        "raw_SWMM_outputs_cleared",
         mode="before",
     )
     @classmethod
@@ -324,8 +333,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
-        "timeseries_written",
-        "raw_outputs_deleted",
+        "TRITON_timeseries_written",
+        "SWMM_node_timeseries_written",
+        "SWMM_link_timeseries_written",
+        "raw_TRITON_outputs_cleared",
+        "raw_SWMM_outputs_cleared",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):
@@ -379,6 +391,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
     all_scenarios_created: LogField[bool] = Field(default_factory=LogField)
     TRITONSWMM_compiled_successfully: LogField[bool] = Field(default_factory=LogField)
     all_sims_run: LogField[bool] = Field(default_factory=LogField)
+    all_TRITON_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
+    all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
 
     # ----------------------------
     # JSON → LogField hydration
@@ -388,6 +402,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_scenarios_created",
         "TRITONSWMM_compiled_successfully",
         "all_sims_run",
+        "all_TRITON_timeseries_processed",
+        "all_SWMM_timeseries_processed",
         mode="before",
     )
     @classmethod
@@ -404,6 +420,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_scenarios_created",
         "TRITONSWMM_compiled_successfully",
         "all_sims_run",
+        "all_TRITON_timeseries_processed",
+        "all_SWMM_timeseries_processed",
         mode="before",
     )
     @classmethod
@@ -411,14 +429,6 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         if isinstance(v, LogField):
             return v
         return LogField(v, expected_type=bool)
-
-    # paths
-    # @field_validator("storm_tide_for_swmm", mode="before")
-    # @classmethod
-    # def _load_path_logfield(cls, v):
-    #     if isinstance(v, LogField):
-    #         return v
-    #     return LogField(v, expected_type=Path)
 
     # ----------------------------
     # Serialization
@@ -428,6 +438,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_scenarios_created",
         "TRITONSWMM_compiled_successfully",
         "all_sims_run",
+        "all_TRITON_timeseries_processed",
+        "all_SWMM_timeseries_processed",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):

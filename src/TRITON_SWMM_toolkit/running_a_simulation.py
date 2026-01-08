@@ -10,6 +10,8 @@ from TRITON_SWMM_toolkit.utils import (
     read_text_file_as_list_of_strings,
 )
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+from TRITON_SWMM_toolkit.constants import Mode
+from typing import Literal
 
 
 class TRITONSWMM_run:
@@ -20,12 +22,21 @@ class TRITONSWMM_run:
         self._experiment = scenario._experiment
         self.weather_event_indexers = weather_event_indexers
         self.log = scenario.log
+
+    def run_sim(
+        self,
+        mode: Mode | Literal["single_core"],
+        pickup_where_leftoff: bool,
+        verbose: bool = False,
+    ):
         if not self._experiment.compilation_successful:
             raise RuntimeError(
-                "Cannot create TRITONSWMM_run instance if the model has not been compiled. Run TRITONSWMM_experiment.compile_TRITON_SWMM() first."
+                "Cannot run simulation because TRITONSWMM has not been compiled. Run TRITONSWMM_experiment.compile_TRITON_SWMM() first."
             )
+        if mode == "single_core":
+            self._run_singlecore_simulation(pickup_where_leftoff, verbose)
 
-    def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
+    def _run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()
         tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
 
