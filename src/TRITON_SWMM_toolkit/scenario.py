@@ -742,7 +742,7 @@ class TRITONSWMM_scenario:
         self._generate_TRITON_SWMM_cfg()
         self._copy_tritonswmm_build_folder_to_sim()
 
-        self.log.scenario_creation_complete = True
+        self.log.scenario_creation_complete.set(True)
         return
 
 

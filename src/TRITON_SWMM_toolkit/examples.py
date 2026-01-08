@@ -10,7 +10,9 @@ from TRITON_SWMM_toolkit.constants import (
     NORFOLK_BENCHMARKING_EXP_CONFIG,
     NORFOLK_CASE_CONFIG,
 )
+import sys
 import warnings
+from typing import Iterable, Union
 
 with warnings.catch_warnings():
     # Only ignore the pkg_resources deprecation warning
@@ -31,6 +33,8 @@ import shutil
 
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
+    load_experiment_config,
+    experiment_config,
 )
 from TRITON_SWMM_toolkit.utils import (
     get_package_root,
@@ -47,26 +51,72 @@ from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
 #  define test case class
 class TRITON_SWMM_example:
     # LOADING FROM SYSTEM CONFIG
-    def __init__(self, cfg_system_yaml: Path, cfg_exp_1sim_yaml: Path):
+    def __init__(self, cfg_system_yaml: Path, cfg_exp_yaml: Path):
         self.system = TRITONSWMM_system(cfg_system_yaml)
-        self.system.add_experiment(cfg_exp_1sim_yaml)
-        # self.system.experiment = TRITONSWMM_experiment(cfg_exp_1sim_yaml)
+        self.system.add_experiment(cfg_exp_yaml)
 
 
 class TRITON_SWMM_testcase:
-    dur_min: int = 10
-    event_iloc_for_subsetting = 0
+    """
+    - everything is based on the single sim experiment so there is only 1 template yaml to keep up to date for testing
+    - retrieves one or more events and subsets time series to simulate a short duration
+    - writes a .csv file with event indices targeted for simulation
+    - creates a version of the experiment config file with a revised experiment name field and pointing to the subset weather index csv
+    """
+
+    n_tsteps: int = 5
 
     # LOADING FROM SYSTEM CONFIG
     def __init__(
-        self, cfg_system_yaml: Path, cfg_exp_1sim_yaml: Path, test_dirname: str
+        self,
+        cfg_system_yaml: Path,
+        experiment_name: str,
+        target_dates: Iterable[Union[str, pd.Timestamp]],
+        experiment_description: str = "",
+        test_system_dirname: str = "norfolk_tests",
+        start_from_scratch: bool = False,
     ):
+        # load system
         self.system = TRITONSWMM_system(cfg_system_yaml)
-
+        # update system directory
         self.system.cfg_system.system_directory = (
-            self.system.cfg_system.system_directory.parent / test_dirname
+            self.system.cfg_system.system_directory.parent / test_system_dirname
         )
-        self.system.add_experiment(cfg_exp_1sim_yaml)
+        # load single sime experiment
+        single_sim_exp_yaml = TRITON_SWMM_examples.load_norfolk_single_sim_experiment()
+        exp = load_experiment_config(single_sim_exp_yaml)
+        # update experiment attributes
+        exp.experiment_id = experiment_name
+        exp.experiment_description = experiment_description
+        exp_dir = self.system.cfg_system.system_directory / experiment_name
+        if start_from_scratch and exp_dir.exists():
+            shutil.rmtree(exp_dir)
+        exp_dir.mkdir(parents=True, exist_ok=True)
+        f_weather_indices = exp_dir / "weather_indices.csv"
+        exp.weather_events_to_simulate = f_weather_indices
+        # create weather indexer dataset
+        write_subset_weather_events_to_simulate(
+            weather_event_summaries=exp.weather_event_summary_csv,  # type: ignore
+            target_dates=target_dates,
+            start_date_col="event_start",
+            end_date_col="event_end",
+            f_out=f_weather_indices,
+            weather_indexers=exp.weather_event_indices,
+        )
+
+        cfg_exp = experiment_config.model_validate(exp)
+        # write experiment as yaml
+        cfg_exp_yaml = exp_dir / f"{experiment_name}.yaml"
+        cfg_exp_yaml.write_text(
+            yaml.safe_dump(
+                cfg_exp.model_dump(mode="json"),
+                sort_keys=False,  # .dict() for pydantic v1
+            )
+        )
+
+        # add experiment to the system
+        self.system.add_experiment(cfg_exp_yaml)
+        # udpate weather time series so simulations are short
         new_weather_timeseries = (
             self._create_reduced_weather_file_for_testing_if_it_does_not_exist()
         )
@@ -82,24 +132,11 @@ class TRITON_SWMM_testcase:
         weather_time_series_timestep_dimension_name = (
             self.system.experiment.cfg_exp.weather_time_series_timestep_dimension_name
         )
-        dur_min = self.dur_min
-
-        weather_event_indexers = (
-            self.system.experiment._retrieve_weather_indexer_using_integer_index(
-                self.event_iloc_for_subsetting
-            )
-        )
 
         ds_event_weather_series = xr.open_dataset(og_weather_timeseries)
-        ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
 
-        peak_idx = ds_event_ts["mm_per_hr"].to_series().dropna().idxmax()
-        # compute 6 min window around peak rainfall
-        first_idx = peak_idx - pd.Timedelta(f"{dur_min/2} minutes")  # type: ignore
-        last_idx = first_idx + pd.Timedelta(f"{dur_min} minutes")
-
-        ds_event_weather_series = ds_event_weather_series.sel(
-            {weather_time_series_timestep_dimension_name: slice(first_idx, last_idx)}
+        ds_event_weather_series = ds_event_weather_series.isel(
+            {weather_time_series_timestep_dimension_name: slice(0, self.n_tsteps)}
         )
 
         tsteps_new = ds_event_weather_series[
@@ -121,28 +158,123 @@ class TRITON_SWMM_testcase:
             else:  # if they are not identical, remove the file and rerewrite
                 new_weather_timeseries.unlink()
         ds_event_weather_series.to_netcdf(new_weather_timeseries)
-        print(f"created weather netcdf {new_weather_timeseries}")
+        # print(f"created weather netcdf {new_weather_timeseries}")
         return new_weather_timeseries
 
 
-def retrieve_norfolk_irene_example(download_if_exists=False):
-    norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
-    norfolk_1sim_1core_experiment_yaml = load_norfolk_single_sim_experiment()
-    norfolk_irene = TRITON_SWMM_example(
-        norfolk_system_yaml, norfolk_1sim_1core_experiment_yaml
-    )
-    return norfolk_irene
+class TRITON_SWMM_examples:
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def retrieve_norfolk_irene_example(cls, download_if_exists=False):
+        norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
+        norfolk_experiment_yaml = cls.load_norfolk_single_sim_experiment()
+        norfolk_irene = TRITON_SWMM_example(
+            norfolk_system_yaml, norfolk_experiment_yaml
+        )
+        return norfolk_irene
+
+    @classmethod
+    def load_norfolk_benchmarking_config(cls):
+        return cls._load_example_experiment_config(
+            NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG
+        )
+
+    @classmethod
+    def load_norfolk_single_sim_experiment(cls):
+        return cls._load_example_experiment_config(
+            NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG
+        )
+
+    @classmethod
+    def _fill_experiment_yaml(cls, system_name: str, experiment_config_filename: str):
+        mapping = get_norfolk_data_and_package_directory_mapping_dict()
+        cfg_template = load_config_filepath(system_name, experiment_config_filename)
+        filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
+        return filled_yaml_data
+
+    @classmethod
+    def _load_example_experiment_config(
+        cls, system_name: str, experiment_config_filename: str
+    ):
+        filled_yaml_data = cls._fill_experiment_yaml(
+            system_name, experiment_config_filename
+        )
+        cfg_system_yaml = load_norfolk_system_config(download_if_exists=False)
+        cfg_system = load_system_config(cfg_system_yaml)
+        experiment_id = filled_yaml_data["experiment_id"]
+        cfg_yaml = (
+            Path(cfg_system.system_directory)
+            / f"config_experiment_{experiment_id}.yaml"
+        )
+        cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
+        write_yaml(filled_yaml_data, cfg_yaml)
+        return cfg_yaml
 
 
-def retrieve_norfolk_testcase(download_if_exists=False):
-    norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
-    norfolk_1sim_1core_experiment_yaml = load_norfolk_single_sim_experiment()
-    nrflk_test = TRITON_SWMM_testcase(
-        norfolk_system_yaml,
-        norfolk_1sim_1core_experiment_yaml,
-        test_dirname="_test_norfolk",
-    )
-    return nrflk_test
+class TRITON_SWMM_testcases:
+    test_system_dirname = "norfolk_tests"
+
+    def __init__(self) -> None:
+        pass
+
+    @classmethod
+    def _retrieve_norfolk_case(
+        cls,
+        experiment_name: str,
+        target_dates: Iterable,
+        start_from_scratch: bool,
+        experiment_description: str = "",
+        download_if_exists=False,
+    ) -> TRITON_SWMM_testcase:
+        norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
+        nrflk_test = TRITON_SWMM_testcase(
+            norfolk_system_yaml,
+            experiment_name=experiment_name,
+            target_dates=target_dates,
+            experiment_description=experiment_description,
+            test_system_dirname=cls.test_system_dirname,
+            start_from_scratch=start_from_scratch,
+        )
+        return nrflk_test
+
+    @classmethod
+    def retreive_norfolk_single_sim_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        experiment_name = "single_sim"
+        target_dates = ["2011-08-28"]
+        experiment_description = "hurricane irene"
+        return cls._retrieve_norfolk_case(
+            experiment_name,
+            target_dates,
+            start_from_scratch,
+            experiment_description,
+            download_if_exists,
+        )
+
+    @classmethod
+    def retreive_norfolk_multi_sim_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        experiment_name = "multi_sim"
+        target_dates = [
+            "2011-08-28",
+            "2015-07-11",
+            "2015-10-04",
+            # "2016-09-03",
+            # "2016-09-21",
+            # "2017-08-29",
+        ]
+        experiment_description = "events wtih 311 flood reports"
+        return cls._retrieve_norfolk_case(
+            experiment_name,
+            target_dates,
+            start_from_scratch,
+            experiment_description,
+            download_if_exists,
+        )
 
 
 def load_config_filepath(case_study_name: str, filename: str) -> Path:
@@ -205,9 +337,6 @@ def sign_into_hydroshare():
     return hs
 
 
-import sys
-
-
 def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
     cfg_filled = fill_template(cfg_template, mapping)
     try:
@@ -260,24 +389,93 @@ def load_norfolk_system_config(
     return cfg_yaml
 
 
-def load_example_experiment_config(system_name: str, experiment_config_filename: str):
-    cfg_system_yaml = load_norfolk_system_config(download_if_exists=False)
-    cfg_system = load_system_config(cfg_system_yaml)
-    mapping = get_norfolk_data_and_package_directory_mapping_dict()
-    cfg_template = load_config_filepath(system_name, experiment_config_filename)
-    filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
-    experiment_id = filled_yaml_data["experiment_id"]
-    cfg_yaml = (
-        Path(cfg_system.system_directory) / f"config_experiment_{experiment_id}.yaml"
+def write_subset_weather_events_to_simulate(
+    weather_event_summaries: Path,
+    target_dates: Iterable[Union[str, pd.Timestamp]],
+    start_date_col: str,
+    end_date_col: str,
+    f_out: Path,
+    weather_indexers: Iterable[str],
+):
+
+    df = pd.read_csv(weather_event_summaries)
+    df_subset = select_events_near_dates(
+        df,
+        start_date_col,
+        end_date_col,
+        target_dates,
     )
-    cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
-    write_yaml(filled_yaml_data, cfg_yaml)
-    return cfg_yaml
+    df_subset.loc[:, weather_indexers].to_csv(f_out)  # type: ignore
 
 
-def load_norfolk_benchmarking_config():
-    return load_example_experiment_config(NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG)
+def select_events_near_dates(
+    df: pd.DataFrame,
+    start_date_col: str,
+    end_date_col: str,
+    target_dates: Iterable[Union[str, pd.Timestamp]],
+):
+    """
+    Select events matching or closest to target dates.
 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Input dataframe
+    start_date_col : str
+        Column name for event start datetime
+    end_date_col : str
+        Column name for event end datetime
+    target_dates : array-like
+        Iterable of datetime-like values
 
-def load_norfolk_single_sim_experiment():
-    return load_example_experiment_config(NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG)
+    Returns
+    -------
+    pandas.DataFrame
+        Subset of selected events (one per target date)
+    """
+
+    df = df.copy()
+    df[start_date_col] = pd.to_datetime(df[start_date_col])
+    df[end_date_col] = pd.to_datetime(df[end_date_col])
+    target_dates = pd.to_datetime(target_dates)  # type: ignore
+
+    selected_events = []
+
+    for date in target_dates:
+        # 1) Events spanning the target date
+        spanning = df[(df[start_date_col] <= date) & (df[end_date_col] >= date)]
+        if len(spanning == 1):
+            selected_events.append(spanning.iloc[0, :])
+        elif len(spanning > 1):
+            sys.exit("multiple events were returned")
+        else:
+            # 2) Otherwise warn and find closest by start and end
+            print(f"WARNING: No event spans {date.date()}")  # type: ignore
+
+            start_diffs = (df[start_date_col] - date).abs()  # type: ignore
+            end_diffs = (df[end_date_col] - date).abs()  # type: ignore
+
+            idx_start = start_diffs.idxmin()
+            idx_end = end_diffs.idxmin()
+
+            # 3) Enforce agreement
+            if idx_start != idx_end:
+                raise RuntimeError(
+                    f"Closest events disagree for {date.date()}:\n"  # type: ignore
+                    f"  Closest by {start_date_col}: index {idx_start}\n"
+                    f"  Closest by {end_date_col}:   index {idx_end}"
+                )
+
+            # 4) Diagnostics
+            event = df.loc[idx_start]
+            print(
+                f"  Selected event:\n"
+                f"    {start_date_col} = {event[start_date_col]}\n"
+                f"    {end_date_col}   = {event[end_date_col]}\n"
+                f"    |date - {start_date_col}| = {abs(event[start_date_col] - date)}\n"  # type: ignore
+                f"    |date - {end_date_col}|   = {abs(event[end_date_col] - date)}"  # type: ignore
+            )
+
+            selected_events.append(event)
+
+    return pd.DataFrame(selected_events).reset_index(drop=True)

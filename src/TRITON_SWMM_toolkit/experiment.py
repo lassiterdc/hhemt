@@ -157,7 +157,7 @@ class TRITONSWMM_experiment:
     ):
         ts_scenario = self.scenarios[sim_iloc]
 
-        if not ts_scenario.log.scenario_creation_complete:
+        if not ts_scenario.log.scenario_creation_complete.get():
             print("Log file:")
             print(ts_scenario.log.print())
             raise ValueError("scenario_creation_complete must be 'success'")
@@ -207,6 +207,7 @@ class TRITONSWMM_experiment:
 
     def compile_TRITON_SWMM(self, recompile_if_already_done_successfully: bool = True):
         if self.compilation_successful and not recompile_if_already_done_successfully:
+            print("TRITON-SWMM already compiled")
             return
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
         compiled_software_directory = self.exp_paths.compiled_software_directory

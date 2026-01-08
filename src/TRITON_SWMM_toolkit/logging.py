@@ -185,7 +185,7 @@ class TritonSWMMLog(BaseModel):
     # ----------------------------
     # JSON → LogField hydration
     # ----------------------------
-    # Fields
+    # enforces data types
     @field_validator(
         "storm_tide_for_swmm",
         "scenario_creation_complete",
@@ -264,6 +264,7 @@ class TritonSWMMLog(BaseModel):
     # ----------------------------
     # Serialization
     # ----------------------------
+    # aids converting to dict and printing
     @field_serializer(
         "swmm_rainfall_dat_files",
         "storm_tide_for_swmm",
