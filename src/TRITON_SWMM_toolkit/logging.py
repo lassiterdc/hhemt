@@ -107,6 +107,29 @@ class SimLog(BaseModel):
 
 
 # ----------------------------
+# Simulation Processing
+# ----------------------------
+class SimProcessingEntry(BaseModel):
+    filepath: Path
+    time_elapsed_s: float
+    success: bool
+    notes: str = ""
+    warnings: str = ""
+
+
+class SimProcessing(BaseModel):
+    _log: "TritonSWMMLog" = PrivateAttr()
+    outputs: Dict[str, SimProcessingEntry] = Field(default_factory=dict)
+
+    def set_log(self, log: "TritonSWMMLog"):
+        self._log = log
+
+    def update(self, entry: SimProcessingEntry):
+        self.outputs[entry.filepath.name] = entry
+        self._log.write()
+
+
+# ----------------------------
 # TritonSWMMLog model
 # ----------------------------
 
@@ -145,10 +168,14 @@ class TritonSWMMLog(BaseModel):
     )
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
+    # COMPILATION (experiment level)
     TRITONSWMM_compiled_successfully_for_experiment: LogField[bool] = Field(
         default_factory=LogField
     )
+    # RUNNING SIMULATIONS
     sim_log: SimLog = Field(default_factory=SimLog)
+    # POST PROCESSING
+    processing_log: SimProcessing = Field(default_factory=SimProcessing)
 
     # ----------------------------
     # Pydantic config
@@ -280,6 +307,26 @@ class TritonSWMMLog(BaseModel):
             status=status,
         )
         self.sim_log.update(simlog)
+
+    # ----------------------------
+    # Processing entries
+    # ----------------------------
+    def add_sim_processing_entry(
+        self,
+        filepath: Path,
+        time_elapsed_s: float,
+        success: bool,
+        notes: str = "",
+        warnings: str = "",
+    ):
+        simlog = SimProcessingEntry(
+            filepath=filepath,
+            time_elapsed_s=time_elapsed_s,
+            success=success,
+            notes=notes,
+            warnings=warnings,
+        )
+        self.processing_log.update(simlog)
 
     # ----------------------------
     # Persistence helpers

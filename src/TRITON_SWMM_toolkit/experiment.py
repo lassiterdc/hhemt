@@ -40,14 +40,22 @@ class TRITONSWMM_experiment:
             / "compiled_software"
         )
         compiled_software_directory.mkdir(parents=True, exist_ok=True)
+        experiment_dir = (
+            self._system.cfg_system.system_directory / self.cfg_exp.experiment_id
+        )
         self.exp_paths = ExpPaths(
+            experiment_dir=experiment_dir,
             compiled_software_directory=compiled_software_directory,
             TRITON_build_dir=compiled_software_directory / "build",
             compilation_script=compiled_software_directory / "compile.sh",
-            simulation_directory=self._system.cfg_system.system_directory
-            / self.cfg_exp.experiment_id
-            / "sims",
+            simulation_directory=experiment_dir / "sims",
             compilation_logfile=compiled_software_directory / f"compilation.log",
+            output_triton_summary=experiment_dir
+            / f"TRITON.{self.cfg_exp.TRITON_processed_output_type}",
+            output_swmm_links_summary=experiment_dir
+            / f"SWMM_links.{self.cfg_exp.TRITON_processed_output_type}",
+            output_swmm_node_summary=experiment_dir
+            / f"SWMM_nodes.{self.cfg_exp.TRITON_processed_output_type}",
         )
         self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate)
         self.scenarios = {}
@@ -70,15 +78,22 @@ class TRITONSWMM_experiment:
             self.cfg_exp.display_tabulate_cfg()
 
     def print_all_yaml_defined_input_files(self):
+        print_json_file_tree(self.dict_of_exp_and_sys_config())
+
+    def dict_of_exp_and_sys_config(self):
         dic_exp = self._system.cfg_system.model_dump()
         dic_sys = self.cfg_exp.model_dump()
-        print_json_file_tree(dic_exp | dic_sys)
+        return dic_exp | dic_sys
 
-    def print_all_sim_files(self, sim_iloc):
+    def dict_of_all_sim_files(self, sim_iloc):
         dic_syspaths = self._system.sys_paths.as_dict()
         dic_exp_paths = self.exp_paths.as_dict()
-        dic_sim_paths = self.scenarios[sim_iloc].sim_paths.as_dict()
+        dic_sim_paths = self.scenarios[sim_iloc].scen_paths.as_dict()
         dic_all_paths = dic_syspaths | dic_exp_paths | dic_sim_paths
+        return dic_all_paths
+
+    def print_all_sim_files(self, sim_iloc):
+        dic_all_paths = self.dict_of_all_sim_files(sim_iloc)
         print_json_file_tree(dic_all_paths)
 
     def _retrieve_weather_indexer_using_integer_index(

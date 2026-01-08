@@ -28,15 +28,19 @@ class SysPaths(MainDataClass):
 
 @dataclass
 class ExpPaths(MainDataClass):
+    experiment_dir: Path
     compiled_software_directory: Path
     TRITON_build_dir: Path
     compilation_script: Path
     simulation_directory: Path
     compilation_logfile: Path
+    output_triton_summary: Path
+    output_swmm_links_summary: Path
+    output_swmm_node_summary: Path
 
 
 @dataclass
-class SimPaths(MainDataClass):
+class ScenarioPaths(MainDataClass):
     f_log: Path
     sim_folder: Path
     dir_weather_datfiles: Path
@@ -50,3 +54,6 @@ class SimPaths(MainDataClass):
     triton_swmm_cfg: Path
     sim_tritonswmm_executable: Path
     tritonswmm_logfile_dir: Path
+    output_triton_timeseries: Path
+    output_swmm_link_time_series: Path
+    output_swmm_node_time_series: Path

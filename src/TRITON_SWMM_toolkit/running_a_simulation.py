@@ -23,11 +23,11 @@ class TRITONSWMM_run:
 
     def run_singlecore_simulation(self, pickup_where_leftoff, verbose=False):
         sim_id_str = self._scenario._retrieve_sim_id_str()
-        tritonswmm_logfile_dir = self._scenario.sim_paths.tritonswmm_logfile_dir
+        tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
 
         start_time = time.perf_counter()
-        exe = self._scenario.sim_paths.sim_tritonswmm_executable
-        cfg = self._scenario.sim_paths.triton_swmm_cfg
+        exe = self._scenario.scen_paths.sim_tritonswmm_executable
+        cfg = self._scenario.scen_paths.triton_swmm_cfg
         sim_start_reporting_tstep = 0
         if pickup_where_leftoff:
             status, f_last_cfg = self._check_simulation_run_status()
@@ -99,14 +99,25 @@ class TRITONSWMM_run:
         return self._scenario.latest_sim_status()
 
     def _triton_swmm_raw_output_directory(self):
-        tritonswmm_output_dir = self._scenario.sim_paths.sim_folder / "output"
+        tritonswmm_output_dir = self._scenario.scen_paths.sim_folder / "output"
         if not tritonswmm_output_dir.exists():
             tritonswmm_output_dir = (
-                self._scenario.sim_paths.sim_folder / "build" / "output"
+                self._scenario.scen_paths.sim_folder / "build" / "output"
             )
             # if not tritonswmm_output_dir.exists():
             #     sys.exit("TRITON-SWMM output folder not found")
         return tritonswmm_output_dir
+
+    @property
+    def raw_triton_output_dir(self):
+        return (
+            self._triton_swmm_raw_output_directory()
+            / self._experiment.cfg_exp.TRITON_raw_output_type
+        )
+
+    @property
+    def raw_swmm_output(self):
+        return self._triton_swmm_raw_output_directory() / "swmm" / "hydraulics.rpt"
 
     def _check_simulation_run_status(self):
         tritonswmm_output_dir = self._triton_swmm_raw_output_directory()
@@ -114,7 +125,7 @@ class TRITONSWMM_run:
         perf_txt = tritonswmm_output_dir / "performance.txt"
         tritonswmm_output_cfg_dir = tritonswmm_output_dir / "cfg"
         cfgs = list(tritonswmm_output_cfg_dir.glob("*.cfg"))
-        f_last_cfg = self._scenario.sim_paths.triton_swmm_cfg
+        f_last_cfg = self._scenario.scen_paths.triton_swmm_cfg
         dic_cfgs = dict(step=[], f_cfg=[])
         perf_txt_exists = perf_txt.exists()
         if len(cfgs) > 0:

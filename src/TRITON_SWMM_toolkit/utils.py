@@ -8,6 +8,7 @@ import datetime
 import yaml
 import xarray as xr
 import shutil
+from typing import Any
 
 
 def read_yaml(f_yaml: Path | str):
@@ -218,3 +219,26 @@ def write_zarr_then_netcdf(ds, fname_out, compression_level):
     except Exception as e:
         print(f"Could not remove zarr folder {fname_out}.zarr due to error {e}")
     return
+
+
+def paths_to_strings(obj: Any) -> Any:
+    """
+    Recursively convert all pathlib.Path objects to strings
+    in arbitrarily nested dictionaries / containers.
+    """
+    if isinstance(obj, Path):
+        return str(obj)
+
+    elif isinstance(obj, dict):
+        return {k: paths_to_strings(v) for k, v in obj.items()}
+
+    elif isinstance(obj, list):
+        return [paths_to_strings(v) for v in obj]
+
+    elif isinstance(obj, tuple):
+        return tuple(paths_to_strings(v) for v in obj)
+
+    elif isinstance(obj, set):
+        return {paths_to_strings(v) for v in obj}
+
+    return obj
