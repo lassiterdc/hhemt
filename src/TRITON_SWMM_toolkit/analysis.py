@@ -12,10 +12,10 @@ from typing import Literal, List
 from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
-from TRITON_SWMM_toolkit.processing_simulation import TRITONSWMM_sim_post_processing
+from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
+from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 
-from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_exp_post_processing
+from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.utils_plotting import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_analysis_log
@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
 
-    # from .processing_analysis import TRITONSWMM_exp_post_processing
+    # from .processing_analysis import TRITONSWMM_analysis_post_processing
 
 
 class TRITONSWMM_analysis:
@@ -81,7 +81,7 @@ class TRITONSWMM_analysis:
         if self.analysis_paths.compilation_logfile.exists():
             self._validate_compilation()
         self._add_all_scenarios()
-        self.process = TRITONSWMM_exp_post_processing(self)
+        self.process = TRITONSWMM_analysis_post_processing(self)
 
     def consolidate_TRITON_simulation_summaries(
         self,

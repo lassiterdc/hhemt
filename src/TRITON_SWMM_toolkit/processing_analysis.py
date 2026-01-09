@@ -1,4 +1,4 @@
-from TRITON_SWMM_toolkit.processing_simulation import (
+from TRITON_SWMM_toolkit.process_simulation import (
     convert_coords_to_dtype,
     convert_datavars_to_dtype,
 )
@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
 
-class TRITONSWMM_exp_post_processing:
+class TRITONSWMM_analysis_post_processing:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
         self.log = analysis.log
