@@ -19,6 +19,7 @@ from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_pro
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.utils_plot import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_analysis_log
+from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 
 from typing import TYPE_CHECKING
 
@@ -82,6 +83,7 @@ class TRITONSWMM_analysis:
             self._validate_compilation()
         self._add_all_scenarios()
         self.process = TRITONSWMM_analysis_post_processing(self)
+        self.plot = TRITONSWMM_analysis_plotting(self)
 
     def consolidate_TRITON_simulation_summaries(
         self,

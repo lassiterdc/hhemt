@@ -12,6 +12,7 @@ import tempfile
 from TRITON_SWMM_toolkit.paths import SysPaths
 from typing import Optional
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
 
 
 class TRITONSWMM_system:
@@ -24,6 +25,7 @@ class TRITONSWMM_system:
             mannings_processed=self.cfg_system.system_directory / "mannings.dem",
         )
         self._analysis: Optional["TRITONSWMM_analysis"] = None
+        self.plot = TRITONSWMM_system_plotting(self)
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
@@ -234,80 +236,6 @@ class TRITONSWMM_system:
         str_flt = flt.astype(str)
         str_flt = str_flt.apply(lambda x: x.ljust(longest_num, "0"))
         return str_flt
-
-    def plot_processed_dem(self, ax=None):
-        from TRITON_SWMM_toolkit.utils_plot import (
-            process_dem_for_plotting,
-            plot_continuous_raster,
-        )
-        import matplotlib.pyplot as plt
-
-        dem_outside_watershed_height = self.cfg_system.dem_outside_watershed_height
-        dem_building_height = self.cfg_system.dem_building_height
-        dem_processed = self.sys_paths.dem_processed
-        dem_unprocessed = self.cfg_system.DEM_fullres
-        watershed_shapefile = self.cfg_system.watershed_gis_polygon
-        res = self.cfg_system.target_dem_resolution
-        ax_title = f"DEM ({res}m)"
-
-        rds_dem_unprocessed = rxr.open_rasterio(dem_unprocessed)
-        rds_dem_processed = rxr.open_rasterio(dem_processed)
-
-        rds_dem_fullres_for_plotting = process_dem_for_plotting(
-            rds_dem_unprocessed, dem_outside_watershed_height, dem_building_height
-        )
-        vmin = rds_dem_fullres_for_plotting.min()  # type: ignore
-        vmax = rds_dem_fullres_for_plotting.max()  # type: ignore
-        if ax is None:
-            fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
-        ax2 = plot_continuous_raster(
-            rds_dem_processed,  # type: ignore
-            cbar_lab="elevation",
-            cmap="terrain",
-            watershed_shapefile=watershed_shapefile,
-            watershed_shapefile_color="red",
-            vmin=vmin,
-            vmax=vmax,
-            ax=ax,
-            set_over="white",
-        )
-        ax2.set_title(ax_title)
-        return ax
-
-    def plot_processed_mannings(self, ax=None):
-        from TRITON_SWMM_toolkit.utils_plot import (
-            process_dem_for_plotting,
-            plot_continuous_raster,
-        )
-        import matplotlib.pyplot as plt
-
-        rds_mannings = self.open_processed_mannings_as_rds()
-        vmin = rds_mannings.min()  # type: ignore
-        vmax = rds_mannings.max()  # type: ignore
-        watershed_shapefile = self.cfg_system.watershed_gis_polygon
-        res = self.cfg_system.target_dem_resolution
-        ax_title = f"Mannings ({res}m)"
-        if ax is None:
-            fig, ax = plt.subplots(1, 2, figsize=(5, 4), layout="constrained")
-        ax2 = plot_continuous_raster(
-            rds_mannings,  # type: ignore
-            cbar_lab="mannings",
-            cmap="viridis",
-            watershed_shapefile=watershed_shapefile,
-            watershed_shapefile_color="red",
-            vmin=vmin,
-            vmax=vmax,
-            ax=ax,
-        )
-        ax2.set_title(ax_title)
-        return ax
-
-    def plot_dem_and_mannings(self):
-        import matplotlib.pyplot as plt
-
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), layout="constrained")
-        self.plot_processed_dem(ax=axes[0])
-        self.plot_processed_mannings(ax=axes[1])
 
 
 def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):

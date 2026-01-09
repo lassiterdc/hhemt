@@ -77,33 +77,6 @@ def plot_discrete_raster(
     return ax
 
 
-def plot_landuse_raster(
-    landuse_raster,
-    landuse_lookup,
-    landuse_colname,
-    landuse_description_colname,
-    landuse_plot_color_colname,
-    watershed_shapefile,
-    watershed_shapefile_color="black",
-    ax: Optional[Axes] = None,
-):
-    rds = rxr.open_rasterio(landuse_raster)
-    df_lu_lookup = pd.read_csv(landuse_lookup).set_index(landuse_colname)
-    labs = df_lu_lookup[landuse_description_colname]
-    colors = df_lu_lookup[landuse_plot_color_colname]
-
-    ax = plot_discrete_raster(
-        rds,
-        cbar_lab="",
-        colors=colors,
-        labs=labs,
-        watershed_shapefile=watershed_shapefile,
-        watershed_shapefile_color=watershed_shapefile_color,
-        ax=ax,
-    )
-    return ax
-
-
 def plot_continuous_raster(
     rds: xr.DataArray,
     cbar_lab: str,
@@ -163,32 +136,6 @@ def plot_continuous_raster(
 
     # plt.show()
     return ax
-
-
-def process_dem_for_plotting(
-    rds_dem, dem_out_of_watershed=None, dem_building_height=None
-):
-    """
-    Docstring for process_dem_for_plotting
-
-    :param rds_dem: dem dataset
-    :param dem_out_of_watershed: height assigned to DEM outside of watershed
-    :param dem_building_height: height assigned to DEM where it overlaps buildings
-
-    This assigns n/a to all dem grid cells that are outside of the watershed or represent buildings
-    """
-    rds_dem_plot_ready = rds_dem.copy()
-    if dem_out_of_watershed is not None:
-        mask_not_out_of_shed = rds_dem != dem_out_of_watershed
-        rds_dem_plot_ready = rds_dem_plot_ready.where(mask_not_out_of_shed)
-    if dem_building_height is not None:
-        mask_not_building = rds_dem != dem_building_height
-        rds_dem_plot_ready = rds_dem_plot_ready.where(mask_not_building)
-    return rds_dem_plot_ready
-
-
-# TODO
-# - include the boundary condition shapefile in plots; add an option to include a callout with a description
 
 
 def print_json_file_tree(
