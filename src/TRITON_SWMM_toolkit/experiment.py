@@ -123,6 +123,8 @@ class TRITONSWMM_experiment:
         all_sims_run = True
         all_TRITON_outputs_processed = True
         all_SWMM_outputs_processed = True
+        all_raw_TRITON_outputs_cleared = True
+        all_raw_SWMM_outputs_cleared = True
         for sim_iloc in self.df_sims.index:
             # sim run status
             scen = self._add_scenario(sim_iloc)
@@ -138,10 +140,20 @@ class TRITONSWMM_experiment:
             all_SWMM_outputs_processed = (
                 all_SWMM_outputs_processed and proc.SWMM_outputs_processed
             )
+            # output clear status
+            all_raw_TRITON_outputs_cleared = (
+                all_raw_TRITON_outputs_cleared and proc.raw_TRITON_outputs_cleared
+            )
+            all_raw_SWMM_outputs_cleared = (
+                all_raw_SWMM_outputs_cleared and proc.raw_SWMM_outputs_cleared
+            )
+
         self.log.all_scenarios_created.set(all_scens_created)
         self.log.all_sims_run.set(all_scens_created)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
         self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
+        self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
+        self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return
 
     def _prepare_scenario(

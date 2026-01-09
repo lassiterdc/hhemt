@@ -64,13 +64,20 @@ def test_process_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     exp = single_sim_single_core.system.experiment
     exp.process_all_sim_outputs()
-    success = (
+    success_processing = (
         exp.log.all_TRITON_timeseries_processed.get()
         and exp.log.all_SWMM_timeseries_processed.get()
     )
-    if not success:
+    if not success_processing:
         exp.print_logfile_for_scenario(0)
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
+    success_clearing = (
+        exp.log.all_raw_TRITON_outputs_cleared.get()
+        and exp.log.all_raw_SWMM_outputs_cleared.get()
+    )
+    if not success_clearing:
+        exp.print_logfile_for_scenario(0)
+        pytest.fail(f"Clearning raw outputs failed.")
 
 
 def test_run_multiple_sims_in_sequence():
@@ -91,10 +98,17 @@ def test_run_multiple_sims_in_sequence():
         exp.print_logfile_for_scenario(0)
         pytest.fail(f"Multi simulation did not run successfully.")
     # verify that outputs processed
-    success = (
+    success_processing = (
         exp.log.all_TRITON_timeseries_processed.get()
         and exp.log.all_SWMM_timeseries_processed.get()
     )
-    if not success:
+    if not success_processing:
         exp.print_logfile_for_scenario(0)
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
+    success_clearing = (
+        exp.log.all_raw_TRITON_outputs_cleared.get()
+        and exp.log.all_raw_SWMM_outputs_cleared.get()
+    )
+    if not success_clearing:
+        exp.print_logfile_for_scenario(0)
+        pytest.fail(f"Clearning raw outputs failed.")

@@ -11,7 +11,7 @@ T = TypeVar("T")  # Generic type variable
 # Custom types with generics
 # ----------------------------
 class LogField(Generic[T]):
-    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
+    _log: "TRITONSWMM_log" = PrivateAttr()
 
     def __init__(
         self,
@@ -21,7 +21,7 @@ class LogField(Generic[T]):
         self.value: Optional[T] = value
         self._expected_type = expected_type
 
-    def set_log(self, log: "TRITONSWMM_scenario_log"):
+    def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
     def set_type(self, expected_type: Type[T]):
@@ -53,7 +53,7 @@ class LogField(Generic[T]):
 
 
 class LogFieldDict(Generic[T]):
-    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
+    _log: "TRITONSWMM_log" = PrivateAttr()
 
     def __init__(
         self, d: Optional[Dict[Any, T]] = None, expected_type: Optional[Type[T]] = None
@@ -61,7 +61,7 @@ class LogFieldDict(Generic[T]):
         self.value: Dict[Any, T] = d or {}
         self._expected_type = expected_type
 
-    def set_log(self, log: "TRITONSWMM_scenario_log"):
+    def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
     def set(self, new_dict: Dict[Any, Any]):
@@ -130,7 +130,7 @@ class SimProcessing(BaseModel):
 
 
 # ----------------------------
-# TRITONSWMM_scenario_log model
+# TRITONSWMM)log base model (used for creating sim and experiment logs)
 # ----------------------------
 class TRITONSWMM_log(BaseModel):
     logfile: Path
@@ -393,6 +393,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
     all_sims_run: LogField[bool] = Field(default_factory=LogField)
     all_TRITON_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
     all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
+    all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
 
     # ----------------------------
     # JSON → LogField hydration
@@ -404,6 +406,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_raw_TRITON_outputs_cleared",
+        "all_raw_SWMM_outputs_cleared",
         mode="before",
     )
     @classmethod
@@ -422,6 +426,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_raw_TRITON_outputs_cleared",
+        "all_raw_SWMM_outputs_cleared",
         mode="before",
     )
     @classmethod
@@ -440,6 +446,8 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_raw_TRITON_outputs_cleared",
+        "all_raw_SWMM_outputs_cleared",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):

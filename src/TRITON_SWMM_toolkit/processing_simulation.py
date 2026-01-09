@@ -150,14 +150,16 @@ class TRITONSWMM_sim_post_processing:
         f_inp = self.scen_paths.inp_hydraulics
         swmm_timeseries_result_file = self._run.raw_swmm_output
 
-        nodes_already_written = self._already_written(f_out_nodes)
-        links_already_written = self._already_written(f_out_links)
+        nodes_already_written = self._SWMM_node_outputs_processed
+        links_already_written = self._SWMM_link_outputs_processed
 
         if (nodes_already_written and links_already_written) and not overwrite_if_exist:
             if verbose:
                 print(
                     f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
                 )
+            if clear_raw_outputs:
+                self._clear_raw_SWMM_outputs()
             return
 
         ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
@@ -220,7 +222,7 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"finished writing {f_out}")
 
-    def _already_written(self, f_out):
+    def _already_written(self, f_out) -> bool:
         proc_log = self.log.processing_log.outputs
         already_written = False
         if f_out.name in proc_log.keys():
@@ -229,10 +231,18 @@ class TRITONSWMM_sim_post_processing:
         return already_written
 
     @property
-    def TRITON_outputs_processed(self):
+    def TRITON_outputs_processed(self) -> bool:
         triton = self._already_written(self.scen_paths.output_triton_timeseries)
         self.log.TRITON_timeseries_written.set(triton)
         return triton
+
+    @property
+    def raw_TRITON_outputs_cleared(self) -> bool:
+        return bool(self.log.raw_TRITON_outputs_cleared.get())
+
+    @property
+    def raw_SWMM_outputs_cleared(self) -> bool:
+        return bool(self.log.raw_SWMM_outputs_cleared.get())
 
     @property
     def _SWMM_link_outputs_processed(self):
@@ -253,7 +263,6 @@ class TRITONSWMM_sim_post_processing:
 
     def _log_write_status(self):
         triton = self.TRITON_outputs_processed
-
         swmm_links = self._SWMM_link_outputs_processed
 
     def _clear_raw_TRITON_outputs(self):
@@ -270,12 +279,15 @@ class TRITONSWMM_sim_post_processing:
         Only clears raw outputs if consolidated output files have already been written successfully.
         """
         self._log_write_status()
-        swmm_written = (
-            self.log.SWMM_link_timeseries_written.get()
-            and self.log.SWMM_node_timeseries_written.get()
-        )
-        if swmm_written and self._run.raw_swmm_output.parent.exists():
-            shutil.rmtree(self._run.raw_swmm_output.parent)
+        raw_swmm_dir = self._run.raw_swmm_output.parent
+        if self.SWMM_outputs_processed and raw_swmm_dir.exists():
+            if (
+                not raw_swmm_dir.name == "swmm"
+            ):  # don't want to accidentally delete the wrong dir
+                raise ValueError(
+                    f"Error: tried deleting raw SWMM outputs but the passed directory name was different han expected.\n{raw_swmm_dir}"
+                )
+            shutil.rmtree(raw_swmm_dir)
             self.log.raw_SWMM_outputs_cleared.set(True)
         return
 
@@ -432,7 +444,7 @@ def return_swmm_outputs(
                 if len(substring) > 0:
                     link_id = substring
                     break
-        df_link_flow_summary.loc[idx, "link_id"] = link_id
+        df_link_flow_summary.loc[idx, "link_id"] = link_id  # type: ignore
     df_link_flow_summary.set_index("link_id", inplace=True)
     #
     with warnings.catch_warnings():
