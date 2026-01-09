@@ -361,9 +361,9 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Dimension in weather_timeseries corresponding to timestep.",
     )
-    rainfall_units: str = Field(
+    rainfall_units: Literal["mm", "mm/hr"] = Field(
         ...,
-        description="Rainfall units in weather_timeseries, e.g,. mm/hr, mm, in, in/hr. Must align with specifications in SWMM_hydrology model.",
+        description="Rainfall units in weather_timeseries mm or mm/hr.",
     )
     # TOGGLES
     toggle_benchmarking_analysis: bool = Field(

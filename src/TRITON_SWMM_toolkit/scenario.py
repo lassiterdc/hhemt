@@ -229,14 +229,35 @@ class TRITONSWMM_scenario:
         )
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
+        tstep_seconds = (
+            ds_event_weather_series.timestep.to_series()
+            .diff()
+            .mode()
+            .iloc[0]
+            .total_seconds()
+        )
+        # interval = self.seconds_to_hhmm(tstep_seconds)
+        interval = self.seconds_to_hhmmss(tstep_seconds)
+
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
+        if self._analysis.cfg_analysis.rainfall_units == "mm/hr":
+            format = "INTENSITY"
+        elif self._analysis.cfg_analysis.rainfall_units == "mm":
+            format = "DEPTH"
+        else:
+            raise ValueError(
+                f"Invalid rainfall units specified. Expecting mm/hr or mm but got {self._analysis.cfg_analysis.rainfall_units}"
+            )
 
         # create time series attributes
         fs = self.log.swmm_rainfall_dat_files.get()
 
         lst_tseries_section = []
+        rain_gages_section = []
         for key, val in fs.items():
             lst_tseries_section.append(f'{key} FILE "{val}"')
+            row = f"{key} {format} {interval} 1.0 TIMESERIES {key}"
+            rain_gages_section.append(row)
         if self._analysis.cfg_analysis.toggle_storm_tide_boundary:
             lst_tseries_section.append(
                 f'water_level FILE "{self.log.storm_tide_for_swmm.get()}"'
@@ -244,6 +265,7 @@ class TRITONSWMM_scenario:
 
         mapping = dict()
         mapping["TIMESERIES"] = "\n\n".join(lst_tseries_section)
+        mapping["RAINGAGES"] = "\n".join(rain_gages_section)
         template_keys = find_all_keys_in_template(swmm_model_template)
 
         first_tstep = (
@@ -259,6 +281,9 @@ class TRITONSWMM_scenario:
         mapping["REPORT_START_TIME"] = mapping["START_TIME"]
         mapping["END_DATE"] = last_tstep.strftime("%m/%d/%Y")
         mapping["END_TIME"] = last_tstep.strftime("%H:%M:%S")
+        mapping["REPORT_STEP"] = self.seconds_to_hhmmss(
+            self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        )
 
         for key in template_keys:
             missing_keys = []
@@ -275,6 +300,18 @@ class TRITONSWMM_scenario:
 
         create_from_template(swmm_model_template, mapping, destination)
         return
+
+    def seconds_to_hhmm(self, seconds):
+        seconds = int(seconds)
+        h, rem = divmod(int(seconds), 3600)
+        return f"{h}:{rem//60:02d}"
+
+    def seconds_to_hhmmss(self, seconds: int | float) -> str:
+        seconds = int(seconds)
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        secs = seconds % 60
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
     def _run_swmm_hydro_model(self, rerun_if_exists=False, verbose=False):
         sim_complete = self.log.hydro_swmm_sim_completed.get() == True
@@ -903,3 +940,6 @@ def calc_area(row):
     else:
         print("shape not recognized in calc_area")
     return
+
+
+# %%

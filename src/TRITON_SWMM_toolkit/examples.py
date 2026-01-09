@@ -72,6 +72,7 @@ class TRITON_SWMM_testcase:
         analysis_name: str,
         n_events: int,
         n_reporting_tsteps_per_sim: int,
+        TRITON_reporting_timestep_s: int,
         analysis_description: str = "",
         test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
@@ -98,6 +99,7 @@ class TRITON_SWMM_testcase:
         anlysys.weather_events_to_simulate = f_weather_indices
         event_index_name = "event_id"
         anlysys.weather_event_indices = [event_index_name]
+        anlysys.TRITON_reporting_timestep_s = TRITON_reporting_timestep_s
         # create weather indexer dataset
         df_weather_indices = pd.DataFrame({event_index_name: np.arange(n_events)})
         df_weather_indices.to_csv(f_weather_indices)
@@ -122,7 +124,13 @@ class TRITON_SWMM_testcase:
 
     # create weather time series dataset
     def create_short_intense_weather_timeseries(
-        self, f_out, n_reporting_tsteps_per_sim, n_events, event_index_name
+        self,
+        f_out,
+        n_reporting_tsteps_per_sim,
+        n_events,
+        event_index_name,
+        rain_intensity=50,
+        storm_tide=3,
     ):
         wlevel_name = (
             self.system.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
@@ -136,19 +144,19 @@ class TRITON_SWMM_testcase:
         )
         gages = df_raingage_mapping[gage_colname].unique()
 
-        reporting_tstep_min = (
-            self.system.analysis.cfg_analysis.TRITON_reporting_timestep_s / 60
+        reporting_tstep_sec = (
+            self.system.analysis.cfg_analysis.TRITON_reporting_timestep_s
         )
 
         timesteps = pd.date_range(
             start="2000-01-01",
             periods=n_reporting_tsteps_per_sim + 1,
-            freq=f"{int(reporting_tstep_min)}min",
+            freq=f"{int(reporting_tstep_sec)}s",
         )
         columns = list(gages) + [wlevel_name]
         df_tseries = pd.DataFrame(index=timesteps, columns=columns)
-        df_tseries.loc[:, wlevel_name] = 5  # type: ignore
-        df_tseries.loc[:, gages] = 1000
+        df_tseries.loc[:, wlevel_name] = storm_tide  # type: ignore
+        df_tseries.loc[:, gages] = rain_intensity
         df_tseries.index.name = tstep_coord_name
         df_tseries.columns = df_tseries.columns.astype(str)
         lst_df = []
@@ -254,7 +262,9 @@ class TRITON_SWMM_examples:
 
 
 class TRITON_SWMM_testcases:
-    test_system_dirname = "norfolk_tests"
+    test_system_dirname = "tests"
+    n_reporting_tsteps_per_sim = 12
+    TRITON_reporting_timestep_s = 10
 
     def __init__(self) -> None:
         pass
@@ -265,6 +275,7 @@ class TRITON_SWMM_testcases:
         analysis_name: str,
         n_events: int,
         n_reporting_tsteps_per_sim: int,
+        TRITON_reporting_timestep_s: int,
         start_from_scratch: bool,
         download_if_exists=False,
     ) -> TRITON_SWMM_testcase:
@@ -274,6 +285,7 @@ class TRITON_SWMM_testcases:
             analysis_name=analysis_name,
             n_events=n_events,
             n_reporting_tsteps_per_sim=n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=TRITON_reporting_timestep_s,
             test_system_dirname=cls.test_system_dirname,
             start_from_scratch=start_from_scratch,
         )
@@ -289,7 +301,8 @@ class TRITON_SWMM_testcases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            n_reporting_tsteps_per_sim=10,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
         )
 
     @classmethod
@@ -302,8 +315,9 @@ class TRITON_SWMM_testcases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            n_events=3,
-            n_reporting_tsteps_per_sim=10,
+            n_events=2,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
         )
 
 

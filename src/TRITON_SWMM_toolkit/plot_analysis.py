@@ -6,18 +6,14 @@ import sys
 import pandas as pd
 import xarray as xr
 import numpy as np
-from TRITON_SWMM_toolkit.utils import (
-    write_zarr,
-    write_zarr_then_netcdf,
-    paths_to_strings,
-    current_datetime_string,
-    get_file_size_MiB,
-)
+
+import TRITON_SWMM_toolkit.utils as utils
+import TRITON_SWMM_toolkit.plot_utils as plt_utils
+
 from typing import Literal, List
 from typing import TYPE_CHECKING
 from pathlib import Path
 import time
-from TRITON_SWMM_toolkit.plot_utils import plot_continuous_raster
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -41,3 +37,13 @@ class TRITONSWMM_analysis_plotting:
     @property
     def swmm_link_ds(self):
         return self._analysis.SWMM_link_summary
+
+    def max_wlevel(self, sim_iloc):
+        da = self.triton_ds["max_wlevel_m"].isel(sim_iloc=sim_iloc)
+        watershed_shapefile = self._system.cfg_system.watershed_gis_polygon
+        mask = utils.create_mask_from_shapefile(da, watershed_shapefile)
+        plt_utils.plot_continuous_raster(
+            da.where(mask & (da > 0)),
+            cbar_lab="max_wlevel_m",
+            watershed_shapefile=watershed_shapefile,
+        )
