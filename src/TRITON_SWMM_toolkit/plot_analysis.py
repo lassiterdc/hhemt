@@ -17,6 +17,7 @@ from typing import Literal, List
 from typing import TYPE_CHECKING
 from pathlib import Path
 import time
+from TRITON_SWMM_toolkit.plot_utils import plot_continuous_raster
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis

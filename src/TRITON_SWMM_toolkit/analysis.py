@@ -17,7 +17,7 @@ from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processin
 
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
-from TRITON_SWMM_toolkit.utils_plot import print_json_file_tree
+from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 

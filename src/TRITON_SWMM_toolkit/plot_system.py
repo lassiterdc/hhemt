@@ -17,7 +17,7 @@ from typing import Literal, List
 from typing import TYPE_CHECKING
 from pathlib import Path
 import time
-from TRITON_SWMM_toolkit.utils_plot import plot_discrete_raster, plot_continuous_raster
+from TRITON_SWMM_toolkit.plot_utils import plot_discrete_raster, plot_continuous_raster
 from matplotlib.axes import Axes
 from typing import Optional, Literal
 import rioxarray as rxr
