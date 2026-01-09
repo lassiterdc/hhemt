@@ -32,11 +32,16 @@ class TRITONSWMM_exp_post_processing:
     ) -> xr.Dataset:  # type: ignore
         lst_ds = []
         for sim_iloc in self._experiment.df_sims.index:
+            proc = self._experiment._sim_run_processing_objects[sim_iloc]
             if mode.lower() == "triton":
-                ds = self._experiment._sim_run_processing_objects[
-                    sim_iloc
-                ].TRITON_timeseries
-                ds = summarize_triton_simulation_results(ds)
+                ds = proc.TRITON_timeseries
+                ds = self._summarize_triton_simulation_results(ds)
+            elif mode.lower() == "swmm_node":
+                ds = proc.SWMM_node_timeseries
+                ds = self._summarize_swmm_simulation_results(ds)
+            elif mode.lower() == "swmm_link":
+                ds = proc.SWMM_link_timeseries
+                ds = self._summarize_swmm_simulation_results(ds)
             ds = ds.assign_coords(coords=dict(sim_iloc=sim_iloc))
             ds = ds.expand_dims("sim_iloc")
             lst_ds.append(ds)
@@ -87,14 +92,107 @@ class TRITONSWMM_exp_post_processing:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
-        spatial_coords: List[str] | str = ["x", "y"],
     ):
-        if not self.log.all_TRITON_timeseries_processed.get():
-            raise RuntimeError("TRITON SWMM time series have not been processed.")
+        self._consolidate_outputs(
+            mode="TRITON",
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        return
+
+    def consolidate_SWMM_outputs_for_experiment(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        self._consolidate_outputs(
+            mode="SWMM_node",
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        self._consolidate_outputs(
+            mode="SWMM_link",
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        return
+
+    def _open_engine(self):
+        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        if processed_out_type == "zarr":
+            return "zarr"
+        elif processed_out_type == "nc":
+            return "h5netcdf"
+
+    def _open(self, f):
+        if f.exists():
+            return xr.open_dataset(
+                f, chunks="auto", engine=self._open_engine(), consolidated=False
+            )
+        else:
+            raise ValueError(
+                f"could not open file because it does not exist: {f}. Run experiment.consolidate_[SWMM/TRITON]_outputs()."
+            )
+
+    @property
+    def SWMM_node_summary(self):
+        return self._open(self._experiment.exp_paths.output_swmm_node_summary)
+
+    @property
+    def SWMM_link_summary(self):
+        return self._open(self._experiment.exp_paths.output_swmm_links_summary)
+
+    @property
+    def TRITON_summary(self):
+        return self._open(self._experiment.exp_paths.output_triton_summary)
+
+    def _already_written(self, f_out) -> bool:
+        """
+        Checks log file to determine whether the file was written successfully
+        """
+        proc_log = self.log.processing_log.outputs
+        already_written = False
+        if f_out.name in proc_log.keys():
+            if proc_log[f_out.name].success == True:
+                already_written = True
+        return already_written
+
+    def _consolidate_outputs(
+        self,
+        mode: Literal["TRITON", "SWMM_node", "SWMM_link"],
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
         start_time = time.time()
-        fname_out = self._experiment.exp_paths.output_triton_summary
+        if mode.lower() == "triton":
+            proc_log = self._experiment.log.TRITON_experiment_summary_created
+            fname_out = self._experiment.exp_paths.output_triton_summary
+            spatial_coords = ["x", "y"]
+
+        if mode.lower() == "swmm_node":
+            proc_log = self._experiment.log.SWMM_node_experiment_summary_created
+            fname_out = self._experiment.exp_paths.output_swmm_node_summary
+            spatial_coords = "node_id"
+
+        if mode.lower() == "swmm_link":
+            proc_log = self._experiment.log.SWMM_link_experiment_summary_created
+            fname_out = self._experiment.exp_paths.output_swmm_links_summary
+            spatial_coords = "link_id"
+
+        if mode.lower() == "triton":
+            if not self.log.all_TRITON_timeseries_processed.get():
+                raise RuntimeError("TRITON time series have not been processed.")
+        else:
+            if not self.log.all_SWMM_timeseries_processed.get():
+                raise RuntimeError("SWMM time series have not been processed.")
+
         if (
-            self._experiment.TRITON_experiment_summary_created
+            self._already_written(fname_out)
             and (not overwrite_if_exist)
             and fname_out.exists()
         ):
@@ -104,14 +202,14 @@ class TRITONSWMM_exp_post_processing:
                 )
             return
 
-        ds_combined_outputs = self._retrieve_combined_output("TRITON")
+        ds_combined_outputs = self._retrieve_combined_output(mode)
         chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)
 
         self._write_output(
             ds_combined_outputs, fname_out, compression_level, chunks, verbose  # type: ignore
         )
         # logging
-        self._experiment.log.TRITON_experiment_summary_created.set(True)
+        proc_log.set(True)
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
@@ -137,6 +235,81 @@ class TRITONSWMM_exp_post_processing:
         if verbose:
             print(f"finished writing {fname_out}")
         return
+
+    def _summarize_swmm_simulation_results(self, ds, tstep_dimname="date_time"):
+        tsteps = ds[tstep_dimname].to_series()
+        lst_time_variant_vars = []
+        for var in ds.data_vars:
+            if tstep_dimname in ds[var].coords:
+                lst_time_variant_vars.append(var)
+
+        for var in lst_time_variant_vars:
+            ds[f"{var}_max"] = ds[var].max(dim=tstep_dimname, skipna=True)
+            ds[f"{var}_last"] = ds[var].sel(date_time=tsteps.max())
+            ds = ds.drop_vars(var)
+        ds = ds.drop_dims(tstep_dimname)
+        return ds
+
+    def _summarize_triton_simulation_results(self, ds, tstep_dimname="timestep_min"):
+        tsteps = ds[tstep_dimname].to_series()
+        # compute max velocity, time of max velocity, and the x and y components of the max velocity
+        ds["velocity_mps"] = (
+            ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2
+        ) ** 0.5
+        ## compute max velocity
+        ds["max_velocity_mps"] = ds["velocity_mps"].max(dim=tstep_dimname, skipna=True)
+        ## compute time of max velocity
+        ds["time_of_max_velocity_min"] = ds["velocity_mps"].idxmax(
+            dim=tstep_dimname, skipna=True
+        )
+        ## return x and y velocities at time of max velocity
+        ds["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
+            timestep_min=ds["time_of_max_velocity_min"]
+        )
+        ds["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
+            timestep_min=ds["time_of_max_velocity_min"]
+        )
+        ## drop velocity_mps
+        ds = ds.drop_vars("velocity_mps")
+        ############################################
+        # compute max water level and time of max water level
+        if tstep_dimname in ds.max_wlevel_m.dims:
+            ds["max_wlevel_m"] = ds.max_wlevel_m.sel(
+                timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
+            ).reset_coords(drop=True)
+        ds["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(
+            dim=tstep_dimname, skipna=True
+        )
+        ## get water levels in last reported time step for mass balance
+        ds["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max())
+        ds["wlevel_m_last_tstep"].attrs[
+            "notes"
+        ] = "this is the water level in the last reported time step for computing mass balance"
+        # drop vars with timestep as a coordinate
+        for var in ds.data_vars:
+            if tstep_dimname in ds[var].coords:
+                ds = ds.drop_vars(var)
+
+        ds = ds.drop_dims(tstep_dimname)
+
+        # compute final stored volume after confirming grid specs
+        x_dim = ds.x.to_series().diff().mode().iloc[0]
+        y_dim = ds.y.to_series().diff().mode().iloc[0]
+        if (x_dim != y_dim) or (
+            x_dim != self._experiment._system.cfg_system.target_dem_resolution
+        ):
+            raise ValueError(
+                f"Output dimensions do not line up with expectations\
+Target DEM res: {self._experiment._system.cfg_system.target_dem_resolution}\n x_dim, y_dim = {x_dim}, {y_dim}"
+            )
+
+        ds["final_surface_flood_volume_cm"] = (
+            ds["wlevel_m_last_tstep"] * x_dim * y_dim
+        ).sum()
+
+        ds["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
+
+        return ds
 
 
 def prev_power_of_two(n: int | float) -> int:
@@ -194,47 +367,6 @@ def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
             )
     # print(problems)
     return problems
-
-
-def summarize_triton_simulation_results(ds):
-    tsteps = ds["timestep_min"].to_series()
-    # compute max velocity, time of max velocity, and the x and y components of the max velocity
-    ds["velocity_mps"] = (ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
-    ## compute max velocity
-    ds["max_velocity_mps"] = ds["velocity_mps"].max(dim="timestep_min", skipna=True)
-    ## compute time of max velocity
-    ds["time_of_max_velocity_min"] = ds["velocity_mps"].idxmax(
-        dim="timestep_min", skipna=True
-    )
-    ## return x and y velocities at time of max velocity
-    ds["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
-        timestep_min=ds["time_of_max_velocity_min"]
-    )
-    ds["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
-        timestep_min=ds["time_of_max_velocity_min"]
-    )
-    ## drop velocity_mps
-    ds = ds.drop_vars("velocity_mps")
-    ############################################
-    # compute max water level and time of max water level
-    if "timestep_min" in ds.max_wlevel_m.dims:
-        ds["max_wlevel_m"] = ds.max_wlevel_m.sel(
-            timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
-        ).reset_coords(drop=True)
-    ds["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(
-        dim="timestep_min", skipna=True
-    )
-    ## get water levels in last reported time step for mass balance
-    ds["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max())
-    ds["wlevel_m_last_tstep"].attrs[
-        "notes"
-    ] = "this is the water level in the last reported time step for computing mass balance"
-    # drop vars with timestep as a coordinate
-    for var in ds.data_vars:
-        if "timestep_min" in ds[var].coords:
-            ds = ds.drop_vars(var)
-    ds = ds.drop_dims("timestep_min")
-    return ds
 
 
 def check_da_for_na(da):

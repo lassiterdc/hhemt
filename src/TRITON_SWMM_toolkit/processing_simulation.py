@@ -231,6 +231,9 @@ class TRITONSWMM_sim_post_processing:
         return
 
     def _already_written(self, f_out) -> bool:
+        """
+        Checks log file to determine whether the file was written successfully
+        """
         proc_log = self.log.processing_log.outputs
         already_written = False
         if f_out.name in proc_log.keys():

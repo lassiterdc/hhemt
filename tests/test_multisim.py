@@ -36,7 +36,18 @@ def test_run_multiple_sims_in_sequence():
         pytest.fail(f"Clearning raw outputs failed.")
 
 
-def test_consolidate_multisim_outputs():
+def test_consolidate_multisim_TRITON_outputs():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=False)
-    multi_sim.system.experiment.consolidate_TRITON_simulation_summaries()
+    multi_sim.system.experiment.consolidate_TRITON_simulation_summaries(
+        overwrite_if_exist=True
+    )
     assert multi_sim.system.experiment.TRITON_experiment_summary_created
+
+
+def test_consolidate_multisim_SWMM_outputs():
+    multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=False)
+    multi_sim.system.experiment.consolidate_SWMM_simulation_summaries(
+        overwrite_if_exist=True
+    )
+    assert multi_sim.system.experiment.SWMM_node_experiment_summary_created
+    assert multi_sim.system.experiment.SWMM_link_experiment_summary_created

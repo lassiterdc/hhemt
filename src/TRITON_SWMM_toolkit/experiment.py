@@ -95,6 +95,18 @@ class TRITONSWMM_experiment:
             compression_level=compression_level,
         )
 
+    def consolidate_SWMM_simulation_summaries(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        self.process.consolidate_SWMM_outputs_for_experiment(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+
     def print_cfg(self, which: Literal["system", "experiment", "both"] = "both"):
         if which == ["system", "both"]:
             print("=== System Configuration ===")
@@ -433,6 +445,18 @@ class TRITONSWMM_experiment:
     @property
     def SWMM_link_experiment_summary_created(self):
         return bool(self.log.SWMM_link_experiment_summary_created.get())
+
+    @property
+    def SWMM_node_summary(self):
+        return self.process.SWMM_node_summary
+
+    @property
+    def SWMM_link_summary(self):
+        return self.process.SWMM_link_summary
+
+    @property
+    def TRITON_summary(self):
+        return self.process.TRITON_summary
 
 
 # %%
