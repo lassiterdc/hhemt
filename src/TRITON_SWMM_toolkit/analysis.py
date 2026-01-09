@@ -6,7 +6,7 @@ from TRITON_SWMM_toolkit.utils import (
     read_text_file_as_string,
 )
 from pathlib import Path
-from TRITON_SWMM_toolkit.config import load_experiment_config
+from TRITON_SWMM_toolkit.config import load_analysis_config
 import pandas as pd
 from typing import Literal, List
 from TRITON_SWMM_toolkit.paths import ExpPaths
@@ -15,52 +15,52 @@ from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.processing_simulation import TRITONSWMM_sim_post_processing
 
-from TRITON_SWMM_toolkit.processing_experiment import TRITONSWMM_exp_post_processing
+from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_exp_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.utils_plotting import print_json_file_tree
-from TRITON_SWMM_toolkit.logging import TRITONSWMM_experiment_log
+from TRITON_SWMM_toolkit.logging import TRITONSWMM_analysis_log
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
 
-    # from .processing_experiment import TRITONSWMM_exp_post_processing
+    # from .processing_analysis import TRITONSWMM_exp_post_processing
 
 
-class TRITONSWMM_experiment:
+class TRITONSWMM_analysis:
     def __init__(
         self,
-        experiment_config_yaml: Path,
+        analysis_config_yaml: Path,
         system: "TRITONSWMM_system",
     ) -> None:
         self._system = system
-        self.experiment_config_yaml = experiment_config_yaml
-        cfg_exp = load_experiment_config(experiment_config_yaml)
+        self.analysis_config_yaml = analysis_config_yaml
+        cfg_exp = load_analysis_config(analysis_config_yaml)
         self.cfg_exp = cfg_exp
         # define additional paths not defined in cfg
         compiled_software_directory = (
             self._system.cfg_system.system_directory
-            / self.cfg_exp.experiment_id
+            / self.cfg_exp.analysis_id
             / "compiled_software"
         )
         compiled_software_directory.mkdir(parents=True, exist_ok=True)
-        experiment_dir = (
-            self._system.cfg_system.system_directory / self.cfg_exp.experiment_id
+        analysis_dir = (
+            self._system.cfg_system.system_directory / self.cfg_exp.analysis_id
         )
-        self.exp_paths = ExpPaths(
-            f_log=experiment_dir / "log.json",
-            experiment_dir=experiment_dir,
+        self.analysis_paths = ExpPaths(
+            f_log=analysis_dir / "log.json",
+            analysis_dir=analysis_dir,
             compiled_software_directory=compiled_software_directory,
             TRITON_build_dir=compiled_software_directory / "build",
             compilation_script=compiled_software_directory / "compile.sh",
-            simulation_directory=experiment_dir / "sims",
+            simulation_directory=analysis_dir / "sims",
             compilation_logfile=compiled_software_directory / f"compilation.log",
-            output_triton_summary=experiment_dir
+            output_triton_summary=analysis_dir
             / f"TRITON.{self.cfg_exp.TRITON_processed_output_type}",
-            output_swmm_links_summary=experiment_dir
+            output_swmm_links_summary=analysis_dir
             / f"SWMM_links.{self.cfg_exp.TRITON_processed_output_type}",
-            output_swmm_node_summary=experiment_dir
+            output_swmm_node_summary=analysis_dir
             / f"SWMM_nodes.{self.cfg_exp.TRITON_processed_output_type}",
         )
         self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate).loc[
@@ -73,12 +73,12 @@ class TRITONSWMM_experiment:
         self.run_modes = Mode
         self.compilation_successful = False
 
-        if self.exp_paths.f_log.exists():
-            self.log = TRITONSWMM_experiment_log.from_json(self.exp_paths.f_log)
+        if self.analysis_paths.f_log.exists():
+            self.log = TRITONSWMM_analysis_log.from_json(self.analysis_paths.f_log)
         else:
-            self.log = TRITONSWMM_experiment_log(logfile=self.exp_paths.f_log)
+            self.log = TRITONSWMM_analysis_log(logfile=self.analysis_paths.f_log)
 
-        if self.exp_paths.compilation_logfile.exists():
+        if self.analysis_paths.compilation_logfile.exists():
             self._validate_compilation()
         self._add_all_scenarios()
         self.process = TRITONSWMM_exp_post_processing(self)
@@ -89,7 +89,7 @@ class TRITONSWMM_experiment:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        self.process.consolidate_TRITON_outputs_for_experiment(
+        self.process.consolidate_TRITON_outputs_for_analysis(
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
@@ -101,20 +101,20 @@ class TRITONSWMM_experiment:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        self.process.consolidate_SWMM_outputs_for_experiment(
+        self.process.consolidate_SWMM_outputs_for_analysis(
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
         )
 
-    def print_cfg(self, which: Literal["system", "experiment", "both"] = "both"):
+    def print_cfg(self, which: Literal["system", "analysis", "both"] = "both"):
         if which == ["system", "both"]:
             print("=== System Configuration ===")
             self._system.cfg_system.display_tabulate_cfg()
         if which == "both":
             print("\n")
-        if which in ["experiment", "both"]:
-            print("=== Experiment Configuration ===")
+        if which in ["analysis", "both"]:
+            print("=== analysis Configuration ===")
             self.cfg_exp.display_tabulate_cfg()
 
     def print_all_yaml_defined_input_files(self):
@@ -127,9 +127,9 @@ class TRITONSWMM_experiment:
 
     def dict_of_all_sim_files(self, sim_iloc):
         dic_syspaths = self._system.sys_paths.as_dict()
-        dic_exp_paths = self.exp_paths.as_dict()
+        dic_analysis_paths = self.analysis_paths.as_dict()
         dic_sim_paths = self.scenarios[sim_iloc].scen_paths.as_dict()
-        dic_all_paths = dic_syspaths | dic_exp_paths | dic_sim_paths
+        dic_all_paths = dic_syspaths | dic_analysis_paths | dic_sim_paths
         return dic_all_paths
 
     def print_all_sim_files(self, sim_iloc):
@@ -244,7 +244,7 @@ class TRITONSWMM_experiment:
             print("run instance instantiated")
         run.run_sim(mode, pickup_where_leftoff, verbose)
         self.sim_run_status(sim_iloc)
-        self._add_all_scenarios()  # updates experiment log
+        self._add_all_scenarios()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
             self.process_sim_output(
                 sim_iloc,
@@ -364,8 +364,8 @@ class TRITONSWMM_experiment:
             print("TRITON-SWMM already compiled")
             return
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
-        compiled_software_directory = self.exp_paths.compiled_software_directory
-        compilation_script = self.exp_paths.compilation_script
+        compiled_software_directory = self.analysis_paths.compiled_software_directory
+        compilation_script = self.analysis_paths.compilation_script
         TRITONSWMM_software_directory = (
             self._system.cfg_system.TRITONSWMM_software_directory
         )
@@ -385,7 +385,7 @@ class TRITONSWMM_experiment:
             mapping,
             compilation_script,
         )
-        compilation_logfile = self.exp_paths.compilation_logfile
+        compilation_logfile = self.analysis_paths.compilation_logfile
 
         with open(compilation_logfile, "w") as logfile:
             proc = subprocess.run(  # type: ignore
@@ -420,7 +420,7 @@ class TRITONSWMM_experiment:
         return
 
     def retrieve_compilation_log(self):
-        return read_text_file_as_string(self.exp_paths.compilation_logfile)
+        return read_text_file_as_string(self.analysis_paths.compilation_logfile)
 
     def print_compilation_log(self):
         print(self.retrieve_compilation_log())
@@ -435,16 +435,16 @@ class TRITONSWMM_experiment:
         return success
 
     @property
-    def TRITON_experiment_summary_created(self):
-        return bool(self.log.TRITON_experiment_summary_created.get())
+    def TRITON_analysis_summary_created(self):
+        return bool(self.log.TRITON_analysis_summary_created.get())
 
     @property
-    def SWMM_node_experiment_summary_created(self):
-        return bool(self.log.SWMM_node_experiment_summary_created.get())
+    def SWMM_node_analysis_summary_created(self):
+        return bool(self.log.SWMM_node_analysis_summary_created.get())
 
     @property
-    def SWMM_link_experiment_summary_created(self):
-        return bool(self.log.SWMM_link_experiment_summary_created.get())
+    def SWMM_link_analysis_summary_created(self):
+        return bool(self.log.SWMM_link_analysis_summary_created.get())
 
     @property
     def SWMM_node_summary(self):

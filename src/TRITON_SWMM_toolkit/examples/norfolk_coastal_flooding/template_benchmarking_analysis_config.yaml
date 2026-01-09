@@ -1,7 +1,7 @@
-experiment_id: 'norfolk_irene_benchmarking'
-benchmarking_experiment: '{DATA}/benchmarking_experiment.xlsx'
+analysis_id: 'norfolk_irene_benchmarking'
+benchmarking_analysis: '{DATA}/benchmarking_analysis.xlsx'
 weather_event_indexers: {'year':9, 'event_type':'compound', 'event_id':1}
 event_description: 'Hurricane Irene 8-27-2011'
-experiment_folder: '{DATA}/benchmarking_experiment'
+analysis_folder: '{DATA}/benchmarking_analysis'
 TRITONSWMM_software_compilation_script: '${PACKAGE_DIR}/compile_tritonswmm_wsl.sh'
-toggle_benchmarking_experiment: True
+toggle_benchmarking_analysis: True

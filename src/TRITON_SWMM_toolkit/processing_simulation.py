@@ -26,14 +26,14 @@ class TRITONSWMM_sim_post_processing:
     def __init__(self, run: TRITONSWMM_run) -> None:
         self._run = run
         self._scenario = run._scenario
-        self._experiment = run._scenario._experiment
-        self._system = run._scenario._experiment._system
+        self._analysis = run._scenario._analysis
+        self._system = run._scenario._analysis._system
         self.log = self._scenario.log
         self.scen_paths = self._scenario.scen_paths
         self._log_write_status()
 
     def _open_engine(self):
-        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
         if processed_out_type == "zarr":
             return "zarr"
         elif processed_out_type == "nc":
@@ -100,8 +100,8 @@ class TRITONSWMM_sim_post_processing:
         fname_out = self.scen_paths.output_triton_timeseries
         # dir_outputs = self._run._triton_swmm_raw_output_directory()
         fldr_out_triton = self._run.raw_triton_output_dir
-        raw_out_type = self._experiment.cfg_exp.TRITON_raw_output_type
-        reporting_interval_s = self._experiment.cfg_exp.TRITON_reporting_timestep_s
+        raw_out_type = self._analysis.cfg_exp.TRITON_raw_output_type
+        reporting_interval_s = self._analysis.cfg_exp.TRITON_reporting_timestep_s
         rds_dem = self._system.open_processed_dem_as_rds()
 
         if self._already_written(fname_out) and not overwrite_if_exist:
@@ -205,19 +205,19 @@ class TRITONSWMM_sim_post_processing:
         compression_level: int,
         verbose: bool,
     ):
-        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
 
         # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
         ds.attrs["paths"] = paths_to_strings(
-            self._experiment.dict_of_all_sim_files(self._scenario.sim_iloc)
+            self._analysis.dict_of_all_sim_files(self._scenario.sim_iloc)
         )
         ds.attrs["configuration"] = paths_to_strings(
             {
                 "system": self._system.cfg_system.model_dump(),
-                "experiment": self._experiment.cfg_exp.model_dump(),
+                "analysis": self._analysis.cfg_exp.model_dump(),
             }
         )
 

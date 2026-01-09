@@ -33,8 +33,8 @@ import shutil
 
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
-    load_experiment_config,
-    experiment_config,
+    load_analysis_config,
+    analysis_config,
 )
 from TRITON_SWMM_toolkit.utils import (
     get_package_root,
@@ -45,7 +45,7 @@ from TRITON_SWMM_toolkit.utils import (
 )
 
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
+from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
 
 #  define test case class
@@ -53,15 +53,15 @@ class TRITON_SWMM_example:
     # LOADING FROM SYSTEM CONFIG
     def __init__(self, cfg_system_yaml: Path, cfg_exp_yaml: Path):
         self.system = TRITONSWMM_system(cfg_system_yaml)
-        self.system.add_experiment(cfg_exp_yaml)
+        self.system.add_analysis(cfg_exp_yaml)
 
 
 class TRITON_SWMM_testcase:
     """
-    - everything is based on the single sim experiment so there is only 1 template yaml to keep up to date for testing
+    - everything is based on the single sim analysis so there is only 1 template yaml to keep up to date for testing
     - retrieves one or more events and subsets time series to simulate a short duration
     - writes a .csv file with event indices targeted for simulation
-    - creates a version of the experiment config file with a revised experiment name field and pointing to the subset weather index csv
+    - creates a version of the analysis config file with a revised analysis name field and pointing to the subset weather index csv
     """
 
     n_tsteps: int = 5
@@ -70,9 +70,9 @@ class TRITON_SWMM_testcase:
     def __init__(
         self,
         cfg_system_yaml: Path,
-        experiment_name: str,
+        analysis_name: str,
         target_dates: Iterable[Union[str, pd.Timestamp]],
-        experiment_description: str = "",
+        analysis_description: str = "",
         test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
     ):
@@ -82,13 +82,13 @@ class TRITON_SWMM_testcase:
         self.system.cfg_system.system_directory = (
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
-        # load single sime experiment
-        single_sim_exp_yaml = TRITON_SWMM_examples.load_norfolk_single_sim_experiment()
-        exp = load_experiment_config(single_sim_exp_yaml)
-        # update experiment attributes
-        exp.experiment_id = experiment_name
-        exp.experiment_description = experiment_description
-        exp_dir = self.system.cfg_system.system_directory / experiment_name
+        # load single sime analysis
+        single_sim_exp_yaml = TRITON_SWMM_examples.load_norfolk_single_sim_analysis()
+        exp = load_analysis_config(single_sim_exp_yaml)
+        # update analysis attributes
+        exp.analysis_id = analysis_name
+        exp.analysis_description = analysis_description
+        exp_dir = self.system.cfg_system.system_directory / analysis_name
         if start_from_scratch and exp_dir.exists():
             shutil.rmtree(exp_dir)
         exp_dir.mkdir(parents=True, exist_ok=True)
@@ -104,9 +104,9 @@ class TRITON_SWMM_testcase:
             weather_indexers=exp.weather_event_indices,
         )
 
-        cfg_exp = experiment_config.model_validate(exp)
-        # write experiment as yaml
-        cfg_exp_yaml = exp_dir / f"{experiment_name}.yaml"
+        cfg_exp = analysis_config.model_validate(exp)
+        # write analysis as yaml
+        cfg_exp_yaml = exp_dir / f"{analysis_name}.yaml"
         cfg_exp_yaml.write_text(
             yaml.safe_dump(
                 cfg_exp.model_dump(mode="json"),
@@ -114,23 +114,23 @@ class TRITON_SWMM_testcase:
             )
         )
 
-        # add experiment to the system
-        self.system.add_experiment(cfg_exp_yaml)
+        # add analysis to the system
+        self.system.add_analysis(cfg_exp_yaml)
         # udpate weather time series so simulations are short
         new_weather_timeseries = (
             self._create_reduced_weather_file_for_testing_if_it_does_not_exist()
         )
-        self.system.experiment.cfg_exp.weather_timeseries = new_weather_timeseries  # type: ignore
+        self.system.analysis.cfg_exp.weather_timeseries = new_weather_timeseries  # type: ignore
 
     def _create_reduced_weather_file_for_testing_if_it_does_not_exist(self):
-        og_weather_timeseries = self.system.experiment.cfg_exp.weather_timeseries
+        og_weather_timeseries = self.system.analysis.cfg_exp.weather_timeseries
         new_weather_timeseries = (
             self.system.cfg_system.system_directory / "weather_subset.nc"
         )
-        # weather_events_to_simulate = self.system.experiment.cfg_exp.weather_events_to_simulate
-        # weather_event_indices = self.system.experiment.cfg_exp.weather_event_indices
+        # weather_events_to_simulate = self.system.analysis.cfg_exp.weather_events_to_simulate
+        # weather_event_indices = self.system.analysis.cfg_exp.weather_event_indices
         weather_time_series_timestep_dimension_name = (
-            self.system.experiment.cfg_exp.weather_time_series_timestep_dimension_name
+            self.system.analysis.cfg_exp.weather_time_series_timestep_dimension_name
         )
 
         ds_event_weather_series = xr.open_dataset(og_weather_timeseries)
@@ -169,44 +169,41 @@ class TRITON_SWMM_examples:
     @classmethod
     def retrieve_norfolk_irene_example(cls, download_if_exists=False):
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
-        norfolk_experiment_yaml = cls.load_norfolk_single_sim_experiment()
-        norfolk_irene = TRITON_SWMM_example(
-            norfolk_system_yaml, norfolk_experiment_yaml
-        )
+        norfolk_analysis_yaml = cls.load_norfolk_single_sim_analysis()
+        norfolk_irene = TRITON_SWMM_example(norfolk_system_yaml, norfolk_analysis_yaml)
         return norfolk_irene
 
     @classmethod
     def load_norfolk_benchmarking_config(cls):
-        return cls._load_example_experiment_config(
+        return cls._load_example_analysis_config(
             NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG
         )
 
     @classmethod
-    def load_norfolk_single_sim_experiment(cls):
-        return cls._load_example_experiment_config(
+    def load_norfolk_single_sim_analysis(cls):
+        return cls._load_example_analysis_config(
             NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG
         )
 
     @classmethod
-    def _fill_experiment_yaml(cls, system_name: str, experiment_config_filename: str):
+    def _fill_analysis_yaml(cls, system_name: str, analysis_config_filename: str):
         mapping = get_norfolk_data_and_package_directory_mapping_dict()
-        cfg_template = load_config_filepath(system_name, experiment_config_filename)
+        cfg_template = load_config_filepath(system_name, analysis_config_filename)
         filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
         return filled_yaml_data
 
     @classmethod
-    def _load_example_experiment_config(
-        cls, system_name: str, experiment_config_filename: str
+    def _load_example_analysis_config(
+        cls, system_name: str, analysis_config_filename: str
     ):
-        filled_yaml_data = cls._fill_experiment_yaml(
-            system_name, experiment_config_filename
+        filled_yaml_data = cls._fill_analysis_yaml(
+            system_name, analysis_config_filename
         )
         cfg_system_yaml = load_norfolk_system_config(download_if_exists=False)
         cfg_system = load_system_config(cfg_system_yaml)
-        experiment_id = filled_yaml_data["experiment_id"]
+        analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = (
-            Path(cfg_system.system_directory)
-            / f"config_experiment_{experiment_id}.yaml"
+            Path(cfg_system.system_directory) / f"config_analysis_{analysis_id}.yaml"
         )
         cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
         write_yaml(filled_yaml_data, cfg_yaml)
@@ -222,18 +219,18 @@ class TRITON_SWMM_testcases:
     @classmethod
     def _retrieve_norfolk_case(
         cls,
-        experiment_name: str,
+        analysis_name: str,
         target_dates: Iterable,
         start_from_scratch: bool,
-        experiment_description: str = "",
+        analysis_description: str = "",
         download_if_exists=False,
     ) -> TRITON_SWMM_testcase:
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
         nrflk_test = TRITON_SWMM_testcase(
             norfolk_system_yaml,
-            experiment_name=experiment_name,
+            analysis_name=analysis_name,
             target_dates=target_dates,
-            experiment_description=experiment_description,
+            analysis_description=analysis_description,
             test_system_dirname=cls.test_system_dirname,
             start_from_scratch=start_from_scratch,
         )
@@ -243,14 +240,14 @@ class TRITON_SWMM_testcases:
     def retreive_norfolk_single_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        experiment_name = "single_sim"
+        analysis_name = "single_sim"
         target_dates = ["2011-08-28"]
-        experiment_description = "hurricane irene"
+        analysis_description = "hurricane irene"
         return cls._retrieve_norfolk_case(
-            experiment_name,
+            analysis_name,
             target_dates,
             start_from_scratch,
-            experiment_description,
+            analysis_description,
             download_if_exists,
         )
 
@@ -258,7 +255,7 @@ class TRITON_SWMM_testcases:
     def retreive_norfolk_multi_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        experiment_name = "multi_sim"
+        analysis_name = "multi_sim"
         target_dates = [
             "2011-08-28",
             "2015-07-11",
@@ -267,12 +264,12 @@ class TRITON_SWMM_testcases:
             # "2016-09-21",
             # "2017-08-29",
         ]
-        experiment_description = "events wtih 311 flood reports"
+        analysis_description = "events wtih 311 flood reports"
         return cls._retrieve_norfolk_case(
-            experiment_name,
+            analysis_name,
             target_dates,
             start_from_scratch,
-            experiment_description,
+            analysis_description,
             download_if_exists,
         )
 

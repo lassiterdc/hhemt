@@ -11,7 +11,7 @@ from TRITON_SWMM_toolkit.utils import read_header, read_text_file_as_string
 import tempfile
 from TRITON_SWMM_toolkit.paths import SysPaths
 from typing import Optional
-from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
+from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
 
 class TRITONSWMM_system:
@@ -23,20 +23,20 @@ class TRITONSWMM_system:
             dem_processed=self.cfg_system.system_directory / "elevation.dem",
             mannings_processed=self.cfg_system.system_directory / "mannings.dem",
         )
-        self._experiment: Optional["TRITONSWMM_experiment"] = None
+        self._analysis: Optional["TRITONSWMM_analysis"] = None
 
     @property
-    def experiment(self) -> "TRITONSWMM_experiment":
-        if self._experiment is None:
-            raise RuntimeError("No experiment defined. Call add_experiment() first.")
-        return self._experiment
+    def analysis(self) -> "TRITONSWMM_analysis":
+        if self._analysis is None:
+            raise RuntimeError("No analysis defined. Call add_analysis() first.")
+        return self._analysis
 
-    def add_experiment(self, experiment_config_yaml: Path):
-        # from TRITON_SWMM_toolkit.experiment import TRITONSWMM_experiment
+    def add_analysis(self, analysis_config_yaml: Path):
+        # from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
-        exp = TRITONSWMM_experiment(experiment_config_yaml, self)
-        exp_name = exp.cfg_exp.experiment_id
-        self._experiment = exp
+        exp = TRITONSWMM_analysis(analysis_config_yaml, self)
+        exp_name = exp.cfg_exp.analysis_id
+        self._analysis = exp
         return
 
     def process_system_level_inputs(

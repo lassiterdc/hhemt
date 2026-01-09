@@ -19,20 +19,20 @@ from pathlib import Path
 import time
 
 if TYPE_CHECKING:
-    from .experiment import TRITONSWMM_experiment
+    from .analysis import TRITONSWMM_analysis
 
 
 class TRITONSWMM_exp_post_processing:
-    def __init__(self, experiment: "TRITONSWMM_experiment") -> None:
-        self._experiment = experiment
-        self.log = experiment.log
+    def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
+        self._analysis = analysis
+        self.log = analysis.log
 
     def _retrieve_combined_output(
         self, mode: Literal["TRITON", "SWMM_node", "SWMM_link"]
     ) -> xr.Dataset:  # type: ignore
         lst_ds = []
-        for sim_iloc in self._experiment.df_sims.index:
-            proc = self._experiment._sim_run_processing_objects[sim_iloc]
+        for sim_iloc in self._analysis.df_sims.index:
+            proc = self._analysis._sim_run_processing_objects[sim_iloc]
             if mode.lower() == "triton":
                 ds = proc.TRITON_timeseries
                 ds = self._summarize_triton_simulation_results(ds)
@@ -87,7 +87,7 @@ class TRITONSWMM_exp_post_processing:
 
         return chunks
 
-    def consolidate_TRITON_outputs_for_experiment(
+    def consolidate_TRITON_outputs_for_analysis(
         self,
         overwrite_if_exist: bool = False,
         verbose: bool = False,
@@ -101,7 +101,7 @@ class TRITONSWMM_exp_post_processing:
         )
         return
 
-    def consolidate_SWMM_outputs_for_experiment(
+    def consolidate_SWMM_outputs_for_analysis(
         self,
         overwrite_if_exist: bool = False,
         verbose: bool = False,
@@ -122,7 +122,7 @@ class TRITONSWMM_exp_post_processing:
         return
 
     def _open_engine(self):
-        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
         if processed_out_type == "zarr":
             return "zarr"
         elif processed_out_type == "nc":
@@ -135,20 +135,20 @@ class TRITONSWMM_exp_post_processing:
             )
         else:
             raise ValueError(
-                f"could not open file because it does not exist: {f}. Run experiment.consolidate_[SWMM/TRITON]_outputs()."
+                f"could not open file because it does not exist: {f}. Run analysis.consolidate_[SWMM/TRITON]_outputs()."
             )
 
     @property
     def SWMM_node_summary(self):
-        return self._open(self._experiment.exp_paths.output_swmm_node_summary)
+        return self._open(self._analysis.analysis_paths.output_swmm_node_summary)
 
     @property
     def SWMM_link_summary(self):
-        return self._open(self._experiment.exp_paths.output_swmm_links_summary)
+        return self._open(self._analysis.analysis_paths.output_swmm_links_summary)
 
     @property
     def TRITON_summary(self):
-        return self._open(self._experiment.exp_paths.output_triton_summary)
+        return self._open(self._analysis.analysis_paths.output_triton_summary)
 
     def _already_written(self, f_out) -> bool:
         """
@@ -170,18 +170,18 @@ class TRITONSWMM_exp_post_processing:
     ):
         start_time = time.time()
         if mode.lower() == "triton":
-            proc_log = self._experiment.log.TRITON_experiment_summary_created
-            fname_out = self._experiment.exp_paths.output_triton_summary
+            proc_log = self._analysis.log.TRITON_analysis_summary_created
+            fname_out = self._analysis.analysis_paths.output_triton_summary
             spatial_coords = ["x", "y"]
 
         if mode.lower() == "swmm_node":
-            proc_log = self._experiment.log.SWMM_node_experiment_summary_created
-            fname_out = self._experiment.exp_paths.output_swmm_node_summary
+            proc_log = self._analysis.log.SWMM_node_analysis_summary_created
+            fname_out = self._analysis.analysis_paths.output_swmm_node_summary
             spatial_coords = "node_id"
 
         if mode.lower() == "swmm_link":
-            proc_log = self._experiment.log.SWMM_link_experiment_summary_created
-            fname_out = self._experiment.exp_paths.output_swmm_links_summary
+            proc_log = self._analysis.log.SWMM_link_analysis_summary_created
+            fname_out = self._analysis.analysis_paths.output_swmm_links_summary
             spatial_coords = "link_id"
 
         if mode.lower() == "triton":
@@ -224,7 +224,7 @@ class TRITONSWMM_exp_post_processing:
         chunks: str | dict,
         verbose: bool,
     ):
-        processed_out_type = self._experiment.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
 
         ds.attrs["output_creation_date"] = current_datetime_string()
 
@@ -296,11 +296,11 @@ class TRITONSWMM_exp_post_processing:
         x_dim = ds.x.to_series().diff().mode().iloc[0]
         y_dim = ds.y.to_series().diff().mode().iloc[0]
         if (x_dim != y_dim) or (
-            x_dim != self._experiment._system.cfg_system.target_dem_resolution
+            x_dim != self._analysis._system.cfg_system.target_dem_resolution
         ):
             raise ValueError(
                 f"Output dimensions do not line up with expectations\
-Target DEM res: {self._experiment._system.cfg_system.target_dem_resolution}\n x_dim, y_dim = {x_dim}, {y_dim}"
+Target DEM res: {self._analysis._system.cfg_system.target_dem_resolution}\n x_dim, y_dim = {x_dim}, {y_dim}"
             )
 
         ds["final_surface_flood_volume_cm"] = (

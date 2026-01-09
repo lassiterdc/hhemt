@@ -239,7 +239,7 @@ class system_config(cfgBaseModel):
     )
     TRITON_SWMM_software_compilation_script: Path = Field(
         ...,
-        description="Folder containing script to build experiment-specific version of TRITON-SWMM.",
+        description="Folder containing script to build analysis-specific version of TRITON-SWMM.",
     )
     subcatchment_raingage_mapping: Optional[Path] = Field(
         None,
@@ -339,13 +339,13 @@ class system_config(cfgBaseModel):
         return
 
 
-class experiment_config(cfgBaseModel):
+class analysis_config(cfgBaseModel):
     # REQUIRED INPUTS
-    experiment_id: Annotated[
+    analysis_id: Annotated[
         str,
         Field(
             ...,
-            description="Experiment identifier. Used for creating experiment folder if one with the same name does not exist.",
+            description="analysis identifier. Used for creating analysis folder if one with the same name does not exist.",
             pattern=r"^[A-Za-z][A-Za-z0-9_.]*$",
         ),
     ]
@@ -366,9 +366,9 @@ class experiment_config(cfgBaseModel):
         description="Rainfall units in weather_timeseries, e.g,. mm/hr, mm, in, in/hr. Must align with specifications in SWMM_hydrology model.",
     )
     # TOGGLES
-    toggle_benchmarking_experiment: bool = Field(
+    toggle_benchmarking_analysis: bool = Field(
         ...,
-        description="Whether or not this is a benchmarking study. If so, a .csv file is required for input benchmarking_experiment defining the experimental setup.",
+        description="Whether or not this is a benchmarking study. If so, a .csv file is required for input benchmarking_analysis defining the analysisal setup.",
     )
     toggle_storm_tide_boundary: bool = Field(
         ...,
@@ -391,15 +391,15 @@ class experiment_config(cfgBaseModel):
         None,
         description="Data variables in weather_timeseries corresponding to storm tide.",
     )
-    benchmarking_experiment: Optional[Path] = Field(
+    benchmarking_analysis: Optional[Path] = Field(
         None,
-        description="Benchmarking experimental design csv file.",
+        description="Benchmarking analysisal design csv file.",
     )
     weather_events_to_simulate: Path = Field(
         ...,
         description="Path to a .csv file defining weather event index used for benchmarking. The columns must correspond to the sytem's weather_event_indices.",
     )
-    experiment_description: Optional[str] = Field(
+    analysis_description: Optional[str] = Field(
         None,
         description="For readability.",
     )
@@ -438,21 +438,21 @@ class experiment_config(cfgBaseModel):
     )
 
     # VALIDATION - STRING REQUIREMENTS
-    @field_validator("experiment_id")
-    def validate_experiment_id(cls, v):
+    @field_validator("analysis_id")
+    def validate_analysis_id(cls, v):
         if not re.match(r"^[A-Za-z][A-Za-z0-9_.]*$", v):
             raise ValueError(
-                "experiment_id must start with a letter and contain only letters, digits, underscores, or periods"
+                "analysis_id must start with a letter and contain only letters, digits, underscores, or periods"
             )
         return v
 
     # VALIDATING DEPENDENCIES BASED ON TOGGLES
     @classmethod
     def get_toggle_tests(cls):
-        ### toggle_benchmarking_experiment
+        ### toggle_benchmarking_analysis
         bm_test = dict(
-            toggle_varname="toggle_benchmarking_experiment",
-            lst_rqrd_if_true=["benchmarking_experiment"],
+            toggle_varname="toggle_benchmarking_analysis",
+            lst_rqrd_if_true=["benchmarking_analysis"],
             lst_rqrd_if_false=[],
         )
         cls.toggle_tests.append(bm_test)
@@ -475,12 +475,12 @@ def load_system_config(cfg_yaml: Path):
     return cfg
 
 
-def load_experiment_config(cfg_yaml: Path):
+def load_analysis_config(cfg_yaml: Path):
     cfg = yaml.safe_load(cfg_yaml.read_text())
-    cfg = experiment_config.model_validate(cfg)
+    cfg = analysis_config.model_validate(cfg)
     return cfg
 
 
-# def load_benchmarking_experiment_config_config(cfg):
-#     cfg = benchmarking_experiment_config.model_validate(cfg)
+# def load_benchmarking_analysis_config_config(cfg):
+#     cfg = benchmarking_analysis_config.model_validate(cfg)
 #     return cfg

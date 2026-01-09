@@ -19,7 +19,7 @@ class TRITONSWMM_run:
         self, weather_event_indexers: dict, scenario: "TRITONSWMM_scenario"
     ) -> None:
         self._scenario = scenario
-        self._experiment = scenario._experiment
+        self._analysis = scenario._analysis
         self.weather_event_indexers = weather_event_indexers
         self.log = scenario.log
 
@@ -29,9 +29,9 @@ class TRITONSWMM_run:
         pickup_where_leftoff: bool,
         verbose: bool = False,
     ):
-        if not self._experiment.compilation_successful:
+        if not self._analysis.compilation_successful:
             raise RuntimeError(
-                "Cannot run simulation because TRITONSWMM has not been compiled. Run TRITONSWMM_experiment.compile_TRITON_SWMM() first."
+                "Cannot run simulation because TRITONSWMM has not been compiled. Run TRITONSWMM_analysis.compile_TRITON_SWMM() first."
             )
         if mode == "single_core":
             self._run_singlecore_simulation(pickup_where_leftoff, verbose)
@@ -60,7 +60,7 @@ class TRITONSWMM_run:
         # update environment with SWMM executable
 
         swmm_path = (
-            self._experiment.exp_paths.compiled_software_directory
+            self._analysis.analysis_paths.compiled_software_directory
             / "Stormwater-Management-Model"
             / "build"
             / "bin"
@@ -124,7 +124,7 @@ class TRITONSWMM_run:
     def raw_triton_output_dir(self):
         return (
             self._triton_swmm_raw_output_directory()
-            / self._experiment.cfg_exp.TRITON_raw_output_type
+            / self._analysis.cfg_exp.TRITON_raw_output_type
         )
 
     @property

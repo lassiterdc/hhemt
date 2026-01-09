@@ -4,7 +4,7 @@ from TRITON_SWMM_toolkit.examples import TRITON_SWMM_testcases as tst
 
 def test_run_multiple_sims_in_sequence():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=True)
-    exp = multi_sim.system.experiment
+    exp = multi_sim.system.analysis
     exp.compile_TRITON_SWMM()
     exp.prepare_all_scenarios(
         overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
@@ -38,16 +38,16 @@ def test_run_multiple_sims_in_sequence():
 
 def test_consolidate_multisim_TRITON_outputs():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=False)
-    multi_sim.system.experiment.consolidate_TRITON_simulation_summaries(
+    multi_sim.system.analysis.consolidate_TRITON_simulation_summaries(
         overwrite_if_exist=True
     )
-    assert multi_sim.system.experiment.TRITON_experiment_summary_created
+    assert multi_sim.system.analysis.TRITON_analysis_summary_created
 
 
 def test_consolidate_multisim_SWMM_outputs():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=False)
-    multi_sim.system.experiment.consolidate_SWMM_simulation_summaries(
+    multi_sim.system.analysis.consolidate_SWMM_simulation_summaries(
         overwrite_if_exist=True
     )
-    assert multi_sim.system.experiment.SWMM_node_experiment_summary_created
-    assert multi_sim.system.experiment.SWMM_link_experiment_summary_created
+    assert multi_sim.system.analysis.SWMM_node_analysis_summary_created
+    assert multi_sim.system.analysis.SWMM_link_analysis_summary_created
