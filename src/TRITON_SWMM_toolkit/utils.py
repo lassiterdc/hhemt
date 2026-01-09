@@ -11,6 +11,33 @@ import shutil
 from typing import Any
 
 
+def create_mask_from_shapefile(
+    da_to_mask, shapefile_path=None, series_single_row_of_gdf=None
+):  # , COORD_EPSG):
+    # da_to_mask, shapefile_path = da_sim_wlevel, f_mitigation_aois
+    og_shape = da_to_mask.shape
+    xs = da_to_mask.x.to_series()
+    ys = da_to_mask.y.to_series()
+    from shapely.geometry import mapping
+    import geopandas as gpd
+    import rasterio.features
+
+    if shapefile_path is not None:
+        gdf = gpd.read_file(shapefile_path)
+        shapes = [
+            mapping(geom) for geom in gdf.geometry
+        ]  # Convert geometries to GeoJSON-like format
+    if series_single_row_of_gdf is not None:
+        shapes = [mapping(series_single_row_of_gdf.geometry)]
+    mask = rasterio.features.geometry_mask(
+        shapes,
+        transform=da_to_mask.rio.transform(),
+        invert=True,
+        out_shape=(og_shape),
+    )
+    return mask
+
+
 def read_yaml(f_yaml: Path | str):
     return yaml.safe_load(Path(f_yaml).read_text())
 
@@ -173,18 +200,18 @@ def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     )
 
     # Handle data variables
-    for var in ds.data_vars:
+    for var in ds.data_vars:  # type: ignore
         dtype_kind = ds[var].dtype.kind
         if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
             encoding[var] = {"compressors": compressor}
         # Optionally handle other types if needed
 
     # Handle coordinate encoding
-    for coord in ds.coords:
-        dtype_kind = ds[coord].dtype.kind
+    for coord in ds.coords:  # type: ignore
+        dtype_kind = ds[coord].dtype.kind  # type: ignore
         if dtype_kind == "U":  # Unicode string coordinates
             max_len = ds[coord].str.len().max().item()
-            encoding[coord] = {"dtype": f"<U{max_len}"}
+            encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
 
     return encoding
 

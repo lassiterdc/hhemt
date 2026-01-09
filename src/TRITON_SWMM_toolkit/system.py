@@ -98,7 +98,8 @@ class TRITONSWMM_system:
             rds_mannings_processed = rxr.open_rasterio(mannings_processed)
         return rds_mannings_processed
 
-    def open_processed_dem_as_rds(self):
+    @property
+    def processed_dem_rds(self):
         return rxr.open_rasterio(self.sys_paths.dem_processed)
 
     def _create_mannings_raster(self):

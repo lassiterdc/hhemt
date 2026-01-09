@@ -1,4 +1,3 @@
-# %%
 import xarray as xr
 import pandas as pd
 from pathlib import Path
@@ -43,7 +42,7 @@ from TRITON_SWMM_toolkit.utils import (
     read_yaml,
     write_yaml,
 )
-
+import numpy as np
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
@@ -71,7 +70,8 @@ class TRITON_SWMM_testcase:
         self,
         cfg_system_yaml: Path,
         analysis_name: str,
-        target_dates: Iterable[Union[str, pd.Timestamp]],
+        n_events: int,
+        n_reporting_tsteps_per_sim: int,
         analysis_description: str = "",
         test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
@@ -83,44 +83,87 @@ class TRITON_SWMM_testcase:
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
         # load single sime analysis
-        single_sim_exp_yaml = TRITON_SWMM_examples.load_norfolk_single_sim_analysis()
-        exp = load_analysis_config(single_sim_exp_yaml)
-        # update analysis attributes
-        exp.analysis_id = analysis_name
-        exp.analysis_description = analysis_description
-        exp_dir = self.system.cfg_system.system_directory / analysis_name
-        if start_from_scratch and exp_dir.exists():
-            shutil.rmtree(exp_dir)
-        exp_dir.mkdir(parents=True, exist_ok=True)
-        f_weather_indices = exp_dir / "weather_indices.csv"
-        exp.weather_events_to_simulate = f_weather_indices
-        # create weather indexer dataset
-        write_subset_weather_events_to_simulate(
-            weather_event_summaries=exp.weather_event_summary_csv,  # type: ignore
-            target_dates=target_dates,
-            start_date_col="event_start",
-            end_date_col="event_end",
-            f_out=f_weather_indices,
-            weather_indexers=exp.weather_event_indices,
+        single_sim_anlysys_yaml = (
+            TRITON_SWMM_examples.load_norfolk_single_sim_analysis()
         )
+        anlysys = load_analysis_config(single_sim_anlysys_yaml)
+        # update analysis attributes
+        anlysys.analysis_id = analysis_name
+        anlysys.analysis_description = analysis_description
+        anlysys_dir = self.system.cfg_system.system_directory / analysis_name
+        if start_from_scratch and anlysys_dir.exists():
+            shutil.rmtree(anlysys_dir)
+        anlysys_dir.mkdir(parents=True, exist_ok=True)
+        f_weather_indices = anlysys_dir / "weather_indices.csv"
+        anlysys.weather_events_to_simulate = f_weather_indices
+        event_index_name = "event_id"
+        anlysys.weather_event_indices = [event_index_name]
+        # create weather indexer dataset
+        df_weather_indices = pd.DataFrame({event_index_name: np.arange(n_events)})
+        df_weather_indices.to_csv(f_weather_indices)
 
-        cfg_exp = analysis_config.model_validate(exp)
+        cfg_anlysys = analysis_config.model_validate(anlysys)
         # write analysis as yaml
-        cfg_exp_yaml = exp_dir / f"{analysis_name}.yaml"
-        cfg_exp_yaml.write_text(
+        cfg_anlysys_yaml = anlysys_dir / f"{analysis_name}.yaml"
+        cfg_anlysys_yaml.write_text(
             yaml.safe_dump(
-                cfg_exp.model_dump(mode="json"),
+                cfg_anlysys.model_dump(mode="json"),
                 sort_keys=False,  # .dict() for pydantic v1
             )
         )
-
-        # add analysis to the system
-        self.system.add_analysis(cfg_exp_yaml)
-        # udpate weather time series so simulations are short
-        new_weather_timeseries = (
-            self._create_reduced_weather_file_for_testing_if_it_does_not_exist()
+        # write weather time series and update weather time series path
+        self.system.add_analysis(cfg_anlysys_yaml)
+        f_weather_tseries = anlysys_dir / "weather_tseries.nc"
+        self.create_short_intense_weather_timeseries(
+            f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
-        self.system.analysis.cfg_exp.weather_timeseries = new_weather_timeseries  # type: ignore
+        self.system.analysis.cfg_exp.weather_timeseries = f_weather_tseries  # type: ignore
+        # add analysis to the system
+
+    # create weather time series dataset
+    def create_short_intense_weather_timeseries(
+        self, f_out, n_reporting_tsteps_per_sim, n_events, event_index_name
+    ):
+        wlevel_name = (
+            self.system.analysis.cfg_exp.weather_time_series_storm_tide_datavar
+        )
+        tstep_coord_name = (
+            self.system.analysis.cfg_exp.weather_time_series_timestep_dimension_name
+        )
+        df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
+        gage_colname = (
+            self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
+        )
+        gages = df_raingage_mapping[gage_colname].unique()
+
+        reporting_tstep_min = (
+            self.system.analysis.cfg_exp.TRITON_reporting_timestep_s / 60
+        )
+
+        timesteps = pd.date_range(
+            start="2000-01-01",
+            periods=n_reporting_tsteps_per_sim + 1,
+            freq=f"{int(reporting_tstep_min)}min",
+        )
+        columns = list(gages) + [wlevel_name]
+        df_tseries = pd.DataFrame(index=timesteps, columns=columns)
+        df_tseries.loc[:, wlevel_name] = 5  # type: ignore
+        df_tseries.loc[:, gages] = 1000
+        df_tseries.index.name = tstep_coord_name
+        df_tseries.columns = df_tseries.columns.astype(str)
+        lst_df = []
+        for event_idx in np.arange(n_events):
+            df = df_tseries.copy()
+            df[event_index_name] = event_idx
+            lst_df.append(df)
+        df_tseries = pd.concat(lst_df)
+        df_tseries = df_tseries.reset_index().set_index(
+            [event_index_name, tstep_coord_name]
+        )
+
+        ds_weather_tseries = df_tseries.to_xarray()
+        ds_weather_tseries.to_netcdf(f_out)
+        return
 
     def _create_reduced_weather_file_for_testing_if_it_does_not_exist(self):
         og_weather_timeseries = self.system.analysis.cfg_exp.weather_timeseries
@@ -220,17 +263,17 @@ class TRITON_SWMM_testcases:
     def _retrieve_norfolk_case(
         cls,
         analysis_name: str,
-        target_dates: Iterable,
+        n_events: int,
+        n_reporting_tsteps_per_sim: int,
         start_from_scratch: bool,
-        analysis_description: str = "",
         download_if_exists=False,
     ) -> TRITON_SWMM_testcase:
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
         nrflk_test = TRITON_SWMM_testcase(
             norfolk_system_yaml,
             analysis_name=analysis_name,
-            target_dates=target_dates,
-            analysis_description=analysis_description,
+            n_events=n_events,
+            n_reporting_tsteps_per_sim=n_reporting_tsteps_per_sim,
             test_system_dirname=cls.test_system_dirname,
             start_from_scratch=start_from_scratch,
         )
@@ -241,14 +284,12 @@ class TRITON_SWMM_testcases:
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "single_sim"
-        target_dates = ["2011-08-28"]
-        analysis_description = "hurricane irene"
         return cls._retrieve_norfolk_case(
-            analysis_name,
-            target_dates,
-            start_from_scratch,
-            analysis_description,
-            download_if_exists,
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=10,
         )
 
     @classmethod
@@ -256,21 +297,13 @@ class TRITON_SWMM_testcases:
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "multi_sim"
-        target_dates = [
-            "2011-08-28",
-            "2015-07-11",
-            "2015-10-04",
-            # "2016-09-03",
-            # "2016-09-21",
-            # "2017-08-29",
-        ]
-        analysis_description = "events wtih 311 flood reports"
+
         return cls._retrieve_norfolk_case(
-            analysis_name,
-            target_dates,
-            start_from_scratch,
-            analysis_description,
-            download_if_exists,
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=3,
+            n_reporting_tsteps_per_sim=10,
         )
 
 

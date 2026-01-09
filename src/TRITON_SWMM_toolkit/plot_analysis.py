@@ -26,6 +26,8 @@ if TYPE_CHECKING:
 class TRITONSWMM_analysis_plotting:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
+        self._system = analysis._system
+        self.sys_paths = analysis._system.sys_paths
         self.log = analysis.log
 
     @property

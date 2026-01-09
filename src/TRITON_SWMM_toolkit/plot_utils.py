@@ -99,10 +99,10 @@ def plot_continuous_raster(
         fig, ax = plt.subplots()
     ax.set_aspect("equal", adjustable="box")
     if vmin is None:
-        vmin = rds.min()
+        vmin = rds.min().compute()
 
     if vmax is None:
-        vmax = rds.max()
+        vmax = rds.max().compute()
 
     cmap_obj = colormaps[cmap].copy()
     for key in ["set_under", "set_over", "set_bad"]:
@@ -111,6 +111,8 @@ def plot_continuous_raster(
 
     img = rds.plot(  # type: ignore
         ax=ax,
+        x="x",
+        y="y",
         cmap=cmap_obj,
         add_colorbar=show_cbar,
         vmin=vmin,
