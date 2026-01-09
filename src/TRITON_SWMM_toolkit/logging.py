@@ -109,22 +109,23 @@ class SimLog(BaseModel):
 # ----------------------------
 # Simulation Processing
 # ----------------------------
-class SimProcessingEntry(BaseModel):
+class ProcessingEntry(BaseModel):
     filepath: Path
+    size_MiB: float
     time_elapsed_s: float
     success: bool
     notes: str = ""
     warnings: str = ""
 
 
-class SimProcessing(BaseModel):
+class Processing(BaseModel):
     _log: "TRITONSWMM_scenario_log" = PrivateAttr()
-    outputs: Dict[str, SimProcessingEntry] = Field(default_factory=dict)
+    outputs: Dict[str, ProcessingEntry] = Field(default_factory=dict)
 
     def set_log(self, log: "TRITONSWMM_scenario_log"):
         self._log = log
 
-    def update(self, entry: SimProcessingEntry):
+    def update(self, entry: ProcessingEntry):
         self.outputs[entry.filepath.name] = entry
         self._log.write()
 
@@ -233,7 +234,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     SWMM_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
-    processing_log: SimProcessing = Field(default_factory=SimProcessing)
+    processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
     # JSON → LogField hydration
@@ -372,13 +373,15 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     def add_sim_processing_entry(
         self,
         filepath: Path,
+        size_MiB: float,
         time_elapsed_s: float,
         success: bool,
         notes: str = "",
         warnings: str = "",
     ):
-        simlog = SimProcessingEntry(
+        simlog = ProcessingEntry(
             filepath=filepath,
+            size_MiB=size_MiB,
             time_elapsed_s=time_elapsed_s,
             success=success,
             notes=notes,
@@ -395,6 +398,14 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
     all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
     all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    TRITON_experiment_summary_created: LogField[bool] = Field(default_factory=LogField)
+    SWMM_node_experiment_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    SWMM_link_experiment_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
     # JSON → LogField hydration
@@ -408,6 +419,9 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_SWMM_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
+        "TRITON_experiment_summary_created",
+        "SWMM_node_experiment_summary_created",
+        "SWMM_link_experiment_summary_created",
         mode="before",
     )
     @classmethod
@@ -428,6 +442,9 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_SWMM_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
+        "TRITON_experiment_summary_created",
+        "SWMM_node_experiment_summary_created",
+        "SWMM_link_experiment_summary_created",
         mode="before",
     )
     @classmethod
@@ -448,6 +465,9 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         "all_SWMM_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
+        "TRITON_experiment_summary_created",
+        "SWMM_node_experiment_summary_created",
+        "SWMM_link_experiment_summary_created",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):
@@ -455,3 +475,25 @@ class TRITONSWMM_experiment_log(TRITONSWMM_log):
         if isinstance(v, Path):
             return str(v)
         return v
+
+    # ----------------------------
+    # Processing entries
+    # ----------------------------
+    def add_sim_processing_entry(
+        self,
+        filepath: Path,
+        size_MiB: float,
+        time_elapsed_s: float,
+        success: bool,
+        notes: str = "",
+        warnings: str = "",
+    ):
+        simlog = ProcessingEntry(
+            filepath=filepath,
+            size_MiB=round(size_MiB, 2),
+            time_elapsed_s=round(time_elapsed_s, 2),
+            success=success,
+            notes=notes,
+            warnings=warnings,
+        )
+        self.processing_log.update(simlog)

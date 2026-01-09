@@ -196,22 +196,38 @@ def return_dic_autochunk(ds):
     return chunk_dict
 
 
-def write_zarr(ds, fname_out, compression_level):
-    encoding = return_dic_zarr_encodings(ds)
+def get_file_size_MiB(f: Path):
+    if f.name.split(".")[-1] == "zarr":
+        size_bytes = zarr_size_bytes(f)
+    else:
+        size_bytes = f.stat().st_size
+    return size_bytes / 1024**2
+
+
+def zarr_size_bytes(zarr_path: Path) -> int:
+    return sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file())
+
+
+def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
+    encoding = return_dic_zarr_encodings(ds, compression_level)
     chunks = return_dic_autochunk(ds)
-    ds.chunk(chunks).to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+    ds = ds.chunk(chunks)
+    ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 
 
-def write_zarr_then_netcdf(ds, fname_out, compression_level):
-    encoding = return_dic_zarr_encodings(ds)
+def write_zarr_then_netcdf(
+    ds, fname_out, compression_level, chunks: str | dict = "auto"
+):
+    encoding = return_dic_zarr_encodings(ds, compression_level)
     chunk_dict = return_dic_autochunk(ds)
     ds = ds.chunk(chunk_dict)
     # first write to zarr, then write to netcdf
-    write_zarr(ds, fname_out, compression_level)
+    write_zarr(ds, fname_out, compression_level, chunks)
     # open and write
     ds = xr.open_dataset(
         f"{fname_out}.zarr", engine="zarr", chunks="auto", consolidated=False
     )
+    ds = ds.chunk(chunks)
     ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
     # delete zarr
     try:

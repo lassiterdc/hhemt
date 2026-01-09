@@ -14,6 +14,7 @@ from TRITON_SWMM_toolkit.utils import (
     write_zarr,
     write_zarr_then_netcdf,
     paths_to_strings,
+    get_file_size_MiB,
 )
 from TRITON_SWMM_toolkit.utils import current_datetime_string
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
@@ -131,7 +132,9 @@ class TRITONSWMM_sim_post_processing:
         ds_combined = xr.merge(lst_ds_vars)
         self._write_output(ds_combined, fname_out, comp_level, verbose)  # type: ignore
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(fname_out, elapsed_s, True)
+        self.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
         if clear_raw_outputs:
             self._clear_raw_TRITON_outputs()
         return
@@ -173,7 +176,9 @@ class TRITONSWMM_sim_post_processing:
         else:
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes, f_out_nodes, comp_level, verbose)
-            self.log.add_sim_processing_entry(f_out_nodes, elapsed_s, True)
+            self.log.add_sim_processing_entry(
+                f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
+            )
         # WRITE LINKS
         if links_already_written and not overwrite_if_exist:
             if verbose:
@@ -184,6 +189,7 @@ class TRITONSWMM_sim_post_processing:
             self._write_output(ds_links, f_out_links, comp_level, verbose)
             self.log.add_sim_processing_entry(
                 f_out_links,
+                get_file_size_MiB(f_out_links),
                 elapsed_s,
                 True,
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
@@ -204,7 +210,7 @@ class TRITONSWMM_sim_post_processing:
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
 
-        ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
+        # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
         ds.attrs["paths"] = paths_to_strings(
             self._experiment.dict_of_all_sim_files(self._scenario.sim_iloc)
         )
@@ -221,6 +227,8 @@ class TRITONSWMM_sim_post_processing:
             write_zarr(ds, f_out, compression_level)
         if verbose:
             print(f"finished writing {f_out}")
+
+        return
 
     def _already_written(self, f_out) -> bool:
         proc_log = self.log.processing_log.outputs

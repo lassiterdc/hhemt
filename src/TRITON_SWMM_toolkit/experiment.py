@@ -8,12 +8,14 @@ from TRITON_SWMM_toolkit.utils import (
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_experiment_config
 import pandas as pd
-from typing import Literal
+from typing import Literal, List
 from TRITON_SWMM_toolkit.paths import ExpPaths
 from pprint import pprint
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.running_a_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.processing_simulation import TRITONSWMM_sim_post_processing
+
+from TRITON_SWMM_toolkit.processing_experiment import TRITONSWMM_exp_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot import print_json_file_tree
 from TRITON_SWMM_toolkit.logging import TRITONSWMM_experiment_log
@@ -22,6 +24,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
+
+    # from .processing_experiment import TRITONSWMM_exp_post_processing
 
 
 class TRITONSWMM_experiment:
@@ -59,7 +63,9 @@ class TRITONSWMM_experiment:
             output_swmm_node_summary=experiment_dir
             / f"SWMM_nodes.{self.cfg_exp.TRITON_processed_output_type}",
         )
-        self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate)
+        self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate).loc[
+            :, self.cfg_exp.weather_event_indices
+        ]
         self.scenarios = {}
         self._sim_run_objects = {}
         self._sim_run_processing_objects = {}
@@ -75,6 +81,19 @@ class TRITONSWMM_experiment:
         if self.exp_paths.compilation_logfile.exists():
             self._validate_compilation()
         self._add_all_scenarios()
+        self.process = TRITONSWMM_exp_post_processing(self)
+
+    def consolidate_TRITON_simulation_summaries(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        self.process.consolidate_TRITON_outputs_for_experiment(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
 
     def print_cfg(self, which: Literal["system", "experiment", "both"] = "both"):
         if which == ["system", "both"]:
@@ -402,6 +421,18 @@ class TRITONSWMM_experiment:
         self.compilation_successful = success
         self.log.TRITONSWMM_compiled_successfully.set(success)
         return success
+
+    @property
+    def TRITON_experiment_summary_created(self):
+        return bool(self.log.TRITON_experiment_summary_created.get())
+
+    @property
+    def SWMM_node_experiment_summary_created(self):
+        return bool(self.log.SWMM_node_experiment_summary_created.get())
+
+    @property
+    def SWMM_link_experiment_summary_created(self):
+        return bool(self.log.SWMM_link_experiment_summary_created.get())
 
 
 # %%
