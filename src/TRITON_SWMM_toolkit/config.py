@@ -16,7 +16,7 @@ import pandas as pd
 from tabulate import tabulate
 import pandas as pd
 from typing import Optional, Tuple
-from TRITON_SWMM_toolkit.utils_plotting import print_json_file_tree
+from TRITON_SWMM_toolkit.utils_plot import print_json_file_tree
 
 
 class cfgBaseModel(BaseModel):
