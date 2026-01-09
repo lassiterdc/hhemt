@@ -63,11 +63,11 @@ class TRITONSWMM_scenario:
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
             # OUTPUTS
             output_triton_timeseries=sim_folder
-            / f"TRITON_tseries.{self._analysis.cfg_exp.TRITON_processed_output_type}",
+            / f"TRITON_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_link_time_series=sim_folder
-            / f"SWMM_link_tseries.{self._analysis.cfg_exp.TRITON_processed_output_type}",
+            / f"SWMM_link_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_node_time_series=sim_folder
-            / f"SWMM_node_tseries.{self._analysis.cfg_exp.TRITON_processed_output_type}",
+            / f"SWMM_node_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
         )
         self._create_directories()
         if self.scen_paths.f_log.exists():
@@ -127,7 +127,7 @@ class TRITONSWMM_scenario:
 
     def _write_swmm_rainfall_dat_files(self):
 
-        weather_timeseries = self._analysis.cfg_exp.weather_timeseries
+        weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
         subcatchment_raingage_mapping = (
             self._system.cfg_system.subcatchment_raingage_mapping
@@ -135,7 +135,7 @@ class TRITONSWMM_scenario:
         subcatchment_raingage_mapping_gage_id_colname = (
             self._system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
         )
-        rainfall_units = self._analysis.cfg_exp.rainfall_units
+        rainfall_units = self._analysis.cfg_analysis.rainfall_units
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
@@ -179,11 +179,11 @@ class TRITONSWMM_scenario:
         return
 
     def _write_swmm_waterlevel_dat_files(self):
-        storm_tide_units = self._analysis.cfg_exp.storm_tide_units
+        storm_tide_units = self._analysis.cfg_analysis.storm_tide_units
         weather_time_series_storm_tide_datavar = (
-            self._analysis.cfg_exp.weather_time_series_storm_tide_datavar
+            self._analysis.cfg_analysis.weather_time_series_storm_tide_datavar
         )
-        weather_timeseries = self._analysis.cfg_exp.weather_timeseries
+        weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -222,10 +222,10 @@ class TRITONSWMM_scenario:
         return
 
     def _create_swmm_model_from_template(self, swmm_model_template, destination):
-        weather_timeseries = self._analysis.cfg_exp.weather_timeseries
+        weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
         weather_time_series_timestep_dimension_name = (
-            self._analysis.cfg_exp.weather_time_series_timestep_dimension_name
+            self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -237,7 +237,7 @@ class TRITONSWMM_scenario:
         lst_tseries_section = []
         for key, val in fs.items():
             lst_tseries_section.append(f'{key} FILE "{val}"')
-        if self._analysis.cfg_exp.toggle_storm_tide_boundary:
+        if self._analysis.cfg_analysis.toggle_storm_tide_boundary:
             lst_tseries_section.append(
                 f'water_level FILE "{self.log.storm_tide_for_swmm.get()}"'
             )
@@ -289,17 +289,17 @@ class TRITONSWMM_scenario:
         return
 
     def _create_external_boundary_condition_files(self):
-        weather_timeseries = self._analysis.cfg_exp.weather_timeseries
+        weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
         weather_time_series_storm_tide_datavar = (
-            self._analysis.cfg_exp.weather_time_series_storm_tide_datavar
+            self._analysis.cfg_analysis.weather_time_series_storm_tide_datavar
         )
         simulation_folders = self._analysis.analysis_paths.simulation_directory
-        storm_tide_units = self._analysis.cfg_exp.storm_tide_units
+        storm_tide_units = self._analysis.cfg_analysis.storm_tide_units
 
         dem_processed = self._system.sys_paths.dem_processed
         storm_tide_boundary_line_gis = (
-            self._analysis.cfg_exp.storm_tide_boundary_line_gis
+            self._analysis.cfg_analysis.storm_tide_boundary_line_gis
         )
 
         ds_event_weather_series = xr.open_dataset(weather_timeseries)
@@ -615,14 +615,16 @@ class TRITONSWMM_scenario:
     def _generate_TRITON_SWMM_cfg(self):
         use_constant_mannings = self._system.cfg_system.toggle_use_constant_mannings
         dem_processed = self._system.sys_paths.dem_processed
-        manhole_diameter = self._analysis.cfg_exp.manhole_diameter
-        manhole_loss_coefficient = self._analysis.cfg_exp.manhole_loss_coefficient
-        TRITON_raw_output_type = self._analysis.cfg_exp.TRITON_raw_output_type
+        manhole_diameter = self._analysis.cfg_analysis.manhole_diameter
+        manhole_loss_coefficient = self._analysis.cfg_analysis.manhole_loss_coefficient
+        TRITON_raw_output_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         mannings_processed = self._system.sys_paths.mannings_processed
         constant_mannings = self._system.cfg_system.constant_mannings
-        hydraulic_timestep_s = self._analysis.cfg_exp.hydraulic_timestep_s
-        TRITON_reporting_timestep_s = self._analysis.cfg_exp.TRITON_reporting_timestep_s
-        open_boundaries = self._analysis.cfg_exp.open_boundaries
+        hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
+        TRITON_reporting_timestep_s = (
+            self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        )
+        open_boundaries = self._analysis.cfg_analysis.open_boundaries
         triton_swmm_configuration_template = (
             self._system.cfg_system.triton_swmm_configuration_template
         )

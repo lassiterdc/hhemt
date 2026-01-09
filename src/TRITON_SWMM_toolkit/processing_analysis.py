@@ -122,7 +122,7 @@ class TRITONSWMM_analysis_post_processing:
         return
 
     def _open_engine(self):
-        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
         if processed_out_type == "zarr":
             return "zarr"
         elif processed_out_type == "nc":
@@ -224,7 +224,7 @@ class TRITONSWMM_analysis_post_processing:
         chunks: str | dict,
         verbose: bool,
     ):
-        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
 
         ds.attrs["output_creation_date"] = current_datetime_string()
 

@@ -50,9 +50,9 @@ from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 #  define test case class
 class TRITON_SWMM_example:
     # LOADING FROM SYSTEM CONFIG
-    def __init__(self, cfg_system_yaml: Path, cfg_exp_yaml: Path):
+    def __init__(self, cfg_system_yaml: Path, cfg_analysis_yaml: Path):
         self.system = TRITONSWMM_system(cfg_system_yaml)
-        self.system.add_analysis(cfg_exp_yaml)
+        self.system.add_analysis(cfg_analysis_yaml)
 
 
 class TRITON_SWMM_testcase:
@@ -117,7 +117,7 @@ class TRITON_SWMM_testcase:
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
-        self.system.analysis.cfg_exp.weather_timeseries = f_weather_tseries  # type: ignore
+        self.system.analysis.cfg_analysis.weather_timeseries = f_weather_tseries  # type: ignore
         # add analysis to the system
 
     # create weather time series dataset
@@ -125,10 +125,10 @@ class TRITON_SWMM_testcase:
         self, f_out, n_reporting_tsteps_per_sim, n_events, event_index_name
     ):
         wlevel_name = (
-            self.system.analysis.cfg_exp.weather_time_series_storm_tide_datavar
+            self.system.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
         )
         tstep_coord_name = (
-            self.system.analysis.cfg_exp.weather_time_series_timestep_dimension_name
+            self.system.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
         df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
         gage_colname = (
@@ -137,7 +137,7 @@ class TRITON_SWMM_testcase:
         gages = df_raingage_mapping[gage_colname].unique()
 
         reporting_tstep_min = (
-            self.system.analysis.cfg_exp.TRITON_reporting_timestep_s / 60
+            self.system.analysis.cfg_analysis.TRITON_reporting_timestep_s / 60
         )
 
         timesteps = pd.date_range(
@@ -166,14 +166,14 @@ class TRITON_SWMM_testcase:
         return
 
     def _create_reduced_weather_file_for_testing_if_it_does_not_exist(self):
-        og_weather_timeseries = self.system.analysis.cfg_exp.weather_timeseries
+        og_weather_timeseries = self.system.analysis.cfg_analysis.weather_timeseries
         new_weather_timeseries = (
             self.system.cfg_system.system_directory / "weather_subset.nc"
         )
-        # weather_events_to_simulate = self.system.analysis.cfg_exp.weather_events_to_simulate
-        # weather_event_indices = self.system.analysis.cfg_exp.weather_event_indices
+        # weather_events_to_simulate = self.system.analysis.cfg_analysis.weather_events_to_simulate
+        # weather_event_indices = self.system.analysis.cfg_analysis.weather_event_indices
         weather_time_series_timestep_dimension_name = (
-            self.system.analysis.cfg_exp.weather_time_series_timestep_dimension_name
+            self.system.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
 
         ds_event_weather_series = xr.open_dataset(og_weather_timeseries)

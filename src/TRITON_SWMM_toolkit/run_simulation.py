@@ -124,7 +124,7 @@ class TRITONSWMM_run:
     def raw_triton_output_dir(self):
         return (
             self._triton_swmm_raw_output_directory()
-            / self._analysis.cfg_exp.TRITON_raw_output_type
+            / self._analysis.cfg_analysis.TRITON_raw_output_type
         )
 
     @property

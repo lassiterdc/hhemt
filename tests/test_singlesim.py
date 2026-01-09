@@ -14,7 +14,7 @@ def test_load_system_and_analysis():
 def test_create_dem_for_TRITON():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     single_sim_single_core.system.create_dem_for_TRITON()
-    rds = single_sim_single_core.system.open_processed_dem_as_rds()
+    rds = single_sim_single_core.system.processed_dem_rds
     assert rds.shape == (1, 537, 551)  # type: ignore
 
 

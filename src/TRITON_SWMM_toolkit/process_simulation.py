@@ -33,7 +33,7 @@ class TRITONSWMM_sim_post_processing:
         self._log_write_status()
 
     def _open_engine(self):
-        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
         if processed_out_type == "zarr":
             return "zarr"
         elif processed_out_type == "nc":
@@ -100,9 +100,9 @@ class TRITONSWMM_sim_post_processing:
         fname_out = self.scen_paths.output_triton_timeseries
         # dir_outputs = self._run._triton_swmm_raw_output_directory()
         fldr_out_triton = self._run.raw_triton_output_dir
-        raw_out_type = self._analysis.cfg_exp.TRITON_raw_output_type
-        reporting_interval_s = self._analysis.cfg_exp.TRITON_reporting_timestep_s
-        rds_dem = self._system.open_processed_dem_as_rds()
+        raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
+        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        rds_dem = self._system.processed_dem_rds
 
         if self._already_written(fname_out) and not overwrite_if_exist:
             if verbose:
@@ -205,7 +205,7 @@ class TRITONSWMM_sim_post_processing:
         compression_level: int,
         verbose: bool,
     ):
-        processed_out_type = self._analysis.cfg_exp.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
@@ -217,7 +217,7 @@ class TRITONSWMM_sim_post_processing:
         ds.attrs["configuration"] = paths_to_strings(
             {
                 "system": self._system.cfg_system.model_dump(),
-                "analysis": self._analysis.cfg_exp.model_dump(),
+                "analysis": self._analysis.cfg_analysis.model_dump(),
             }
         )
 

@@ -37,7 +37,7 @@ class TRITONSWMM_system:
         # from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
         exp = TRITONSWMM_analysis(analysis_config_yaml, self)
-        exp_name = exp.cfg_exp.analysis_id
+        exp_name = exp.cfg_analysis.analysis_id
         self._analysis = exp
         return
 

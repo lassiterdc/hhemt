@@ -37,17 +37,17 @@ class TRITONSWMM_analysis:
     ) -> None:
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
-        cfg_exp = load_analysis_config(analysis_config_yaml)
-        self.cfg_exp = cfg_exp
+        cfg_analysis = load_analysis_config(analysis_config_yaml)
+        self.cfg_analysis = cfg_analysis
         # define additional paths not defined in cfg
         compiled_software_directory = (
             self._system.cfg_system.system_directory
-            / self.cfg_exp.analysis_id
+            / self.cfg_analysis.analysis_id
             / "compiled_software"
         )
         compiled_software_directory.mkdir(parents=True, exist_ok=True)
         analysis_dir = (
-            self._system.cfg_system.system_directory / self.cfg_exp.analysis_id
+            self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
         )
         self.analysis_paths = ExpPaths(
             f_log=analysis_dir / "log.json",
@@ -58,14 +58,14 @@ class TRITONSWMM_analysis:
             simulation_directory=analysis_dir / "sims",
             compilation_logfile=compiled_software_directory / f"compilation.log",
             output_triton_summary=analysis_dir
-            / f"TRITON.{self.cfg_exp.TRITON_processed_output_type}",
+            / f"TRITON.{self.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_links_summary=analysis_dir
-            / f"SWMM_links.{self.cfg_exp.TRITON_processed_output_type}",
+            / f"SWMM_links.{self.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_node_summary=analysis_dir
-            / f"SWMM_nodes.{self.cfg_exp.TRITON_processed_output_type}",
+            / f"SWMM_nodes.{self.cfg_analysis.TRITON_processed_output_type}",
         )
-        self.df_sims = pd.read_csv(self.cfg_exp.weather_events_to_simulate).loc[
-            :, self.cfg_exp.weather_event_indices
+        self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
+            :, self.cfg_analysis.weather_event_indices
         ]
         self.scenarios = {}
         self._sim_run_objects = {}
@@ -117,14 +117,14 @@ class TRITONSWMM_analysis:
             print("\n")
         if which in ["analysis", "both"]:
             print("=== analysis Configuration ===")
-            self.cfg_exp.display_tabulate_cfg()
+            self.cfg_analysis.display_tabulate_cfg()
 
     def print_all_yaml_defined_input_files(self):
         print_json_file_tree(self.dict_of_exp_and_sys_config())
 
     def dict_of_exp_and_sys_config(self):
         dic_exp = self._system.cfg_system.model_dump()
-        dic_sys = self.cfg_exp.model_dump()
+        dic_sys = self.cfg_analysis.model_dump()
         return dic_exp | dic_sys
 
     def dict_of_all_sim_files(self, sim_iloc):
@@ -142,7 +142,7 @@ class TRITONSWMM_analysis:
         self,
         sim_iloc,
     ):
-        row = self.df_sims.loc[sim_iloc, self.cfg_exp.weather_event_indices]
+        row = self.df_sims.loc[sim_iloc, self.cfg_analysis.weather_event_indices]
         weather_event_indexers = row.to_dict()
         return weather_event_indexers
 
@@ -371,7 +371,7 @@ class TRITONSWMM_analysis:
         TRITONSWMM_software_directory = (
             self._system.cfg_system.TRITONSWMM_software_directory
         )
-        TRITON_SWMM_make_command = self.cfg_exp.TRITON_SWMM_make_command
+        TRITON_SWMM_make_command = self.cfg_analysis.TRITON_SWMM_make_command
         TRITON_SWMM_software_compilation_script = (
             self._system.cfg_system.TRITON_SWMM_software_compilation_script
         )
