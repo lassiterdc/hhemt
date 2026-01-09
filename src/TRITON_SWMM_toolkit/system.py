@@ -236,7 +236,7 @@ class TRITONSWMM_system:
         return str_flt
 
     def plot_processed_dem(self, ax=None):
-        from TRITON_SWMM_toolkit.plot import (
+        from TRITON_SWMM_toolkit.utils_plotting import (
             process_dem_for_plotting,
             plot_continuous_raster,
         )
@@ -275,7 +275,7 @@ class TRITONSWMM_system:
         return ax
 
     def plot_processed_mannings(self, ax=None):
-        from TRITON_SWMM_toolkit.plot import (
+        from TRITON_SWMM_toolkit.utils_plotting import (
             process_dem_for_plotting,
             plot_continuous_raster,
         )

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict
 from dataclasses import dataclass, asdict
-from TRITON_SWMM_toolkit.plot import print_json_file_tree
+from TRITON_SWMM_toolkit.utils_plotting import print_json_file_tree
 
 
 @dataclass
