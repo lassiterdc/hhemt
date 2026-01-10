@@ -8,6 +8,7 @@ storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.sh
 weather_events_to_simulate: '${DATA_DIR}/hurricane_irene_event_index.csv'
 analysis_description: 'Single Simulation of Hurricane Irene 8-27-2011'
 TRITON_SWMM_make_command: 'hpc_swmm_omp'
+run_mode: "serial"
 # UNITS
 rainfall_units: 'mm/hr'
 storm_tide_units: 'm'

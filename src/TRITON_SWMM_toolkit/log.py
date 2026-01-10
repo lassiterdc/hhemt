@@ -92,6 +92,13 @@ class SimEntry(BaseModel):
     tritonswmm_logfile: Path
     time_elapsed_s: float
     status: str
+    run_mode: str
+    cmd: str
+    n_mpi_procs: int | float | None
+    n_omp_threads: int | float | None
+    n_gpus: int | float | None
+    in_slurm: bool
+    env: dict
 
 
 class SimLog(BaseModel):
@@ -357,6 +364,13 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         tritonswmm_logfile: Path,
         time_elapsed_s: float,
         status: str,
+        run_mode: str,
+        cmd: str,
+        n_mpi_procs: int | float | None,
+        n_omp_threads: int | float | None,
+        n_gpus: int | float | None,
+        in_slurm: bool,
+        env: dict,
     ):
         simlog = SimEntry(
             sim_datetime=sim_datetime,
@@ -364,6 +378,13 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
             tritonswmm_logfile=tritonswmm_logfile,
             time_elapsed_s=time_elapsed_s,
             status=status,
+            run_mode=run_mode,
+            cmd=cmd,
+            n_mpi_procs=n_mpi_procs,
+            n_omp_threads=n_omp_threads,
+            n_gpus=n_gpus,
+            in_slurm=in_slurm,
+            env=env,
         )
         self.sim_log.update(simlog)
 

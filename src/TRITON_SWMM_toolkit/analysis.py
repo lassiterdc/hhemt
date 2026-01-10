@@ -18,7 +18,7 @@ from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processin
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
-from TRITON_SWMM_toolkit.logging import TRITONSWMM_analysis_log
+from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 
 from typing import TYPE_CHECKING
@@ -222,7 +222,6 @@ class TRITONSWMM_analysis:
     def run_sim(
         self,
         sim_iloc: int,
-        mode: Mode | Literal["single_core"],
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool,
         which: Literal["TRITON", "SWMM", "both"],
@@ -244,7 +243,7 @@ class TRITONSWMM_analysis:
         run = self._retreive_sim_run_object(sim_iloc)
         if verbose:
             print("run instance instantiated")
-        run.run_sim(mode, pickup_where_leftoff, verbose)
+        run.run_simulation(pickup_where_leftoff, verbose=verbose)
         self.sim_run_status(sim_iloc)
         self._add_all_scenarios()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
@@ -320,7 +319,6 @@ class TRITONSWMM_analysis:
 
     def run_all_sims_in_series(
         self,
-        mode: Mode | Literal["single_core"],
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -344,11 +342,10 @@ class TRITONSWMM_analysis:
         for sim_iloc in self.df_sims.index:
             if verbose:
                 print(
-                    f"Running sim {sim_iloc} with mode = {mode} and pickup_where_leftoff = {pickup_where_leftoff}"
+                    f"Running sim {sim_iloc} and pickup_where_leftoff = {pickup_where_leftoff}"
                 )
             self.run_sim(
                 sim_iloc=sim_iloc,
-                mode=mode,
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
                 process_outputs_after_sim_completion=process_outputs_after_sim_completion,

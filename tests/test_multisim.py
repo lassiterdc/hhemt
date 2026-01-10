@@ -10,7 +10,6 @@ def test_run_multiple_sims_in_sequence():
         overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
     )
     exp.run_all_sims_in_series(
-        mode=exp.run_modes.SINGLE_CORE,
         pickup_where_leftoff=False,
         process_outputs_after_sim_completion=True,
     )

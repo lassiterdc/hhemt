@@ -365,6 +365,16 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Rainfall units in weather_timeseries mm or mm/hr.",
     )
+    # COMPUTE CONFIG
+    run_mode: Literal["serial", "openmp", "mpi", "hybrid"] = Field(
+        ..., description="Compute configuration"
+    )
+    n_mpi_procs: Optional[int] = Field(
+        None, description="Number of MPI ranks per simulation."
+    )
+    n_omp_threads: Optional[int] = Field(None, description="Threads per rank")
+    n_gpus: Optional[int] = Field(None, description="Number of GPUs")
+
     # TOGGLES
     toggle_benchmarking_analysis: bool = Field(
         ...,
@@ -467,6 +477,62 @@ class analysis_config(cfgBaseModel):
             lst_rqrd_if_false=[""],
         )
         cls.toggle_tests.append(storm_tide_boundary_test)
+
+    @model_validator(mode="before")
+    @classmethod
+    def check_consistency(cls, values):
+        mode = values.get("run_mode")
+        mpi = values.get("n_mpi_procs")
+        omp = values.get("n_omp_threads")
+        gpus = values.get("n_gpus")
+
+        # -------------------------------
+        # Validation rules per mode
+        # -------------------------------
+        if mode == "serial":
+            if mpi is not None:
+                raise ValueError("n_mpi_procs must be None for serial mode")
+            if omp is not None and omp != 1:
+                raise ValueError("n_omp_threads must be 1 or None for serial mode")
+            if gpus not in (None, 0):
+                raise ValueError("n_gpus must be None or 0 for serial mode")
+
+        elif mode == "openmp":
+            if mpi not in (None, 1):
+                raise ValueError("n_mpi_procs must be None or 1 for OpenMP mode")
+            if omp is None or omp < 2:
+                raise ValueError("n_omp_threads must be >1 for OpenMP mode")
+            if gpus not in (None, 0):
+                raise ValueError("n_gpus must be None or 0 for OpenMP mode")
+
+        elif mode == "mpi":
+            if mpi is None or mpi < 2:
+                raise ValueError("n_mpi_procs must be >1 for MPI mode")
+            if omp not in (None, 1):
+                raise ValueError("n_omp_threads must be 1 or None for MPI-only mode")
+            if gpus not in (None, 0):
+                raise ValueError("n_gpus must be None or 0 for MPI-only mode")
+
+        elif mode == "hybrid":
+            if mpi is None or mpi < 2:
+                raise ValueError("n_mpi_procs must be >1 for hybrid mode")
+            if omp is None or omp < 2:
+                raise ValueError("n_omp_threads must be >1 for hybrid mode")
+            if gpus not in (None, 0):
+                raise ValueError("n_gpus must be None or 0 for hybrid CPU mode")
+
+        elif mode == "gpu":
+            if gpus is None or gpus < 1:
+                raise ValueError("n_gpus must be >=1 for GPU mode")
+            if mpi is not None and mpi < 1:
+                raise ValueError("n_mpi_procs must be >=1 if using MPI with GPU")
+            if omp is not None and omp < 1:
+                raise ValueError("n_omp_threads must be >=1 if using OpenMP with GPU")
+
+        else:
+            raise ValueError(f"Unknown run_mode: {mode}")
+
+        return values
 
 
 def load_system_config(cfg_yaml: Path):

@@ -18,7 +18,7 @@ from TRITON_SWMM_toolkit.utils import (
     string_to_datetime,
 )
 from datetime import datetime
-from TRITON_SWMM_toolkit.logging import TRITONSWMM_scenario_log
+from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
 from typing import TYPE_CHECKING, Literal
 

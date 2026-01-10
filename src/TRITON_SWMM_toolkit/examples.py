@@ -5,8 +5,8 @@ from TRITON_SWMM_toolkit.constants import (
     APP_NAME,
     NORFOLK_EX,
     NORFOLK_SYSTEM_CONFIG,
-    NORFOLK_SINGLE_SIM_EXP_CONFIG,
-    NORFOLK_BENCHMARKING_EXP_CONFIG,
+    NORFOLK_ANALYSIS_CONFIG,
+    # NORFOLK_BENCHMARKING_EXP_CONFIG,
     NORFOLK_CASE_CONFIG,
 )
 import sys
@@ -84,9 +84,7 @@ class TRITON_SWMM_testcase:
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
         # load single sime analysis
-        single_sim_anlysys_yaml = (
-            TRITON_SWMM_examples.load_norfolk_single_sim_analysis()
-        )
+        single_sim_anlysys_yaml = TRITON_SWMM_examples.load_norfolk_template_analysis()
         anlysys = load_analysis_config(single_sim_anlysys_yaml)
         # update analysis attributes
         anlysys.analysis_id = analysis_name
@@ -220,21 +218,19 @@ class TRITON_SWMM_examples:
     @classmethod
     def retrieve_norfolk_irene_example(cls, download_if_exists=False):
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
-        norfolk_analysis_yaml = cls.load_norfolk_single_sim_analysis()
+        norfolk_analysis_yaml = cls.load_norfolk_template_analysis()
         norfolk_irene = TRITON_SWMM_example(norfolk_system_yaml, norfolk_analysis_yaml)
         return norfolk_irene
 
-    @classmethod
-    def load_norfolk_benchmarking_config(cls):
-        return cls._load_example_analysis_config(
-            NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG
-        )
+    # @classmethod
+    # def load_norfolk_benchmarking_config(cls):
+    #     return cls._load_example_analysis_config(
+    #         NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG
+    # )
 
     @classmethod
-    def load_norfolk_single_sim_analysis(cls):
-        return cls._load_example_analysis_config(
-            NORFOLK_EX, NORFOLK_SINGLE_SIM_EXP_CONFIG
-        )
+    def load_norfolk_template_analysis(cls):
+        return cls._load_example_analysis_config(NORFOLK_EX, NORFOLK_ANALYSIS_CONFIG)
 
     @classmethod
     def _fill_analysis_yaml(cls, system_name: str, analysis_config_filename: str):
@@ -322,7 +318,7 @@ class TRITON_SWMM_testcases:
 
 
 def load_config_filepath(case_study_name: str, filename: str) -> Path:
-    return files(APP_NAME).joinpath(f"examples/{case_study_name}/{filename}")  # type: ignore
+    return files(APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
 
 
 def load_config_file_as_dic(case_study_name: str, filename: str) -> dict:
@@ -394,7 +390,8 @@ def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
 def get_norfolk_data_and_package_directory_mapping_dict():
     hydroshare_root_dir = get_package_data_root(APP_NAME) / "examples" / NORFOLK_EX
     data_dir = hydroshare_root_dir / "data" / "contents"
-    package_dir = get_package_root(APP_NAME) / "examples" / NORFOLK_EX
+    package_dir = get_package_root(APP_NAME).parents[1] / "test_data" / NORFOLK_EX
+
     mapping = dict(
         DATA_DIR=str(data_dir),
         PACKAGE_DIR=str(package_dir),

@@ -9,8 +9,8 @@ class Mode(str, Enum):
 # TESTING
 APP_NAME = "TRITON_SWMM_toolkit"
 NORFOLK_EX = "norfolk_coastal_flooding"
-NORFOLK_SINGLE_SIM_EXP_CONFIG = "template_single_sim_analysis_config.yaml"
-NORFOLK_BENCHMARKING_EXP_CONFIG = "template_benchmarking_analysis_config.yaml"
+NORFOLK_ANALYSIS_CONFIG = "template_analysis_config.yaml"
+# NORFOLK_BENCHMARKING_EXP_CONFIG = "template_benchmarking_analysis_config.yaml"
 NORFOLK_SYSTEM_CONFIG = "template_system_config.yaml"
 NORFOLK_CASE_CONFIG = "case.yaml"
 

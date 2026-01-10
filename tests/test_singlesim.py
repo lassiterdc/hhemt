@@ -4,7 +4,9 @@ from TRITON_SWMM_toolkit.examples import TRITON_SWMM_testcases as tst
 
 
 def test_load_system_and_analysis():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
+        start_from_scratch=True
+    )
     assert (
         single_sim_single_core.system.analysis.analysis_paths.simulation_directory.exists()
     )
@@ -51,8 +53,7 @@ def test_prepare_all_scenarios():
 def test_run_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     single_sim_single_core.system.analysis.run_all_sims_in_series(
-        mode=single_sim_single_core.system.analysis.run_modes.SINGLE_CORE,
-        pickup_where_leftoff=False,
+        pickup_where_leftoff=False
     )
     success = single_sim_single_core.system.analysis.scenarios[0].sim_run_completed
     if not success:
