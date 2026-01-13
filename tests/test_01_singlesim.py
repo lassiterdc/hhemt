@@ -1,6 +1,6 @@
 # tests/test_TRITON_SWMM_toolkit.py
 import pytest
-from TRITON_SWMM_toolkit.examples import TRITON_SWMM_testcases as tst
+from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
 
 def test_load_system_and_analysis():
@@ -31,7 +31,7 @@ def test_create_mannings_file_for_TRITON():
 def test_compile_TRITONSWMM_for_cpu_sims():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     single_sim_single_core.system.analysis.compile_TRITON_SWMM()
-    assert single_sim_single_core.system.analysis._validate_compilation()
+    assert single_sim_single_core.system.analysis.compilation_successful
 
 
 # SCENARIO SET UP
@@ -64,7 +64,7 @@ def test_run_sim():
 def test_process_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     exp = single_sim_single_core.system.analysis
-    exp.process_all_sim_outputs()
+    exp.process_all_sim_timeseries()
     success_processing = (
         exp.log.all_TRITON_timeseries_processed.get()
         and exp.log.all_SWMM_timeseries_processed.get()

@@ -25,14 +25,15 @@ if TYPE_CHECKING:
 class TRITONSWMM_analysis_post_processing:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
-        self.log = analysis.log
+        # self.log = analysis.log
 
     def _retrieve_combined_output(
         self, mode: Literal["TRITON", "SWMM_node", "SWMM_link"]
     ) -> xr.Dataset:  # type: ignore
         lst_ds = []
-        for sim_iloc in self._analysis.df_sims.index:
-            proc = self._analysis._sim_run_processing_objects[sim_iloc]
+        for event_iloc in self._analysis.df_sims.index:
+            scen = self._analysis.scenarios[event_iloc]
+            proc = self._analysis._sim_run_processing_objects[event_iloc]
             if mode.lower() == "triton":
                 ds = proc.TRITON_timeseries
                 ds = self._summarize_triton_simulation_results(ds)
@@ -42,12 +43,20 @@ class TRITONSWMM_analysis_post_processing:
             elif mode.lower() == "swmm_link":
                 ds = proc.SWMM_link_timeseries
                 ds = self._summarize_swmm_simulation_results(ds)
-            ds = ds.assign_coords(coords=dict(sim_iloc=sim_iloc))
-            ds = ds.expand_dims("sim_iloc")
+            ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
+            ds = ds.expand_dims("event_iloc")
+            # add computation time as a data array
+            df = pd.DataFrame(
+                index=[event_iloc],
+                data=dict(compute_time_min=[scen.sim_compute_time_min]),
+            )
+            df.index.name = "event_iloc"
+            da_compute_time = df.to_xarray()["compute_time_min"]
+            ds["compute_time_min"] = da_compute_time
             lst_ds.append(ds)
         # merge
         ds_triton_outputs = xr.concat(
-            lst_ds, dim="sim_iloc", combine_attrs="drop_conflicts"
+            lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
         )
         return ds_triton_outputs  # type: ignore
 
@@ -66,22 +75,40 @@ class TRITONSWMM_analysis_post_processing:
         if len(spatial_coords) not in [1, 2]:
             raise ValueError("Spatial dimension can only be 1 or 2 dimensional")
 
-        sim_idxs = ds_combined_outputs.sim_iloc.to_series()
+        lst_non_spatial_coords = []
+        for coord in ds_combined_outputs.coords:
+            if coord not in spatial_coords:
+                lst_non_spatial_coords.append(coord)
 
         size_to_load_MiB = ds_memory_req_MiB(ds_combined_outputs)
-        size_per_sim = size_to_load_MiB / len(sim_idxs)
+        size_per_sim = size_to_load_MiB / len(lst_non_spatial_coords)
 
-        sim_idx_chunk = prev_power_of_two(max_mem_usage_MiB / size_per_sim)
+        target_sim_idx_chunk = prev_power_of_two(max_mem_usage_MiB / size_per_sim)
 
-        chunks = dict(sim_iloc=sim_idx_chunk)
-        test_slice = dict(sim_iloc=slice(0, int(sim_idx_chunk)))
+        # creating chunking for nonspatial dims
+        sims_per_chunk = 1
+        chunks = dict()
+        for coord in lst_non_spatial_coords:
+            s_crd = ds_combined_outputs[coord].to_series()
+            # will only be triggered once for the first dimension encountered that is greater than or equal to in length the target
+            chnk = 1
+            if (len(s_crd) >= target_sim_idx_chunk) and (
+                sims_per_chunk < target_sim_idx_chunk
+            ):
+                chnk = len(s_crd)
+            chunks[coord] = chnk
+            sims_per_chunk *= chnk
+            test_slice = {coord: slice(0, int(chnk))}
+
         for coord in spatial_coords:
-            chunks[coord] = int(size_per_spatial_coord)
+            s_crd = ds_combined_outputs[coord].to_series()
+            len_crd = len(s_crd)
+            chunks[coord] = int(min(size_per_spatial_coord, len_crd))
             test_slice[coord] = slice(0, int(size_per_spatial_coord))
 
-        ds_combined_outputs = ds_combined_outputs.chunk(chunks)
+        ds_combined_outputs = ds_combined_outputs.chunk(chunks)  # type: ignore
 
-        size_to_load_MiB = ds_memory_req_MiB(ds_combined_outputs.isel(test_slice))
+        size_to_load_MiB = ds_memory_req_MiB(ds_combined_outputs.isel(test_slice))  # type: ignore
 
         assert size_to_load_MiB <= max_mem_usage_MiB
 
@@ -93,7 +120,9 @@ class TRITONSWMM_analysis_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        ds_combined_outputs = self._retrieve_combined_output("TRITON")
         self._consolidate_outputs(
+            ds_combined_outputs,
             mode="TRITON",
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
@@ -107,13 +136,17 @@ class TRITONSWMM_analysis_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        ds_combined_outputs = self._retrieve_combined_output("SWMM_node")
         self._consolidate_outputs(
+            ds_combined_outputs,
             mode="SWMM_node",
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
         )
+        ds_combined_outputs = self._retrieve_combined_output("SWMM_link")
         self._consolidate_outputs(
+            ds_combined_outputs,
             mode="SWMM_link",
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
@@ -131,7 +164,7 @@ class TRITONSWMM_analysis_post_processing:
     def _open(self, f):
         if f.exists():
             return xr.open_dataset(
-                f, chunks="auto", engine=self._open_engine(), consolidated=False
+                f, chunks="auto", engine=self._open_engine(), consolidated=False  # type: ignore
             )
         else:
             raise ValueError(
@@ -154,7 +187,7 @@ class TRITONSWMM_analysis_post_processing:
         """
         Checks log file to determine whether the file was written successfully
         """
-        proc_log = self.log.processing_log.outputs
+        proc_log = self._analysis.log.processing_log.outputs
         already_written = False
         if f_out.name in proc_log.keys():
             if proc_log[f_out.name].success == True:
@@ -163,12 +196,14 @@ class TRITONSWMM_analysis_post_processing:
 
     def _consolidate_outputs(
         self,
+        ds_combined_outputs: xr.Dataset | xr.DataArray,
         mode: Literal["TRITON", "SWMM_node", "SWMM_link"],
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         start_time = time.time()
+        self._analysis._refresh_log()
         if mode.lower() == "triton":
             proc_log = self._analysis.log.TRITON_analysis_summary_created
             fname_out = self._analysis.analysis_paths.output_triton_summary
@@ -185,11 +220,17 @@ class TRITONSWMM_analysis_post_processing:
             spatial_coords = "link_id"
 
         if mode.lower() == "triton":
-            if not self.log.all_TRITON_timeseries_processed.get():
-                raise RuntimeError("TRITON time series have not been processed.")
+            if not self._analysis.log.all_TRITON_timeseries_processed.get():
+                raise RuntimeError(
+                    f"TRITON time series have not been processed.\n\
+self._analysis.log.all_TRITON_timeseries_processed.get() = {self._analysis.log.all_TRITON_timeseries_processed.get()}\n\
+Log:\n{self._analysis.log._as_json()}\n id(self._analysis.log) = {id(self._analysis.log)}\n id(self._analysis) = {id(self._analysis)}"
+                )
         else:
-            if not self.log.all_SWMM_timeseries_processed.get():
-                raise RuntimeError("SWMM time series have not been processed.")
+            if not self._analysis.log.all_SWMM_timeseries_processed.get():
+                raise RuntimeError(
+                    f"SWMM time series have not been processed. Log:\n{self._analysis.log._as_json()}"
+                )
 
         if (
             self._already_written(fname_out)
@@ -202,8 +243,8 @@ class TRITONSWMM_analysis_post_processing:
                 )
             return
 
-        ds_combined_outputs = self._retrieve_combined_output(mode)
-        chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)
+        # ds_combined_outputs = self._retrieve_combined_output(mode)
+        chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)  # type: ignore
 
         self._write_output(
             ds_combined_outputs, fname_out, compression_level, chunks, verbose  # type: ignore
@@ -211,7 +252,7 @@ class TRITONSWMM_analysis_post_processing:
         # logging
         proc_log.set(True)
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
+        self._analysis.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
         return

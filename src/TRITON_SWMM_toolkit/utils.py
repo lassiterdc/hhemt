@@ -237,7 +237,8 @@ def zarr_size_bytes(zarr_path: Path) -> int:
 
 def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
     encoding = return_dic_zarr_encodings(ds, compression_level)
-    chunks = return_dic_autochunk(ds)
+    if chunks == "auto":
+        chunks = return_dic_autochunk(ds)
     ds = ds.chunk(chunks)
     ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 

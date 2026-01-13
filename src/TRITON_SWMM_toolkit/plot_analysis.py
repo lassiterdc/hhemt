@@ -38,8 +38,8 @@ class TRITONSWMM_analysis_plotting:
     def swmm_link_ds(self):
         return self._analysis.SWMM_link_summary
 
-    def max_wlevel(self, sim_iloc):
-        da = self.triton_ds["max_wlevel_m"].isel(sim_iloc=sim_iloc)
+    def max_wlevel(self, event_iloc):
+        da = self.triton_ds["max_wlevel_m"].isel(event_iloc=event_iloc)
         watershed_shapefile = self._system.cfg_system.watershed_gis_polygon
         mask = utils.create_mask_from_shapefile(da, watershed_shapefile)
         plt_utils.plot_continuous_raster(

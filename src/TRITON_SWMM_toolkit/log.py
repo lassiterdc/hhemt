@@ -201,7 +201,7 @@ class TRITONSWMM_log(BaseModel):
 
 
 class TRITONSWMM_scenario_log(TRITONSWMM_log):
-    sim_iloc: int
+    event_iloc: int
     event_idx: Dict
     simulation_folder: Path
 

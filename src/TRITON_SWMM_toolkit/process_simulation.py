@@ -42,7 +42,7 @@ class TRITONSWMM_sim_post_processing:
     def _open(self, f):
         if f.exists():
             return xr.open_dataset(
-                f, chunks="auto", engine=self._open_engine(), consolidated=False
+                f, chunks="auto", engine=self._open_engine(), consolidated=False  # type: ignore
             )
         else:
             raise ValueError(
@@ -212,7 +212,7 @@ class TRITONSWMM_sim_post_processing:
 
         # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
         ds.attrs["paths"] = paths_to_strings(
-            self._analysis.dict_of_all_sim_files(self._scenario.sim_iloc)
+            self._analysis.dict_of_all_sim_files(self._scenario.event_iloc)
         )
         ds.attrs["configuration"] = paths_to_strings(
             {

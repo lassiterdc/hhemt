@@ -369,6 +369,7 @@ class analysis_config(cfgBaseModel):
     run_mode: Literal["serial", "openmp", "mpi", "hybrid"] = Field(
         ..., description="Compute configuration"
     )
+    n_nodes: int = Field(1, description="Node count")
     n_mpi_procs: Optional[int] = Field(
         None, description="Number of MPI ranks per simulation."
     )
@@ -376,9 +377,9 @@ class analysis_config(cfgBaseModel):
     n_gpus: Optional[int] = Field(None, description="Number of GPUs")
 
     # TOGGLES
-    toggle_benchmarking_analysis: bool = Field(
+    toggle_sensitivity_analysis: bool = Field(
         ...,
-        description="Whether or not this is a benchmarking study. If so, a .csv file is required for input benchmarking_analysis defining the analysisal setup.",
+        description="Whether or not this is a sensitivity study. If so, a .csv file is required for input sensitivity_analysis defining the analysisal setup.",
     )
     toggle_storm_tide_boundary: bool = Field(
         ...,
@@ -401,13 +402,13 @@ class analysis_config(cfgBaseModel):
         None,
         description="Data variables in weather_timeseries corresponding to storm tide.",
     )
-    benchmarking_analysis: Optional[Path] = Field(
+    sensitivity_analysis: Optional[Path] = Field(
         None,
-        description="Benchmarking analysisal design csv file.",
+        description="sensitivity analysisal design csv file.",
     )
     weather_events_to_simulate: Path = Field(
         ...,
-        description="Path to a .csv file defining weather event index used for benchmarking. The columns must correspond to the sytem's weather_event_indices.",
+        description="Path to a .csv file defining weather event index used for sensitivity. The columns must correspond to the sytem's weather_event_indices.",
     )
     analysis_description: Optional[str] = Field(
         None,
@@ -450,19 +451,19 @@ class analysis_config(cfgBaseModel):
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("analysis_id")
     def validate_analysis_id(cls, v):
-        if not re.match(r"^[A-Za-z][A-Za-z0-9_.]*$", v):
+        if not re.match(r"^[A-Za-z0-9_.]*$", v):
             raise ValueError(
-                "analysis_id must start with a letter and contain only letters, digits, underscores, or periods"
+                "analysis_id must contain only letters, digits, underscores, or periods"
             )
         return v
 
     # VALIDATING DEPENDENCIES BASED ON TOGGLES
     @classmethod
     def get_toggle_tests(cls):
-        ### toggle_benchmarking_analysis
+        ### toggle_sensitivity_analysis
         bm_test = dict(
-            toggle_varname="toggle_benchmarking_analysis",
-            lst_rqrd_if_true=["benchmarking_analysis"],
+            toggle_varname="toggle_sensitivity_analysis",
+            lst_rqrd_if_true=["sensitivity_analysis"],
             lst_rqrd_if_false=[],
         )
         cls.toggle_tests.append(bm_test)
@@ -490,8 +491,10 @@ class analysis_config(cfgBaseModel):
         # Validation rules per mode
         # -------------------------------
         if mode == "serial":
-            if mpi is not None:
-                raise ValueError("n_mpi_procs must be None for serial mode")
+            if mpi is not None and mpi != 1:
+                raise ValueError(
+                    f"n_mpi_procs is set to {mpi}.\nn_mpi_procs must be None or 1 for serial mode"
+                )
             if omp is not None and omp != 1:
                 raise ValueError("n_omp_threads must be 1 or None for serial mode")
             if gpus not in (None, 0):
@@ -547,6 +550,6 @@ def load_analysis_config(cfg_yaml: Path):
     return cfg
 
 
-# def load_benchmarking_analysis_config_config(cfg):
-#     cfg = benchmarking_analysis_config.model_validate(cfg)
+# def load_sensitivity_analysis_config_config(cfg):
+#     cfg = sensitivity_analysis_config.model_validate(cfg)
 #     return cfg

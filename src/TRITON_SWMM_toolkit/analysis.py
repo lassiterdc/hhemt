@@ -8,9 +8,8 @@ from TRITON_SWMM_toolkit.utils import (
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_analysis_config
 import pandas as pd
-from typing import Literal, List
-from TRITON_SWMM_toolkit.paths import ExpPaths
-from pprint import pprint
+from typing import Literal
+from TRITON_SWMM_toolkit.paths import AnalysisPaths
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
@@ -20,13 +19,12 @@ from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
-
-from typing import TYPE_CHECKING
+from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
+import yaml
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
-
-    # from .processing_analysis import TRITONSWMM_analysis_post_processing
 
 
 class TRITONSWMM_analysis:
@@ -34,22 +32,26 @@ class TRITONSWMM_analysis:
         self,
         analysis_config_yaml: Path,
         system: "TRITONSWMM_system",
+        analysis_dir: Optional[Path] = None,
+        compiled_software_directory: Optional[Path] = None,
     ) -> None:
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
         # define additional paths not defined in cfg
-        compiled_software_directory = (
-            self._system.cfg_system.system_directory
-            / self.cfg_analysis.analysis_id
-            / "compiled_software"
-        )
-        compiled_software_directory.mkdir(parents=True, exist_ok=True)
-        analysis_dir = (
-            self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
-        )
-        self.analysis_paths = ExpPaths(
+        if compiled_software_directory is None:
+            compiled_software_directory = (
+                self._system.cfg_system.system_directory
+                / self.cfg_analysis.analysis_id
+                / "compiled_software"
+            )
+            compiled_software_directory.mkdir(parents=True, exist_ok=True)
+        if analysis_dir is None:
+            analysis_dir = (
+                self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
+            )
+        self.analysis_paths = AnalysisPaths(
             f_log=analysis_dir / "log.json",
             analysis_dir=analysis_dir,
             compiled_software_directory=compiled_software_directory,
@@ -72,18 +74,35 @@ class TRITONSWMM_analysis:
         self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
         self.run_modes = Mode
-        self.compilation_successful = False
-
-        if self.analysis_paths.f_log.exists():
-            self.log = TRITONSWMM_analysis_log.from_json(self.analysis_paths.f_log)
-        else:
-            self.log = TRITONSWMM_analysis_log(logfile=self.analysis_paths.f_log)
+        # self.compilation_successful = False
+        self._refresh_log()
 
         if self.analysis_paths.compilation_logfile.exists():
             self._validate_compilation()
         self._add_all_scenarios()
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
+        if self.cfg_analysis.toggle_sensitivity_analysis == True:
+            self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
+
+        cfg_anlysys_yaml = analysis_dir / f"analysis.yaml"
+        cfg_anlysys_yaml.write_text(
+            yaml.safe_dump(
+                self.cfg_analysis.model_dump(mode="json"),
+                sort_keys=False,  # .dict() for pydantic v1
+            )
+        )
+        self._update_log()
+
+    def _refresh_log(self):
+        if self.analysis_paths.f_log.exists():
+            self.log = TRITONSWMM_analysis_log.from_json(self.analysis_paths.f_log)
+        else:
+            self.log = TRITONSWMM_analysis_log(logfile=self.analysis_paths.f_log)
+
+    @property
+    def compilation_successful(self):
+        return self._validate_compilation()
 
     def consolidate_TRITON_simulation_summaries(
         self,
@@ -127,46 +146,53 @@ class TRITONSWMM_analysis:
         dic_sys = self.cfg_analysis.model_dump()
         return dic_exp | dic_sys
 
-    def dict_of_all_sim_files(self, sim_iloc):
+    def dict_of_all_sim_files(self, event_iloc):
         dic_syspaths = self._system.sys_paths.as_dict()
         dic_analysis_paths = self.analysis_paths.as_dict()
-        dic_sim_paths = self.scenarios[sim_iloc].scen_paths.as_dict()
+        dic_sim_paths = self.scenarios[event_iloc].scen_paths.as_dict()
         dic_all_paths = dic_syspaths | dic_analysis_paths | dic_sim_paths
         return dic_all_paths
 
-    def print_all_sim_files(self, sim_iloc):
-        dic_all_paths = self.dict_of_all_sim_files(sim_iloc)
+    def print_all_sim_files(self, event_iloc):
+        dic_all_paths = self.dict_of_all_sim_files(event_iloc)
         print_json_file_tree(dic_all_paths)
 
     def _retrieve_weather_indexer_using_integer_index(
         self,
-        sim_iloc,
+        event_iloc,
     ):
-        row = self.df_sims.loc[sim_iloc, self.cfg_analysis.weather_event_indices]
+        row = self.df_sims.loc[event_iloc, self.cfg_analysis.weather_event_indices]
         weather_event_indexers = row.to_dict()
         return weather_event_indexers
 
-    def _add_scenario(self, sim_iloc: int):
-        scen = TRITONSWMM_scenario(sim_iloc, self)
-        self.scenarios[sim_iloc] = scen
+    def _add_scenario(self, event_iloc: int):
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        self.scenarios[event_iloc] = scen
         return scen
 
     def _add_all_scenarios(self):
+        for event_iloc in self.df_sims.index:
+            self._add_scenario(event_iloc)
+        return
+
+    def _update_log(self):
+        dict_all_logs = {}
         all_scens_created = True
         all_sims_run = True
         all_TRITON_outputs_processed = True
         all_SWMM_outputs_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
-        for sim_iloc in self.df_sims.index:
+        for event_iloc in self.df_sims.index:
+            scen = self.scenarios[event_iloc]
+            dict_all_logs[event_iloc] = scen.log.model_dump()
             # sim run status
-            scen = self._add_scenario(sim_iloc)
             all_sims_run = all_sims_run and scen.sim_run_completed
             # sim creation status
             scen_created = bool(scen.log.scenario_creation_complete.get())
             all_scens_created = all_scens_created and scen_created
             # sim output processing status
-            proc = self._retrieve_sim_run_processing_object(sim_iloc)
+            proc = self._retrieve_sim_run_processing_object(event_iloc)
             all_TRITON_outputs_processed = (
                 all_TRITON_outputs_processed and proc.TRITON_outputs_processed
             )
@@ -182,7 +208,7 @@ class TRITONSWMM_analysis:
             )
 
         self.log.all_scenarios_created.set(all_scens_created)
-        self.log.all_sims_run.set(all_scens_created)
+        self.log.all_sims_run.set(all_sims_run)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
         self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
         self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
@@ -191,15 +217,16 @@ class TRITONSWMM_analysis:
 
     def _prepare_scenario(
         self,
-        sim_iloc,
+        event_iloc,
         overwrite_sim: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
-        scen = self.scenarios[sim_iloc]
+        scen = self.scenarios[event_iloc]
         scen._prepare_simulation(
             overwrite_sim, rerun_swmm_hydro_if_outputs_exist, verbose
         )
+        self._update_log()  # update logs
         return
 
     def prepare_all_scenarios(
@@ -208,20 +235,19 @@ class TRITONSWMM_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
-        self._add_all_scenarios()
-        for sim_iloc in self.df_sims.index:
+        for event_iloc in self.df_sims.index:
             self._prepare_scenario(
-                sim_iloc, overwrite_sims, rerun_swmm_hydro_if_outputs_exist, verbose
+                event_iloc, overwrite_sims, rerun_swmm_hydro_if_outputs_exist, verbose
             )
         return
 
-    def print_logfile_for_scenario(self, sim_iloc):
-        scen = self.scenarios[sim_iloc]
+    def print_logfile_for_scenario(self, event_iloc):
+        scen = self.scenarios[event_iloc]
         scen.log.print()
 
     def run_sim(
         self,
-        sim_iloc: int,
+        event_iloc: int,
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool,
         which: Literal["TRITON", "SWMM", "both"],
@@ -230,7 +256,7 @@ class TRITONSWMM_analysis:
         compression_level: int,
         verbose=False,
     ):
-        ts_scenario = self.scenarios[sim_iloc]
+        ts_scenario = self.scenarios[event_iloc]
 
         if not ts_scenario.log.scenario_creation_complete.get():
             print("Log file:")
@@ -240,15 +266,15 @@ class TRITONSWMM_analysis:
             print("Log file:")
             print(ts_scenario.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
-        run = self._retreive_sim_run_object(sim_iloc)
+        run = self._retreive_sim_run_object(event_iloc)
         if verbose:
             print("run instance instantiated")
         run.run_simulation(pickup_where_leftoff, verbose=verbose)
-        self.sim_run_status(sim_iloc)
-        self._add_all_scenarios()  # updates analysis log
+        self.sim_run_status(event_iloc)
+        self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
-            self.process_sim_output(
-                sim_iloc,
+            self.process_sim_timeseries(
+                event_iloc,
                 which,
                 clear_raw_outputs,
                 overwrite_if_exist,
@@ -257,16 +283,19 @@ class TRITONSWMM_analysis:
             )
         return
 
-    def process_sim_output(
+    def process_sim_timeseries(
         self,
-        sim_iloc,
+        event_iloc,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        proc = self._retrieve_sim_run_processing_object(sim_iloc=sim_iloc)
+        """
+        Creates time series of TRITON-SWMM outputs
+        """
+        proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
         proc.write_timeseries_outputs(
             which=which,
             clear_raw_outputs=clear_raw_outputs,
@@ -275,7 +304,7 @@ class TRITONSWMM_analysis:
             compression_level=compression_level,
         )
 
-    def process_all_sim_outputs(
+    def process_all_sim_timeseries(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
@@ -283,38 +312,58 @@ class TRITONSWMM_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        for sim_iloc in self.df_sims.index:
-            self.process_sim_output(
-                sim_iloc=sim_iloc,
+        for event_iloc in self.df_sims.index:
+            self.process_sim_timeseries(
+                event_iloc=event_iloc,
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
             )
-        self._add_all_scenarios()
-
+        self._update_log()
         return
 
-    def sim_run_status(self, sim_iloc):
-        run = self._retreive_sim_run_object(sim_iloc)
+    def consolidate_analysis_outptus(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        if which == "TRITON" or which == "both":
+            self.process.consolidate_TRITON_outputs_for_analysis(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        if which == "SWMM" or which == "both":
+            self.process.consolidate_SWMM_outputs_for_analysis(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        return
+
+    def sim_run_status(self, event_iloc):
+        run = self._retreive_sim_run_object(event_iloc)
         status = run._scenario.latest_simlog
-        self._simulation_run_statuses[sim_iloc] = status
+        self._simulation_run_statuses[event_iloc] = status
         return status
 
-    def _retreive_sim_run_object(self, sim_iloc):
+    def _retreive_sim_run_object(self, event_iloc):
         weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
-            sim_iloc
+            event_iloc
         )
-        ts_scenario = self.scenarios[sim_iloc]
+        ts_scenario = self.scenarios[event_iloc]
         run = TRITONSWMM_run(weather_event_indexers, ts_scenario)
-        self._sim_run_objects[sim_iloc] = run
+        self._sim_run_objects[event_iloc] = run
         return run
 
-    def _retrieve_sim_run_processing_object(self, sim_iloc):
-        run = self._retreive_sim_run_object(sim_iloc)
+    def _retrieve_sim_run_processing_object(self, event_iloc):
+        run = self._retreive_sim_run_object(event_iloc)
         proc = TRITONSWMM_sim_post_processing(run)
-        self._sim_run_processing_objects[sim_iloc] = proc
+        self._sim_run_processing_objects[event_iloc] = proc
         return proc
 
     def run_all_sims_in_series(
@@ -331,7 +380,7 @@ class TRITONSWMM_analysis:
         Arguments passed to run:
             - mode: Mode | Literal["single_core"]
             - pickup_where_leftoff
-        Arguments passed to processing process_sim_outputs (and only needed if process_outputs_after_sim_completion=True):
+        Arguments passed to processing process_sim_timeseriess (and only needed if process_outputs_after_sim_completion=True):
             - which: Literal["TRITON", "SWMM", "both"]
             - clear_raw_outputs: bool
             - overwrite_if_exist: bool
@@ -339,13 +388,13 @@ class TRITONSWMM_analysis:
         """
         if verbose:
             print("Running all sims in series...")
-        for sim_iloc in self.df_sims.index:
+        for event_iloc in self.df_sims.index:
             if verbose:
                 print(
-                    f"Running sim {sim_iloc} and pickup_where_leftoff = {pickup_where_leftoff}"
+                    f"Running sim {event_iloc} and pickup_where_leftoff = {pickup_where_leftoff}"
                 )
             self.run_sim(
-                sim_iloc=sim_iloc,
+                event_iloc=event_iloc,
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
                 process_outputs_after_sim_completion=process_outputs_after_sim_completion,
@@ -354,7 +403,7 @@ class TRITONSWMM_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 compression_level=compression_level,
             )
-        self._add_all_scenarios()  # updates log
+        self._update_log()
 
     def compile_TRITON_SWMM(
         self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
@@ -406,7 +455,7 @@ class TRITONSWMM_analysis:
             if elapsed > 5:
                 break
         self.compilation_log = compilation_log
-        success = self._validate_compilation()
+        success = self.compilation_successful
         self.log.TRITONSWMM_compiled_successfully.set(success)
         if not success:
             if verbose:
@@ -419,7 +468,9 @@ class TRITONSWMM_analysis:
         return
 
     def retrieve_compilation_log(self):
-        return read_text_file_as_string(self.analysis_paths.compilation_logfile)
+        if self.analysis_paths.compilation_logfile.exists():
+            return read_text_file_as_string(self.analysis_paths.compilation_logfile)
+        return "no sim logfile created"
 
     def print_compilation_log(self):
         print(self.retrieve_compilation_log())
@@ -429,9 +480,17 @@ class TRITONSWMM_analysis:
         swmm_check = "[100%] Built target runswmm" in compilation_log
         triton_check = "Building finished: triton" in compilation_log
         success = swmm_check and triton_check
-        self.compilation_successful = success
+        # self.compilation_successful = success
         self.log.TRITONSWMM_compiled_successfully.set(success)
         return success
+
+    @property
+    def TRITONSWMM_runtimes(self):
+        return (
+            self.TRITON_summary["compute_time_min"]
+            .to_dataframe()
+            .dropna()["compute_time_min"]
+        )
 
     @property
     def TRITON_analysis_summary_created(self):

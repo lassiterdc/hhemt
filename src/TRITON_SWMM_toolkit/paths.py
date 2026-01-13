@@ -27,7 +27,7 @@ class SysPaths(MainDataClass):
 
 
 @dataclass
-class ExpPaths(MainDataClass):
+class AnalysisPaths(MainDataClass):
     f_log: Path
     analysis_dir: Path
     compiled_software_directory: Path

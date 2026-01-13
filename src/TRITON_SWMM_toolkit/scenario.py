@@ -27,13 +27,13 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_scenario:
-    def __init__(self, sim_iloc: int, analysis: "TRITONSWMM_analysis") -> None:
-        self.sim_iloc = sim_iloc
+    def __init__(self, event_iloc: int, analysis: "TRITONSWMM_analysis") -> None:
+        self.event_iloc = event_iloc
         self._analysis = analysis
         self._system = analysis._system
 
         self.weather_event_indexers = (
-            self._analysis._retrieve_weather_indexer_using_integer_index(sim_iloc)
+            self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         )
         # define sim specific filepaths
         simulations_folder = self._analysis.analysis_paths.simulation_directory
@@ -74,7 +74,7 @@ class TRITONSWMM_scenario:
             self.log = TRITONSWMM_scenario_log.from_json(self.scen_paths.f_log)
         else:
             self.log = TRITONSWMM_scenario_log(
-                sim_iloc=self.sim_iloc,
+                event_iloc=self.event_iloc,
                 event_idx=self.weather_event_indexers,
                 simulation_folder=self.scen_paths.sim_folder,
                 logfile=self.scen_paths.f_log,
@@ -90,6 +90,38 @@ class TRITONSWMM_scenario:
             key=lambda k: string_to_datetime(k),
         )
         return dic_logs[latest_key]
+
+    @property
+    def sim_compute_time_min(self) -> float:
+        """
+        Docstring for sim_compute_time
+
+        :param self: Adds up total compute time even if the simulatoin required restarting
+          one or more times from a hotstart file.
+        :return:
+        :rtype: float
+        """
+        conversion = 1 / 60
+
+        dic_full_sim = dict()
+        dic_logs = self.log.sim_log.model_dump()["run_attempts"].copy()
+        gathering_current_simlogs = True
+        while gathering_current_simlogs:
+            latest_key = max(
+                dic_logs.keys(),
+                key=lambda k: string_to_datetime(k),
+            )
+            dic_full_sim[latest_key] = dic_logs[latest_key]
+            del dic_logs[latest_key]
+            if dic_full_sim[latest_key]["sim_start_reporting_tstep"] == 0:
+                gathering_current_simlogs = False
+                break
+        # add up compute time
+        total_compute_time = 0
+        for sim_datetime, sim_dict in dic_full_sim.items():
+            total_compute_time += sim_dict["time_elapsed_s"]
+
+        return total_compute_time * conversion
 
     @property
     def sim_run_completed(self) -> bool:
@@ -123,7 +155,7 @@ class TRITONSWMM_scenario:
         sim_id_str = "_".join(
             f"{idx}.{val}" for idx, val in self.weather_event_indexers.items()
         )
-        return f"{self.sim_iloc}-{sim_id_str}"
+        return f"{self.event_iloc}-{sim_id_str}"
 
     def _write_swmm_rainfall_dat_files(self):
 

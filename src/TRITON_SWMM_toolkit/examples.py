@@ -6,7 +6,7 @@ from TRITON_SWMM_toolkit.constants import (
     NORFOLK_EX,
     NORFOLK_SYSTEM_CONFIG,
     NORFOLK_ANALYSIS_CONFIG,
-    # NORFOLK_BENCHMARKING_EXP_CONFIG,
+    # NORFOLK_sensitivity_EXP_CONFIG,
     NORFOLK_CASE_CONFIG,
 )
 import sys
@@ -76,6 +76,7 @@ class TRITON_SWMM_testcase:
         analysis_description: str = "",
         test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
+        additional_analysis_configs: dict = dict(),
     ):
         # load system
         self.system = TRITONSWMM_system(cfg_system_yaml)
@@ -101,6 +102,12 @@ class TRITON_SWMM_testcase:
         # create weather indexer dataset
         df_weather_indices = pd.DataFrame({event_index_name: np.arange(n_events)})
         df_weather_indices.to_csv(f_weather_indices)
+        # add additional fields
+        for key, val in additional_analysis_configs.items():
+            setattr(anlysys, key, val)
+
+        f_weather_tseries = anlysys_dir / "weather_tseries.nc"
+        anlysys.weather_timeseries = f_weather_tseries
 
         cfg_anlysys = analysis_config.model_validate(anlysys)
         # write analysis as yaml
@@ -111,13 +118,13 @@ class TRITON_SWMM_testcase:
                 sort_keys=False,  # .dict() for pydantic v1
             )
         )
-        # write weather time series and update weather time series path
         self.system.add_analysis(cfg_anlysys_yaml)
-        f_weather_tseries = anlysys_dir / "weather_tseries.nc"
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
-        self.system.analysis.cfg_analysis.weather_timeseries = f_weather_tseries  # type: ignore
+        # write weather time series and update weather time series path
+
+        # self.system.analysis.cfg_analysis.weather_timeseries = f_weather_tseries  # type: ignore
         # add analysis to the system
 
     # create weather time series dataset
@@ -223,9 +230,9 @@ class TRITON_SWMM_examples:
         return norfolk_irene
 
     # @classmethod
-    # def load_norfolk_benchmarking_config(cls):
+    # def load_norfolk_sensitivity_config(cls):
     #     return cls._load_example_analysis_config(
-    #         NORFOLK_EX, NORFOLK_BENCHMARKING_EXP_CONFIG
+    #         NORFOLK_EX, NORFOLK_sensitivity_EXP_CONFIG
     # )
 
     @classmethod
@@ -257,10 +264,12 @@ class TRITON_SWMM_examples:
         return cfg_yaml
 
 
-class TRITON_SWMM_testcases:
+class GetTS_TestCases:
     test_system_dirname = "tests"
     n_reporting_tsteps_per_sim = 12
     TRITON_reporting_timestep_s = 10
+    test_data_dir = files(APP_NAME).parents[1].joinpath(f"test_data/{NORFOLK_EX}/")  # type: ignore
+    cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
 
     def __init__(self) -> None:
         pass
@@ -274,6 +283,7 @@ class TRITON_SWMM_testcases:
         TRITON_reporting_timestep_s: int,
         start_from_scratch: bool,
         download_if_exists=False,
+        additional_analysis_configs=dict(),
     ) -> TRITON_SWMM_testcase:
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
         nrflk_test = TRITON_SWMM_testcase(
@@ -284,8 +294,27 @@ class TRITON_SWMM_testcases:
             TRITON_reporting_timestep_s=TRITON_reporting_timestep_s,
             test_system_dirname=cls.test_system_dirname,
             start_from_scratch=start_from_scratch,
+            additional_analysis_configs=additional_analysis_configs,
         )
         return nrflk_test
+
+    @classmethod
+    def retreive_norfolk_cpu_config_sensitivity_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "cpu_config_sensitivity"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                toggle_sensitivity_analysis=True,
+                sensitivity_analysis=cls.cpu_sensitivity,
+            ),
+        )
 
     @classmethod
     def retreive_norfolk_single_sim_test_case(
@@ -428,95 +457,3 @@ def load_norfolk_system_config(
             z.extractall(cfg_system.TRITONSWMM_software_directory.parent)
         zipped_software.unlink()
     return cfg_yaml
-
-
-def write_subset_weather_events_to_simulate(
-    weather_event_summaries: Path,
-    target_dates: Iterable[Union[str, pd.Timestamp]],
-    start_date_col: str,
-    end_date_col: str,
-    f_out: Path,
-    weather_indexers: Iterable[str],
-):
-
-    df = pd.read_csv(weather_event_summaries)
-    df_subset = select_events_near_dates(
-        df,
-        start_date_col,
-        end_date_col,
-        target_dates,
-    )
-    df_subset.loc[:, weather_indexers].to_csv(f_out)  # type: ignore
-
-
-def select_events_near_dates(
-    df: pd.DataFrame,
-    start_date_col: str,
-    end_date_col: str,
-    target_dates: Iterable[Union[str, pd.Timestamp]],
-):
-    """
-    Select events matching or closest to target dates.
-
-    Parameters
-    ----------
-    df : pandas.DataFrame
-        Input dataframe
-    start_date_col : str
-        Column name for event start datetime
-    end_date_col : str
-        Column name for event end datetime
-    target_dates : array-like
-        Iterable of datetime-like values
-
-    Returns
-    -------
-    pandas.DataFrame
-        Subset of selected events (one per target date)
-    """
-
-    df = df.copy()
-    df[start_date_col] = pd.to_datetime(df[start_date_col])
-    df[end_date_col] = pd.to_datetime(df[end_date_col])
-    target_dates = pd.to_datetime(target_dates)  # type: ignore
-
-    selected_events = []
-
-    for date in target_dates:
-        # 1) Events spanning the target date
-        spanning = df[(df[start_date_col] <= date) & (df[end_date_col] >= date)]
-        if len(spanning == 1):
-            selected_events.append(spanning.iloc[0, :])
-        elif len(spanning > 1):
-            sys.exit("multiple events were returned")
-        else:
-            # 2) Otherwise warn and find closest by start and end
-            print(f"WARNING: No event spans {date.date()}")  # type: ignore
-
-            start_diffs = (df[start_date_col] - date).abs()  # type: ignore
-            end_diffs = (df[end_date_col] - date).abs()  # type: ignore
-
-            idx_start = start_diffs.idxmin()
-            idx_end = end_diffs.idxmin()
-
-            # 3) Enforce agreement
-            if idx_start != idx_end:
-                raise RuntimeError(
-                    f"Closest events disagree for {date.date()}:\n"  # type: ignore
-                    f"  Closest by {start_date_col}: index {idx_start}\n"
-                    f"  Closest by {end_date_col}:   index {idx_end}"
-                )
-
-            # 4) Diagnostics
-            event = df.loc[idx_start]
-            print(
-                f"  Selected event:\n"
-                f"    {start_date_col} = {event[start_date_col]}\n"
-                f"    {end_date_col}   = {event[end_date_col]}\n"
-                f"    |date - {start_date_col}| = {abs(event[start_date_col] - date)}\n"  # type: ignore
-                f"    |date - {end_date_col}|   = {abs(event[end_date_col] - date)}"  # type: ignore
-            )
-
-            selected_events.append(event)
-
-    return pd.DataFrame(selected_events).reset_index(drop=True)
