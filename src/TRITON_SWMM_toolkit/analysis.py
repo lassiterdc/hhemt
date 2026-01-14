@@ -279,8 +279,8 @@ class TRITONSWMM_analysis:
     def run_python_functions_concurrently(
         self,
         function_launchers: List[Callable[[], None]],
-        max_parallel: int | None = None,
         min_memory_per_function_MiB: int | None = 1024,
+        max_parallel: int | None = None,
         verbose: bool = True,
     ) -> List[int]:
         """
@@ -307,7 +307,12 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # CPU-based limit
         # ----------------------------
-        cpu_limit = max_parallel or (os.cpu_count() or 1)
+        physical_cores = psutil.cpu_count(logical=False)
+        if isinstance(physical_cores, int) and physical_cores > 1:
+            physical_cores -= 1  # more conservative process count
+        # logical_cores = psutil.cpu_count(logical=True)
+
+        cpu_limit = max_parallel or (physical_cores or 1)
 
         # ----------------------------
         # Memory-based limit
@@ -327,7 +332,12 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Final concurrency
         # ----------------------------
-        effective_max_parallel = max(1, min(cpu_limit, mem_limit))
+        # effective_max_parallel = max(1, min(cpu_limit, mem_limit))
+        effective_max_parallel = min(
+            cpu_limit,
+            mem_limit,
+            max_parallel or cpu_limit,
+        )
 
         if verbose:
             print(
@@ -358,9 +368,9 @@ class TRITONSWMM_analysis:
                 idx = futures[future]
                 try:
                     results.append(future.result())
-                except Exception as e:
+                except:
                     if verbose:
-                        print(f"Function {idx} failed: {e}")
+                        print(f"Function {idx} failed. See associated logfile.")
 
         self._update_log()
         return results
