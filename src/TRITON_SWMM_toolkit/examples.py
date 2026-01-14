@@ -477,10 +477,7 @@ def get_norfolk_data_and_package_directory_mapping_dict():
     return mapping
 
 
-def load_norfolk_system_config(
-    download_if_exists: bool,
-    verbose: bool = False,
-):
+def load_norfolk_system_config(download_if_exists: bool):
     case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
     mapping = get_norfolk_data_and_package_directory_mapping_dict()

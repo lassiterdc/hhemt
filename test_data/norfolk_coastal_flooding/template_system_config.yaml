@@ -1,6 +1,6 @@
 # FILEPATHS
 watershed_gis_polygon: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
-system_directory: '${DATA_DIR}/system'
+system_directory: '${PACKAGE_DIR}/system'
 DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'
 landuse_lookup_file: '${DATA_DIR}/landuse_lookup_tables.csv'
 landuse_raster: '${DATA_DIR}/landuse_clipped_to_triton_extent.tif'
