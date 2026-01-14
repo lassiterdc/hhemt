@@ -46,6 +46,7 @@ class AnalysisPaths(MainDataClass):
 class ScenarioPaths(MainDataClass):
     f_log: Path
     sim_folder: Path
+    weather_timeseries: Path
     dir_weather_datfiles: Path
     inp_hydro: Path
     inp_hydraulics: Path

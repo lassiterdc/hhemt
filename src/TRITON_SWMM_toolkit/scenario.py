@@ -12,16 +12,15 @@ import swmmio
 import warnings
 from swmm.toolkit.shared_enum import NodeAttribute
 from scipy.stats import rankdata
-from TRITON_SWMM_toolkit.utils import (
-    find_all_keys_in_template,
-    create_from_template,
-    string_to_datetime,
-)
+import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
 from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
 from typing import TYPE_CHECKING, Literal
 from contextlib import redirect_stdout, redirect_stderr
+import threading
+
+lock = threading.Lock()
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -46,6 +45,7 @@ class TRITONSWMM_scenario:
         self.scen_paths = ScenarioPaths(
             sim_folder=simulations_folder / self.sim_id_str,
             f_log=sim_folder / "log.json",
+            weather_timeseries=simulations_folder / "sim_weather.nc",
             # swmm time series
             dir_weather_datfiles=sim_folder / "dats",
             # swmm models
@@ -88,7 +88,7 @@ class TRITONSWMM_scenario:
             return {"status": "no sim run attempts made"}
         latest_key = max(
             dic_logs.keys(),
-            key=lambda k: string_to_datetime(k),
+            key=lambda k: utils.string_to_datetime(k),
         )
         return dic_logs[latest_key]
 
@@ -110,7 +110,7 @@ class TRITONSWMM_scenario:
         while gathering_current_simlogs:
             latest_key = max(
                 dic_logs.keys(),
-                key=lambda k: string_to_datetime(k),
+                key=lambda k: utils.string_to_datetime(k),
             )
             dic_full_sim[latest_key] = dic_logs[latest_key]
             del dic_logs[latest_key]
@@ -141,7 +141,7 @@ class TRITONSWMM_scenario:
         else:
             dt_str = simlog["sim_datetime"]
             if astype == "dt":
-                return string_to_datetime(dt_str)
+                return utils.string_to_datetime(dt_str)
             else:
                 return dt_str
 
@@ -170,14 +170,12 @@ class TRITONSWMM_scenario:
         )
         rainfall_units = self._analysis.cfg_analysis.rainfall_units
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
-        ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)  # type: ignore
         sim_id_str = self.sim_id_str
 
         # retreieve dataframe of rainfall time series
         df_allrain = (
-            ds_event_ts[
+            self.ds_event_ts[
                 df_sub_raingage_mapping[subcatchment_raingage_mapping_gage_id_colname]
                 .unique()
                 .astype(str)
@@ -219,13 +217,12 @@ class TRITONSWMM_scenario:
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
-        ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
+        # ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         # df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)
         sim_id_str = self.sim_id_str
 
         s_wlevel = (
-            ds_event_ts[weather_time_series_storm_tide_datavar]
+            self.ds_event_ts[weather_time_series_storm_tide_datavar]
             .reset_coords(drop=True)
             .to_dataframe()
             .dropna()
@@ -261,18 +258,20 @@ class TRITONSWMM_scenario:
             self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
+        ds_event_ts = self.ds_event_ts
+
         tstep_seconds = (
-            ds_event_weather_series.timestep.to_series()
+            ds_event_ts[weather_time_series_timestep_dimension_name]
+            .to_series()
             .diff()
             .mode()
             .iloc[0]
-            .total_seconds()
+            .total_seconds()  # type:ignore
         )
         # interval = self.seconds_to_hhmm(tstep_seconds)
         interval = self.seconds_to_hhmmss(tstep_seconds)
 
-        ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
+        # ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         if self._analysis.cfg_analysis.rainfall_units == "mm/hr":
             format = "INTENSITY"
         elif self._analysis.cfg_analysis.rainfall_units == "mm":
@@ -299,7 +298,7 @@ class TRITONSWMM_scenario:
         mapping = dict()
         mapping["TIMESERIES"] = "\n\n".join(lst_tseries_section)
         mapping["RAINGAGES"] = "\n".join(rain_gages_section)
-        template_keys = find_all_keys_in_template(swmm_model_template)
+        template_keys = utils.find_all_keys_in_template(swmm_model_template)
 
         first_tstep = (
             ds_event_ts[weather_time_series_timestep_dimension_name].to_series().min()
@@ -331,7 +330,7 @@ class TRITONSWMM_scenario:
                 print(f"All keys accounted for: {mapping.keys()}")
                 sys.exit()
 
-        create_from_template(swmm_model_template, mapping, destination)
+        utils.create_from_template(swmm_model_template, mapping, destination)
         return
 
     def seconds_to_hhmm(self, seconds):
@@ -371,9 +370,8 @@ class TRITONSWMM_scenario:
         storm_tide_boundary_line_gis = (
             self._analysis.cfg_analysis.storm_tide_boundary_line_gis
         )
-
-        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
-        ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
+        ds_event_ts = self.ds_event_ts
+        # ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         df_water_levels = (
             ds_event_ts[weather_time_series_storm_tide_datavar]
             .reset_coords(drop=True)
@@ -748,7 +746,7 @@ class TRITONSWMM_scenario:
             REPORTING_TSTEP_S=TRITON_reporting_timestep_s,
             OPEN_BOUNDARIES=open_boundaries,
         )
-        create_from_template(
+        utils.create_from_template(
             triton_swmm_configuration_template, mapping, self.scen_paths.triton_swmm_cfg
         )
         self.log.triton_swmm_cfg_created.set(True)
@@ -767,6 +765,27 @@ class TRITONSWMM_scenario:
         shutil.copytree(src_build_fpath, target_build_fpath)
         self.log.sim_tritonswmm_executable_copied.set(True)
         return
+
+    def _write_sim_weather_nc(self):
+        weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
+        weather_event_indexers = self.weather_event_indexers
+        with lock:
+            with xr.open_dataset(
+                weather_timeseries, engine="h5netcdf"
+            ) as ds_event_weather_series:
+                ds_event_ts = ds_event_weather_series.sel(weather_event_indexers).load()
+                utils.write_netcdf(
+                    ds_event_ts,
+                    self.scen_paths.weather_timeseries,
+                    compression_level=5,
+                    chunks="auto",
+                )
+
+    @property
+    def ds_event_ts(self):
+        if not self.scen_paths.weather_timeseries.exists():
+            self._write_sim_weather_nc()
+        return xr.open_dataset(self.scen_paths.weather_timeseries, engine="h5netcdf")
 
     def prepare_scenario(
         self,
@@ -800,6 +819,7 @@ class TRITONSWMM_scenario:
                             "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=True."
                         )
                     return
+                self._write_sim_weather_nc()
                 # everything needed for running TRITON-SWMM
                 self._write_swmm_rainfall_dat_files()
                 self._write_swmm_waterlevel_dat_files()

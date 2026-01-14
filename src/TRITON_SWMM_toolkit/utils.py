@@ -244,10 +244,11 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
 
 
 def write_zarr_then_netcdf(
-    ds, fname_out, compression_level, chunks: str | dict = "auto"
+    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
 ):
     encoding = return_dic_zarr_encodings(ds, compression_level)
-    chunk_dict = return_dic_autochunk(ds)
+    if chunks == "auto":
+        chunk_dict = return_dic_autochunk(ds)
     ds = ds.chunk(chunk_dict)
     # first write to zarr, then write to netcdf
     write_zarr(ds, fname_out, compression_level, chunks)
@@ -255,13 +256,32 @@ def write_zarr_then_netcdf(
     ds = xr.open_dataset(
         f"{fname_out}.zarr", engine="zarr", chunks="auto", consolidated=False
     )
-    ds = ds.chunk(chunks)
-    ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
+    write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr
     try:
         shutil.rmtree(f"{fname_out}.zarr")
     except Exception as e:
         print(f"Could not remove zarr folder {fname_out}.zarr due to error {e}")
+    return
+
+
+def return_dic_netcdf_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
+    encoding = {}
+    for var in ds.data_vars:
+        if ds[var].dtype.kind in {"i", "u", "f"}:
+            encoding[var] = {"zlib": True, "complevel": clevel, "shuffle": True}
+    # Coordinates usually don’t need compression
+    return encoding
+
+
+def write_netcdf(
+    ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
+):
+    encoding = return_dic_netcdf_encodings(ds, compression_level)
+    if chunks == "auto":
+        chunk_dict = return_dic_autochunk(ds)
+    ds = ds.chunk(chunk_dict)
+    ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
     return
 
 
