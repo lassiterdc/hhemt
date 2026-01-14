@@ -25,7 +25,7 @@ import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
-
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -84,6 +84,7 @@ class TRITONSWMM_analysis:
         self.run_modes = Mode
         # self.compilation_successful = False
         self._refresh_log()
+        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
 
         if self.analysis_paths.compilation_logfile.exists():
             self._validate_compilation()
@@ -111,6 +112,24 @@ class TRITONSWMM_analysis:
     @property
     def compilation_successful(self):
         return self._validate_compilation()
+
+    def consolidate_TRITON_and_SWMM_simulation_summaries(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        self.consolidate_TRITON_simulation_summaries(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        self.consolidate_SWMM_simulation_summaries(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        return
 
     def consolidate_TRITON_simulation_summaries(
         self,
@@ -223,30 +242,96 @@ class TRITONSWMM_analysis:
         self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return
 
-    def _prepare_scenario(
+    def retrieve_prepare_scenario_launchers(
         self,
-        event_iloc,
-        overwrite_sim: bool = False,
+        overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
-        scen = self.scenarios[event_iloc]
-        scen._prepare_simulation(
-            overwrite_sim, rerun_swmm_hydro_if_outputs_exist, verbose
-        )
-        self._update_log()  # update logs
-        return
+        prepare_scenario_launchers = []
+        for event_iloc in self.df_sims.index:
+            scenario = self.scenarios[event_iloc]
+            launcher = scenario.prepare_scenario(
+                overwrite_scenario=overwrite_scenario,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                verbose=verbose,
+            )
+            prepare_scenario_launchers.append(launcher)
 
-    def prepare_all_scenarios(
+        return prepare_scenario_launchers
+
+    def run_python_functions_concurrently(
         self,
-        overwrite_sims: bool = False,
+        function_launchers: List[Callable[[], None]],
+        max_parallel: int | None = None,
+        verbose: bool = True,
+    ) -> List[int]:
+        """
+        Run a list of scenario preparation launchers concurrently on a desktop.
+
+        Parameters
+        ----------
+        function_launchers : List[Callable[[], None]]
+            List of functions returned by `prepare_scenario` for each scenario.
+        max_parallel : int, optional
+            Maximum number of concurrent scenarios.
+            Defaults to os.cpu_count().
+        verbose : bool
+            Print progress messages.
+
+        Returns
+        -------
+        List[int]
+            List of scenario indices (by position in the input list) successfully prepared.
+        """
+
+        if max_parallel is None:
+            max_parallel = os.cpu_count() or 1
+
+        if verbose:
+            print(
+                f"Preparing {len(function_launchers)} scenarios concurrently (max {max_parallel})"
+            )
+
+        results: List[int] = []
+
+        def wrapper(idx: int, launcher: Callable[[], None]):
+            start = time.time()
+            launcher()
+            end = time.time()
+            if verbose:
+                print(f"Scenario {idx} prepared in {end-start:.2f} s")
+            return idx
+
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            futures = {
+                executor.submit(wrapper, idx, launcher): idx
+                for idx, launcher in enumerate(function_launchers)
+            }
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    result_idx = future.result()
+                    results.append(result_idx)
+                except Exception as e:
+                    if verbose:
+                        print(f"Scenario {idx} failed: {e}")
+        self._update_log()
+        return results
+
+    def run_prepare_scenarios_serially(
+        self,
+        overwrite_scenarios: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
         for event_iloc in self.df_sims.index:
-            self._prepare_scenario(
-                event_iloc, overwrite_sims, rerun_swmm_hydro_if_outputs_exist, verbose
+            scen = self.scenarios[event_iloc]
+            launcher = scen.prepare_scenario(
+                overwrite_scenarios, rerun_swmm_hydro_if_outputs_exist, verbose
             )
+            launcher()
+            self._update_log()  # update logs
         return
 
     def print_logfile_for_scenario(self, event_iloc):
@@ -342,6 +427,27 @@ class TRITONSWMM_analysis:
             )
         return
 
+    def retreive_scenario_timeseries_processing_launchers(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        scenario_timeseries_processing_launchers = []
+        for event_iloc in self.df_sims.index:
+            proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
+            launcher = proc.write_timeseries_outputs(
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+            scenario_timeseries_processing_launchers.append(launcher)
+        return scenario_timeseries_processing_launchers
+
     def process_sim_timeseries(
         self,
         event_iloc,
@@ -355,15 +461,16 @@ class TRITONSWMM_analysis:
         Creates time series of TRITON-SWMM outputs
         """
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
-        proc.write_timeseries_outputs(
+        launcher = proc.write_timeseries_outputs(
             which=which,
             clear_raw_outputs=clear_raw_outputs,
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
         )
+        launcher()
 
-    def process_all_sim_timeseries(
+    def process_all_sim_timeseries_serially(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
@@ -429,8 +536,8 @@ class TRITONSWMM_analysis:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
-        in_slurm: Optional[bool] = None,
     ):
+        in_slurm = self.in_slurm
         launch_functions = []
         for event_iloc in self.df_sims.index:
             run = self._retreive_sim_runs(event_iloc)
@@ -441,6 +548,25 @@ class TRITONSWMM_analysis:
             )
             launch_functions.append(launch_function)
         return launch_functions
+
+    def run_simulations_concurrently(
+        self,
+        launch_functions: list[Callable[[], tuple]],
+        verbose: bool = True,
+    ):
+        """
+        Docstring for run_simulations_concurrently
+
+        :param self: automatically chooses whether to use SLURM or ThreadPoolExecutor for concurrent runs
+        """
+        if self.in_slurm:
+            self.run_simulations_concurrently_on_SLURM_HPC(
+                launch_functions=launch_functions, verbose=verbose
+            )
+        else:
+            self.run_simulations_concurrently_on_desktop(
+                launch_functions=launch_functions, verbose=verbose
+            )
 
     def run_simulations_concurrently_on_SLURM_HPC(
         self,
@@ -584,7 +710,7 @@ class TRITONSWMM_analysis:
         self._update_log()
         return results
 
-    def run_all_sims_in_series(
+    def run_all_sims_in_serially(
         self,
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,

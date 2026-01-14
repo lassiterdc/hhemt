@@ -23,7 +23,7 @@ def test_prepare_scenarios():
         start_from_scratch=False
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
-    analysis.sensitivity.prepare_scenarios_in_each_subanalysis()
+    analysis.sensitivity.prepare_scenarios_in_each_subanalysis(concurrent=True)
     assert analysis.log.all_scenarios_created.get() == True
 
 
@@ -32,9 +32,7 @@ def test_run_all_sims():
         start_from_scratch=False
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
-    analysis.sensitivity.run_all_sims(
-        pickup_where_leftoff=False, process_outputs_after_sim_completion=True
-    )
+    analysis.sensitivity.run_all_sims(pickup_where_leftoff=False, concurrent=True)
     assert analysis.log.all_sims_run.get() == True
 
 
@@ -43,6 +41,9 @@ def test_consolidate_outputs():
         start_from_scratch=False
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
+    analysis.sensitivity.process_simulation_timeseries_concurrently(
+        overwrite_if_exist=True
+    )
     analysis.sensitivity.consolidate_TRITON_outputs_for_analysis()
     assert analysis.log.TRITON_analysis_summary_created.get() == True
     analysis.sensitivity.consolidate_SWMM_outputs_for_analysis()

@@ -40,8 +40,8 @@ def test_prepare_all_scenarios():
         start_from_scratch=True
     )
     single_sim_single_core.system.analysis.compile_TRITON_SWMM()
-    single_sim_single_core.system.analysis.prepare_all_scenarios(
-        overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
+    single_sim_single_core.system.analysis.run_prepare_scenarios_serially(
+        overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
     if not single_sim_single_core.system.analysis.scenarios[
         0
