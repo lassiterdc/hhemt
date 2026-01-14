@@ -792,7 +792,7 @@ class TRITONSWMM_scenario:
         self,
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
-        verbose: bool = False,
+        verbose: bool = True,
     ):
         def launcher(
             overwrite_scenario=overwrite_scenario,
@@ -804,12 +804,18 @@ class TRITONSWMM_scenario:
             )
             # open the file immediately
             launcher_logfile.parent.mkdir(parents=True, exist_ok=True)
-            f = open(launcher_logfile, "a")
+            f = open(launcher_logfile, "a", buffering=1)  # line-buffered
             try:
                 with (
                     redirect_stdout(f),
                     redirect_stderr(f),
                 ):
+                    if verbose:
+                        print(
+                            "#############################################", flush=True
+                        )
+                        print(f"processing scenario {self.event_iloc}", flush=True)
+                        print(utils.current_datetime_string(), flush=True)
                     sim_folder = self.scen_paths.sim_folder
                     if overwrite_scenario:
                         if sim_folder.exists():
@@ -823,7 +829,8 @@ class TRITONSWMM_scenario:
                     ):
                         if verbose:
                             print(
-                                "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=True."
+                                "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=True.",
+                                flush=True,
                             )
                         return
                     self._write_sim_weather_nc()
@@ -1024,3 +1031,6 @@ def calc_area(row):
     else:
         print("shape not recognized in calc_area")
     return
+
+
+# %%
