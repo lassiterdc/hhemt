@@ -72,8 +72,8 @@ class TRITONSWMM_analysis:
             output_swmm_node_summary=analysis_dir
             / f"SWMM_nodes.{self.cfg_analysis.TRITON_processed_output_type}",
         )
-        if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
-            self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
+        # if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
+        #     self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
@@ -278,30 +278,30 @@ class TRITONSWMM_analysis:
         return command_text
 
     # analysis functions
-    def create_ensemble_bash_script(self, run_command: str):
-        """
-        Generates one bash script that launches all simulations in the ensemble.
-        """
-        run_mode = self.cfg_analysis.run_mode
-        if run_mode == "gpu":
-            gpu_toggle = ""
-        else:
-            gpu_toggle = " "
-        mapping = dict(
-            allocation=self.cfg_analysis.hpc_allocation,
-            time=minutes_to_hhmmss(self.cfg_analysis.hpc_time_min),  # type: ignore
-            partition=self.cfg_analysis.hpc_partition,
-            nodes=self.cfg_analysis.hpc_n_nodes,
-            gpu_toggle=gpu_toggle,
-            gres=self.cfg_analysis.hpc_gpus_requested,
-            run_command=run_command,
-        )
+    # def create_ensemble_bash_script(self, run_command: str):
+    #     """
+    #     Generates one bash script that launches all simulations in the ensemble.
+    #     """
+    #     run_mode = self.cfg_analysis.run_mode
+    #     if run_mode == "gpu":
+    #         gpu_toggle = ""
+    #     else:
+    #         gpu_toggle = " "
+    #     mapping = dict(
+    #         allocation=self.cfg_analysis.hpc_allocation,
+    #         time=minutes_to_hhmmss(self.cfg_analysis.hpc_time_min),  # type: ignore
+    #         partition=self.cfg_analysis.hpc_partition,
+    #         nodes=self.cfg_analysis.hpc_n_nodes,
+    #         gpu_toggle=gpu_toggle,
+    #         gres=self.cfg_analysis.hpc_gpus_requested,
+    #         run_command=run_command,
+    #     )
 
-        create_from_template(
-            self.cfg_analysis.hpc_bash_script_ensemble_template,  # type: ignore
-            mapping,
-            self.analysis_paths.bash_script_path,  # type: ignore
-        )
+    #     create_from_template(
+    #         self.cfg_analysis.hpc_bash_script_ensemble_template,  # type: ignore
+    #         mapping,
+    #         self.analysis_paths.bash_script_path,  # type: ignore
+    #     )
 
     def run_sim(
         self,

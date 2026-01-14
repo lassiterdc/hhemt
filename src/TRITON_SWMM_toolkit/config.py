@@ -375,10 +375,10 @@ class analysis_config(cfgBaseModel):
 
     # TOGGLES
     # TODO - create validatoin checks for bash script toggle
-    toggle_run_ensemble_with_bash_script: bool = Field(
-        ...,
-        description="If true, a bash script will be generated using a template and submitted the the HPC to run the ensemble.",
-    )
+    # toggle_run_ensemble_with_bash_script: bool = Field(
+    #     ...,
+    #     description="If true, a bash script will be generated using a template and submitted the the HPC to run the ensemble.",
+    # )
     toggle_sensitivity_analysis: bool = Field(
         ...,
         description="Whether or not this is a sensitivity study. If so, a .csv file is required for input sensitivity_analysis defining the analysisal setup.",
@@ -388,29 +388,29 @@ class analysis_config(cfgBaseModel):
         description="If True, a boundary condition representing storm tide will be applied to the model.",
     )
     # OPTIONAL OR DEPENDENT
-    hpc_bash_script_ensemble_template: Optional[Path] = Field(
-        None,
-        description="Bash script template filled with other user defined variables in the analysis configuration yaml.",
-    )
-    hpc_allocation: Optional[str] = Field(None, description="Allocation")
-    hpc_time_min: Optional[int] = Field(
-        None, description="Amount of time in minutes the job will be run."
-    )
-    hpc_partition: Optional[str] = Field(
-        None, description="Partition on which to run enesmble."
-    )
-    hpc_n_nodes: Optional[int] = Field(
-        None, description="Number of HPC nodes to request."
-    )
-    hpc_cpus_per_task: Optional[int] = Field(
-        None, description="CPUs per task (threads per MPI rank)."
-    )
-    hpc_ntasks_per_node: Optional[int] = Field(
-        None, description="Number of tasks per node (MPI ranks per node)"
-    )
-    hpc_gpus_requested: Optional[int] = Field(
-        None, description="Number of GPUs requested."
-    )
+    # hpc_bash_script_ensemble_template: Optional[Path] = Field(
+    #     None,
+    #     description="Bash script template filled with other user defined variables in the analysis configuration yaml.",
+    # )
+    # hpc_allocation: Optional[str] = Field(None, description="Allocation")
+    # hpc_time_min: Optional[int] = Field(
+    #     None, description="Amount of time in minutes the job will be run."
+    # )
+    # hpc_partition: Optional[str] = Field(
+    #     None, description="Partition on which to run enesmble."
+    # )
+    # hpc_n_nodes: Optional[int] = Field(
+    #     None, description="Number of HPC nodes to request."
+    # )
+    # hpc_cpus_per_task: Optional[int] = Field(
+    #     None, description="CPUs per task (threads per MPI rank)."
+    # )
+    # hpc_ntasks_per_node: Optional[int] = Field(
+    #     None, description="Number of tasks per node (MPI ranks per node)"
+    # )
+    # hpc_gpus_requested: Optional[int] = Field(
+    #     None, description="Number of GPUs requested."
+    # )
 
     storm_tide_boundary_line_gis: Optional[Path] = Field(
         None,
@@ -440,7 +440,9 @@ class analysis_config(cfgBaseModel):
         None,
         description="For readability.",
     )
-    TRITON_SWMM_make_command: str = Field(
+    TRITON_SWMM_make_command: Literal[
+        "hpc_swmm_omp", "hpc_swmm_gpu", "frontier_swmm_gpu", "frontier_swmm_omp"
+    ] = Field(
         "hpc_swmm_omp",
         description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
     )

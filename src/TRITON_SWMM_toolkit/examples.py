@@ -302,50 +302,45 @@ class GetTS_TestCases:
         return nrflk_test
 
     @classmethod
-    def retreive_norfolk_hcp_multisim_case(
+    def retreive_norfolk_frontier_multisim_cpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        analysis_name = "cpu_config_sensitivity"
+        analysis_name = "frontier_multisim"
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            n_events=2,
+            n_events=128,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                toggle_run_ensemble_with_bash_script=True,
-                hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
-                hpc_allocation="***REMOVED***",
-                hpc_time_min=120,
-                hpc_partition="batch",
-                hpc_n_nodes=1,
+                TRITON_SWMM_make_command="frontier_swmm_omp",
             ),
         )
 
-    @classmethod
-    def retreive_norfolk_hcp_cpu_sensitivity_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "cpu_config_sensitivity"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                toggle_sensitivity_analysis=True,
-                toggle_run_ensemble_with_bash_script=True,
-                hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
-                sensitivity_analysis=cls.cpu_sensitivity,
-                hpc_allocation="***REMOVED***",
-                hpc_time_min=120,
-                hpc_partition="batch",
-                hpc_n_nodes=1,
-            ),
-        )
+    # @classmethod
+    # def retreive_norfolk_hcp_cpu_sensitivity_case(
+    #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    # ):
+    #     analysis_name = "cpu_config_sensitivity"
+    #     return cls._retrieve_norfolk_case(
+    #         analysis_name=analysis_name,
+    #         start_from_scratch=start_from_scratch,
+    #         download_if_exists=download_if_exists,
+    #         n_events=1,
+    #         n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+    #         TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+    #         additional_analysis_configs=dict(
+    #             toggle_sensitivity_analysis=True,
+    #             toggle_run_ensemble_with_bash_script=True,
+    #             hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
+    #             sensitivity_analysis=cls.cpu_sensitivity,
+    #             hpc_allocation="***REMOVED***",
+    #             hpc_time_min=120,
+    #             hpc_partition="batch",
+    #             hpc_n_nodes=1,
+    #         ),
+    #     )
 
     @classmethod
     def retreive_norfolk_cpu_config_sensitivity_case(

@@ -293,7 +293,7 @@ class TRITONSWMM_run:
 
             proc = subprocess.Popen(  # type: ignore
                 cmd,  # type: ignore
-                env=env | og_env,  # type: ignore
+                env={**os.environ, **env},  # type: ignore
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )

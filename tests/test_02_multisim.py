@@ -53,7 +53,7 @@ def test_consolidate_multisim_SWMM_outputs():
 
 
 def test_run_multisim_concurrently():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_hcp_multisim_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_multi_sim_test_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
