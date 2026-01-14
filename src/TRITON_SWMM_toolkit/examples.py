@@ -123,6 +123,7 @@ class TRITON_SWMM_testcase:
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
+        self.system.process_system_level_inputs(overwrite_if_exists=start_from_scratch)
         # write weather time series and update weather time series path
 
         # self.system.analysis.cfg_analysis.weather_timeseries = f_weather_tseries  # type: ignore

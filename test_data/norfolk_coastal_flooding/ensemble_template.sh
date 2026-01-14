@@ -13,6 +13,9 @@
 #SBATCH --mail-type=ALL
 #SBATCH -q debug
 
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***
+# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 1 --exclusive -q debug
+
 set -euo pipefail
 
 # Load modules
@@ -20,6 +23,7 @@ module purge
 module load PrgEnv-amd Core/24.07 cmake/3.27.9 craype-accel-amd-gfx90a
 module load miniforge3/23.11.0
 DIR=~/.conda/envs/running_swmm
+conda activate triton_swmm_toolkit
 
 echo "Node CPUs: $(nproc)"
 echo "SLURM_CPUS_ON_NODE=${SLURM_CPUS_ON_NODE:-unset}"

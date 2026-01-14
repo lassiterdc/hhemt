@@ -22,6 +22,7 @@ from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 import yaml
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 
@@ -326,7 +327,8 @@ class TRITONSWMM_analysis:
         run = self._retreive_sim_runs(event_iloc)
         if verbose:
             print("run instance instantiated")
-        run.run_simulation(pickup_where_leftoff, verbose=verbose, run_async=False)
+
+        run.run_sim(pickup_where_leftoff=pickup_where_leftoff, verbose=verbose)
         self.sim_run_status(event_iloc)
         self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
@@ -432,53 +434,85 @@ class TRITONSWMM_analysis:
         launch_functions = []
         for event_iloc in self.df_sims.index:
             run = self._retreive_sim_runs(event_iloc)
-            launch_function = run.run_simulation(
+            launch_function = run.retrieve_sim_launcher(
                 pickup_where_leftoff=pickup_where_leftoff,
-                run_async=True,
                 verbose=verbose,
                 in_slurm=in_slurm,
             )
             launch_functions.append(launch_function)
         return launch_functions
 
-    def run_simulations_concurrently(
+    def run_simulations_concurrently_on_SLURM_HPC(
         self,
-        launch_functions: List[Callable[[], str]],
-        use_gpu: bool = False,
-        total_gpus_available: Optional[int] = 0,
+        launch_functions: list[Callable[[], tuple]],
         verbose: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         """
-        Run a list of simulation launch functions concurrently, dynamically
-        computing max parallelism based on available resources.
+        Launch simulations concurrently on an HPC system using SLURM.
+        Assumes each launch function starts an srun process that may block
+        until completion and returns (proc, log_file, start_time, log_dict, run_obj).
 
         Parameters
         ----------
-        launch_functions : List[Callable[[], str]]
-            List of functions that launch simulations and return status.
-        n_omp_threads : int, optional
-            Number of OpenMP threads per simulation (default: 1).
-        n_mpi_procs : int, optional
-            Number of MPI ranks per simulation (default: 1).
-        n_gpus : int, optional
-            Number of GPUs required per simulation (default: 0).
-        total_gpus_available : int, optional
-            Total GPUs available on the machine (default: 0).
+        launch_functions : list of callables
+            Each function launches a simulation and returns a tuple:
+            (proc, log_file_handle, start_time, log_dict, run_obj)
         verbose : bool
             If True, prints progress messages.
 
         Returns
         -------
-        List[str]
+        list[str]
             List of simulation statuses, in completion order.
         """
+        running: list[tuple] = []
+        results: list[str] = []
+
+        # ----------------------------
+        # Launch all simulations
+        # ----------------------------
+        for i, launch in enumerate(launch_functions):
+            proc, lf, start, log_dic, run = launch()
+            running.append((proc, lf, start, log_dic, run))
+            if verbose:
+                print(f"[SLURM] Launched simulation {i}")
+
+        # ----------------------------
+        # Wait for all to complete
+        # ----------------------------
+        for i, (proc, lf, start, log_dic, run) in enumerate(running):
+            rc = proc.wait()
+            lf.close()
+
+            end_time = time.time()
+            elapsed = end_time - start
+
+            status, _ = run._check_simulation_run_status()
+
+            log_dic.update(time_elapsed_s=elapsed, status=status)
+            run.log.add_sim_entry(**log_dic)
+            results.append(status)
+
+            if verbose:
+                print(f"[SLURM] Simulation {i} completed: {status}")
+
+        self._update_log()
+        return results
+
+    def run_simulations_concurrently_on_desktop(
+        self,
+        launch_functions: List[Callable[[], tuple]],
+        use_gpu: bool = False,
+        total_gpus_available: Optional[int] = 0,
+        verbose: bool = True,
+    ):
         # ----------------------------
         # Determine CPU parallelism
         # ----------------------------
         total_cores = os.cpu_count() or 1
         threads_per_sim = self.cfg_analysis.n_omp_threads or 1
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
-        n_gpus = self.cfg_analysis.n_gpus
+        n_gpus = self.cfg_analysis.n_gpus or 0
 
         cores_per_sim = threads_per_sim * mpi_ranks
         max_parallel_cpu = max(1, total_cores // cores_per_sim)
@@ -486,34 +520,66 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Determine GPU parallelism
         # ----------------------------
-        if n_gpus and total_gpus_available:
+        if use_gpu and n_gpus and total_gpus_available:
             max_parallel_gpu = max(1, total_gpus_available // n_gpus)
-        else:
-            max_parallel_gpu = max_parallel_cpu  # no GPU constraint
-
-        # Effective maximum parallel simulations
-        if use_gpu:
-            max_parallel = max_parallel_gpu
+            max_parallel = min(max_parallel_cpu, max_parallel_gpu)
         else:
             max_parallel = max_parallel_cpu
 
         if verbose:
-            print(f"Running up to {max_parallel} sims concurrently")
+            print(f"Running up to {max_parallel} simulations concurrently")
 
-        results: List[str] = []
-        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
-            futures = {executor.submit(fn): i for i, fn in enumerate(launch_functions)}
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    status = future.result()
-                    results.append(status)
-                    if verbose:
-                        print(f"Simulation {idx} finished: {status}")
-                except Exception as e:
-                    results.append(f"failed: {e}")
-                    if verbose:
-                        print(f"Simulation {idx} failed: {e}")
+        # ----------------------------
+        # Launch + monitor loop
+        # ----------------------------
+        running = []
+        results = []
+
+        launch_iter = iter(launch_functions)
+
+        def launch_next():
+            try:
+                launch = next(launch_iter)
+            except StopIteration:
+                return False
+
+            proc, lf, start, log_dic, run = launch()
+            running.append((proc, lf, start, log_dic, run))
+            return True
+
+        # Prime the pool
+        for _ in range(min(max_parallel, len(launch_functions))):
+            launch_next()
+
+        # Main loop
+        while running:
+            for entry in list(running):
+                proc, lf, start, log_dic, run = entry
+
+                if proc.poll() is None:
+                    continue  # still running
+
+                # Process finished
+                lf.close()
+                end_time = time.time()
+                elapsed = end_time - start
+
+                status, _ = run._check_simulation_run_status()
+
+                log_dic["time_elapsed_s"] = elapsed
+                log_dic["status"] = status
+                run.log.add_sim_entry(**log_dic)
+
+                results.append(status)
+                running.remove(entry)
+
+                if verbose:
+                    print(f"Simulation finished: {status}")
+
+                # Launch next job if available
+                launch_next()
+
+            time.sleep(0.1)  # prevent busy-waiting
 
         self._update_log()
         return results

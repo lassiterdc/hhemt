@@ -206,3 +206,5 @@ __marimo__/
 
 # custom
 *_archive*
+*test_data/*/system*
+*test_data/*/tests/*

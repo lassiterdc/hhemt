@@ -5,6 +5,7 @@
 # then:
 # conda env create -f environment.yaml
 # conda activate triton_swmm_toolkit
+# if git cloned, run: python -m pip install -e .
 name: triton_swmm_toolkit
 channels:
   - conda-forge
