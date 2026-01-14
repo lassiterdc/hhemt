@@ -6,9 +6,11 @@ def test_run_multiple_sims_in_sequence():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=True)
     analysis = multi_sim.system.analysis
     analysis.compile_TRITON_SWMM()
+    assert analysis.log.TRITONSWMM_compiled_successfully.get()
     analysis.run_prepare_scenarios_serially(
         overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
+    assert analysis.log.all_scenarios_created.get()
     analysis.run_all_sims_in_serially(
         pickup_where_leftoff=False,
         process_outputs_after_sim_completion=True,
@@ -58,10 +60,12 @@ def test_run_multisim_concurrently():
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     analysis.compile_TRITON_SWMM(recompile_if_already_done_successfully=True)
+    assert analysis.log.TRITONSWMM_compiled_successfully.get()
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario=True, verbose=True
     )
     analysis.run_python_functions_concurrently(prepare_scenario_launchers)
+    assert analysis.log.all_scenarios_created.get()
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=False, verbose=True
     )
