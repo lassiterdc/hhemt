@@ -31,7 +31,7 @@ import traceback
 from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import threading
-
+import psutil
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -280,33 +280,59 @@ class TRITONSWMM_analysis:
         self,
         function_launchers: List[Callable[[], None]],
         max_parallel: int | None = None,
+        min_memory_per_function_MiB: int | None = 1024,
         verbose: bool = True,
     ) -> List[int]:
         """
-        Run a list of scenario preparation launchers concurrently on a desktop.
+        Run Python functions concurrently, limiting parallelism by CPU and memory.
 
         Parameters
         ----------
         function_launchers : List[Callable[[], None]]
-            List of functions returned by `prepare_scenario` for each scenario.
-        max_parallel : int, optional
-            Maximum number of concurrent scenarios.
-            Defaults to os.cpu_count().
+            Functions to execute concurrently.
+        max_parallel : int | None
+            Upper bound on parallelism (defaults to CPU count).
+        min_memory_per_function_MiB : int | None
+            Minimum memory required per function (MiB).
+            If provided, concurrency is reduced to avoid oversubscription.
         verbose : bool
             Print progress messages.
 
         Returns
         -------
         List[int]
-            List of scenario indices (by position in the input list) successfully prepared.
+            Indices of functions that completed successfully.
         """
 
-        if max_parallel is None:
-            max_parallel = os.cpu_count() or 1
+        # ----------------------------
+        # CPU-based limit
+        # ----------------------------
+        cpu_limit = max_parallel or (os.cpu_count() or 1)
+
+        # ----------------------------
+        # Memory-based limit
+        # ----------------------------
+        mem_limit = cpu_limit
+        if min_memory_per_function_MiB is not None:
+            available_mem_MiB = psutil.virtual_memory().available // (1024**2)
+            mem_limit = max(1, available_mem_MiB // min_memory_per_function_MiB)
+
+            if verbose:
+                print(
+                    f"Memory-based limit: {mem_limit} "
+                    f"(available {available_mem_MiB} MiB, "
+                    f"{min_memory_per_function_MiB} MiB per task)"
+                )
+
+        # ----------------------------
+        # Final concurrency
+        # ----------------------------
+        effective_max_parallel = max(1, min(cpu_limit, mem_limit))
 
         if verbose:
             print(
-                f"Preparing {len(function_launchers)} scenarios concurrently (max {max_parallel})"
+                f"Running {len(function_launchers)} functions "
+                f"(max parallel = {effective_max_parallel})"
             )
 
         results: List[int] = []
@@ -314,24 +340,28 @@ class TRITONSWMM_analysis:
         def wrapper(idx: int, launcher: Callable[[], None]):
             start = time.time()
             launcher()
-            end = time.time()
+            elapsed = time.time() - start
             if verbose:
-                print(f"Scenario {idx} prepared in {end-start:.2f} s")
+                print(f"Function {idx} completed in {elapsed:.2f} s")
             return idx
 
-        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+        # ----------------------------
+        # Execute
+        # ----------------------------
+        with ThreadPoolExecutor(max_workers=effective_max_parallel) as executor:
             futures = {
                 executor.submit(wrapper, idx, launcher): idx
                 for idx, launcher in enumerate(function_launchers)
             }
+
             for future in as_completed(futures):
                 idx = futures[future]
                 try:
-                    result_idx = future.result()
-                    results.append(result_idx)  # type: ignore
+                    results.append(future.result())
                 except Exception as e:
                     if verbose:
-                        print(f"Scenario {idx} failed: {e}")
+                        print(f"Function {idx} failed: {e}")
+
         self._update_log()
         return results
 
