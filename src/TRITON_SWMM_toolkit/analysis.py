@@ -369,8 +369,7 @@ class TRITONSWMM_analysis:
                 try:
                     results.append(future.result())
                 except:
-                    if verbose:
-                        print(f"Function {idx} failed. See associated logfile.")
+                    pass
 
         self._update_log()
         return results

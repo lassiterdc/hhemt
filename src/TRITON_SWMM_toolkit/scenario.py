@@ -780,7 +780,7 @@ class TRITONSWMM_scenario:
             verbose=verbose,
         ):
             launcher_logfile = (
-                self.log.logfile.parent / ".stdout_and_err_scenario_setup.log"
+                self.log.logfile.parent / "_stdout_and_err_scenario_setup.log"
             )
             with (
                 open(launcher_logfile, "w") as f,

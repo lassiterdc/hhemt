@@ -78,7 +78,7 @@ class TRITONSWMM_sim_post_processing:
             compression_level=compression_level,
         ):
             launcher_logfile = (
-                self.log.logfile.parent / ".stdout_and_err_scenario_processing.log"
+                self.log.logfile.parent / "_stdout_and_err_scenario_processing.log"
             )
             with (
                 open(launcher_logfile, "w") as f,
