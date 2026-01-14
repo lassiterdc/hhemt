@@ -69,26 +69,35 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        if not self._scenario.sim_run_completed:
-            raise RuntimeError(
-                f"Simulation not completed. Log: {self._scenario.latest_simlog}"
-            )
+        def write_scenario_timeseries_launcher(
+            which=which,
+            clear_raw_outputs=clear_raw_outputs,
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        ):
+            if not self._scenario.sim_run_completed:
+                raise RuntimeError(
+                    f"Simulation not completed. Log: {self._scenario.latest_simlog}"
+                )
 
-        if (which == "both") or (which == "TRITON"):
-            self._export_TRITON_outputs(
-                overwrite_if_exist,
-                clear_raw_outputs,
-                verbose,
-                compression_level,
-            )
-        if (which == "both") or (which == "SWMM"):
-            self._export_SWMM_outputs(
-                overwrite_if_exist,
-                clear_raw_outputs,
-                verbose,
-                compression_level,
-            )
-        return
+            if (which == "both") or (which == "TRITON"):
+                self._export_TRITON_outputs(
+                    overwrite_if_exist,
+                    clear_raw_outputs,
+                    verbose,
+                    compression_level,
+                )
+            if (which == "both") or (which == "SWMM"):
+                self._export_SWMM_outputs(
+                    overwrite_if_exist,
+                    clear_raw_outputs,
+                    verbose,
+                    compression_level,
+                )
+            return
+
+        return write_scenario_timeseries_launcher
 
     def _export_TRITON_outputs(
         self,

@@ -40,8 +40,8 @@ def test_prepare_all_scenarios():
         start_from_scratch=True
     )
     single_sim_single_core.system.analysis.compile_TRITON_SWMM()
-    single_sim_single_core.system.analysis.prepare_all_scenarios(
-        overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
+    single_sim_single_core.system.analysis.run_prepare_scenarios_serially(
+        overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
     if not single_sim_single_core.system.analysis.scenarios[
         0
@@ -52,7 +52,7 @@ def test_prepare_all_scenarios():
 
 def test_run_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    single_sim_single_core.system.analysis.run_all_sims_in_series(
+    single_sim_single_core.system.analysis.run_all_sims_in_serially(
         pickup_where_leftoff=False
     )
     success = single_sim_single_core.system.analysis.scenarios[0].sim_run_completed
@@ -64,7 +64,7 @@ def test_run_sim():
 def test_process_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     exp = single_sim_single_core.system.analysis
-    exp.process_all_sim_timeseries()
+    exp.process_all_sim_timeseries_serially()
     success_processing = (
         exp.log.all_TRITON_timeseries_processed.get()
         and exp.log.all_SWMM_timeseries_processed.get()

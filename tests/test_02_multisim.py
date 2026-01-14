@@ -6,10 +6,10 @@ def test_run_multiple_sims_in_sequence():
     multi_sim = tst.retreive_norfolk_multi_sim_test_case(start_from_scratch=True)
     analysis = multi_sim.system.analysis
     analysis.compile_TRITON_SWMM()
-    analysis.prepare_all_scenarios(
-        overwrite_sims=True, rerun_swmm_hydro_if_outputs_exist=True
+    analysis.run_prepare_scenarios_serially(
+        overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
-    analysis.run_all_sims_in_series(
+    analysis.run_all_sims_in_serially(
         pickup_where_leftoff=False,
         process_outputs_after_sim_completion=True,
     )
@@ -58,7 +58,10 @@ def test_run_multisim_concurrently():
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     analysis.compile_TRITON_SWMM(recompile_if_already_done_successfully=True)
-    analysis.prepare_all_scenarios()
+    prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
+        overwrite_scenario=True, verbose=True
+    )
+    analysis.run_python_functions_concurrently(prepare_scenario_launchers)
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=False, verbose=True
     )
@@ -66,3 +69,27 @@ def test_run_multisim_concurrently():
         launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
     )
     assert analysis.log.all_sims_run.get() == True
+
+
+def test_concurrently_process_scenario_timeseries():
+    nrflk_multisim_ensemble = tst.retreive_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = nrflk_multisim_ensemble.system.analysis
+    scenario_timeseries_processing_launchers = (
+        analysis.retreive_scenario_timeseries_processing_launchers()
+    )
+    analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
+    # verify that time series outputs processed
+    success_processing = (
+        analysis.log.all_TRITON_timeseries_processed.get()
+        and analysis.log.all_SWMM_timeseries_processed.get()
+    )
+    if not success_processing:
+        analysis.print_logfile_for_scenario(0)
+        pytest.fail(f"Processing TRITON and SWMM time series failed.")
+
+    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)
+    assert analysis.TRITON_analysis_summary_created
+    assert analysis.SWMM_node_analysis_summary_created
+    assert analysis.SWMM_link_analysis_summary_created

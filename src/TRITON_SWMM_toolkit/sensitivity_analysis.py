@@ -66,25 +66,96 @@ class TRITONSWMM_sensitivity_analysis:
 
     def prepare_scenarios_in_each_subanalysis(
         self,
-        overwrite_sims: bool = False,
+        overwrite_scenarios: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
+        concurrent: bool = True,
         verbose: bool = False,
     ):
+        prepare_scenario_launchers = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            # sub_analysis._add_all_scenarios()
-            sub_analysis.prepare_all_scenarios(
-                overwrite_sims=overwrite_sims,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                verbose=verbose,
+            sub_analysis._add_all_scenarios()
+            prepare_scenario_launchers += (
+                sub_analysis.retrieve_prepare_scenario_launchers(
+                    overwrite_scenario=overwrite_scenarios,
+                    rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                    verbose=verbose,
+                )
             )
-        all_logs = self._update_master_analysis_log()
+        if concurrent:
+            self.master_analysis.run_python_functions_concurrently(
+                prepare_scenario_launchers, verbose=verbose
+            )
+        else:
+            for launcher in prepare_scenario_launchers:
+                launcher()
+
+        self._update_master_analysis_log()
         if self.master_analysis.log.all_scenarios_created.get() != True:
-            logs_for_printing = json.dumps(all_logs, indent=4)
+            logs_for_printing = self.master_analysis.log.model_dump_json(indent=2)
             raise RuntimeError(
                 f"""Log is not reflecting that scenarios have been created.\n
 {logs_for_printing}
                 """
             )
+
+    def run_all_sims(
+        self,
+        pickup_where_leftoff,
+        concurrent: bool = True,
+        process_outputs_after_sim_completion: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        verbose=False,
+    ):
+        if concurrent:
+            launch_functions = []
+            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+                sub_analysis._add_all_scenarios()
+                launch_functions += sub_analysis._create_launchable_sims(
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    verbose=verbose,
+                )
+            self.master_analysis.run_simulations_concurrently(
+                launch_functions, verbose=verbose
+            )
+        else:
+            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+                sub_analysis.run_all_sims_in_series(
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    process_outputs_after_sim_completion=process_outputs_after_sim_completion,
+                    which=which,
+                    clear_raw_outputs=clear_raw_outputs,
+                    overwrite_if_exist=-overwrite_if_exist,
+                    compression_level=compression_level,
+                    verbose=verbose,
+                )
+        self._update_master_analysis_log()
+        return
+
+    def process_simulation_timeseries_concurrently(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        scenario_timeseries_processing_launchers = []
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            launchers = sub_analysis.retreive_scenario_timeseries_processing_launchers(
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+            scenario_timeseries_processing_launchers += launchers
+        self.master_analysis.run_python_functions_concurrently(
+            scenario_timeseries_processing_launchers
+        )
+        return
 
     def _combine_TRITON_outputs_per_subanalysis(self):
         assert self.TRITON_subanalyses_outputs_consolidated
@@ -146,6 +217,7 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        self._update_master_analysis_log()
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis.consolidate_analysis_outptus(
                 which=which,
@@ -245,29 +317,6 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITONSWMM_runtimes(self):
         return self.master_analysis.TRITONSWMM_runtimes
 
-    def run_all_sims(
-        self,
-        pickup_where_leftoff,
-        process_outputs_after_sim_completion: bool = True,
-        which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
-        compression_level: int = 5,
-        verbose=False,
-    ):
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            sub_analysis.run_all_sims_in_series(
-                pickup_where_leftoff=pickup_where_leftoff,
-                process_outputs_after_sim_completion=process_outputs_after_sim_completion,
-                which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=-overwrite_if_exist,
-                compression_level=compression_level,
-                verbose=verbose,
-            )
-        self._update_master_analysis_log()
-        return
-
     def _attributes_varied_for_analysis(self):
         df_setup = self._retieve_df_setup()
         keys_targeted_for_sensitivity = []
@@ -325,35 +374,38 @@ class TRITONSWMM_sensitivity_analysis:
         return dic_sensitivity_analyses
 
     def _update_master_analysis_log(self):
-        dic_all_logs = dict()
+
+        # dic_all_logs = dict()
         all_scenarios_created = True
         all_sims_run = True
         all_TRITON_timeseries_processed = True
         all_SWMM_timeseries_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
-        for key, analysis in self.sub_analyses.items():
-            dic_all_logs[key] = analysis.log.model_dump()
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            # dic_all_logs[key] = sub_analysis.log.model_dump()
             all_scenarios_created = (
-                all_scenarios_created and analysis.log.all_scenarios_created.get()
+                all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
             )
-            all_sims_run = all_sims_run and analysis.log.all_sims_run.get()
+            all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
             all_TRITON_timeseries_processed = (
                 all_TRITON_timeseries_processed
-                and analysis.log.all_TRITON_timeseries_processed.get()
+                and sub_analysis.log.all_TRITON_timeseries_processed.get()
             )
             all_SWMM_timeseries_processed = (
                 all_SWMM_timeseries_processed
-                and analysis.log.all_SWMM_timeseries_processed.get()
+                and sub_analysis.log.all_SWMM_timeseries_processed.get()
             )
             all_raw_TRITON_outputs_cleared = (
                 all_raw_TRITON_outputs_cleared
-                and analysis.log.all_raw_TRITON_outputs_cleared.get()
+                and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
             )
             all_raw_SWMM_outputs_cleared = (
                 all_raw_SWMM_outputs_cleared
-                and analysis.log.all_raw_SWMM_outputs_cleared.get()
+                and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
             )
+        self.master_analysis._update_log()
         self.master_analysis.log.all_scenarios_created.set(all_scenarios_created)
         self.master_analysis.log.all_sims_run.set(all_sims_run)
         self.master_analysis.log.all_TRITON_timeseries_processed.set(
@@ -368,3 +420,4 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis.log.all_raw_SWMM_outputs_cleared.set(
             all_raw_SWMM_outputs_cleared
         )
+        return
