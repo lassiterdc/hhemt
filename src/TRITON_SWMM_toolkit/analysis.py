@@ -366,11 +366,10 @@ class TRITONSWMM_analysis:
 
             for future in as_completed(futures):
                 idx = futures[future]
-                try:
-                    results.append(future.result())
-                except:
-                    if verbose:
-                        print(f"Function {idx} failed. See associated logfile.")
+                # try:
+                results.append(future.result())
+                # except:
+                #     pass
 
         self._update_log()
         return results
