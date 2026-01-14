@@ -489,7 +489,10 @@ def load_norfolk_system_config(
     write_yaml(filled_yaml_data, cfg_yaml)
     cfg_system = load_system_config(cfg_yaml)
     # download data if it doesn't exist
-    if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
+    if (
+        Path(mapping["DATA_DIR"]).joinpath("software").exists()
+        and not download_if_exists
+    ):
         pass
     else:
         hs = sign_into_hydroshare()
