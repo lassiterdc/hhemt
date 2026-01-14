@@ -13,6 +13,7 @@ run_mode: "serial"
 rainfall_units: 'mm/hr'
 storm_tide_units: 'm'
 # TOGGLES
+toggle_run_ensemble_with_bash_script: False
 toggle_sensitivity_analysis: False
 toggle_storm_tide_boundary: True
 # PARAMETERS

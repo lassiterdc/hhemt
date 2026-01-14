@@ -21,6 +21,10 @@ from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 import yaml
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, List, Optional
+
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -51,6 +55,7 @@ class TRITONSWMM_analysis:
             analysis_dir = (
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
             )
+
         self.analysis_paths = AnalysisPaths(
             f_log=analysis_dir / "log.json",
             analysis_dir=analysis_dir,
@@ -66,6 +71,8 @@ class TRITONSWMM_analysis:
             output_swmm_node_summary=analysis_dir
             / f"SWMM_nodes.{self.cfg_analysis.TRITON_processed_output_type}",
         )
+        if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
+            self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
@@ -245,6 +252,56 @@ class TRITONSWMM_analysis:
         scen = self.scenarios[event_iloc]
         scen.log.print()
 
+    def retrieve_sim_command_text(
+        self,
+        pickup_where_leftoff: bool = False,
+        in_slurm: Optional[bool] = None,
+        verbose: bool = False,
+        extra_env: Optional[dict] = None,
+    ):
+        sim_commands = []
+        for event_iloc in self.df_sims.index:
+            run = self._retreive_sim_runs(event_iloc)
+            cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = (  # type: ignore
+                run.prepare_simulation_command(
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    in_slurm=in_slurm,
+                    verbose=verbose,
+                )
+            )
+            env_lines = [f"export {k}={v}" for k, v in env.items()]  # type: ignore
+            cmd_line = " ".join(cmd) + f" > {tritonswmm_logfile} 2>&1 &"  # type: ignore
+            sim_commands.append(cmd_line)
+        env_text = "\n".join(env_lines)
+        command_text = env_text + "\n" * 2 + "\n".join(sim_commands) + "\n\nwait\n"
+        return command_text
+
+    # analysis functions
+    def create_ensemble_bash_script(self, run_command: str):
+        """
+        Generates one bash script that launches all simulations in the ensemble.
+        """
+        run_mode = self.cfg_analysis.run_mode
+        if run_mode == "gpu":
+            gpu_toggle = ""
+        else:
+            gpu_toggle = " "
+        mapping = dict(
+            allocation=self.cfg_analysis.hpc_allocation,
+            time=minutes_to_hhmmss(self.cfg_analysis.hpc_time_min),  # type: ignore
+            partition=self.cfg_analysis.hpc_partition,
+            nodes=self.cfg_analysis.hpc_n_nodes,
+            gpu_toggle=gpu_toggle,
+            gres=self.cfg_analysis.hpc_gpus_requested,
+            run_command=run_command,
+        )
+
+        create_from_template(
+            self.cfg_analysis.hpc_bash_script_ensemble_template,  # type: ignore
+            mapping,
+            self.analysis_paths.bash_script_path,  # type: ignore
+        )
+
     def run_sim(
         self,
         event_iloc: int,
@@ -266,10 +323,10 @@ class TRITONSWMM_analysis:
             print("Log file:")
             print(ts_scenario.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
-        run = self._retreive_sim_run_object(event_iloc)
+        run = self._retreive_sim_runs(event_iloc)
         if verbose:
             print("run instance instantiated")
-        run.run_simulation(pickup_where_leftoff, verbose=verbose)
+        run.run_simulation(pickup_where_leftoff, verbose=verbose, run_async=False)
         self.sim_run_status(event_iloc)
         self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
@@ -346,12 +403,12 @@ class TRITONSWMM_analysis:
         return
 
     def sim_run_status(self, event_iloc):
-        run = self._retreive_sim_run_object(event_iloc)
+        run = self._retreive_sim_runs(event_iloc)
         status = run._scenario.latest_simlog
         self._simulation_run_statuses[event_iloc] = status
         return status
 
-    def _retreive_sim_run_object(self, event_iloc):
+    def _retreive_sim_runs(self, event_iloc):
         weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
             event_iloc
         )
@@ -361,10 +418,105 @@ class TRITONSWMM_analysis:
         return run
 
     def _retrieve_sim_run_processing_object(self, event_iloc):
-        run = self._retreive_sim_run_object(event_iloc)
+        run = self._retreive_sim_runs(event_iloc)
         proc = TRITONSWMM_sim_post_processing(run)
         self._sim_run_processing_objects[event_iloc] = proc
         return proc
+
+    def _create_launchable_sims(
+        self,
+        pickup_where_leftoff: bool = False,
+        verbose: bool = False,
+        in_slurm: Optional[bool] = None,
+    ):
+        launch_functions = []
+        for event_iloc in self.df_sims.index:
+            run = self._retreive_sim_runs(event_iloc)
+            launch_function = run.run_simulation(
+                pickup_where_leftoff=pickup_where_leftoff,
+                run_async=True,
+                verbose=verbose,
+                in_slurm=in_slurm,
+            )
+            launch_functions.append(launch_function)
+        return launch_functions
+
+    def run_simulations_concurrently(
+        self,
+        launch_functions: List[Callable[[], str]],
+        use_gpu: bool = False,
+        total_gpus_available: Optional[int] = 0,
+        verbose: bool = True,
+    ) -> List[str]:
+        """
+        Run a list of simulation launch functions concurrently, dynamically
+        computing max parallelism based on available resources.
+
+        Parameters
+        ----------
+        launch_functions : List[Callable[[], str]]
+            List of functions that launch simulations and return status.
+        n_omp_threads : int, optional
+            Number of OpenMP threads per simulation (default: 1).
+        n_mpi_procs : int, optional
+            Number of MPI ranks per simulation (default: 1).
+        n_gpus : int, optional
+            Number of GPUs required per simulation (default: 0).
+        total_gpus_available : int, optional
+            Total GPUs available on the machine (default: 0).
+        verbose : bool
+            If True, prints progress messages.
+
+        Returns
+        -------
+        List[str]
+            List of simulation statuses, in completion order.
+        """
+        # ----------------------------
+        # Determine CPU parallelism
+        # ----------------------------
+        total_cores = os.cpu_count() or 1
+        threads_per_sim = self.cfg_analysis.n_omp_threads or 1
+        mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+        n_gpus = self.cfg_analysis.n_gpus
+
+        cores_per_sim = threads_per_sim * mpi_ranks
+        max_parallel_cpu = max(1, total_cores // cores_per_sim)
+
+        # ----------------------------
+        # Determine GPU parallelism
+        # ----------------------------
+        if n_gpus and total_gpus_available:
+            max_parallel_gpu = max(1, total_gpus_available // n_gpus)
+        else:
+            max_parallel_gpu = max_parallel_cpu  # no GPU constraint
+
+        # Effective maximum parallel simulations
+        if use_gpu:
+            max_parallel = max_parallel_gpu
+        else:
+            max_parallel = max_parallel_cpu
+
+        if verbose:
+            print(f"Running up to {max_parallel} sims concurrently")
+
+        results: List[str] = []
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            futures = {executor.submit(fn): i for i, fn in enumerate(launch_functions)}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    status = future.result()
+                    results.append(status)
+                    if verbose:
+                        print(f"Simulation {idx} finished: {status}")
+                except Exception as e:
+                    results.append(f"failed: {e}")
+                    if verbose:
+                        print(f"Simulation {idx} failed: {e}")
+
+        self._update_log()
+        return results
 
     def run_all_sims_in_series(
         self,
@@ -518,3 +670,8 @@ class TRITONSWMM_analysis:
 
 
 # %%
+def minutes_to_hhmmss(minutes: int) -> str:
+    secs = 0
+    hours = minutes // 60
+    minutes = minutes % 60
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"

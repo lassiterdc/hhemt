@@ -270,6 +270,7 @@ class GetTS_TestCases:
     TRITON_reporting_timestep_s = 10
     test_data_dir = files(APP_NAME).parents[1].joinpath(f"test_data/{NORFOLK_EX}/")  # type: ignore
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
+    hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
 
     def __init__(self) -> None:
         pass
@@ -297,6 +298,52 @@ class GetTS_TestCases:
             additional_analysis_configs=additional_analysis_configs,
         )
         return nrflk_test
+
+    @classmethod
+    def retreive_norfolk_hcp_multisim_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "cpu_config_sensitivity"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=2,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                toggle_run_ensemble_with_bash_script=True,
+                hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
+                hpc_allocation="***REMOVED***",
+                hpc_time_min=120,
+                hpc_partition="batch",
+                hpc_n_nodes=1,
+            ),
+        )
+
+    @classmethod
+    def retreive_norfolk_hcp_cpu_sensitivity_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "cpu_config_sensitivity"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                toggle_sensitivity_analysis=True,
+                toggle_run_ensemble_with_bash_script=True,
+                hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
+                sensitivity_analysis=cls.cpu_sensitivity,
+                hpc_allocation="***REMOVED***",
+                hpc_time_min=120,
+                hpc_partition="batch",
+                hpc_n_nodes=1,
+            ),
+        )
 
     @classmethod
     def retreive_norfolk_cpu_config_sensitivity_case(

@@ -90,27 +90,22 @@ class TRITONSWMM_run:
                 status = "simulation started but did not finish"
         return status, Path(f_last_cfg)  # type: ignore
 
-    def run_simulation(
+    # cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
+    def prepare_simulation_command(
         self,
         pickup_where_leftoff: bool,
-        extra_env: Optional[dict] = None,
+        in_slurm: Optional[bool] = None,
         verbose: bool = True,
     ):
-        start_time = time.time()
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
         n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
         n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
         n_gpus = self._analysis.cfg_analysis.n_gpus
-
-        sim_id_str = self._scenario._retrieve_sim_id_str()
         tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
-        start_time = time.perf_counter()
         exe = self._scenario.scen_paths.sim_tritonswmm_executable
         cfg = self._scenario.scen_paths.triton_swmm_cfg
-        start_time = time.perf_counter()
-        exe = self._scenario.scen_paths.sim_tritonswmm_executable
-        cfg = self._scenario.scen_paths.triton_swmm_cfg
+
         sim_start_reporting_tstep = 0
         if pickup_where_leftoff:
             status, f_last_cfg = self._check_simulation_run_status()
@@ -125,48 +120,30 @@ class TRITONSWMM_run:
                     print(f"{status}. Picking up where left off...")
                     print(print(f"cfg: {cfg}"))
 
-        """
-        Run a hydrodynamic model in serial, OpenMP, MPI, or hybrid mode.
-
-        Parameters
-        ----------
-        exe : Path
-            Executable path
-        cfg : Path
-            Configuration file
-        logfile : Path
-            Log file path
-        run_mode : {"serial", "openmp", "mpi", "hybrid"}
-        n_mpi_procs : int
-            Number of MPI ranks (mpi / hybrid)
-        n_omp_threads : int
-            Threads per rank (openmp / hybrid)
-        extra_env : dict, optional
-            Additional environment variables
-        """
-
-        env = os.environ.copy()
+        og_env = os.environ.copy()
+        env = dict()
         swmm_path = (
             self._analysis.analysis_paths.compiled_software_directory
             / "Stormwater-Management-Model"
             / "build"
             / "bin"
         )
-        env["LD_LIBRARY_PATH"] = f"{swmm_path}:{env.get('LD_LIBRARY_PATH', '')}"
+        env["LD_LIBRARY_PATH"] = (
+            f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
+        )
+
+        run_specific_env = dict()
 
         # ----------------------------
         # OpenMP configuration
         # ----------------------------
         if run_mode in ("openmp", "hybrid"):
-            env["OMP_NUM_THREADS"] = str(n_omp_threads)
+            run_specific_env["OMP_NUM_THREADS"] = str(n_omp_threads)
             # env["OMP_PROC_BIND"] = "spread"
-            env["OMP_PROC_BIND"] = "true"
-            env["OMP_PLACES"] = "cores"
+            run_specific_env["OMP_PROC_BIND"] = "true"
+            run_specific_env["OMP_PLACES"] = "cores"
         else:
-            env["OMP_NUM_THREADS"] = "1"
-
-        if extra_env:
-            env.update(extra_env)
+            run_specific_env["OMP_NUM_THREADS"] = "1"
 
         # ----------------------------
         # GPU configuration
@@ -175,33 +152,41 @@ class TRITONSWMM_run:
             # expose the requested GPUs
             gpu_list = ",".join(str(i) for i in range(n_gpus))  # type: ignore
             # AMD ROCm / Frontier
-            env["HIP_VISIBLE_DEVICES"] = gpu_list
+            run_specific_env["HIP_VISIBLE_DEVICES"] = gpu_list
             # NVIDIA / CUDA
-            env["CUDA_VISIBLE_DEVICES"] = gpu_list
-            env["OMP_NUM_THREADS"] = str(n_omp_threads)  # optional: threads per GPU
-            env["OMP_PROC_BIND"] = "true"
-            env["OMP_PLACES"] = "cores"
-
-        if extra_env:
-            env.update(extra_env)
-
+            run_specific_env["CUDA_VISIBLE_DEVICES"] = gpu_list
+            run_specific_env["OMP_NUM_THREADS"] = str(
+                n_omp_threads
+            )  # optional: threads per GPU
+            run_specific_env["OMP_PROC_BIND"] = "true"
+            run_specific_env["OMP_PLACES"] = "cores"
         # ----------------------------
         # Detect SLURM
         # ----------------------------
-        in_slurm = "SLURM_JOB_ID" in env
+        if in_slurm is None:
+            in_slurm = "SLURM_JOB_ID" in og_env
+        if not in_slurm:
+            env = env | run_specific_env
 
         # ----------------------------
         # Build command
         # ----------------------------
-        if run_mode == "serial":
-            cmd = [str(exe), str(cfg)]
+        run_env_prefix = " ".join(f"{k}={v}" for k, v in run_specific_env.items())
 
-        elif run_mode == "openmp":
-            cmd = [str(exe), str(cfg)]
-
+        if run_mode in ("serial", "openmp"):
+            if in_slurm:
+                cmd = [
+                    run_env_prefix,
+                    "srun",
+                    str(exe),
+                    str(cfg),
+                ]
+            else:
+                cmd = [str(exe), str(cfg)]
         elif run_mode in ("mpi", "hybrid"):
             if in_slurm:
                 cmd = [
+                    run_env_prefix,
                     "srun",
                     "--ntasks",
                     str(n_mpi_procs),
@@ -222,6 +207,7 @@ class TRITONSWMM_run:
         elif run_mode == "gpu":
             if in_slurm:
                 cmd = [
+                    run_env_prefix,
                     "srun",
                     "--ntasks",
                     str(n_gpus),
@@ -253,24 +239,44 @@ class TRITONSWMM_run:
         # ----------------------------
         # Run
         # ----------------------------
-        if verbose:
-            print("OMP_NUM_THREADS =", env.get("OMP_NUM_THREADS"))
-            print("OMP_PROC_BIND =", env.get("OMP_PROC_BIND"))
-            print("OMP_PLACES =", env.get("OMP_PLACES"))
-            if run_mode == "gpu":
-                print("CUDA_VISIBLE_DEVICES =", env.get("CUDA_VISIBLE_DEVICES"))
-            print(f"Running mode: {run_mode}")
-            print("Command:", " ".join(cmd))
-        # print("OMP_NUM_THREADS:", env["OMP_NUM_THREADS"])
-
         tritonswmm_logfile = (
             tritonswmm_logfile_dir
             / f"{current_datetime_string(filepath_friendly=True)}.log"
         )  # individual sim log
+        return cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
+
+    def run_simulation(
+        self,
+        pickup_where_leftoff: bool,
+        run_async: bool,
+        in_slurm: Optional[bool] = None,
+        verbose: bool = True,
+    ):
+        n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
+        n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
+        n_gpus = self._analysis.cfg_analysis.n_gpus
+        run_mode = self._analysis.cfg_analysis.run_mode
+
+        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = (  # type: ignore
+            self.prepare_simulation_command(
+                pickup_where_leftoff=pickup_where_leftoff,
+                in_slurm=in_slurm,
+                verbose=verbose,
+            )
+        )
+
+        sim_id_str = self._scenario._retrieve_sim_id_str()
+
+        # print("OMP_NUM_THREADS:", env["OMP_NUM_THREADS"])
+
         sim_datetime = current_datetime_string()
 
         if run_mode != "gpu":
             n_gpus = 0
+
+        og_env = os.environ.copy()
+        if in_slurm is None:
+            in_slurm = "SLURM_JOB_ID" in og_env
 
         self.log.add_sim_entry(
             sim_datetime=sim_datetime,
@@ -279,47 +285,53 @@ class TRITONSWMM_run:
             time_elapsed_s=0,
             status="not started",
             run_mode=run_mode,
-            cmd=" ".join(cmd),
+            cmd=" ".join(cmd),  # type: ignore
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
             n_gpus=n_gpus,
             in_slurm=in_slurm,
-            env=env,
+            env=env,  # type: ignore
         )
         if verbose:
             print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
             print("bash command to view progress:")
             print(f"tail -f {tritonswmm_logfile}")
 
-        with open(tritonswmm_logfile, "w") as lf:
-            subprocess.run(
-                cmd,
-                env=env,
-                stdout=lf,
-                stderr=subprocess.STDOUT,
-                check=True,
-            )
-        end_time = time.perf_counter()
-        elapsed = end_time - start_time
+        def launch_sim():
+            start_time = time.time()
+            with open(tritonswmm_logfile, "w") as lf:
+                subprocess.run(
+                    cmd,  # type: ignore
+                    env={**env, **og_env},  # type: ignore
+                    stdout=lf,
+                    stderr=subprocess.STDOUT,
+                    check=True,
+                )
+                end_time = time.perf_counter()
+                elapsed = end_time - start_time
 
-        status, __ = self._check_simulation_run_status()
+                status, __ = self._check_simulation_run_status()
 
-        self.log.add_sim_entry(
-            sim_datetime=sim_datetime,
-            sim_start_reporting_tstep=sim_start_reporting_tstep,
-            tritonswmm_logfile=tritonswmm_logfile,
-            time_elapsed_s=elapsed,
-            status=status,
-            run_mode=run_mode,
-            cmd=" ".join(cmd),
-            n_mpi_procs=n_mpi_procs,
-            n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus,
-            in_slurm=in_slurm,
-            env=env,
-        )
+                self.log.add_sim_entry(
+                    sim_datetime=sim_datetime,
+                    sim_start_reporting_tstep=sim_start_reporting_tstep,
+                    tritonswmm_logfile=tritonswmm_logfile,
+                    time_elapsed_s=elapsed,
+                    status=status,
+                    run_mode=run_mode,
+                    cmd=" ".join(cmd),  # type: ignore
+                    n_mpi_procs=n_mpi_procs,
+                    n_omp_threads=n_omp_threads,
+                    n_gpus=n_gpus,
+                    in_slurm=in_slurm,
+                    env=env,  # type: ignore
+                )
+            return status
 
-        return
+        if run_async:
+            return launch_sim  # caller can submit it to a thread/process pool
+        else:
+            return launch_sim()  # run immediately
 
 
 def return_the_reporting_step_from_a_cfg(f_cfg: Path):

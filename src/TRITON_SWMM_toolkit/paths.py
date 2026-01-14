@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Dict
 from dataclasses import dataclass, asdict
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
+from typing import Optional
 
 
 @dataclass
@@ -38,6 +39,7 @@ class AnalysisPaths(MainDataClass):
     output_triton_summary: Path
     output_swmm_links_summary: Path
     output_swmm_node_summary: Path
+    bash_script_path: Optional[Path] = None
 
 
 @dataclass

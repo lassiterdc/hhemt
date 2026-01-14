@@ -1,5 +1,3 @@
-# src/TRITON_SWMM_toolkit/config_model.py
-# %%
 from pydantic import (
     BaseModel,
     Field,
@@ -369,14 +367,18 @@ class analysis_config(cfgBaseModel):
     run_mode: Literal["serial", "openmp", "mpi", "hybrid"] = Field(
         ..., description="Compute configuration"
     )
-    n_nodes: int = Field(1, description="Node count")
     n_mpi_procs: Optional[int] = Field(
-        None, description="Number of MPI ranks per simulation."
+        1, description="Number of MPI ranks per simulation."
     )
-    n_omp_threads: Optional[int] = Field(None, description="Threads per rank")
-    n_gpus: Optional[int] = Field(None, description="Number of GPUs")
+    n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
+    n_gpus: Optional[int] = Field(0, description="Number of GPUs")
 
     # TOGGLES
+    # TODO - create validatoin checks for bash script toggle
+    toggle_run_ensemble_with_bash_script: bool = Field(
+        ...,
+        description="If true, a bash script will be generated using a template and submitted the the HPC to run the ensemble.",
+    )
     toggle_sensitivity_analysis: bool = Field(
         ...,
         description="Whether or not this is a sensitivity study. If so, a .csv file is required for input sensitivity_analysis defining the analysisal setup.",
@@ -386,6 +388,30 @@ class analysis_config(cfgBaseModel):
         description="If True, a boundary condition representing storm tide will be applied to the model.",
     )
     # OPTIONAL OR DEPENDENT
+    hpc_bash_script_ensemble_template: Optional[Path] = Field(
+        None,
+        description="Bash script template filled with other user defined variables in the analysis configuration yaml.",
+    )
+    hpc_allocation: Optional[str] = Field(None, description="Allocation")
+    hpc_time_min: Optional[int] = Field(
+        None, description="Amount of time in minutes the job will be run."
+    )
+    hpc_partition: Optional[str] = Field(
+        None, description="Partition on which to run enesmble."
+    )
+    hpc_n_nodes: Optional[int] = Field(
+        None, description="Number of HPC nodes to request."
+    )
+    hpc_cpus_per_task: Optional[int] = Field(
+        None, description="CPUs per task (threads per MPI rank)."
+    )
+    hpc_ntasks_per_node: Optional[int] = Field(
+        None, description="Number of tasks per node (MPI ranks per node)"
+    )
+    hpc_gpus_requested: Optional[int] = Field(
+        None, description="Number of GPUs requested."
+    )
+
     storm_tide_boundary_line_gis: Optional[Path] = Field(
         None,
         description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",

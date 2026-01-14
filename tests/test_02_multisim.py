@@ -50,3 +50,19 @@ def test_consolidate_multisim_SWMM_outputs():
     )
     assert multi_sim.system.analysis.SWMM_node_analysis_summary_created
     assert multi_sim.system.analysis.SWMM_link_analysis_summary_created
+
+
+def test_run_multisim_concurrently():
+    nrflk_multisim_ensemble = tst.retreive_norfolk_hcp_multisim_case(
+        start_from_scratch=True
+    )
+    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis.compile_TRITON_SWMM(recompile_if_already_done_successfully=True)
+    analysis.prepare_all_scenarios()
+    launch_functions = analysis._create_launchable_sims(
+        pickup_where_leftoff=False, verbose=True
+    )
+    analysis.run_simulations_concurrently(
+        launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
+    )
+    assert analysis.log.all_sims_run.get() == True
