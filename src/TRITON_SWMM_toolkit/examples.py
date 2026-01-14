@@ -302,7 +302,7 @@ class GetTS_TestCases:
         return nrflk_test
 
     @classmethod
-    def retreive_norfolk_frontier_multisim_cpu_case(
+    def retreive_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "frontier_multisim"
