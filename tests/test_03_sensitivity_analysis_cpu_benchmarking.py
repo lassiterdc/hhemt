@@ -1,7 +1,5 @@
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-temp_test = True
-
 
 def test_retrieve_test():
     nrflk_cpu_sensitivity = tst.retreive_norfolk_cpu_config_sensitivity_case(

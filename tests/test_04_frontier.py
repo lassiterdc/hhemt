@@ -52,7 +52,11 @@ def test_prepare_scenarios():
         overwrite_scenario=True, verbose=True
     )
     analysis.run_python_functions_concurrently(prepare_scenario_launchers)
-    assert analysis.log.all_scenarios_created.get()
+    if analysis.log.all_scenarios_created.get() != True:
+        scens_not_created = "\n".join(analysis.scenarios_not_created)
+        pytest.fail(
+            f"Processing TRITON and SWMM time series failed.Scenarios not created: \n{scens_not_created}"
+        )
 
 
 def test_run_sims():
@@ -84,7 +88,7 @@ def test_concurrently_process_scenario_timeseries():
         and analysis.log.all_SWMM_timeseries_processed.get()
     )
     if not success_processing:
-        analysis.print_logfile_for_scenario(0)
+        analysis.log.print()
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
 
     analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)

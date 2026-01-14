@@ -202,8 +202,18 @@ class TRITONSWMM_analysis:
             self._add_scenario(event_iloc)
         return
 
+    @property
+    def scenarios_not_created(self):
+        scens_not_created = []
+        for event_iloc in self.df_sims.index:
+            scen = self.scenarios[event_iloc]
+            scen.log.refresh()
+            if scen.log.scenario_creation_complete.get() != True:
+                scens_not_created.append(str(scen.log.logfile.parent))
+        return scens_not_created
+
     def _update_log(self):
-        dict_all_logs = {}
+        # dict_all_logs = {}
         all_scens_created = True
         all_sims_run = True
         all_TRITON_outputs_processed = True
@@ -212,7 +222,8 @@ class TRITONSWMM_analysis:
         all_raw_SWMM_outputs_cleared = True
         for event_iloc in self.df_sims.index:
             scen = self.scenarios[event_iloc]
-            dict_all_logs[event_iloc] = scen.log.model_dump()
+            scen.log.refresh()
+            # dict_all_logs[event_iloc] = scen.log.model_dump()
             # sim run status
             all_sims_run = all_sims_run and scen.sim_run_completed
             # sim creation status

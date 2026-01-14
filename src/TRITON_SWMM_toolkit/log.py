@@ -185,6 +185,12 @@ class TRITONSWMM_log(BaseModel):
     def print(self, indent: int = 4):
         print(self._as_json(indent))
 
+    def refresh(self):
+        if self.logfile.exists():
+            self = self.from_json(self.logfile)
+        else:
+            pass
+
     @classmethod
     def from_json(cls, path: Path | str):
         path = Path(path)
