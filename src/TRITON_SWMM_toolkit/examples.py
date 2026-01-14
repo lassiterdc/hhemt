@@ -191,7 +191,9 @@ class TRITON_SWMM_testcase:
             self.system.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
 
-        ds_event_weather_series = xr.open_dataset(og_weather_timeseries)
+        ds_event_weather_series = xr.open_dataset(
+            og_weather_timeseries, engine="h5netcdf"
+        )
 
         ds_event_weather_series = ds_event_weather_series.isel(
             {weather_time_series_timestep_dimension_name: slice(0, self.n_tsteps)}
@@ -204,7 +206,9 @@ class TRITON_SWMM_testcase:
         new_weather_timeseries.parent.mkdir(parents=True, exist_ok=True)
 
         if new_weather_timeseries.exists():
-            with xr.open_dataset(new_weather_timeseries) as ds_existing:
+            with xr.open_dataset(
+                new_weather_timeseries, engine="h5netcdf"
+            ) as ds_existing:
                 tsteps_existing = ds_existing[
                     weather_time_series_timestep_dimension_name
                 ].to_series()

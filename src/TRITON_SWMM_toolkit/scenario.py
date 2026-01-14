@@ -170,7 +170,7 @@ class TRITONSWMM_scenario:
         )
         rainfall_units = self._analysis.cfg_analysis.rainfall_units
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries)
+        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)  # type: ignore
         sim_id_str = self.sim_id_str
@@ -219,7 +219,7 @@ class TRITONSWMM_scenario:
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
         weather_event_indexers = self.weather_event_indexers
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries)
+        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         # df_sub_raingage_mapping = pd.read_csv(subcatchment_raingage_mapping)
         sim_id_str = self.sim_id_str
@@ -261,7 +261,7 @@ class TRITONSWMM_scenario:
             self._analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries)
+        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
         tstep_seconds = (
             ds_event_weather_series.timestep.to_series()
             .diff()
@@ -372,7 +372,7 @@ class TRITONSWMM_scenario:
             self._analysis.cfg_analysis.storm_tide_boundary_line_gis
         )
 
-        ds_event_weather_series = xr.open_dataset(weather_timeseries)
+        ds_event_weather_series = xr.open_dataset(weather_timeseries, engine="h5netcdf")
         ds_event_ts = ds_event_weather_series.sel(weather_event_indexers)
         df_water_levels = (
             ds_event_ts[weather_time_series_storm_tide_datavar]
