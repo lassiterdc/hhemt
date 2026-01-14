@@ -564,6 +564,11 @@ class analysis_config(cfgBaseModel):
         return values
 
 
+def load_system_config_from_dict(cfg_dict):
+    cfg = system_config.model_validate(cfg_dict)
+    return cfg
+
+
 def load_system_config(cfg_yaml: Path):
     cfg = yaml.safe_load(cfg_yaml.read_text())
     cfg = system_config.model_validate(cfg)
