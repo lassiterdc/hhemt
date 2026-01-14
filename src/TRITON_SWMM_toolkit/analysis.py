@@ -27,6 +27,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable, List, Optional
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Optional
+import traceback
+from contextlib import redirect_stdout, redirect_stderr
+from pathlib import Path
+import threading
+
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -314,6 +319,28 @@ class TRITONSWMM_analysis:
                 print(f"Scenario {idx} prepared in {end-start:.2f} s")
             return idx
 
+        # def wrapper(idx: int, launcher: Callable[[], None]):
+        #     log_dir = Path("concurrent_debug_logs")
+        #     log_dir.mkdir(exist_ok=True)
+
+        #     log_path = log_dir / f"launcher_{idx}.log"
+        #     thread_id = threading.get_ident()
+
+        #     with open(log_path, "w") as f, redirect_stdout(f), redirect_stderr(f):
+        #         print(f"[START] idx={idx}, thread={thread_id}")
+        #         print(f"[TIME ] {time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        #         start = time.time()
+        #         try:
+        #             launcher()
+        #         except Exception:
+        #             print("[ERROR] Exception raised:")
+        #             traceback.print_exc()
+        #             raise
+        #         finally:
+        #             end = time.time()
+        #             print(f"[END  ] elapsed={end - start:.2f}s")
+
         with ThreadPoolExecutor(max_workers=max_parallel) as executor:
             futures = {
                 executor.submit(wrapper, idx, launcher): idx
@@ -323,7 +350,7 @@ class TRITONSWMM_analysis:
                 idx = futures[future]
                 try:
                     result_idx = future.result()
-                    results.append(result_idx)
+                    results.append(result_idx)  # type: ignore
                 except Exception as e:
                     if verbose:
                         print(f"Scenario {idx} failed: {e}")

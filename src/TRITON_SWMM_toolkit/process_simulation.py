@@ -20,6 +20,7 @@ from TRITON_SWMM_toolkit.utils import current_datetime_string
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 import re
 from datetime import datetime
+from contextlib import redirect_stdout, redirect_stderr
 
 
 class TRITONSWMM_sim_post_processing:
@@ -69,35 +70,43 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        def write_scenario_timeseries_launcher(
+        def launcher(
             which=which,
             clear_raw_outputs=clear_raw_outputs,
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
         ):
-            if not self._scenario.sim_run_completed:
-                raise RuntimeError(
-                    f"Simulation not completed. Log: {self._scenario.latest_simlog}"
-                )
+            launcher_logfile = (
+                self.log.logfile.parent / ".stdout_and_err_scenario_processing.log"
+            )
+            with (
+                open(launcher_logfile, "w") as f,
+                redirect_stdout(f),
+                redirect_stderr(f),
+            ):
+                if not self._scenario.sim_run_completed:
+                    raise RuntimeError(
+                        f"Simulation not completed. Log: {self._scenario.latest_simlog}"
+                    )
 
-            if (which == "both") or (which == "TRITON"):
-                self._export_TRITON_outputs(
-                    overwrite_if_exist,
-                    clear_raw_outputs,
-                    verbose,
-                    compression_level,
-                )
-            if (which == "both") or (which == "SWMM"):
-                self._export_SWMM_outputs(
-                    overwrite_if_exist,
-                    clear_raw_outputs,
-                    verbose,
-                    compression_level,
-                )
+                if (which == "both") or (which == "TRITON"):
+                    self._export_TRITON_outputs(
+                        overwrite_if_exist,
+                        clear_raw_outputs,
+                        verbose,
+                        compression_level,
+                    )
+                if (which == "both") or (which == "SWMM"):
+                    self._export_SWMM_outputs(
+                        overwrite_if_exist,
+                        clear_raw_outputs,
+                        verbose,
+                        compression_level,
+                    )
             return
 
-        return write_scenario_timeseries_launcher
+        return launcher
 
     def _export_TRITON_outputs(
         self,

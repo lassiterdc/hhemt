@@ -21,6 +21,7 @@ from datetime import datetime
 from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
 from typing import TYPE_CHECKING, Literal
+from contextlib import redirect_stdout, redirect_stderr
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -778,53 +779,61 @@ class TRITONSWMM_scenario:
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
         ):
-            sim_folder = self.scen_paths.sim_folder
-            if overwrite_scenario:
-                if sim_folder.exists():
-                    shutil.rmtree(sim_folder)
-                self._create_directories()
-            sim_folder.mkdir(parents=True, exist_ok=True)
-            # halt if the scenario was successfully created
-            if self.log.scenario_creation_complete.get() and not overwrite_scenario:
-                if verbose:
-                    print(
-                        "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=True."
+            launcher_logfile = (
+                self.log.logfile.parent / ".stdout_and_err_scenario_setup.log"
+            )
+            with (
+                open(launcher_logfile, "w") as f,
+                redirect_stdout(f),
+                redirect_stderr(f),
+            ):
+                sim_folder = self.scen_paths.sim_folder
+                if overwrite_scenario:
+                    if sim_folder.exists():
+                        shutil.rmtree(sim_folder)
+                    self._create_directories()
+                sim_folder.mkdir(parents=True, exist_ok=True)
+                # halt if the scenario was successfully created
+                if self.log.scenario_creation_complete.get() and not overwrite_scenario:
+                    if verbose:
+                        print(
+                            "Simulation already succesfully created. If you wish to overwrite it, re-run with overwrite_scenario=True."
+                        )
+                    return
+                # everything needed for running TRITON-SWMM
+                self._write_swmm_rainfall_dat_files()
+                self._write_swmm_waterlevel_dat_files()
+                self._create_swmm_model_from_template(
+                    self._system.cfg_system.SWMM_hydraulics,
+                    self.scen_paths.inp_hydraulics,
+                )
+                self.log.inp_hydraulics_model_created_successfully.set(True)
+                if self._system.cfg_system.toggle_full_swmm_model:
+                    self._create_swmm_model_from_template(
+                        self._system.cfg_system.SWMM_full,
+                        self.scen_paths.inp_full,
                     )
-                return
-            # everything needed for running TRITON-SWMM
-            self._write_swmm_rainfall_dat_files()
-            self._write_swmm_waterlevel_dat_files()
-            self._create_swmm_model_from_template(
-                self._system.cfg_system.SWMM_hydraulics,
-                self.scen_paths.inp_hydraulics,
-            )
-            self.log.inp_hydraulics_model_created_successfully.set(True)
-            if self._system.cfg_system.toggle_full_swmm_model:
-                self._create_swmm_model_from_template(
-                    self._system.cfg_system.SWMM_full,
-                    self.scen_paths.inp_full,
-                )
-                self.log.inp_full_model_created_successfully.set(True)
-            if self._system.cfg_system.toggle_use_swmm_for_hydrology:
-                self._create_swmm_model_from_template(
-                    self._system.cfg_system.SWMM_hydrology,
-                    self.scen_paths.inp_hydro,
-                )
-                self._run_swmm_hydro_model(
-                    rerun_if_exists=rerun_swmm_hydro_if_outputs_exist, verbose=False
-                )
-                self.log.inp_hydro_model_created_successfully.set(True)
+                    self.log.inp_full_model_created_successfully.set(True)
+                if self._system.cfg_system.toggle_use_swmm_for_hydrology:
+                    self._create_swmm_model_from_template(
+                        self._system.cfg_system.SWMM_hydrology,
+                        self.scen_paths.inp_hydro,
+                    )
+                    self._run_swmm_hydro_model(
+                        rerun_if_exists=rerun_swmm_hydro_if_outputs_exist, verbose=False
+                    )
+                    self.log.inp_hydro_model_created_successfully.set(True)
 
-            self._create_external_boundary_condition_files()
-            self._write_hydrograph_files()
-            self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
-                verbose=False
-            )
-            self._generate_TRITON_SWMM_cfg()
-            self._copy_tritonswmm_build_folder_to_sim()
+                self._create_external_boundary_condition_files()
+                self._write_hydrograph_files()
+                self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
+                    verbose=False
+                )
+                self._generate_TRITON_SWMM_cfg()
+                self._copy_tritonswmm_build_folder_to_sim()
 
-            self.log.scenario_creation_complete.set(True)
-            return
+                self.log.scenario_creation_complete.set(True)
+            return launcher_logfile
 
         return launcher
 
