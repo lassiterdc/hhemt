@@ -702,7 +702,9 @@ class TRITONSWMM_analysis:
             proc, lf, start, log_dic, run = launch()
             running.append((proc, lf, start, log_dic, run))
             if verbose:
-                print(f"[SLURM] Launched simulation {i}")
+                print(
+                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} as job {proc.pid}"
+                )
 
         # ----------------------------
         # Wait for all to complete
@@ -721,7 +723,9 @@ class TRITONSWMM_analysis:
             results.append(status)
 
             if verbose:
-                print(f"[SLURM] Simulation {i} completed: {status}")
+                print(
+                    f"[SLURM] Run for scenario {run._scenario.event_iloc} ended: {status}"
+                )
 
         self._update_log()
         return results
