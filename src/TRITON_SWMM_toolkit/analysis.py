@@ -616,11 +616,8 @@ class TRITONSWMM_analysis:
         return status
 
     def _retreive_sim_runs(self, event_iloc):
-        weather_event_indexers = self._retrieve_weather_indexer_using_integer_index(
-            event_iloc
-        )
         ts_scenario = self.scenarios[event_iloc]
-        run = TRITONSWMM_run(weather_event_indexers, ts_scenario)
+        run = ts_scenario.run
         self._sim_run_objects[event_iloc] = run
         return run
 

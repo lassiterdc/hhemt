@@ -15,12 +15,10 @@ from typing import Literal, Optional
 
 
 class TRITONSWMM_run:
-    def __init__(
-        self, weather_event_indexers: dict, scenario: "TRITONSWMM_scenario"
-    ) -> None:
+    def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
         self._analysis = scenario._analysis
-        self.weather_event_indexers = weather_event_indexers
+        self.weather_event_indexers = scenario.weather_event_indexers
         self.log = scenario.log
 
     def _triton_swmm_raw_output_directory(self):
@@ -43,6 +41,11 @@ class TRITONSWMM_run:
     @property
     def raw_swmm_output(self):
         return self._triton_swmm_raw_output_directory() / "swmm" / "hydraulics.rpt"
+
+    @property
+    def sim_run_completed(self):
+        status, __ = self._check_simulation_run_status()
+        return status == "simulation completed"
 
     def _check_simulation_run_status(self):
         tritonswmm_output_dir = self._triton_swmm_raw_output_directory()

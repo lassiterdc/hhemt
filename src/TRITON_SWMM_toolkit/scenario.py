@@ -30,6 +30,7 @@ lock = threading.Lock()
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+    from .run_simulation import TRITONSWMM_run
 
 
 class TRITONSWMM_scenario:
@@ -37,7 +38,6 @@ class TRITONSWMM_scenario:
         self.event_iloc = event_iloc
         self._analysis = analysis
         self._system = analysis._system
-
         self.weather_event_indexers = (
             self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         )
@@ -86,6 +86,7 @@ class TRITONSWMM_scenario:
                 simulation_folder=self.scen_paths.sim_folder,
                 logfile=self.scen_paths.f_log,
             )
+        self.run = TRITONSWMM_run(self)
 
     @property
     def latest_simlog(self) -> dict:
@@ -132,7 +133,7 @@ class TRITONSWMM_scenario:
 
     @property
     def sim_run_completed(self) -> bool:
-        success = "simulation completed" == self._latest_sim_status()
+        success = self.run.sim_run_completed
         self.log.simulation_completed.set(success)
         return success
 
