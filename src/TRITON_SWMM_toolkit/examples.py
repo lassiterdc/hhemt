@@ -349,7 +349,7 @@ class GetTS_TestCases:
                 sensitivity_analysis=cls.sensitivity_frontier_all_configs,
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.TRITON_SWMM_software_compilation_script,
+                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
             ),
         )
 
