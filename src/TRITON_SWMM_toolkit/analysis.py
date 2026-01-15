@@ -672,18 +672,22 @@ class TRITONSWMM_analysis:
     def run_simulations_concurrently_on_SLURM_HPC(
         self,
         launch_functions: list[Callable[[], tuple]],
+        max_concurrent_srun: Optional[int] = None,
         verbose: bool = True,
     ) -> list[str]:
         """
         Launch simulations concurrently on an HPC system using SLURM.
-        Assumes each launch function starts an srun process that may block
-        until completion and returns (proc, log_file, start_time, log_dict, run_obj).
+        Uses a pool-based approach to limit concurrent srun tasks and avoid
+        resource contention.
 
         Parameters
         ----------
         launch_functions : list of callables
             Each function launches a simulation and returns a tuple:
             (proc, log_file_handle, start_time, log_dict, run_obj)
+        max_concurrent_srun : int | None
+            Maximum number of concurrent srun tasks. If None, defaults to
+            the number of physical cores available divided by threads per task.
         verbose : bool
             If True, prints progress messages.
 
@@ -692,48 +696,93 @@ class TRITONSWMM_analysis:
         list[str]
             List of simulation statuses, in completion order.
         """
+        # ----------------------------
+        # Determine max concurrency
+        # ----------------------------
+        if max_concurrent_srun is None:
+            # Conservative default: use physical cores / threads per task
+            physical_cores = psutil.cpu_count(logical=False) or 1
+            threads_per_sim = self.cfg_analysis.n_omp_threads or 1
+            max_concurrent_srun = max(1, physical_cores // threads_per_sim)
+
+            # For interactive jobs, be even more conservative
+            if verbose:
+                print(
+                    f"[SLURM] Auto-detected max_concurrent_srun = {max_concurrent_srun}",
+                    flush=True,
+                )
+
+        if verbose:
+            print(
+                f"[SLURM] Running {len(launch_functions)} simulations "
+                f"(max {max_concurrent_srun} concurrent srun tasks)",
+                flush=True,
+            )
+
+        # ----------------------------
+        # Pool-based execution
+        # ----------------------------
         running: list[tuple] = []
         results: list[str] = []
+        launch_iter = iter(launch_functions)
+        completed_count = 0
 
-        # ----------------------------
-        # Launch all simulations
-        # ----------------------------
-        for i, launch in enumerate(launch_functions):
+        def launch_next():
+            """Launch the next simulation if available."""
+            try:
+                launch = next(launch_iter)
+            except StopIteration:
+                return False
+
             proc, lf, start, log_dic, run = launch()
             running.append((proc, lf, start, log_dic, run))
-            if verbose:
-                print(
-                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} as job {proc.pid}",
-                    flush=True,
-                )
-
-        # ----------------------------
-        # Wait for all to complete
-        # ----------------------------
-        for i, (proc, lf, start, log_dic, run) in enumerate(running):
-            if verbose:
-                print(
-                    f"[SLURM] Waiting for scenario {run._scenario.event_iloc} to complete...",
-                    flush=True,
-                )
-
-            rc = proc.wait()
-            lf.close()
-
-            end_time = time.time()
-            elapsed = end_time - start
-
-            status, _ = run._check_simulation_run_status()
-
-            log_dic.update(time_elapsed_s=elapsed, status=status)
-            run.log.add_sim_entry(**log_dic)
-            results.append(status)
 
             if verbose:
                 print(
-                    f"[SLURM] Run for scenario {run._scenario.event_iloc} ended: {status}",
+                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} "
+                    f"(PID {proc.pid}, {len(running)} running)",
                     flush=True,
                 )
+            return True
+
+        # Prime the pool with initial tasks
+        for _ in range(min(max_concurrent_srun, len(launch_functions))):
+            launch_next()
+
+        # Main polling loop
+        while running:
+            for entry in list(running):
+                proc, lf, start, log_dic, run = entry
+
+                # Check if process has completed
+                if proc.poll() is None:
+                    continue  # Still running
+
+                # Process has completed
+                lf.close()
+                end_time = time.time()
+                elapsed = end_time - start
+
+                status, _ = run._check_simulation_run_status()
+
+                log_dic.update(time_elapsed_s=elapsed, status=status)
+                run.log.add_sim_entry(**log_dic)
+                results.append(status)
+                running.remove(entry)
+                completed_count += 1
+
+                if verbose:
+                    print(
+                        f"[SLURM] Scenario {run._scenario.event_iloc} completed: {status} "
+                        f"({elapsed:.1f}s, {completed_count}/{len(launch_functions)} done)",
+                        flush=True,
+                    )
+
+                # Launch next task if available
+                launch_next()
+
+            # Small sleep to prevent busy-waiting
+            time.sleep(0.1)
 
         self._update_log()
         return results
