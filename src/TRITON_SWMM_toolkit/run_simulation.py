@@ -12,7 +12,6 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.constants import Mode
 from typing import Literal, Optional
-from TRITON_SWMM_toolkit.log import log_function_to_file
 
 
 class TRITONSWMM_run:
@@ -290,12 +289,7 @@ class TRITONSWMM_run:
             print("bash command to view progress:")
             print(f"tail -f {tritonswmm_logfile}")
 
-        launcher_logfile = (
-            self.log.logfile.parent / f"scenario_run_{self._scenario.event_iloc}.log"
-        )
-
-        @log_function_to_file(launcher_logfile)
-        def launch_sim(logger=None):
+        def launch_sim():
             logger.info(f"Running scenario {self._scenario.event_iloc}")  # type: ignore
             start_time = time.time()
             lf = open(tritonswmm_logfile, "w")
@@ -305,14 +299,7 @@ class TRITONSWMM_run:
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
-            logger.info(
-                "Process started",
-                extra={
-                    "pid": proc.pid,
-                    "logfile": str(tritonswmm_logfile),
-                },
-            )
-            return proc, lf, start_time, log_dic, self, logger
+            return proc, lf, start_time, log_dic, self
 
         return launch_sim
 
@@ -323,19 +310,9 @@ class TRITONSWMM_run:
         )
         if launch is None:
             return
-        proc, lf, start, log_dic, run, logger = launch()
-        logger.info("Waiting for process to complete", extra={"pid": proc.pid})
+        proc, lf, start, log_dic, run = launch()
         rc = proc.wait()
         lf.close()
-
-        logger.info(
-            "Process completed",
-            extra={
-                "pid": proc.pid,
-                "returncode": rc,
-                "elapsed_s": time.time() - start,
-            },
-        )
 
         end_time = time.time()
         elapsed = end_time - start
