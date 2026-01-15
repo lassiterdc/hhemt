@@ -600,6 +600,8 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 in_slurm=in_slurm,
             )
+            if launch_function is None:
+                continue
             launch_functions.append(launch_function)
         return launch_functions
 

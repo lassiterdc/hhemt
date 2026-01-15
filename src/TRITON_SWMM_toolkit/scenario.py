@@ -803,11 +803,7 @@ class TRITONSWMM_scenario:
         )
 
         @log_function_to_file(launcher_logfile)
-        def launcher(
-            overwrite_scenario=overwrite_scenario,
-            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-            logger=None,
-        ):
+        def launcher(logger=None):
 
             logger.info(f"Processing scenario {self.event_iloc}")  # type: ignore
 

@@ -13,7 +13,7 @@
 #SBATCH --mail-type=ALL
 #SBATCH -q debug
 
-# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
 # salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 1 --exclusive -q debug
 
 set -euo pipefail

@@ -12,6 +12,7 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.constants import Mode
 from typing import Literal, Optional
+from TRITON_SWMM_toolkit.log import log_function_to_file
 
 
 class TRITONSWMM_run:
@@ -110,7 +111,7 @@ class TRITONSWMM_run:
         if pickup_where_leftoff:
             status, f_last_cfg = self._check_simulation_run_status()
             if status == "simulation completed":
-                return None, None
+                return None
             if status == "simulation started but did not finish":
                 cfg = f_last_cfg
                 sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(
@@ -244,13 +245,17 @@ class TRITONSWMM_run:
         n_gpus = self._analysis.cfg_analysis.n_gpus
         run_mode = self._analysis.cfg_analysis.run_mode
 
-        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = (  # type: ignore
-            self.prepare_simulation_command(
-                pickup_where_leftoff=pickup_where_leftoff,
-                in_slurm=in_slurm,
-                verbose=verbose,
-            )
+        simprep_result = self.prepare_simulation_command(
+            pickup_where_leftoff=pickup_where_leftoff,
+            in_slurm=in_slurm,
+            verbose=verbose,
         )
+        if simprep_result is None:
+            if verbose:
+                print("simulation already run")
+            return None
+
+        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
 
         sim_id_str = self._scenario._retrieve_sim_id_str()
 
@@ -285,9 +290,13 @@ class TRITONSWMM_run:
             print("bash command to view progress:")
             print(f"tail -f {tritonswmm_logfile}")
 
-        run = self
+        launcher_logfile = (
+            self.log.logfile.parent / f"scenario_run_{self._scenario.event_iloc}.log"
+        )
 
-        def launch_sim():
+        @log_function_to_file(launcher_logfile)
+        def launch_sim(logger=None):
+            logger.info(f"Running scenario {self._scenario.event_iloc}")  # type: ignore
             start_time = time.time()
             lf = open(tritonswmm_logfile, "w")
 
@@ -297,7 +306,7 @@ class TRITONSWMM_run:
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
-            return proc, lf, start_time, log_dic, run
+            return proc, lf, start_time, log_dic, self
 
         return launch_sim
 
@@ -306,6 +315,8 @@ class TRITONSWMM_run:
             pickup_where_leftoff=pickup_where_leftoff,
             verbose=verbose,
         )
+        if launch is None:
+            return
         proc, lf, start, log_dic, run = launch()
         rc = proc.wait()
         lf.close()
