@@ -3,6 +3,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
 import json
 from typing import Type, Optional, Generic, TypeVar, Any, Dict
+import logging
+
 
 T = TypeVar("T")  # Generic type variable
 
@@ -520,3 +522,41 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
             warnings=warnings,
         )
         self.processing_log.update(simlog)
+
+
+def log_function_to_file(logfile_path: Path):
+    """Decorator to log Python messages and exceptions to a file safely for concurrent runs."""
+
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            # ---------- Change 1: Create a unique logger for this function call ----------
+            logger = logging.getLogger(f"{func.__name__}_{id(func)}")
+            logger.setLevel(logging.INFO)
+            logger.propagate = False
+            logger.handlers.clear()  # Remove any existing handlers
+
+            # ---------- Change 2: Ensure logfile directory exists and file exists ----------
+            logfile_path.parent.mkdir(parents=True, exist_ok=True)
+            logfile_path.touch(exist_ok=True)  # Make sure file exists immediately
+
+            # ---------- Change 3: FileHandler with explicit flush ----------
+            fh = logging.FileHandler(logfile_path, mode="a", encoding="utf-8")
+            formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
+
+            try:
+                # Pass logger into the wrapped function
+                return func(*args, logger=logger, **kwargs)
+            except Exception:
+                logger.exception("Exception occurred during function execution")
+                raise
+            finally:
+                # ---------- Change 4: Explicit flush before closing ----------
+                fh.flush()  # Ensures all logs are written to disk before checking exists()
+                logger.removeHandler(fh)
+                fh.close()
+
+        return wrapper
+
+    return decorator
