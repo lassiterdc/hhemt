@@ -60,6 +60,8 @@ def test_prepare_scenarios():
 
 
 def test_run_sims():
+    from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+
     nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
