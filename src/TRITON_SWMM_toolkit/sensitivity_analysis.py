@@ -364,14 +364,34 @@ class TRITONSWMM_sensitivity_analysis:
                 )
             )
 
+            compiled_software_directory = (
+                self.master_analysis.analysis_paths.compiled_software_directory
+            )
+            if "TRITON_SWMM_make_command" in self.df_setup.columns:
+                compiled_software_directory = (
+                    compiled_software_directory / row["TRITON_SWMM_make_command"]
+                )
+
             anlsys = anlysis.TRITONSWMM_analysis(
                 cfg_anlysys_yaml,
                 self._system,
                 sub_analysis_directory,
-                compiled_software_directory=self.master_analysis.analysis_paths.compiled_software_directory,
+                compiled_software_directory=compiled_software_directory,
             )
             dic_sensitivity_analyses[idx] = anlsys
         return dic_sensitivity_analyses
+
+    def compile_TRITON_SWMM(
+        self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
+    ):
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            if not sub_analysis.compilation_successful:
+                sub_analysis.compile_TRITON_SWMM(
+                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    verbose=verbose,
+                )
+        self._update_master_analysis_log()
+        return
 
     def _update_master_analysis_log(self):
 
@@ -382,6 +402,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_SWMM_timeseries_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
+        TRITONSWMM_compiled_successfully = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             # dic_all_logs[key] = sub_analysis.log.model_dump()
@@ -404,6 +425,9 @@ class TRITONSWMM_sensitivity_analysis:
             all_raw_SWMM_outputs_cleared = (
                 all_raw_SWMM_outputs_cleared
                 and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
+            )
+            TRITONSWMM_compiled_successfully = (
+                TRITONSWMM_compiled_successfully and sub_analysis.compilation_successful
             )
         self.master_analysis._update_log()
         self.master_analysis.log.all_scenarios_created.set(all_scenarios_created)
