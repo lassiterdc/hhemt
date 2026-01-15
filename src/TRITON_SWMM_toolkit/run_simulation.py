@@ -299,14 +299,20 @@ class TRITONSWMM_run:
             logger.info(f"Running scenario {self._scenario.event_iloc}")  # type: ignore
             start_time = time.time()
             lf = open(tritonswmm_logfile, "w")
-
             proc = subprocess.Popen(  # type: ignore
                 cmd,  # type: ignore
                 env={**os.environ, **env},  # type: ignore
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
-            return proc, lf, start_time, log_dic, self
+            logger.info(
+                "Process started",
+                extra={
+                    "pid": proc.pid,
+                    "logfile": str(tritonswmm_logfile),
+                },
+            )
+            return proc, lf, start_time, log_dic, self, logger
 
         return launch_sim
 
@@ -317,9 +323,19 @@ class TRITONSWMM_run:
         )
         if launch is None:
             return
-        proc, lf, start, log_dic, run = launch()
+        proc, lf, start, log_dic, run, logger = launch()
+        logger.info("Waiting for process to complete", extra={"pid": proc.pid})
         rc = proc.wait()
         lf.close()
+
+        logger.info(
+            "Process completed",
+            extra={
+                "pid": proc.pid,
+                "returncode": rc,
+                "elapsed_s": time.time() - start,
+            },
+        )
 
         end_time = time.time()
         elapsed = end_time - start

@@ -664,18 +664,27 @@ class TRITONSWMM_analysis:
         # Launch all simulations
         # ----------------------------
         for i, launch in enumerate(launch_functions):
-            proc, lf, start, log_dic, run = launch()
-            running.append((proc, lf, start, log_dic, run))
+            proc, lf, start, log_dic, run, logger = launch()
+            running.append((proc, lf, start, log_dic, run, logger))
+            logger.info(f"[SLURM] Launched simulation {i}")
             if verbose:
                 print(f"[SLURM] Launched simulation {i}")
 
         # ----------------------------
         # Wait for all to complete
         # ----------------------------
-        for i, (proc, lf, start, log_dic, run) in enumerate(running):
+        for i, (proc, lf, start, log_dic, run, logger) in enumerate(running):
+            logger.info("Waiting for process to complete", extra={"pid": proc.pid})
             rc = proc.wait()
             lf.close()
-
+            logger.info(
+                "Process completed",
+                extra={
+                    "pid": proc.pid,
+                    "returncode": rc,
+                    "elapsed_s": time.time() - start,
+                },
+            )
             end_time = time.time()
             elapsed = end_time - start
 
@@ -735,8 +744,9 @@ class TRITONSWMM_analysis:
             except StopIteration:
                 return False
 
-            proc, lf, start, log_dic, run = launch()
-            running.append((proc, lf, start, log_dic, run))
+            proc, lf, start, log_dic, run, logger = launch()
+            running.append((proc, lf, start, log_dic, run, logger))
+            logger.info("Running process", extra={"pid": proc.pid})
             return True
 
         # Prime the pool
@@ -746,13 +756,21 @@ class TRITONSWMM_analysis:
         # Main loop
         while running:
             for entry in list(running):
-                proc, lf, start, log_dic, run = entry
+                proc, lf, start, log_dic, run, logger = entry
 
                 if proc.poll() is None:
                     continue  # still running
 
                 # Process finished
                 lf.close()
+                logger.info(
+                    "Process completed",
+                    extra={
+                        "pid": proc.pid,
+                        "returncode": rc,
+                        "elapsed_s": time.time() - start,
+                    },
+                )
                 end_time = time.time()
                 elapsed = end_time - start
 
