@@ -69,6 +69,10 @@ def test_run_sims():
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=True, verbose=True
     )
+    # event_iloc = 100
+    # run = analysis._retreive_sim_runs(event_iloc)
+    # run.run_sim(pickup_where_leftoff=False, verbose=True)
+
     analysis.run_simulations_concurrently_on_desktop(
         launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
     )
