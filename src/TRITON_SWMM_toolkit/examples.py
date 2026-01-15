@@ -119,6 +119,8 @@ class TRITON_SWMM_testcase:
                 sort_keys=False,  # .dict() for pydantic v1
             )
         )
+        for key, val in additional_system_configs.items():
+            setattr(self.system.cfg_system, key, val)
         self.system.add_analysis(cfg_anlysys_yaml)
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
@@ -278,7 +280,7 @@ class GetTS_TestCases:
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
     # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
     sensitivity_frontier_all_configs = test_data_dir / "benchmarking_frontier.xlsx"
-    TRITON_SWMM_software_compilation_script = (
+    frontier_compilation_script = (
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
 
@@ -295,6 +297,7 @@ class GetTS_TestCases:
         start_from_scratch: bool,
         download_if_exists=False,
         additional_analysis_configs=dict(),
+        additional_system_configs=dict(),
     ) -> TRITON_SWMM_testcase:
         norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
         nrflk_test = TRITON_SWMM_testcase(
@@ -306,6 +309,7 @@ class GetTS_TestCases:
             test_system_dirname=cls.test_system_dirname,
             start_from_scratch=start_from_scratch,
             additional_analysis_configs=additional_analysis_configs,
+            additional_system_configs=additional_system_configs,
         )
         return nrflk_test
 
@@ -323,7 +327,7 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="frontier_swmm_omp",
-                TRITON_SWMM_software_compilation_script=cls.TRITON_SWMM_software_compilation_script,
+                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
             ),
         )
 
@@ -343,6 +347,8 @@ class GetTS_TestCases:
                 TRITON_SWMM_make_command="frontier_swmm_omp",
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_frontier_all_configs,
+            ),
+            additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.TRITON_SWMM_software_compilation_script,
             ),
         )
