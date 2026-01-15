@@ -703,13 +703,20 @@ class TRITONSWMM_analysis:
             running.append((proc, lf, start, log_dic, run))
             if verbose:
                 print(
-                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} as job {proc.pid}"
+                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} as job {proc.pid}",
+                    flush=True,
                 )
 
         # ----------------------------
         # Wait for all to complete
         # ----------------------------
         for i, (proc, lf, start, log_dic, run) in enumerate(running):
+            if verbose:
+                print(
+                    f"[SLURM] Waiting for scenario {run._scenario.event_iloc} to complete...",
+                    flush=True,
+                )
+
             rc = proc.wait()
             lf.close()
 
@@ -724,7 +731,8 @@ class TRITONSWMM_analysis:
 
             if verbose:
                 print(
-                    f"[SLURM] Run for scenario {run._scenario.event_iloc} ended: {status}"
+                    f"[SLURM] Run for scenario {run._scenario.event_iloc} ended: {status}",
+                    flush=True,
                 )
 
         self._update_log()
