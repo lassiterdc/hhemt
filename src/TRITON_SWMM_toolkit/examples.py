@@ -278,6 +278,9 @@ class GetTS_TestCases:
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
     # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
     sensitivity_frontier_all_configs = test_data_dir / "benchmarking_frontier.xlsx"
+    TRITON_SWMM_software_compilation_script = (
+        test_data_dir / "template_compile_triton_swmm_frontier.sh"
+    )
 
     def __init__(self) -> None:
         pass
@@ -320,6 +323,7 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="frontier_swmm_omp",
+                TRITON_SWMM_software_compilation_script=cls.TRITON_SWMM_software_compilation_script,
             ),
         )
 
@@ -339,6 +343,7 @@ class GetTS_TestCases:
                 TRITON_SWMM_make_command="frontier_swmm_omp",
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_frontier_all_configs,
+                TRITON_SWMM_software_compilation_script=cls.TRITON_SWMM_software_compilation_script,
             ),
         )
 
