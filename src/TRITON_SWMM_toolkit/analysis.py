@@ -217,6 +217,16 @@ class TRITONSWMM_analysis:
                 scens_not_created.append(str(scen.log.logfile.parent))
         return scens_not_created
 
+    @property
+    def scenarios_not_run(self):
+        scens_not_run = []
+        for event_iloc in self.df_sims.index:
+            scen = self.scenarios[event_iloc]
+            scen.log.refresh()
+            if scen.log.simulation_completed.get() != True:
+                scens_not_run.append(str(scen.log.logfile.parent))
+        return scens_not_run
+
     def _update_log(self):
         # dict_all_logs = {}
         all_scens_created = True

@@ -67,10 +67,11 @@ def test_run_sims():
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=True, verbose=True
     )
-    analysis.run_simulations_concurrently_on_desktop(
-        launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
-    )
-    assert analysis.log.all_sims_run.get() == True
+    analysis.run_simulations_concurrently(launch_functions, verbose=True)
+
+    if analysis.log.all_sims_run.get() != True:
+        scenarios_not_run = "\n".join(analysis.scenarios_not_run)
+        pytest.fail(f"Not all sims run: \n{scenarios_not_run}")
 
 
 def test_concurrently_process_scenario_timeseries():
