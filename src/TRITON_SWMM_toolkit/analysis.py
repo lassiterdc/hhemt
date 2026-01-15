@@ -270,7 +270,6 @@ class TRITONSWMM_analysis:
             launcher = scenario.prepare_scenario(
                 overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                verbose=verbose,
             )
             prepare_scenario_launchers.append(launcher)
 
@@ -383,7 +382,7 @@ class TRITONSWMM_analysis:
         for event_iloc in self.df_sims.index:
             scen = self.scenarios[event_iloc]
             launcher = scen.prepare_scenario(
-                overwrite_scenarios, rerun_swmm_hydro_if_outputs_exist, verbose
+                overwrite_scenarios, rerun_swmm_hydro_if_outputs_exist
             )
             launcher()
             self._update_log()  # update logs

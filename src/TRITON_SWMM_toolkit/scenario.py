@@ -797,7 +797,6 @@ class TRITONSWMM_scenario:
         self,
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
-        verbose: bool = True,
     ):
         launcher_logfile = (
             self.log.logfile.parent / f"scenario_prep_{self.event_iloc}.log"
