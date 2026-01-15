@@ -21,7 +21,6 @@ from contextlib import redirect_stdout, redirect_stderr
 import threading
 import traceback
 from TRITON_SWMM_toolkit.log import log_function_to_file
-from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 import logging
 
 import sys
@@ -31,7 +30,7 @@ lock = threading.Lock()
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
-    # from .run_simulation import TRITONSWMM_run
+    from .run_simulation import TRITONSWMM_run
 
 
 class TRITONSWMM_scenario:
@@ -42,6 +41,8 @@ class TRITONSWMM_scenario:
         self.weather_event_indexers = (
             self._analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         )
+        from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
+
         # define sim specific filepaths
         analysis_simulations_folder = self._analysis.analysis_paths.simulation_directory
         self.sim_id_str = self._retrieve_sim_id_str()
