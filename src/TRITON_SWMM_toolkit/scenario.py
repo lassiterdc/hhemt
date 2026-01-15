@@ -21,7 +21,7 @@ from contextlib import redirect_stdout, redirect_stderr
 import threading
 import traceback
 from TRITON_SWMM_toolkit.log import log_function_to_file
-
+from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 import logging
 
 import sys
@@ -30,7 +30,8 @@ lock = threading.Lock()
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
-    from .run_simulation import TRITONSWMM_run
+
+    # from .run_simulation import TRITONSWMM_run
 
 
 class TRITONSWMM_scenario:
