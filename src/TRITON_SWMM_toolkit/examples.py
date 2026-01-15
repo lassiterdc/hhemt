@@ -78,6 +78,7 @@ class TRITON_SWMM_testcase:
         test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
         additional_analysis_configs: dict = dict(),
+        additional_system_configs: dict = dict(),
     ):
         # load system
         self.system = TRITONSWMM_system(cfg_system_yaml)
