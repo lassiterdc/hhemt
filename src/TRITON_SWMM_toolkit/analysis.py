@@ -769,6 +769,7 @@ class TRITONSWMM_analysis:
                 results.append(status)
                 running.remove(entry)
                 completed_count += 1
+                success = run._scenario.sim_run_completed
 
                 if verbose:
                     print(
@@ -868,6 +869,8 @@ class TRITONSWMM_analysis:
 
                 results.append(status)
                 running.remove(entry)
+
+                success = run._scenario.sim_run_completed
 
                 if verbose:
                     print(f"Simulation finished: {status}")
