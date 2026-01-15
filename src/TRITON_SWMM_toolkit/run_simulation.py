@@ -168,6 +168,10 @@ class TRITONSWMM_run:
             if in_slurm:
                 cmd = [
                     "srun",
+                    "--ntasks=1",  # 1 task for serial/OpenMP
+                    f"--cpus-per-task={n_omp_threads}",  # allocate exactly n_omp_threads
+                    "--exclusive",  # prevent sharing cores with other jobs
+                    "--cpu-bind=cores",
                     str(exe),
                     str(cfg),
                 ]
@@ -177,10 +181,9 @@ class TRITONSWMM_run:
             if in_slurm:
                 cmd = [
                     "srun",
-                    "--ntasks",
-                    str(n_mpi_procs),
-                    "--cpus-per-task",
-                    str(n_omp_threads),
+                    f"--ntasks={n_mpi_procs}",  # one task per MPI process
+                    f"--cpus-per-task={n_omp_threads}",  # cores per task
+                    "--exclusive",  # exclusive allocation
                     "--cpu-bind=cores",
                     str(exe),
                     str(cfg),
@@ -197,12 +200,10 @@ class TRITONSWMM_run:
             if in_slurm:
                 cmd = [
                     "srun",
-                    "--ntasks",
-                    str(n_gpus),
-                    "--cpus-per-task",
-                    str(n_omp_threads),
-                    "--gpus-per-task",
-                    "1",
+                    f"--ntasks={n_gpus}",  # one task per GPU
+                    f"--cpus-per-task={n_omp_threads}",  # threads per GPU
+                    "--gpus-per-task=1",  # one GPU per task
+                    "--exclusive",  # exclusive allocation
                     "--cpu-bind=cores",
                     str(exe),
                     str(cfg),
