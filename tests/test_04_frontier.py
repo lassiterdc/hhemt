@@ -60,6 +60,8 @@ def test_prepare_scenarios():
 
 
 def test_run_sims():
+    from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+
     nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
@@ -67,11 +69,10 @@ def test_run_sims():
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=True, verbose=True
     )
-    analysis.run_simulations_concurrently(launch_functions, verbose=True)
-
-    if analysis.log.all_sims_run.get() != True:
-        scenarios_not_run = "\n".join(analysis.scenarios_not_run)
-        pytest.fail(f"Not all sims run: \n{scenarios_not_run}")
+    analysis.run_simulations_concurrently_on_desktop(
+        launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
+    )
+    assert analysis.log.all_sims_run.get() == True
 
 
 def test_concurrently_process_scenario_timeseries():
