@@ -285,6 +285,70 @@ class TRITONSWMM_analysis:
 
         return prepare_scenario_launchers
 
+    def calculate_effective_max_parallel(
+        self,
+        min_memory_per_function_MiB: int | None = None,
+        max_parallel_cpu: int | None = None,
+        max_parallel_gpu: int | None = None,
+        verbose: bool = False,
+    ) -> int:
+        """
+        Calculate the effective maximum parallelism based on CPU, GPU, and memory constraints.
+
+        Parameters
+        ----------
+        min_memory_per_function_MiB : int | None
+            Minimum memory required per function (MiB).
+            If provided, concurrency is reduced to avoid oversubscription.
+        max_parallel_cpu : int | None
+            CPU-based upper bound on parallelism (e.g., based on cores/threads per task).
+            If None, defaults to physical CPU count - 1.
+        max_parallel_gpu : int | None
+            GPU-based upper bound on parallelism (e.g., total GPUs / GPUs per task).
+            If None, GPU constraints are not applied.
+        verbose : bool
+            Print progress messages.
+
+        Returns
+        -------
+        int
+            The effective maximum number of parallel tasks.
+        """
+        # ----------------------------
+        # CPU-based limit
+        # ----------------------------
+        if max_parallel_cpu is None:
+            physical_cores = psutil.cpu_count(logical=False)
+            if isinstance(physical_cores, int) and physical_cores > 1:
+                physical_cores -= 1  # more conservative process count
+            max_parallel_cpu = physical_cores or 1
+
+        # ----------------------------
+        # Memory-based limit
+        # ----------------------------
+        mem_limit = max_parallel_cpu
+        if min_memory_per_function_MiB is not None:
+            available_mem_MiB = psutil.virtual_memory().available // (1024**2)
+            mem_limit = max(1, available_mem_MiB // min_memory_per_function_MiB)
+
+            if verbose:
+                print(
+                    f"Memory-based limit: {mem_limit} "
+                    f"(available {available_mem_MiB} MiB, "
+                    f"{min_memory_per_function_MiB} MiB per task)"
+                )
+
+        # ----------------------------
+        # Final concurrency (apply all constraints)
+        # ----------------------------
+        limits = [max_parallel_cpu, mem_limit]
+        if max_parallel_gpu is not None:
+            limits.append(max_parallel_gpu)
+
+        effective_max_parallel = min(limits)
+
+        return effective_max_parallel
+
     def run_python_functions_concurrently(
         self,
         function_launchers: List[Callable[[], None]],
@@ -313,39 +377,10 @@ class TRITONSWMM_analysis:
             Indices of functions that completed successfully.
         """
 
-        # ----------------------------
-        # CPU-based limit
-        # ----------------------------
-        physical_cores = psutil.cpu_count(logical=False)
-        if isinstance(physical_cores, int) and physical_cores > 1:
-            physical_cores -= 1  # more conservative process count
-        # logical_cores = psutil.cpu_count(logical=True)
-
-        cpu_limit = max_parallel or (physical_cores or 1)
-
-        # ----------------------------
-        # Memory-based limit
-        # ----------------------------
-        mem_limit = cpu_limit
-        if min_memory_per_function_MiB is not None:
-            available_mem_MiB = psutil.virtual_memory().available // (1024**2)
-            mem_limit = max(1, available_mem_MiB // min_memory_per_function_MiB)
-
-            if verbose:
-                print(
-                    f"Memory-based limit: {mem_limit} "
-                    f"(available {available_mem_MiB} MiB, "
-                    f"{min_memory_per_function_MiB} MiB per task)"
-                )
-
-        # ----------------------------
-        # Final concurrency
-        # ----------------------------
-        # effective_max_parallel = max(1, min(cpu_limit, mem_limit))
-        effective_max_parallel = min(
-            cpu_limit,
-            mem_limit,
-            max_parallel or cpu_limit,
+        effective_max_parallel = self.calculate_effective_max_parallel(
+            min_memory_per_function_MiB=min_memory_per_function_MiB,
+            max_parallel_cpu=max_parallel,
+            verbose=verbose,
         )
 
         if verbose:
@@ -696,6 +731,7 @@ class TRITONSWMM_analysis:
         launch_functions: List[Callable[[], tuple]],
         use_gpu: bool = False,
         total_gpus_available: Optional[int] = 0,
+        min_memory_per_sim_MiB: int | None = 1024,
         verbose: bool = True,
     ):
         # ----------------------------
@@ -712,11 +748,19 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Determine GPU parallelism
         # ----------------------------
+        max_parallel_gpu = None
         if use_gpu and n_gpus and total_gpus_available:
             max_parallel_gpu = max(1, total_gpus_available // n_gpus)
-            max_parallel = min(max_parallel_cpu, max_parallel_gpu)
-        else:
-            max_parallel = max_parallel_cpu
+
+        # ----------------------------
+        # Calculate effective max parallel with all constraints
+        # ----------------------------
+        max_parallel = self.calculate_effective_max_parallel(
+            min_memory_per_function_MiB=min_memory_per_sim_MiB,
+            max_parallel_cpu=max_parallel_cpu,
+            max_parallel_gpu=max_parallel_gpu,
+            verbose=verbose,
+        )
 
         if verbose:
             print(f"Running up to {max_parallel} simulations concurrently")
