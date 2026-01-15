@@ -7,6 +7,10 @@ pytestmark = pytest.mark.skipif(
     "frontier" not in socket.gethostname(), reason="Only runs on Frontier HPC"
 )
 
+# bash commands
+# pgrep -l srun # lists all srun processes
+# ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
+
 
 def test_load_system_and_analysis():
     nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
@@ -69,15 +73,14 @@ def test_run_sims():
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=True, verbose=True
     )
-    # pgrep -l srun
-    # ps -o pid= --ppid $$ | xargs kill -9
-    # event_iloc = 100
-    # run = analysis._retreive_sim_runs(event_iloc)
-    # run.run_sim(pickup_where_leftoff=False, verbose=True)
-    analysis.scenarios_not_run
 
     analysis.run_simulations_concurrently(launch_functions, verbose=True)
-    assert analysis.log.all_sims_run.get() == True
+
+    if analysis.log.all_sims_run.get() != True:
+        sims_not_run = "\n".join(analysis.scenarios_not_run)
+        pytest.fail(
+            f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
+        )
 
 
 def test_concurrently_process_scenario_timeseries():
