@@ -276,7 +276,8 @@ class GetTS_TestCases:
     TRITON_reporting_timestep_s = 10
     test_data_dir = files(APP_NAME).parents[1].joinpath(f"test_data/{NORFOLK_EX}/")  # type: ignore
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
-    hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
+    # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
+    sensitivity_frontier_all_configs = test_data_dir / "benchmarking_frontier.xlsx"
 
     def __init__(self) -> None:
         pass
@@ -319,6 +320,25 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="frontier_swmm_omp",
+            ),
+        )
+
+    @classmethod
+    def retreive_norfolk_frontier_all_configs(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "frontier_all_configs_sensitivity"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                TRITON_SWMM_make_command="frontier_swmm_omp",
+                toggle_sensitivity_analysis=True,
+                sensitivity_analysis=cls.sensitivity_frontier_all_configs,
             ),
         )
 

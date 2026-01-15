@@ -21,6 +21,7 @@ from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 import re
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
+from TRITON_SWMM_toolkit.log import log_function_to_file
 
 
 class TRITONSWMM_sim_post_processing:
@@ -70,41 +71,37 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        def launcher(
-            which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        ):
-            launcher_logfile = (
-                self.log.logfile.parent / "_stdout_and_err_scenario_processing.log"
-            )
-            with (
-                open(launcher_logfile, "w") as f,
-                redirect_stdout(f),
-                redirect_stderr(f),
-            ):
-                if not self._scenario.sim_run_completed:
-                    raise RuntimeError(
-                        f"Simulation not completed. Log: {self._scenario.latest_simlog}"
-                    )
+        scen = self._scenario
 
-                if (which == "both") or (which == "TRITON"):
-                    self._export_TRITON_outputs(
-                        overwrite_if_exist,
-                        clear_raw_outputs,
-                        verbose,
-                        compression_level,
-                    )
-                if (which == "both") or (which == "SWMM"):
-                    self._export_SWMM_outputs(
-                        overwrite_if_exist,
-                        clear_raw_outputs,
-                        verbose,
-                        compression_level,
-                    )
-            return
+        launcher_logfile = (
+            self.log.logfile.parent / f"scenario_processing_{scen.event_iloc}.log"
+        )
+
+        @log_function_to_file(launcher_logfile)
+        def launcher(logger=None):
+            if not self._scenario.sim_run_completed:
+                raise RuntimeError(
+                    f"Simulation not completed. Log: {self._scenario.latest_simlog}"
+                )
+            logger.info(f"Processing run results for scenario {scen.event_iloc}")  # type: ignore
+
+            if (which == "both") or (which == "TRITON"):
+                self._export_TRITON_outputs(
+                    overwrite_if_exist,
+                    clear_raw_outputs,
+                    verbose,
+                    compression_level,
+                )
+                logger.info(f"Processed TRITON outputs for scenario {scen.event_iloc}")  # type: ignore
+            if (which == "both") or (which == "SWMM"):
+                self._export_SWMM_outputs(
+                    overwrite_if_exist,
+                    clear_raw_outputs,
+                    verbose,
+                    compression_level,
+                )
+                logger.info(f"Processed SWMM outputs for scenario {scen.event_iloc}")  # type: ignore
+            return launcher_logfile
 
         return launcher
 

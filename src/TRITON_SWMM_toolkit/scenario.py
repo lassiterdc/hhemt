@@ -810,8 +810,6 @@ class TRITONSWMM_scenario:
 
             logger.info(f"Processing scenario {self.event_iloc}")  # type: ignore
 
-            sim_folder = self.scen_paths.sim_folder
-
             # Halt if scenario already complete
             if self.log.scenario_creation_complete.get() and not overwrite_scenario:
                 logger.info(  # type: ignore

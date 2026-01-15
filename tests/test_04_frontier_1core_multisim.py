@@ -91,13 +91,16 @@ def test_concurrently_process_scenario_timeseries():
     scenario_timeseries_processing_launchers = (
         analysis.retreive_scenario_timeseries_processing_launchers()
     )
-    analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
+    analysis.run_python_functions_concurrently(
+        scenario_timeseries_processing_launchers, max_parallel=32
+    )
     # verify that time series outputs processed
     success_processing = (
         analysis.log.all_TRITON_timeseries_processed.get()
         and analysis.log.all_SWMM_timeseries_processed.get()
     )
     if not success_processing:
+        analysis._update_log()
         analysis.log.print()
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
 

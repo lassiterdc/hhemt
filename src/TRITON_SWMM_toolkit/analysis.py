@@ -86,7 +86,7 @@ class TRITONSWMM_analysis:
         self._sim_run_objects = {}
         self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
-        self.run_modes = Mode
+        # self.run_modes = Mode
         # self.compilation_successful = False
         self._refresh_log()
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
@@ -649,6 +649,7 @@ class TRITONSWMM_analysis:
     def run_simulations_concurrently(
         self,
         launch_functions: list[Callable[[], tuple]],
+        max_concurrent: Optional[int] = None,
         verbose: bool = True,
     ):
         """
@@ -658,11 +659,15 @@ class TRITONSWMM_analysis:
         """
         if self.in_slurm:
             self.run_simulations_concurrently_on_SLURM_HPC(
-                launch_functions=launch_functions, verbose=verbose
+                launch_functions=launch_functions,
+                verbose=verbose,
+                max_concurrent_srun=max_concurrent,
             )
         else:
             self.run_simulations_concurrently_on_desktop(
-                launch_functions=launch_functions, verbose=verbose
+                launch_functions=launch_functions,
+                verbose=verbose,
+                max_concurrent=max_concurrent,
             )
 
     def run_simulations_concurrently_on_SLURM_HPC(
@@ -695,18 +700,65 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Determine max concurrency
         # ----------------------------
-        if max_concurrent_srun is None:
-            # Conservative default: use physical cores / threads per task
-            physical_cores = psutil.cpu_count(logical=False) or 1
-            threads_per_sim = self.cfg_analysis.n_omp_threads or 1
-            max_concurrent_srun = max(1, physical_cores // threads_per_sim)
+        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
+        n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes or 1
+        mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+        omp_threads = self.cfg_analysis.n_omp_threads or 1
+        cpus_per_sim = mpi_ranks * omp_threads
+        gpus_per_sim = self.cfg_analysis.n_gpus or 0
 
+        if max_concurrent_srun is None:
+            if self.cfg_analysis.run_mode != "gpu":
+                # Total CPUs available to this SLURM job
+                total_cpus = int(os.environ.get("SLURM_CPUS_ON_NODE", 0)) * num_nodes
+                if total_cpus == 0:
+                    total_cpus = psutil.cpu_count(logical=False) or 1 * num_nodes
+                # Per-simulation CPU cost
+                max_concurrent_srun = max(1, total_cpus // cpus_per_sim)
+            else:
+                # Total GPUs allocated to this SLURM job
+                total_gpus = int(os.environ.get("SLURM_GPUS_ON_NODE", 0)) * num_nodes
+                if total_gpus == 0:
+                    # Fallback for older clusters / custom configs
+                    total_gpus = int(os.environ.get("SLURM_GPUS", 0)) * num_nodes
+                if total_gpus == 0:
+                    raise RuntimeError(
+                        "GPU run mode requested, but no GPUs detected via SLURM "
+                        "(SLURM_GPUS_ON_NODE / SLURM_GPUS not set)."
+                    )
+                # Per-simulation GPU cost
+                if gpus_per_sim > total_gpus:
+                    raise RuntimeError(
+                        f"Each simulation requires {gpus_per_sim} GPUs, "
+                        f"but only {total_gpus} GPU(s) allocated to the job."
+                    )
+                max_concurrent_srun = max(1, total_gpus // gpus_per_sim)
             # For interactive jobs, be even more conservative
             if verbose:
                 print(
                     f"[SLURM] Auto-detected max_concurrent_srun = {max_concurrent_srun}",
                     flush=True,
                 )
+        # ----------------------------
+        # Hard validation (fail fast)
+        # ----------------------------
+        if n_nodes_per_sim > total_nodes:
+            raise RuntimeError(
+                f"Each simulation requires {n_nodes_per_sim} node(s), "
+                f"but job only has {total_nodes}."
+            )
+
+        if cpus_per_sim > total_cpus:
+            raise RuntimeError(
+                f"Each simulation requires {cpus_per_sim} CPUs, "
+                f"but job only has {total_cpus}."
+            )
+
+        if gpus_per_sim and gpus_per_sim > total_gpus:
+            raise RuntimeError(
+                f"Each simulation requires {gpus_per_sim} GPUs, "
+                f"but job only has {total_gpus}."
+            )
 
         if verbose:
             print(
@@ -787,6 +839,7 @@ class TRITONSWMM_analysis:
     def run_simulations_concurrently_on_desktop(
         self,
         launch_functions: List[Callable[[], tuple]],
+        max_concurrent: Optional[int] = None,
         use_gpu: bool = False,
         total_gpus_available: Optional[int] = 0,
         min_memory_per_sim_MiB: int | None = 1024,
@@ -795,33 +848,34 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Determine CPU parallelism
         # ----------------------------
-        total_cores = os.cpu_count() or 1
-        threads_per_sim = self.cfg_analysis.n_omp_threads or 1
-        mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
-        n_gpus = self.cfg_analysis.n_gpus or 0
+        if max_concurrent is None:
+            total_cores = os.cpu_count() or 1
+            threads_per_sim = self.cfg_analysis.n_omp_threads or 1
+            mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+            n_gpus = self.cfg_analysis.n_gpus or 0
 
-        cores_per_sim = threads_per_sim * mpi_ranks
-        max_parallel_cpu = max(1, total_cores // cores_per_sim)
+            cores_per_sim = threads_per_sim * mpi_ranks
+            max_parallel_cpu = max(1, total_cores // cores_per_sim)
 
-        # ----------------------------
-        # Determine GPU parallelism
-        # ----------------------------
-        max_parallel_gpu = None
-        if use_gpu and n_gpus and total_gpus_available:
-            max_parallel_gpu = max(1, total_gpus_available // n_gpus)
+            # ----------------------------
+            # Determine GPU parallelism
+            # ----------------------------
+            max_parallel_gpu = None
+            if use_gpu and n_gpus and total_gpus_available:
+                max_parallel_gpu = max(1, total_gpus_available // n_gpus)
 
-        # ----------------------------
-        # Calculate effective max parallel with all constraints
-        # ----------------------------
-        max_parallel = self.calculate_effective_max_parallel(
-            min_memory_per_function_MiB=min_memory_per_sim_MiB,
-            max_parallel_cpu=max_parallel_cpu,
-            max_parallel_gpu=max_parallel_gpu,
-            verbose=verbose,
-        )
+            # ----------------------------
+            # Calculate effective max parallel with all constraints
+            # ----------------------------
+            max_concurrent = self.calculate_effective_max_parallel(
+                min_memory_per_function_MiB=min_memory_per_sim_MiB,
+                max_parallel_cpu=max_parallel_cpu,
+                max_parallel_gpu=max_parallel_gpu,
+                verbose=verbose,
+            )
 
         if verbose:
-            print(f"Running up to {max_parallel} simulations concurrently")
+            print(f"Running up to {max_concurrent} simulations concurrently")
 
         # ----------------------------
         # Launch + monitor loop
@@ -842,7 +896,7 @@ class TRITONSWMM_analysis:
             return True
 
         # Prime the pool
-        for _ in range(min(max_parallel, len(launch_functions))):
+        for _ in range(min(max_concurrent, len(launch_functions))):
             launch_next()
 
         # Main loop

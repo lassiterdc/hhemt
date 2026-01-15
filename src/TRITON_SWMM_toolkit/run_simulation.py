@@ -105,6 +105,7 @@ class TRITONSWMM_run:
         n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
         n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
         n_gpus = self._analysis.cfg_analysis.n_gpus
+        n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
         tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
         exe = self._scenario.scen_paths.sim_tritonswmm_executable
         cfg = self._scenario.scen_paths.triton_swmm_cfg

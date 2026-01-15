@@ -122,7 +122,7 @@ class TRITONSWMM_sensitivity_analysis:
             )
         else:
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-                sub_analysis.run_all_sims_in_series(
+                sub_analysis.run_all_sims_in_serially(
                     pickup_where_leftoff=pickup_where_leftoff,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,

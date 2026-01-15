@@ -364,7 +364,7 @@ class analysis_config(cfgBaseModel):
         description="Rainfall units in weather_timeseries mm or mm/hr.",
     )
     # COMPUTE CONFIG
-    run_mode: Literal["serial", "openmp", "mpi", "hybrid"] = Field(
+    run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
         ..., description="Compute configuration"
     )
     n_mpi_procs: Optional[int] = Field(
@@ -372,6 +372,7 @@ class analysis_config(cfgBaseModel):
     )
     n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
     n_gpus: Optional[int] = Field(0, description="Number of GPUs")
+    n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
 
     # TOGGLES
     # TODO - create validatoin checks for bash script toggle
