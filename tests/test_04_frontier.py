@@ -74,6 +74,7 @@ def test_run_sims():
     # event_iloc = 100
     # run = analysis._retreive_sim_runs(event_iloc)
     # run.run_sim(pickup_where_leftoff=False, verbose=True)
+    analysis.scenarios_not_run
 
     analysis.run_simulations_concurrently(launch_functions, verbose=True)
     assert analysis.log.all_sims_run.get() == True

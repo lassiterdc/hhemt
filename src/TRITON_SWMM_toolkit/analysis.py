@@ -222,8 +222,7 @@ class TRITONSWMM_analysis:
         scens_not_run = []
         for event_iloc in self.df_sims.index:
             scen = self.scenarios[event_iloc]
-            scen.log.refresh()
-            if scen.log.simulation_completed.get() != True:
+            if scen.sim_run_completed != True:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
