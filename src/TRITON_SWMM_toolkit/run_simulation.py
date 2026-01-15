@@ -299,7 +299,6 @@ class TRITONSWMM_run:
                 stderr=subprocess.STDOUT,
             )
             return proc, lf, start_time, log_dic, self
-            return proc, lf, start_time, log_dic, self
 
         return launch_sim
 
@@ -310,7 +309,6 @@ class TRITONSWMM_run:
         )
         if launch is None:
             return
-        proc, lf, start, log_dic, run = launch()
         proc, lf, start, log_dic, run = launch()
         rc = proc.wait()
         lf.close()
