@@ -164,20 +164,7 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
-        if run_mode in ("serial", "openmp"):
-            if in_slurm:
-                cmd = [
-                    "srun",
-                    "--ntasks=1",  # 1 task for serial/OpenMP
-                    f"--cpus-per-task={n_omp_threads}",  # allocate exactly n_omp_threads
-                    "--exclusive",  # prevent sharing cores with other jobs
-                    "--cpu-bind=cores",
-                    str(exe),
-                    str(cfg),
-                ]
-            else:
-                cmd = [str(exe), str(cfg)]
-        elif run_mode in ("mpi", "hybrid"):
+        if run_mode != "gpu":
             if in_slurm:
                 cmd = [
                     "srun",
@@ -188,7 +175,9 @@ class TRITONSWMM_run:
                     str(exe),
                     str(cfg),
                 ]
-            else:
+            elif run_mode in ("serial", "openmp"):
+                cmd = [str(exe), str(cfg)]
+            elif run_mode in ("mpi", "hybrid"):
                 cmd = [
                     "mpirun",
                     "-np",
@@ -209,7 +198,6 @@ class TRITONSWMM_run:
                     str(cfg),
                 ]
             else:
-                # Non-SLURM: just run the executable with CUDA_VISIBLE_DEVICES
                 cmd = [str(exe), str(cfg)]
         else:
             raise ValueError(f"Unknown run_mode: {run_mode}")
