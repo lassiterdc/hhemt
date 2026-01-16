@@ -232,8 +232,10 @@ class TRITONSWMM_run:
                         f"srun "
                         f"--ntasks={n_gpus} "
                         f"--cpus-per-task={n_omp_threads} "
-                        "--gpus-per-task=1 ",  # one GPU per task
-                        "--exclusive " "--cpu-bind=cores " f"{exe} {cfg}",
+                        "--gpus-per-task=1 "  # one GPU per task
+                        "--exclusive "
+                        "--cpu-bind=cores "
+                        f"{exe} {cfg}"
                     ),
                 ]
             else:
