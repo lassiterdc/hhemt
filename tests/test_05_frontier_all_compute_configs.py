@@ -7,6 +7,12 @@ pytestmark = pytest.mark.skipif(
     "frontier" not in socket.gethostname(), reason="Only runs on Frontier HPC"
 )
 
+# bash commands
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
+# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 1 --exclusive -q debug
+# pgrep -l srun # lists all srun processes
+# ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
+
 
 def test_retrieve_test():
     nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(

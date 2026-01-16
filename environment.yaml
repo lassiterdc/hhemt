@@ -42,3 +42,9 @@ dependencies:
   - ty
   - ipdb
   - ipykernel
+  - pip
+  - pip:
+      - hsclient
+      - pyswmm
+      - swmmio
+      - tabulate
