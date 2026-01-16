@@ -432,4 +432,7 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis.log.all_raw_SWMM_outputs_cleared.set(
             all_raw_SWMM_outputs_cleared
         )
+        self.master_analysis.log.TRITONSWMM_compiled_successfully.set(
+            TRITONSWMM_compiled_successfully
+        )
         return
