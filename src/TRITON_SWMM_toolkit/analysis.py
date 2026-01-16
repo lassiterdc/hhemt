@@ -304,25 +304,28 @@ class TRITONSWMM_analysis:
 
     def calculate_effective_max_parallel(
         self,
-        min_memory_per_function_MiB: int | None = None,
-        max_parallel_cpu: int | None = None,
-        max_parallel_gpu: int | None = None,
+        min_memory_per_function_MiB: int | None = 1024,
+        max_concurrent: int | None = None,
         verbose: bool = False,
     ) -> int:
         """
-        Calculate the effective maximum parallelism based on CPU, GPU, and memory constraints.
+        Calculate the effective maximum parallelism based on CPU, GPU, memory, and SLURM constraints.
+
+        This method respects SLURM job allocation constraints when running in a SLURM environment,
+        ensuring that concurrent tasks don't exceed the job's resource allocation.
 
         Parameters
         ----------
         min_memory_per_function_MiB : int | None
             Minimum memory required per function (MiB).
             If provided, concurrency is reduced to avoid oversubscription.
-        max_parallel_cpu : int | None
+        max_concurrent : int | None
             CPU-based upper bound on parallelism (e.g., based on cores/threads per task).
-            If None, defaults to physical CPU count - 1.
-        max_parallel_gpu : int | None
-            GPU-based upper bound on parallelism (e.g., total GPUs / GPUs per task).
-            If None, GPU constraints are not applied.
+            If None, defaults to physical CPU count - 1 (or SLURM allocation if in SLURM).
+        use_slurm_constraints : bool | None
+            If True, use SLURM environment variables to constrain parallelism.
+            If None (default), automatically uses SLURM constraints if self.in_slurm is True.
+            If False, uses pure hardware-based constraints.
         verbose : bool
             Print progress messages.
 
@@ -332,39 +335,52 @@ class TRITONSWMM_analysis:
             The effective maximum number of parallel tasks.
         """
         # ----------------------------
-        # CPU-based limit
+        # Determine if we should use SLURM constraints
         # ----------------------------
-        if max_parallel_cpu is None:
-            physical_cores = psutil.cpu_count(logical=False)
-            if isinstance(physical_cores, int) and physical_cores > 1:
-                physical_cores -= 1  # more conservative process count
-            max_parallel_cpu = physical_cores or 1
+        use_slurm_constraints = self.in_slurm == True
 
         # ----------------------------
-        # Memory-based limit
+        # CPU-based limit (with SLURM awareness)
         # ----------------------------
-        mem_limit = max_parallel_cpu
-        if min_memory_per_function_MiB is not None:
-            available_mem_MiB = psutil.virtual_memory().available // (1024**2)
-            mem_limit = max(1, available_mem_MiB // min_memory_per_function_MiB)
+        if max_concurrent is None:
+            if use_slurm_constraints:
+                # Get SLURM-aware CPU limit
+                constraints = self._get_slurm_resource_constraints(verbose=verbose)
+                max_concurrent = int(constraints["max_concurrent"])
+            else:
+                # Pure hardware-based calculation
+                physical_cores = psutil.cpu_count(logical=False)
+                if isinstance(physical_cores, int) and physical_cores > 1:
+                    physical_cores -= 1  # more conservative process count
+                max_concurrent_cpu = physical_cores or 1
+                # ----------------------------
+                # Memory-based limit
+                # ----------------------------
+                mem_limit = max_concurrent_cpu
+                if min_memory_per_function_MiB is not None:
+                    available_mem_MiB = psutil.virtual_memory().available // (1024**2)
+                    mem_limit = max(1, available_mem_MiB // min_memory_per_function_MiB)
 
-            if verbose:
-                print(
-                    f"Memory-based limit: {mem_limit} "
-                    f"(available {available_mem_MiB} MiB, "
-                    f"{min_memory_per_function_MiB} MiB per task)"
-                )
+                    if verbose:
+                        print(
+                            f"Memory-based limit: {mem_limit} "
+                            f"(available {available_mem_MiB} MiB, "
+                            f"{min_memory_per_function_MiB} MiB per task)"
+                        )
+                # ----------------------------
+                # Final concurrency (apply all constraints)
+                # ----------------------------
+                limits = [int(max_concurrent_cpu), int(mem_limit)]
 
-        # ----------------------------
-        # Final concurrency (apply all constraints)
-        # ----------------------------
-        limits = [max_parallel_cpu, mem_limit]
-        if max_parallel_gpu is not None:
-            limits.append(max_parallel_gpu)
+                max_concurrent = min(limits)
 
-        effective_max_parallel = min(limits)
+                if verbose and use_slurm_constraints and self.in_slurm:
+                    print(
+                        f"[SLURM] Using SLURM-aware concurrency limit: {max_concurrent}",
+                        flush=True,
+                    )
 
-        return effective_max_parallel
+        return max_concurrent
 
     def run_python_functions_concurrently(
         self,
@@ -396,7 +412,7 @@ class TRITONSWMM_analysis:
 
         effective_max_parallel = self.calculate_effective_max_parallel(
             min_memory_per_function_MiB=min_memory_per_function_MiB,
-            max_parallel_cpu=max_parallel,
+            max_concurrent=max_parallel,
             verbose=verbose,
         )
 
@@ -1079,37 +1095,28 @@ class TRITONSWMM_analysis:
         self,
         launch_functions: List[Callable[[], tuple]],
         max_concurrent: Optional[int] = None,
-        use_gpu: bool = False,
-        total_gpus_available: Optional[int] = 0,
         min_memory_per_sim_MiB: int | None = 1024,
         verbose: bool = True,
     ):
+        use_gpu = self.cfg_analysis.run_mode == "gpu"
         # ----------------------------
-        # Determine CPU parallelism
+        # Determine parallelism
         # ----------------------------
         if max_concurrent is None:
-            total_cores = os.cpu_count() or 1
-            threads_per_sim = self.cfg_analysis.n_omp_threads or 1
-            mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
-            n_gpus = self.cfg_analysis.n_gpus or 0
-
-            cores_per_sim = threads_per_sim * mpi_ranks
-            max_parallel_cpu = max(1, total_cores // cores_per_sim)
-
             # ----------------------------
-            # Determine GPU parallelism
+            # Determine GPU parallelism (TODO)
             # ----------------------------
-            max_parallel_gpu = None
-            if use_gpu and n_gpus and total_gpus_available:
-                max_parallel_gpu = max(1, total_gpus_available // n_gpus)
+            if use_gpu:
+                raise ValueError(
+                    "Currently desktop-based simulations are not designed to use GPUs. Feature must be built out."
+                )
 
             # ----------------------------
             # Calculate effective max parallel with all constraints
             # ----------------------------
             max_concurrent = self.calculate_effective_max_parallel(
                 min_memory_per_function_MiB=min_memory_per_sim_MiB,
-                max_parallel_cpu=max_parallel_cpu,
-                max_parallel_gpu=max_parallel_gpu,
+                max_concurrent=max_concurrent,
                 verbose=verbose,
             )
 
