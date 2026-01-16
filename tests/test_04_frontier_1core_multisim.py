@@ -7,6 +7,9 @@ pytestmark = pytest.mark.skipif(
     "frontier" not in socket.getfqdn(), reason="Only runs on Frontier HPC"
 )
 
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
+# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
+
 # bash commands
 # pgrep -l srun # lists all srun processes
 # ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes

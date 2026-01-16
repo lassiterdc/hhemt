@@ -645,6 +645,212 @@ class TRITONSWMM_analysis:
         self._sim_run_processing_objects[event_iloc] = proc
         return proc
 
+    def _parse_slurm_tasks_per_node(self, tasks_per_node_str: str) -> list[int]:
+        """
+        Parse SLURM_TASKS_PER_NODE format.
+
+        Examples:
+            "4,4,4,4" -> [4, 4, 4, 4]
+            "4(x4)" -> [4, 4, 4, 4]
+            "8(x2),4" -> [8, 8, 4]
+
+        Parameters
+        ----------
+        tasks_per_node_str : str
+            SLURM_TASKS_PER_NODE environment variable value
+
+        Returns
+        -------
+        list[int]
+            Tasks per node for each allocated node
+        """
+        tasks = []
+        for part in tasks_per_node_str.split(","):
+            part = part.strip()
+            if "(x" in part:
+                # Format: "4(x4)" means 4 tasks repeated 4 times
+                count_str, repeat_str = part.split("(x")
+                count = int(count_str)
+                repeat = int(repeat_str.rstrip(")"))
+                tasks.extend([count] * repeat)
+            else:
+                # Simple format: "4" means 4 tasks
+                tasks.append(int(part))
+        return tasks
+
+    def _get_slurm_resource_constraints(
+        self, verbose: bool = False, min_mem_per_sim_MiB: int = 1024
+    ) -> dict:
+        """
+        Extract and validate SLURM resource constraints from environment variables.
+
+        This method reads all relevant SLURM environment variables and calculates
+        the effective maximum concurrency based on:
+        - CPU allocation (SLURM_CPUS_PER_TASK, SLURM_CPUS_ON_NODE)
+        - GPU allocation (SLURM_GPUS, SLURM_GPUS_ON_NODE, SLURM_GPUS_PER_TASK)
+        - Memory constraints (SLURM_MEM_PER_NODE, SLURM_MEM_PER_CPU)
+        - Multi-node distribution (SLURM_TASKS_PER_NODE, SLURM_JOB_NUM_NODES)
+
+        Returns
+        -------
+        dict
+            Dictionary containing:
+            - max_concurrent: int - Maximum concurrent simulations
+            - total_cpus: int - Total CPUs allocated to job
+            - total_gpus: int - Total GPUs allocated (if GPU mode)
+            - cpus_per_task: int - CPUs per task from SLURM
+            - gpus_per_task: int - GPUs per task from config
+            - num_nodes: int - Number of nodes allocated
+            - cpus_per_node: int - CPUs per node
+            - memory_per_node_MiB: int - Memory per node in MiB
+            - run_mode: str - CPU or GPU mode
+        """
+        # ----------------------------
+        # Read basic SLURM allocation
+        # ----------------------------
+        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
+        cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+        cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
+
+        # If SLURM_CPUS_ON_NODE not set, use psutil
+        if cpus_on_node == 0:
+            cpus_on_node = psutil.cpu_count(logical=False) or 1
+
+        # ----------------------------
+        # Calculate total CPUs available
+        # ----------------------------
+        # Total CPUs = CPUs per node × number of nodes
+        total_cpus = cpus_on_node * num_nodes
+
+        # But respect SLURM_CPUS_PER_TASK if it's more restrictive
+        # (i.e., if job was allocated fewer CPUs than node capacity)
+        slurm_total_cpus = int(os.environ.get("SLURM_NTASKS", 1)) * cpus_per_task
+        if slurm_total_cpus > 0 and slurm_total_cpus < total_cpus:
+            total_cpus = slurm_total_cpus
+
+        # ----------------------------
+        # Memory constraints
+        # ----------------------------
+        mem_per_node_MiB = 0
+        mem_per_cpu_MiB = 0
+
+        # Try to get memory per node
+        mem_per_node_str = os.environ.get("SLURM_MEM_PER_NODE")
+        if mem_per_node_str:
+            # Format: "123456" (in MB) or "123456M" or "123G"
+            mem_per_node_str = mem_per_node_str.rstrip("M")
+            try:
+                mem_per_node_MiB = int(mem_per_node_str)
+            except ValueError:
+                if mem_per_node_str.endswith("G"):
+                    mem_per_node_MiB = int(mem_per_node_str[:-1]) * 1024
+
+        # Try to get memory per CPU
+        mem_per_cpu_str = os.environ.get("SLURM_MEM_PER_CPU")
+        if mem_per_cpu_str:
+            mem_per_cpu_str = mem_per_cpu_str.rstrip("M")
+            try:
+                mem_per_cpu_MiB = int(mem_per_cpu_str)
+            except ValueError:
+                if mem_per_cpu_str.endswith("G"):
+                    mem_per_cpu_MiB = int(mem_per_cpu_str[:-1]) * 1024
+
+        # Calculate effective memory per node
+        if mem_per_node_MiB == 0 and mem_per_cpu_MiB > 0:
+            mem_per_node_MiB = mem_per_cpu_MiB * cpus_on_node
+
+        # ----------------------------
+        # GPU constraints (if GPU mode)
+        # ----------------------------
+        total_gpus = 0
+        gpus_per_task = self.cfg_analysis.n_gpus or 0
+
+        if self.cfg_analysis.run_mode == "gpu":
+            # Try SLURM_GPUS first (total GPUs)
+            total_gpus = int(os.environ.get("SLURM_GPUS", 0))
+
+            # If not set, try SLURM_GPUS_ON_NODE
+            if total_gpus == 0:
+                gpus_on_node = int(os.environ.get("SLURM_GPUS_ON_NODE", 0))
+                total_gpus = gpus_on_node * num_nodes
+
+            # Validate GPU allocation
+            if total_gpus == 0:
+                raise RuntimeError(
+                    "GPU run mode requested, but no GPUs detected via SLURM. "
+                    "Check SLURM_GPUS or SLURM_GPUS_ON_NODE environment variables."
+                )
+
+            if gpus_per_task > total_gpus:
+                raise RuntimeError(
+                    f"Each simulation requires {gpus_per_task} GPU(s), "
+                    f"but only {total_gpus} GPU(s) allocated to the job."
+                )
+
+        # ----------------------------
+        # Calculate max concurrency based on mode
+        # ----------------------------
+        if self.cfg_analysis.run_mode == "gpu":
+            # GPU-based limit
+            max_concurrent = max(1, total_gpus // gpus_per_task)
+        else:
+            # CPU-based limit
+            mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+            omp_threads = self.cfg_analysis.n_omp_threads or 1
+            cpus_per_sim = mpi_ranks * omp_threads
+
+            max_concurrent = max(1, total_cpus // cpus_per_sim) - 1
+        # ----------------------------
+        # Apply memory constraints
+        # ----------------------------
+        if mem_per_node_MiB > 0:
+            # Estimate memory per simulation
+            # This is conservative: assume each sim uses proportional memory
+            available_mem_MiB = mem_per_node_MiB * num_nodes
+            # For now, we don't have a per-sim memory requirement from config
+            # But we can add a safety factor to prevent oversubscription
+            # Assume each concurrent task uses ~1GB by default (can be overridden)
+            mem_based_limit = max(1, available_mem_MiB // min_mem_per_sim_MiB)
+            max_concurrent = min(max_concurrent, mem_based_limit)
+
+        # ----------------------------
+        # Respect multi-node task distribution
+        # ----------------------------
+        tasks_per_node_env = os.environ.get("SLURM_TASKS_PER_NODE")
+        if tasks_per_node_env:
+            tasks_per_node = self._parse_slurm_tasks_per_node(tasks_per_node_env)
+            # Use minimum to be conservative
+            if tasks_per_node:
+                max_tasks_per_node = min(tasks_per_node)
+                max_concurrent = min(max_concurrent, max_tasks_per_node * num_nodes)
+
+        # ----------------------------
+        # Verbose logging
+        # ----------------------------
+        if verbose:
+            print(f"[SLURM] Resource Constraints:")
+            print(f"  Nodes: {num_nodes}")
+            print(f"  CPUs per node: {cpus_on_node}")
+            print(f"  Total CPUs Allocated (SLURM): {slurm_total_cpus}")
+            print(f"  CPUs per task (SLURM): {cpus_per_task}")
+            if self.cfg_analysis.run_mode == "gpu":
+                print(f"  Total GPUs: {total_gpus}")
+                print(f"  GPUs per task: {gpus_per_task}")
+            if mem_per_node_MiB > 0:
+                print(f"  Memory per node: {mem_per_node_MiB} MiB")
+            print(f"  Max concurrent simulations: {max_concurrent}")
+
+        return {
+            "max_concurrent": max_concurrent,
+            "total_cpus": total_cpus,
+            "total_gpus": total_gpus,
+            "cpus_per_task": cpus_per_task,
+            "gpus_per_task": gpus_per_task,
+            "num_nodes": num_nodes,
+            "cpus_per_node": cpus_on_node,
+            "memory_per_node_MiB": mem_per_node_MiB,
+        }
+
     def _create_launchable_sims(
         self,
         pickup_where_leftoff: bool = False,
@@ -679,7 +885,7 @@ class TRITONSWMM_analysis:
             self.run_simulations_concurrently_on_SLURM_HPC(
                 launch_functions=launch_functions,
                 verbose=verbose,
-                max_concurrent_srun=max_concurrent,
+                max_concurrent=max_concurrent,
             )
         else:
             self.run_simulations_concurrently_on_desktop(
@@ -691,7 +897,7 @@ class TRITONSWMM_analysis:
     def run_simulations_concurrently_on_SLURM_HPC(
         self,
         launch_functions: list[Callable[[], tuple]],
-        max_concurrent_srun: Optional[int] = None,
+        max_concurrent: Optional[int] = None,
         verbose: bool = True,
     ) -> list[str]:
         """
@@ -699,70 +905,79 @@ class TRITONSWMM_analysis:
         Uses a pool-based approach to limit concurrent srun tasks and avoid
         resource contention.
 
+        This method honors all relevant SLURM environment variables to ensure
+        concurrent simulations respect the job's resource allocation:
+
+        **CPU-based constraints:**
+        - SLURM_JOB_NUM_NODES: Number of nodes allocated
+        - SLURM_CPUS_ON_NODE: CPUs per node
+        - SLURM_CPUS_PER_TASK: CPUs per task (from job allocation)
+        - SLURM_NTASKS: Total tasks allocated
+        - SLURM_TASKS_PER_NODE: Task distribution across nodes
+
+        **GPU-based constraints (if run_mode == "gpu"):**
+        - SLURM_GPUS: Total GPUs allocated
+        - SLURM_GPUS_ON_NODE: GPUs per node
+        - SLURM_GPUS_PER_TASK: GPUs per task (from config)
+
+        **Memory constraints:**
+        - SLURM_MEM_PER_NODE: Memory per node
+        - SLURM_MEM_PER_CPU: Memory per CPU
+
         Parameters
         ----------
         launch_functions : list of callables
             Each function launches a simulation and returns a tuple:
             (proc, log_file_handle, start_time, log_dict, run_obj)
-        max_concurrent_srun : int | None
-            Maximum number of concurrent srun tasks. If None, defaults to
-            the number of physical cores available divided by threads per task.
+        max_concurrent : int | None
+            Maximum number of concurrent srun tasks. If None, automatically
+            calculated from SLURM environment variables and job configuration.
         verbose : bool
-            If True, prints progress messages.
+            If True, prints detailed resource constraint information.
 
         Returns
         -------
         list[str]
             List of simulation statuses, in completion order.
+
+        Raises
+        ------
+        RuntimeError
+            If GPU mode is requested but no GPUs are detected, or if
+            simulation resource requirements exceed job allocation.
         """
         # ----------------------------
-        # Determine max concurrency
+        # Get SLURM resource constraints
         # ----------------------------
-        num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
+        constraints = self._get_slurm_resource_constraints(verbose=verbose)
+        num_nodes = constraints["num_nodes"]
+        total_cpus = constraints["total_cpus"]
+        total_gpus = constraints["total_gpus"]
+        if max_concurrent is None:
+            max_concurrent = int(constraints["max_concurrent"])
+        # else:
+        #     # User provided explicit max_concurrent
+        #     num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
+        #     cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
+        #     if cpus_on_node == 0:
+        #         cpus_on_node = psutil.cpu_count(logical=False) or 1
+        #     total_cpus = cpus_on_node * num_nodes
+        #     gpus_on_node = int(os.environ.get("SLURM_GPUS_ON_NODE", 0))
+        #     slurm_gpus = int(os.environ.get("SLURM_GPUS", 0))
+        #     total_gpus = slurm_gpus if slurm_gpus > 0 else (gpus_on_node * num_nodes)
+
+        # ----------------------------
+        # Validate simulation requirements
+        # ----------------------------
         n_nodes_per_sim = self.cfg_analysis.n_nodes or 1
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
         omp_threads = self.cfg_analysis.n_omp_threads or 1
         cpus_per_sim = mpi_ranks * omp_threads
         gpus_per_sim = self.cfg_analysis.n_gpus or 0
 
-        if max_concurrent_srun is None:
-            if self.cfg_analysis.run_mode != "gpu":
-                # Total CPUs available to this SLURM job
-                total_cpus = int(os.environ.get("SLURM_CPUS_ON_NODE", 0)) * num_nodes
-                if total_cpus == 0:
-                    total_cpus = psutil.cpu_count(logical=False) or 1 * num_nodes
-                # Per-simulation CPU cost
-                max_concurrent_srun = max(1, total_cpus // cpus_per_sim)
-            else:
-                # Total GPUs allocated to this SLURM job
-                total_gpus = int(os.environ.get("SLURM_GPUS_ON_NODE", 0)) * num_nodes
-                if total_gpus == 0:
-                    # Fallback for older clusters / custom configs
-                    total_gpus = int(os.environ.get("SLURM_GPUS", 0)) * num_nodes
-                if total_gpus == 0:
-                    raise RuntimeError(
-                        "GPU run mode requested, but no GPUs detected via SLURM "
-                        "(SLURM_GPUS_ON_NODE / SLURM_GPUS not set)."
-                    )
-                # Per-simulation GPU cost
-                if gpus_per_sim > total_gpus:
-                    raise RuntimeError(
-                        f"Each simulation requires {gpus_per_sim} GPUs, "
-                        f"but only {total_gpus} GPU(s) allocated to the job."
-                    )
-                max_concurrent_srun = max(1, total_gpus // gpus_per_sim)
-            # For interactive jobs, be even more conservative
-            if verbose:
-                print(
-                    f"[SLURM] Auto-detected max_concurrent_srun = {max_concurrent_srun}",
-                    flush=True,
-                )
-        # ----------------------------
-        # Hard validation (fail fast)
-        # ----------------------------
         if n_nodes_per_sim > num_nodes:  # type: ignore
             raise RuntimeError(
-                f"Each simulation num_nodes {n_nodes_per_sim} node(s), "
+                f"Each simulation requires {n_nodes_per_sim} node(s), "
                 f"but job only has {num_nodes}."  # type: ignore
             )
 
@@ -772,16 +987,22 @@ class TRITONSWMM_analysis:
                 f"but job only has {total_cpus}."
             )
 
-        if gpus_per_sim and gpus_per_sim > total_gpus:
-            raise RuntimeError(
-                f"Each simulation requires {gpus_per_sim} GPUs, "
-                f"but job only has {total_gpus}."
-            )
+        if self.cfg_analysis.run_mode == "gpu":
+            if total_gpus == 0:
+                raise RuntimeError(
+                    "GPU run mode requested, but no GPUs detected via SLURM. "
+                    "Check SLURM_GPUS or SLURM_GPUS_ON_NODE environment variables."
+                )
+            if gpus_per_sim > total_gpus:
+                raise RuntimeError(
+                    f"Each simulation requires {gpus_per_sim} GPU(s), "
+                    f"but only {total_gpus} GPU(s) allocated to the job."
+                )
 
         if verbose:
             print(
                 f"[SLURM] Running {len(launch_functions)} simulations "
-                f"(max {max_concurrent_srun} concurrent srun tasks)",
+                f"(max {max_concurrent} concurrent srun tasks)",
                 flush=True,
             )
 
@@ -812,7 +1033,7 @@ class TRITONSWMM_analysis:
             return True
 
         # Prime the pool with initial tasks
-        for _ in range(min(max_concurrent_srun, len(launch_functions))):
+        for _ in range(min(max_concurrent, len(launch_functions))):
             launch_next()
 
         # Main polling loop

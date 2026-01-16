@@ -7,6 +7,18 @@ pytestmark = pytest.mark.skipif(
     "virginia" not in socket.getfqdn(), reason="Only runs on UVA's HPC"
 )
 
+# ijob \
+#   -A ***REMOVED*** \
+#   -p interactive \
+#   --time=12:00:00 \
+#   -N 2 \
+#   --gres=gpu:1 \
+#   --mem=108G \
+#  --cpus-per-task=1 \
+#  --ntasks-per-node=12
+
+# module load miniforge
+# conda activate triton_swmm_toolkit
 # bash commands
 # pgrep -l srun # lists all srun processes
 # ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
