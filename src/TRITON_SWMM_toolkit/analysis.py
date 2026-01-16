@@ -974,7 +974,9 @@ class TRITONSWMM_analysis:
         self._update_log()
 
     def compile_TRITON_SWMM(
-        self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
+        self,
+        recompile_if_already_done_successfully: bool = False,
+        verbose: bool = False,
     ):
         if self.compilation_successful and not recompile_if_already_done_successfully:
             print("TRITON-SWMM already compiled")

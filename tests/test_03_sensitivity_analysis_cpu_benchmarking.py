@@ -12,9 +12,7 @@ def test_compile():
         start_from_scratch=False
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
-    analysis.sensitivity.compile_TRITON_SWMM(
-        recompile_if_already_done_successfully=True
-    )
+    analysis.sensitivity.compile_TRITON_SWMM_for_sensitivity_analysis()
     assert analysis.compilation_successful == True
 
 

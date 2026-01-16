@@ -51,19 +51,6 @@ class TRITONSWMM_sensitivity_analysis:
         self.sub_analyses = self._create_sub_analyses()
         self._update_master_analysis_log()
 
-    def compile_TRITON_SWMM_for_sensitivity_analysis(
-        self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
-    ):
-        """
-        Docstring for compile_TRITON_SWMM_for_sensitivity_analysis
-
-        :param self: Compiles TRITONSWMM once for the entire sensitivity analysis
-        """
-        self.master_analysis.compile_TRITON_SWMM(
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            verbose=verbose,
-        )
-
     def prepare_scenarios_in_each_subanalysis(
         self,
         overwrite_scenarios: bool = False,
@@ -381,13 +368,14 @@ class TRITONSWMM_sensitivity_analysis:
             dic_sensitivity_analyses[idx] = anlsys
         return dic_sensitivity_analyses
 
-    def compile_TRITON_SWMM(
-        self, recompile_if_already_done_successfully: bool = True, verbose: bool = False
+    def compile_TRITON_SWMM_for_sensitivity_analysis(
+        self,
+        verbose: bool = False,
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if not sub_analysis.compilation_successful:
                 sub_analysis.compile_TRITON_SWMM(
-                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    recompile_if_already_done_successfully=False,
                     verbose=verbose,
                 )
         self._update_master_analysis_log()

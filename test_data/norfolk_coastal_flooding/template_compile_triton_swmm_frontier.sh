@@ -24,7 +24,9 @@ export CRAY_CPU_TARGET=x86-64
 export MPICH_DIR=/opt/cray/pe/mpich/8.1.31/ofi/amd/6.0
 export HIP_LIB_PATH=/opt/rocm-6.2.4/lib
 
-model=/lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit/test_data/norfolk_coastal_flooding/tests/frontier_all_configs_sensitivity/compiled_software/frontier_swmm_gpu
+model=${COMPILED_MODEL_DIR}
+# cd ${model}
+# source modules_frontier.sh
 swmm_build="${model}/Stormwater-Management-Model/build"
 
 # create build folder
