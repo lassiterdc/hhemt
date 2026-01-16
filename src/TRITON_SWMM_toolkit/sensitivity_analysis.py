@@ -381,6 +381,16 @@ class TRITONSWMM_sensitivity_analysis:
         self._update_master_analysis_log()
         return
 
+    @property
+    def compilation_successful(self):
+        TRITONSWMM_compiled_successfully = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            TRITONSWMM_compiled_successfully = (
+                TRITONSWMM_compiled_successfully and sub_analysis.compilation_successful
+            )
+        return TRITONSWMM_compiled_successfully
+
     def _update_master_analysis_log(self):
 
         # dic_all_logs = dict()
@@ -390,7 +400,6 @@ class TRITONSWMM_sensitivity_analysis:
         all_SWMM_timeseries_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
-        TRITONSWMM_compiled_successfully = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             # dic_all_logs[key] = sub_analysis.log.model_dump()
@@ -414,9 +423,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_raw_SWMM_outputs_cleared
                 and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
             )
-            TRITONSWMM_compiled_successfully = (
-                TRITONSWMM_compiled_successfully and sub_analysis.compilation_successful
-            )
+
         self.master_analysis._update_log()
         self.master_analysis.log.all_scenarios_created.set(all_scenarios_created)
         self.master_analysis.log.all_sims_run.set(all_sims_run)
@@ -431,8 +438,5 @@ class TRITONSWMM_sensitivity_analysis:
         )
         self.master_analysis.log.all_raw_SWMM_outputs_cleared.set(
             all_raw_SWMM_outputs_cleared
-        )
-        self.master_analysis.log.TRITONSWMM_compiled_successfully.set(
-            TRITONSWMM_compiled_successfully
         )
         return

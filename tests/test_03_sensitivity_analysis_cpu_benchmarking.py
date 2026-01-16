@@ -13,7 +13,7 @@ def test_compile():
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
     analysis.sensitivity.compile_TRITON_SWMM_for_sensitivity_analysis()
-    assert analysis.compilation_successful == True
+    assert analysis.sensitivity.compilation_successful == True
 
 
 def test_prepare_scenarios():
