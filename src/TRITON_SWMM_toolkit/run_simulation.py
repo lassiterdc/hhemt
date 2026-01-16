@@ -168,16 +168,38 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
+        module_load_cmd = ""
+        modules = (
+            self._scenario._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        )
+
+        if modules:
+            module_load_cmd = f"module load {modules}; "
+
         if run_mode != "gpu":
             if in_slurm:
+                # cmd = [
+                #     "srun",
+                #     f"--ntasks={n_mpi_procs}",  # one task per MPI process
+                #     f"--cpus-per-task={n_omp_threads}",  # cores per task
+                #     "--exclusive",  # exclusive allocation
+                #     "--cpu-bind=cores",
+                #     str(exe),
+                #     str(cfg),
+                # ]
+
                 cmd = [
-                    "srun",
-                    f"--ntasks={n_mpi_procs}",  # one task per MPI process
-                    f"--cpus-per-task={n_omp_threads}",  # cores per task
-                    "--exclusive",  # exclusive allocation
-                    "--cpu-bind=cores",
-                    str(exe),
-                    str(cfg),
+                    "bash",
+                    "-lc",
+                    (
+                        f"{module_load_cmd}"
+                        f"srun "
+                        f"--ntasks={n_mpi_procs} "
+                        f"--cpus-per-task={n_omp_threads} "
+                        "--exclusive "
+                        "--cpu-bind=cores "
+                        f"{exe} {cfg}"
+                    ),
                 ]
             elif run_mode in ("serial", "openmp"):
                 cmd = [str(exe), str(cfg)]
@@ -191,15 +213,28 @@ class TRITONSWMM_run:
                 ]
         elif run_mode == "gpu":
             if in_slurm:
+                # cmd = [
+                #     "srun",
+                #     f"--ntasks={n_gpus}",  # one task per GPU
+                #     f"--cpus-per-task={n_omp_threads}",  # threads per GPU
+                #     "--gpus-per-task=1",  # one GPU per task
+                #     "--exclusive",  # exclusive allocation
+                #     "--cpu-bind=cores",
+                #     str(exe),
+                #     str(cfg),
+                # ]
+
                 cmd = [
-                    "srun",
-                    f"--ntasks={n_gpus}",  # one task per GPU
-                    f"--cpus-per-task={n_omp_threads}",  # threads per GPU
-                    "--gpus-per-task=1",  # one GPU per task
-                    "--exclusive",  # exclusive allocation
-                    "--cpu-bind=cores",
-                    str(exe),
-                    str(cfg),
+                    "bash",
+                    "-lc",
+                    (
+                        f"{module_load_cmd}"
+                        f"srun "
+                        f"--ntasks={n_gpus} "
+                        f"--cpus-per-task={n_omp_threads} "
+                        "--gpus-per-task=1 ",  # one GPU per task
+                        "--exclusive " "--cpu-bind=cores " f"{exe} {cfg}",
+                    ),
                 ]
             else:
                 cmd = [str(exe), str(cfg)]

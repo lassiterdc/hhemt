@@ -284,6 +284,7 @@ class GetTS_TestCases:
     frontier_compilation_script = (
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
+    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
 
     def __init__(self) -> None:
         pass
@@ -330,6 +331,10 @@ class GetTS_TestCases:
                 TRITON_SWMM_make_command="frontier_swmm_omp",
                 TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
             ),
+            additional_system_configs=dict(
+                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
+            ),
         )
 
     @classmethod
@@ -351,6 +356,7 @@ class GetTS_TestCases:
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
             ),
         )
 

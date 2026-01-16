@@ -239,6 +239,10 @@ class system_config(cfgBaseModel):
         ...,
         description="Folder containing script to build analysis-specific version of TRITON-SWMM.",
     )
+    additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
+        None,
+        description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",
+    )
     subcatchment_raingage_mapping: Optional[Path] = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
