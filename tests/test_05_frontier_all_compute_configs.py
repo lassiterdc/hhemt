@@ -20,7 +20,7 @@ def test_compile():
     )
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=True)
-    assert analysis.compilation_successful == True
+    assert analysis.sensitivity.compilation_successful == True
 
 
 def test_prepare_scenarios():
@@ -29,7 +29,7 @@ def test_prepare_scenarios():
     )
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.prepare_scenarios_in_each_subanalysis(concurrent=True)
-    assert analysis.sensitivity.compilation_successful == True
+    assert analysis.log.all_scenarios_created.get() == True
 
 
 def test_run_all_sims():
