@@ -285,6 +285,9 @@ class GetTS_TestCases:
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
     frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+    # UVA
+    UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
+    UVA_modules_to_load_for_srun = "gcc openmpi"
 
     def __init__(self) -> None:
         pass
@@ -316,6 +319,27 @@ class GetTS_TestCases:
         return nrflk_test
 
     @classmethod
+    def retreive_norfolk_UVA_multisim_cpu_serial_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "UVA_multisim"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=60,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                TRITON_SWMM_make_command="hpc_swmm_omp",
+            ),
+            additional_system_configs=dict(
+                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
+            ),
+        )
+
+    @classmethod
     def retreive_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
@@ -329,7 +353,6 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="frontier_swmm_omp",
-                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,

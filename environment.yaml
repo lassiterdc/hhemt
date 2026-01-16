@@ -3,9 +3,17 @@
 # conda deactivate
 # conda env remove -n triton_swmm_toolkit
 # then:
-# conda env create -f environment.yaml
-# conda activate triton_swmm_toolkit
-# if git cloned, run: python -m pip install -e .
+# either:
+  # clean install, no use of :
+    # conda create -n triton_swmm_toolkit python=3.11 --no-default-packages
+    # conda activate triton_swmm_toolkit
+    # export PYTHONNOUSERSITE=1
+    # conda env update -f environment.yaml
+  # create directly from environment yaml
+    # conda env create -f environment.yaml
+    # conda activate triton_swmm_toolkit
+# to use development version if git cloned:
+  # python -m pip install -e .
 name: triton_swmm_toolkit
 channels:
   - conda-forge

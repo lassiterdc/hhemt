@@ -4,7 +4,7 @@ import socket
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
 pytestmark = pytest.mark.skipif(
-    "frontier" not in socket.getfqdn(), reason="Only runs on Frontier HPC"
+    "virginia" not in socket.getfqdn(), reason="Only runs on UVA's HPC"
 )
 
 # bash commands
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_load_system_and_analysis():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=True
     )
     assert (
@@ -22,7 +22,7 @@ def test_load_system_and_analysis():
 
 
 def test_create_dem_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_dem_for_TRITON()
@@ -31,7 +31,7 @@ def test_create_dem_for_TRITON():
 
 
 def test_create_mannings_file_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_mannings_file_for_TRITON()
@@ -40,7 +40,7 @@ def test_create_mannings_file_for_TRITON():
 
 
 def test_compile_TRITONSWMM_for_cpu_sims():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.analysis.compile_TRITON_SWMM()
@@ -48,7 +48,7 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 
 
 def test_prepare_scenarios():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -66,7 +66,7 @@ def test_prepare_scenarios():
 def test_run_sims():
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -84,7 +84,7 @@ def test_run_sims():
 
 
 def test_concurrently_process_scenario_timeseries():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
