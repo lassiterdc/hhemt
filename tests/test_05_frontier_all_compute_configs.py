@@ -29,7 +29,7 @@ def test_prepare_scenarios():
     )
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.prepare_scenarios_in_each_subanalysis(concurrent=True)
-    assert analysis.log.all_scenarios_created.get() == True
+    assert analysis.sensitivity.all_scenarios_created
 
 
 def test_run_all_sims():
@@ -37,7 +37,9 @@ def test_run_all_sims():
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis
-    analysis.sensitivity.run_all_sims(pickup_where_leftoff=False, concurrent=False)
+    analysis.sensitivity.run_all_sims(
+        pickup_where_leftoff=False, concurrent=False, verbose=True
+    )
     assert analysis.log.all_sims_run.get() == True
     success_processing = (
         analysis.log.all_TRITON_timeseries_processed.get()
