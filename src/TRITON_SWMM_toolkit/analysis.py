@@ -701,7 +701,7 @@ class TRITONSWMM_analysis:
         # Determine max concurrency
         # ----------------------------
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
-        n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes or 1
+        n_nodes_per_sim = self.cfg_analysis.n_nodes or 1
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
         omp_threads = self.cfg_analysis.n_omp_threads or 1
         cpus_per_sim = mpi_ranks * omp_threads
@@ -742,10 +742,10 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Hard validation (fail fast)
         # ----------------------------
-        if n_nodes_per_sim > total_nodes:
+        if n_nodes_per_sim > total_nodes:  # type: ignore
             raise RuntimeError(
                 f"Each simulation requires {n_nodes_per_sim} node(s), "
-                f"but job only has {total_nodes}."
+                f"but job only has {total_nodes}."  # type: ignore
             )
 
         if cpus_per_sim > total_cpus:
