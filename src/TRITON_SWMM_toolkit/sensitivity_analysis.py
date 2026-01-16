@@ -411,6 +411,52 @@ class TRITONSWMM_sensitivity_analysis:
             )
         return all_scenarios_created == True
 
+    @property
+    def all_sims_run(self):
+        all_sims_run = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
+        return all_sims_run == True
+
+    @property
+    def all_TRITON_timeseries_processed(self):
+        all_TRITON_timeseries_processed = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            all_TRITON_timeseries_processed = (
+                all_TRITON_timeseries_processed
+                and sub_analysis.log.all_TRITON_timeseries_processed.get()
+            )
+        return all_TRITON_timeseries_processed == True
+
+    @property
+    def all_SWMM_timeseries_processed(self):
+        all_SWMM_timeseries_processed = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            all_SWMM_timeseries_processed = (
+                all_SWMM_timeseries_processed
+                and sub_analysis.log.all_SWMM_timeseries_processed.get()
+            )
+        return all_SWMM_timeseries_processed == True
+
+    @property
+    def TRITON_time_series_not_processed(self):
+        lst_scens = []
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            lst_scens += sub_analysis.TRITON_time_series_not_processed()
+        return lst_scens
+
+    @property
+    def SWMM_time_series_not_processed(self):
+        lst_scens = []
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            lst_scens += sub_analysis.SWMM_time_series_not_processed()
+        return lst_scens
+
     def _update_master_analysis_log(self):
 
         # dic_all_logs = dict()

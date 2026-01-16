@@ -46,14 +46,19 @@ def test_run_all_sims():
     analysis.sensitivity.run_all_sims(
         pickup_where_leftoff=False, concurrent=False, verbose=True
     )
-    assert analysis.log.all_sims_run.get() == True
+    assert analysis.sensitivity.all_sims_run == True
     success_processing = (
-        analysis.log.all_TRITON_timeseries_processed.get()
-        and analysis.log.all_SWMM_timeseries_processed.get()
+        analysis.sensitivity.all_TRITON_timeseries_processed
+        and analysis.sensitivity.all_SWMM_timeseries_processed
     )
     if not success_processing:
-        analysis.log.print()
-        pytest.fail(f"Processing TRITON and SWMM time series failed.")
+        unprcsd_triton = "\n".join(
+            analysis.sensitivity.TRITON_time_series_not_processed
+        )
+        unprcsd_swmm = "\n".join(analysis.sensitivity.SWMM_time_series_not_processed)
+        pytest.fail(
+            f"Processing TRITON and SWMM time series failed.\nUnprocessed TRITON: {unprcsd_triton}\nUnprocessed SWMM: {unprcsd_swmm}"
+        )
 
 
 def test_consolidate_outputs():

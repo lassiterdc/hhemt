@@ -226,6 +226,24 @@ class TRITONSWMM_analysis:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
+    def TRITON_time_series_not_processed(self):
+        scens_not_processed = []
+        for event_iloc in self.df_sims.index:
+            scen = self.scenarios[event_iloc]
+            if scen.log.TRITON_timeseries_written.get() != True:
+                scens_not_processed.append(str(scen.log.logfile.parent))
+        return scens_not_processed
+
+    def SWMM_time_series_not_processed(self):
+        scens_not_processed = []
+        for event_iloc in self.df_sims.index:
+            scen = self.scenarios[event_iloc]
+            node_tseries_written = bool(scen.log.SWMM_node_timeseries_written.get())
+            link_tseries_written = bool(scen.log.SWMM_link_timeseries_written.get())
+            if not (node_tseries_written and link_tseries_written):
+                scens_not_processed.append(str(scen.log.logfile.parent))
+        return scens_not_processed
+
     def _update_log(self):
         # dict_all_logs = {}
         all_scens_created = True
