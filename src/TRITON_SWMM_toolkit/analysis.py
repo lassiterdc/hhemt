@@ -760,9 +760,9 @@ class TRITONSWMM_analysis:
         # ----------------------------
         # Hard validation (fail fast)
         # ----------------------------
-        if n_nodes_per_sim > total_nodes:  # type: ignore
+        if n_nodes_per_sim > num_nodes:  # type: ignore
             raise RuntimeError(
-                f"Each simulation requires {n_nodes_per_sim} node(s), "
+                f"Each simulation num_nodes {n_nodes_per_sim} node(s), "
                 f"but job only has {total_nodes}."  # type: ignore
             )
 
