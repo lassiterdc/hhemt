@@ -58,7 +58,7 @@ def test_prepare_scenarios():
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario=True, verbose=True
     )
-    analysis.run_python_functions_concurrently(prepare_scenario_launchers)
+    analysis.run_python_functions_concurrently(prepare_scenario_launchers, verbose=True)
     if analysis.log.all_scenarios_created.get() != True:
         scens_not_created = "\n".join(analysis.scenarios_not_created)
         pytest.fail(
@@ -95,7 +95,7 @@ def test_concurrently_process_scenario_timeseries():
         analysis.retreive_scenario_timeseries_processing_launchers()
     )
     analysis.run_python_functions_concurrently(
-        scenario_timeseries_processing_launchers, max_parallel=32
+        scenario_timeseries_processing_launchers, verbose=True
     )
     # verify that time series outputs processed
     success_processing = (

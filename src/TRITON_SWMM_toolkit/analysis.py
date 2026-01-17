@@ -423,13 +423,21 @@ class TRITONSWMM_analysis:
             )
 
         results: List[int] = []
+        batch_start = time.time()  # Reference point for all tasks
 
         def wrapper(idx: int, launcher: Callable[[], None]):
-            start = time.time()
+            task_start = time.time()
             launcher()
-            elapsed = time.time() - start
+            task_end = time.time()
+
+            duration = task_end - task_start
+            completed_at = task_end - batch_start
+
             if verbose:
-                print(f"Function {idx} completed in {elapsed:.2f} s")
+                print(
+                    f"Function {idx}: duration={duration:.2f}s, "
+                    f"completed_at={completed_at:.2f}s"
+                )
             return idx
 
         # ----------------------------
@@ -854,7 +862,7 @@ class TRITONSWMM_analysis:
                 print(f"  GPUs per task: {gpus_per_task}")
             if mem_per_node_MiB > 0:
                 print(f"  Memory per node: {mem_per_node_MiB} MiB")
-            print(f"  Max concurrent simulations: {max_concurrent}")
+            print(f"  Max concurrent srun tasks: {max_concurrent}")
 
         return {
             "max_concurrent": max_concurrent,
