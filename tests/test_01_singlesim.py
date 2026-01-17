@@ -37,9 +37,8 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 # SCENARIO SET UP
 def test_prepare_all_scenarios():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
-        start_from_scratch=True
+        start_from_scratch=False
     )
-    single_sim_single_core.system.analysis.compile_TRITON_SWMM()
     single_sim_single_core.system.analysis.run_prepare_scenarios_serially(
         overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )

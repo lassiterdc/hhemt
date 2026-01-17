@@ -104,6 +104,8 @@ def main():
         logger.info(
             f"Assigning compiled model directory to analysis: {str(compiled_model_dir)}"
         )
+    else:
+        compiled_model_dir = None
     if args.analysis_dir:
         analysis_dir = args.analysis_dir
         assert args.analysis_dir.exists()
