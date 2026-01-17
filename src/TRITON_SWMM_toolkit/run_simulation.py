@@ -194,7 +194,7 @@ class TRITONSWMM_run:
                     (
                         f"{module_load_cmd}"
                         f"srun "
-                        f"N {n_nodes_per_sim} "
+                        f"-N {n_nodes_per_sim} "
                         f"--ntasks={n_mpi_procs} "
                         f"--cpus-per-task={n_omp_threads} "
                         "--exclusive "
