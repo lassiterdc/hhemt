@@ -95,7 +95,7 @@ class TRITONSWMM_analysis:
         self.plot = TRITONSWMM_analysis_plotting(self)
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
-        if skip_log_update:
+        if not skip_log_update:
             self._refresh_log()
             if self.analysis_paths.compilation_logfile.exists():
                 self._validate_compilation()
