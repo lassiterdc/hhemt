@@ -86,6 +86,12 @@ class TRITON_SWMM_testcase:
         self.system.cfg_system.system_directory = (
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
+
+        anlysys_dir = self.system.cfg_system.system_directory / analysis_name
+        if start_from_scratch and anlysys_dir.exists():
+            shutil.rmtree(anlysys_dir)
+        anlysys_dir.mkdir(parents=True, exist_ok=True)
+
         new_system_config_yaml = (
             self.system.cfg_system.system_directory / f"{test_system_dirname}.yaml"
         )
@@ -105,10 +111,6 @@ class TRITON_SWMM_testcase:
         # update analysis attributes
         anlysys.analysis_id = analysis_name
         anlysys.analysis_description = analysis_description
-        anlysys_dir = self.system.cfg_system.system_directory / analysis_name
-        if start_from_scratch and anlysys_dir.exists():
-            shutil.rmtree(anlysys_dir)
-        anlysys_dir.mkdir(parents=True, exist_ok=True)
         f_weather_indices = anlysys_dir / "weather_indices.csv"
         anlysys.weather_events_to_simulate = f_weather_indices
         event_index_name = "event_id"

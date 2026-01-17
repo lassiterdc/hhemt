@@ -99,13 +99,6 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
 
-        cfg_anlysys_yaml = analysis_dir / f"analysis.yaml"
-        cfg_anlysys_yaml.write_text(
-            yaml.safe_dump(
-                self.cfg_analysis.model_dump(mode="json"),
-                sort_keys=False,  # .dict() for pydantic v1
-            )
-        )
         self._update_log()
 
     def _refresh_log(self):
@@ -290,6 +283,8 @@ class TRITONSWMM_analysis:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
+        analysis_dir: Optional[Path] = None,
     ):
         """
         Create subprocess-based launchers for scenario preparation.
@@ -320,6 +315,8 @@ class TRITONSWMM_analysis:
                 overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
+                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
+                analysis_dir=analysis_dir,
             )
             prepare_scenario_launchers.append(launcher)
 
@@ -490,18 +487,18 @@ class TRITONSWMM_analysis:
         overwrite_scenarios: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
+        analysis_dir: Optional[Path] = None,
     ):
-        for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
-            launcher = scen._create_subprocess_prepare_scenario_launcher(
-                overwrite_scenario=overwrite_scenarios,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                verbose=verbose,
-            )
+        prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
+            overwrite_scenario=overwrite_scenarios,
+            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+            verbose=verbose,
+            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
+            analysis_dir=analysis_dir,
+        )
+        for launcher in prepare_scenario_launchers:
             launcher()
-            # Reload the scenario log from disk after subprocess completes
-            # This ensures the parent process sees all updates written by the subprocess
-            scen.log.refresh()
             self._update_log()  # update logs
         return
 

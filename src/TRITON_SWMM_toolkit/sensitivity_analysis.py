@@ -61,12 +61,12 @@ class TRITONSWMM_sensitivity_analysis:
         prepare_scenario_launchers = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis._add_all_scenarios()
-            prepare_scenario_launchers += (
-                sub_analysis.retrieve_prepare_scenario_launchers(
-                    overwrite_scenario=overwrite_scenarios,
-                    rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                    verbose=verbose,
-                )
+            prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
+                overwrite_scenario=overwrite_scenarios,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                verbose=verbose,
+                compiled_TRITONSWMM_directory=self.master_analysis.analysis_paths.compiled_software_directory,
+                analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
         if concurrent:
             self.master_analysis.run_python_functions_concurrently(
@@ -360,9 +360,9 @@ class TRITONSWMM_sensitivity_analysis:
                 )
 
             anlsys = anlysis.TRITONSWMM_analysis(
-                cfg_anlysys_yaml,
-                self._system,
-                sub_analysis_directory,
+                analysis_config_yaml=cfg_anlysys_yaml,
+                system=self._system,
+                analysis_dir=sub_analysis_directory,
                 compiled_software_directory=compiled_software_directory,
             )
             dic_sensitivity_analyses[idx] = anlsys

@@ -69,6 +69,19 @@ def main():
         default=False,
         help="Rerun SWMM hydrology model even if outputs exist",
     )
+    parser.add_argument(
+        "--compiled-model-dir",
+        type=Path,
+        required=False,
+        help="(Optional) path to compiled TRITON-SWMM directory (mainly used for sensitivity analysis)",
+    )
+
+    parser.add_argument(
+        "--analysis-dir",
+        type=Path,
+        required=False,
+        help="(Optional) path to the analysis (mainly used for sensitivity analysis)",
+    )
 
     try:
         args = parser.parse_args()
@@ -85,6 +98,18 @@ def main():
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
+    if args.compiled_model_dir:
+        compiled_model_dir = args.compiled_model_dir
+        assert args.compiled_model_dir.exists()
+        logger.info(
+            f"Assigning compiled model directory to analysis: {str(compiled_model_dir)}"
+        )
+    if args.analysis_dir:
+        analysis_dir = args.analysis_dir
+        assert args.analysis_dir.exists()
+        logger.info(f"Assigning analysis to directory {str(analysis_dir)}")
+    else:
+        analysis_dir = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -95,7 +120,12 @@ def main():
         system = TRITONSWMM_system(args.system_config)
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
-        analysis = TRITONSWMM_analysis(args.analysis_config, system)
+        analysis = TRITONSWMM_analysis(
+            analysis_config_yaml=args.analysis_config,
+            system=system,
+            analysis_dir=analysis_dir,
+            compiled_software_directory=compiled_model_dir,
+        )
 
         logger.info(f"Preparing scenario {args.event_iloc}")
         scenario = analysis.scenarios[args.event_iloc]

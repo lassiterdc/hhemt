@@ -16,7 +16,7 @@ import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
 from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Optional
 from contextlib import redirect_stdout, redirect_stderr
 import threading
 import traceback
@@ -857,6 +857,8 @@ class TRITONSWMM_scenario:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
+        analysis_dir: Optional[Path] = None,
     ):
         """
         Create a launcher function that runs scenario preparation in a subprocess.
@@ -925,6 +927,12 @@ class TRITONSWMM_scenario:
             cmd.append("--overwrite-scenario")
         if rerun_swmm_hydro_if_outputs_exist:
             cmd.append("--rerun-swmm-hydro")
+        if compiled_TRITONSWMM_directory:
+            cmd.append("--compiled-model-dir")
+            cmd.append(str(compiled_TRITONSWMM_directory))
+        if analysis_dir:
+            cmd.append("--analysis-dir")
+            cmd.append(str(analysis_dir))
 
         def launcher():
             """Execute scenario preparation in a subprocess."""
