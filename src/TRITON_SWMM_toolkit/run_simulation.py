@@ -316,10 +316,10 @@ class TRITONSWMM_run:
             env=env,  # type: ignore
         )
         log_dic = self._scenario.latest_simlog
-        if verbose:
-            print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
-            print("bash command to view progress:")
-            print(f"tail -f {tritonswmm_logfile}")
+        # if verbose:
+        #     print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
+        #     print("bash command to view progress:")
+        #     print(f"tail -f {tritonswmm_logfile}")
 
         def launch_sim():
             start_time = time.time()

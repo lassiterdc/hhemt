@@ -1050,7 +1050,7 @@ class TRITONSWMM_analysis:
             if verbose:
                 print(
                     f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} "
-                    f"(PID {proc.pid}, {len(running)} running)\n\ttrack logfile with: tail -f {str(lf)}",
+                    f"(PID {proc.pid}, {len(running)} running)\n\ttrack logfile with: tail -f {log_dic['tritonswmm_logfile']}",
                     flush=True,
                 )
             return True
