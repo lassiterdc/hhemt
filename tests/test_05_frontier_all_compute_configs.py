@@ -7,9 +7,11 @@ pytestmark = pytest.mark.skipif(
     "frontier" not in socket.gethostname(), reason="Only runs on Frontier HPC"
 )
 
-# bash commands
 # cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
-# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 1 --exclusive -q debug
+# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
+# conda activate triton_swmm_toolkit
+
+# bash commands
 # pgrep -l srun # lists all srun processes
 # ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
 
@@ -34,7 +36,9 @@ def test_prepare_scenarios():
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis
-    analysis.sensitivity.prepare_scenarios_in_each_subanalysis(concurrent=True)
+    analysis.sensitivity.prepare_scenarios_in_each_subanalysis(
+        concurrent=True, verbose=True
+    )
     assert analysis.sensitivity.all_scenarios_created
 
 

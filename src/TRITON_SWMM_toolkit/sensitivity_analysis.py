@@ -66,7 +66,7 @@ class TRITONSWMM_sensitivity_analysis:
                 overwrite_scenario=overwrite_scenarios,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
-                compiled_TRITONSWMM_directory=self.master_analysis.analysis_paths.compiled_software_directory,
+                compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_software_directory,
                 analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
         if concurrent:
@@ -78,12 +78,10 @@ class TRITONSWMM_sensitivity_analysis:
                 launcher()
 
         self._update_master_analysis_log()
-        if self.master_analysis.log.all_scenarios_created.get() != True:
-            logs_for_printing = self.master_analysis.log.model_dump_json(indent=2)
+        if self.all_scenarios_created != True:
+            scens_not_created = "\n\t".join(self.scenarios_not_created)
             raise RuntimeError(
-                f"""Log is not reflecting that scenarios have been created.\n
-{logs_for_printing}
-                """
+                f"Preparation failed for the following scenarios:\n{scens_not_created}"
             )
 
     def run_all_sims(
@@ -382,6 +380,16 @@ class TRITONSWMM_sensitivity_analysis:
                 )
         self._update_master_analysis_log()
         return
+
+    @property
+    def scenarios_not_created(self):
+        scenarios_not_created = []
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            for event_iloc in sub_analysis.df_sims.index:
+                scen = sub_analysis.scenarios[event_iloc]
+                if scen.log.scenario_creation_complete.get() != True:
+                    scenarios_not_created.append(str(scen.log.logfile.parent))
+        return scenarios_not_created
 
     @property
     def scenarios_not_run(self):
