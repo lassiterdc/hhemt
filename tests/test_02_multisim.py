@@ -69,9 +69,7 @@ def test_run_multisim_concurrently():
     launch_functions = analysis._create_launchable_sims(
         pickup_where_leftoff=False, verbose=True
     )
-    analysis.run_simulations_concurrently_on_desktop(
-        launch_functions, use_gpu=False, total_gpus_available=0, verbose=True
-    )
+    analysis.run_simulations_concurrently_on_desktop(launch_functions, verbose=True)
     assert analysis.log.all_sims_run.get() == True
 
 

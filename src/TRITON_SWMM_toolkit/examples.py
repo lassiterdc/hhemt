@@ -74,8 +74,8 @@ class TRITON_SWMM_testcase:
         n_events: int,
         n_reporting_tsteps_per_sim: int,
         TRITON_reporting_timestep_s: int,
+        test_system_dirname: str,
         analysis_description: str = "",
-        test_system_dirname: str = "norfolk_tests",
         start_from_scratch: bool = False,
         additional_analysis_configs: dict = dict(),
         additional_system_configs: dict = dict(),
@@ -86,6 +86,19 @@ class TRITON_SWMM_testcase:
         self.system.cfg_system.system_directory = (
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
+        new_system_config_yaml = (
+            self.system.cfg_system.system_directory / f"{test_system_dirname}.yaml"
+        )
+
+        new_system_config_yaml.write_text(
+            yaml.safe_dump(
+                self.system.cfg_system.model_dump(mode="json"),
+                sort_keys=False,  # .dict() for pydantic v1
+            )
+        )
+
+        self.system = TRITONSWMM_system(new_system_config_yaml)
+
         # load single sime analysis
         single_sim_anlysys_yaml = TRITON_SWMM_examples.load_norfolk_template_analysis()
         anlysys = load_analysis_config(single_sim_anlysys_yaml)

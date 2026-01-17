@@ -291,12 +291,35 @@ class TRITONSWMM_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
+        """
+        Create subprocess-based launchers for scenario preparation.
+
+        Each launcher runs scenario preparation in an isolated subprocess to avoid
+        PySwmm's MultiSimulationError when preparing multiple scenarios concurrently.
+
+        Parameters
+        ----------
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        list
+            List of launcher functions that execute scenario preparation in subprocesses
+        """
         prepare_scenario_launchers = []
         for event_iloc in self.df_sims.index:
             scenario = self.scenarios[event_iloc]
-            launcher = scenario.prepare_scenario(
+
+            # Create a subprocess-based launcher
+            launcher = scenario._create_subprocess_prepare_scenario_launcher(
                 overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                verbose=verbose,
             )
             prepare_scenario_launchers.append(launcher)
 
@@ -470,10 +493,15 @@ class TRITONSWMM_analysis:
     ):
         for event_iloc in self.df_sims.index:
             scen = self.scenarios[event_iloc]
-            launcher = scen.prepare_scenario(
-                overwrite_scenarios, rerun_swmm_hydro_if_outputs_exist
+            launcher = scen._create_subprocess_prepare_scenario_launcher(
+                overwrite_scenario=overwrite_scenarios,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                verbose=verbose,
             )
             launcher()
+            # Reload the scenario log from disk after subprocess completes
+            # This ensures the parent process sees all updates written by the subprocess
+            scen.log.refresh()
             self._update_log()  # update logs
         return
 

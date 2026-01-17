@@ -188,8 +188,12 @@ class TRITONSWMM_log(BaseModel):
         print(self._as_json(indent))
 
     def refresh(self):
+        """Reload the log from disk, updating all instance attributes."""
         if self.logfile.exists():
-            self = self.from_json(self.logfile)
+            reloaded = self.from_json(self.logfile)
+            # Copy all attributes from reloaded instance to self
+            for key, value in reloaded.__dict__.items():
+                setattr(self, key, value)
         else:
             pass
 
@@ -212,6 +216,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     event_iloc: int
     event_idx: Dict
     simulation_folder: Path
+    logfile: Path
 
     # ----------------------------
     # Log fields

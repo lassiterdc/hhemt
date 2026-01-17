@@ -801,62 +801,173 @@ class TRITONSWMM_scenario:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
     ):
-        launcher_logfile = (
-            self.log.logfile.parent / f"scenario_prep_{self.event_iloc}.log"
+
+        # Halt if scenario already complete
+        if self.log.scenario_creation_complete.get() and not overwrite_scenario:
+            print(  # type: ignore
+                "Simulation already successfully created. "
+                "If you wish to overwrite it, re-run with overwrite_scenario=True.",
+                flush=True,
+            )
+            return
+
+        # Main scenario setup
+        self._write_sim_weather_nc()
+        self._write_swmm_rainfall_dat_files()
+        self._write_swmm_waterlevel_dat_files()
+        self._create_swmm_model_from_template(
+            self._system.cfg_system.SWMM_hydraulics,
+            self.scen_paths.inp_hydraulics,
         )
+        self.log.inp_hydraulics_model_created_successfully.set(True)
 
-        @log_function_to_file(launcher_logfile)
-        def launcher(logger=None):
-
-            logger.info(f"Processing scenario {self.event_iloc}")  # type: ignore
-
-            # Halt if scenario already complete
-            if self.log.scenario_creation_complete.get() and not overwrite_scenario:
-                logger.info(  # type: ignore
-                    "Simulation already successfully created. "
-                    "If you wish to overwrite it, re-run with overwrite_scenario=True."
-                )
-                return launcher_logfile
-
-            # Main scenario setup
-            self._write_sim_weather_nc()
-            self._write_swmm_rainfall_dat_files()
-            self._write_swmm_waterlevel_dat_files()
+        if self._system.cfg_system.toggle_full_swmm_model:
             self._create_swmm_model_from_template(
-                self._system.cfg_system.SWMM_hydraulics,
-                self.scen_paths.inp_hydraulics,
+                self._system.cfg_system.SWMM_full,
+                self.scen_paths.inp_full,
             )
-            self.log.inp_hydraulics_model_created_successfully.set(True)
+            self.log.inp_full_model_created_successfully.set(True)
 
-            if self._system.cfg_system.toggle_full_swmm_model:
-                self._create_swmm_model_from_template(
-                    self._system.cfg_system.SWMM_full,
-                    self.scen_paths.inp_full,
-                )
-                self.log.inp_full_model_created_successfully.set(True)
-
-            if self._system.cfg_system.toggle_use_swmm_for_hydrology:
-                self._create_swmm_model_from_template(
-                    self._system.cfg_system.SWMM_hydrology,
-                    self.scen_paths.inp_hydro,
-                )
-                self._run_swmm_hydro_model(
-                    rerun_if_exists=rerun_swmm_hydro_if_outputs_exist,
-                    verbose=False,
-                )
-                self.log.inp_hydro_model_created_successfully.set(True)
-
-            self._create_external_boundary_condition_files()
-            self._write_hydrograph_files()
-            self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
-                verbose=False
+        if self._system.cfg_system.toggle_use_swmm_for_hydrology:
+            self._create_swmm_model_from_template(
+                self._system.cfg_system.SWMM_hydrology,
+                self.scen_paths.inp_hydro,
             )
-            self._generate_TRITON_SWMM_cfg()
-            self._copy_tritonswmm_build_folder_to_sim()
+            self._run_swmm_hydro_model(
+                rerun_if_exists=rerun_swmm_hydro_if_outputs_exist,
+                verbose=False,
+            )
+            self.log.inp_hydro_model_created_successfully.set(True)
 
-            self.log.scenario_creation_complete.set(True)
-            logger.info("Scenario preparation complete")
-            return launcher_logfile
+        self._create_external_boundary_condition_files()
+        self._write_hydrograph_files()
+        self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
+            verbose=False
+        )
+        self._generate_TRITON_SWMM_cfg()
+        self._copy_tritonswmm_build_folder_to_sim()
+
+        self.log.scenario_creation_complete.set(True)
+        print("Scenario preparation complete", flush=True)
+
+        return
+
+    def _create_subprocess_prepare_scenario_launcher(
+        self,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = False,
+    ):
+        """
+        Create a launcher function that runs scenario preparation in a subprocess.
+
+        This isolates PySwmm to a separate process, avoiding MultiSimulationError
+        when preparing multiple scenarios concurrently.
+
+        Parameters
+        ----------
+        event_iloc : int
+            Integer index of the scenario to prepare
+        overwrite_scenario : bool
+            If True, overwrite existing scenario
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        callable
+            A launcher function that executes the subprocess
+        """
+        import os
+        import subprocess
+
+        event_iloc = self.event_iloc
+        scenario_logfile = self.log.logfile.parent / f"scenario_prep_{event_iloc}.log"
+
+        # Detect SLURM environment
+        in_slurm = "SLURM_JOB_ID" in os.environ.copy()
+
+        # Build command
+        if in_slurm:
+            # Use srun for single-core scenario preparation on HPC
+            cmd = [
+                "srun",
+                "--ntasks=1",
+                "--cpus-per-task=1",
+                "python",
+                "-m",
+                "TRITON_SWMM_toolkit.prepare_scenario_runner",
+                "--event-iloc",
+                str(event_iloc),
+                "--analysis-config",
+                str(self._analysis.analysis_config_yaml),
+                "--system-config",
+                str(self._system.system_config_yaml),
+            ]
+        else:
+            # Direct Python execution on desktop
+            cmd = [
+                "python",
+                "-m",
+                "TRITON_SWMM_toolkit.prepare_scenario_runner",
+                "--event-iloc",
+                str(event_iloc),
+                "--analysis-config",
+                str(self._analysis.analysis_config_yaml),
+                "--system-config",
+                str(self._system.system_config_yaml),
+            ]
+
+        # Add optional flags
+        if overwrite_scenario:
+            cmd.append("--overwrite-scenario")
+        if rerun_swmm_hydro_if_outputs_exist:
+            cmd.append("--rerun-swmm-hydro")
+
+        def launcher():
+            """Execute scenario preparation in a subprocess."""
+            if verbose:
+                print(
+                    f"[Scenario {event_iloc}] Launching subprocess: {' '.join(cmd)}",
+                    flush=True,
+                )
+
+            # Open log file for subprocess output
+            with open(scenario_logfile, "w") as lf:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=lf,
+                    stderr=subprocess.STDOUT,
+                    env=os.environ.copy(),
+                )
+
+                # Wait for subprocess to complete
+                rc = proc.wait()
+
+                if verbose:
+                    if rc == 0:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess completed successfully",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                            flush=True,
+                        )
+
+                if rc != 0:
+                    # Log the error
+                    if scenario_logfile.exists():
+                        with open(scenario_logfile, "r") as f:
+                            error_output = f.read()
+                        if verbose:
+                            print(
+                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
+                                flush=True,
+                            )
 
         return launcher
 
@@ -939,7 +1050,7 @@ def find_lowest_inv(node_to_keep, nodes):
     ranks_inv = rankdata(lst_invs, method="min")
     # subset the nodes that have the lowest elevation
     node_to_keep = node_to_keep[ranks_inv == min(ranks_inv)]
-    node_to_keep = list(np.unique(node_to_keep))
+    node_to_keep = list(np.unique(node_to_keep))  # type: ignore
     return node_to_keep
 
 
