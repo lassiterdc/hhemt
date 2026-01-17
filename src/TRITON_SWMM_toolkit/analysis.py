@@ -44,6 +44,7 @@ class TRITONSWMM_analysis:
         system: "TRITONSWMM_system",
         analysis_dir: Optional[Path] = None,
         compiled_software_directory: Optional[Path] = None,
+        skip_log_update: bool = False,
     ) -> None:
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
@@ -88,18 +89,17 @@ class TRITONSWMM_analysis:
         self._simulation_run_statuses = {}
         # self.run_modes = Mode
         # self.compilation_successful = False
-        self._refresh_log()
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
-
-        if self.analysis_paths.compilation_logfile.exists():
-            self._validate_compilation()
         self._add_all_scenarios()
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
-
-        self._update_log()
+        if skip_log_update:
+            self._refresh_log()
+            if self.analysis_paths.compilation_logfile.exists():
+                self._validate_compilation()
+            self._update_log()
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():

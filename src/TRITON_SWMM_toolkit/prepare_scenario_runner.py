@@ -127,6 +127,7 @@ def main():
             system=system,
             analysis_dir=analysis_dir,
             compiled_software_directory=compiled_model_dir,
+            skip_log_update=True,
         )
 
         logger.info(f"Preparing scenario {args.event_iloc}")
