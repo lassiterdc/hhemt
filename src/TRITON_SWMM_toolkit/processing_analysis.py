@@ -63,7 +63,7 @@ class TRITONSWMM_analysis_post_processing:
         self,
         ds_combined_outputs: xr.Dataset,
         spatial_coords: List[str] | str,
-        spatial_coord_size: int = 65536,
+        spatial_coord_size: int = 65536,  # 256x256 for x,y coords
         max_mem_usage_MiB: float = 200,
     ):
         if isinstance(spatial_coords, str):
@@ -99,7 +99,7 @@ class TRITONSWMM_analysis_post_processing:
             if (len(s_crd) >= target_sim_idx_chunk) and (
                 sims_per_chunk < target_sim_idx_chunk
             ):
-                chnk = len(s_crd)
+                chnk = target_sim_idx_chunk
             chunks[coord] = chnk
             sims_per_chunk *= chnk
             test_slice = {coord: slice(0, int(chnk))}
@@ -113,6 +113,11 @@ class TRITONSWMM_analysis_post_processing:
         ds_combined_outputs = ds_combined_outputs.chunk(chunks)  # type: ignore
 
         size_to_load_MiB = ds_memory_req_MiB(ds_combined_outputs.isel(test_slice))  # type: ignore
+
+        if size_to_load_MiB < 1:
+            print(
+                "warning: chunks are less than 1 MiB which could lead to inefficient reading and writing."
+            )
 
         assert size_to_load_MiB <= max_mem_usage_MiB
 
@@ -359,6 +364,8 @@ Target DEM res: {self._analysis._system.cfg_system.target_dem_resolution}\n x_di
 
 def prev_power_of_two(n: int | float) -> int:
     n = int(n)
+    if n < 1:
+        return 1
     if n <= 0:
         raise ValueError("n must be positive")
     return 1 << (n.bit_length() - 1)

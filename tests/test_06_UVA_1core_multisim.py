@@ -17,6 +17,8 @@ pytestmark = pytest.mark.skipif(
 #  --cpus-per-task=1 \
 #  --ntasks-per-node=12
 
+# verify this runs:
+# srun -n 1 -c 1 echo "Hello SLURM"
 # module load miniforge
 # conda activate triton_swmm_toolkit
 # bash commands
@@ -106,9 +108,7 @@ def test_concurrently_process_scenario_timeseries():
     scenario_timeseries_processing_launchers = (
         analysis.retreive_scenario_timeseries_processing_launchers()
     )
-    analysis.run_python_functions_concurrently(
-        scenario_timeseries_processing_launchers, max_parallel=32
-    )
+    analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
     # verify that time series outputs processed
     success_processing = (
         analysis.log.all_TRITON_timeseries_processed.get()
