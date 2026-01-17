@@ -93,6 +93,39 @@ class TRITONSWMM_run:
                 status = "simulation started but did not finish"
         return status, Path(f_last_cfg)  # type: ignore
 
+    def _write_repro_script(
+        self,
+        script_path,
+        module_load_cmd,
+        env,
+        launch_cmd_str,
+    ):
+        lines = []
+
+        lines.append("#!/usr/bin/env bash")
+        lines.append("set -euo pipefail")
+        lines.append("")
+        lines.append("# --- Modules ---")
+        if module_load_cmd:
+            # strip trailing semicolon for readability
+            lines.append(module_load_cmd.rstrip("; "))
+        else:
+            lines.append("# (no modules)")
+        lines.append("")
+        lines.append("# --- Environment ---")
+        for k, v in sorted(env.items()):
+            lines.append(f'export {k}="{v}"')
+        lines.append("")
+        lines.append("# --- Launch ---")
+        lines.append('echo "Running on host: $(hostname)"')
+        lines.append('echo "PWD: $(pwd)"')
+        lines.append("")
+        lines.append(launch_cmd_str)
+        lines.append("")
+
+        script_path.write_text("\n".join(lines))
+        script_path.chmod(0o755)
+
     # cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
     def prepare_simulation_command(
         self,
@@ -178,32 +211,32 @@ class TRITONSWMM_run:
 
         if run_mode != "gpu":
             if in_slurm:
+                launch_cmd_str = (
+                    f"srun "
+                    f"-N {n_nodes_per_sim} "
+                    f"--ntasks={n_mpi_procs} "
+                    f"--cpus-per-task={n_omp_threads} "
+                    "--exclusive "
+                    "--cpu-bind=cores "
+                    f"{exe} {cfg}"
+                )
                 # cmd = [
-                #     "srun",
-                #     f"--ntasks={n_mpi_procs}",  # one task per MPI process
-                #     f"--cpus-per-task={n_omp_threads}",  # cores per task
-                #     "--exclusive",  # exclusive allocation
-                #     "--cpu-bind=cores",
-                #     str(exe),
-                #     str(cfg),
+                #     "bash",
+                #     "-lc",
+                #     (
+                #         f"{module_load_cmd}"
+                #         f"srun "
+                #         f"-N {n_nodes_per_sim} "
+                #         f"--ntasks={n_mpi_procs} "
+                #         f"--cpus-per-task={n_omp_threads} "
+                #         "--exclusive "
+                #         "--cpu-bind=cores "
+                #         f"{exe} {cfg}"
+                #     ),
                 # ]
-
-                cmd = [
-                    "bash",
-                    "-lc",
-                    (
-                        f"{module_load_cmd}"
-                        f"srun "
-                        f"-N {n_nodes_per_sim} "
-                        f"--ntasks={n_mpi_procs} "
-                        f"--cpus-per-task={n_omp_threads} "
-                        "--exclusive "
-                        "--cpu-bind=cores "
-                        f"{exe} {cfg}"
-                    ),
-                ]
             elif run_mode in ("serial", "openmp"):
-                cmd = [str(exe), str(cfg)]
+                # cmd = [str(exe), str(cfg)]
+                launch_cmd_str = f"{exe} {cfg}"
             elif run_mode in ("mpi", "hybrid"):
                 cmd = [
                     "mpirun",
@@ -214,36 +247,43 @@ class TRITONSWMM_run:
                 ]
         elif run_mode == "gpu":
             if in_slurm:
+                launch_cmd_str = (
+                    f"srun "
+                    f"-N {n_nodes_per_sim} "
+                    f"--ntasks={n_gpus} "
+                    f"--cpus-per-task={n_omp_threads} "
+                    "--gpus-per-task=1 "
+                    "--exclusive "
+                    "--cpu-bind=cores "
+                    f"{exe} {cfg}"
+                )
                 # cmd = [
-                #     "srun",
-                #     f"--ntasks={n_gpus}",  # one task per GPU
-                #     f"--cpus-per-task={n_omp_threads}",  # threads per GPU
-                #     "--gpus-per-task=1",  # one GPU per task
-                #     "--exclusive",  # exclusive allocation
-                #     "--cpu-bind=cores",
-                #     str(exe),
-                #     str(cfg),
+                #     "bash",
+                #     "-lc",
+                #     (
+                #         f"{module_load_cmd}"
+                #         f"srun "
+                #         f"-N {n_nodes_per_sim} "
+                #         f"--ntasks={n_gpus} "
+                #         f"--cpus-per-task={n_omp_threads} "
+                #         "--gpus-per-task=1 "  # one GPU per task
+                #         "--exclusive "
+                #         "--cpu-bind=cores "
+                #         f"{exe} {cfg}"
+                #     ),
                 # ]
-
-                cmd = [
-                    "bash",
-                    "-lc",
-                    (
-                        f"{module_load_cmd}"
-                        f"srun "
-                        f"-N {n_nodes_per_sim} "
-                        f"--ntasks={n_gpus} "
-                        f"--cpus-per-task={n_omp_threads} "
-                        "--gpus-per-task=1 "  # one GPU per task
-                        "--exclusive "
-                        "--cpu-bind=cores "
-                        f"{exe} {cfg}"
-                    ),
-                ]
             else:
-                cmd = [str(exe), str(cfg)]
+                # cmd = [str(exe), str(cfg)]
+                launch_cmd_str = f"{exe} {cfg}"
         else:
             raise ValueError(f"Unknown run_mode: {run_mode}")
+
+        full_cmd = f"{module_load_cmd}{launch_cmd_str}"
+        cmd = [
+            "bash",
+            "-lc",
+            full_cmd,
+        ]
 
         # ----------------------------
         # Safety checks
@@ -263,6 +303,12 @@ class TRITONSWMM_run:
             tritonswmm_logfile_dir
             / f"{current_datetime_string(filepath_friendly=True)}.log"
         )  # individual sim log
+        self._write_repro_script(
+            script_path=self._scenario.scen_paths.sim_folder / "tritonswmm_run.sh",
+            module_load_cmd=module_load_cmd,
+            env=env,
+            launch_cmd_str=launch_cmd_str,
+        )
         return cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
 
     def retrieve_sim_launcher(
