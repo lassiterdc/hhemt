@@ -49,7 +49,8 @@ class TRITONSWMM_sensitivity_analysis:
         self.independent_vars = self._attributes_varied_for_analysis()
         self.df_setup = self._retieve_df_setup().loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
-        self._update_master_analysis_log()
+        if self.master_analysis.analysis_paths.f_log.exists():
+            self._update_master_analysis_log()
 
     def prepare_scenarios_in_each_subanalysis(
         self,
