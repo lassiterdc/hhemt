@@ -29,7 +29,7 @@ class TRITONSWMM_sim_post_processing:
         self._run = run
         self._scenario = run._scenario
         self._analysis = run._scenario._analysis
-        self._system = run._scenario._analysis._system
+        self._system = run._scenario._system
         self.log = self._scenario.log
         self.scen_paths = self._scenario.scen_paths
         self._log_write_status()
