@@ -67,7 +67,10 @@ def test_prepare_scenarios():
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario=True, verbose=True
     )
-    analysis.run_python_functions_concurrently(prepare_scenario_launchers, verbose=True)
+    analysis.run_python_functions_concurrently(
+        prepare_scenario_launchers,
+        verbose=True,
+    )
     if analysis.log.all_scenarios_created.get() != True:
         scens_not_created = "\n".join(analysis.scenarios_not_created)
         pytest.fail(

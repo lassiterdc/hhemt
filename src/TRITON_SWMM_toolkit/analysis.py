@@ -403,7 +403,7 @@ class TRITONSWMM_analysis:
 
         return max_concurrent
 
-    def run_python_functions_concurrently_threadpool(
+    def run_python_functions_concurrently(
         self,
         function_launchers: List[Callable[[], None]],
         min_memory_per_function_MiB: int | None = 1024,
@@ -478,90 +478,6 @@ class TRITONSWMM_analysis:
                     results.append(future.result())
                 except:
                     pass
-
-        self._update_log()
-        return results
-
-    def run_python_functions_concurrently_processpool(
-        self,
-        function_launchers: List[Callable[[], None]],
-        min_memory_per_function_MiB: int | None = 1024,
-        max_parallel: int | None = None,
-        verbose: bool = True,
-    ) -> List[int]:
-        """
-        Run Python functions concurrently using ProcessPoolExecutor.
-
-        This approach uses separate processes for each worker, providing true
-        parallelism without GIL limitations. Ideal for I/O-bound tasks that
-        are already isolated in subprocesses (like scenario preparation).
-
-        Parameters
-        ----------
-        function_launchers : List[Callable[[], None]]
-            Functions to execute concurrently.
-        max_parallel : int | None
-            Upper bound on parallelism (defaults to CPU count).
-        min_memory_per_function_MiB : int | None
-            Minimum memory required per function (MiB).
-            If provided, concurrency is reduced to avoid oversubscription.
-        verbose : bool
-            Print progress messages.
-
-        Returns
-        -------
-        List[int]
-            Indices of functions that completed successfully.
-        """
-
-        effective_max_parallel = self.calculate_effective_max_parallel(
-            min_memory_per_function_MiB=min_memory_per_function_MiB,
-            max_concurrent=max_parallel,
-            verbose=verbose,
-        )
-
-        if verbose:
-            print(
-                f"Running {len(function_launchers)} functions "
-                f"(max parallel = {effective_max_parallel}) [ProcessPoolExecutor]",
-                flush=True,
-            )
-
-        results: List[int] = []
-        batch_start = time.time()  # Reference point for all tasks
-
-        def wrapper(idx: int, launcher: Callable[[], None]):
-            task_start = time.time()
-            launcher()
-            task_end = time.time()
-
-            duration = task_end - task_start
-            completed_at = task_end - batch_start
-
-            if verbose:
-                print(
-                    f"Function {idx}: duration={duration:.2f}s, "
-                    f"completed_at={completed_at:.2f}s",
-                    flush=True,
-                )
-            return idx
-
-        # ----------------------------
-        # Execute with ProcessPoolExecutor
-        # ----------------------------
-        with ProcessPoolExecutor(max_workers=effective_max_parallel) as executor:
-            futures = {
-                executor.submit(wrapper, idx, launcher): idx
-                for idx, launcher in enumerate(function_launchers)
-            }
-
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    results.append(future.result())
-                except Exception as e:
-                    if verbose:
-                        print(f"Function {idx} failed with error: {e}", flush=True)
 
         self._update_log()
         return results
