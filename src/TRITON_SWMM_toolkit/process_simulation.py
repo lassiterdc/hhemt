@@ -7,7 +7,7 @@ from glob import glob
 import shutil
 import zarr
 import rioxarray as rxr
-from typing import Literal
+from typing import Literal, Optional
 import warnings
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
@@ -73,35 +73,142 @@ class TRITONSWMM_sim_post_processing:
     ):
         scen = self._scenario
 
-        launcher_logfile = (
-            self.log.logfile.parent / f"scenario_processing_{scen.event_iloc}.log"
+        if not self._scenario.sim_run_completed:
+            raise RuntimeError(
+                f"Simulation not completed. Log: {self._scenario.latest_simlog}"
+            )
+        print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
+
+        if (which == "both") or (which == "TRITON"):
+            self._export_TRITON_outputs(
+                overwrite_if_exist,
+                clear_raw_outputs,
+                verbose,
+                compression_level,
+            )
+            print(f"Processed TRITON outputs for scenario {scen.event_iloc}", flush=True)  # type: ignore
+        if (which == "both") or (which == "SWMM"):
+            self._export_SWMM_outputs(
+                overwrite_if_exist,
+                clear_raw_outputs,
+                verbose,
+                compression_level,
+            )
+            print(f"Processed SWMM outputs for scenario {scen.event_iloc}", flush=True)  # type: ignore
+
+        return
+
+    def _create_subprocess_timeseries_processing_launcher(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+        analysis_dir: Optional[Path] = None,
+    ):
+        """
+        Create a launcher function that runs timeseries processing in a subprocess.
+
+        This isolates the processing to a separate process, avoiding potential
+        conflicts when processing multiple scenarios' outputs concurrently.
+
+        Parameters
+        ----------
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        verbose : bool
+            If True, print progress messages
+        compression_level : int
+            Compression level for output files (0-9)
+        analysis_dir : Optional[Path]
+            Optional path to analysis directory (for sensitivity analysis)
+
+        Returns
+        -------
+        callable
+            A launcher function that executes the subprocess
+        """
+        import os
+        import subprocess
+
+        event_iloc = self._scenario.event_iloc
+        processing_logfile = (
+            self.log.logfile.parent / f"timeseries_processing_{event_iloc}.log"
         )
 
-        @log_function_to_file(launcher_logfile)
-        def launcher(logger=None):
-            if not self._scenario.sim_run_completed:
-                raise RuntimeError(
-                    f"Simulation not completed. Log: {self._scenario.latest_simlog}"
-                )
-            logger.info(f"Processing run results for scenario {scen.event_iloc}")  # type: ignore
+        # Build command - always use direct Python execution (no srun)
+        cmd = [
+            "python",
+            "-m",
+            "TRITON_SWMM_toolkit.process_timeseries_runner",
+            "--event-iloc",
+            str(event_iloc),
+            "--analysis-config",
+            str(self._analysis.analysis_config_yaml),
+            "--system-config",
+            str(self._system.system_config_yaml),
+            "--which",
+            str(which),
+            "--compression-level",
+            str(compression_level),
+        ]
 
-            if (which == "both") or (which == "TRITON"):
-                self._export_TRITON_outputs(
-                    overwrite_if_exist,
-                    clear_raw_outputs,
-                    verbose,
-                    compression_level,
+        # Add optional flags
+        if clear_raw_outputs:
+            cmd.append("--clear-raw-outputs")
+        if overwrite_if_exist:
+            cmd.append("--overwrite-if-exist")
+        if analysis_dir:
+            cmd.append("--analysis-dir")
+            cmd.append(str(analysis_dir))
+
+        def launcher():
+            """Execute timeseries processing in a subprocess."""
+            if verbose:
+                print(
+                    f"[Scenario {event_iloc}] Launching subprocess: {' '.join(cmd)}",
+                    flush=True,
                 )
-                logger.info(f"Processed TRITON outputs for scenario {scen.event_iloc}")  # type: ignore
-            if (which == "both") or (which == "SWMM"):
-                self._export_SWMM_outputs(
-                    overwrite_if_exist,
-                    clear_raw_outputs,
-                    verbose,
-                    compression_level,
+
+            # Open log file for subprocess output
+            with open(processing_logfile, "w") as lf:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=lf,
+                    stderr=subprocess.STDOUT,
+                    env=os.environ.copy(),
                 )
-                logger.info(f"Processed SWMM outputs for scenario {scen.event_iloc}")  # type: ignore
-            return launcher_logfile
+
+                # Wait for subprocess to complete
+                rc = proc.wait()
+
+                if verbose:
+                    if rc == 0:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess completed successfully",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                            flush=True,
+                        )
+
+                if rc != 0:
+                    # Log the error
+                    if processing_logfile.exists():
+                        with open(processing_logfile, "r") as f:
+                            error_output = f.read()
+                        if verbose:
+                            print(
+                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
+                                flush=True,
+                            )
 
         return launcher
 

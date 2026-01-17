@@ -322,6 +322,58 @@ class TRITONSWMM_analysis:
 
         return prepare_scenario_launchers
 
+    def retrieve_scenario_timeseries_processing_launchers(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+        analysis_dir: Optional[Path] = None,
+    ):
+        """
+        Create subprocess-based launchers for scenario timeseries processing.
+
+        Each launcher runs timeseries processing in an isolated subprocess to avoid
+        potential conflicts when processing multiple scenarios' outputs concurrently.
+
+        Parameters
+        ----------
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process: TRITON, SWMM, or both
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        verbose : bool
+            If True, print progress messages
+        compression_level : int
+            Compression level for output files (0-9)
+        analysis_dir : Optional[Path]
+            Optional path to analysis directory (mainly used for sensitivity analysis)
+
+        Returns
+        -------
+        list
+            List of launcher functions that execute timeseries processing in subprocesses
+        """
+        scenario_timeseries_processing_launchers = []
+        for event_iloc in self.df_sims.index:
+            proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
+
+            # Create a subprocess-based launcher
+            launcher = proc._create_subprocess_timeseries_processing_launcher(
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+                analysis_dir=analysis_dir,
+            )
+            scenario_timeseries_processing_launchers.append(launcher)
+
+        return scenario_timeseries_processing_launchers
+
     def calculate_effective_max_parallel(
         self,
         min_memory_per_function_MiB: int | None = 1024,
@@ -627,14 +679,13 @@ class TRITONSWMM_analysis:
         Creates time series of TRITON-SWMM outputs
         """
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
-        launcher = proc.write_timeseries_outputs(
+        proc.write_timeseries_outputs(
             which=which,
             clear_raw_outputs=clear_raw_outputs,
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
         )
-        launcher()
 
     def process_all_sim_timeseries_serially(
         self,
