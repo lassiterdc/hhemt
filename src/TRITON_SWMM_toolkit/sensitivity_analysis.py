@@ -87,7 +87,7 @@ class TRITONSWMM_sensitivity_analysis:
     def run_all_sims(
         self,
         pickup_where_leftoff,
-        concurrent: bool = True,
+        concurrent: bool = False,
         process_outputs_after_sim_completion: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
@@ -96,6 +96,12 @@ class TRITONSWMM_sensitivity_analysis:
         verbose=False,
     ):
         if concurrent:
+            raise RuntimeError(
+                "Running sensitivity analyses concurrently requires"
+                "more intelligent handling of compute resource availability"
+                "tracking. Update run_simulations_concurrently function"
+                "in analysis.py to enable this."
+            )
             launch_functions = []
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 sub_analysis._add_all_scenarios()

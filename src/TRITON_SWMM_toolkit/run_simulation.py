@@ -234,13 +234,14 @@ class TRITONSWMM_run:
                 # cmd = [str(exe), str(cfg)]
                 launch_cmd_str = f"{exe} {cfg}"
             elif run_mode in ("mpi", "hybrid"):
-                cmd = [
-                    "mpirun",
-                    "-np",
-                    str(n_mpi_procs),
-                    str(exe),
-                    str(cfg),
-                ]
+                launch_cmd_str = "mpirun " f"-np {str(n_mpi_procs)} " f"{exe} {cfg}"
+                # cmd = [
+                #     "mpirun",
+                #     "-np",
+                #     str(n_mpi_procs),
+                #     str(exe),
+                #     str(cfg),
+                # ]
         elif run_mode == "gpu":
             if in_slurm:
                 launch_cmd_str = (

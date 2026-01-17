@@ -30,7 +30,7 @@ def test_run_all_sims():
         start_from_scratch=False
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
-    analysis.sensitivity.run_all_sims(pickup_where_leftoff=False, concurrent=True)
+    analysis.sensitivity.run_all_sims(pickup_where_leftoff=False, concurrent=False)
     assert analysis.log.all_sims_run.get() == True
 
 

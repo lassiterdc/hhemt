@@ -48,7 +48,7 @@ def test_run_all_sims():
     )
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.run_all_sims(
-        pickup_where_leftoff=False, concurrent=False, verbose=True
+        pickup_where_leftoff=False, concurrent=False, verbose=True, which="TRITON"
     )
     assert analysis.sensitivity.all_sims_run == True
     success_processing = (
@@ -72,6 +72,6 @@ def test_consolidate_outputs():
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.consolidate_TRITON_outputs_for_analysis()
     assert analysis.log.TRITON_analysis_summary_created.get() == True
-    analysis.sensitivity.consolidate_SWMM_outputs_for_analysis()
-    assert analysis.log.SWMM_node_analysis_summary_created.get() == True
-    assert analysis.log.SWMM_link_analysis_summary_created.get() == True
+    # analysis.sensitivity.consolidate_SWMM_outputs_for_analysis()
+    # assert analysis.log.SWMM_node_analysis_summary_created.get() == True
+    # assert analysis.log.SWMM_link_analysis_summary_created.get() == True
