@@ -888,43 +888,18 @@ class TRITONSWMM_scenario:
         event_iloc = self.event_iloc
         scenario_logfile = self.log.logfile.parent / f"scenario_prep_{event_iloc}.log"
 
-        # Detect SLURM environment
-        in_slurm = "SLURM_JOB_ID" in os.environ.copy()
-
-        # Build command
-        if in_slurm:
-            # Use srun for single-core scenario preparation on HPC
-            cmd = [
-                "srun",
-                "-N",
-                "1",
-                "--exclusive",
-                "--cpu-bind=cores",
-                "--ntasks=1",
-                "--cpus-per-task=1",
-                "python",
-                "-m",
-                "TRITON_SWMM_toolkit.prepare_scenario_runner",
-                "--event-iloc",
-                str(event_iloc),
-                "--analysis-config",
-                str(self._analysis.analysis_config_yaml),
-                "--system-config",
-                str(self._system.system_config_yaml),
-            ]
-        else:
-            # Direct Python execution on desktop
-            cmd = [
-                "python",
-                "-m",
-                "TRITON_SWMM_toolkit.prepare_scenario_runner",
-                "--event-iloc",
-                str(event_iloc),
-                "--analysis-config",
-                str(self._analysis.analysis_config_yaml),
-                "--system-config",
-                str(self._system.system_config_yaml),
-            ]
+        # Build command - always use direct Python execution (no srun)
+        cmd = [
+            "python",
+            "-m",
+            "TRITON_SWMM_toolkit.prepare_scenario_runner",
+            "--event-iloc",
+            str(event_iloc),
+            "--analysis-config",
+            str(self._analysis.analysis_config_yaml),
+            "--system-config",
+            str(self._system.system_config_yaml),
+        ]
 
         # Add optional flags
         if overwrite_scenario:
