@@ -25,7 +25,6 @@ if TYPE_CHECKING:
 class TRITONSWMM_analysis_post_processing:
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
-        # self.log = analysis.log
 
     def _retrieve_combined_output(
         self, mode: Literal["TRITON", "SWMM_node", "SWMM_link"]

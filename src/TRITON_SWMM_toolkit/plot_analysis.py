@@ -24,7 +24,6 @@ class TRITONSWMM_analysis_plotting:
         self._analysis = analysis
         self._system = analysis._system
         self.sys_paths = analysis._system.sys_paths
-        self.log = analysis.log
 
     @property
     def triton_ds(self):
