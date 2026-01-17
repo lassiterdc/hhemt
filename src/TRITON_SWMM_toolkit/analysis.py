@@ -162,12 +162,12 @@ class TRITONSWMM_analysis:
 
     def print_cfg(self, which: Literal["system", "analysis", "both"] = "both"):
         if which == ["system", "both"]:
-            print("=== System Configuration ===")
+            print("=== System Configuration ===", flush=True)
             self._system.cfg_system.display_tabulate_cfg()
         if which == "both":
-            print("\n")
+            print("\n", flush=True)
         if which in ["analysis", "both"]:
-            print("=== analysis Configuration ===")
+            print("=== analysis Configuration ===", flush=True)
             self.cfg_analysis.display_tabulate_cfg()
 
     def print_all_yaml_defined_input_files(self):
@@ -365,7 +365,8 @@ class TRITONSWMM_analysis:
                         print(
                             f"Memory-based limit: {mem_limit} "
                             f"(available {available_mem_MiB} MiB, "
-                            f"{min_memory_per_function_MiB} MiB per task)"
+                            f"{min_memory_per_function_MiB} MiB per task)",
+                            flush=True,
                         )
                 # ----------------------------
                 # Final concurrency (apply all constraints)
@@ -419,7 +420,8 @@ class TRITONSWMM_analysis:
         if verbose:
             print(
                 f"Running {len(function_launchers)} functions "
-                f"(max parallel = {effective_max_parallel})"
+                f"(max parallel = {effective_max_parallel})",
+                flush=True,
             )
 
         results: List[int] = []
@@ -436,7 +438,8 @@ class TRITONSWMM_analysis:
             if verbose:
                 print(
                     f"Function {idx}: duration={duration:.2f}s, "
-                    f"completed_at={completed_at:.2f}s"
+                    f"completed_at={completed_at:.2f}s",
+                    flush=True,
                 )
             return idx
 
@@ -481,7 +484,6 @@ class TRITONSWMM_analysis:
     def retrieve_sim_command_text(
         self,
         pickup_where_leftoff: bool = False,
-        in_slurm: Optional[bool] = None,
         verbose: bool = False,
         extra_env: Optional[dict] = None,
     ):
@@ -491,7 +493,6 @@ class TRITONSWMM_analysis:
             cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = (  # type: ignore
                 run.prepare_simulation_command(
                     pickup_where_leftoff=pickup_where_leftoff,
-                    in_slurm=in_slurm,
                     verbose=verbose,
                 )
             )
@@ -542,16 +543,16 @@ class TRITONSWMM_analysis:
         ts_scenario = self.scenarios[event_iloc]
 
         if not ts_scenario.log.scenario_creation_complete.get():
-            print("Log file:")
+            print("Log file:", flush=True)
             print(ts_scenario.log.print())
             raise ValueError("scenario_creation_complete must be 'success'")
         if not self.compilation_successful:
-            print("Log file:")
+            print("Log file:", flush=True)
             print(ts_scenario.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
         run = self._retreive_sim_runs(event_iloc)
         if verbose:
-            print("run instance instantiated")
+            print("run instance instantiated", flush=True)
 
         run.run_sim(pickup_where_leftoff=pickup_where_leftoff, verbose=verbose)
         self.sim_run_status(event_iloc)
@@ -852,17 +853,17 @@ class TRITONSWMM_analysis:
         # Verbose logging
         # ----------------------------
         if verbose:
-            print(f"[SLURM] Resource Constraints:")
-            print(f"  Nodes: {num_nodes}")
-            print(f"  CPUs per node: {cpus_on_node}")
-            print(f"  Total CPUs Allocated (SLURM): {slurm_total_cpus}")
+            print(f"[SLURM] Resource Constraints:", flush=True)
+            print(f"  Nodes: {num_nodes}", flush=True)
+            print(f"  CPUs per node: {cpus_on_node}", flush=True)
+            print(f"  Total CPUs Allocated (SLURM): {slurm_total_cpus}", flush=True)
             print(f"  CPUs per task (SLURM): {cpus_per_task}")
             if self.cfg_analysis.run_mode == "gpu":
-                print(f"  Total GPUs: {total_gpus}")
-                print(f"  GPUs per task: {gpus_per_task}")
+                print(f"  Total GPUs: {total_gpus}", flush=True)
+                print(f"  GPUs per task: {gpus_per_task}", flush=True)
             if mem_per_node_MiB > 0:
-                print(f"  Memory per node: {mem_per_node_MiB} MiB")
-            print(f"  Max concurrent srun tasks: {max_concurrent}")
+                print(f"  Memory per node: {mem_per_node_MiB} MiB", flush=True)
+            print(f"  Max concurrent srun tasks: {max_concurrent}", flush=True)
 
         return {
             "max_concurrent": max_concurrent,
@@ -880,14 +881,12 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
     ):
-        in_slurm = self.in_slurm
         launch_functions = []
         for event_iloc in self.df_sims.index:
             run = self._retreive_sim_runs(event_iloc)
             launch_function = run.retrieve_sim_launcher(
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
-                in_slurm=in_slurm,
             )
             if launch_function is None:
                 continue
@@ -1129,7 +1128,9 @@ class TRITONSWMM_analysis:
             )
 
         if verbose:
-            print(f"Running up to {max_concurrent} simulations concurrently")
+            print(
+                f"Running up to {max_concurrent} simulations concurrently", flush=True
+            )
 
         # ----------------------------
         # Launch + monitor loop
@@ -1178,7 +1179,7 @@ class TRITONSWMM_analysis:
                 success = run._scenario.sim_run_completed
 
                 if verbose:
-                    print(f"Simulation finished: {status}")
+                    print(f"Simulation finished: {status}", flush=True)
 
                 # Launch next job if available
                 launch_next()
@@ -1209,11 +1210,12 @@ class TRITONSWMM_analysis:
             - compression_level: int
         """
         if verbose:
-            print("Running all sims in series...")
+            print("Running all sims in series...", flush=True)
         for event_iloc in self.df_sims.index:
             if verbose:
                 print(
-                    f"Running sim {event_iloc} and pickup_where_leftoff = {pickup_where_leftoff}"
+                    f"Running sim {event_iloc} and pickup_where_leftoff = {pickup_where_leftoff}",
+                    flush=True,
                 )
             self.run_sim(
                 event_iloc=event_iloc,
@@ -1233,7 +1235,7 @@ class TRITONSWMM_analysis:
         verbose: bool = False,
     ):
         if self.compilation_successful and not recompile_if_already_done_successfully:
-            print("TRITON-SWMM already compiled")
+            print("TRITON-SWMM already compiled", flush=True)
             return
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
         compiled_software_directory = self.analysis_paths.compiled_software_directory
@@ -1287,7 +1289,8 @@ class TRITONSWMM_analysis:
                     "warning: TRITON-SWMM did not compile successfully.\
     You can load compilation log as string using\
     retrieve_compilation_log or print it to the\
-    terminal using the method print_compilation_log"
+    terminal using the method print_compilation_log",
+                    flush=True,
                 )
         return
 
@@ -1297,7 +1300,7 @@ class TRITONSWMM_analysis:
         return "no sim logfile created"
 
     def print_compilation_log(self):
-        print(self.retrieve_compilation_log())
+        print(self.retrieve_compilation_log(), flush=True)
 
     def _validate_compilation(self):
         compilation_log = self.retrieve_compilation_log()
