@@ -80,7 +80,12 @@ class TRITONSWMM_analysis_post_processing:
                 lst_non_spatial_coords.append(coord)
 
         size_to_load_MiB = ds_memory_req_MiB(ds_combined_outputs)
-        size_per_sim = size_to_load_MiB / len(lst_non_spatial_coords)
+
+        n_sims = 1
+        for nonspatial_coord in lst_non_spatial_coords:
+            n_sims *= len(ds_combined_outputs[nonspatial_coord].to_series())
+
+        size_per_sim = size_to_load_MiB / n_sims
 
         target_sim_idx_chunk = prev_power_of_two(max_mem_usage_MiB / size_per_sim)
 
