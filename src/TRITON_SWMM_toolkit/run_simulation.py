@@ -194,6 +194,7 @@ class TRITONSWMM_run:
                     (
                         f"{module_load_cmd}"
                         f"srun "
+                        f"N {n_nodes_per_sim} "
                         f"--ntasks={n_mpi_procs} "
                         f"--cpus-per-task={n_omp_threads} "
                         "--exclusive "
@@ -230,6 +231,7 @@ class TRITONSWMM_run:
                     (
                         f"{module_load_cmd}"
                         f"srun "
+                        f"N {n_nodes_per_sim} "
                         f"--ntasks={n_gpus} "
                         f"--cpus-per-task={n_omp_threads} "
                         "--gpus-per-task=1 "  # one GPU per task
