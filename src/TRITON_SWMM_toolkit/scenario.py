@@ -896,6 +896,9 @@ class TRITONSWMM_scenario:
             # Use srun for single-core scenario preparation on HPC
             cmd = [
                 "srun",
+                "N 1",
+                "--exclusive",
+                "--cpu-bind=cores",
                 "--ntasks=1",
                 "--cpus-per-task=1",
                 "python",
