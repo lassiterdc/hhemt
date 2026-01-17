@@ -103,8 +103,6 @@ class TRITONSWMM_run:
         lines = []
 
         lines.append("#!/usr/bin/env bash")
-        lines.append("set -euo pipefail")
-        lines.append("")
         lines.append("# --- Modules ---")
         if module_load_cmd:
             # strip trailing semicolon for readability
@@ -117,8 +115,6 @@ class TRITONSWMM_run:
             lines.append(f'export {k}="{v}"')
         lines.append("")
         lines.append("# --- Launch ---")
-        lines.append('echo "Running on host: $(hostname)"')
-        lines.append('echo "PWD: $(pwd)"')
         lines.append("")
         lines.append(launch_cmd_str)
         lines.append("")

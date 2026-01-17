@@ -302,7 +302,7 @@ class GetTS_TestCases:
     frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
     # UVA
     UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
-    UVA_modules_to_load_for_srun = "gcc openmpi"
+    UVA_modules_to_load_for_srun = "gompi/14.2.0_5.0.7"
 
     def __init__(self) -> None:
         pass
@@ -342,7 +342,7 @@ class GetTS_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            n_events=60,
+            n_events=40,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(

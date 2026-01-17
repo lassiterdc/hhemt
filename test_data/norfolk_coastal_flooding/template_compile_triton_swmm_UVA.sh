@@ -1,5 +1,5 @@
 #!/bin/bash
-module load gcc openmpi
+module load gompi/14.2.0_5.0.7
 
 model=${COMPILED_MODEL_DIR}
 swmm_build="${model}/Stormwater-Management-Model/build"
