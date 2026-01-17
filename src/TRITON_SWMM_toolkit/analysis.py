@@ -652,16 +652,18 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
+        analysis_dir: Optional[Path] = None,
     ):
         scenario_timeseries_processing_launchers = []
         for event_iloc in self.df_sims.index:
             proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
-            launcher = proc.write_timeseries_outputs(
+            launcher = proc._create_subprocess_timeseries_processing_launcher(
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
+                analysis_dir=analysis_dir,
             )
             scenario_timeseries_processing_launchers.append(launcher)
         return scenario_timeseries_processing_launchers

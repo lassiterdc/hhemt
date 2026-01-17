@@ -137,6 +137,7 @@ class TRITONSWMM_sensitivity_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
+                analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
             scenario_timeseries_processing_launchers += launchers
         self.master_analysis.run_python_functions_concurrently(
