@@ -80,10 +80,7 @@ class TRITONSWMM_sensitivity_analysis:
         self._update_master_analysis_log()
         if self.all_scenarios_created != True:
             scens_not_created = "\n\t".join(self.scenarios_not_created)
-        if self.all_scenarios_created != True:
-            scens_not_created = "\n\t".join(self.scenarios_not_created)
             raise RuntimeError(
-                f"Preparation failed for the following scenarios:\n{scens_not_created}"
                 f"Preparation failed for the following scenarios:\n{scens_not_created}"
             )
 
@@ -383,16 +380,6 @@ class TRITONSWMM_sensitivity_analysis:
                 )
         self._update_master_analysis_log()
         return
-
-    @property
-    def scenarios_not_created(self):
-        scenarios_not_created = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            for event_iloc in sub_analysis.df_sims.index:
-                scen = sub_analysis.scenarios[event_iloc]
-                if scen.log.scenario_creation_complete.get() != True:
-                    scenarios_not_created.append(str(scen.log.logfile.parent))
-        return scenarios_not_created
 
     @property
     def scenarios_not_created(self):
