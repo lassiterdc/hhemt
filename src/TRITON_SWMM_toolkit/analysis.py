@@ -1406,15 +1406,23 @@ class TRITONSWMM_analysis:
 
         from TRITON_SWMM_toolkit.utils import current_datetime_string
 
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        # archive outputs from previous runs
+        archive_dir = logdir / "_archive"
+        archive_dir.mkdir(exist_ok=True)
+        for folder in logdir.iterdir():
+            if folder.is_dir() and folder.name != "_archive":
+                shutil.move(str(folder), archive_dir / folder.name)
+
         dtime = current_datetime_string(filepath_friendly=True)
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / dtime
-        logdir.mkdir(parents=True, exist_ok=True)
+        logdir_job = logdir / dtime
+        logdir_job.mkdir(parents=True, exist_ok=True)
 
         # Add output/error log directives
         sbatch_lines.extend(
             [
-                f"#SBATCH --output={logdir}/sim_%A_%a.out",
-                f"#SBATCH --error={logdir}/sim_%A_%a.out",
+                f"#SBATCH --output={logdir_job}/sim_%A_%a.out",
+                f"#SBATCH --error={logdir_job}/sim_%A_%a.out",
                 "",
             ]
         )
@@ -1588,10 +1596,6 @@ class TRITONSWMM_analysis:
                 print(f"Job submitted successfully!", flush=True)
                 print(f"Job ID: {job_id}", flush=True)
                 print(f"Monitor with: squeue -j {job_id}", flush=True)
-                print(
-                    f"View logs with: tail -f {self.analysis_paths.analysis_dir}/logs/sim_{job_id}_*.out",
-                    flush=True,
-                )
 
             return script_path, job_id
 
