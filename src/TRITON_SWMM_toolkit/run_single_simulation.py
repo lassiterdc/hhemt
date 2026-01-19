@@ -29,6 +29,7 @@ Exit codes:
 
 import sys
 import argparse
+import subprocess
 from pathlib import Path
 import traceback
 import logging
@@ -185,10 +186,14 @@ def main():
         # Step 1: Prepare scenario if requested
         if args.prepare_scenario:
             logger.info(f"[{event_iloc}] Preparing scenario...")
-            scenario.prepare_scenario(
+            launcher = scenario._create_subprocess_prepare_scenario_launcher(
                 overwrite_scenario=args.overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=args.rerun_swmm_hydro,
+                verbose=True,
+                compiled_TRITONSWMM_directory=args.compiled_model_dir,
+                analysis_dir=args.analysis_dir,
             )
+            launcher()
             scenario.log.refresh()
             if not scenario.log.scenario_creation_complete.get():
                 logger.error(f"[{event_iloc}] Scenario preparation failed")
@@ -205,16 +210,14 @@ def main():
 
         # Step 2: Run simulation
         logger.info(f"[{event_iloc}] Running simulation...")
-        analysis.run_sim(
-            event_iloc=event_iloc,
+        launcher = scenario.run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=args.pickup_where_leftoff,
-            process_outputs_after_sim_completion=False,  # We'll do this separately
-            which=args.which,  # type: ignore
-            clear_raw_outputs=args.clear_raw_outputs,
-            overwrite_if_exist=args.overwrite_if_exist,
-            compression_level=args.compression_level,
             verbose=True,
+            compiled_TRITONSWMM_directory=args.compiled_model_dir,
+            analysis_dir=args.analysis_dir,
         )
+        # Execute the launcher (which handles simlog updates internally)
+        launcher()
 
         # Check if simulation completed successfully
         scenario.log.refresh()
@@ -227,18 +230,20 @@ def main():
         # Step 3: Process timeseries if requested
         if args.process_timeseries:
             logger.info(f"[{event_iloc}] Processing timeseries outputs...")
-            analysis.process_sim_timeseries(
-                event_iloc=event_iloc,
+            run = scenario.run
+            proc = TRITONSWMM_sim_post_processing(run)
+            launcher = proc._create_subprocess_timeseries_processing_launcher(
                 which=args.which,  # type: ignore
                 clear_raw_outputs=args.clear_raw_outputs,
                 overwrite_if_exist=args.overwrite_if_exist,
                 verbose=True,
                 compression_level=args.compression_level,
+                analysis_dir=args.analysis_dir,
             )
+            launcher()
 
             # Verify processing was successful
             scenario.log.refresh()
-            run = scenario.run
             proc = TRITONSWMM_sim_post_processing(run)
 
             if args.which == "TRITON" or args.which == "both":

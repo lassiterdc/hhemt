@@ -306,3 +306,32 @@ def paths_to_strings(obj: Any) -> Any:
         return {paths_to_strings(v) for v in obj}
 
     return obj
+
+
+def convert_datetime_to_str(obj: Any) -> Any:
+    """
+    Recursively convert all datetime objects to ISO format strings
+    in arbitrarily nested dictionaries / containers.
+
+    This ensures that datetime objects can be serialized to JSON
+    when writing xarray datasets to zarr format.
+    """
+    import pandas as pd
+
+    # Handle datetime objects
+    if isinstance(obj, (datetime.datetime, pd.Timestamp)):
+        return obj.isoformat()
+
+    elif isinstance(obj, dict):
+        return {k: convert_datetime_to_str(v) for k, v in obj.items()}
+
+    elif isinstance(obj, list):
+        return [convert_datetime_to_str(v) for v in obj]
+
+    elif isinstance(obj, tuple):
+        return tuple(convert_datetime_to_str(v) for v in obj)
+
+    elif isinstance(obj, set):
+        return {convert_datetime_to_str(v) for v in obj}
+
+    return obj

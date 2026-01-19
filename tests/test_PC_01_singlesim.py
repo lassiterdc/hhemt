@@ -50,7 +50,7 @@ def test_prepare_all_scenarios():
         overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
     scen = TRITONSWMM_scenario(0, analysis)
-    if scen.log.scenario_creation_complete.get():
+    if not scen.log.scenario_creation_complete.get():
         analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Scenario not succesfully set up.")
 
@@ -58,7 +58,7 @@ def test_prepare_all_scenarios():
 def test_run_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
     analysis = single_sim_single_core.system.analysis
-    analysis.run_all_sims_in_serially(pickup_where_leftoff=False)
+    analysis.run_sims_in_sequence(pickup_where_leftoff=False)
 
     scen = TRITONSWMM_scenario(0, analysis)
     success = scen.sim_run_completed
@@ -70,19 +70,19 @@ def test_run_sim():
 
 def test_process_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    exp = single_sim_single_core.system.analysis
-    exp.process_all_sim_timeseries_serially()
+    analysis = single_sim_single_core.system.analysis
+    analysis.process_all_sim_timeseries_serially()
     success_processing = (
-        exp.log.all_TRITON_timeseries_processed.get()
-        and exp.log.all_SWMM_timeseries_processed.get()
+        analysis.log.all_TRITON_timeseries_processed.get()
+        and analysis.log.all_SWMM_timeseries_processed.get()
     )
     if not success_processing:
-        exp.print_logfile_for_scenario(0)
+        analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
     success_clearing = (
-        exp.log.all_raw_TRITON_outputs_cleared.get()
-        and exp.log.all_raw_SWMM_outputs_cleared.get()
+        analysis.log.all_raw_TRITON_outputs_cleared.get()
+        and analysis.log.all_raw_SWMM_outputs_cleared.get()
     )
     if not success_clearing:
-        exp.print_logfile_for_scenario(0)
+        analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Clearning raw outputs failed.")

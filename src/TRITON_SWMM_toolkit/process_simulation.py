@@ -15,6 +15,7 @@ from TRITON_SWMM_toolkit.utils import (
     write_zarr_then_netcdf,
     paths_to_strings,
     get_file_size_MiB,
+    convert_datetime_to_str,
 )
 from TRITON_SWMM_toolkit.utils import current_datetime_string
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
@@ -342,6 +343,10 @@ class TRITONSWMM_sim_post_processing:
                 "analysis": self._analysis.cfg_analysis.model_dump(),
             }
         )
+
+        # Convert any datetime objects in attributes to ISO format strings
+        # to ensure JSON serializability when writing to zarr
+        ds.attrs = convert_datetime_to_str(ds.attrs)
 
         if processed_out_type == "nc":
             write_zarr_then_netcdf(ds, f_out, compression_level)

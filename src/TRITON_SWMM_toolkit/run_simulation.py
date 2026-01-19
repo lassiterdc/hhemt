@@ -127,6 +127,7 @@ class TRITONSWMM_run:
         self,
         pickup_where_leftoff: bool,
         in_slurm: Optional[bool] = None,
+        using_srun: bool = False,
         verbose: bool = True,
     ):
         # compute config
@@ -206,7 +207,7 @@ class TRITONSWMM_run:
             module_load_cmd = f"module load {modules}; "
 
         if run_mode != "gpu":
-            if in_slurm:
+            if in_slurm and using_srun:
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -243,7 +244,7 @@ class TRITONSWMM_run:
                 #     str(cfg),
                 # ]
         elif run_mode == "gpu":
-            if in_slurm:
+            if in_slurm and using_srun:
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -308,7 +309,7 @@ class TRITONSWMM_run:
         )
         return cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
 
-    def retrieve_sim_launcher(
+    def _obsolete_retrieve_sim_launcher(
         self,
         pickup_where_leftoff: bool,
         in_slurm: Optional[bool] = None,
@@ -377,8 +378,8 @@ class TRITONSWMM_run:
 
         return launch_sim
 
-    def run_sim(self, pickup_where_leftoff: bool, verbose: bool):
-        launch = self.retrieve_sim_launcher(
+    def _obsolete_run_sim(self, pickup_where_leftoff: bool, verbose: bool):
+        launch = self._obsolete_retrieve_sim_launcher(
             pickup_where_leftoff=pickup_where_leftoff,
             verbose=verbose,
         )
@@ -399,6 +400,168 @@ class TRITONSWMM_run:
         self.log.add_sim_entry(**log_dic)
 
         self._scenario.sim_run_completed
+
+    def _create_subprocess_sim_run_launcher(
+        self,
+        pickup_where_leftoff: bool = False,
+        verbose: bool = False,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
+        analysis_dir: Optional[Path] = None,
+    ):
+        """
+        Create a launcher function that runs simulation in a subprocess.
+
+        This isolates the simulation to a separate process, avoiding potential
+        state conflicts when running multiple simulations concurrently.
+
+        The launcher function handles the complete simulation lifecycle:
+        1. Records initial simulation metadata in simlog
+        2. Executes the simulation subprocess
+        3. Waits for completion
+        4. Captures elapsed time and status
+        5. Updates the simlog with final results
+
+        Parameters
+        ----------
+        pickup_where_leftoff : bool
+            If True, resume simulation from last checkpoint if available
+        verbose : bool
+            If True, print progress messages
+        compiled_TRITONSWMM_directory : Optional[Path]
+            Optional path to compiled TRITON-SWMM directory
+        analysis_dir : Optional[Path]
+            Optional path to analysis directory
+
+        Returns
+        -------
+        callable
+            A launcher function that executes the subprocess and updates the simlog
+        """
+        import os
+        import subprocess
+
+        event_iloc = self._scenario.event_iloc
+        sim_logfile = self.log.logfile.parent / f"sim_run_{event_iloc}.log"
+
+        # Build command - always use direct Python execution (no srun)
+        cmd = [
+            "python",
+            "-m",
+            "TRITON_SWMM_toolkit.run_simulation_runner",
+            "--event-iloc",
+            str(event_iloc),
+            "--analysis-config",
+            str(self._analysis.analysis_config_yaml),
+            "--system-config",
+            str(self._scenario._system.system_config_yaml),
+        ]
+
+        # Add optional flags
+        if pickup_where_leftoff:
+            cmd.append("--pickup-where-leftoff")
+        if compiled_TRITONSWMM_directory:
+            cmd.append("--compiled-model-dir")
+            cmd.append(str(compiled_TRITONSWMM_directory))
+        if analysis_dir:
+            cmd.append("--analysis-dir")
+            cmd.append(str(analysis_dir))
+
+        # Prepare simulation metadata for initial log entry
+        n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
+        n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
+        n_gpus = self._analysis.cfg_analysis.n_gpus
+        run_mode = self._analysis.cfg_analysis.run_mode
+
+        if run_mode != "gpu":
+            n_gpus = 0
+
+        og_env = os.environ.copy()
+        in_slurm = "SLURM_JOB_ID" in og_env
+
+        def launcher():
+            """Execute simulation in a subprocess and update simlog after completion."""
+            if verbose:
+                print(
+                    f"[Scenario {event_iloc}] Launching subprocess: {' '.join(cmd)}",
+                    flush=True,
+                )
+            sim_datetime = current_datetime_string()
+            # Record initial simulation entry BEFORE subprocess execution
+            # This captures all simulation metadata for benchmarking
+            self.log.add_sim_entry(
+                sim_datetime=sim_datetime,
+                sim_start_reporting_tstep=0,
+                tritonswmm_logfile=sim_logfile,
+                time_elapsed_s=0,
+                status="not started",
+                run_mode=run_mode,
+                cmd=" ".join(cmd),  # type: ignore
+                n_mpi_procs=n_mpi_procs,
+                n_omp_threads=n_omp_threads,
+                n_gpus=n_gpus,
+                in_slurm=in_slurm,
+                env=og_env,  # type: ignore
+            )
+
+            start_time = time.time()
+
+            # Open log file for subprocess output
+            with open(sim_logfile, "w") as lf:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=lf,
+                    stderr=subprocess.STDOUT,
+                    env=os.environ.copy(),
+                )
+
+                # Wait for subprocess to complete
+                rc = proc.wait()
+
+                if verbose:
+                    if rc == 0:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess completed successfully",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                            flush=True,
+                        )
+
+                if rc != 0:
+                    # Log the error
+                    if sim_logfile.exists():
+                        with open(sim_logfile, "r") as f:
+                            error_output = f.read()
+                        if verbose:
+                            print(
+                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
+                                flush=True,
+                            )
+
+            # Update simlog after subprocess completion
+            end_time = time.time()
+            elapsed = end_time - start_time
+
+            # Check simulation status
+            status, __ = self._check_simulation_run_status()
+
+            # Get the latest log entry and update it with completion info
+            log_dic = self._scenario.latest_simlog
+            log_dic["time_elapsed_s"] = elapsed
+            log_dic["status"] = status
+
+            # Update the simlog with final status
+            self.log.add_sim_entry(**log_dic)
+
+            if verbose:
+                print(
+                    f"[Scenario {event_iloc}] Simlog updated: status={status}, elapsed={elapsed:.1f}s",
+                    flush=True,
+                )
+
+        return launcher
 
 
 def return_the_reporting_step_from_a_cfg(f_cfg: Path):

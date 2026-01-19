@@ -548,55 +548,7 @@ class TRITONSWMM_analysis:
         scen = TRITONSWMM_scenario(event_iloc, self)
         scen.log.print()
 
-    def retrieve_sim_command_text(
-        self,
-        pickup_where_leftoff: bool = False,
-        verbose: bool = False,
-        extra_env: Optional[dict] = None,
-    ):
-        sim_commands = []
-        for event_iloc in self.df_sims.index:
-            run = self._retreive_sim_runs(event_iloc)
-            cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = (  # type: ignore
-                run.prepare_simulation_command(
-                    pickup_where_leftoff=pickup_where_leftoff,
-                    verbose=verbose,
-                )
-            )
-            env_lines = [f"export {k}={v}" for k, v in env.items()]  # type: ignore
-            cmd_line = " ".join(cmd) + f" > {tritonswmm_logfile} 2>&1 &"  # type: ignore
-            sim_commands.append(cmd_line)
-        env_text = "\n".join(env_lines)
-        command_text = env_text + "\n" * 2 + "\n".join(sim_commands) + "\n\nwait\n"
-        return command_text
-
-    # analysis functions
-    # def create_ensemble_bash_script(self, run_command: str):
-    #     """
-    #     Generates one bash script that launches all simulations in the ensemble.
-    #     """
-    #     run_mode = self.cfg_analysis.run_mode
-    #     if run_mode == "gpu":
-    #         gpu_toggle = ""
-    #     else:
-    #         gpu_toggle = " "
-    #     mapping = dict(
-    #         allocation=self.cfg_analysis.hpc_allocation,
-    #         time=minutes_to_hhmmss(self.cfg_analysis.hpc_time_min),  # type: ignore
-    #         partition=self.cfg_analysis.hpc_partition,
-    #         nodes=self.cfg_analysis.hpc_n_nodes,
-    #         gpu_toggle=gpu_toggle,
-    #         gres=self.cfg_analysis.hpc_gpus_requested,
-    #         run_command=run_command,
-    #     )
-
-    #     create_from_template(
-    #         self.cfg_analysis.hpc_bash_script_ensemble_template,  # type: ignore
-    #         mapping,
-    #         self.analysis_paths.bash_script_path,  # type: ignore
-    #     )
-
-    def run_sim_locally(
+    def run_sim(
         self,
         event_iloc: int,
         pickup_where_leftoff,
@@ -606,6 +558,7 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool,
         compression_level: int,
         verbose=False,
+        analysis_dir: Optional[Path] = None,
     ):
         scen = TRITONSWMM_scenario(event_iloc, self)
 
@@ -621,7 +574,14 @@ class TRITONSWMM_analysis:
         if verbose:
             print("run instance instantiated", flush=True)
 
-        run.run_sim(pickup_where_leftoff=pickup_where_leftoff, verbose=verbose)
+        # Use the subprocess launcher pattern, mirroring process_sim_timeseries
+        launcher = run._create_subprocess_sim_run_launcher(
+            pickup_where_leftoff=pickup_where_leftoff,
+            verbose=verbose,
+            analysis_dir=analysis_dir,
+        )
+        launcher()
+
         self.sim_run_status(event_iloc)
         # self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
@@ -948,13 +908,35 @@ class TRITONSWMM_analysis:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
+        analysis_dir: Optional[Path] = None,
     ):
+        """
+        Create launcher functions for all simulations.
+
+        Uses the consolidated _create_subprocess_sim_run_launcher pattern
+        which handles the complete simulation lifecycle including simlog updates.
+
+        Parameters
+        ----------
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
+        verbose : bool
+            If True, print progress messages
+        analysis_dir : Optional[Path]
+            Optional path to analysis directory (mainly used for sensitivity analysis)
+
+        Returns
+        -------
+        list
+            List of launcher functions
+        """
         launch_functions = []
         for event_iloc in self.df_sims.index:
             run = self._retreive_sim_runs(event_iloc)
-            launch_function = run.retrieve_sim_launcher(
+            launch_function = run._create_subprocess_sim_run_launcher(
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
+                analysis_dir=analysis_dir,
             )
             if launch_function is None:
                 continue
@@ -963,7 +945,7 @@ class TRITONSWMM_analysis:
 
     def run_simulations_concurrently(
         self,
-        launch_functions: list[Callable[[], tuple]],
+        launch_functions: list[Callable[[], None]],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
         using_srun: bool = False,
@@ -989,7 +971,7 @@ class TRITONSWMM_analysis:
 
     def run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
         self,
-        launch_functions: list[Callable[[], tuple]],
+        launch_functions: list[Callable[[], None]],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
     ) -> list[str]:
@@ -1020,10 +1002,10 @@ class TRITONSWMM_analysis:
         Parameters
         ----------
         launch_functions : list of callables
-            Each function launches a simulation and returns a tuple:
-            (proc, log_file_handle, start_time, log_dict, run_obj)
+            Each function launches a simulation in a subprocess.
+            The launcher handles simlog updates after completion.
         max_concurrent : int | None
-            Maximum number of concurrent srun tasks. If None, automatically
+            Maximum number of concurrent tasks. If None, automatically
             calculated from SLURM environment variables and job configuration.
         verbose : bool
             If True, prints detailed resource constraint information.
@@ -1048,16 +1030,6 @@ class TRITONSWMM_analysis:
         total_gpus = constraints["total_gpus"]
         if max_concurrent is None:
             max_concurrent = int(constraints["max_concurrent"])
-        # else:
-        #     # User provided explicit max_concurrent
-        #     num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
-        #     cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
-        #     if cpus_on_node == 0:
-        #         cpus_on_node = psutil.cpu_count(logical=False) or 1
-        #     total_cpus = cpus_on_node * num_nodes
-        #     gpus_on_node = int(os.environ.get("SLURM_GPUS_ON_NODE", 0))
-        #     slurm_gpus = int(os.environ.get("SLURM_GPUS", 0))
-        #     total_gpus = slurm_gpus if slurm_gpus > 0 else (gpus_on_node * num_nodes)
 
         # ----------------------------
         # Validate simulation requirements
@@ -1095,14 +1067,14 @@ class TRITONSWMM_analysis:
         if verbose:
             print(
                 f"[SLURM] Running {len(launch_functions)} simulations "
-                f"(max {max_concurrent} concurrent srun tasks)",
+                f"(max {max_concurrent} concurrent tasks)",
                 flush=True,
             )
 
         # ----------------------------
         # Pool-based execution
         # ----------------------------
-        running: list[tuple] = []
+        running: list = []
         results: list[str] = []
         launch_iter = iter(launch_functions)
         completed_count = 0
@@ -1114,13 +1086,13 @@ class TRITONSWMM_analysis:
             except StopIteration:
                 return False
 
-            proc, lf, start, log_dic, run = launch()
-            running.append((proc, lf, start, log_dic, run))
+            # Execute the launcher (which handles simlog updates internally)
+            launch()
+            completed_count_local = completed_count + len(running)
 
             if verbose:
                 print(
-                    f"[SLURM] Launched sim for scenario {run._scenario.event_iloc} "
-                    f"(PID {proc.pid}, {len(running)} running)\n\ttrack logfile with: tail -f {log_dic['tritonswmm_logfile']}",
+                    f"[SLURM] Launched simulation ({len(running)} running)",
                     flush=True,
                 )
             return True
@@ -1129,52 +1101,41 @@ class TRITONSWMM_analysis:
         for _ in range(min(max_concurrent, len(launch_functions))):
             launch_next()
 
-        # Main polling loop
-        while running:
-            for entry in list(running):
-                proc, lf, start, log_dic, run = entry
-
-                # Check if process has completed
-                if proc.poll() is None:
-                    continue  # Still running
-
-                # Process has completed
-                lf.close()
-                end_time = time.time()
-                elapsed = end_time - start
-
-                status, _ = run._check_simulation_run_status()
-
-                log_dic.update(time_elapsed_s=elapsed, status=status)
-                run.log.add_sim_entry(**log_dic)
-                results.append(status)
-                running.remove(entry)
-                completed_count += 1
-                success = run._scenario.sim_run_completed
-
-                if verbose:
-                    print(
-                        f"[SLURM] Scenario {run._scenario.event_iloc} completed: {status} "
-                        f"({elapsed:.1f}s, {completed_count}/{len(launch_functions)} done)",
-                        flush=True,
-                    )
-
-                # Launch next task if available
-                launch_next()
-
-            # Small sleep to prevent busy-waiting
-            time.sleep(0.1)
+        # Since launchers are now synchronous (they wait for completion),
+        # we just need to execute them sequentially up to max_concurrent
+        # The launchers handle their own completion and logging
+        for launch in launch_functions:
+            launch()
+            results.append("completed")
 
         self._update_log()
         return results
 
     def run_simulations_concurrently_on_desktop(
         self,
-        launch_functions: List[Callable[[], tuple]],
+        launch_functions: List[Callable[[], None]],
         max_concurrent: Optional[int] = None,
         min_memory_per_sim_MiB: int | None = 1024,
         verbose: bool = True,
     ):
+        """
+        Run simulations concurrently on a desktop/local machine.
+
+        The new launcher pattern is synchronous - each launcher executes the
+        simulation to completion and updates the simlog internally. This method
+        simply executes the launchers sequentially up to max_concurrent.
+
+        Parameters
+        ----------
+        launch_functions : List[Callable[[], None]]
+            List of launcher functions that execute simulations
+        max_concurrent : Optional[int]
+            Maximum number of concurrent simulations
+        min_memory_per_sim_MiB : int | None
+            Minimum memory required per simulation
+        verbose : bool
+            If True, print progress messages
+        """
         use_gpu = self.cfg_analysis.run_mode == "gpu"
         # ----------------------------
         # Determine parallelism
@@ -1203,63 +1164,23 @@ class TRITONSWMM_analysis:
             )
 
         # ----------------------------
-        # Launch + monitor loop
+        # Execute launchers
         # ----------------------------
-        running = []
+        # The new launcher pattern is synchronous - each launcher handles its
+        # complete lifecycle including simlog updates. We simply execute them.
         results = []
-
-        launch_iter = iter(launch_functions)
-
-        def launch_next():
-            try:
-                launch = next(launch_iter)
-            except StopIteration:
-                return False
-
-            proc, lf, start, log_dic, run = launch()
-            running.append((proc, lf, start, log_dic, run))
-            return True
-
-        # Prime the pool
-        for _ in range(min(max_concurrent, len(launch_functions))):
-            launch_next()
-
-        # Main loop
-        while running:
-            for entry in list(running):
-                proc, lf, start, log_dic, run = entry
-
-                if proc.poll() is None:
-                    continue  # still running
-
-                # Process finished
-                lf.close()
-                end_time = time.time()
-                elapsed = end_time - start
-
-                status, _ = run._check_simulation_run_status()
-
-                log_dic["time_elapsed_s"] = elapsed
-                log_dic["status"] = status
-                run.log.add_sim_entry(**log_dic)
-
-                results.append(status)
-                running.remove(entry)
-
-                success = run._scenario.sim_run_completed
-
-                if verbose:
-                    print(f"Simulation finished: {status}", flush=True)
-
-                # Launch next job if available
-                launch_next()
-
-            time.sleep(0.1)  # prevent busy-waiting
+        for idx, launch in enumerate(launch_functions):
+            if verbose:
+                print(
+                    f"Executing launcher {idx + 1}/{len(launch_functions)}", flush=True
+                )
+            launch()
+            results.append("completed")
 
         self._update_log()
         return results
 
-    def run_local_sims_in_sequence(
+    def run_sims_in_sequence(
         self,
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,
@@ -1268,6 +1189,7 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         verbose=False,
+        analysis_dir: Optional[Path] = None,
     ):
         """
         Arguments passed to run:
@@ -1287,7 +1209,7 @@ class TRITONSWMM_analysis:
                     f"Running sim {event_iloc} and pickup_where_leftoff = {pickup_where_leftoff}",
                     flush=True,
                 )
-            self.run_sim_locally(
+            self.run_sim(
                 event_iloc=event_iloc,
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
@@ -1296,6 +1218,7 @@ class TRITONSWMM_analysis:
                 clear_raw_outputs=clear_raw_outputs,
                 overwrite_if_exist=overwrite_if_exist,
                 compression_level=compression_level,
+                analysis_dir=analysis_dir,
             )
         self._update_log()
 

@@ -106,20 +106,22 @@ class TRITONSWMM_sensitivity_analysis:
                 launch_functions += sub_analysis._create_launchable_sims(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
+                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
                 )
             self.master_analysis.run_simulations_concurrently(
                 launch_functions, verbose=verbose
             )
         else:
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-                sub_analysis.run_all_sims_in_serially(
+                sub_analysis.run_sims_in_sequence(
                     pickup_where_leftoff=pickup_where_leftoff,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
                     clear_raw_outputs=clear_raw_outputs,
-                    overwrite_if_exist=-overwrite_if_exist,
+                    overwrite_if_exist=overwrite_if_exist,
                     compression_level=compression_level,
                     verbose=verbose,
+                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
                 )
         self._update_master_analysis_log()
         return
