@@ -1404,11 +1404,17 @@ class TRITONSWMM_analysis:
         if run_mode == "gpu":
             sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
 
+        from TRITON_SWMM_toolkit.utils import current_datetime_string
+
+        dtime = current_datetime_string(filepath_friendly=True)
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / dtime
+        logdir.mkdir(parents=True, exist_ok=True)
+
         # Add output/error log directives
         sbatch_lines.extend(
             [
-                "#SBATCH --output=logs/sim_%A_%a.out",
-                "#SBATCH --error=logs/sim_%A_%a.err",
+                f"#SBATCH --output={logdir}/sim_%A_%a.out",
+                f"#SBATCH --error={logdir}/sim_%A_%a.out",
                 "",
             ]
         )
@@ -1429,9 +1435,6 @@ class TRITONSWMM_analysis:
                 "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
                 f"    --analysis-config {self.analysis_config_yaml} \\",
                 f"    --system-config {self._system.system_config_yaml})",
-                "",
-                "# Create logs directory if it doesn't exist",
-                "mkdir -p logs",
                 "",
                 "# Redirect output to simulation-specific log",
                 'LOG_FILE="${SIM_FOLDER}/slurm_job_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"',
@@ -1676,8 +1679,6 @@ class TRITONSWMM_analysis:
         swmm_check = "[100%] Built target runswmm" in compilation_log
         triton_check = "Building finished: triton" in compilation_log
         success = swmm_check and triton_check
-        # self.compilation_successful = success
-        self.log.TRITONSWMM_compiled_successfully.set(success)
         return success
 
     @property

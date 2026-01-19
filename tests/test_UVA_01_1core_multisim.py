@@ -118,12 +118,12 @@ def test_run_sims_using_sbatch():
         prepare_scenarios=False, process_timeseries=False, verbose=True
     )
 
-    # Wait for all jobs to complete
     while True:
         result = subprocess.run(
             ["squeue", "-j", job_id], capture_output=True, text=True
         )
-        if result.returncode != 0:
+        # Check if job_id appears in the output (job still running)
+        if job_id not in result.stdout:
             break
         time.sleep(5)  # Check every 5 seconds
 
