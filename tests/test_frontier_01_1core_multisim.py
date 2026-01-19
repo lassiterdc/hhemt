@@ -106,7 +106,7 @@ def test_concurrently_process_scenario_timeseries():
         analysis.log.print()
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
 
-    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)
+    analysis.consolidate_TRITON_simulation_summaries(overwrite_if_exist=True)
     assert analysis.TRITON_analysis_summary_created
     # assert analysis.SWMM_node_analysis_summary_created
     # assert analysis.SWMM_link_analysis_summary_created
