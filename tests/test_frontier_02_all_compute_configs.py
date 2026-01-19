@@ -2,7 +2,7 @@ import os
 import pytest
 import socket
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from .utils import on_frontier
+from tests.utils import on_frontier
 
 pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier HPC")
 # cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit

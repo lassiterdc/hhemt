@@ -1,7 +1,7 @@
 import os
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from .utils import on_frontier
+from tests.utils import on_frontier
 
 pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier HPC")
 
