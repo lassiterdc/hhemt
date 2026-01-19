@@ -57,7 +57,6 @@ class TRITONSWMM_analysis:
                 / self.cfg_analysis.analysis_id
                 / "compiled_software"
             )
-            compiled_TRITONSWMM_directory.mkdir(parents=True, exist_ok=True)
         if analysis_dir is None:
             analysis_dir = (
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
@@ -1539,6 +1538,10 @@ class TRITONSWMM_analysis:
         recompile_if_already_done_successfully: bool = False,
         verbose: bool = False,
     ):
+        self.analysis_paths.compiled_TRITONSWMM_directory.mkdir(
+            parents=True, exist_ok=True
+        )
+
         if self.compilation_successful and not recompile_if_already_done_successfully:
             print("TRITON-SWMM already compiled", flush=True)
             return
