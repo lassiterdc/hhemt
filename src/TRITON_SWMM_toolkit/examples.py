@@ -350,7 +350,7 @@ class GetTS_TestCases:
                 hpc_time_min_per_sim=30,
                 hpc_partition="standard",
                 hpc_allocation="***REMOVED***",
-                rummode="serial",
+                run_mode="serial",
                 n_mpi_procs=1,
                 n_omp_threads=1,
                 n_gpus=0,
