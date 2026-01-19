@@ -18,8 +18,8 @@ def is_scheduler_context() -> bool:
 
 
 def on_frontier() -> bool:
-    return "frontier" not in socket.getfqdn()
+    return "frontier" in socket.getfqdn()
 
 
 def on_UVA_HPC() -> bool:
-    return "virginia" not in socket.getfqdn()
+    return "virginia" in socket.getfqdn()
