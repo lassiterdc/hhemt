@@ -1471,7 +1471,7 @@ class TRITONSWMM_analysis:
 
         # Remove trailing backslash from last line and add log redirection
         cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
-        cmd_parts.append('    > "${LOG_FILE}" 2>&1')
+        # cmd_parts.append('    > "${LOG_FILE}" 2>&1')
 
         sbatch_lines.extend(cmd_parts)
 
