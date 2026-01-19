@@ -623,7 +623,7 @@ class TRITONSWMM_analysis:
 
         run.run_sim(pickup_where_leftoff=pickup_where_leftoff, verbose=verbose)
         self.sim_run_status(event_iloc)
-        self._update_log()  # updates analysis log
+        # self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.sim_run_completed:
             self.process_sim_timeseries(
                 event_iloc,
@@ -1436,8 +1436,8 @@ class TRITONSWMM_analysis:
                 f"    --analysis-config {self.analysis_config_yaml} \\",
                 f"    --system-config {self._system.system_config_yaml})",
                 "",
-                "# Redirect output to simulation-specific log",
-                'LOG_FILE="${SIM_FOLDER}/slurm_job_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"',
+                # "# Redirect output to simulation-specific log",
+                # 'LOG_FILE="${SIM_FOLDER}/slurm_job_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"',
                 "",
             ]
         )
