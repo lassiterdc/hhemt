@@ -79,18 +79,32 @@ def test_prepare_scenarios():
         )
 
 
-def test_run_sims():
+def test_run_sims_using_sbatch():
+    import subprocess
+    import time
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
     nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
-    launch_functions = analysis._create_launchable_sims(
-        pickup_where_leftoff=True, verbose=True
+
+    # Submit SLURM job array
+    script_path, job_id = analysis.submit_SLURM_job_array(
+        prepare_scenarios=False, process_timeseries=False, verbose=True
     )
 
-    analysis.run_simulations_concurrently(launch_functions, verbose=True)
+    # Wait for all jobs to complete
+    while True:
+        result = subprocess.run(
+            ["squeue", "-j", job_id], capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            break
+        time.sleep(5)  # Check every 5 seconds
+
+    # Update log and verify all sims ran
+    analysis._update_log()
 
     if analysis.log.all_sims_run.get() != True:
         sims_not_run = "\n".join(analysis.scenarios_not_run)
