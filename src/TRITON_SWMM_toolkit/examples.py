@@ -334,7 +334,7 @@ class GetTS_TestCases:
         return nrflk_test
 
     @classmethod
-    def retreive_norfolk_UVA_multisim_cpu_serial_case(
+    def retreive_norfolk_UVA_multisim_1cpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "UVA_multisim"
@@ -351,6 +351,14 @@ class GetTS_TestCases:
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
+                hpc_time_min_per_sim=30,
+                hpc_partition="standard",
+                hpc_allocation="***REMOVED***",
+                rummode="serial",
+                n_mpi_procs=1,
+                n_omp_threads=1,
+                n_gpus=0,
+                n_nodes=1,
             ),
         )
 
