@@ -83,7 +83,6 @@ class TRITONSWMM_analysis:
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
-        # self.scenarios = {}
         self._sim_run_objects = {}
         self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
@@ -191,21 +190,10 @@ class TRITONSWMM_analysis:
         weather_event_indexers = row.to_dict()
         return weather_event_indexers
 
-    # def _add_scenario(self, event_iloc: int):
-    #     scen = TRITONSWMM_scenario(event_iloc, self)
-    #     self.scenarios[event_iloc] = scen
-    #     return scen
-
-    # def _add_all_scenarios(self):
-    #     for event_iloc in self.df_sims.index:
-    #         self._add_scenario(event_iloc)
-    #     return
-
     @property
     def scenarios_not_created(self):
         scens_not_created = []
         for event_iloc in self.df_sims.index:
-            # scen = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             if scen.log.scenario_creation_complete.get() != True:
@@ -216,7 +204,6 @@ class TRITONSWMM_analysis:
     def scenarios_not_run(self):
         scens_not_run = []
         for event_iloc in self.df_sims.index:
-            # scen = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.sim_run_completed != True:
                 scens_not_run.append(str(scen.log.logfile.parent))
@@ -225,7 +212,6 @@ class TRITONSWMM_analysis:
     def TRITON_time_series_not_processed(self):
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
-            # scen = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.log.TRITON_timeseries_written.get() != True:
                 scens_not_processed.append(str(scen.log.logfile.parent))
@@ -234,7 +220,6 @@ class TRITONSWMM_analysis:
     def SWMM_time_series_not_processed(self):
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
-            # scen = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
             node_tseries_written = bool(scen.log.SWMM_node_timeseries_written.get())
             link_tseries_written = bool(scen.log.SWMM_link_timeseries_written.get())
@@ -251,7 +236,6 @@ class TRITONSWMM_analysis:
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
         for event_iloc in self.df_sims.index:
-            # scen = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             # dict_all_logs[event_iloc] = scen.log.model_dump()
@@ -314,7 +298,6 @@ class TRITONSWMM_analysis:
         """
         prepare_scenario_launchers = []
         for event_iloc in self.df_sims.index:
-            # scenario = self.scenarios[event_iloc]
             scen = TRITONSWMM_scenario(event_iloc, self)
 
             # Create a subprocess-based launcher
@@ -744,7 +727,6 @@ class TRITONSWMM_analysis:
         return status
 
     def _retreive_sim_runs(self, event_iloc):
-        # ts_scenario = self.scenarios[event_iloc]
         scen = TRITONSWMM_scenario(event_iloc, self)
         run = scen.run
         self._sim_run_objects[event_iloc] = run

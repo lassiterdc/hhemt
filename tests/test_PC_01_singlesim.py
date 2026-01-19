@@ -2,6 +2,7 @@
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 from tests.utils import is_scheduler_context
+from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
 pytestmark = pytest.mark.skipif(
     is_scheduler_context(), reason="Only runs on non-HPC systems."
@@ -12,9 +13,8 @@ def test_load_system_and_analysis():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
         start_from_scratch=True
     )
-    assert (
-        single_sim_single_core.system.analysis.analysis_paths.simulation_directory.exists()
-    )
+    analysis = single_sim_single_core.system.analysis
+    assert analysis.analysis_paths.simulation_directory.exists()
 
 
 # SYSTEM TESTS
@@ -35,8 +35,9 @@ def test_create_mannings_file_for_TRITON():
 # COMPILING TRITON-SWMM
 def test_compile_TRITONSWMM_for_cpu_sims():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    single_sim_single_core.system.analysis.compile_TRITON_SWMM()
-    assert single_sim_single_core.system.analysis.compilation_successful
+    analysis = single_sim_single_core.system.analysis
+    analysis.compile_TRITON_SWMM()
+    assert analysis.compilation_successful
 
 
 # SCENARIO SET UP
@@ -44,24 +45,26 @@ def test_prepare_all_scenarios():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
         start_from_scratch=False
     )
-    single_sim_single_core.system.analysis.run_prepare_scenarios_serially(
+    analysis = single_sim_single_core.system.analysis
+    analysis.run_prepare_scenarios_serially(
         overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
     )
-    if not single_sim_single_core.system.analysis.scenarios[
-        0
-    ].log.scenario_creation_complete.get():
-        single_sim_single_core.system.analysis.print_logfile_for_scenario(0)
+    scen = TRITONSWMM_scenario(0, analysis)
+    if scen.log.scenario_creation_complete.get():
+        analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Scenario not succesfully set up.")
 
 
 def test_run_sim():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    single_sim_single_core.system.analysis.run_all_sims_in_serially(
-        pickup_where_leftoff=False
-    )
-    success = single_sim_single_core.system.analysis.scenarios[0].sim_run_completed
+    analysis = single_sim_single_core.system.analysis
+    analysis.run_all_sims_in_serially(pickup_where_leftoff=False)
+
+    scen = TRITONSWMM_scenario(0, analysis)
+    success = scen.sim_run_completed
+
     if not success:
-        single_sim_single_core.system.analysis.print_logfile_for_scenario(0)
+        analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Simulation did not run successfully.")
 
 

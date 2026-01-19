@@ -1,5 +1,6 @@
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from tests.utils import is_scheduler_context
 
 pytestmark = pytest.mark.skipif(
@@ -21,7 +22,8 @@ def test_run_multiple_sims_in_sequence():
         process_outputs_after_sim_completion=True,
     )
     # verify that models ran
-    success = analysis.scenarios[0].sim_run_completed
+    scen = TRITONSWMM_scenario(0, analysis)
+    success = scen.sim_run_completed
     if not success:
         analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Multi simulation did not run successfully.")

@@ -392,7 +392,7 @@ class TRITONSWMM_sensitivity_analysis:
         scenarios_not_created = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
-                scen = sub_analysis.scenarios[event_iloc]
+                scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
                 if scen.log.scenario_creation_complete.get() != True:
                     scenarios_not_created.append(str(scen.log.logfile.parent))
         return scenarios_not_created
@@ -402,7 +402,7 @@ class TRITONSWMM_sensitivity_analysis:
         scens_not_run = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
-                scen = sub_analysis.scenarios[event_iloc]
+                scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
                 if scen.sim_run_completed != True:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run

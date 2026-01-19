@@ -17,6 +17,7 @@ from typing import Literal, List
 from typing import TYPE_CHECKING
 from pathlib import Path
 import time
+from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -31,7 +32,7 @@ class TRITONSWMM_analysis_post_processing:
     ) -> xr.Dataset:  # type: ignore
         lst_ds = []
         for event_iloc in self._analysis.df_sims.index:
-            scen = self._analysis.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
             proc = self._analysis._sim_run_processing_objects[event_iloc]
             if mode.lower() == "triton":
                 ds = proc.TRITON_timeseries

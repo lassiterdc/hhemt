@@ -72,6 +72,7 @@ def main():
         # Import here to avoid import errors if dependencies are missing
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+        from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
         system = TRITONSWMM_system(args.system_config)
         analysis = TRITONSWMM_analysis(
@@ -80,7 +81,7 @@ def main():
             skip_log_update=True,
         )
 
-        scenario = analysis.scenarios[args.event_iloc]
+        scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
         sim_folder = scenario.scen_paths.sim_folder
 
         # Print to stdout (clean output for shell script)
@@ -94,3 +95,5 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# %%
