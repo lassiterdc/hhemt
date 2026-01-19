@@ -120,6 +120,7 @@ def main():
         # Import here to avoid import errors if dependencies are missing
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+        from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
         from TRITON_SWMM_toolkit.process_simulation import (
             TRITONSWMM_sim_post_processing,
         )
@@ -136,7 +137,7 @@ def main():
         )
 
         logger.info(f"Processing timeseries for scenario {args.event_iloc}")
-        scenario = analysis.scenarios[args.event_iloc]
+        scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
 
         # Verify that the simulation has been run
         if not scenario.sim_run_completed:

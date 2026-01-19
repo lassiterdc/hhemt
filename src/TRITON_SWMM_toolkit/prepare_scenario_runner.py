@@ -117,6 +117,7 @@ def main():
         # Import here to avoid import errors if dependencies are missing
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+        from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
         logger.info(f"Loading system configuration from {args.system_config}")
         system = TRITONSWMM_system(args.system_config)
@@ -131,7 +132,8 @@ def main():
         )
 
         logger.info(f"Preparing scenario {args.event_iloc}")
-        scenario = analysis.scenarios[args.event_iloc]
+
+        scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
 
         # Call the prepare_scenario method
         scenario.prepare_scenario(

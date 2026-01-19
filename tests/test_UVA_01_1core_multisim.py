@@ -17,7 +17,7 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on Frontier 
 #  --ntasks-per-node=12
 
 # verify this runs:
-# srun -n 1 -c 1 echo "Hello SLURM"
+# srun N 1 -n 1 -c 1 echo "Hello World"
 # module load miniforge
 # conda activate triton_swmm_toolkit
 # bash commands

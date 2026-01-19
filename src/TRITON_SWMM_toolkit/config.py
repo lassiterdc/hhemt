@@ -397,13 +397,6 @@ class analysis_config(cfgBaseModel):
     #     None,
     #     description="Bash script template filled with other user defined variables in the analysis configuration yaml.",
     # )
-    # hpc_allocation: Optional[str] = Field(None, description="Allocation")
-    # hpc_time_min: Optional[int] = Field(
-    #     None, description="Amount of time in minutes the job will be run."
-    # )
-    # hpc_partition: Optional[str] = Field(
-    #     None, description="Partition on which to run enesmble."
-    # )
     # hpc_n_nodes: Optional[int] = Field(
     #     None, description="Number of HPC nodes to request."
     # )
@@ -479,6 +472,20 @@ class analysis_config(cfgBaseModel):
     open_boundaries: int = Field(
         ...,
         description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
+    )
+
+    # HPC JOB ARRAY PARAMETERS
+    hpc_time_min_per_sim: Optional[int] = Field(
+        None,
+        description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_partition: Optional[str] = Field(
+        None,
+        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory'). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_allocation: Optional[str] = Field(
+        None,
+        description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
 
     # VALIDATION - STRING REQUIREMENTS

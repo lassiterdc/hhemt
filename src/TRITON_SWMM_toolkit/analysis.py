@@ -83,17 +83,17 @@ class TRITONSWMM_analysis:
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
-        self.scenarios = {}
+        # self.scenarios = {}
         self._sim_run_objects = {}
         self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
         # self.run_modes = Mode
         # self.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
-        self._add_all_scenarios()
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
         if not skip_log_update:
+            # self._add_all_scenarios()
             self._refresh_log()
             if self.analysis_paths.compilation_logfile.exists():
                 self._validate_compilation()
@@ -174,7 +174,8 @@ class TRITONSWMM_analysis:
     def dict_of_all_sim_files(self, event_iloc):
         dic_syspaths = self._system.sys_paths.as_dict()
         dic_analysis_paths = self.analysis_paths.as_dict()
-        dic_sim_paths = self.scenarios[event_iloc].scen_paths.as_dict()
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        dic_sim_paths = scen.scen_paths.as_dict()
         dic_all_paths = dic_syspaths | dic_analysis_paths | dic_sim_paths
         return dic_all_paths
 
@@ -190,21 +191,22 @@ class TRITONSWMM_analysis:
         weather_event_indexers = row.to_dict()
         return weather_event_indexers
 
-    def _add_scenario(self, event_iloc: int):
-        scen = TRITONSWMM_scenario(event_iloc, self)
-        self.scenarios[event_iloc] = scen
-        return scen
+    # def _add_scenario(self, event_iloc: int):
+    #     scen = TRITONSWMM_scenario(event_iloc, self)
+    #     self.scenarios[event_iloc] = scen
+    #     return scen
 
-    def _add_all_scenarios(self):
-        for event_iloc in self.df_sims.index:
-            self._add_scenario(event_iloc)
-        return
+    # def _add_all_scenarios(self):
+    #     for event_iloc in self.df_sims.index:
+    #         self._add_scenario(event_iloc)
+    #     return
 
     @property
     def scenarios_not_created(self):
         scens_not_created = []
         for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
+            # scen = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             if scen.log.scenario_creation_complete.get() != True:
                 scens_not_created.append(str(scen.log.logfile.parent))
@@ -214,7 +216,8 @@ class TRITONSWMM_analysis:
     def scenarios_not_run(self):
         scens_not_run = []
         for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
+            # scen = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.sim_run_completed != True:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
@@ -222,7 +225,8 @@ class TRITONSWMM_analysis:
     def TRITON_time_series_not_processed(self):
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
+            # scen = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
             if scen.log.TRITON_timeseries_written.get() != True:
                 scens_not_processed.append(str(scen.log.logfile.parent))
         return scens_not_processed
@@ -230,7 +234,8 @@ class TRITONSWMM_analysis:
     def SWMM_time_series_not_processed(self):
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
+            # scen = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
             node_tseries_written = bool(scen.log.SWMM_node_timeseries_written.get())
             link_tseries_written = bool(scen.log.SWMM_link_timeseries_written.get())
             if not (node_tseries_written and link_tseries_written):
@@ -246,7 +251,8 @@ class TRITONSWMM_analysis:
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
         for event_iloc in self.df_sims.index:
-            scen = self.scenarios[event_iloc]
+            # scen = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
             # dict_all_logs[event_iloc] = scen.log.model_dump()
             # sim run status
@@ -308,10 +314,11 @@ class TRITONSWMM_analysis:
         """
         prepare_scenario_launchers = []
         for event_iloc in self.df_sims.index:
-            scenario = self.scenarios[event_iloc]
+            # scenario = self.scenarios[event_iloc]
+            scen = TRITONSWMM_scenario(event_iloc, self)
 
             # Create a subprocess-based launcher
-            launcher = scenario._create_subprocess_prepare_scenario_launcher(
+            launcher = scen._create_subprocess_prepare_scenario_launcher(
                 overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
@@ -555,7 +562,7 @@ class TRITONSWMM_analysis:
         return
 
     def print_logfile_for_scenario(self, event_iloc):
-        scen = self.scenarios[event_iloc]
+        scen = TRITONSWMM_scenario(event_iloc, self)
         scen.log.print()
 
     def retrieve_sim_command_text(
@@ -617,15 +624,15 @@ class TRITONSWMM_analysis:
         compression_level: int,
         verbose=False,
     ):
-        ts_scenario = self.scenarios[event_iloc]
+        scen = TRITONSWMM_scenario(event_iloc, self)
 
-        if not ts_scenario.log.scenario_creation_complete.get():
+        if not scen.log.scenario_creation_complete.get():
             print("Log file:", flush=True)
-            print(ts_scenario.log.print())
+            print(scen.log.print())
             raise ValueError("scenario_creation_complete must be 'success'")
         if not self.compilation_successful:
             print("Log file:", flush=True)
-            print(ts_scenario.log.print())
+            print(scen.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
         run = self._retreive_sim_runs(event_iloc)
         if verbose:
@@ -737,8 +744,9 @@ class TRITONSWMM_analysis:
         return status
 
     def _retreive_sim_runs(self, event_iloc):
-        ts_scenario = self.scenarios[event_iloc]
-        run = ts_scenario.run
+        # ts_scenario = self.scenarios[event_iloc]
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        run = scen.run
         self._sim_run_objects[event_iloc] = run
         return run
 
@@ -1306,6 +1314,307 @@ class TRITONSWMM_analysis:
                 compression_level=compression_level,
             )
         self._update_log()
+
+    def generate_SLURM_job_array_script(
+        self,
+        job_script_path: Optional[Path] = None,
+        prepare_scenarios: bool = True,
+        process_timeseries: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        pickup_where_leftoff: bool = True,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = True,
+    ) -> Path:
+        """
+        Generate a SLURM job array script for running all simulations.
+
+        Each array task runs a single simulation identified by SLURM_ARRAY_TASK_ID,
+        which maps directly to event_iloc. Logs are saved to each simulation's folder.
+
+        Parameters
+        ----------
+        job_script_path : Optional[Path]
+            Path where the job script will be saved. If None, defaults to
+            analysis_dir/run_job_array.sh
+        prepare_scenarios : bool
+            If True, each task will prepare its scenario before running
+        process_timeseries : bool
+            If True, each task will process timeseries outputs after simulation
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process (only used if process_timeseries=True)
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        compression_level : int
+            Compression level for output files (0-9)
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        Path
+            Path to the generated job script
+
+        Examples
+        --------
+        >>> analysis = TRITONSWMM_analysis(...)
+        >>> script_path = analysis.generate_SLURM_job_array_script(
+        ...     prepare_scenarios=True,
+        ...     process_timeseries=True,
+        ... )
+        >>> print(f"Job script generated at: {script_path}")
+        >>> # User can then submit with: sbatch {script_path}
+        """
+        # Default job script path
+        if job_script_path is None:
+            job_script_path = self.analysis_paths.analysis_dir / "run_job_array.sh"
+        else:
+            job_script_path = Path(job_script_path)
+
+        # Ensure parent directory exists
+        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Get configuration parameters
+        analysis_id = self.cfg_analysis.analysis_id
+        run_mode = self.cfg_analysis.run_mode
+        n_mpi_procs = self.cfg_analysis.n_mpi_procs or 1
+        n_omp_threads = self.cfg_analysis.n_omp_threads or 1
+        n_gpus = self.cfg_analysis.n_gpus or 0
+        n_nodes = self.cfg_analysis.n_nodes or 1
+
+        # Get HPC parameters (if available in config)
+        hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim
+        hpc_partition = self.cfg_analysis.hpc_partition
+        hpc_allocation = self.cfg_analysis.hpc_allocation
+
+        if hpc_time_min is None:
+            raise ValueError("sim run time not specified in analysis config file")
+
+        # Calculate array range
+        n_sims = len(self.df_sims)
+        array_range = f"0-{n_sims - 1}"
+
+        # Build SBATCH directives
+        sbatch_lines = [
+            "#!/bin/bash",
+            f"#SBATCH --job-name=TRITON_SWMM_{analysis_id}",
+            f"#SBATCH --array={array_range}",
+            f"#SBATCH --nodes={n_nodes}",
+            f"#SBATCH --ntasks={n_mpi_procs}",
+            f"#SBATCH --cpus-per-task={n_omp_threads}",
+            f"#SBATCH --time={minutes_to_hhmmss(hpc_time_min)}",
+            f"#SBATCH --partition={hpc_partition}",
+            f"#SBATCH --account={hpc_allocation}",
+        ]
+
+        # Add GPU directive if in GPU mode
+        if run_mode == "gpu":
+            sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
+
+        # Add output/error log directives
+        sbatch_lines.extend(
+            [
+                "#SBATCH --output=logs/sim_%A_%a.out",
+                "#SBATCH --error=logs/sim_%A_%a.err",
+                "",
+            ]
+        )
+
+        # Add module loading if needed
+        modules = (
+            self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        )
+        if modules:
+            sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("")
+
+        # Add environment setup
+        sbatch_lines.extend(
+            [
+                "# Determine simulation folder for this task",
+                "SIM_FOLDER=$(python -m TRITON_SWMM_toolkit.get_sim_folder \\",
+                "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
+                f"    --analysis-config {self.analysis_config_yaml} \\",
+                f"    --system-config {self._system.system_config_yaml})",
+                "",
+                "# Create logs directory if it doesn't exist",
+                "mkdir -p logs",
+                "",
+                "# Redirect output to simulation-specific log",
+                'LOG_FILE="${SIM_FOLDER}/slurm_job_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}.log"',
+                "",
+            ]
+        )
+
+        # Build the run_single_simulation command
+        cmd_parts = [
+            "python -m TRITON_SWMM_toolkit.run_single_simulation \\",
+            "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
+            f"    --system-config {self._system.system_config_yaml} \\",
+            f"    --analysis-config {self.analysis_config_yaml} \\",
+        ]
+
+        if prepare_scenarios:
+            cmd_parts.append("    --prepare-scenario \\")
+            if overwrite_scenario:
+                cmd_parts.append("    --overwrite-scenario \\")
+            if rerun_swmm_hydro_if_outputs_exist:
+                cmd_parts.append("    --rerun-swmm-hydro \\")
+
+        if process_timeseries:
+            cmd_parts.append("    --process-timeseries \\")
+            cmd_parts.append(f"    --which {which} \\")
+            if clear_raw_outputs:
+                cmd_parts.append("    --clear-raw-outputs \\")
+            if overwrite_if_exist:
+                cmd_parts.append("    --overwrite-if-exist \\")
+            cmd_parts.append(f"    --compression-level {compression_level} \\")
+
+        if pickup_where_leftoff:
+            cmd_parts.append("    --pickup-where-leftoff \\")
+
+        # Remove trailing backslash from last line and add log redirection
+        cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
+        cmd_parts.append('    > "${LOG_FILE}" 2>&1')
+
+        sbatch_lines.extend(cmd_parts)
+
+        # Write the script
+        script_content = "\n".join(sbatch_lines)
+        job_script_path.write_text(script_content)
+        job_script_path.chmod(0o755)
+
+        if verbose:
+            print(f"SLURM job array script generated: {job_script_path}", flush=True)
+            print(f"Array range: {array_range}", flush=True)
+            print(f"To submit: sbatch {job_script_path}", flush=True)
+
+        return job_script_path
+
+    def submit_SLURM_job_array(
+        self,
+        job_script_path: Optional[Path] = None,
+        prepare_scenarios: bool = True,
+        process_timeseries: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        pickup_where_leftoff: bool = False,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        verbose: bool = True,
+    ) -> tuple[Path, str]:
+        """
+        Generate and submit a SLURM job array script.
+
+        This method wraps generate_SLURM_job_array_script() and automatically
+        submits the generated script using sbatch.
+
+        Parameters
+        ----------
+        job_script_path : Optional[Path]
+            Path where the job script will be saved. If None, defaults to
+            analysis_dir/run_job_array.sh
+        prepare_scenarios : bool
+            If True, each task will prepare its scenario before running
+        process_timeseries : bool
+            If True, each task will process timeseries outputs after simulation
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process (only used if process_timeseries=True)
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        compression_level : int
+            Compression level for output files (0-9)
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        tuple[Path, str]
+            (job_script_path, job_id) where job_id is the SLURM job ID
+
+        Raises
+        ------
+        RuntimeError
+            If sbatch submission fails
+
+        Examples
+        --------
+        >>> analysis = TRITONSWMM_analysis(...)
+        >>> script_path, job_id = analysis.submit_SLURM_job_array(
+        ...     prepare_scenarios=True,
+        ...     process_timeseries=True,
+        ... )
+        >>> print(f"Job submitted with ID: {job_id}")
+        >>> print(f"Monitor with: squeue -j {job_id}")
+        """
+        # Generate the script
+        script_path = self.generate_SLURM_job_array_script(
+            job_script_path=job_script_path,
+            prepare_scenarios=prepare_scenarios,
+            process_timeseries=process_timeseries,
+            which=which,
+            clear_raw_outputs=clear_raw_outputs,
+            overwrite_if_exist=overwrite_if_exist,
+            compression_level=compression_level,
+            pickup_where_leftoff=pickup_where_leftoff,
+            overwrite_scenario=overwrite_scenario,
+            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+            verbose=verbose,
+        )
+
+        # Submit the job
+        if verbose:
+            print(f"Submitting job array script: {script_path}", flush=True)
+
+        try:
+            result = subprocess.run(
+                ["sbatch", str(script_path)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            # Extract job ID from sbatch output (format: "Submitted batch job XXXXX")
+            output_lines = result.stdout.strip().split("\n")
+            job_id_line = output_lines[-1]
+            job_id = job_id_line.split()[-1]
+
+            if verbose:
+                print(f"Job submitted successfully!", flush=True)
+                print(f"Job ID: {job_id}", flush=True)
+                print(f"Monitor with: squeue -j {job_id}", flush=True)
+                print(
+                    f"View logs with: tail -f {self.analysis_paths.analysis_dir}/logs/sim_{job_id}_*.out",
+                    flush=True,
+                )
+
+            return script_path, job_id
+
+        except subprocess.CalledProcessError as e:
+            error_msg = f"sbatch submission failed: {e.stderr}"
+            if verbose:
+                print(error_msg, flush=True)
+            raise RuntimeError(error_msg)
 
     def compile_TRITON_SWMM(
         self,

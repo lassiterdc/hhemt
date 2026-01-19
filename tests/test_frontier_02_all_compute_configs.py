@@ -1,6 +1,4 @@
-import os
 import pytest
-import socket
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 from tests.utils import on_frontier
 
