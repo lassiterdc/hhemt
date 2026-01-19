@@ -596,7 +596,7 @@ class TRITONSWMM_analysis:
     #         self.analysis_paths.bash_script_path,  # type: ignore
     #     )
 
-    def run_sim(
+    def run_sim_locally(
         self,
         event_iloc: int,
         pickup_where_leftoff,
@@ -966,6 +966,7 @@ class TRITONSWMM_analysis:
         launch_functions: list[Callable[[], tuple]],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
+        using_srun: bool = False,
     ):
         """
         Docstring for run_simulations_concurrently
@@ -973,11 +974,12 @@ class TRITONSWMM_analysis:
         :param self: automatically chooses whether to use SLURM or ThreadPoolExecutor for concurrent runs
         """
         if self.in_slurm:
-            self.run_simulations_concurrently_on_SLURM_HPC(
-                launch_functions=launch_functions,
-                verbose=verbose,
-                max_concurrent=max_concurrent,
-            )
+            if using_srun:
+                self.run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
+                    launch_functions=launch_functions,
+                    verbose=verbose,
+                    max_concurrent=max_concurrent,
+                )
         else:
             self.run_simulations_concurrently_on_desktop(
                 launch_functions=launch_functions,
@@ -985,7 +987,7 @@ class TRITONSWMM_analysis:
                 max_concurrent=max_concurrent,
             )
 
-    def run_simulations_concurrently_on_SLURM_HPC(
+    def run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
         self,
         launch_functions: list[Callable[[], tuple]],
         max_concurrent: Optional[int] = None,
@@ -1257,7 +1259,7 @@ class TRITONSWMM_analysis:
         self._update_log()
         return results
 
-    def run_all_sims_in_serially(
+    def run_local_sims_in_sequence(
         self,
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,
@@ -1285,7 +1287,7 @@ class TRITONSWMM_analysis:
                     f"Running sim {event_iloc} and pickup_where_leftoff = {pickup_where_leftoff}",
                     flush=True,
                 )
-            self.run_sim(
+            self.run_sim_locally(
                 event_iloc=event_iloc,
                 pickup_where_leftoff=pickup_where_leftoff,
                 verbose=verbose,
