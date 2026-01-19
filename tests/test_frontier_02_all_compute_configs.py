@@ -2,11 +2,9 @@ import os
 import pytest
 import socket
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+from .utils import on_frontier
 
-pytestmark = pytest.mark.skipif(
-    "frontier" not in socket.gethostname(), reason="Only runs on Frontier HPC"
-)
-
+pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier HPC")
 # cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
 # salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
 # conda activate triton_swmm_toolkit

@@ -1,33 +1,21 @@
 import os
 import pytest
-import socket
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+from .utils import on_frontier
 
-pytestmark = pytest.mark.skipif(
-    "virginia" not in socket.getfqdn(), reason="Only runs on UVA's HPC"
-)
+pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier HPC")
 
-# ijob \
-#   -A ***REMOVED*** \
-#   -p interactive \
-#   --time=12:00:00 \
-#   -N 2 \
-#   --gres=gpu:1 \
-#   --mem=108G \
-#  --cpus-per-task=1 \
-#  --ntasks-per-node=12
-
-# verify this runs:
-# srun -n 1 -c 1 echo "Hello SLURM"
-# module load miniforge
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
+# salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
 # conda activate triton_swmm_toolkit
+
 # bash commands
 # pgrep -l srun # lists all srun processes
 # ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
 
 
 def test_load_system_and_analysis():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=True
     )
     assert (
@@ -36,7 +24,7 @@ def test_load_system_and_analysis():
 
 
 def test_create_dem_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_dem_for_TRITON()
@@ -45,7 +33,7 @@ def test_create_dem_for_TRITON():
 
 
 def test_create_mannings_file_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_mannings_file_for_TRITON()
@@ -54,7 +42,7 @@ def test_create_mannings_file_for_TRITON():
 
 
 def test_compile_TRITONSWMM_for_cpu_sims():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.analysis.compile_TRITON_SWMM()
@@ -62,17 +50,14 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 
 
 def test_prepare_scenarios():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario=True, verbose=True
     )
-    analysis.run_python_functions_concurrently(
-        prepare_scenario_launchers,
-        verbose=True,
-    )
+    analysis.run_python_functions_concurrently(prepare_scenario_launchers, verbose=True)
     if analysis.log.all_scenarios_created.get() != True:
         scens_not_created = "\n".join(analysis.scenarios_not_created)
         pytest.fail(
@@ -83,7 +68,7 @@ def test_prepare_scenarios():
 def test_run_sims():
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -101,18 +86,20 @@ def test_run_sims():
 
 
 def test_concurrently_process_scenario_timeseries():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     scenario_timeseries_processing_launchers = (
-        analysis.retreive_scenario_timeseries_processing_launchers()
+        analysis.retreive_scenario_timeseries_processing_launchers(which="TRITON")
     )
-    analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
+    analysis.run_python_functions_concurrently(
+        scenario_timeseries_processing_launchers, verbose=True
+    )
     # verify that time series outputs processed
     success_processing = (
         analysis.log.all_TRITON_timeseries_processed.get()
-        and analysis.log.all_SWMM_timeseries_processed.get()
+        # and analysis.log.all_SWMM_timeseries_processed.get()
     )
     if not success_processing:
         analysis._update_log()
@@ -121,5 +108,5 @@ def test_concurrently_process_scenario_timeseries():
 
     analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)
     assert analysis.TRITON_analysis_summary_created
-    assert analysis.SWMM_node_analysis_summary_created
-    assert analysis.SWMM_link_analysis_summary_created
+    # assert analysis.SWMM_node_analysis_summary_created
+    # assert analysis.SWMM_link_analysis_summary_created

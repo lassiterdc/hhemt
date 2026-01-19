@@ -1,5 +1,10 @@
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+from .utils import is_scheduler_context
+
+pytestmark = pytest.mark.skipif(
+    is_scheduler_context(), reason="Only runs on non-HPC systems."
+)
 
 
 def test_run_multiple_sims_in_sequence():
