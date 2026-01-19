@@ -347,10 +347,6 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="hpc_swmm_omp",
-            ),
-            additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
                 hpc_time_min_per_sim=30,
                 hpc_partition="standard",
                 hpc_allocation="***REMOVED***",
@@ -359,6 +355,10 @@ class GetTS_TestCases:
                 n_omp_threads=1,
                 n_gpus=0,
                 n_nodes=1,
+            ),
+            additional_system_configs=dict(
+                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
         )
 
