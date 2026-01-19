@@ -61,7 +61,6 @@ class TRITONSWMM_sensitivity_analysis:
     ):
         prepare_scenario_launchers = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            sub_analysis._add_all_scenarios()
             prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
                 overwrite_scenario=overwrite_scenarios,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
@@ -104,7 +103,6 @@ class TRITONSWMM_sensitivity_analysis:
             )
             launch_functions = []
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-                sub_analysis._add_all_scenarios()
                 launch_functions += sub_analysis._create_launchable_sims(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,

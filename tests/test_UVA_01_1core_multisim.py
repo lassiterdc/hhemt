@@ -8,13 +8,21 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on Frontier 
 
 # ijob \
 #   -A ***REMOVED*** \
-#   -p interactive \
-#   --time=12:00:00 \
-#   -N 2 \
-#   --gres=gpu:1 \
-#   --mem=108G \
+#   -p standard \
+#   --time=08:00:00 \
+#   -N 1 \
 #  --cpus-per-task=1 \
-#  --ntasks-per-node=12
+#  --ntasks-per-node=96
+
+# ijob \
+#   -A ***REMOVED*** \
+#   -p interactive \
+#   --time=08:00:00 \
+#   -N 1 \
+#  --cpus-per-task=1 \
+#  --ntasks-per-node=24
+
+#   --gres=gpu:1 \
 
 # verify this runs:
 # srun N 1 -n 1 -c 1 echo "Hello World"
