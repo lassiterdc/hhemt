@@ -157,7 +157,7 @@ class TRITONSWMM_run:
         og_env = os.environ.copy()
         env = dict()
         swmm_path = (
-            self._analysis.analysis_paths.compiled_software_directory
+            self._analysis.analysis_paths.compiled_TRITONSWMM_directory
             / "Stormwater-Management-Model"
             / "build"
             / "bin"

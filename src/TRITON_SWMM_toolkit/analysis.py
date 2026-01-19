@@ -43,7 +43,7 @@ class TRITONSWMM_analysis:
         analysis_config_yaml: Path,
         system: "TRITONSWMM_system",
         analysis_dir: Optional[Path] = None,
-        compiled_software_directory: Optional[Path] = None,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
         skip_log_update: bool = False,
     ) -> None:
         self._system = system
@@ -51,13 +51,13 @@ class TRITONSWMM_analysis:
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
         # define additional paths not defined in cfg
-        if compiled_software_directory is None:
-            compiled_software_directory = (
+        if compiled_TRITONSWMM_directory is None:
+            compiled_TRITONSWMM_directory = (
                 self._system.cfg_system.system_directory
                 / self.cfg_analysis.analysis_id
                 / "compiled_software"
             )
-            compiled_software_directory.mkdir(parents=True, exist_ok=True)
+            compiled_TRITONSWMM_directory.mkdir(parents=True, exist_ok=True)
         if analysis_dir is None:
             analysis_dir = (
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
@@ -66,11 +66,11 @@ class TRITONSWMM_analysis:
         self.analysis_paths = AnalysisPaths(
             f_log=analysis_dir / "log.json",
             analysis_dir=analysis_dir,
-            compiled_software_directory=compiled_software_directory,
-            TRITON_build_dir=compiled_software_directory / "build",
-            compilation_script=compiled_software_directory / "compile.sh",
+            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
+            TRITON_build_dir=compiled_TRITONSWMM_directory / "build",
+            compilation_script=compiled_TRITONSWMM_directory / "compile.sh",
             simulation_directory=analysis_dir / "sims",
-            compilation_logfile=compiled_software_directory / f"compilation.log",
+            compilation_logfile=compiled_TRITONSWMM_directory / f"compilation.log",
             output_triton_summary=analysis_dir
             / f"TRITON.{self.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_links_summary=analysis_dir
@@ -559,6 +559,7 @@ class TRITONSWMM_analysis:
         compression_level: int,
         verbose=False,
         analysis_dir: Optional[Path] = None,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
     ):
         scen = TRITONSWMM_scenario(event_iloc, self)
 
@@ -579,6 +580,7 @@ class TRITONSWMM_analysis:
             pickup_where_leftoff=pickup_where_leftoff,
             verbose=verbose,
             analysis_dir=analysis_dir,
+            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
         )
         launcher()
 
@@ -1190,6 +1192,7 @@ class TRITONSWMM_analysis:
         compression_level: int = 5,
         verbose=False,
         analysis_dir: Optional[Path] = None,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
     ):
         """
         Arguments passed to run:
@@ -1219,6 +1222,7 @@ class TRITONSWMM_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 compression_level=compression_level,
                 analysis_dir=analysis_dir,
+                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
             )
         self._update_log()
 
@@ -1539,7 +1543,9 @@ class TRITONSWMM_analysis:
             print("TRITON-SWMM already compiled", flush=True)
             return
         # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
-        compiled_software_directory = self.analysis_paths.compiled_software_directory
+        compiled_TRITONSWMM_directory = (
+            self.analysis_paths.compiled_TRITONSWMM_directory
+        )
         compilation_script = self.analysis_paths.compilation_script
         TRITONSWMM_software_directory = (
             self._system.cfg_system.TRITONSWMM_software_directory
@@ -1548,11 +1554,11 @@ class TRITONSWMM_analysis:
         TRITON_SWMM_software_compilation_script = (
             self._system.cfg_system.TRITON_SWMM_software_compilation_script
         )
-        if compiled_software_directory.exists():
-            shutil.rmtree(compiled_software_directory)
-        shutil.copytree(TRITONSWMM_software_directory, compiled_software_directory)
+        if compiled_TRITONSWMM_directory.exists():
+            shutil.rmtree(compiled_TRITONSWMM_directory)
+        shutil.copytree(TRITONSWMM_software_directory, compiled_TRITONSWMM_directory)
         mapping = dict(
-            COMPILED_MODEL_DIR=compiled_software_directory,
+            COMPILED_MODEL_DIR=compiled_TRITONSWMM_directory,
             MAKE_COMMAND=TRITON_SWMM_make_command,
         )
         comp_script_content = create_from_template(

@@ -31,7 +31,7 @@ class SysPaths(MainDataClass):
 class AnalysisPaths(MainDataClass):
     f_log: Path
     analysis_dir: Path
-    compiled_software_directory: Path
+    compiled_TRITONSWMM_directory: Path
     TRITON_build_dir: Path
     compilation_script: Path
     simulation_directory: Path

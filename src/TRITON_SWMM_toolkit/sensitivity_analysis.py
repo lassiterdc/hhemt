@@ -65,7 +65,7 @@ class TRITONSWMM_sensitivity_analysis:
                 overwrite_scenario=overwrite_scenarios,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
-                compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_software_directory,
+                compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
                 analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
         if concurrent:
@@ -122,6 +122,7 @@ class TRITONSWMM_sensitivity_analysis:
                     compression_level=compression_level,
                     verbose=verbose,
                     analysis_dir=sub_analysis.analysis_paths.analysis_dir,
+                    compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
                 )
         self._update_master_analysis_log()
         return
@@ -357,19 +358,19 @@ class TRITONSWMM_sensitivity_analysis:
                 )
             )
 
-            compiled_software_directory = (
-                self.master_analysis.analysis_paths.compiled_software_directory
+            compiled_TRITONSWMM_directory = (
+                self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
             )
             if "TRITON_SWMM_make_command" in self.df_setup.columns:
-                compiled_software_directory = (
-                    compiled_software_directory / row["TRITON_SWMM_make_command"]
+                compiled_TRITONSWMM_directory = (
+                    compiled_TRITONSWMM_directory / row["TRITON_SWMM_make_command"]
                 )
 
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=self._system,
                 analysis_dir=sub_analysis_directory,
-                compiled_software_directory=compiled_software_directory,
+                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
             )
             dic_sensitivity_analyses[idx] = anlsys
         return dic_sensitivity_analyses

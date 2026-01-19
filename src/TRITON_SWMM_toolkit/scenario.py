@@ -762,12 +762,12 @@ class TRITONSWMM_scenario:
         return
 
     def _copy_tritonswmm_build_folder_to_sim(self):
-        compiled_software_directory = (
-            self._analysis.analysis_paths.compiled_software_directory
+        compiled_TRITONSWMM_directory = (
+            self._analysis.analysis_paths.compiled_TRITONSWMM_directory
         )
         sim_tritonswmm_executable = self.scen_paths.sim_tritonswmm_executable
 
-        src_build_fpath = compiled_software_directory / "build/"
+        src_build_fpath = compiled_TRITONSWMM_directory / "build/"
         target_build_fpath = sim_tritonswmm_executable.parent
         if target_build_fpath.exists():
             shutil.rmtree(target_build_fpath)
