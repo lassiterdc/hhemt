@@ -471,7 +471,7 @@ class TRITONSWMM_run:
         if run_mode != "gpu":
             n_gpus = 0
 
-        og_env = os.environ.copy()
+        # og_env = os.environ.copy()
 
         def launcher():
             """
@@ -501,7 +501,7 @@ class TRITONSWMM_run:
                 n_mpi_procs=n_mpi_procs,
                 n_omp_threads=n_omp_threads,
                 n_gpus=n_gpus,
-                env=og_env,  # type: ignore
+                # env=og_env,  # type: ignore
             )
 
             start_time = time.time()

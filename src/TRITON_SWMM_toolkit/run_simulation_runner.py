@@ -165,10 +165,17 @@ def main():
         logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
         logger.info(f"command: {' '.join(cmd)}")
 
+        merged_env = os.environ.copy()
+        merged_env.update(env)
+
+        logger.info(
+            f"Merged environment passed to subprocess running TRITON-SWMM: {merged_env}"
+        )
+
         with open(tritonswmm_logfile, "w") as lf:
             proc = subprocess.Popen(
                 cmd,
-                env={**env},  # **os.environ,
+                env=merged_env,
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
