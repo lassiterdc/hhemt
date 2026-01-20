@@ -1347,7 +1347,7 @@ class TRITONSWMM_analysis:
             sbatch_lines.append(f"module load {modules}")
         # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
         # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("source activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
         setup_cmd_parts = [
@@ -1443,7 +1443,7 @@ class TRITONSWMM_analysis:
             sbatch_lines.append(f"module load {modules}")
         # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
         # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("source activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
         cmd_parts = [
@@ -1600,7 +1600,7 @@ class TRITONSWMM_analysis:
             sbatch_lines.append(f"module load {modules}")
         # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
         # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("source activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
         # Add environment setup

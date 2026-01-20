@@ -13,7 +13,7 @@
     # module purge
     # module load {conda app, e.g., miniforge}
     # conda env create -f environment.yaml
-    # conda activate triton_swmm_toolkit
+    # conda (or source) activate triton_swmm_toolkit
 # to use development version if git cloned:
   # python -m pip install -e .
 name: triton_swmm_toolkit
