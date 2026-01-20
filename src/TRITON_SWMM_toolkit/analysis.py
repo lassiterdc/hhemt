@@ -1345,6 +1345,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
+        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
@@ -1439,6 +1440,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
+        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
@@ -1595,6 +1597,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
+        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
