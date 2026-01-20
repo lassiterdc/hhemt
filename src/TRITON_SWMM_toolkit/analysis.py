@@ -114,17 +114,20 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
     ):
-        self.consolidate_TRITON_simulation_summaries(
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        self.consolidate_SWMM_simulation_summaries(
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
+        if which in ["TRITON", "both"]:
+            self.consolidate_TRITON_simulation_summaries(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        if which in ["SWMM", "both"]:
+            self.consolidate_SWMM_simulation_summaries(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
         return
 
     def consolidate_TRITON_simulation_summaries(
@@ -958,7 +961,7 @@ class TRITONSWMM_analysis:
 
     def run_simulations_concurrently(
         self,
-        launch_functions: list[Callable[[], None]],
+        launch_functions: list[tuple],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
     ):
