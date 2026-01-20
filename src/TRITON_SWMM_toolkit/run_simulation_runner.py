@@ -187,7 +187,7 @@ def main():
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
             n_gpus=n_gpus,
-            env=merged_env,  # type: ignore
+            env=env,  # type: ignore
         )
 
         with open(tritonswmm_logfile, "w") as lf:
