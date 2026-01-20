@@ -210,14 +210,16 @@ def main():
 
         # Step 2: Run simulation
         logger.info(f"[{event_iloc}] Running simulation...")
-        launcher = scenario.run._create_subprocess_sim_run_launcher(
+        launcher, finalize_sim = scenario.run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=args.pickup_where_leftoff,
             verbose=True,
             compiled_TRITONSWMM_directory=args.compiled_model_dir,
             analysis_dir=args.analysis_dir,
         )
-        # Execute the launcher (which handles simlog updates internally)
-        launcher()
+        # Launch the simulation (non-blocking)
+        proc, start_time, sim_logfile, lf = launcher()
+        # Wait for simulation to complete and update simlog
+        finalize_sim(proc, start_time, sim_logfile, lf)
 
         # Check if simulation completed successfully
         scenario.log.refresh()
@@ -240,6 +242,7 @@ def main():
                 compression_level=args.compression_level,
                 analysis_dir=args.analysis_dir,
             )
+            # Execute the launcher (which handles simlog updates internally)
             launcher()
 
             # Verify processing was successful

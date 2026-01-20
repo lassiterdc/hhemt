@@ -575,13 +575,16 @@ class TRITONSWMM_analysis:
             print("run instance instantiated", flush=True)
 
         # Use the subprocess launcher pattern, mirroring process_sim_timeseries
-        launcher = run._create_subprocess_sim_run_launcher(
+        launcher, finalize_sim = run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=pickup_where_leftoff,
             verbose=verbose,
             analysis_dir=analysis_dir,
             compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
         )
-        launcher()
+        # Launch the simulation (non-blocking)
+        proc, start_time, sim_logfile, lf = launcher()
+        # Wait for simulation to complete and update simlog
+        finalize_sim(proc, start_time, sim_logfile, lf)
 
         self.sim_run_status(event_iloc)
         # self._update_log()  # updates analysis log
@@ -934,18 +937,22 @@ class TRITONSWMM_analysis:
         list
             List of launcher functions
         """
-        launch_functions = []
+        launch_and_finalize_functions_tuples = []
         for event_iloc in self.df_sims.index:
             run = self._retreive_sim_runs(event_iloc)
-            launch_function = run._create_subprocess_sim_run_launcher(
-                pickup_where_leftoff=pickup_where_leftoff,
-                verbose=verbose,
-                analysis_dir=analysis_dir,
+            launch_and_finalize_functions_tuple = (
+                run._create_subprocess_sim_run_launcher(
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    verbose=verbose,
+                    analysis_dir=analysis_dir,
+                )
             )
-            if launch_function is None:
+            if launch_and_finalize_functions_tuple is None:
                 continue
-            launch_functions.append(launch_function)
-        return launch_functions
+            launch_and_finalize_functions_tuples.append(
+                launch_and_finalize_functions_tuple
+            )
+        return launch_and_finalize_functions_tuples
 
     def run_simulations_concurrently(
         self,
@@ -977,7 +984,7 @@ class TRITONSWMM_analysis:
 
     def run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
         self,
-        launch_functions: list[Callable[[], None]],
+        launch_functions: list[tuple],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
     ) -> list[str]:
@@ -1007,9 +1014,9 @@ class TRITONSWMM_analysis:
 
         Parameters
         ----------
-        launch_functions : list of callables
-            Each function launches a simulation in a subprocess.
-            The launcher handles simlog updates after completion.
+        launch_functions : list of tuples
+            Each tuple is (launcher, finalize_sim) from _create_subprocess_sim_run_launcher().
+            launcher() starts the process (non-blocking), finalize_sim() waits and updates logs.
         max_concurrent : int | None
             Maximum number of concurrent tasks. If None, automatically
             calculated from SLURM environment variables and job configuration.
@@ -1078,40 +1085,16 @@ class TRITONSWMM_analysis:
             )
 
         # ----------------------------
-        # Pool-based execution
+        # Execute simulations
         # ----------------------------
-        running: list = []
         results: list[str] = []
-        launch_iter = iter(launch_functions)
-        completed_count = 0
 
-        def launch_next():
-            """Launch the next simulation if available."""
-            try:
-                launch = next(launch_iter)
-            except StopIteration:
-                return False
-
-            # Execute the launcher (which handles simlog updates internally)
-            launch()
-            completed_count_local = completed_count + len(running)
-
-            if verbose:
-                print(
-                    f"[SLURM] Launched simulation ({len(running)} running)",
-                    flush=True,
-                )
-            return True
-
-        # Prime the pool with initial tasks
-        for _ in range(min(max_concurrent, len(launch_functions))):
-            launch_next()
-
-        # Since launchers are now synchronous (they wait for completion),
-        # we just need to execute them sequentially up to max_concurrent
-        # The launchers handle their own completion and logging
-        for launch in launch_functions:
-            launch()
+        # Unpack and execute each launcher tuple
+        for launcher, finalize_sim in launch_functions:
+            # Launch the simulation (non-blocking)
+            proc, start_time, sim_logfile, lf = launcher()
+            # Wait for simulation to complete and update simlog
+            finalize_sim(proc, start_time, sim_logfile, lf)
             results.append("completed")
 
         self._update_log()
@@ -1119,7 +1102,7 @@ class TRITONSWMM_analysis:
 
     def run_simulations_concurrently_on_local_machine(
         self,
-        launch_functions: List[Callable[[], None]],
+        launch_functions: List[tuple],
         max_concurrent: Optional[int] = None,
         min_memory_per_sim_MiB: int | None = 1024,
         verbose: bool = True,
@@ -1127,14 +1110,15 @@ class TRITONSWMM_analysis:
         """
         Run simulations concurrently on a desktop/local machine.
 
-        The new launcher pattern is synchronous - each launcher executes the
-        simulation to completion and updates the simlog internally. This method
-        simply executes the launchers sequentially up to max_concurrent.
+        The new launcher pattern is non-blocking - each launcher starts a process
+        and returns immediately, while finalize_sim waits for completion.
+        This method uses ThreadPoolExecutor to run multiple simulations concurrently.
 
         Parameters
         ----------
-        launch_functions : List[Callable[[], None]]
-            List of launcher functions that execute simulations
+        launch_functions : List[tuple]
+            List of tuples (launcher, finalize_sim) from _create_subprocess_sim_run_launcher().
+            launcher() starts the process (non-blocking), finalize_sim() waits and updates logs.
         max_concurrent : Optional[int]
             Maximum number of concurrent simulations
         min_memory_per_sim_MiB : int | None
@@ -1170,18 +1154,34 @@ class TRITONSWMM_analysis:
             )
 
         # ----------------------------
-        # Execute launchers
+        # Execute launchers with ThreadPoolExecutor
         # ----------------------------
-        # The new launcher pattern is synchronous - each launcher handles its
-        # complete lifecycle including simlog updates. We simply execute them.
         results = []
-        for idx, launch in enumerate(launch_functions):
-            if verbose:
-                print(
-                    f"Executing launcher {idx + 1}/{len(launch_functions)}", flush=True
-                )
-            launch()
-            results.append("completed")
+
+        def execute_sim(launcher, finalize_sim):
+            """Execute a single simulation: launch and finalize."""
+            proc, start_time, sim_logfile, lf = launcher()
+            finalize_sim(proc, start_time, sim_logfile, lf)
+            return "completed"
+
+        with ThreadPoolExecutor(max_workers=max_concurrent) as executor:
+            futures = [
+                executor.submit(execute_sim, launcher, finalize_sim)
+                for launcher, finalize_sim in launch_functions
+            ]
+
+            for idx, future in enumerate(as_completed(futures)):
+                if verbose:
+                    print(
+                        f"Simulation {idx + 1}/{len(launch_functions)} completed",
+                        flush=True,
+                    )
+                try:
+                    results.append(future.result())
+                except Exception as e:
+                    if verbose:
+                        print(f"Simulation failed with error: {e}", flush=True)
+                    results.append("failed")
 
         self._update_log()
         return results

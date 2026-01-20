@@ -399,17 +399,19 @@ class TRITONSWMM_run:
         analysis_dir: Optional[Path] = None,
     ):
         """
-        Create a launcher function that runs simulation in a subprocess.
+        Create a launcher function that runs simulation in a subprocess (non-blocking).
 
         This isolates the simulation to a separate process, avoiding potential
         state conflicts when running multiple simulations concurrently.
 
-        The launcher function handles the complete simulation lifecycle:
+        The launcher function:
         1. Records initial simulation metadata in simlog
         2. Executes the simulation subprocess
-        3. Waits for completion
-        4. Captures elapsed time and status
-        5. Updates the simlog with final results
+        3. Returns the Popen object (does NOT wait for completion)
+        4. Caller is responsible for waiting and updating simlog
+
+        This non-blocking pattern allows multiple simulations to run concurrently
+        when used with process polling in the concurrent execution methods.
 
         Parameters
         ----------
@@ -424,8 +426,10 @@ class TRITONSWMM_run:
 
         Returns
         -------
-        callable
-            A launcher function that executes the subprocess and updates the simlog
+        tuple
+            (launcher_func, metadata_dict) where:
+            - launcher_func: callable that returns (proc, start_time, sim_logfile)
+            - metadata_dict: dict with simulation metadata for logging
         """
         import os
         import subprocess
@@ -468,7 +472,14 @@ class TRITONSWMM_run:
         og_env = os.environ.copy()
 
         def launcher():
-            """Execute simulation in a subprocess and update simlog after completion."""
+            """
+            Execute simulation in a subprocess (non-blocking).
+
+            Returns
+            -------
+            tuple
+                (proc, start_time, sim_logfile) where proc is the Popen object
+            """
             if verbose:
                 print(
                     f"[Scenario {event_iloc}] Launching subprocess: {' '.join(cmd)}",
@@ -494,39 +505,58 @@ class TRITONSWMM_run:
             start_time = time.time()
 
             # Open log file for subprocess output
-            with open(sim_logfile, "w") as lf:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=lf,
-                    stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
-                )
+            lf = open(sim_logfile, "w")
+            proc = subprocess.Popen(
+                cmd,
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+                env=os.environ.copy(),
+            )
 
-                # Wait for subprocess to complete
-                rc = proc.wait()
+            # Return process handle and metadata (do NOT wait)
+            return proc, start_time, sim_logfile, lf
 
-                if verbose:
-                    if rc == 0:
+        def finalize_sim(proc, start_time, sim_logfile, lf):
+            """
+            Wait for simulation to complete and update simlog.
+
+            Parameters
+            ----------
+            proc : subprocess.Popen
+                The process object
+            start_time : float
+                Time when process was started
+            sim_logfile : Path
+                Path to simulation log file
+            lf : file object
+                Open log file handle
+            """
+            # Wait for subprocess to complete
+            rc = proc.wait()
+            lf.close()
+
+            if verbose:
+                if rc == 0:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess completed successfully",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                        flush=True,
+                    )
+
+            if rc != 0:
+                # Log the error
+                if sim_logfile.exists():
+                    with open(sim_logfile, "r") as f:
+                        error_output = f.read()
+                    if verbose:
                         print(
-                            f"[Scenario {event_iloc}] Subprocess completed successfully",
+                            f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
                             flush=True,
                         )
-                    else:
-                        print(
-                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
-                            flush=True,
-                        )
-
-                if rc != 0:
-                    # Log the error
-                    if sim_logfile.exists():
-                        with open(sim_logfile, "r") as f:
-                            error_output = f.read()
-                        if verbose:
-                            print(
-                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
-                                flush=True,
-                            )
 
             # Update simlog after subprocess completion
             end_time = time.time()
@@ -549,7 +579,7 @@ class TRITONSWMM_run:
                     flush=True,
                 )
 
-        return launcher
+        return launcher, finalize_sim
 
 
 def return_the_reporting_step_from_a_cfg(f_cfg: Path):
