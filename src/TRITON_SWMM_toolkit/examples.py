@@ -82,12 +82,15 @@ class TRITON_SWMM_testcase:
     ):
         # load system
         self.system = TRITONSWMM_system(cfg_system_yaml)
+
+        for key, val in additional_system_configs.items():
+            setattr(self.system.cfg_system, key, val)
         # update system directory
         self.system.cfg_system.system_directory = (
             self.system.cfg_system.system_directory.parent / test_system_dirname
         )
-
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
+
         if start_from_scratch and anlysys_dir.exists():
             shutil.rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
@@ -135,8 +138,7 @@ class TRITON_SWMM_testcase:
                 sort_keys=False,  # .dict() for pydantic v1
             )
         )
-        for key, val in additional_system_configs.items():
-            setattr(self.system.cfg_system, key, val)
+
         self.system.add_analysis(cfg_anlysys_yaml)
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
