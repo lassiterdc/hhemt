@@ -158,6 +158,8 @@ def main():
 
         cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
 
+        logger.info(f"Environment returned by run.prepare_simulation_command: {env}")
+
         # Execute the simulation command
         logger.info(f"[{event_iloc}] Executing simulation command...")
         logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
