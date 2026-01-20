@@ -1333,6 +1333,9 @@ class TRITONSWMM_analysis:
         logdir_job = logdir / dtime
         logdir_job.mkdir(parents=True, exist_ok=True)
 
+        hpc_partition = self.cfg_analysis.hpc_partition
+        hpc_allocation = self.cfg_analysis.hpc_allocation
+
         sbatch_lines = [
             "#!/bin/bash",
             "#SBATCH --job-name=TRITON_SWMM_setup",
@@ -1340,6 +1343,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
             "#SBATCH --time=00:30:00",
+            f"#SBATCH --partition={hpc_partition}",
+            f"#SBATCH --account={hpc_allocation}",
             f"#SBATCH --output={logdir_job}/setup_%j.out",
             f"#SBATCH --error={logdir_job}/setup_%j.out",
             "",
@@ -1578,6 +1583,9 @@ class TRITONSWMM_analysis:
         logdir_job = logdir / dtime
         logdir_job.mkdir(parents=True, exist_ok=True)
 
+        hpc_partition = self.cfg_analysis.hpc_partition
+        hpc_allocation = self.cfg_analysis.hpc_allocation
+
         sbatch_lines = [
             "#!/bin/bash",
             "#SBATCH --job-name=TRITON_SWMM_consolidate",
@@ -1585,6 +1593,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
             "#SBATCH --time=00:30:00",
+            f"#SBATCH --partition={hpc_partition}",
+            f"#SBATCH --account={hpc_allocation}",
             f"#SBATCH --output={logdir_job}/consolidate_%j.out",
             f"#SBATCH --error={logdir_job}/consolidate_%j.out",
             "",
