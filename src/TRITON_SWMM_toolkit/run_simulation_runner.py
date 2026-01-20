@@ -186,8 +186,16 @@ def main():
                 env=merged_env,
                 stdout=lf,
                 stderr=subprocess.STDOUT,
+                shell=False,
             )
-            proc.wait()
+            rc = proc.wait()
+
+            if rc != 0:
+                logger.error(f"[{event_iloc}] Subprocess exited with return code {rc}")
+                if tritonswmm_logfile.exists():
+                    with open(tritonswmm_logfile, "r") as f:
+                        error_output = f.read()
+                    logger.error(f"[{event_iloc}] Subprocess output:\n{error_output}")
 
         logger.info(f"[{event_iloc}] Simulation process completed")
 

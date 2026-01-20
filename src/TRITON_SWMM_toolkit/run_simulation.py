@@ -165,6 +165,9 @@ class TRITONSWMM_run:
             f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
         )
 
+        # Preserve PATH from parent environment to ensure subprocess can find executables
+        env["PATH"] = og_env.get("PATH", "")
+
         # ----------------------------
         # OpenMP configuration
         # ----------------------------
