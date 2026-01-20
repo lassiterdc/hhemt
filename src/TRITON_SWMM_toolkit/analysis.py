@@ -1344,10 +1344,9 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module purge")
-            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("")
-        sbatch_lines.append(f"module load triton_swmm_toolkit")
+        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("")
 
         setup_cmd_parts = [
             "python -m TRITON_SWMM_toolkit.setup_workflow \\",
@@ -1374,162 +1373,6 @@ class TRITONSWMM_analysis:
 
         if verbose:
             print(f"Setup workflow script generated: {job_script_path}", flush=True)
-
-        return job_script_path
-
-    def generate_ensemble_simulations_script(
-        self,
-        prepare_scenarios: bool = True,
-        process_timeseries: bool = True,
-        which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
-        compression_level: int = 5,
-        pickup_where_leftoff: bool = False,
-        overwrite_scenario: bool = False,
-        rerun_swmm_hydro_if_outputs_exist: bool = False,
-        verbose: bool = True,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
-        analysis_dir: Optional[Path] = None,
-    ) -> Path:
-        """
-        Generate a SLURM script for Phase 2: Ensemble simulations (job array).
-
-        Parameters
-        ----------
-        job_script_path : Optional[Path]
-            Path where the job script will be saved. If None, defaults to
-            analysis_dir/run_ensemble_simulations.sh
-        prepare_scenarios : bool
-            If True, each array task will prepare its scenario before running
-        process_timeseries : bool
-            If True, each array task will process timeseries outputs after simulation
-        which : Literal["TRITON", "SWMM", "both"]
-            Which outputs to process (only used if process_timeseries=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_if_exist : bool
-            If True, overwrite existing processed outputs
-        compression_level : int
-            Compression level for output files (0-9)
-        pickup_where_leftoff : bool
-            If True, resume simulations from last checkpoint
-        overwrite_scenario : bool
-            If True, overwrite existing scenarios
-        rerun_swmm_hydro_if_outputs_exist : bool
-            If True, rerun SWMM hydrology model even if outputs exist
-        verbose : bool
-            If True, print progress messages
-
-        Returns
-        -------
-        Path
-            Path to the generated job script
-        """
-
-        job_script_path = (
-            self.analysis_paths.analysis_dir / "run_ensemble_simulations.sh"
-        )
-
-        analysis_id = self.cfg_analysis.analysis_id
-        run_mode = self.cfg_analysis.run_mode
-        n_mpi_procs = self.cfg_analysis.n_mpi_procs or 1
-        n_omp_threads = self.cfg_analysis.n_omp_threads or 1
-        n_gpus = self.cfg_analysis.n_gpus or 0
-        n_nodes = self.cfg_analysis.n_nodes or 1
-        hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim
-        hpc_partition = self.cfg_analysis.hpc_partition
-        hpc_allocation = self.cfg_analysis.hpc_allocation
-
-        if hpc_time_min is None:
-            raise ValueError("sim run time not specified in analysis config file")
-
-        n_sims = len(self.df_sims)
-        array_range = f"0-{n_sims - 1}"
-
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "sims"
-        logdir.mkdir(exist_ok=True, parents=True)
-        ut.archive_directory_contents(logdir)
-
-        sbatch_lines = [
-            "#!/bin/bash",
-            f"#SBATCH --job-name=TRITON_SWMM_{analysis_id}",
-            f"#SBATCH --array={array_range}",
-            f"#SBATCH --nodes={n_nodes}",
-            f"#SBATCH --ntasks={n_mpi_procs}",
-            f"#SBATCH --cpus-per-task={n_omp_threads}",
-            f"#SBATCH --time={minutes_to_hhmmss(hpc_time_min)}",
-            f"#SBATCH --partition={hpc_partition}",
-            f"#SBATCH --account={hpc_allocation}",
-        ]
-
-        if run_mode == "gpu":
-            sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
-
-        sbatch_lines.extend(
-            [
-                f"#SBATCH --output={logdir}/sim_{ut.current_datetime_string(filepath_friendly=True)}_%A_%a.out",
-                f"#SBATCH --error={logdir}/sim_{ut.current_datetime_string(filepath_friendly=True)}_%A_%a.out",
-                "",
-            ]
-        )
-
-        modules = (
-            self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-        )
-        if modules:
-            sbatch_lines.append(f"module purge")
-            sbatch_lines.append(f"conda deactivate")
-            sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("")
-        sbatch_lines.append(f"module load triton_swmm_toolkit")
-
-        sbatch_lines.append("conda activate triton_swmm_toolkit")
-
-        cmd_parts = [
-            "python -m TRITON_SWMM_toolkit.run_single_simulation \\",
-            "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
-            f"    --system-config {self._system.system_config_yaml} \\",
-            f"    --analysis-config {self.analysis_config_yaml} \\",
-        ]
-
-        if compiled_TRITONSWMM_directory:
-            cmd_parts.append("--compiled-model-dir")
-            cmd_parts.append(str(compiled_TRITONSWMM_directory))
-        if analysis_dir:
-            cmd_parts.append("--analysis-dir")
-            cmd_parts.append(str(analysis_dir))
-
-        if prepare_scenarios:
-            cmd_parts.append("    --prepare-scenario \\")
-            if overwrite_scenario:
-                cmd_parts.append("    --overwrite-scenario \\")
-            if rerun_swmm_hydro_if_outputs_exist:
-                cmd_parts.append("    --rerun-swmm-hydro \\")
-
-        if process_timeseries:
-            cmd_parts.append("    --process-timeseries \\")
-            cmd_parts.append(f"    --which {which} \\")
-            if clear_raw_outputs:
-                cmd_parts.append("    --clear-raw-outputs \\")
-            if overwrite_if_exist:
-                cmd_parts.append("    --overwrite-if-exist \\")
-            cmd_parts.append(f"    --compression-level {compression_level} \\")
-
-        if pickup_where_leftoff:
-            cmd_parts.append("    --pickup-where-leftoff \\")
-
-        cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
-        sbatch_lines.extend(cmd_parts)
-
-        script_content = "\n".join(sbatch_lines)
-        job_script_path.write_text(script_content)
-        job_script_path.chmod(0o755)
-
-        if verbose:
-            print(
-                f"Ensemble simulations script generated: {job_script_path}", flush=True
-            )
 
         return job_script_path
 
@@ -1595,12 +1438,9 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module purge")
-            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("")
-        sbatch_lines.append(f"module load triton_swmm_toolkit")
-
         sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("")
 
         cmd_parts = [
             "python -m TRITON_SWMM_toolkit.consolidate_workflow \\",
@@ -1754,10 +1594,9 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module purge")
-            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("")
-        sbatch_lines.append(f"module load triton_swmm_toolkit")
+        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append("")
 
         # Add environment setup
         sbatch_lines.extend(
@@ -1914,7 +1753,7 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
             )
 
-        ensemble_script = self.generate_ensemble_simulations_script(
+        ensemble_script = self.generate_SLURM_job_array_script(
             prepare_scenarios=prepare_scenarios,
             process_timeseries=process_timeseries,
             which=which,

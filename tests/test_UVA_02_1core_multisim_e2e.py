@@ -37,7 +37,7 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
     assert setup_script.suffix == ".sh", "Setup script should be a shell script"
 
     # Generate Phase 2 (Ensemble) script
-    ensemble_script = analysis.generate_ensemble_simulations_script(
+    ensemble_script = analysis.generate_SLURM_job_array_script(
         prepare_scenarios=True,
         process_timeseries=True,
         which="TRITON",
