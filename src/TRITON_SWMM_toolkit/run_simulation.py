@@ -151,8 +151,8 @@ class TRITONSWMM_run:
                     f_last_cfg
                 )
                 if verbose:
-                    print(f"{status}. Picking up where left off...")
-                    print(print(f"cfg: {cfg}"))
+                    print(f"{status}. Picking up where left off...", flush=True)
+                    print(f"cfg: {cfg}", flush=True)
 
         og_env = os.environ.copy()
         env = dict()
@@ -193,12 +193,14 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
-        module_load_cmd = ""
         modules = (
             self._scenario._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
+        module_load_cmd = ""
 
         if modules:
+            if verbose:
+                print(f"loading modules {modules}")
             module_load_cmd = f"module load {modules}; "
 
         if run_mode != "gpu":

@@ -152,6 +152,10 @@ def main():
             )
             return 0
 
+        logger.info(
+            f"Expected modules in cmd: {system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc}"
+        )
+
         cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
 
         # Execute the simulation command

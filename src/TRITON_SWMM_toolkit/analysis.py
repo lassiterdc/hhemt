@@ -912,6 +912,7 @@ class TRITONSWMM_analysis:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
         analysis_dir: Optional[Path] = None,
     ):
         """
@@ -944,6 +945,7 @@ class TRITONSWMM_analysis:
                 run._create_subprocess_sim_run_launcher(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
+                    compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
                     analysis_dir=analysis_dir,
                 )
             )
@@ -990,8 +992,8 @@ class TRITONSWMM_analysis:
     ) -> list[str]:
         """
         Launch simulations concurrently on an HPC system using SLURM.
-        Uses a pool-based approach to limit concurrent srun tasks and avoid
-        resource contention.
+        Uses a pool-based approach with process polling to limit concurrent srun tasks
+        and avoid resource contention.
 
         This method honors all relevant SLURM environment variables to ensure
         concurrent simulations respect the job's resource allocation:
@@ -1085,17 +1087,67 @@ class TRITONSWMM_analysis:
             )
 
         # ----------------------------
-        # Execute simulations
+        # Process polling-based concurrent execution
         # ----------------------------
         results: list[str] = []
+        running_processes = {}  # {proc: (finalize_sim, start_time, sim_logfile, lf)}
+        pending_launchers = list(
+            launch_functions
+        )  # Queue of (launcher, finalize_sim) tuples
 
-        # Unpack and execute each launcher tuple
-        for launcher, finalize_sim in launch_functions:
-            # Launch the simulation (non-blocking)
+        # Launch initial batch up to max_concurrent
+        while len(running_processes) < max_concurrent and pending_launchers:
+            launcher, finalize_sim = pending_launchers.pop(0)
             proc, start_time, sim_logfile, lf = launcher()
-            # Wait for simulation to complete and update simlog
-            finalize_sim(proc, start_time, sim_logfile, lf)
-            results.append("completed")
+            running_processes[proc] = (finalize_sim, start_time, sim_logfile, lf)
+            if verbose:
+                print(
+                    f"[SLURM] Launched simulation ({len(running_processes)} running, "
+                    f"{len(pending_launchers)} pending)",
+                    flush=True,
+                )
+
+        # Poll and manage running processes
+        while running_processes or pending_launchers:
+            # Check which processes have completed
+            completed_procs = []
+            for proc in list(running_processes.keys()):
+                if proc.poll() is not None:  # Process finished
+                    completed_procs.append(proc)
+
+            # Finalize completed processes
+            for proc in completed_procs:
+                finalize_sim, start_time, sim_logfile, lf = running_processes.pop(proc)
+                finalize_sim(proc, start_time, sim_logfile, lf)
+                results.append("completed")
+
+                if verbose:
+                    print(
+                        f"[SLURM] Simulation completed ({len(running_processes)} running, "
+                        f"{len(pending_launchers)} pending)",
+                        flush=True,
+                    )
+
+                # Launch next pending simulation
+                if pending_launchers:
+                    launcher, finalize_sim = pending_launchers.pop(0)
+                    proc, start_time, sim_logfile, lf = launcher()
+                    running_processes[proc] = (
+                        finalize_sim,
+                        start_time,
+                        sim_logfile,
+                        lf,
+                    )
+                    if verbose:
+                        print(
+                            f"[SLURM] Launched simulation ({len(running_processes)} running, "
+                            f"{len(pending_launchers)} pending)",
+                            flush=True,
+                        )
+
+            # Small sleep to avoid busy-waiting
+            if running_processes:
+                time.sleep(0.1)
 
         self._update_log()
         return results
