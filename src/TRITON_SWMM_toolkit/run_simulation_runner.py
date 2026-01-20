@@ -157,6 +157,7 @@ def main():
         # Execute the simulation command
         logger.info(f"[{event_iloc}] Executing simulation command...")
         logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
+        logger.info(f"command: {" ".join(cmd)}")
 
         with open(tritonswmm_logfile, "w") as lf:
             proc = subprocess.Popen(
