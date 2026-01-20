@@ -6,6 +6,9 @@ from tests.utils import on_UVA_HPC
 
 pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
+# module load miniforge
+# conda activate triton_swmm_toolkit
+
 
 def test_load_system_and_analysis():
     nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(

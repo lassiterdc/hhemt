@@ -1394,7 +1394,7 @@ class TRITONSWMM_analysis:
         logdir = self.analysis_paths.analysis_dir / "slurm_logs"
         # archive outputs from previous runs
         archive_dir = logdir / "_archive"
-        archive_dir.mkdir(exist_ok=True)
+        archive_dir.mkdir(exist_ok=True, parents=True)
         for folder in logdir.iterdir():
             if folder.is_dir() and folder.name != "_archive":
                 shutil.move(str(folder), archive_dir / folder.name)
