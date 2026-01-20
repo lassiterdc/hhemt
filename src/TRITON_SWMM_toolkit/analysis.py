@@ -1343,9 +1343,11 @@ class TRITONSWMM_analysis:
             self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
         if modules:
+            sbatch_lines.append(f"module purge")
+            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
             sbatch_lines.append("")
-        sbatch_lines.append("conda activate triton_swmm_toolkit")
+        sbatch_lines.append(f"module load triton_swmm_toolkit")
 
         setup_cmd_parts = [
             "python -m TRITON_SWMM_toolkit.setup_workflow \\",
@@ -1476,8 +1478,11 @@ class TRITONSWMM_analysis:
             self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
         if modules:
+            sbatch_lines.append(f"module purge")
+            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
             sbatch_lines.append("")
+        sbatch_lines.append(f"module load triton_swmm_toolkit")
 
         sbatch_lines.append("conda activate triton_swmm_toolkit")
 
@@ -1589,8 +1594,11 @@ class TRITONSWMM_analysis:
             self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
         if modules:
+            sbatch_lines.append(f"module purge")
+            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
             sbatch_lines.append("")
+        sbatch_lines.append(f"module load triton_swmm_toolkit")
 
         sbatch_lines.append("conda activate triton_swmm_toolkit")
 
@@ -1745,8 +1753,11 @@ class TRITONSWMM_analysis:
             self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
         if modules:
+            sbatch_lines.append(f"module purge")
+            sbatch_lines.append(f"conda deactivate")
             sbatch_lines.append(f"module load {modules}")
             sbatch_lines.append("")
+        sbatch_lines.append(f"module load triton_swmm_toolkit")
 
         # Add environment setup
         sbatch_lines.extend(

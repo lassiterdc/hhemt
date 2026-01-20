@@ -26,7 +26,9 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
 # verify this runs:
 # srun N 1 -n 1 -c 1 echo "Hello World"
-# module load miniforge
+# module purge
+# conda deactivate
+# module load gompi/14.2.0_5.0.7 miniforge
 # conda activate triton_swmm_toolkit
 # bash commands
 # pgrep -l srun # lists all srun processes
