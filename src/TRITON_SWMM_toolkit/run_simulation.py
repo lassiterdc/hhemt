@@ -19,7 +19,6 @@ class TRITONSWMM_run:
         self._scenario = scenario
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
-        self.log = scenario.log
 
     def _triton_swmm_raw_output_directory(self):
         tritonswmm_output_dir = self._scenario.scen_paths.sim_folder / "output"
@@ -338,7 +337,7 @@ class TRITONSWMM_run:
 
         og_env = os.environ.copy()
 
-        self.log.add_sim_entry(
+        self._scenario.log.add_sim_entry(
             sim_datetime=sim_datetime,
             sim_start_reporting_tstep=sim_start_reporting_tstep,
             tritonswmm_logfile=tritonswmm_logfile,
@@ -389,7 +388,7 @@ class TRITONSWMM_run:
         log_dic["time_elapsed_s"] = elapsed
         log_dic["status"] = status
 
-        self.log.add_sim_entry(**log_dic)
+        self._scenario.log.add_sim_entry(**log_dic)
 
         self._scenario.sim_run_completed
 
@@ -437,7 +436,7 @@ class TRITONSWMM_run:
         import subprocess
 
         event_iloc = self._scenario.event_iloc
-        sim_logfile = self.log.logfile.parent / f"sim_run_{event_iloc}.log"
+        sim_logfile = self._scenario.log.logfile.parent / f"sim_run_{event_iloc}.log"
 
         # Build command - always use direct Python execution (no srun)
         cmd = [
@@ -483,6 +482,28 @@ class TRITONSWMM_run:
                 )
 
             start_time = time.time()
+
+            sim_datetime = current_datetime_string()
+
+            # record sim log
+            n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
+            n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
+            n_gpus = self._analysis.cfg_analysis.n_gpus
+            run_mode = self._analysis.cfg_analysis.run_mode
+
+            self._scenario.log.add_sim_entry(
+                sim_datetime=sim_datetime,
+                sim_start_reporting_tstep=0,
+                tritonswmm_logfile=sim_logfile,
+                time_elapsed_s=0,
+                status="not started",
+                run_mode=run_mode,
+                cmd=" ".join(cmd),  # type: ignore
+                n_mpi_procs=n_mpi_procs,
+                n_omp_threads=n_omp_threads,
+                n_gpus=n_gpus,
+                env=dict(),  # type: ignore
+            )
 
             # Open log file for subprocess output
             lf = open(sim_logfile, "w")
@@ -551,7 +572,7 @@ class TRITONSWMM_run:
             log_dic["status"] = status
 
             # Update the simlog with final status
-            self.log.add_sim_entry(**log_dic)
+            self._scenario.log.add_sim_entry(**log_dic)
 
             if verbose:
                 print(

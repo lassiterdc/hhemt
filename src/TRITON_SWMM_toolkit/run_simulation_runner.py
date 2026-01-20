@@ -173,27 +173,12 @@ def main():
             f"Merged environment passed to subprocess running TRITON-SWMM: {merged_env}"
         )
 
-        sim_datetime = ut.current_datetime_string()
+        # update the environment recorded in the log
+        log_dic = scenario.latest_simlog
+        log_dic["env"] = env
 
-        # record sim log
-        n_mpi_procs = scenario._analysis.cfg_analysis.n_mpi_procs
-        n_omp_threads = scenario._analysis.cfg_analysis.n_omp_threads
-        n_gpus = scenario._analysis.cfg_analysis.n_gpus
-        run_mode = scenario._analysis.cfg_analysis.run_mode
-
-        scenario.log.add_sim_entry(
-            sim_datetime=sim_datetime,
-            sim_start_reporting_tstep=0,
-            tritonswmm_logfile=tritonswmm_logfile,
-            time_elapsed_s=0,
-            status="not started",
-            run_mode=run_mode,
-            cmd=" ".join(cmd),  # type: ignore
-            n_mpi_procs=n_mpi_procs,
-            n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus,
-            env=env,  # type: ignore
-        )
+        # Update the simlog with final status
+        scenario.log.add_sim_entry(**log_dic)
 
         with open(tritonswmm_logfile, "w") as lf:
             proc = subprocess.Popen(
