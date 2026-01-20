@@ -296,6 +296,7 @@ class GetTS_TestCases:
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
     # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
     sensitivity_frontier_all_configs = test_data_dir / "benchmarking_frontier.xlsx"
+    sensitivity_UVA_cpu = test_data_dir / "benchmarking_uva_cpus.xlsx"
     frontier_compilation_script = (
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
@@ -342,7 +343,7 @@ class GetTS_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            n_events=40,
+            n_events=8,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
@@ -355,6 +356,29 @@ class GetTS_TestCases:
                 n_omp_threads=1,
                 n_gpus=0,
                 n_nodes=1,
+            ),
+            additional_system_configs=dict(
+                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
+            ),
+        )
+
+    @classmethod
+    def retreive_norfolk_UVA_sensitivtiy_CPU(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "UVA_sensitivtiy_CPU"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                TRITON_SWMM_make_command="hpc_swmm_omp",
+                toggle_sensitivity_analysis=True,
+                sensitivity_analysis=cls.sensitivity_UVA_cpu,
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
