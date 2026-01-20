@@ -166,7 +166,7 @@ def main():
         with open(tritonswmm_logfile, "w") as lf:
             proc = subprocess.Popen(
                 cmd,
-                env={**os.environ, **env},
+                env={**env},  # **os.environ,
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
