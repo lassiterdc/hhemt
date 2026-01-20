@@ -1345,7 +1345,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
+        sbatch_lines.append("source ~/.conda/etc/profile.d/conda.sh")
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
@@ -1440,7 +1440,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
+        sbatch_lines.append("source ~/.conda/etc/profile.d/conda.sh")
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
@@ -1573,19 +1573,18 @@ class TRITONSWMM_analysis:
         if run_mode == "gpu":
             sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
 
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "sims"
+        logdir.mkdir(parents=True, exist_ok=True)
         # archive outputs from previous runs
         ut.archive_directory_contents(logdir)
 
         dtime = ut.current_datetime_string(filepath_friendly=True)
-        logdir_job = logdir / dtime
-        logdir_job.mkdir(parents=True, exist_ok=True)
 
         # Add output/error log directives
         sbatch_lines.extend(
             [
-                f"#SBATCH --output={logdir_job}/sim_%A_%a.out",
-                f"#SBATCH --error={logdir_job}/sim_%A_%a.out",
+                f"#SBATCH --output={logdir}/sim_{dtime}_%A_%a.out",
+                f"#SBATCH --error={logdir}/sim_{dtime}_%A_%a.out",
                 "",
             ]
         )
@@ -1597,7 +1596,7 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
+        sbatch_lines.append("source ~/.conda/etc/profile.d/conda.sh")
         sbatch_lines.append("conda activate triton_swmm_toolkit")
         sbatch_lines.append("")
 
