@@ -143,7 +143,6 @@ def main():
 
         simprep_result = run.prepare_simulation_command(
             pickup_where_leftoff=args.pickup_where_leftoff,
-            using_srun=False,
             verbose=True,
         )
 

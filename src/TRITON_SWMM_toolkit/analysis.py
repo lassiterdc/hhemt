@@ -961,6 +961,8 @@ class TRITONSWMM_analysis:
         multi_sim_run_method = self.cfg_analysis.multi_sim_run_method
         using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
         if using_srun:
+            if verbose:
+                print(f"running multiple sims using approach {multi_sim_run_method}")
             self.run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
                 launch_functions=launch_functions,
                 verbose=verbose,
