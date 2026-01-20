@@ -55,14 +55,11 @@ def test_run_and_process_sims():
         pytest.fail(
             f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
         )
-    success_processing = (
-        analysis.log.all_TRITON_timeseries_processed.get()
-        and analysis.log.all_SWMM_timeseries_processed.get()
-    )
+    success_processing = analysis.log.all_TRITON_timeseries_processed.get()
     if not success_processing:
         analysis._update_log()
         analysis.log.print()
-        pytest.fail(f"Processing TRITON and SWMM time series failed.")
+        pytest.fail(f"Processing TRITON time series failed.")
 
 
 def test_consolidate_analysis_outputs():
@@ -70,7 +67,5 @@ def test_consolidate_analysis_outputs():
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
-    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)
+    analysis.consolidate_TRITON_simulation_summaries(overwrite_if_exist=True)
     assert analysis.TRITON_analysis_summary_created
-    assert analysis.SWMM_node_analysis_summary_created
-    assert analysis.SWMM_link_analysis_summary_created
