@@ -1285,6 +1285,278 @@ class TRITONSWMM_analysis:
             )
         self._update_log()
 
+    def generate_consolidated_SLURM_workflow_script(
+        self,
+        job_script_path: Optional[Path] = None,
+        process_system_level_inputs: bool = False,
+        overwrite_system_inputs: bool = False,
+        compile_TRITON_SWMM: bool = False,
+        recompile_if_already_done_successfully: bool = False,
+        prepare_scenarios: bool = False,
+        process_timeseries: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        pickup_where_leftoff: bool = False,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        consolidate_outputs: bool = True,
+        verbose: bool = True,
+    ) -> Path:
+        """
+        Generate a consolidated SLURM workflow script with three phases.
+
+        Phase 1: Setup (process system inputs and compile TRITON-SWMM)
+        Phase 2: Ensemble (run all simulations in parallel using job array)
+        Phase 3: Consolidation (consolidate outputs after all simulations complete)
+
+        Each phase verifies the success of the previous phase before proceeding.
+
+        Parameters
+        ----------
+        job_script_path : Optional[Path]
+            Path where the job script will be saved. If None, defaults to
+            analysis_dir/run_consolidated_workflow.sh
+        process_system_level_inputs : bool
+            If True, process system-level inputs (DEM, Mannings) in Phase 1
+        overwrite_system_inputs : bool
+            If True, overwrite existing system input files
+        compile_TRITON_SWMM : bool
+            If True, compile TRITON-SWMM in Phase 1
+        recompile_if_already_done_successfully : bool
+            If True, recompile even if already compiled successfully
+        prepare_scenarios : bool
+            If True, each array task will prepare its scenario before running
+        process_timeseries : bool
+            If True, each array task will process timeseries outputs after simulation
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process (only used if process_timeseries=True)
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        compression_level : int
+            Compression level for output files (0-9)
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        consolidate_outputs : bool
+            If True, consolidate outputs in Phase 3 after all simulations complete
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        Path
+            Path to the generated job script
+        """
+        # Default job script path
+        if job_script_path is None:
+            job_script_path = (
+                self.analysis_paths.analysis_dir / "run_consolidated_workflow.sh"
+            )
+        else:
+            job_script_path = Path(job_script_path)
+
+        # Ensure parent directory exists
+        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Get configuration parameters
+        analysis_id = self.cfg_analysis.analysis_id
+        run_mode = self.cfg_analysis.run_mode
+        n_mpi_procs = self.cfg_analysis.n_mpi_procs or 1
+        n_omp_threads = self.cfg_analysis.n_omp_threads or 1
+        n_gpus = self.cfg_analysis.n_gpus or 0
+        n_nodes = self.cfg_analysis.n_nodes or 1
+
+        # Get HPC parameters (if available in config)
+        hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim
+        hpc_partition = self.cfg_analysis.hpc_partition
+        hpc_allocation = self.cfg_analysis.hpc_allocation
+
+        if hpc_time_min is None:
+            raise ValueError("sim run time not specified in analysis config file")
+
+        # Calculate array range
+        n_sims = len(self.df_sims)
+        array_range = f"0-{n_sims - 1}"
+
+        from TRITON_SWMM_toolkit.utils import current_datetime_string
+
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        # archive outputs from previous runs
+        archive_dir = logdir / "_archive"
+        archive_dir.mkdir(exist_ok=True, parents=True)
+        for folder in logdir.iterdir():
+            if folder.is_dir() and folder.name != "_archive":
+                shutil.move(str(folder), archive_dir / folder.name)
+
+        dtime = current_datetime_string(filepath_friendly=True)
+        logdir_job = logdir / dtime
+        logdir_job.mkdir(parents=True, exist_ok=True)
+
+        # Build heterogeneous SLURM script with three phases
+        sbatch_lines = ["#!/bin/bash", "#SBATCH --heterogeneous", ""]
+
+        # ===== PHASE 1: Setup (process system inputs and compile) =====
+        sbatch_lines.extend(
+            [
+                "# Phase 1: Setup (process system inputs and compile TRITON-SWMM)",
+                "#SBATCH --nodes=1",
+                "#SBATCH --ntasks=1",
+                "#SBATCH --cpus-per-task=1",
+                "#SBATCH --time=00:30:00",
+                f"#SBATCH --output={logdir_job}/setup_%j.out",
+                f"#SBATCH --error={logdir_job}/setup_%j.out",
+                "",
+            ]
+        )
+
+        # Add module loading if needed
+        modules = (
+            self._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        )
+        if modules:
+            sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("")
+
+        # Build setup_workflow command
+        setup_cmd_parts = [
+            "python -m TRITON_SWMM_toolkit.setup_workflow \\",
+            f"    --system-config {self._system.system_config_yaml} \\",
+            f"    --analysis-config {self.analysis_config_yaml} \\",
+        ]
+
+        if process_system_level_inputs:
+            setup_cmd_parts.append("    --process-system-inputs \\")
+            if overwrite_system_inputs:
+                setup_cmd_parts.append("    --overwrite-system-inputs \\")
+
+        if compile_TRITON_SWMM:
+            setup_cmd_parts.append("    --compile-triton-swmm \\")
+            if recompile_if_already_done_successfully:
+                setup_cmd_parts.append("    --recompile-if-already-done \\")
+
+        setup_cmd_parts[-1] = setup_cmd_parts[-1].rstrip(" \\")
+        sbatch_lines.extend(setup_cmd_parts)
+        sbatch_lines.append("")
+
+        # ===== PHASE 2: Ensemble (job array for simulations) =====
+        sbatch_lines.extend(
+            [
+                "#SBATCH hetjob",
+                "# Phase 2: Ensemble simulations (job array)",
+                f"#SBATCH --job-name=TRITON_SWMM_{analysis_id}",
+                f"#SBATCH --array={array_range}",
+                f"#SBATCH --nodes={n_nodes}",
+                f"#SBATCH --ntasks={n_mpi_procs}",
+                f"#SBATCH --cpus-per-task={n_omp_threads}",
+                f"#SBATCH --time={minutes_to_hhmmss(hpc_time_min)}",
+                f"#SBATCH --partition={hpc_partition}",
+                f"#SBATCH --account={hpc_allocation}",
+            ]
+        )
+
+        # Add GPU directive if in GPU mode
+        if run_mode == "gpu":
+            sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
+
+        sbatch_lines.extend(
+            [
+                f"#SBATCH --output={logdir_job}/sim_%A_%a.out",
+                f"#SBATCH --error={logdir_job}/sim_%A_%a.out",
+                "",
+            ]
+        )
+
+        if modules:
+            sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("")
+
+        # Build the run_single_simulation command
+        cmd_parts = [
+            "python -m TRITON_SWMM_toolkit.run_single_simulation \\",
+            "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
+            f"    --system-config {self._system.system_config_yaml} \\",
+            f"    --analysis-config {self.analysis_config_yaml} \\",
+        ]
+
+        if prepare_scenarios:
+            cmd_parts.append("    --prepare-scenario \\")
+            if overwrite_scenario:
+                cmd_parts.append("    --overwrite-scenario \\")
+            if rerun_swmm_hydro_if_outputs_exist:
+                cmd_parts.append("    --rerun-swmm-hydro \\")
+
+        if process_timeseries:
+            cmd_parts.append("    --process-timeseries \\")
+            cmd_parts.append(f"    --which {which} \\")
+            if clear_raw_outputs:
+                cmd_parts.append("    --clear-raw-outputs \\")
+            if overwrite_if_exist:
+                cmd_parts.append("    --overwrite-if-exist \\")
+            cmd_parts.append(f"    --compression-level {compression_level} \\")
+
+        if pickup_where_leftoff:
+            cmd_parts.append("    --pickup-where-leftoff \\")
+
+        cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
+        sbatch_lines.extend(cmd_parts)
+        sbatch_lines.append("")
+
+        # ===== PHASE 3: Consolidation (after all array tasks complete) =====
+        sbatch_lines.extend(
+            [
+                "#SBATCH hetjob",
+                "# Phase 3: Consolidation (after all simulations complete)",
+                "#SBATCH --nodes=1",
+                "#SBATCH --ntasks=1",
+                "#SBATCH --cpus-per-task=1",
+                "#SBATCH --time=00:30:00",
+                f"#SBATCH --output={logdir_job}/consolidate_%j.out",
+                f"#SBATCH --error={logdir_job}/consolidate_%j.out",
+                "",
+            ]
+        )
+
+        if modules:
+            sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("")
+
+        # Build consolidate_workflow command
+        consolidate_cmd_parts = [
+            "python -m TRITON_SWMM_toolkit.consolidate_workflow \\",
+            f"    --system-config {self._system.system_config_yaml} \\",
+            f"    --analysis-config {self.analysis_config_yaml} \\",
+        ]
+
+        if consolidate_outputs:
+            consolidate_cmd_parts.append("    --consolidate-outputs \\")
+            consolidate_cmd_parts.append(
+                f"    --compression-level {compression_level} \\"
+            )
+
+        consolidate_cmd_parts[-1] = consolidate_cmd_parts[-1].rstrip(" \\")
+        sbatch_lines.extend(consolidate_cmd_parts)
+
+        # Write the script
+        script_content = "\n".join(sbatch_lines)
+        job_script_path.write_text(script_content)
+        job_script_path.chmod(0o755)
+
+        if verbose:
+            print(
+                f"Consolidated SLURM workflow script generated: {job_script_path}",
+                flush=True,
+            )
+            print(f"To submit: sbatch {job_script_path}", flush=True)
+
+        return job_script_path
+
     def generate_SLURM_job_array_script(
         self,
         job_script_path: Optional[Path] = None,
@@ -1486,6 +1758,10 @@ class TRITONSWMM_analysis:
     def submit_SLURM_job_array(
         self,
         job_script_path: Optional[Path] = None,
+        process_system_level_inputs: bool = False,
+        overwrite_system_inputs: bool = False,
+        compile_TRITON_SWMM: bool = True,
+        recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -1495,23 +1771,36 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff: bool = False,
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
+        consolidate_outputs: bool = True,
         verbose: bool = True,
     ) -> tuple[Path, str]:
         """
-        Generate and submit a SLURM job array script.
+        Generate and submit a consolidated SLURM workflow script.
 
-        This method wraps generate_SLURM_job_array_script() and automatically
-        submits the generated script using sbatch.
+        This method creates a heterogeneous SLURM job with three phases:
+        1. Setup: Process system inputs and compile TRITON-SWMM
+        2. Ensemble: Run all simulations in parallel using job array
+        3. Consolidation: Consolidate outputs after all simulations complete
+
+        Each phase verifies the success of the previous phase before proceeding.
 
         Parameters
         ----------
         job_script_path : Optional[Path]
             Path where the job script will be saved. If None, defaults to
-            analysis_dir/run_job_array.sh
+            analysis_dir/run_consolidated_workflow.sh
+        process_system_level_inputs : bool
+            If True, process system-level inputs (DEM, Mannings) in Phase 1
+        overwrite_system_inputs : bool
+            If True, overwrite existing system input files
+        compile_TRITON_SWMM : bool
+            If True, compile TRITON-SWMM in Phase 1
+        recompile_if_already_done_successfully : bool
+            If True, recompile even if already compiled successfully
         prepare_scenarios : bool
-            If True, each task will prepare its scenario before running
+            If True, each array task will prepare its scenario before running
         process_timeseries : bool
-            If True, each task will process timeseries outputs after simulation
+            If True, each array task will process timeseries outputs after simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
         clear_raw_outputs : bool
@@ -1526,6 +1815,8 @@ class TRITONSWMM_analysis:
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
+        consolidate_outputs : bool
+            If True, consolidate outputs in Phase 3 after all simulations complete
         verbose : bool
             If True, print progress messages
 
@@ -1543,15 +1834,20 @@ class TRITONSWMM_analysis:
         --------
         >>> analysis = TRITONSWMM_analysis(...)
         >>> script_path, job_id = analysis.submit_SLURM_job_array(
-        ...     prepare_scenarios=True,
-        ...     process_timeseries=True,
+        ...     process_system_level_inputs=True,
+        ...     compile_TRITON_SWMM=True,
+        ...     consolidate_outputs=True,
         ... )
         >>> print(f"Job submitted with ID: {job_id}")
         >>> print(f"Monitor with: squeue -j {job_id}")
         """
         # Generate the script
-        script_path = self.generate_SLURM_job_array_script(
+        script_path = self.generate_consolidated_SLURM_workflow_script(
             job_script_path=job_script_path,
+            process_system_level_inputs=process_system_level_inputs,
+            overwrite_system_inputs=overwrite_system_inputs,
+            compile_TRITON_SWMM=compile_TRITON_SWMM,
+            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
             process_timeseries=process_timeseries,
             which=which,
@@ -1561,12 +1857,13 @@ class TRITONSWMM_analysis:
             pickup_where_leftoff=pickup_where_leftoff,
             overwrite_scenario=overwrite_scenario,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+            consolidate_outputs=consolidate_outputs,
             verbose=verbose,
         )
 
         # Submit the job
         if verbose:
-            print(f"Submitting job array script: {script_path}", flush=True)
+            print(f"Submitting consolidated workflow script: {script_path}", flush=True)
 
         try:
             result = subprocess.run(
