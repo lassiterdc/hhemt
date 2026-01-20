@@ -10,6 +10,8 @@
     # export PYTHONNOUSERSITE=1
     # conda env update -f environment.yaml
   # create directly from environment yaml
+    # module purge
+    # module load {conda app, e.g., miniforge}
     # conda env create -f environment.yaml
     # conda activate triton_swmm_toolkit
 # to use development version if git cloned:
