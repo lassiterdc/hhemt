@@ -275,7 +275,16 @@ class TRITONSWMM_run:
         else:
             raise ValueError(f"Unknown run_mode: {run_mode}")
 
-        full_cmd = f"{module_load_cmd}{launch_cmd_str}"
+        # Build the full command with explicit environment variable exports
+        # This ensures LD_LIBRARY_PATH is set AFTER module loading, preventing it from being overwritten
+        env_exports = []
+        for key, value in env.items():
+            # Escape any special characters in the value
+            escaped_value = value.replace('"', '\\"')
+            env_exports.append(f'export {key}="{escaped_value}"')
+        env_export_str = "; ".join(env_exports)
+
+        full_cmd = f"{env_export_str}; {module_load_cmd}{launch_cmd_str}"
         cmd = [
             "bash",
             "-lc",
