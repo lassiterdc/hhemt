@@ -487,22 +487,6 @@ class TRITONSWMM_run:
                     f"[Scenario {event_iloc}] Launching subprocess: {' '.join(cmd)}",
                     flush=True,
                 )
-            sim_datetime = current_datetime_string()
-            # Record initial simulation entry BEFORE subprocess execution
-            # This captures all simulation metadata for benchmarking
-            self.log.add_sim_entry(
-                sim_datetime=sim_datetime,
-                sim_start_reporting_tstep=0,
-                tritonswmm_logfile=sim_logfile,
-                time_elapsed_s=0,
-                status="not started",
-                run_mode=run_mode,
-                cmd=" ".join(cmd),  # type: ignore
-                n_mpi_procs=n_mpi_procs,
-                n_omp_threads=n_omp_threads,
-                n_gpus=n_gpus,
-                # env=og_env,  # type: ignore
-            )
 
             start_time = time.time()
 

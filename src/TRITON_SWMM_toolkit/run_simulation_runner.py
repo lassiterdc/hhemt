@@ -27,6 +27,7 @@ import os
 from pathlib import Path
 import traceback
 import logging
+import TRITON_SWMM_toolkit.utils as ut
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -170,6 +171,23 @@ def main():
 
         logger.info(
             f"Merged environment passed to subprocess running TRITON-SWMM: {merged_env}"
+        )
+
+        sim_datetime = ut.current_datetime_string()
+        # Record initial simulation entry BEFORE subprocess execution
+        # This captures all simulation metadata for benchmarking
+        scenario.log.add_sim_entry(
+            sim_datetime=sim_datetime,
+            sim_start_reporting_tstep=0,
+            tritonswmm_logfile=sim_logfile,
+            time_elapsed_s=0,
+            status="not started",
+            run_mode=run_mode,
+            cmd=" ".join(cmd),  # type: ignore
+            n_mpi_procs=n_mpi_procs,
+            n_omp_threads=n_omp_threads,
+            n_gpus=n_gpus,
+            env=merged_env,  # type: ignore
         )
 
         with open(tritonswmm_logfile, "w") as lf:
