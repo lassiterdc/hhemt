@@ -1,10 +1,8 @@
 # %%
 import subprocess
 import shutil
-from TRITON_SWMM_toolkit.utils import (
-    create_from_template,
-    read_text_file_as_string,
-)
+import TRITON_SWMM_toolkit.utils as ut
+
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_analysis_config
 import pandas as pd
@@ -1287,7 +1285,6 @@ class TRITONSWMM_analysis:
 
     def generate_setup_workflow_script(
         self,
-        job_script_path: Optional[Path] = None,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
         compile_TRITON_SWMM: bool = True,
@@ -1318,20 +1315,12 @@ class TRITONSWMM_analysis:
         Path
             Path to the generated job script
         """
-        if job_script_path is None:
-            job_script_path = self.analysis_paths.analysis_dir / "run_setup_workflow.sh"
-        else:
-            job_script_path = Path(job_script_path)
 
-        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+        job_script_path = self.analysis_paths.analysis_dir / "run_setup_workflow.sh"
 
-        from TRITON_SWMM_toolkit.utils import current_datetime_string
-
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "setup"
         logdir.mkdir(exist_ok=True, parents=True)
-        dtime = current_datetime_string(filepath_friendly=True)
-        logdir_job = logdir / dtime
-        logdir_job.mkdir(parents=True, exist_ok=True)
+        ut.archive_subdirectories(logdir)
 
         hpc_partition = self.cfg_analysis.hpc_partition
         hpc_allocation = self.cfg_analysis.hpc_allocation
@@ -1345,8 +1334,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --time=00:30:00",
             f"#SBATCH --partition={hpc_partition}",
             f"#SBATCH --account={hpc_allocation}",
-            f"#SBATCH --output={logdir_job}/setup_%j.out",
-            f"#SBATCH --error={logdir_job}/setup_%j.out",
+            f"#SBATCH --output={logdir}/setup_%j.out",
+            f"#SBATCH --error={logdir}/setup_%j.out",
             "",
         ]
 
@@ -1355,8 +1344,8 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("conda activate triton_swmm_toolkit")
             sbatch_lines.append("")
+        sbatch_lines.append("conda activate triton_swmm_toolkit")
 
         setup_cmd_parts = [
             "python -m TRITON_SWMM_toolkit.setup_workflow \\",
@@ -1388,7 +1377,6 @@ class TRITONSWMM_analysis:
 
     def generate_ensemble_simulations_script(
         self,
-        job_script_path: Optional[Path] = None,
         prepare_scenarios: bool = True,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -1399,6 +1387,8 @@ class TRITONSWMM_analysis:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = True,
+        compiled_TRITONSWMM_directory: Optional[Path] = None,
+        analysis_dir: Optional[Path] = None,
     ) -> Path:
         """
         Generate a SLURM script for Phase 2: Ensemble simulations (job array).
@@ -1434,14 +1424,10 @@ class TRITONSWMM_analysis:
         Path
             Path to the generated job script
         """
-        if job_script_path is None:
-            job_script_path = (
-                self.analysis_paths.analysis_dir / "run_ensemble_simulations.sh"
-            )
-        else:
-            job_script_path = Path(job_script_path)
 
-        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+        job_script_path = (
+            self.analysis_paths.analysis_dir / "run_ensemble_simulations.sh"
+        )
 
         analysis_id = self.cfg_analysis.analysis_id
         run_mode = self.cfg_analysis.run_mode
@@ -1459,13 +1445,9 @@ class TRITONSWMM_analysis:
         n_sims = len(self.df_sims)
         array_range = f"0-{n_sims - 1}"
 
-        from TRITON_SWMM_toolkit.utils import current_datetime_string
-
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "sims"
         logdir.mkdir(exist_ok=True, parents=True)
-        dtime = current_datetime_string(filepath_friendly=True)
-        logdir_job = logdir / dtime
-        logdir_job.mkdir(parents=True, exist_ok=True)
+        ut.archive_subdirectories(logdir)
 
         sbatch_lines = [
             "#!/bin/bash",
@@ -1484,8 +1466,8 @@ class TRITONSWMM_analysis:
 
         sbatch_lines.extend(
             [
-                f"#SBATCH --output={logdir_job}/sim_%A_%a.out",
-                f"#SBATCH --error={logdir_job}/sim_%A_%a.out",
+                f"#SBATCH --output={logdir}/sim_%A_%a.out",
+                f"#SBATCH --error={logdir}/sim_%A_%a.out",
                 "",
             ]
         )
@@ -1497,12 +1479,21 @@ class TRITONSWMM_analysis:
             sbatch_lines.append(f"module load {modules}")
             sbatch_lines.append("")
 
+        sbatch_lines.append("conda activate triton_swmm_toolkit")
+
         cmd_parts = [
             "python -m TRITON_SWMM_toolkit.run_single_simulation \\",
             "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
             f"    --system-config {self._system.system_config_yaml} \\",
             f"    --analysis-config {self.analysis_config_yaml} \\",
         ]
+
+        if compiled_TRITONSWMM_directory:
+            cmd_parts.append("--compiled-model-dir")
+            cmd_parts.append(str(compiled_TRITONSWMM_directory))
+        if analysis_dir:
+            cmd_parts.append("--analysis-dir")
+            cmd_parts.append(str(analysis_dir))
 
         if prepare_scenarios:
             cmd_parts.append("    --prepare-scenario \\")
@@ -1539,11 +1530,10 @@ class TRITONSWMM_analysis:
 
     def generate_consolidation_workflow_script(
         self,
-        job_script_path: Optional[Path] = None,
-        consolidate_outputs: bool = True,
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         verbose: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
     ) -> Path:
         """
         Generate a SLURM script for Phase 3: Consolidation.
@@ -1567,22 +1557,16 @@ class TRITONSWMM_analysis:
         Path
             Path to the generated job script
         """
-        if job_script_path is None:
-            job_script_path = (
-                self.analysis_paths.analysis_dir / "run_consolidation_workflow.sh"
-            )
-        else:
-            job_script_path = Path(job_script_path)
 
-        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+        job_script_path = (
+            self.analysis_paths.analysis_dir / "run_consolidation_workflow.sh"
+        )
 
-        from TRITON_SWMM_toolkit.utils import current_datetime_string
-
-        logdir = self.analysis_paths.analysis_dir / "slurm_logs"
+        logdir = (
+            self.analysis_paths.analysis_dir / "slurm_logs" / "output_consolidation"
+        )
         logdir.mkdir(exist_ok=True, parents=True)
-        dtime = current_datetime_string(filepath_friendly=True)
-        logdir_job = logdir / dtime
-        logdir_job.mkdir(parents=True, exist_ok=True)
+        ut.archive_subdirectories(logdir)
 
         hpc_partition = self.cfg_analysis.hpc_partition
         hpc_allocation = self.cfg_analysis.hpc_allocation
@@ -1596,8 +1580,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --time=00:30:00",
             f"#SBATCH --partition={hpc_partition}",
             f"#SBATCH --account={hpc_allocation}",
-            f"#SBATCH --output={logdir_job}/consolidate_%j.out",
-            f"#SBATCH --error={logdir_job}/consolidate_%j.out",
+            f"#SBATCH --output={logdir}/consolidate_%j.out",
+            f"#SBATCH --error={logdir}/consolidate_%j.out",
             "",
         ]
 
@@ -1606,23 +1590,25 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module load {modules}")
-            sbatch_lines.append("conda activate triton_swmm_toolkit")
             sbatch_lines.append("")
 
-        consolidate_cmd_parts = [
+        sbatch_lines.append("conda activate triton_swmm_toolkit")
+
+        cmd_parts = [
             "python -m TRITON_SWMM_toolkit.consolidate_workflow \\",
             f"    --system-config {self._system.system_config_yaml} \\",
             f"    --analysis-config {self.analysis_config_yaml} \\",
         ]
 
-        if consolidate_outputs:
-            consolidate_cmd_parts.append("    --consolidate-outputs \\")
-            consolidate_cmd_parts.append(
-                f"    --compression-level {compression_level} \\"
-            )
+        cmd_parts.append("    --consolidate-outputs \\")
+        cmd_parts.append(f"    --compression-level {compression_level} \\")
+        if overwrite_if_exist:
+            cmd_parts.append("    --overwrite-if-exist \\")
 
-        consolidate_cmd_parts[-1] = consolidate_cmd_parts[-1].rstrip(" \\")
-        sbatch_lines.extend(consolidate_cmd_parts)
+        cmd_parts.append(f"    --which {which} \\")
+
+        cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
+        sbatch_lines.extend(cmd_parts)
 
         script_content = "\n".join(sbatch_lines)
         job_script_path.write_text(script_content)
@@ -1743,17 +1729,11 @@ class TRITONSWMM_analysis:
         if run_mode == "gpu":
             sbatch_lines.append(f"#SBATCH --gres=gpu:{n_gpus}")
 
-        from TRITON_SWMM_toolkit.utils import current_datetime_string
-
         logdir = self.analysis_paths.analysis_dir / "slurm_logs"
         # archive outputs from previous runs
-        archive_dir = logdir / "_archive"
-        archive_dir.mkdir(exist_ok=True, parents=True)
-        for folder in logdir.iterdir():
-            if folder.is_dir() and folder.name != "_archive":
-                shutil.move(str(folder), archive_dir / folder.name)
+        ut.archive_subdirectories(logdir)
 
-        dtime = current_datetime_string(filepath_friendly=True)
+        dtime = ut.current_datetime_string(filepath_friendly=True)
         logdir_job = logdir / dtime
         logdir_job.mkdir(parents=True, exist_ok=True)
 
@@ -1836,7 +1816,6 @@ class TRITONSWMM_analysis:
 
     def submit_SLURM_job_array(
         self,
-        job_script_path: Optional[Path] = None,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
         compile_TRITON_SWMM: bool = True,
@@ -1943,10 +1922,10 @@ class TRITONSWMM_analysis:
         )
 
         consolidation_script = self.generate_consolidation_workflow_script(
-            consolidate_outputs=consolidate_outputs,
             overwrite_if_exist=overwrite_if_exist,
             compression_level=compression_level,
             verbose=verbose,
+            which=which,
         )
 
         # Submit the three scripts with dependencies
@@ -2046,7 +2025,7 @@ class TRITONSWMM_analysis:
             COMPILED_MODEL_DIR=compiled_TRITONSWMM_directory,
             MAKE_COMMAND=TRITON_SWMM_make_command,
         )
-        comp_script_content = create_from_template(
+        comp_script_content = ut.create_from_template(
             TRITON_SWMM_software_compilation_script,
             mapping,
             compilation_script,
@@ -2064,10 +2043,10 @@ class TRITONSWMM_analysis:
         import time
 
         start_time = time.time()
-        compilation_log = read_text_file_as_string(compilation_logfile)
+        compilation_log = ut.read_text_file_as_string(compilation_logfile)
         while "Building finished: triton" not in compilation_log:
             time.sleep(0.1)
-            compilation_log = read_text_file_as_string(compilation_logfile)
+            compilation_log = ut.read_text_file_as_string(compilation_logfile)
             elapsed = time.time() - start_time
             time.sleep(0.1)
             if elapsed > 5:
@@ -2088,7 +2067,7 @@ class TRITONSWMM_analysis:
 
     def retrieve_compilation_log(self):
         if self.analysis_paths.compilation_logfile.exists():
-            return read_text_file_as_string(self.analysis_paths.compilation_logfile)
+            return ut.read_text_file_as_string(self.analysis_paths.compilation_logfile)
         return "no sim logfile created"
 
     def print_compilation_log(self):

@@ -11,6 +11,14 @@ import shutil
 from typing import Any
 
 
+def archive_subdirectories(dir: Path):
+    archive_dir = dir / "_archive"
+    archive_dir.mkdir(exist_ok=True, parents=True)
+    for folder in dir.iterdir():
+        if folder.is_dir() and folder.name != "_archive":
+            shutil.move(str(folder), archive_dir / folder.name)
+
+
 def create_mask_from_shapefile(
     da_to_mask, shapefile_path=None, series_single_row_of_gdf=None
 ):  # , COORD_EPSG):

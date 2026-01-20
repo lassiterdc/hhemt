@@ -56,10 +56,11 @@ def main() -> int:
         help="Path to analysis configuration YAML file",
     )
     parser.add_argument(
-        "--consolidate-outputs",
-        action="store_true",
-        default=False,
-        help="Consolidate TRITON and SWMM simulation summaries",
+        "--which",
+        type=str,
+        default="both",
+        choices=["TRITON", "SWMM", "both"],
+        help="Which outputs to process: TRITON, SWMM, or both (only used if --process-timeseries)",
     )
     parser.add_argument(
         "--overwrite-if-exist",
@@ -77,6 +78,7 @@ def main() -> int:
         "--analysis-dir",
         type=Path,
         required=False,
+        default=None,
         help="(Optional) path to the analysis directory",
     )
 
@@ -141,21 +143,19 @@ def main() -> int:
             )
 
         # Phase 3b: Consolidate outputs
-        if args.consolidate_outputs:
-            logger.info("Consolidating TRITON and SWMM simulation summaries...")
-            try:
-                analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-                    overwrite_if_exist=args.overwrite_if_exist,
-                    verbose=True,
-                    compression_level=args.compression_level,
-                )
-                logger.info("Consolidation completed successfully")
-            except Exception as e:
-                logger.error(f"Failed to consolidate outputs: {e}")
-                logger.error(traceback.format_exc())
-                return 1
-        else:
-            logger.info("Skipping consolidation (--consolidate-outputs not specified)")
+        logger.info("Consolidating TRITON and SWMM simulation summaries...")
+        try:
+            analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
+                overwrite_if_exist=args.overwrite_if_exist,
+                verbose=True,
+                compression_level=args.compression_level,
+                which=args.which,
+            )
+            logger.info("Consolidation completed successfully")
+        except Exception as e:
+            logger.error(f"Failed to consolidate outputs: {e}")
+            logger.error(traceback.format_exc())
+            return 1
 
         logger.info("Consolidation workflow completed successfully")
         return 0

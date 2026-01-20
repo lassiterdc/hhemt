@@ -26,11 +26,10 @@ Exit codes:
 
 import sys
 import argparse
-import subprocess
 from pathlib import Path
 import traceback
 import logging
-from typing import Tuple
+
 
 # Configure logging to stderr
 logging.basicConfig(
