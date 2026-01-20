@@ -463,13 +463,7 @@ class TRITONSWMM_run:
             cmd.append(str(analysis_dir))
 
         # Prepare simulation metadata for initial log entry
-        n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
-        n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
-        n_gpus = self._analysis.cfg_analysis.n_gpus
         run_mode = self._analysis.cfg_analysis.run_mode
-
-        if run_mode != "gpu":
-            n_gpus = 0
 
         # og_env = os.environ.copy()
 

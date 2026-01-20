@@ -174,12 +174,17 @@ def main():
         )
 
         sim_datetime = ut.current_datetime_string()
-        # Record initial simulation entry BEFORE subprocess execution
-        # This captures all simulation metadata for benchmarking
+
+        # record sim log
+        n_mpi_procs = scenario._analysis.cfg_analysis.n_mpi_procs
+        n_omp_threads = scenario._analysis.cfg_analysis.n_omp_threads
+        n_gpus = scenario._analysis.cfg_analysis.n_gpus
+        run_mode = scenario._analysis.cfg_analysis.run_mode
+
         scenario.log.add_sim_entry(
             sim_datetime=sim_datetime,
             sim_start_reporting_tstep=0,
-            tritonswmm_logfile=sim_logfile,
+            tritonswmm_logfile=tritonswmm_logfile,
             time_elapsed_s=0,
             status="not started",
             run_mode=run_mode,
