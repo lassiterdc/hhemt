@@ -61,7 +61,7 @@ def main() -> int:
     parser.add_argument(
         "--process-system-inputs",
         action="store_true",
-        default=False,
+        default=True,
         help="Process system-level inputs (DEM, Mannings files)",
     )
     parser.add_argument(
@@ -73,7 +73,7 @@ def main() -> int:
     parser.add_argument(
         "--compile-triton-swmm",
         action="store_true",
-        default=False,
+        default=True,
         help="Compile TRITON-SWMM",
     )
     parser.add_argument(
@@ -86,12 +86,14 @@ def main() -> int:
         "--compiled-model-dir",
         type=Path,
         required=False,
+        default=None,
         help="(Optional) path to compiled TRITON-SWMM directory",
     )
     parser.add_argument(
         "--analysis-dir",
         type=Path,
         required=False,
+        default=None,
         help="(Optional) path to the analysis directory",
     )
 
@@ -131,7 +133,7 @@ def main() -> int:
             system=system,
             analysis_dir=args.analysis_dir,
             compiled_TRITONSWMM_directory=args.compiled_model_dir,
-            skip_log_update=True,
+            skip_log_update=False,
         )
 
         # Phase 1a: Process system-level inputs

@@ -1355,6 +1355,7 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("conda activate triton_swmm_toolkit")
             sbatch_lines.append("")
 
         setup_cmd_parts = [
@@ -1605,6 +1606,7 @@ class TRITONSWMM_analysis:
         )
         if modules:
             sbatch_lines.append(f"module load {modules}")
+            sbatch_lines.append("conda activate triton_swmm_toolkit")
             sbatch_lines.append("")
 
         consolidate_cmd_parts = [
