@@ -40,7 +40,7 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
     ensemble_script = analysis.generate_ensemble_simulations_script(
         prepare_scenarios=True,
         process_timeseries=True,
-        which="both",
+        which="TRITON",
         clear_raw_outputs=True,
         overwrite_if_exist=False,
         compression_level=5,
@@ -54,10 +54,7 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
 
     # Generate Phase 3 (Consolidation) script
     consolidation_script = analysis.generate_consolidation_workflow_script(
-        consolidate_outputs=True,
-        overwrite_if_exist=False,
-        compression_level=5,
-        verbose=True,
+        overwrite_if_exist=False, compression_level=5, verbose=True, which="TRITON"
     )
     assert (
         consolidation_script.exists()
@@ -102,7 +99,7 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         process_timeseries=True,
-        which="both",
+        which="TRITON",
         clear_raw_outputs=True,
         overwrite_if_exist=False,
         compression_level=5,

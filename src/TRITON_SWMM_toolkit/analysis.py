@@ -1320,7 +1320,7 @@ class TRITONSWMM_analysis:
 
         logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "setup"
         logdir.mkdir(exist_ok=True, parents=True)
-        ut.archive_subdirectories(logdir)
+        ut.archive_directory_contents(logdir)
 
         hpc_partition = self.cfg_analysis.hpc_partition
         hpc_allocation = self.cfg_analysis.hpc_allocation
@@ -1334,8 +1334,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --time=00:30:00",
             f"#SBATCH --partition={hpc_partition}",
             f"#SBATCH --account={hpc_allocation}",
-            f"#SBATCH --output={logdir}/setup_%j.out",
-            f"#SBATCH --error={logdir}/setup_%j.out",
+            f"#SBATCH --output={logdir}/setup_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
+            f"#SBATCH --error={logdir}/setup_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             "",
         ]
 
@@ -1447,7 +1447,7 @@ class TRITONSWMM_analysis:
 
         logdir = self.analysis_paths.analysis_dir / "slurm_logs" / "sims"
         logdir.mkdir(exist_ok=True, parents=True)
-        ut.archive_subdirectories(logdir)
+        ut.archive_directory_contents(logdir)
 
         sbatch_lines = [
             "#!/bin/bash",
@@ -1466,8 +1466,8 @@ class TRITONSWMM_analysis:
 
         sbatch_lines.extend(
             [
-                f"#SBATCH --output={logdir}/sim_%A_%a.out",
-                f"#SBATCH --error={logdir}/sim_%A_%a.out",
+                f"#SBATCH --output={logdir}/sim_{ut.current_datetime_string(filepath_friendly=True)}_%A_%a.out",
+                f"#SBATCH --error={logdir}/sim_{ut.current_datetime_string(filepath_friendly=True)}_%A_%a.out",
                 "",
             ]
         )
@@ -1566,7 +1566,7 @@ class TRITONSWMM_analysis:
             self.analysis_paths.analysis_dir / "slurm_logs" / "output_consolidation"
         )
         logdir.mkdir(exist_ok=True, parents=True)
-        ut.archive_subdirectories(logdir)
+        ut.archive_directory_contents(logdir)
 
         hpc_partition = self.cfg_analysis.hpc_partition
         hpc_allocation = self.cfg_analysis.hpc_allocation
@@ -1580,8 +1580,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --time=00:30:00",
             f"#SBATCH --partition={hpc_partition}",
             f"#SBATCH --account={hpc_allocation}",
-            f"#SBATCH --output={logdir}/consolidate_%j.out",
-            f"#SBATCH --error={logdir}/consolidate_%j.out",
+            f"#SBATCH --output={logdir}/consolidate_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
+            f"#SBATCH --error={logdir}/consolidate_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             "",
         ]
 
@@ -1684,13 +1684,7 @@ class TRITONSWMM_analysis:
         >>> # User can then submit with: sbatch {script_path}
         """
         # Default job script path
-        if job_script_path is None:
-            job_script_path = self.analysis_paths.analysis_dir / "run_job_array.sh"
-        else:
-            job_script_path = Path(job_script_path)
-
-        # Ensure parent directory exists
-        job_script_path.parent.mkdir(parents=True, exist_ok=True)
+        job_script_path = self.analysis_paths.analysis_dir / "run_job_array.sh"
 
         # Get configuration parameters
         analysis_id = self.cfg_analysis.analysis_id
@@ -1731,7 +1725,7 @@ class TRITONSWMM_analysis:
 
         logdir = self.analysis_paths.analysis_dir / "slurm_logs"
         # archive outputs from previous runs
-        ut.archive_subdirectories(logdir)
+        ut.archive_directory_contents(logdir)
 
         dtime = ut.current_datetime_string(filepath_friendly=True)
         logdir_job = logdir / dtime
@@ -1900,13 +1894,14 @@ class TRITONSWMM_analysis:
         >>> print(f"Monitor with: squeue -j {job_id}")
         """
         # Generate the three phase scripts
-        setup_script = self.generate_setup_workflow_script(
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            verbose=verbose,
-        )
+        if process_system_level_inputs or compile_TRITON_SWMM:
+            setup_script = self.generate_setup_workflow_script(
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                verbose=verbose,
+            )
 
         ensemble_script = self.generate_ensemble_simulations_script(
             prepare_scenarios=prepare_scenarios,
@@ -1920,13 +1915,13 @@ class TRITONSWMM_analysis:
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
         )
-
-        consolidation_script = self.generate_consolidation_workflow_script(
-            overwrite_if_exist=overwrite_if_exist,
-            compression_level=compression_level,
-            verbose=verbose,
-            which=which,
-        )
+        if consolidate_outputs:
+            consolidation_script = self.generate_consolidation_workflow_script(
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                verbose=verbose,
+                which=which,
+            )
 
         # Submit the three scripts with dependencies
         if verbose:
@@ -1935,53 +1930,73 @@ class TRITONSWMM_analysis:
                 flush=True,
             )
 
-        try:
-            # Phase 1: Setup
-            result1 = subprocess.run(
-                ["sbatch", str(setup_script)],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            job_id_1 = result1.stdout.strip().split()[-1]
-            if verbose:
-                print(f"Phase 1 (Setup) submitted with job ID: {job_id_1}", flush=True)
+        jobs = []
 
-            # Phase 2: Ensemble (depends on Phase 1)
-            result2 = subprocess.run(
-                ["sbatch", f"--dependency=afterok:{job_id_1}", str(ensemble_script)],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            job_id_2 = result2.stdout.strip().split()[-1]
-            if verbose:
-                print(
-                    f"Phase 2 (Ensemble) submitted with job ID: {job_id_2} "
-                    f"(depends on {job_id_1})",
-                    flush=True,
+        try:
+            if process_system_level_inputs or compile_TRITON_SWMM:
+                result1 = subprocess.run(
+                    ["sbatch", str(setup_script)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
+                job_id_1 = result1.stdout.strip().split()[-1]
+                jobs.append(job_id_1)
+                if verbose:
+                    print(
+                        f"Phase 1 (Setup) submitted with job ID: {job_id_1}", flush=True
+                    )
+                # Phase 2: Ensemble (depends on Phase 1)
+                result2 = subprocess.run(
+                    [
+                        "sbatch",
+                        f"--dependency=afterok:{job_id_1}",
+                        str(ensemble_script),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                job_id_2 = result2.stdout.strip().split()[-1]
+                jobs.append(job_id_2)
+                if verbose:
+                    print(
+                        f"Phase 2 (Ensemble) submitted with job ID: {job_id_2} "
+                        f"(depends on {job_id_1})",
+                        flush=True,
+                    )
+            else:
+                result2 = subprocess.run(
+                    ["sbatch", str(ensemble_script)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                job_id_2 = result2.stdout.strip().split()[-1]
+                jobs.append(job_id_2)
+                if verbose:
+                    print(
+                        f"Simulation ensemble submitted with job ID: {job_id_2} ",
+                        flush=True,
+                    )
 
             # Phase 3: Consolidation (depends on Phase 2)
-            result3 = subprocess.run(
-                [
-                    "sbatch",
-                    f"--dependency=afterok:{job_id_2}",
-                    str(consolidation_script),
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            job_id_3 = result3.stdout.strip().split()[-1]
+            if consolidate_outputs:
+                result3 = subprocess.run(
+                    [
+                        "sbatch",
+                        f"--dependency=afterok:{job_id_2}",
+                        str(consolidation_script),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                job_id_3 = result3.stdout.strip().split()[-1]
+                jobs.append(job_id_3)
             if verbose:
                 print(
-                    f"Phase 3 (Consolidation) submitted with job ID: {job_id_3} "
-                    f"(depends on {job_id_2})",
-                    flush=True,
-                )
-                print(
-                    f"Complete workflow submitted! Monitor with: squeue -j {job_id_1},{job_id_2},{job_id_3}",
+                    f"Complete workflow submitted! Monitor with: squeue -j {','.join(jobs)}",
                     flush=True,
                 )
 
