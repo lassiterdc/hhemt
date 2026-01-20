@@ -126,10 +126,10 @@ class TRITONSWMM_run:
     def prepare_simulation_command(
         self,
         pickup_where_leftoff: bool,
-        in_slurm: Optional[bool] = None,
-        using_srun: bool = False,
         verbose: bool = True,
     ):
+        multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
+        using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
         n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
@@ -191,11 +191,6 @@ class TRITONSWMM_run:
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
         # ----------------------------
-        # Detect SLURM
-        # ----------------------------
-        if in_slurm is None:
-            in_slurm = "SLURM_JOB_ID" in og_env
-        # ----------------------------
         # Build command
         # ----------------------------
         module_load_cmd = ""
@@ -207,7 +202,7 @@ class TRITONSWMM_run:
             module_load_cmd = f"module load {modules}; "
 
         if run_mode != "gpu":
-            if in_slurm and using_srun:
+            if using_srun:
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -244,7 +239,7 @@ class TRITONSWMM_run:
                 #     str(cfg),
                 # ]
         elif run_mode == "gpu":
-            if in_slurm and using_srun:
+            if using_srun:
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
@@ -312,7 +307,6 @@ class TRITONSWMM_run:
     def _obsolete_retrieve_sim_launcher(
         self,
         pickup_where_leftoff: bool,
-        in_slurm: Optional[bool] = None,
         verbose: bool = True,
     ):
         n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
@@ -322,7 +316,6 @@ class TRITONSWMM_run:
 
         simprep_result = self.prepare_simulation_command(
             pickup_where_leftoff=pickup_where_leftoff,
-            in_slurm=in_slurm,
             verbose=verbose,
         )
         if simprep_result is None:
@@ -342,8 +335,6 @@ class TRITONSWMM_run:
             n_gpus = 0
 
         og_env = os.environ.copy()
-        if in_slurm is None:
-            in_slurm = "SLURM_JOB_ID" in og_env
 
         self.log.add_sim_entry(
             sim_datetime=sim_datetime,
@@ -356,7 +347,6 @@ class TRITONSWMM_run:
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
             n_gpus=n_gpus,
-            in_slurm=in_slurm,
             env=env,  # type: ignore
         )
         log_dic = self._scenario.latest_simlog
@@ -476,7 +466,6 @@ class TRITONSWMM_run:
             n_gpus = 0
 
         og_env = os.environ.copy()
-        in_slurm = "SLURM_JOB_ID" in og_env
 
         def launcher():
             """Execute simulation in a subprocess and update simlog after completion."""
@@ -499,7 +488,6 @@ class TRITONSWMM_run:
                 n_mpi_procs=n_mpi_procs,
                 n_omp_threads=n_omp_threads,
                 n_gpus=n_gpus,
-                in_slurm=in_slurm,
                 env=og_env,  # type: ignore
             )
 

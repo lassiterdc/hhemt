@@ -474,6 +474,14 @@ class analysis_config(cfgBaseModel):
         description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
     )
 
+    # MULTI-SIMULATION EXECUTION METHOD
+    multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
+        Field(
+            "local",
+            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
+        )
+    )
+
     # HPC JOB ARRAY PARAMETERS
     hpc_time_min_per_sim: Optional[int] = Field(
         None,

@@ -99,7 +99,6 @@ class SimEntry(BaseModel):
     n_mpi_procs: int | float | None
     n_omp_threads: int | float | None
     n_gpus: int | float | None
-    in_slurm: bool
     env: dict
 
 
@@ -382,7 +381,6 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         n_mpi_procs: int | float | None,
         n_omp_threads: int | float | None,
         n_gpus: int | float | None,
-        in_slurm: bool,
         env: dict,
     ):
         simlog = SimEntry(
@@ -396,7 +394,6 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
             n_gpus=n_gpus,
-            in_slurm=in_slurm,
             env=env,
         )
         self.sim_log.update(simlog)

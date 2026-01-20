@@ -356,6 +356,7 @@ class GetTS_TestCases:
                 n_omp_threads=1,
                 n_gpus=0,
                 n_nodes=1,
+                multi_sim_run_method="batch_job",
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
@@ -379,6 +380,7 @@ class GetTS_TestCases:
                 TRITON_SWMM_make_command="hpc_swmm_omp",
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu,
+                multi_sim_run_method="batch_job",
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
@@ -400,6 +402,7 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 TRITON_SWMM_make_command="frontier_swmm_omp",
+                multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
@@ -423,6 +426,7 @@ class GetTS_TestCases:
                 TRITON_SWMM_make_command="frontier_swmm_omp",
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_frontier_all_configs,
+                multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,

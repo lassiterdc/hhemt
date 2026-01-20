@@ -76,7 +76,9 @@ def test_run_sims():
         pickup_where_leftoff=True, verbose=True
     )
 
-    analysis.run_simulations_concurrently(launch_functions, verbose=True)
+    analysis.run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
+        launch_functions, verbose=True
+    )
 
     if analysis.log.all_sims_run.get() != True:
         sims_not_run = "\n".join(analysis.scenarios_not_run)

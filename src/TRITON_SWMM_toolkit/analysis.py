@@ -917,6 +917,9 @@ class TRITONSWMM_analysis:
         Uses the consolidated _create_subprocess_sim_run_launcher pattern
         which handles the complete simulation lifecycle including simlog updates.
 
+        The execution method (local, batch_job, or 1_job_many_srun_tasks) is
+        determined by self.cfg_analysis.multi_sim_run_method.
+
         Parameters
         ----------
         pickup_where_leftoff : bool
@@ -949,22 +952,22 @@ class TRITONSWMM_analysis:
         launch_functions: list[Callable[[], None]],
         max_concurrent: Optional[int] = None,
         verbose: bool = True,
-        using_srun: bool = False,
     ):
         """
         Docstring for run_simulations_concurrently
 
         :param self: automatically chooses whether to use SLURM or ThreadPoolExecutor for concurrent runs
         """
-        if self.in_slurm:
-            if using_srun:
-                self.run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
-                    launch_functions=launch_functions,
-                    verbose=verbose,
-                    max_concurrent=max_concurrent,
-                )
+        multi_sim_run_method = self.cfg_analysis.multi_sim_run_method
+        using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
+        if using_srun:
+            self.run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks(
+                launch_functions=launch_functions,
+                verbose=verbose,
+                max_concurrent=max_concurrent,
+            )
         else:
-            self.run_simulations_concurrently_on_desktop(
+            self.run_simulations_concurrently_on_local_machine(
                 launch_functions=launch_functions,
                 verbose=verbose,
                 max_concurrent=max_concurrent,
@@ -1112,7 +1115,7 @@ class TRITONSWMM_analysis:
         self._update_log()
         return results
 
-    def run_simulations_concurrently_on_desktop(
+    def run_simulations_concurrently_on_local_machine(
         self,
         launch_functions: List[Callable[[], None]],
         max_concurrent: Optional[int] = None,
