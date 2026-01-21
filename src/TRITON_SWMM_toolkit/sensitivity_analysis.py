@@ -242,6 +242,27 @@ class TRITONSWMM_sensitivity_analysis:
             )
         return node_success and link_success
 
+    def consolidate_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        if which in ["TRITON", "both"]:
+            self.consolidate_TRITON_outputs_for_analysis(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        if which in ["SWMM", "both"]:
+            self.consolidate_SWMM_outputs_for_analysis(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        return
+
     def consolidate_TRITON_outputs_for_analysis(
         self,
         overwrite_if_exist: bool = False,
