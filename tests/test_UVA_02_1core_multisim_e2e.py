@@ -185,31 +185,13 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
             f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
         )
 
-    # Verify timeseries processing in Phase 2
     assert (
         analysis.log.all_TRITON_timeseries_processed.get() == True
     ), "All TRITON timeseries should be processed in Phase 2"
-    # assert (
-    #     analysis.log.all_SWMM_timeseries_processed.get() == True
-    # ), "All SWMM timeseries should be processed in Phase 2"
 
-    # Verify Phase 3 outputs (consolidation)
     assert (
         analysis.TRITON_analysis_summary_created
     ), "TRITON analysis summary should be created in Phase 3"
-    # assert (
-    #     analysis.SWMM_node_analysis_summary_created
-    # ), "SWMM node analysis summary should be created in Phase 3"
-    # assert (
-    #     analysis.SWMM_link_analysis_summary_created
-    # ), "SWMM link analysis summary should be created in Phase 3"
 
-    # Verify consolidated output files exist
     triton_output = analysis.analysis_paths.output_triton_summary
     assert triton_output.exists(), "TRITON consolidated output should exist"
-
-    # swmm_node_output = analysis.analysis_paths.output_swmm_node_summary
-    # assert swmm_node_output.exists(), "SWMM node consolidated output should exist"
-
-    # swmm_link_output = analysis.analysis_paths.output_swmm_links_summary
-    # assert swmm_link_output.exists(), "SWMM link consolidated output should exist"
