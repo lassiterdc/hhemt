@@ -412,9 +412,17 @@ class GetTS_TestCases:
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                TRITON_SWMM_make_command="hpc_swmm_omp",
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu,
+                TRITON_SWMM_make_command="hpc_swmm_omp",
+                hpc_time_min_per_sim=30,
+                hpc_partition="standard",
+                hpc_allocation="***REMOVED***",
+                run_mode="serial",
+                n_mpi_procs=1,
+                n_omp_threads=1,
+                n_gpus=0,
+                n_nodes=1,
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
                 additional_bash_lines=[
@@ -604,6 +612,7 @@ def sign_into_hydroshare():
             "hsclient is not installed. Install optional dependencies with `pip install .[tests]`. Alternatively, you can download the data manually if you have issues installing this package with pip. Link: https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
         )
     hs = HydroShare()
+    print("Please log into hydroshare to download example.", flush=True)
     hs.sign_in()
     print("signed into Hydroshare successfully.")
     return hs
