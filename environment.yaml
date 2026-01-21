@@ -58,3 +58,6 @@ dependencies:
       - pyswmm
       - swmmio
       - tabulate
+      - notebook
+      - jupyter_server
+      - ipywidgets

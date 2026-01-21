@@ -18,6 +18,9 @@ dependencies = [
     "pyswmm",
     "swmmio",
     "tabulate",
+    "notebook",
+    "jupyter_server",
+    "ipywidgets"
 ]
 requires-python = ">= 3.10"
 
