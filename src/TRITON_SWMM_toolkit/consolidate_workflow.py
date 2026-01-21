@@ -81,6 +81,12 @@ def main() -> int:
         default=None,
         help="(Optional) path to the analysis directory",
     )
+    parser.add_argument(
+        "--consolidate-sensitivity-analysis-outputs",
+        action="store_true",
+        default=False,
+        help="If True, consolidate subanalysis-level outputs into master analysis outputs (for sensitivity analysis)",
+    )
 
     try:
         args = parser.parse_args()
@@ -143,19 +149,36 @@ def main() -> int:
             )
 
         # Phase 3b: Consolidate outputs
-        logger.info("Consolidating TRITON and SWMM simulation summaries...")
-        try:
-            analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-                overwrite_if_exist=args.overwrite_if_exist,
-                verbose=True,
-                compression_level=args.compression_level,
-                which=args.which,
+        if args.consolidate_sensitivity_analysis_outputs:
+            logger.info(
+                "Consolidating subanalysis-level outputs into master analysis outputs..."
             )
-            logger.info("Consolidation completed successfully")
-        except Exception as e:
-            logger.error(f"Failed to consolidate outputs: {e}")
-            logger.error(traceback.format_exc())
-            return 1
+            try:
+                analysis.sensitivity.consolidate_outputs(
+                    which=args.which,
+                    overwrite_if_exist=args.overwrite_if_exist,
+                    verbose=True,
+                    compression_level=args.compression_level,
+                )
+                logger.info("Sensitivity analysis consolidation completed successfully")
+            except Exception as e:
+                logger.error(f"Failed to consolidate sensitivity analysis outputs: {e}")
+                logger.error(traceback.format_exc())
+                return 1
+        else:
+            logger.info("Consolidating TRITON and SWMM simulation summaries...")
+            try:
+                analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
+                    overwrite_if_exist=args.overwrite_if_exist,
+                    verbose=True,
+                    compression_level=args.compression_level,
+                    which=args.which,
+                )
+                logger.info("Consolidation completed successfully")
+            except Exception as e:
+                logger.error(f"Failed to consolidate outputs: {e}")
+                logger.error(traceback.format_exc())
+                return 1
 
         logger.info("Consolidation workflow completed successfully")
         return 0

@@ -88,7 +88,7 @@ class TRITONSWMM_sensitivity_analysis:
                 "prepare scenarios is not currently executable as batch_job."
             )
 
-    def run_ensemble_as_batch(
+    def run_sensitivity_analysis_as_batch_job(
         self,
         # setup stuff
         process_system_level_inputs: bool = True,
@@ -123,9 +123,6 @@ class TRITONSWMM_sensitivity_analysis:
             verbose=verbose,
         )
         setup_job_id = ut.run_bash_script(setup_script, verbose=verbose)
-        # ensemble_scripts = []
-        # subanalysis_consolidation_scripts = []
-        # setup_jobid = ut.run_bash_script(setup_script, verbose=verbose)
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             ensemble_script = sub_analysis.generate_SLURM_job_array_script(
                 prepare_scenarios=prepare_scenarios,
@@ -156,6 +153,34 @@ class TRITONSWMM_sensitivity_analysis:
                 verbose=verbose,
             )
             subanalysis_consolidation_jobs.append(subanalysis_consolidation_jobid)
+
+        # Generate master consolidation script to consolidate subanalysis outputs
+        master_consolidation_script = (
+            self.master_analysis.generate_consolidation_workflow_script(
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                verbose=verbose,
+                which=which,
+                consolidate_sensitivity_analysis_outputs=True,
+            )
+        )
+
+        # Submit master consolidation job with dependencies on all subanalysis consolidation jobs
+        master_consolidation_jobid = ut.run_bash_script(
+            master_consolidation_script,
+            dependent_job_id=subanalysis_consolidation_jobs,
+            verbose=verbose,
+        )
+
+        if verbose:
+            print(
+                f"Sensitivity analysis batch job workflow submitted successfully",
+                flush=True,
+            )
+            print(
+                f"Master consolidation job ID: {master_consolidation_jobid}", flush=True
+            )
+        return master_consolidation_jobid
 
     def run_all_sims(
         self,

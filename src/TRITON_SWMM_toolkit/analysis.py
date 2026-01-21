@@ -1391,6 +1391,7 @@ class TRITONSWMM_analysis:
         compression_level: int = 5,
         verbose: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
+        consolidate_sensitivity_analysis_outputs: bool = False,
     ) -> Path:
         """
         Generate a SLURM script for Phase 3: Consolidation.
@@ -1408,6 +1409,9 @@ class TRITONSWMM_analysis:
             Compression level for output files (0-9)
         verbose : bool
             If True, print progress messages
+        consolidate_sensitivity_analysis_outputs : bool
+            If True, consolidate subanalysis-level outputs into master analysis outputs
+            (for sensitivity analysis)
 
         Returns
         -------
@@ -1465,6 +1469,9 @@ class TRITONSWMM_analysis:
             cmd_parts.append("    --overwrite-if-exist \\")
 
         cmd_parts.append(f"    --which {which} \\")
+
+        if consolidate_sensitivity_analysis_outputs:
+            cmd_parts.append("    --consolidate-sensitivity-analysis-outputs \\")
 
         cmd_parts[-1] = cmd_parts[-1].rstrip(" \\")
         sbatch_lines.extend(cmd_parts)
