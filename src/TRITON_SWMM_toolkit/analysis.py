@@ -1459,7 +1459,6 @@ class TRITONSWMM_analysis:
             f"    --analysis-config {self.analysis_config_yaml} \\",
         ]
 
-        cmd_parts.append("    --consolidate-outputs \\")
         cmd_parts.append(f"    --compression-level {compression_level} \\")
         if overwrite_if_exist:
             cmd_parts.append("    --overwrite-if-exist \\")
