@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 # export PYTHONNOUSERSITE=1
 
 
-def test_consolidated_workflow_with_system_inputs_and_compilation():
+def test_consolidated_workflow_script_generation():
     """
     Test the consolidated SLURM workflow with three separate scripts and dependencies:
     1. Phase 1: Process system-level inputs (DEM, Mannings) and compile TRITON-SWMM
@@ -104,6 +104,13 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
         "--consolidate-outputs" in consolidation_content
     ), "Consolidation script should consolidate outputs"
 
+
+def test_consolidated_workflow_with_system_inputs_and_compilation():
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+        start_from_scratch=True
+    )
+    analysis = nrflk_multisim_ensemble.system.analysis
+    system = nrflk_multisim_ensemble.system
     # ===== Phase 2: Submit the three-phase workflow with dependencies =====
     ensemble_script_path, final_job_id = analysis.submit_SLURM_job_array(
         process_system_level_inputs=True,
