@@ -12,6 +12,7 @@ from TRITON_SWMM_toolkit.constants import (
 import sys
 import warnings
 from typing import Iterable, Union
+from typing import Optional
 
 with warnings.catch_warnings():
     # Only ignore the pkg_resources deprecation warning
@@ -616,9 +617,6 @@ def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
         print(cfg_filled)
         sys.exit("failed to load yaml")
     return cfg_filled_yaml
-
-
-from typing import Optional
 
 
 def get_norfolk_data_and_package_directory_mapping_dict(

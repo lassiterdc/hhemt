@@ -21,6 +21,8 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 # source activate triton_swmm_toolkit
 # export PYTHONNOUSERSITE=1
 
+# /home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python
+
 
 def test_consolidated_workflow_with_system_inputs_and_compilation():
     nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_sensitivtiy_CPU(
