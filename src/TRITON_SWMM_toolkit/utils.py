@@ -9,6 +9,39 @@ import yaml
 import xarray as xr
 import shutil
 from typing import Any
+import subprocess
+from typing import Optional, Literal
+
+subprocess.CompletedProcess
+
+
+def run_bash_script(
+    bash_script: Path,
+    dependent_job_id: Optional[int | str] = None,
+    dependency_type: Literal["afterok", "afterany"] = "afterok",
+    verbose: bool = True,
+):
+    cmd = ["sbatch"]
+    dpdndncy = ""
+    if dependent_job_id:
+        cmd.append(
+            f"--dependency={dependency_type}:{dependent_job_id}",
+        )
+        dpdndncy = (
+            f"\n dependent on job {dependent_job_id} using dependency={dependency_type}"
+        )
+    cmd.append(str(bash_script))
+
+    proc = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    job_id = proc.stdout.strip().split()[-1]
+    if verbose:
+        print(f"Submitted script {bash_script}{dpdndncy}\njob id: {job_id}", flush=True)
+    return job_id
 
 
 def archive_directory_contents(dir: Path):

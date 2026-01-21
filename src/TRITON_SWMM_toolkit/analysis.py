@@ -1797,74 +1797,26 @@ class TRITONSWMM_analysis:
 
         try:
             if process_system_level_inputs or compile_TRITON_SWMM:
-                result1 = subprocess.run(
-                    ["sbatch", str(setup_script)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                job_id_1 = result1.stdout.strip().split()[-1]
+                job_id_1 = ut.run_bash_script(setup_script, verbose=verbose)
                 jobs.append(job_id_1)
-                if verbose:
-                    print(
-                        f"Phase 1 (Setup) submitted with job ID: {job_id_1}", flush=True
-                    )
-                # Phase 2: Ensemble (depends on Phase 1)
-                result2 = subprocess.run(
-                    [
-                        "sbatch",
-                        f"--dependency=afterok:{job_id_1}",
-                        str(ensemble_script),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                job_id_2 = result2.stdout.strip().split()[-1]
-                jobs.append(job_id_2)
-                if verbose:
-                    print(
-                        f"Phase 2 (Ensemble) submitted with job ID: {job_id_2} "
-                        f"(depends on {job_id_1})",
-                        flush=True,
-                    )
-            else:
-                result2 = subprocess.run(
-                    ["sbatch", str(ensemble_script)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                job_id_2 = result2.stdout.strip().split()[-1]
-                jobs.append(job_id_2)
-                if verbose:
-                    print(
-                        f"Simulation ensemble submitted with job ID: {job_id_2} ",
-                        flush=True,
-                    )
 
+                # Phase 2: Ensemble (depends on Phase 1)
+                job_id_2 = ut.run_bash_script(
+                    ensemble_script, dependent_job_id=job_id_1, verbose=verbose
+                )
+                jobs.append(job_id_2)
+
+            else:
+                job_id_2 = ut.run_bash_script(ensemble_script, verbose=verbose)
+                jobs.append(job_id_2)
             # Phase 3: Consolidation (depends on Phase 2)
             if consolidate_outputs:
-                result3 = subprocess.run(
-                    [
-                        "sbatch",
-                        f"--dependency=afterok:{job_id_2}",
-                        str(consolidation_script),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
+                job_id_3 = ut.run_bash_script(
+                    consolidation_script, dependent_job_id=job_id_2, verbose=verbose
                 )
-                job_id_3 = result3.stdout.strip().split()[-1]
                 jobs.append(job_id_3)
-            if verbose:
-                print(
-                    f"Complete workflow submitted! Monitor with: squeue -j {','.join(jobs)}",
-                    flush=True,
-                )
-
             # Return the ensemble script path and the final job ID
-            return ensemble_script, job_id_3
+            return ensemble_script, jobs[-1]
 
         except subprocess.CalledProcessError as e:
             error_msg = f"sbatch submission failed: {e.stderr}"
