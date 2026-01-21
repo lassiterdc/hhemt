@@ -890,7 +890,7 @@ class TRITONSWMM_scenario:
 
         # Build command - always use direct Python execution (no srun)
         cmd = [
-            "python",
+            f"{self._analysis._python_executable}",
             "-m",
             "TRITON_SWMM_toolkit.prepare_scenario_runner",
             "--event-iloc",

@@ -1615,7 +1615,7 @@ class TRITONSWMM_analysis:
         sbatch_lines.extend(
             [
                 "# Determine simulation folder for this task",
-                "SIM_FOLDER=$(python -m TRITON_SWMM_toolkit.get_sim_folder \\",
+                f"SIM_FOLDER=$({self._python_executable} -m TRITON_SWMM_toolkit.get_sim_folder \\",
                 "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
                 f"    --analysis-config {self.analysis_config_yaml} \\",
                 f"    --system-config {self._system.system_config_yaml})",
