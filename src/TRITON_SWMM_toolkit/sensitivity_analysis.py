@@ -466,16 +466,16 @@ class TRITONSWMM_sensitivity_analysis:
             cfg_anlysys_yaml = sub_analysis_directory / f"subanalysis_{idx}.yaml"
 
             if "TRITON_SWMM_make_command" in self.df_setup.columns:
-                cfg_snstvty._compiled_TRITONSWMM_directory = (
+                cfg_snstvty.compiled_TRITONSWMM_directory = (
                     self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
                     / row["TRITON_SWMM_make_command"]
                 )
             else:
-                cfg_snstvty._compiled_TRITONSWMM_directory = (
+                cfg_snstvty.compiled_TRITONSWMM_directory = (
                     self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
                 )
 
-            cfg_snstvty._analysis_dir = sub_analysis_directory
+            cfg_snstvty.analysis_dir = sub_analysis_directory
 
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(

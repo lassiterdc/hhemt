@@ -47,16 +47,16 @@ class TRITONSWMM_analysis:
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
         # define additional paths
-        if cfg_analysis._compiled_TRITONSWMM_directory:
-            compiled_TRITONSWMM_directory = cfg_analysis._compiled_TRITONSWMM_directory
+        if cfg_analysis.compiled_TRITONSWMM_directory:
+            compiled_TRITONSWMM_directory = cfg_analysis.compiled_TRITONSWMM_directory
         else:
             compiled_TRITONSWMM_directory = (
                 self._system.cfg_system.system_directory
                 / self.cfg_analysis.analysis_id
                 / "compiled_software"
             )
-        if cfg_analysis._analysis_dir:
-            analysis_dir = cfg_analysis._analysis_dir
+        if cfg_analysis.analysis_dir:
+            analysis_dir = cfg_analysis.analysis_dir
         else:
             analysis_dir = (
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id

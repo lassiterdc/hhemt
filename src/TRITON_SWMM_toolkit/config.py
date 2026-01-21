@@ -503,12 +503,12 @@ class analysis_config(cfgBaseModel):
         None,
         description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
     )
-    # HIDDEN INPUTS
-    _compiled_TRITONSWMM_directory: Optional[Path] = Field(
+    # extra inputs (currently only used by sensitivity analysis)
+    compiled_TRITONSWMM_directory: Optional[Path] = Field(
         None,
         description="Optional path to compiled TRITON-SWMM software directory",
     )
-    _analysis_dir: Optional[Path] = Field(
+    analysis_dir: Optional[Path] = Field(
         None,
         description="Optional path to analysis directory",
     )
