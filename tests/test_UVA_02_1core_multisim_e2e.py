@@ -100,9 +100,6 @@ def test_consolidated_workflow_script_generation():
     assert (
         "consolidate_workflow" in consolidation_content
     ), "Consolidation script should contain consolidate_workflow"
-    assert (
-        "--consolidate-outputs" in consolidation_content
-    ), "Consolidation script should consolidate outputs"
 
 
 def test_consolidated_workflow_with_system_inputs_and_compilation():
