@@ -589,52 +589,28 @@ class TRITONSWMM_sensitivity_analysis:
             lst_scens += sub_analysis.SWMM_time_series_not_processed()
         return lst_scens
 
-    def _update_master_analysis_log(self):
-
-        # dic_all_logs = dict()
-        all_scenarios_created = True
-        all_sims_run = True
-        all_TRITON_timeseries_processed = True
-        all_SWMM_timeseries_processed = True
+    @property
+    def all_raw_TRITON_outputs_cleared(self):
         all_raw_TRITON_outputs_cleared = True
-        all_raw_SWMM_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
-            # dic_all_logs[key] = sub_analysis.log.model_dump()
-            all_scenarios_created = (
-                all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
-            )
-            all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
-            all_TRITON_timeseries_processed = (
-                all_TRITON_timeseries_processed
-                and sub_analysis.log.all_TRITON_timeseries_processed.get()
-            )
-            all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed
-                and sub_analysis.log.all_SWMM_timeseries_processed.get()
-            )
             all_raw_TRITON_outputs_cleared = (
                 all_raw_TRITON_outputs_cleared
                 and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
             )
+        return all_raw_TRITON_outputs_cleared == True
+
+    @property
+    def all_raw_SWMM_outputs_cleared(self):
+        all_raw_SWMM_outputs_cleared = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
             all_raw_SWMM_outputs_cleared = (
                 all_raw_SWMM_outputs_cleared
                 and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
             )
+        return all_raw_SWMM_outputs_cleared == True
 
+    def _update_master_analysis_log(self):
         self.master_analysis._update_log()
-        self.master_analysis.log.all_scenarios_created.set(all_scenarios_created)
-        self.master_analysis.log.all_sims_run.set(all_sims_run)
-        self.master_analysis.log.all_TRITON_timeseries_processed.set(
-            all_TRITON_timeseries_processed
-        )
-        self.master_analysis.log.all_SWMM_timeseries_processed.set(
-            all_SWMM_timeseries_processed
-        )
-        self.master_analysis.log.all_raw_TRITON_outputs_cleared.set(
-            all_raw_TRITON_outputs_cleared
-        )
-        self.master_analysis.log.all_raw_SWMM_outputs_cleared.set(
-            all_raw_SWMM_outputs_cleared
-        )
         return

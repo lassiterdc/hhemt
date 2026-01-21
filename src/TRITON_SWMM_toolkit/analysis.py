@@ -243,31 +243,39 @@ class TRITONSWMM_analysis:
         all_SWMM_outputs_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
-        for event_iloc in self.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, self)
-            scen.log.refresh()
-            # dict_all_logs[event_iloc] = scen.log.model_dump()
-            # sim run status
-            all_sims_run = all_sims_run and scen.sim_run_completed
-            # sim creation status
-            scen_created = bool(scen.log.scenario_creation_complete.get())
-            all_scens_created = all_scens_created and scen_created
-            # sim output processing status
-            proc = self._retrieve_sim_run_processing_object(event_iloc)
-            all_TRITON_outputs_processed = (
-                all_TRITON_outputs_processed and proc.TRITON_outputs_processed
-            )
-            all_SWMM_outputs_processed = (
-                all_SWMM_outputs_processed and proc.SWMM_outputs_processed
-            )
-            # output clear status
-            all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared and proc.raw_TRITON_outputs_cleared
-            )
-            all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared and proc.raw_SWMM_outputs_cleared
-            )
-
+        if self.cfg_analysis.toggle_sensitivity_analysis == True:
+            sens = self.sensitivity
+            all_scens_created = sens.all_scenarios_created
+            all_sims_run = sens.all_sims_run
+            all_TRITON_outputs_processed = sens.all_TRITON_timeseries_processed
+            all_SWMM_outputs_processed = sens.all_SWMM_timeseries_processed
+            all_raw_TRITON_outputs_cleared = sens.all_raw_TRITON_outputs_cleared
+            all_raw_SWMM_outputs_cleared = sens.all_raw_SWMM_outputs_cleared
+        else:
+            for event_iloc in self.df_sims.index:
+                scen = TRITONSWMM_scenario(event_iloc, self)
+                scen.log.refresh()
+                # dict_all_logs[event_iloc] = scen.log.model_dump()
+                # sim run status
+                all_sims_run = all_sims_run and scen.sim_run_completed
+                # sim creation status
+                scen_created = bool(scen.log.scenario_creation_complete.get())
+                all_scens_created = all_scens_created and scen_created
+                # sim output processing status
+                proc = self._retrieve_sim_run_processing_object(event_iloc)
+                all_TRITON_outputs_processed = (
+                    all_TRITON_outputs_processed and proc.TRITON_outputs_processed
+                )
+                all_SWMM_outputs_processed = (
+                    all_SWMM_outputs_processed and proc.SWMM_outputs_processed
+                )
+                # output clear status
+                all_raw_TRITON_outputs_cleared = (
+                    all_raw_TRITON_outputs_cleared and proc.raw_TRITON_outputs_cleared
+                )
+                all_raw_SWMM_outputs_cleared = (
+                    all_raw_SWMM_outputs_cleared and proc.raw_SWMM_outputs_cleared
+                )
         self.log.all_scenarios_created.set(all_scens_created)
         self.log.all_sims_run.set(all_sims_run)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
