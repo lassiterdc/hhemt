@@ -364,7 +364,7 @@ class GetTS_TestCases:
                     'eval "$(conda shell.bash hook)"',
                     "conda activate triton_swmm_toolkit",
                     "export PYTHONNOUSERSITE=1",
-                    "pip install -e .",
+                    # "pip install -e .",
                 ],
             ),
             additional_system_configs=dict(
@@ -395,7 +395,7 @@ class GetTS_TestCases:
                     'eval "$(conda shell.bash hook)"',
                     "conda activate triton_swmm_toolkit",
                     "export PYTHONNOUSERSITE=1",
-                    "pip install -e .",
+                    # "pip install -e .",
                 ],
             ),
             additional_system_configs=dict(
