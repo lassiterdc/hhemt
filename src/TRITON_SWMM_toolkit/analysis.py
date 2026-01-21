@@ -30,6 +30,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import threading
 import psutil
+import warnings
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -1812,7 +1813,7 @@ class TRITONSWMM_analysis:
                 print(error_msg, flush=True)
             raise RuntimeError(error_msg)
 
-    def compile_TRITON_SWMM(
+    def compile_TRITON_SWMM_using_template(
         self,
         recompile_if_already_done_successfully: bool = False,
         verbose: bool = False,

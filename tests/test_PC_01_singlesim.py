@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(
 
 def test_load_system_and_analysis():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
-        start_from_scratch=True
+        start_from_scratch=True,
     )
     analysis = single_sim_single_core.system.analysis
     assert analysis.analysis_paths.simulation_directory.exists()
