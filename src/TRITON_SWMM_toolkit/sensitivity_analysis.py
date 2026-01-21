@@ -46,8 +46,6 @@ class TRITONSWMM_sensitivity_analysis:
         self.independent_vars = self._attributes_varied_for_analysis()
         self.df_setup = self._retieve_df_setup().loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
-        if self.master_analysis.analysis_paths.f_log.exists():
-            self._update_master_analysis_log()
 
     def prepare_scenarios_in_each_subanalysis(
         self,
@@ -75,12 +73,12 @@ class TRITONSWMM_sensitivity_analysis:
                 for launcher in prepare_scenario_launchers:
                     launcher()
 
-            self._update_master_analysis_log()
             if self.all_scenarios_created != True:
                 scens_not_created = "\n\t".join(self.scenarios_not_created)
                 raise RuntimeError(
                     f"Preparation failed for the following scenarios:\n{scens_not_created}"
                 )
+            self._update_master_analysis_log()
         elif self.master_analysis.cfg_analysis.multi_sim_run_method in ["batch_job"]:
             raise ValueError(
                 "prepare scenarios is not currently executable as batch_job."
@@ -304,7 +302,6 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        self._update_master_analysis_log()
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis.consolidate_analysis_outptus(
                 which=which,
