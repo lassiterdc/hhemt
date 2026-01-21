@@ -233,6 +233,7 @@ class TRITONSWMM_analysis:
         return scens_not_processed
 
     def _update_log(self):
+        self._refresh_log()
         # dict_all_logs = {}
         all_scens_created = True
         all_sims_run = True
