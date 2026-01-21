@@ -1333,7 +1333,7 @@ class TRITONSWMM_analysis:
 
         sbatch_lines = [
             "#!/bin/bash",
-            "#SBATCH --job-name=TRITON_SWMM_setup",
+            "#SBATCH --job-name=setup_analysis",
             "#SBATCH --nodes=1",
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
@@ -1434,7 +1434,7 @@ class TRITONSWMM_analysis:
 
         sbatch_lines = [
             "#!/bin/bash",
-            "#SBATCH --job-name=TRITON_SWMM_consolidate",
+            "#SBATCH --job-name=consolidate_outputs",
             "#SBATCH --nodes=1",
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
@@ -1574,7 +1574,7 @@ class TRITONSWMM_analysis:
         # Build SBATCH directives
         sbatch_lines = [
             "#!/bin/bash",
-            f"#SBATCH --job-name=TRITON_SWMM_{analysis_id}",
+            f"#SBATCH --job-name=run_{analysis_id}",
             f"#SBATCH --array={array_range}",
             f"#SBATCH --nodes={n_nodes}",
             f"#SBATCH --ntasks={n_mpi_procs}",
