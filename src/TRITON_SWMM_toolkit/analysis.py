@@ -90,12 +90,6 @@ class TRITONSWMM_analysis:
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
-        if not skip_log_update:
-            # self._add_all_scenarios()
-            self._refresh_log()
-            if self.analysis_paths.compilation_logfile.exists():
-                self._validate_compilation()
-            self._update_log()
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
         if self.cfg_analysis.python_path is not None:
@@ -103,6 +97,12 @@ class TRITONSWMM_analysis:
         else:
             python_executable = "python"
         self._python_executable = python_executable
+        if not skip_log_update:
+            # self._add_all_scenarios()
+            self._refresh_log()
+            if self.analysis_paths.compilation_logfile.exists():
+                self._validate_compilation()
+            self._update_log()
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():
