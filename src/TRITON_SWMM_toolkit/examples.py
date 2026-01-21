@@ -361,7 +361,7 @@ class GetTS_TestCases:
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
                 additional_bash_lines=[
-                    "source activate triton_swmm_toolkit",
+                    "conda activate triton_swmm_toolkit",
                     "export PYTHONNOUSERSITE=1",
                     "pip install -e .",
                 ],
@@ -391,7 +391,7 @@ class GetTS_TestCases:
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
                 additional_bash_lines=[
-                    "source activate triton_swmm_toolkit",
+                    "conda activate triton_swmm_toolkit",
                     "export PYTHONNOUSERSITE=1",
                     "pip install -e .",
                 ],
