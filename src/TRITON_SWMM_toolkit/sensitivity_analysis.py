@@ -339,71 +339,78 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        self.create_subanalysis_summaries(
+            which=which,
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        self.consolidate_subanalysis_outputs(
+            which=which,
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
+        return
+
+    def consolidate_subanalysis_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
         if which in ["TRITON", "both"]:
-            self.consolidate_TRITON_outputs_for_analysis(
+            ds_combined_outputs = self._combine_TRITON_outputs_per_subanalysis()
+            self.master_analysis.process._consolidate_outputs(
+                ds_combined_outputs,
+                mode="TRITON",
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         if which in ["SWMM", "both"]:
-            self.consolidate_SWMM_outputs_for_analysis(
+            ds_combined_outputs = self._combine_SWMM_node_outputs_per_subanalysis()
+            self.master_analysis.process._consolidate_outputs(
+                ds_combined_outputs,
+                mode="SWMM_node",
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+            ds_combined_outputs = (
+                self._combine_SWMM_link_outputs_outputs_per_subanalysis()
+            )
+            self.master_analysis.process._consolidate_outputs(
+                ds_combined_outputs,
+                mode="SWMM_link",
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         return
 
-    def consolidate_TRITON_outputs_for_analysis(
+    def create_subanalysis_summaries(
         self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        self._consolidate_outputs_in_each_subanalysis(
-            which="TRITON",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        ds_combined_outputs = self._combine_TRITON_outputs_per_subanalysis()
-
-        self.master_analysis.process._consolidate_outputs(
-            ds_combined_outputs,
-            mode="TRITON",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        return
-
-    def consolidate_SWMM_outputs_for_analysis(
-        self,
-        overwrite_if_exist: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        self._consolidate_outputs_in_each_subanalysis(
-            which="SWMM",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        ds_combined_outputs = self._combine_SWMM_node_outputs_per_subanalysis()
-        self.master_analysis.process._consolidate_outputs(
-            ds_combined_outputs,
-            mode="SWMM_node",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        ds_combined_outputs = self._combine_SWMM_link_outputs_outputs_per_subanalysis()
-        self.master_analysis.process._consolidate_outputs(
-            ds_combined_outputs,
-            mode="SWMM_link",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
+        if which in ["TRITON", "both"]:
+            self._consolidate_outputs_in_each_subanalysis(
+                which="TRITON",
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
+        if which in ["SWMM", "both"]:
+            self._consolidate_outputs_in_each_subanalysis(
+                which="SWMM",
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
         return
 
     @property

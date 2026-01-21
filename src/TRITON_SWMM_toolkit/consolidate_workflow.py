@@ -143,7 +143,7 @@ def main() -> int:
                 "Consolidating subanalysis-level outputs into master analysis outputs..."
             )
             try:
-                analysis.sensitivity.consolidate_outputs(
+                analysis.sensitivity.consolidate_subanalysis_outputs(
                     which=args.which,
                     overwrite_if_exist=args.overwrite_if_exist,
                     verbose=True,
