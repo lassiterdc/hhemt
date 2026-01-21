@@ -144,7 +144,7 @@ class TRITONSWMM_sim_post_processing:
 
         # Build command - always use direct Python execution (no srun)
         cmd = [
-            "python",
+            f"{self._analysis._python_executable}",
             "-m",
             "TRITON_SWMM_toolkit.process_timeseries_runner",
             "--event-iloc",
