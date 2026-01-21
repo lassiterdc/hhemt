@@ -96,6 +96,11 @@ class TRITONSWMM_analysis:
             self._update_log()
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
+        if self.cfg_analysis.python_path is not None:
+            python_executable = str(self.cfg_analysis.python_path)
+        else:
+            python_executable = "python"
+        self._python_executable = python_executable
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():
@@ -1345,14 +1350,14 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
-        # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("source activate triton_swmm_toolkit")
-        sbatch_lines.append("export PYTHONNOUSERSITE=1")
         sbatch_lines.append("")
 
+        if self.cfg_analysis.additional_bash_lines:
+            sbatch_lines.extend(self.cfg_analysis.additional_bash_lines)
+            sbatch_lines.append("")
+
         setup_cmd_parts = [
-            "python -m TRITON_SWMM_toolkit.setup_workflow \\",
+            f"{self._python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\",
             f"    --system-config {self._system.system_config_yaml} \\",
             f"    --analysis-config {self.analysis_config_yaml} \\",
         ]
@@ -1442,14 +1447,14 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
-        # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("source activate triton_swmm_toolkit")
-        sbatch_lines.append("export PYTHONNOUSERSITE=1")
         sbatch_lines.append("")
 
+        if self.cfg_analysis.additional_bash_lines:
+            sbatch_lines.extend(self.cfg_analysis.additional_bash_lines)
+            sbatch_lines.append("")
+
         cmd_parts = [
-            "python -m TRITON_SWMM_toolkit.consolidate_workflow \\",
+            f"{self._python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\",
             f"    --system-config {self._system.system_config_yaml} \\",
             f"    --analysis-config {self.analysis_config_yaml} \\",
         ]
@@ -1600,11 +1605,11 @@ class TRITONSWMM_analysis:
         if modules:
             sbatch_lines.append(f"module purge")
             sbatch_lines.append(f"module load {modules}")
-        # sbatch_lines.append("DIR=~/.conda/envs/triton_swmm_toolkit")
-        # sbatch_lines.append('source "$(conda info --base)/etc/profile.d/conda.sh"')
-        sbatch_lines.append("source activate triton_swmm_toolkit")
-        sbatch_lines.append("export PYTHONNOUSERSITE=1")
         sbatch_lines.append("")
+
+        if self.cfg_analysis.additional_bash_lines:
+            sbatch_lines.extend(self.cfg_analysis.additional_bash_lines)
+            sbatch_lines.append("")
 
         # Add environment setup
         sbatch_lines.extend(
@@ -1623,7 +1628,7 @@ class TRITONSWMM_analysis:
 
         # Build the run_single_simulation command
         cmd_parts = [
-            "python -m TRITON_SWMM_toolkit.run_single_simulation \\",
+            f"{self._python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\",
             "    --event-iloc ${SLURM_ARRAY_TASK_ID} \\",
             f"    --system-config {self._system.system_config_yaml} \\",
             f"    --analysis-config {self.analysis_config_yaml} \\",

@@ -495,6 +495,14 @@ class analysis_config(cfgBaseModel):
         None,
         description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
+    python_path: Optional[Path] = Field(
+        None,
+        description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",
+    )
+    additional_bash_lines: Optional[List[str]] = Field(
+        None,
+        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
+    )
 
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("analysis_id")

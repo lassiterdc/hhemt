@@ -359,6 +359,12 @@ class GetTS_TestCases:
                 n_gpus=0,
                 n_nodes=1,
                 multi_sim_run_method="batch_job",
+                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
+                additional_bash_lines=[
+                    "source activate triton_swmm_toolkit",
+                    "export PYTHONNOUSERSITE=1",
+                    "pip install -e .",
+                ],
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
@@ -383,6 +389,12 @@ class GetTS_TestCases:
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu,
                 multi_sim_run_method="batch_job",
+                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
+                additional_bash_lines=[
+                    "source activate triton_swmm_toolkit",
+                    "export PYTHONNOUSERSITE=1",
+                    "pip install -e .",
+                ],
             ),
             additional_system_configs=dict(
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,

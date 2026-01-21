@@ -24,15 +24,10 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
 #   --gres=gpu:1 \
 
-# verify this runs:
-# srun N 1 -n 1 -c 1 echo "Hello World"
 # module purge
-# conda deactivate
 # module load gompi/14.2.0_5.0.7 miniforge
-# conda activate triton_swmm_toolkit
-# bash commands
-# pgrep -l srun # lists all srun processes
-# ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
+# source activate triton_swmm_toolkit
+# export PYTHONNOUSERSITE=1
 
 
 def test_load_system_and_analysis():
