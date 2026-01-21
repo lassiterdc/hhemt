@@ -16,8 +16,8 @@ from TRITON_SWMM_toolkit.utils import (
     paths_to_strings,
     get_file_size_MiB,
     convert_datetime_to_str,
+    current_datetime_string,
 )
-from TRITON_SWMM_toolkit.utils import current_datetime_string
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 import re
 from datetime import datetime

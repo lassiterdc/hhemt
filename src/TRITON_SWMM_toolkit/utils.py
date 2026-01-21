@@ -17,13 +17,15 @@ subprocess.CompletedProcess
 
 def run_bash_script(
     bash_script: Path,
-    dependent_job_id: Optional[int | str] = None,
+    dependent_job_id: Optional[int | str | list] = None,
     dependency_type: Literal["afterok", "afterany"] = "afterok",
     verbose: bool = True,
 ):
     cmd = ["sbatch"]
     dpdndncy = ""
     if dependent_job_id:
+        if isinstance(dependent_job_id, list):
+            dependent_job_id = ",".join(dependent_job_id)
         cmd.append(
             f"--dependency={dependency_type}:{dependent_job_id}",
         )

@@ -1,10 +1,7 @@
 # %%
 import subprocess
 import shutil
-from TRITON_SWMM_toolkit.utils import (
-    create_from_template,
-    read_text_file_as_string,
-)
+import TRITON_SWMM_toolkit.utils as ut
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import analysis_config
 import pandas as pd
@@ -59,29 +56,106 @@ class TRITONSWMM_sensitivity_analysis:
         concurrent: bool = True,
         verbose: bool = False,
     ):
-        prepare_scenario_launchers = []
+        if self.master_analysis.cfg_analysis.multi_sim_run_method in [
+            "local",
+            "1_job_many_srun_tasks",
+        ]:
+            prepare_scenario_launchers = []
+            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+                prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
+                    overwrite_scenario=overwrite_scenarios,
+                    rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                    verbose=verbose,
+                    compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
+                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
+                )
+            if concurrent:
+                self.master_analysis.run_python_functions_concurrently(
+                    prepare_scenario_launchers, verbose=verbose
+                )
+            else:
+                for launcher in prepare_scenario_launchers:
+                    launcher()
+
+            self._update_master_analysis_log()
+            if self.all_scenarios_created != True:
+                scens_not_created = "\n\t".join(self.scenarios_not_created)
+                raise RuntimeError(
+                    f"Preparation failed for the following scenarios:\n{scens_not_created}"
+                )
+        elif self.master_analysis.cfg_analysis.multi_sim_run_method in ["batch_job"]:
+            raise ValueError(
+                "prepare scenarios is not currently executable as batch_job."
+            )
+
+    def run_ensemble_as_batch(
+        self,
+        # setup stuff
+        process_system_level_inputs: bool = True,
+        overwrite_system_inputs: bool = False,
+        compile_TRITON_SWMM: bool = True,
+        recompile_if_already_done_successfully: bool = False,
+        # ensemble run stuff
+        prepare_scenarios: bool = True,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        process_timeseries: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        pickup_where_leftoff: bool = True,
+        # other
+        verbose: bool = True,
+    ):
+        if "TRITON_SWMM_make_command" in self.df_setup.columns:
+            raise ValueError(
+                "Currently sensitivity analysis run as batch jobs can only use 1 compiled TRITON-SWMM version. "
+                "If CPU and GPU sensitivity analysis needs to be conducted, they should be submitted as "
+                "separate analyses."
+            )
+        subanalysis_consolidation_jobs = []
+        setup_script = self.master_analysis.generate_setup_workflow_script(
+            process_system_level_inputs=process_system_level_inputs,
+            overwrite_system_inputs=overwrite_system_inputs,
+            compile_TRITON_SWMM=compile_TRITON_SWMM,
+            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+            verbose=verbose,
+        )
+        setup_job_id = ut.run_bash_script(setup_script, verbose=verbose)
+        # ensemble_scripts = []
+        # subanalysis_consolidation_scripts = []
+        # setup_jobid = ut.run_bash_script(setup_script, verbose=verbose)
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
-                overwrite_scenario=overwrite_scenarios,
+            ensemble_script = sub_analysis.generate_SLURM_job_array_script(
+                prepare_scenarios=prepare_scenarios,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+                overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
-                compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
-                analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
-        if concurrent:
-            self.master_analysis.run_python_functions_concurrently(
-                prepare_scenario_launchers, verbose=verbose
+            ensemble_jobid = ut.run_bash_script(
+                ensemble_script, dependent_job_id=setup_job_id, verbose=verbose
             )
-        else:
-            for launcher in prepare_scenario_launchers:
-                launcher()
-
-        self._update_master_analysis_log()
-        if self.all_scenarios_created != True:
-            scens_not_created = "\n\t".join(self.scenarios_not_created)
-            raise RuntimeError(
-                f"Preparation failed for the following scenarios:\n{scens_not_created}"
+            subanalysis_consolidation_script = (
+                sub_analysis.generate_consolidation_workflow_script(
+                    overwrite_if_exist=overwrite_if_exist,
+                    compression_level=compression_level,
+                    verbose=verbose,
+                    which=which,
+                )
             )
+            subanalysis_consolidation_jobid = ut.run_bash_script(
+                subanalysis_consolidation_script,
+                dependent_job_id=ensemble_jobid,
+                verbose=verbose,
+            )
+            subanalysis_consolidation_jobs.append(subanalysis_consolidation_jobid)
 
     def run_all_sims(
         self,

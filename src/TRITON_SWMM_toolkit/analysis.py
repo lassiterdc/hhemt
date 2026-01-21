@@ -1483,16 +1483,15 @@ class TRITONSWMM_analysis:
 
     def generate_SLURM_job_array_script(
         self,
-        job_script_path: Optional[Path] = None,
         prepare_scenarios: bool = True,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
-        overwrite_scenario: bool = False,
-        rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = True,
     ) -> Path:
         """
