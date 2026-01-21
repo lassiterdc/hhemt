@@ -249,8 +249,14 @@ class TRITON_SWMM_examples:
         pass
 
     @classmethod
-    def retrieve_norfolk_irene_example(cls, download_if_exists=False):
-        norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
+    def retrieve_norfolk_irene_example(
+        cls,
+        download_if_exists=False,
+        example_data_dir: Optional[Path] = None,
+    ):
+        norfolk_system_yaml = load_norfolk_system_config(
+            download_if_exists=download_if_exists, example_data_dir=example_data_dir
+        )
         norfolk_analysis_yaml = cls.load_norfolk_template_analysis()
         norfolk_irene = TRITON_SWMM_example(norfolk_system_yaml, norfolk_analysis_yaml)
         return norfolk_irene
@@ -266,20 +272,34 @@ class TRITON_SWMM_examples:
         return cls._load_example_analysis_config(NORFOLK_EX, NORFOLK_ANALYSIS_CONFIG)
 
     @classmethod
-    def _fill_analysis_yaml(cls, system_name: str, analysis_config_filename: str):
-        mapping = get_norfolk_data_and_package_directory_mapping_dict()
+    def _fill_analysis_yaml(
+        cls,
+        system_name: str,
+        analysis_config_filename: str,
+        example_data_dir: Optional[Path] = None,
+    ):
+        mapping = get_norfolk_data_and_package_directory_mapping_dict(
+            example_data_dir=example_data_dir
+        )
         cfg_template = load_config_filepath(system_name, analysis_config_filename)
         filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
         return filled_yaml_data
 
     @classmethod
     def _load_example_analysis_config(
-        cls, system_name: str, analysis_config_filename: str
+        cls,
+        system_name: str,
+        analysis_config_filename: str,
+        example_data_dir: Optional[Path] = None,
     ):
         filled_yaml_data = cls._fill_analysis_yaml(
-            system_name, analysis_config_filename
+            system_name=system_name,
+            analysis_config_filename=analysis_config_filename,
+            example_data_dir=example_data_dir,
         )
-        cfg_system_yaml = load_norfolk_system_config(download_if_exists=False)
+        cfg_system_yaml = load_norfolk_system_config(
+            download_if_exists=False, example_data_dir=example_data_dir
+        )
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = (
@@ -306,6 +326,7 @@ class GetTS_TestCases:
     # UVA
     UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
     UVA_modules_to_load_for_srun = "gompi/14.2.0_5.0.7 miniforge"
+    UVA_norfolk_data_dir = Path("/scratch/***REMOVED***/triton_swmm_toolkit_data")
 
     def __init__(self) -> None:
         pass
@@ -321,8 +342,11 @@ class GetTS_TestCases:
         download_if_exists=False,
         additional_analysis_configs=dict(),
         additional_system_configs=dict(),
+        example_data_dir: Optional[Path] = None,
     ) -> TRITON_SWMM_testcase:
-        norfolk_system_yaml = load_norfolk_system_config(download_if_exists)
+        norfolk_system_yaml = load_norfolk_system_config(
+            download_if_exists, additional_system_configs
+        )
         nrflk_test = TRITON_SWMM_testcase(
             norfolk_system_yaml,
             analysis_name=analysis_name,
@@ -371,6 +395,7 @@ class GetTS_TestCases:
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
+            example_data_dir=cls.UVA_norfolk_data_dir,
         )
 
     @classmethod
@@ -402,6 +427,7 @@ class GetTS_TestCases:
                 TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
+            example_data_dir=cls.UVA_norfolk_data_dir,
         )
 
     @classmethod
@@ -592,8 +618,17 @@ def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
     return cfg_filled_yaml
 
 
-def get_norfolk_data_and_package_directory_mapping_dict():
-    hydroshare_root_dir = get_package_data_root(APP_NAME) / "examples" / NORFOLK_EX
+from typing import Optional
+
+
+def get_norfolk_data_and_package_directory_mapping_dict(
+    example_data_dir: Optional[Path] = None,
+):
+    if example_data_dir:
+        root = example_data_dir
+    else:
+        root = get_package_data_root(APP_NAME)
+    hydroshare_root_dir = root / "examples" / NORFOLK_EX
     data_dir = hydroshare_root_dir / "data" / "contents"
     package_dir = get_package_root(APP_NAME).parents[1] / "test_data" / NORFOLK_EX
 
@@ -605,10 +640,14 @@ def get_norfolk_data_and_package_directory_mapping_dict():
     return mapping
 
 
-def load_norfolk_system_config(download_if_exists: bool):
+def load_norfolk_system_config(
+    download_if_exists: bool, example_data_dir: Optional[Path] = None
+):
     case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
-    mapping = get_norfolk_data_and_package_directory_mapping_dict()
+    mapping = get_norfolk_data_and_package_directory_mapping_dict(
+        example_data_dir=example_data_dir
+    )
     cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
     filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
     cfg_system = load_system_config_from_dict(filled_yaml_data)
