@@ -106,7 +106,6 @@ class TRITONSWMM_sim_post_processing:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
-        analysis_dir: Optional[Path] = None,
     ):
         """
         Create a launcher function that runs timeseries processing in a subprocess.
@@ -126,8 +125,6 @@ class TRITONSWMM_sim_post_processing:
             If True, print progress messages
         compression_level : int
             Compression level for output files (0-9)
-        analysis_dir : Optional[Path]
-            Optional path to analysis directory (for sensitivity analysis)
 
         Returns
         -------
@@ -164,9 +161,6 @@ class TRITONSWMM_sim_post_processing:
             cmd.append("--clear-raw-outputs")
         if overwrite_if_exist:
             cmd.append("--overwrite-if-exist")
-        if analysis_dir:
-            cmd.append("--analysis-dir")
-            cmd.append(str(analysis_dir))
 
         def launcher():
             """Execute timeseries processing in a subprocess."""

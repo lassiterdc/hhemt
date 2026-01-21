@@ -40,22 +40,24 @@ class TRITONSWMM_analysis:
         self,
         analysis_config_yaml: Path,
         system: "TRITONSWMM_system",
-        analysis_dir: Optional[Path] = None,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
         skip_log_update: bool = False,
     ) -> None:
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
-        # define additional paths not defined in cfg
-        if compiled_TRITONSWMM_directory is None:
+        # define additional paths
+        if cfg_analysis._compiled_TRITONSWMM_directory:
+            compiled_TRITONSWMM_directory = cfg_analysis._compiled_TRITONSWMM_directory
+        else:
             compiled_TRITONSWMM_directory = (
                 self._system.cfg_system.system_directory
                 / self.cfg_analysis.analysis_id
                 / "compiled_software"
             )
-        if analysis_dir is None:
+        if cfg_analysis._analysis_dir:
+            analysis_dir = cfg_analysis._analysis_dir
+        else:
             analysis_dir = (
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
             )
@@ -279,8 +281,6 @@ class TRITONSWMM_analysis:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
-        analysis_dir: Optional[Path] = None,
     ):
         """
         Create subprocess-based launchers for scenario preparation.
@@ -311,8 +311,6 @@ class TRITONSWMM_analysis:
                 overwrite_scenario=overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
-                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
-                analysis_dir=analysis_dir,
             )
             prepare_scenario_launchers.append(launcher)
 
@@ -325,7 +323,6 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
-        analysis_dir: Optional[Path] = None,
     ):
         """
         Create subprocess-based launchers for scenario timeseries processing.
@@ -345,8 +342,6 @@ class TRITONSWMM_analysis:
             If True, print progress messages
         compression_level : int
             Compression level for output files (0-9)
-        analysis_dir : Optional[Path]
-            Optional path to analysis directory (mainly used for sensitivity analysis)
 
         Returns
         -------
@@ -364,7 +359,6 @@ class TRITONSWMM_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
-                analysis_dir=analysis_dir,
             )
             scenario_timeseries_processing_launchers.append(launcher)
 
@@ -535,15 +529,11 @@ class TRITONSWMM_analysis:
         overwrite_scenarios: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
-        analysis_dir: Optional[Path] = None,
     ):
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
             overwrite_scenario=overwrite_scenarios,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
-            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
-            analysis_dir=analysis_dir,
         )
         for launcher in prepare_scenario_launchers:
             launcher()
@@ -564,8 +554,6 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool,
         compression_level: int,
         verbose=False,
-        analysis_dir: Optional[Path] = None,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
     ):
         scen = TRITONSWMM_scenario(event_iloc, self)
 
@@ -585,8 +573,6 @@ class TRITONSWMM_analysis:
         launcher, finalize_sim = run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=pickup_where_leftoff,
             verbose=verbose,
-            analysis_dir=analysis_dir,
-            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
         )
         # Launch the simulation (non-blocking)
         proc, start_time, sim_logfile, lf = launcher()
@@ -613,7 +599,6 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
-        analysis_dir: Optional[Path] = None,
     ):
         scenario_timeseries_processing_launchers = []
         for event_iloc in self.df_sims.index:
@@ -624,7 +609,6 @@ class TRITONSWMM_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
-                analysis_dir=analysis_dir,
             )
             scenario_timeseries_processing_launchers.append(launcher)
         return scenario_timeseries_processing_launchers
@@ -919,8 +903,6 @@ class TRITONSWMM_analysis:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
-        analysis_dir: Optional[Path] = None,
     ):
         """
         Create launcher functions for all simulations.
@@ -937,8 +919,6 @@ class TRITONSWMM_analysis:
             If True, resume simulations from last checkpoint
         verbose : bool
             If True, print progress messages
-        analysis_dir : Optional[Path]
-            Optional path to analysis directory (mainly used for sensitivity analysis)
 
         Returns
         -------
@@ -952,8 +932,6 @@ class TRITONSWMM_analysis:
                 run._create_subprocess_sim_run_launcher(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
-                    compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
-                    analysis_dir=analysis_dir,
                 )
             )
             if launch_and_finalize_functions_tuple is None:
@@ -1254,8 +1232,6 @@ class TRITONSWMM_analysis:
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         verbose=False,
-        analysis_dir: Optional[Path] = None,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
     ):
         """
         Arguments passed to run:
@@ -1284,8 +1260,6 @@ class TRITONSWMM_analysis:
                 clear_raw_outputs=clear_raw_outputs,
                 overwrite_if_exist=overwrite_if_exist,
                 compression_level=compression_level,
-                analysis_dir=analysis_dir,
-                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
             )
         self._update_log()
 

@@ -408,8 +408,6 @@ class TRITONSWMM_run:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
-        compiled_TRITONSWMM_directory: Optional[Path] = None,
-        analysis_dir: Optional[Path] = None,
     ):
         """
         Create a launcher function that runs simulation in a subprocess (non-blocking).
@@ -432,10 +430,6 @@ class TRITONSWMM_run:
             If True, resume simulation from last checkpoint if available
         verbose : bool
             If True, print progress messages
-        compiled_TRITONSWMM_directory : Optional[Path]
-            Optional path to compiled TRITON-SWMM directory
-        analysis_dir : Optional[Path]
-            Optional path to analysis directory
 
         Returns
         -------
@@ -466,12 +460,6 @@ class TRITONSWMM_run:
         # Add optional flags
         if pickup_where_leftoff:
             cmd.append("--pickup-where-leftoff")
-        if compiled_TRITONSWMM_directory:
-            cmd.append("--compiled-model-dir")
-            cmd.append(str(compiled_TRITONSWMM_directory))
-        if analysis_dir:
-            cmd.append("--analysis-dir")
-            cmd.append(str(analysis_dir))
 
         # Prepare simulation metadata for initial log entry
         run_mode = self._analysis.cfg_analysis.run_mode

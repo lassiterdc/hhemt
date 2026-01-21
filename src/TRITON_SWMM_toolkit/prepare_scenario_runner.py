@@ -69,20 +69,6 @@ def main():
         default=False,
         help="Rerun SWMM hydrology model even if outputs exist",
     )
-    parser.add_argument(
-        "--compiled-model-dir",
-        type=Path,
-        required=False,
-        help="(Optional) path to compiled TRITON-SWMM directory (mainly used for sensitivity analysis)",
-    )
-
-    parser.add_argument(
-        "--analysis-dir",
-        type=Path,
-        required=False,
-        help="(Optional) path to the analysis (mainly used for sensitivity analysis)",
-    )
-
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -98,20 +84,6 @@ def main():
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
-    if args.compiled_model_dir:
-        compiled_model_dir = args.compiled_model_dir
-        assert args.compiled_model_dir.exists()
-        logger.info(
-            f"Assigning compiled model directory to analysis: {str(compiled_model_dir)}"
-        )
-    else:
-        compiled_model_dir = None
-    if args.analysis_dir:
-        analysis_dir = args.analysis_dir
-        assert args.analysis_dir.exists()
-        logger.info(f"Assigning analysis to directory {str(analysis_dir)}")
-    else:
-        analysis_dir = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -126,8 +98,6 @@ def main():
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            analysis_dir=analysis_dir,
-            compiled_TRITONSWMM_directory=compiled_model_dir,
             skip_log_update=True,
         )
 

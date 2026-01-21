@@ -81,21 +81,6 @@ def main() -> int:
         default=False,
         help="Recompile even if already compiled successfully (only used if --compile-triton-swmm)",
     )
-    parser.add_argument(
-        "--compiled-model-dir",
-        type=Path,
-        required=False,
-        default=None,
-        help="(Optional) path to compiled TRITON-SWMM directory",
-    )
-    parser.add_argument(
-        "--analysis-dir",
-        type=Path,
-        required=False,
-        default=None,
-        help="(Optional) path to the analysis directory",
-    )
-
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -111,12 +96,6 @@ def main() -> int:
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
-    if args.compiled_model_dir and not args.compiled_model_dir.exists():
-        logger.error(f"Compiled model directory not found: {args.compiled_model_dir}")
-        return 2
-    if args.analysis_dir and not args.analysis_dir.exists():
-        logger.error(f"Analysis directory not found: {args.analysis_dir}")
-        return 2
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -130,8 +109,6 @@ def main() -> int:
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            analysis_dir=args.analysis_dir,
-            compiled_TRITONSWMM_directory=args.compiled_model_dir,
             skip_log_update=False,
         )
 

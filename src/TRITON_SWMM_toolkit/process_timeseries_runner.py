@@ -14,7 +14,7 @@ Usage:
         --clear-raw-outputs \
         --overwrite-if-exist \
         --compression-level 5 \
-        [--analysis-dir /path/to/analysis]
+
 
 Exit codes:
     0: Success
@@ -86,13 +86,6 @@ def main():
         default=5,
         help="Compression level for output files (0-9)",
     )
-    parser.add_argument(
-        "--analysis-dir",
-        type=Path,
-        required=False,
-        help="(Optional) path to the analysis directory (mainly used for sensitivity analysis)",
-    )
-
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -108,13 +101,6 @@ def main():
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
-    if args.analysis_dir:
-        if not args.analysis_dir.exists():
-            logger.error(f"Analysis directory not found: {args.analysis_dir}")
-            return 2
-        logger.info(f"Using analysis directory: {str(args.analysis_dir)}")
-    else:
-        args.analysis_dir = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -132,7 +118,6 @@ def main():
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            analysis_dir=args.analysis_dir,
             skip_log_update=True,
         )
 

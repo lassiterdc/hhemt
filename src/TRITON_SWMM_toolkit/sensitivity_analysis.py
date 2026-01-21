@@ -66,8 +66,6 @@ class TRITONSWMM_sensitivity_analysis:
                     overwrite_scenario=overwrite_scenarios,
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     verbose=verbose,
-                    compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
-                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
                 )
             if concurrent:
                 self.master_analysis.run_python_functions_concurrently(
@@ -205,7 +203,6 @@ class TRITONSWMM_sensitivity_analysis:
                 launch_functions += sub_analysis._create_launchable_sims(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
-                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
                 )
             self.master_analysis.run_simulations_concurrently(
                 launch_functions, verbose=verbose
@@ -220,8 +217,6 @@ class TRITONSWMM_sensitivity_analysis:
                     overwrite_if_exist=overwrite_if_exist,
                     compression_level=compression_level,
                     verbose=verbose,
-                    analysis_dir=sub_analysis.analysis_paths.analysis_dir,
-                    compiled_TRITONSWMM_directory=sub_analysis.analysis_paths.compiled_TRITONSWMM_directory,
                 )
         self._update_master_analysis_log()
         return
@@ -242,7 +237,6 @@ class TRITONSWMM_sensitivity_analysis:
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
-                analysis_dir=sub_analysis.analysis_paths.analysis_dir,
             )
             scenario_timeseries_processing_launchers += launchers
         self.master_analysis.run_python_functions_concurrently(
@@ -471,26 +465,27 @@ class TRITONSWMM_sensitivity_analysis:
 
             cfg_anlysys_yaml = sub_analysis_directory / f"subanalysis_{idx}.yaml"
 
+            if "TRITON_SWMM_make_command" in self.df_setup.columns:
+                cfg_snstvty._compiled_TRITONSWMM_directory = (
+                    self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
+                    / row["TRITON_SWMM_make_command"]
+                )
+            else:
+                cfg_snstvty._compiled_TRITONSWMM_directory = (
+                    self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
+                )
+
+            cfg_snstvty._analysis_dir = sub_analysis_directory
+
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(
                     cfg_snstvty.model_dump(mode="json"),
                     sort_keys=False,  # .dict() for pydantic v1
                 )
             )
-
-            compiled_TRITONSWMM_directory = (
-                self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
-            )
-            if "TRITON_SWMM_make_command" in self.df_setup.columns:
-                compiled_TRITONSWMM_directory = (
-                    compiled_TRITONSWMM_directory / row["TRITON_SWMM_make_command"]
-                )
-
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=self._system,
-                analysis_dir=sub_analysis_directory,
-                compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
             )
             dic_sensitivity_analyses[idx] = anlsys
         return dic_sensitivity_analyses

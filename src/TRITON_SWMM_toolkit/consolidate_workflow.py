@@ -75,13 +75,6 @@ def main() -> int:
         help="Compression level for output files (0-9)",
     )
     parser.add_argument(
-        "--analysis-dir",
-        type=Path,
-        required=False,
-        default=None,
-        help="(Optional) path to the analysis directory",
-    )
-    parser.add_argument(
         "--consolidate-sensitivity-analysis-outputs",
         action="store_true",
         default=False,
@@ -103,9 +96,6 @@ def main() -> int:
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
-    if args.analysis_dir and not args.analysis_dir.exists():
-        logger.error(f"Analysis directory not found: {args.analysis_dir}")
-        return 2
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -119,7 +109,6 @@ def main() -> int:
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            analysis_dir=args.analysis_dir,
             skip_log_update=False,
         )
 

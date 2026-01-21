@@ -122,19 +122,6 @@ def main():
         default=False,
         help="Rerun SWMM hydrology model even if outputs exist (only used if --prepare-scenario)",
     )
-    parser.add_argument(
-        "--compiled-model-dir",
-        type=Path,
-        required=False,
-        help="(Optional) path to compiled TRITON-SWMM directory",
-    )
-    parser.add_argument(
-        "--analysis-dir",
-        type=Path,
-        required=False,
-        help="(Optional) path to the analysis directory",
-    )
-
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -149,12 +136,6 @@ def main():
         return 2
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
-        return 2
-    if args.compiled_model_dir and not args.compiled_model_dir.exists():
-        logger.error(f"Compiled model directory not found: {args.compiled_model_dir}")
-        return 2
-    if args.analysis_dir and not args.analysis_dir.exists():
-        logger.error(f"Analysis directory not found: {args.analysis_dir}")
         return 2
 
     try:
@@ -173,8 +154,6 @@ def main():
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            analysis_dir=args.analysis_dir,
-            compiled_TRITONSWMM_directory=args.compiled_model_dir,
             skip_log_update=True,
         )
 
@@ -190,8 +169,6 @@ def main():
                 overwrite_scenario=args.overwrite_scenario,
                 rerun_swmm_hydro_if_outputs_exist=args.rerun_swmm_hydro,
                 verbose=True,
-                compiled_TRITONSWMM_directory=args.compiled_model_dir,
-                analysis_dir=args.analysis_dir,
             )
             launcher()
             scenario.log.refresh()
@@ -213,8 +190,6 @@ def main():
         launcher, finalize_sim = scenario.run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=args.pickup_where_leftoff,
             verbose=True,
-            compiled_TRITONSWMM_directory=args.compiled_model_dir,
-            analysis_dir=args.analysis_dir,
         )
         # Launch the simulation (non-blocking)
         proc, start_time, sim_logfile, lf = launcher()
@@ -240,7 +215,6 @@ def main():
                 overwrite_if_exist=args.overwrite_if_exist,
                 verbose=True,
                 compression_level=args.compression_level,
-                analysis_dir=args.analysis_dir,
             )
             # Execute the launcher (which handles simlog updates internally)
             launcher()
