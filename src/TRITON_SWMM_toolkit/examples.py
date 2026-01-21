@@ -346,7 +346,7 @@ class GetTS_TestCases:
         example_data_dir: Optional[Path] = None,
     ) -> TRITON_SWMM_testcase:
         norfolk_system_yaml = load_norfolk_system_config(
-            download_if_exists, additional_system_configs
+            download_if_exists, example_data_dir=example_data_dir
         )
         nrflk_test = TRITON_SWMM_testcase(
             norfolk_system_yaml,
