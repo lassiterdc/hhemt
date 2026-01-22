@@ -1,0 +1,6 @@
+use-conda: false
+conda-frontend: mamba
+cores: 4
+printshellcmds: true
+keep-going: false
+rerun-incomplete: true

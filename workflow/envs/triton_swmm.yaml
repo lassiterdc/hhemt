@@ -1,0 +1,45 @@
+name: triton_swmm_toolkit
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - typer
+  - pydantic
+  - pyyaml
+  - zarr
+  - netcdf4
+  - scipy
+  - pydap
+  - h5netcdf
+  - cftime
+  - bottleneck
+  - dask
+  - matplotlib
+  - seaborn
+  - sparse
+  - pint
+  - bagit
+  - openpyxl
+  # geospatial packages
+  - rioxarray
+  - cartopy
+  - geopandas
+  - fiona
+  - pyproj
+  - shapely
+  # other stuff
+  - coverage
+  - pytest
+  - ruff
+  - ty
+  - ipdb
+  - ipykernel
+  - pip
+  - pip:
+      - hsclient
+      - pyswmm
+      - swmmio
+      - tabulate
+      - notebook
+      - jupyter_server
+      - ipywidgets

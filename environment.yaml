@@ -61,3 +61,5 @@ dependencies:
       - notebook
       - jupyter_server
       - ipywidgets
+      - snakemake-executor-plugin-slurm
+      - snakemake>=8.0
