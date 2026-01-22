@@ -46,6 +46,14 @@ class TRITONSWMM_sensitivity_analysis:
         self.independent_vars = self._attributes_varied_for_analysis()
         self.df_setup = self._retieve_df_setup().loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
+        # validate
+        if "run_mode" in self.df_setup.columns:
+            run_modes = self.df_setup.loc[:, "run_mode"].unique()
+            if ("gpu" in run_modes) and len(run_modes) > 1:
+                raise ValueError(
+                    "A single sensitivity analysis is not currently configured to handle multi-CPU and multi-GPU "
+                    "configurations. The solution currently is to run two different sensitivity analyses."
+                )
 
     def prepare_scenarios_in_each_subanalysis(
         self,
@@ -104,12 +112,6 @@ class TRITONSWMM_sensitivity_analysis:
         # other
         verbose: bool = True,
     ):
-        if "TRITON_SWMM_make_command" in self.df_setup.columns:
-            raise ValueError(
-                "Currently sensitivity analysis run as batch jobs can only use 1 compiled TRITON-SWMM version. "
-                "If CPU and GPU sensitivity analysis needs to be conducted, they should be submitted as "
-                "separate analyses."
-            )
         subanalysis_consolidation_jobs = []
         setup_script = self.master_analysis.generate_setup_workflow_script(
             process_system_level_inputs=process_system_level_inputs,
@@ -471,9 +473,6 @@ class TRITONSWMM_sensitivity_analysis:
             cfg_anlysys_yaml = sub_analysis_directory / f"subanalysis_{idx}.yaml"
 
             cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
-
-            if "TRITON_SWMM_make_command" in self.df_setup.columns:
-                raise ValueError("Benchmarking on GPU and CPU configs is not possible.")
 
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(

@@ -449,12 +449,7 @@ class analysis_config(cfgBaseModel):
         None,
         description="For readability.",
     )
-    # TRITON_SWMM_make_command: Literal[
-    #     "hpc_swmm_omp", "hpc_swmm_gpu", "frontier_swmm_gpu", "frontier_swmm_omp"
-    # ] = Field(
-    #     "hpc_swmm_omp",
-    #     description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
-    # )
+
     # TRITON-SWMM PARAMETERS
     TRITON_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",

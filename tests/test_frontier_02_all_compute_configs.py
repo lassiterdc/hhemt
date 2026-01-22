@@ -24,7 +24,7 @@ def test_compile():
     )
     analysis = nrflk_multiconfig.system.analysis
     analysis.sensitivity.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=True)
-    assert analysis.sensitivity.compilation_successful == True
+    assert analysis._system.compilation_successful, "TRITON-SWMM not compiled"
 
 
 def test_prepare_scenarios():

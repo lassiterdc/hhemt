@@ -318,8 +318,11 @@ class GetTS_TestCases:
     test_data_dir = files(APP_NAME).parents[1].joinpath(f"test_data/{NORFOLK_EX}/")  # type: ignore
     cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
     # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
-    sensitivity_frontier_all_configs = test_data_dir / "benchmarking_frontier.xlsx"
-    sensitivity_UVA_cpu = test_data_dir / "benchmarking_uva_cpus.xlsx"
+    sensitivity_frontier_all_configs_minimal = (
+        test_data_dir / "benchmarking_frontier_minimal.xlsx"
+    )
+    sensitivity_UVA_cpu_minimal = test_data_dir / "benchmarking_uva_cpus_minimal.xlsx"
+    sensitivity_UVA_cpu_full = test_data_dir / "benchmarking_uva_cpus.xlsx"
     frontier_compilation_script = (
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
@@ -374,7 +377,6 @@ class GetTS_TestCases:
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                TRITON_SWMM_make_command="hpc_swmm_omp",
                 hpc_time_min_per_sim=30,
                 hpc_partition="standard",
                 hpc_allocation="***REMOVED***",
@@ -400,7 +402,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_UVA_sensitivtiy_CPU(
+    def retreive_norfolk_UVA_sensitivtiy_CPU_full_ensemble_short_sims(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "UVA_sensitivtiy_CPU"
@@ -413,8 +415,46 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_UVA_cpu,
-                TRITON_SWMM_make_command="hpc_swmm_omp",
+                sensitivity_analysis=cls.sensitivity_UVA_cpu_full,
+                hpc_time_min_per_sim=30,
+                hpc_partition="standard",
+                hpc_allocation="***REMOVED***",
+                run_mode="serial",
+                n_mpi_procs=1,
+                n_omp_threads=1,
+                n_gpus=0,
+                n_nodes=1,
+                multi_sim_run_method="batch_job",
+                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
+                additional_bash_lines=[
+                    'eval "$(conda shell.bash hook)"',
+                    "conda activate triton_swmm_toolkit",
+                    "export PYTHONNOUSERSITE=1",
+                    # "pip install -e .",
+                ],
+            ),
+            additional_system_configs=dict(
+                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
+            ),
+            example_data_dir=cls.UVA_norfolk_data_dir,
+        )
+
+    @classmethod
+    def retreive_norfolk_UVA_sensitivtiy_CPU_minimal(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "UVA_sensitivtiy_CPU"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                toggle_sensitivity_analysis=True,
+                sensitivity_analysis=cls.sensitivity_UVA_cpu_minimal,
                 hpc_time_min_per_sim=30,
                 hpc_partition="standard",
                 hpc_allocation="***REMOVED***",
@@ -452,7 +492,6 @@ class GetTS_TestCases:
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                TRITON_SWMM_make_command="frontier_swmm_omp",
                 multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
@@ -474,9 +513,8 @@ class GetTS_TestCases:
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                TRITON_SWMM_make_command="frontier_swmm_omp",
                 toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_frontier_all_configs,
+                sensitivity_analysis=cls.sensitivity_frontier_all_configs_minimal,
                 multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
