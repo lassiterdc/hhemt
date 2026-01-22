@@ -165,7 +165,7 @@ def test_consolidated_workflow_with_system_inputs_and_compilation():
     assert mannings_file.exists(), "Mannings file should be created in Phase 1"
 
     assert (
-        analysis.compilation_successful
+        system.compilation_successful
     ), "TRITON-SWMM should be compiled successfully in Phase 1"
 
     # Verify Phase 2 outputs (simulations ran)

@@ -68,7 +68,7 @@ class TRITONSWMM_scenario:
             hyg_locs=sim_folder / "strmflow" / "loc.txt",
             # TRITON-SWMM
             triton_swmm_cfg=sim_folder / f"TRITONSWMM.cfg",
-            sim_tritonswmm_executable=sim_folder / "build" / "triton",
+            sim_tritonswmm_executable=sim_folder / "build" / "triton.exe",
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
             # OUTPUTS
             output_triton_timeseries=sim_folder
@@ -762,12 +762,9 @@ class TRITONSWMM_scenario:
         return
 
     def _copy_tritonswmm_build_folder_to_sim(self):
-        compiled_TRITONSWMM_directory = (
-            self._analysis.analysis_paths.compiled_TRITONSWMM_directory
-        )
+        src_build_fpath = self._system.sys_paths.TRITON_build_dir
         sim_tritonswmm_executable = self.scen_paths.sim_tritonswmm_executable
 
-        src_build_fpath = compiled_TRITONSWMM_directory / "build/"
         target_build_fpath = sim_tritonswmm_executable.parent
         if target_build_fpath.exists():
             shutil.rmtree(target_build_fpath)

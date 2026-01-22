@@ -25,17 +25,16 @@ class MainDataClass:
 class SysPaths(MainDataClass):
     dem_processed: Path
     mannings_processed: Path
+    TRITON_build_dir: Path
+    compilation_script: Path
+    compilation_logfile: Path
 
 
 @dataclass
 class AnalysisPaths(MainDataClass):
     f_log: Path
     analysis_dir: Path
-    compiled_TRITONSWMM_directory: Path
-    TRITON_build_dir: Path
-    compilation_script: Path
     simulation_directory: Path
-    compilation_logfile: Path
     output_triton_summary: Path
     output_swmm_links_summary: Path
     output_swmm_node_summary: Path

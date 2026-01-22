@@ -423,7 +423,6 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):
     all_scenarios_created: LogField[bool] = Field(default_factory=LogField)
-    TRITONSWMM_compiled_successfully: LogField[bool] = Field(default_factory=LogField)
     all_sims_run: LogField[bool] = Field(default_factory=LogField)
     all_TRITON_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
     all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
@@ -440,7 +439,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # enforces data types
     @field_validator(
         "all_scenarios_created",
-        "TRITONSWMM_compiled_successfully",
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
@@ -463,7 +461,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # bools
     @field_validator(
         "all_scenarios_created",
-        "TRITONSWMM_compiled_successfully",
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
@@ -486,7 +483,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # aids converting to dict and printing
     @field_serializer(
         "all_scenarios_created",
-        "TRITONSWMM_compiled_successfully",
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",

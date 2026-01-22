@@ -51,7 +51,7 @@ class cfgBaseModel(BaseModel):
             field_name: field_info.description or ""
             for field_name, field_info in model_cls.model_fields.items()
         }
-        sr = pd.Series(data)
+        sr = pd.Series(data)  # type: ignore
         sr.index.name = "attr_name"  # type: ignore
         sr.name = "desc"  # type: ignore
         return sr
@@ -65,7 +65,7 @@ class cfgBaseModel(BaseModel):
         for name, field in model_cls.model_fields.items():
             is_optional = field.default is not ... or field.allow_none  # type: ignore
             data[name] = is_optional
-        sr = pd.Series(data)
+        sr = pd.Series(data)  # type: ignore
         sr.index.name = "attr_name"  # type: ignore
         sr.name = "optional"  # type: ignore
         return sr
@@ -231,18 +231,25 @@ class system_config(cfgBaseModel):
         None,
         description="Landuse raster used for creating manning's roughness input.",
     )
-    TRITON_software_directory: Path = Field(
+    TRITONSWMM_software_directory: Path = Field(
         ...,
-        description="Folder containing the TRITON model software.",
+        description="Folder containing the TRITONSWMM model software.",
     )
-    SWMM_software_directory: Path = Field(
-        ...,
-        description="Folder containing the SWMM model software.",
+    TRITON_machine_name: Optional[str] = Field(
+        None,
+        description="Machine name corresponding to the folder containing bash scripts"
+        " for setting machine-specific variables while compiling the software, e.g, Linux or Frontier"
+        "In other words, <MACHINE> in <TRITON top directory>/cmake/machines/<MACHINE>/COMPILER_BACKEND.sh",
     )
-    TRITON_SWMM_software_compilation_script: Path = Field(
-        ...,
-        description="Folder containing script to build analysis-specific version of TRITON-SWMM.",
+    TRITON_machine_bash_script: Optional[str] = Field(
+        None,
+        description="File name (e.g., 'default_OPENMP.sh') of bash script that sets machine-specific variables for compiling the software"
+        "In other words, COMPILER_BACKEND.sh in <TRITON top directory>/cmake/machines/<MACHINE>/COMPILER_BACKEND.sh",
     )
+    # TRITON_SWMM_software_compilation_script: Path = Field(
+    #     ...,
+    #     description="Folder containing script to build analysis-specific version of TRITON-SWMM.",
+    # )
     additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
         None,
         description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",
@@ -442,12 +449,12 @@ class analysis_config(cfgBaseModel):
         None,
         description="For readability.",
     )
-    TRITON_SWMM_make_command: Literal[
-        "hpc_swmm_omp", "hpc_swmm_gpu", "frontier_swmm_gpu", "frontier_swmm_omp"
-    ] = Field(
-        "hpc_swmm_omp",
-        description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
-    )
+    # TRITON_SWMM_make_command: Literal[
+    #     "hpc_swmm_omp", "hpc_swmm_gpu", "frontier_swmm_gpu", "frontier_swmm_omp"
+    # ] = Field(
+    #     "hpc_swmm_omp",
+    #     description="This should be one of the make commands listed in Makefile in the TRITONSWMM software directory.",
+    # )
     # TRITON-SWMM PARAMETERS
     TRITON_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
@@ -485,7 +492,6 @@ class analysis_config(cfgBaseModel):
             description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
         )
     )
-
     # HPC JOB ARRAY PARAMETERS
     hpc_time_min_per_sim: Optional[int] = Field(
         None,
@@ -508,10 +514,6 @@ class analysis_config(cfgBaseModel):
         description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
     )
     # extra inputs (currently only used by sensitivity analysis)
-    compiled_TRITONSWMM_directory: Optional[Path] = Field(
-        None,
-        description="Optional path to compiled TRITON-SWMM software directory",
-    )
     analysis_dir: Optional[Path] = Field(
         None,
         description="Optional path to analysis directory",
