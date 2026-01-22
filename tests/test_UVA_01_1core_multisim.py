@@ -61,7 +61,7 @@ def test_compile_TRITONSWMM_for_cpu_sims():
     nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=False
     )
-    nrflk_multisim_ensemble.system.compile_TRITON_SWMM()
+    nrflk_multisim_ensemble.system.compile_TRITON_SWMM(verbose=True)
     assert nrflk_multisim_ensemble.system.compilation_successful
 
 
