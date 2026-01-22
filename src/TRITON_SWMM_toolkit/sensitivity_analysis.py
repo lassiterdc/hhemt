@@ -456,34 +456,28 @@ class TRITONSWMM_sensitivity_analysis:
         # create sub analyses
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():
-            cfg_snstvty = self.master_analysis.cfg_analysis.model_copy()
+            cfg_snstvty_analysis = self.master_analysis.cfg_analysis.model_copy()
+
             for key, val in row.items():
-                setattr(cfg_snstvty, key, val)  # type: ignore
-            cfg_snstvty.analysis_id = f"subanalysis_{idx}"  # type: ignore
+                setattr(cfg_snstvty_analysis, key, val)  # type: ignore
+            cfg_snstvty_analysis.analysis_id = f"subanalysis_{idx}"  # type: ignore
             sub_analysis_directory = (
                 self.master_analysis.analysis_paths.analysis_dir
-                / str(cfg_snstvty.analysis_id)
+                / str(cfg_snstvty_analysis.analysis_id)
             )
             sub_analysis_directory.mkdir(parents=True, exist_ok=True)
-            cfg_snstvty.toggle_sensitivity_analysis = False
+            cfg_snstvty_analysis.toggle_sensitivity_analysis = False
 
             cfg_anlysys_yaml = sub_analysis_directory / f"subanalysis_{idx}.yaml"
 
-            if "TRITON_SWMM_make_command" in self.df_setup.columns:
-                cfg_snstvty.compiled_TRITONSWMM_directory = (
-                    self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
-                    / row["TRITON_SWMM_make_command"]
-                )
-            else:
-                cfg_snstvty.compiled_TRITONSWMM_directory = (
-                    self.master_analysis.analysis_paths.compiled_TRITONSWMM_directory
-                )
+            cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
 
-            cfg_snstvty.analysis_dir = sub_analysis_directory
+            if "TRITON_SWMM_make_command" in self.df_setup.columns:
+                raise ValueError("Benchmarking on GPU and CPU configs is not possible.")
 
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(
-                    cfg_snstvty.model_dump(mode="json"),
+                    cfg_snstvty_analysis.model_dump(mode="json"),
                     sort_keys=False,  # .dict() for pydantic v1
                 )
             )
@@ -497,13 +491,12 @@ class TRITONSWMM_sensitivity_analysis:
     def compile_TRITON_SWMM_for_sensitivity_analysis(
         self,
         verbose: bool = False,
+        recompile_if_already_done_successfully: bool = False,
     ):
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            if not sub_analysis.compilation_successful:
-                sub_analysis.compile_TRITON_SWMM(
-                    recompile_if_already_done_successfully=False,
-                    verbose=verbose,
-                )
+        self._system.compile_TRITON_SWMM(
+            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+            verbose=verbose,
+        )
         self._update_master_analysis_log()
         return
 
@@ -526,16 +519,6 @@ class TRITONSWMM_sensitivity_analysis:
                 if scen.sim_run_completed != True:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
-
-    @property
-    def compilation_successful(self):
-        TRITONSWMM_compiled_successfully = True
-        for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
-            TRITONSWMM_compiled_successfully = (
-                TRITONSWMM_compiled_successfully and sub_analysis.compilation_successful
-            )
-        return TRITONSWMM_compiled_successfully == True
 
     @property
     def all_scenarios_created(self):

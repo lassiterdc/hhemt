@@ -7,12 +7,14 @@ import xarray as xr
 from pathlib import Path
 from rasterio.enums import Resampling
 import sys
-from TRITON_SWMM_toolkit.utils import read_header, read_text_file_as_string
+import TRITON_SWMM_toolkit.utils as ut
 import tempfile
 from TRITON_SWMM_toolkit.paths import SysPaths
 from typing import Optional
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
+import subprocess
+import time
 
 
 class TRITONSWMM_system:
@@ -23,6 +25,9 @@ class TRITONSWMM_system:
         self.sys_paths = SysPaths(
             dem_processed=self.cfg_system.system_directory / "elevation.dem",
             mannings_processed=self.cfg_system.system_directory / "mannings.dem",
+            TRITON_build_dir=self.cfg_system.TRITONSWMM_software_directory / "build",
+            compilation_logfile=self.cfg_system.system_directory / f"compilation.log",
+            compilation_script=self.cfg_system.system_directory / "compile.sh",
         )
         self._analysis: Optional["TRITONSWMM_analysis"] = None
         self.plot = TRITONSWMM_system_plotting(self)
@@ -85,10 +90,10 @@ class TRITONSWMM_system:
         mannings_processed = self.sys_paths.mannings_processed
         dem_processed = self.sys_paths.dem_processed
 
-        dem_header = "".join(read_header(dem_processed, 6))
-        mannings_header = "".join(read_header(mannings_processed, 6))
+        dem_header = "".join(ut.read_header(dem_processed, 6))
+        mannings_header = "".join(ut.read_header(mannings_processed, 6))
         if dem_header != mannings_header:
-            mannings_data = read_text_file_as_string(mannings_processed)
+            mannings_data = ut.read_text_file_as_string(mannings_processed)
             mannings_with_header = dem_header + mannings_data
             with tempfile.NamedTemporaryFile(suffix=".asc") as tmp:
                 tmp.write(mannings_with_header.encode("utf-8"))
@@ -117,7 +122,7 @@ class TRITONSWMM_system:
         unique_values = np.unique(arr[~np.isnan(arr)])
         no_data_value = rds_lu.rio.nodata
         # create dataframe from landuse vals in the landuse raster
-        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()
+        df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()  # type: ignore
         df_lu_vals.index.name = landuse_colname
         # join the landuse values present in the raster with the lookup table
         df_lu_vals = df_lu_vals.join(
@@ -238,7 +243,178 @@ class TRITONSWMM_system:
         str_flt = str_flt.apply(lambda x: x.ljust(longest_num, "0"))
         return str_flt
 
+    # compilation stuff
+    def compile_TRITON_SWMM(
+        self,
+        recompile_if_already_done_successfully: bool = False,
+        redownload_triton_swmm_if_exists: bool = False,
+        verbose: bool = False,
+    ):
+        """
+        Compile TRITON-SWMM by generating the compilation bash script internally.
 
+        This method generates the compilation script directly within the function,
+        eliminating the need for external template files. It compiles SWMM first,
+        then TRITON with explicit SWMM paths. Builds are done in-place in the
+        original source directories to avoid git/cmake configuration issues.
+
+        Parameters
+        ----------
+        recompile_if_already_done_successfully : bool
+            If True, recompile even if already compiled successfully
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        None
+
+        Raises
+        ------
+        FileNotFoundError
+            If TRITON or SWMM software directories don't exist
+        subprocess.CalledProcessError
+            If compilation fails
+        """
+
+        compilation_script = self.sys_paths.compilation_script
+        TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
+
+        if self.compilation_successful and not recompile_if_already_done_successfully:
+            if verbose:
+                print("TRITON-SWMM already compiled", flush=True)
+            return
+
+        import shutil
+
+        bash_script_lines = [
+            "#!/bin/bash",
+            "set -e  # Exit on error",
+            "",
+            f"TRITON_DIR={TRITONSWMM_software_directory}",
+            "",
+        ]
+
+        if redownload_triton_swmm_if_exists:
+            print("Pulling TRITON-SWMM from repo...")
+            download_lines = [
+                f'cd "{TRITONSWMM_software_directory.parent}"',
+                'rm -rf "${TRITON_DIR}"',
+                "git clone https://code.ornl.gov/hydro/triton.git && cd triton && git checkout 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+                "git submodule update --init --recursive",
+            ]
+
+            bash_script_lines.extend(download_lines)
+
+        machine_imports = ""
+        if self.cfg_system.TRITON_machine_name:
+            if self.cfg_system.TRITON_machine_bash_script:
+                machine_imports = (
+                    TRITONSWMM_software_directory
+                    / "cmake"
+                    / "machines"
+                    / self.cfg_system.TRITON_machine_name
+                    / self.cfg_system.TRITON_machine_bash_script
+                )
+                if not machine_imports.exists():
+                    raise ValueError(
+                        f"File for machine-specific imports does not exist: {machine_imports}\n"
+                        "Inspect system configuration arguments for TRITON_machine_name and TRITON_machine_bash_script\n"
+                        f"which form the file path based on TRITON_software_directory {TRITONSWMM_software_directory}\n"
+                        "Also consider inspecting available bash scripts within \n"
+                        f"{TRITONSWMM_software_directory / 'cmake' / 'machines'}"
+                    )
+                ut.fix_line_endings(machine_imports)
+                machine_import_lines = [
+                    f"MACHINE_IMPORTS={machine_imports}",
+                    'source "${MACHINE_IMPORTS}"',
+                ]
+                bash_script_lines.extend(machine_import_lines)
+        # Build compilation script content (builds in-place in source directories)
+
+        bash_script_lines.extend(
+            [
+                'cd "${TRITON_DIR}"',
+                # 'if [ -f "${TRITON_DIR}/build/triton_clean.sh" ]; then',
+                # '    source "${TRITON_DIR}/build/triton_clean.sh"',
+                # '    echo "running triton_clean.sh"',
+                # "fi",
+                "rm -rf build",
+                "mkdir -p build",
+                "cd build",
+                "cmake -DTRITON_ENABLE_SWMM=ON ..",
+                "make -j4",
+                "",
+                "echo 'script finished'",
+            ]
+        )
+
+        bash_script_content = "\n".join(bash_script_lines)
+
+        # Write compilation script
+        compilation_script.parent.mkdir(parents=True, exist_ok=True)
+        compilation_script.write_text(bash_script_content)
+        compilation_script.chmod(0o755)
+
+        if verbose:
+            print(f"Compilation script generated: {compilation_script}", flush=True)
+
+        # Execute compilation script
+        compilation_logfile = self.sys_paths.compilation_logfile
+
+        if verbose:
+            print("Starting TRITON-SWMM compilation...", flush=True)
+
+        with open(compilation_logfile, "w") as logfile:
+            proc = subprocess.run(
+                ["/bin/bash", str(compilation_script)],
+                stdout=logfile,
+                stderr=subprocess.STDOUT,
+                check=True,
+            )
+
+        # Wait for compilation to complete and verify
+        start_time = time.time()
+        compilation_log = ut.read_text_file_as_string(compilation_logfile)
+        while "script finished" not in compilation_log:
+            time.sleep(0.1)
+            compilation_log = ut.read_text_file_as_string(compilation_logfile)
+            elapsed = time.time() - start_time
+            if elapsed > 10:  # Timeout after 10 seconds of checking
+                break
+
+        success = self.compilation_successful
+
+        if verbose:
+            if success:
+                print("TRITON-SWMM compiled successfully!", flush=True)
+            else:
+                print(
+                    "Warning: TRITON-SWMM compilation may not have completed successfully. "
+                    "Check the compilation log for details.",
+                    flush=True,
+                )
+
+        return
+
+    def retrieve_compilation_log(self):
+        if self.sys_paths.compilation_logfile.exists():
+            return ut.read_text_file_as_string(self.sys_paths.compilation_logfile)
+        return "no sim logfile created"
+
+    def print_compilation_log(self):
+        print(self.retrieve_compilation_log(), flush=True)
+
+    @property
+    def compilation_successful(self):
+        compilation_log = self.retrieve_compilation_log()
+        swmm_check = "Built target swmm5" in compilation_log
+        triton_check = "[100%] Built target triton.exe" in compilation_log
+        success = swmm_check and triton_check
+        return success
+
+
+# %% helper functions
 def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
     from rasterio.enums import Resampling
     import xarray as xr

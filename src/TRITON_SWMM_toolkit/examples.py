@@ -659,10 +659,7 @@ def load_norfolk_system_config(
     filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
     cfg_system = load_system_config_from_dict(filled_yaml_data)
     # download data if it doesn't exist
-    if (
-        Path(mapping["DATA_DIR"]).joinpath("software").exists()
-        and not download_if_exists
-    ):
+    if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
         pass
     else:
         hs = sign_into_hydroshare()
@@ -672,10 +669,10 @@ def load_norfolk_system_config(
             hs,
             download_if_exists=download_if_exists,
         )
-        zipped_software = Path(str(cfg_system.TRITONSWMM_software_directory) + ".zip")
-        with ZipFile(zipped_software, "r") as z:
-            z.extractall(cfg_system.TRITONSWMM_software_directory.parent)
-        zipped_software.unlink()
+        # zipped_software = Path(mapping["DATA_DIR"]) / "triton_swmm.zip"
+        # with ZipFile(zipped_software, "r") as z:
+        #     z.extractall(zipped_software.parent)
+        # zipped_software.unlink()
     cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
     cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
     write_yaml(filled_yaml_data, cfg_yaml)

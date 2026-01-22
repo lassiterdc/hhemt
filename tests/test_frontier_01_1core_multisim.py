@@ -45,8 +45,8 @@ def test_compile_TRITONSWMM_for_cpu_sims():
     nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
-    nrflk_multisim_ensemble.system.analysis.compile_TRITON_SWMM()
-    assert nrflk_multisim_ensemble.system.analysis.compilation_successful
+    nrflk_multisim_ensemble.system.compile_TRITON_SWMM()
+    assert nrflk_multisim_ensemble.system.compilation_successful
 
 
 def test_prepare_scenarios():

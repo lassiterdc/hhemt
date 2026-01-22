@@ -12,7 +12,45 @@ from typing import Any
 import subprocess
 from typing import Optional, Literal
 
-subprocess.CompletedProcess
+
+def fix_line_endings(file_path, target_ending="\n"):
+    """
+    Convert line endings in a file to the target format.
+    Only rewrites the file if line endings are incorrect.
+
+    Args:
+        file_path (str): Path to the file to fix
+        target_ending (str): Target line ending ('\n' for LF, '\r\n' for CRLF)
+
+    Returns:
+        bool: True if file was modified, False if already correct
+    """
+    try:
+        # Read file in binary mode
+        with open(file_path, "rb") as f:
+            original_content = f.read()
+
+        # Normalize to LF first, then convert to target
+        normalized = original_content.replace(b"\r\n", b"\n")  # CRLF -> LF
+        normalized = normalized.replace(b"\r", b"\n")  # CR -> LF
+
+        # Convert to target ending if needed
+        if target_ending == "\r\n":
+            normalized = normalized.replace(b"\n", b"\r\n")
+
+        # Only write if content changed
+        if normalized != original_content:
+            with open(file_path, "wb") as f:
+                f.write(normalized)
+            print(f"✓ Fixed line endings in: {file_path}")
+            return True
+        else:
+            # print(f"✓ Already correct: {file_path}")
+            return False
+
+    except Exception as e:
+        print(f"✗ Error fixing {file_path}: {e}")
+        return False
 
 
 def run_bash_script(

@@ -112,7 +112,7 @@ def main():
             return 1
 
         # Verify compilation
-        if not analysis.compilation_successful:
+        if not system.compilation_successful:
             logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
             return 1
 

@@ -30,6 +30,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from pathlib import Path
 import threading
 import psutil
+import warnings
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -46,15 +47,6 @@ class TRITONSWMM_analysis:
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
-        # define additional paths
-        if cfg_analysis.compiled_TRITONSWMM_directory:
-            compiled_TRITONSWMM_directory = cfg_analysis.compiled_TRITONSWMM_directory
-        else:
-            compiled_TRITONSWMM_directory = (
-                self._system.cfg_system.system_directory
-                / self.cfg_analysis.analysis_id
-                / "compiled_software"
-            )
         if cfg_analysis.analysis_dir:
             analysis_dir = cfg_analysis.analysis_dir
         else:
@@ -65,11 +57,7 @@ class TRITONSWMM_analysis:
         self.analysis_paths = AnalysisPaths(
             f_log=analysis_dir / "log.json",
             analysis_dir=analysis_dir,
-            compiled_TRITONSWMM_directory=compiled_TRITONSWMM_directory,
-            TRITON_build_dir=compiled_TRITONSWMM_directory / "build",
-            compilation_script=compiled_TRITONSWMM_directory / "compile.sh",
             simulation_directory=analysis_dir / "sims",
-            compilation_logfile=compiled_TRITONSWMM_directory / f"compilation.log",
             output_triton_summary=analysis_dir
             / f"TRITON.{self.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_links_summary=analysis_dir
@@ -77,6 +65,7 @@ class TRITONSWMM_analysis:
             output_swmm_node_summary=analysis_dir
             / f"SWMM_nodes.{self.cfg_analysis.TRITON_processed_output_type}",
         )
+
         # if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
         #     self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
@@ -86,7 +75,7 @@ class TRITONSWMM_analysis:
         self._sim_run_processing_objects = {}
         self._simulation_run_statuses = {}
         # self.run_modes = Mode
-        # self.compilation_successful = False
+        # self._system.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
@@ -100,8 +89,8 @@ class TRITONSWMM_analysis:
         if not skip_log_update:
             # self._add_all_scenarios()
             self._refresh_log()
-            if self.analysis_paths.compilation_logfile.exists():
-                self._validate_compilation()
+            if self._system.sys_paths.compilation_logfile.exists():
+                self._system.compilation_successful
             self._update_log()
 
     def _refresh_log(self):
@@ -109,10 +98,6 @@ class TRITONSWMM_analysis:
             self.log = TRITONSWMM_analysis_log.from_json(self.analysis_paths.f_log)
         else:
             self.log = TRITONSWMM_analysis_log(logfile=self.analysis_paths.f_log)
-
-    @property
-    def compilation_successful(self):
-        return self._validate_compilation()
 
     def consolidate_TRITON_and_SWMM_simulation_summaries(
         self,
@@ -569,7 +554,7 @@ class TRITONSWMM_analysis:
             print("Log file:", flush=True)
             print(scen.log.print())
             raise ValueError("scenario_creation_complete must be 'success'")
-        if not self.compilation_successful:
+        if not self._system.compilation_successful:
             print("Log file:", flush=True)
             print(scen.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
@@ -1811,92 +1796,6 @@ class TRITONSWMM_analysis:
             if verbose:
                 print(error_msg, flush=True)
             raise RuntimeError(error_msg)
-
-    def compile_TRITON_SWMM(
-        self,
-        recompile_if_already_done_successfully: bool = False,
-        verbose: bool = False,
-    ):
-        self.analysis_paths.compiled_TRITONSWMM_directory.mkdir(
-            parents=True, exist_ok=True
-        )
-
-        if self.compilation_successful and not recompile_if_already_done_successfully:
-            print("TRITON-SWMM already compiled", flush=True)
-            return
-        # TODO ADD TOGGLE TO ONLY DO THIS IF NOT ALREADY COMPILED
-        compiled_TRITONSWMM_directory = (
-            self.analysis_paths.compiled_TRITONSWMM_directory
-        )
-        compilation_script = self.analysis_paths.compilation_script
-        TRITONSWMM_software_directory = (
-            self._system.cfg_system.TRITONSWMM_software_directory
-        )
-        TRITON_SWMM_make_command = self.cfg_analysis.TRITON_SWMM_make_command
-        TRITON_SWMM_software_compilation_script = (
-            self._system.cfg_system.TRITON_SWMM_software_compilation_script
-        )
-        if compiled_TRITONSWMM_directory.exists():
-            shutil.rmtree(compiled_TRITONSWMM_directory)
-        shutil.copytree(TRITONSWMM_software_directory, compiled_TRITONSWMM_directory)
-        mapping = dict(
-            COMPILED_MODEL_DIR=compiled_TRITONSWMM_directory,
-            MAKE_COMMAND=TRITON_SWMM_make_command,
-        )
-        comp_script_content = ut.create_from_template(
-            TRITON_SWMM_software_compilation_script,
-            mapping,
-            compilation_script,
-        )
-        compilation_logfile = self.analysis_paths.compilation_logfile
-
-        with open(compilation_logfile, "w") as logfile:
-            proc = subprocess.run(  # type: ignore
-                ["/bin/bash", str(compilation_script)],
-                stdout=logfile,
-                stderr=subprocess.STDOUT,
-                check=True,
-            )
-
-        import time
-
-        start_time = time.time()
-        compilation_log = ut.read_text_file_as_string(compilation_logfile)
-        while "Building finished: triton" not in compilation_log:
-            time.sleep(0.1)
-            compilation_log = ut.read_text_file_as_string(compilation_logfile)
-            elapsed = time.time() - start_time
-            time.sleep(0.1)
-            if elapsed > 5:
-                break
-        self.compilation_log = compilation_log
-        success = self.compilation_successful
-        self.log.TRITONSWMM_compiled_successfully.set(success)
-        if not success:
-            if verbose:
-                print(
-                    "warning: TRITON-SWMM did not compile successfully.\
-    You can load compilation log as string using\
-    retrieve_compilation_log or print it to the\
-    terminal using the method print_compilation_log",
-                    flush=True,
-                )
-        return
-
-    def retrieve_compilation_log(self):
-        if self.analysis_paths.compilation_logfile.exists():
-            return ut.read_text_file_as_string(self.analysis_paths.compilation_logfile)
-        return "no sim logfile created"
-
-    def print_compilation_log(self):
-        print(self.retrieve_compilation_log(), flush=True)
-
-    def _validate_compilation(self):
-        compilation_log = self.retrieve_compilation_log()
-        swmm_check = "[100%] Built target runswmm" in compilation_log
-        triton_check = "Building finished: triton" in compilation_log
-        success = swmm_check and triton_check
-        return success
 
     @property
     def TRITONSWMM_runtimes(self):

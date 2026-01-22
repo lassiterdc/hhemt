@@ -68,6 +68,8 @@ TRITON_SWMM_toolkit = [
 ]
 
 [tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["test_data", "docs", ".git", ".venv", "venv"]
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",
     "ignore::DeprecationWarning:pkg_resources",

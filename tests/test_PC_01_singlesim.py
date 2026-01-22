@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(
 
 def test_load_system_and_analysis():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
-        start_from_scratch=True
+        start_from_scratch=True,
     )
     analysis = single_sim_single_core.system.analysis
     assert analysis.analysis_paths.simulation_directory.exists()
@@ -35,9 +35,8 @@ def test_create_mannings_file_for_TRITON():
 # COMPILING TRITON-SWMM
 def test_compile_TRITONSWMM_for_cpu_sims():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    analysis = single_sim_single_core.system.analysis
-    analysis.compile_TRITON_SWMM()
-    assert analysis.compilation_successful
+    single_sim_single_core.system.compile_TRITON_SWMM()
+    assert single_sim_single_core.system.compilation_successful
 
 
 # SCENARIO SET UP

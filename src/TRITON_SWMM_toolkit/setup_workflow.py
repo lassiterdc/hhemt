@@ -134,15 +134,15 @@ def main() -> int:
         if args.compile_triton_swmm:
             logger.info("Compiling TRITON-SWMM...")
             try:
-                analysis.compile_TRITON_SWMM(
+                system.compile_TRITON_SWMM(
                     recompile_if_already_done_successfully=args.recompile_if_already_done,
                     verbose=True,
                 )
                 # Verify compilation was successful
-                if not analysis.compilation_successful:
+                if not system.compilation_successful:
                     logger.error("TRITON-SWMM compilation failed")
                     logger.error(
-                        f"Compilation log:\n{analysis.retrieve_compilation_log()}"
+                        f"Compilation log:\n{system.retrieve_compilation_log()}"
                     )
                     return 1
                 logger.info("TRITON-SWMM compiled successfully")
@@ -155,7 +155,7 @@ def main() -> int:
                 "Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)"
             )
             # Verify compilation is already done
-            if not analysis.compilation_successful:
+            if not system.compilation_successful:
                 logger.error(
                     "TRITON-SWMM has not been compiled and --compile-triton-swmm not specified"
                 )
