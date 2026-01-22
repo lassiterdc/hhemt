@@ -246,10 +246,6 @@ class system_config(cfgBaseModel):
         description="File name (e.g., 'default_OPENMP.sh') of bash script that sets machine-specific variables for compiling the software"
         "In other words, COMPILER_BACKEND.sh in <TRITON top directory>/cmake/machines/<MACHINE>/COMPILER_BACKEND.sh",
     )
-    # TRITON_SWMM_software_compilation_script: Path = Field(
-    #     ...,
-    #     description="Folder containing script to build analysis-specific version of TRITON-SWMM.",
-    # )
     additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
         None,
         description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",

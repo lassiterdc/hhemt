@@ -395,7 +395,6 @@ class GetTS_TestCases:
                 ],
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
             example_data_dir=cls.UVA_norfolk_data_dir,
@@ -434,7 +433,6 @@ class GetTS_TestCases:
                 ],
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
             example_data_dir=cls.UVA_norfolk_data_dir,
@@ -473,7 +471,6 @@ class GetTS_TestCases:
                 ],
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.UVA_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
             ),
             example_data_dir=cls.UVA_norfolk_data_dir,
@@ -495,7 +492,6 @@ class GetTS_TestCases:
                 multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
             ),
         )
@@ -518,7 +514,6 @@ class GetTS_TestCases:
                 multi_sim_run_method="1_job_many_srun_tasks",
             ),
             additional_system_configs=dict(
-                TRITON_SWMM_software_compilation_script=cls.frontier_compilation_script,
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
             ),
         )
