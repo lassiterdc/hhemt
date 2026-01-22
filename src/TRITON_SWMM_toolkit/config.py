@@ -551,6 +551,7 @@ class analysis_config(cfgBaseModel):
         mpi = values.get("n_mpi_procs")
         omp = values.get("n_omp_threads")
         gpus = values.get("n_gpus")
+        nodes = values.get("n_nodes")
 
         # -------------------------------
         # Validation rules per mode
@@ -564,6 +565,10 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be 1 or None for serial mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for serial mode")
+            if nodes is not None and nodes != 1:
+                raise ValueError(
+                    "n_nodes must be 1 or None for serial mode (single task cannot span multiple nodes)"
+                )
 
         elif mode == "openmp":
             if mpi not in (None, 1):
@@ -572,6 +577,10 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be >1 for OpenMP mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for OpenMP mode")
+            if nodes is not None and nodes != 1:
+                raise ValueError(
+                    "n_nodes must be 1 or None for OpenMP mode (single task cannot span multiple nodes)"
+                )
 
         elif mode == "mpi":
             if mpi is None or mpi < 2:
@@ -580,6 +589,13 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be 1 or None for MPI-only mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for MPI-only mode")
+            # Validate ntasks >= nnodes
+            if nodes is not None and mpi is not None and mpi < nodes:
+                raise ValueError(
+                    f"n_mpi_procs must be >= n_nodes for MPI mode. "
+                    f"You specified n_mpi_procs={mpi} and n_nodes={nodes}. "
+                    f"Each node requires at least one MPI rank to run on it."
+                )
 
         elif mode == "hybrid":
             if mpi is None or mpi < 2:
@@ -588,6 +604,13 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_omp_threads must be >1 for hybrid mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for hybrid CPU mode")
+            # Validate ntasks >= nnodes
+            if nodes is not None and mpi is not None and mpi < nodes:
+                raise ValueError(
+                    f"n_mpi_procs must be >= n_nodes for hybrid mode. "
+                    f"You specified n_mpi_procs={mpi} and n_nodes={nodes}. "
+                    f"Each node requires at least one MPI rank to run on it."
+                )
 
         elif mode == "gpu":
             if gpus is None or gpus < 1:
@@ -596,6 +619,13 @@ class analysis_config(cfgBaseModel):
                 raise ValueError("n_mpi_procs must be >=1 if using MPI with GPU")
             if omp is not None and omp < 1:
                 raise ValueError("n_omp_threads must be >=1 if using OpenMP with GPU")
+            # Validate ntasks >= nnodes (if using MPI with GPU)
+            if mpi is not None and mpi > 1 and nodes is not None and mpi < nodes:
+                raise ValueError(
+                    f"n_mpi_procs must be >= n_nodes for GPU mode with MPI. "
+                    f"You specified n_mpi_procs={mpi} and n_nodes={nodes}. "
+                    f"Each node requires at least one MPI rank to run on it."
+                )
 
         else:
             raise ValueError(f"Unknown run_mode: {mode}")

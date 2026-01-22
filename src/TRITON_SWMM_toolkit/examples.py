@@ -684,7 +684,9 @@ def get_norfolk_data_and_package_directory_mapping_dict(
 
 
 def load_norfolk_system_config(
-    download_if_exists: bool, example_data_dir: Optional[Path] = None
+    download_if_exists: bool,
+    example_data_dir: Optional[Path] = None,
+    verbose: bool = True,
 ):
     case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
     res_identifier = case_details["res_identifier"]  # will come from the case yaml
@@ -696,8 +698,13 @@ def load_norfolk_system_config(
     cfg_system = load_system_config_from_dict(filled_yaml_data)
     # download data if it doesn't exist
     if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
-        pass
+        if verbose:
+            print(
+                f"Directory already exists and download_if_exists={download_if_exists}. Not redownloading.\n{mapping['DATA_DIR']}"
+            )
     else:
+        if verbose:
+            print(f"Download example data to {mapping['DATA_DIR']} using Hydroshare")
         hs = sign_into_hydroshare()
         download_data_from_hydroshare(
             res_identifier,
