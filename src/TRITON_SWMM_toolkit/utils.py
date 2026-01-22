@@ -13,6 +13,58 @@ import subprocess
 from typing import Optional, Literal
 
 
+class BatchJobSubmissionError(Exception):
+    """
+    Custom exception for batch job submission failures.
+
+    Provides detailed information about why a batch job submission failed,
+    including the script path, command, dependency information, and stderr output.
+    """
+
+    def __init__(
+        self,
+        script_path: Path,
+        command: list,
+        return_code: int,
+        stderr: str,
+        dependent_job_id: Optional[int | str | list] = None,
+        dependency_type: str = "afterok",
+    ):
+        self.script_path = script_path
+        self.command = command
+        self.return_code = return_code
+        self.stderr = stderr
+        self.dependent_job_id = dependent_job_id
+        self.dependency_type = dependency_type
+
+        # Format the error message
+        error_lines = [
+            "Failed to submit batch job script",
+            f"  Script: {script_path}",
+        ]
+
+        if dependent_job_id:
+            error_lines.append(f"  Dependency: {dependency_type}:{dependent_job_id}")
+
+        error_lines.extend(
+            [
+                f"  Command: {' '.join(str(c) for c in command)}",
+                f"  Return code: {return_code}",
+            ]
+        )
+
+        if stderr.strip():
+            error_lines.append(f"  Error output:\n{self._indent_text(stderr)}")
+
+        self.message = "\n".join(error_lines)
+        super().__init__(self.message)
+
+    @staticmethod
+    def _indent_text(text: str, indent: str = "    ") -> str:
+        """Indent each line of text for better readability."""
+        return "\n".join(indent + line for line in text.split("\n"))
+
+
 def fix_line_endings(file_path, target_ending="\n"):
     """
     Convert line endings in a file to the target format.
@@ -72,12 +124,23 @@ def run_bash_script(
         )
     cmd.append(str(bash_script))
 
-    proc = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise BatchJobSubmissionError(
+            script_path=bash_script,
+            command=cmd,
+            return_code=e.returncode,
+            stderr=e.stderr,
+            dependent_job_id=dependent_job_id if dependent_job_id else None,
+            dependency_type=dependency_type,
+        ) from e
+
     job_id = proc.stdout.strip().split()[-1]
     if verbose:
         print(f"Submitted script {bash_script}{dpdndncy}\njob id: {job_id}", flush=True)
