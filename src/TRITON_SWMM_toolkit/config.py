@@ -396,11 +396,15 @@ class analysis_config(cfgBaseModel):
         None,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_partition: Optional[str] = Field(
+    hpc_ensemble_partition: Optional[str] = Field(
         None,
-        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory'). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for running simulations. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_allocation: Optional[str] = Field(
+    hpc_setup_and_analysis_processing_partition: Optional[str] = Field(
+        None,
+        description="SLURM partition name for simulation setup and analysis output consolidation (single node, single core processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_account: Optional[str] = Field(
         None,
         description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )

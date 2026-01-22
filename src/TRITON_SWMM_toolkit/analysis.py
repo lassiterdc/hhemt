@@ -1295,8 +1295,10 @@ class TRITONSWMM_analysis:
         logdir.mkdir(exist_ok=True, parents=True)
         ut.archive_directory_contents(logdir)
 
-        hpc_partition = self.cfg_analysis.hpc_partition
-        hpc_allocation = self.cfg_analysis.hpc_allocation
+        hpc_setup_and_analysis_processing_partition = (
+            self.cfg_analysis.hpc_setup_and_analysis_processing_partition
+        )
+        hpc_account = self.cfg_analysis.hpc_account
 
         sbatch_lines = [
             "#!/bin/bash",
@@ -1305,8 +1307,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
             "#SBATCH --time=00:30:00",
-            f"#SBATCH --partition={hpc_partition}",
-            f"#SBATCH --account={hpc_allocation}",
+            f"#SBATCH --partition={hpc_setup_and_analysis_processing_partition}",
+            f"#SBATCH --account={hpc_account}",
             f"#SBATCH --output={logdir}/setup_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             f"#SBATCH --error={logdir}/setup_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             "",
@@ -1396,8 +1398,10 @@ class TRITONSWMM_analysis:
         logdir.mkdir(exist_ok=True, parents=True)
         ut.archive_directory_contents(logdir)
 
-        hpc_partition = self.cfg_analysis.hpc_partition
-        hpc_allocation = self.cfg_analysis.hpc_allocation
+        hpc_setup_and_analysis_processing_partition = (
+            self.cfg_analysis.hpc_setup_and_analysis_processing_partition
+        )
+        hpc_account = self.cfg_analysis.hpc_account
 
         sbatch_lines = [
             "#!/bin/bash",
@@ -1406,8 +1410,8 @@ class TRITONSWMM_analysis:
             "#SBATCH --ntasks=1",
             "#SBATCH --cpus-per-task=1",
             "#SBATCH --time=00:30:00",
-            f"#SBATCH --partition={hpc_partition}",
-            f"#SBATCH --account={hpc_allocation}",
+            f"#SBATCH --partition={hpc_setup_and_analysis_processing_partition}",
+            f"#SBATCH --account={hpc_account}",
             f"#SBATCH --output={logdir}/consolidate_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             f"#SBATCH --error={logdir}/consolidate_{ut.current_datetime_string(filepath_friendly=True)}_%j.out",
             "",
@@ -1528,8 +1532,8 @@ class TRITONSWMM_analysis:
 
         # Get HPC parameters (if available in config)
         hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim
-        hpc_partition = self.cfg_analysis.hpc_partition
-        hpc_allocation = self.cfg_analysis.hpc_allocation
+        hpc_ensemble_partition = self.cfg_analysis.hpc_ensemble_partition
+        hpc_account = self.cfg_analysis.hpc_account
 
         if hpc_time_min is None:
             raise ValueError("sim run time not specified in analysis config file")
@@ -1547,8 +1551,8 @@ class TRITONSWMM_analysis:
             f"#SBATCH --ntasks={n_mpi_procs}",
             f"#SBATCH --cpus-per-task={n_omp_threads}",
             f"#SBATCH --time={minutes_to_hhmmss(hpc_time_min)}",
-            f"#SBATCH --partition={hpc_partition}",
-            f"#SBATCH --account={hpc_allocation}",
+            f"#SBATCH --partition={hpc_ensemble_partition}",
+            f"#SBATCH --account={hpc_account}",
         ]
 
         # Add GPU directive if in GPU mode
