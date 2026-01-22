@@ -208,3 +208,4 @@ __marimo__/
 *_archive*
 *test_data/*/system*
 *test_data/*/tests/*
+*test_data/triton/*
