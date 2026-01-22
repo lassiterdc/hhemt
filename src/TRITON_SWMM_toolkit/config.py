@@ -384,7 +384,34 @@ class analysis_config(cfgBaseModel):
     n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
     n_gpus: Optional[int] = Field(0, description="Number of GPUs")
     n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
-
+    # MULTI-SIMULATION EXECUTION METHOD
+    multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
+        Field(
+            "local",
+            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
+        )
+    )
+    # HPC JOB ARRAY PARAMETERS
+    hpc_time_min_per_sim: Optional[int] = Field(
+        None,
+        description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_partition: Optional[str] = Field(
+        None,
+        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory'). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_allocation: Optional[str] = Field(
+        None,
+        description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    python_path: Optional[Path] = Field(
+        None,
+        description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",
+    )
+    additional_bash_lines: Optional[List[str]] = Field(
+        None,
+        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
+    )
     # TOGGLES
     # TODO - create validatoin checks for bash script toggle
     # toggle_run_ensemble_with_bash_script: bool = Field(
@@ -476,34 +503,6 @@ class analysis_config(cfgBaseModel):
         description="0 for closed, 1 for open. This is affects all boundaries wherever external boundary conditions are not otherwise defined.",
     )
 
-    # MULTI-SIMULATION EXECUTION METHOD
-    multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
-        Field(
-            "local",
-            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
-        )
-    )
-    # HPC JOB ARRAY PARAMETERS
-    hpc_time_min_per_sim: Optional[int] = Field(
-        None,
-        description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
-    )
-    hpc_partition: Optional[str] = Field(
-        None,
-        description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory'). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
-    )
-    hpc_allocation: Optional[str] = Field(
-        None,
-        description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
-    )
-    python_path: Optional[Path] = Field(
-        None,
-        description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",
-    )
-    additional_bash_lines: Optional[List[str]] = Field(
-        None,
-        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
-    )
     # extra inputs (currently only used by sensitivity analysis)
     analysis_dir: Optional[Path] = Field(
         None,
