@@ -1,7 +1,7 @@
 # tests/test_TRITON_SWMM_toolkit.py
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from tests.utils import is_scheduler_context
+from tests.test_utils import is_scheduler_context
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 
 pytestmark = pytest.mark.skipif(
