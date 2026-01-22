@@ -295,7 +295,10 @@ class TRITONSWMM_system:
             "",
         ]
 
-        if redownload_triton_swmm_if_exists and TRITONSWMM_software_directory.exists():
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+        ):
             print(f"Pulling TRITON-SWMM from repo to {TRITONSWMM_software_directory}")
             download_lines = [
                 f'cd "{TRITONSWMM_software_directory.parent}"',
