@@ -25,7 +25,7 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
 
 def test_consolidated_workflow_with_system_inputs_and_compilation():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_sensitivtiy_CPU_minimal(
+    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis

@@ -303,7 +303,6 @@ class TRITONSWMM_system:
                 "git clone https://code.ornl.gov/hydro/triton.git && cd triton && git checkout 02438b60613a7d913d884e7b836f9f5ff421fe7d",
                 "git submodule update --init --recursive",
             ]
-
             bash_script_lines.extend(download_lines)
 
         machine_imports = ""
@@ -316,17 +315,13 @@ class TRITONSWMM_system:
                     / self.cfg_system.TRITON_machine_name
                     / self.cfg_system.TRITON_machine_bash_script
                 )
-                if not machine_imports.exists():
-                    raise ValueError(
-                        f"File for machine-specific imports does not exist: {machine_imports}\n"
-                        "Inspect system configuration arguments for TRITON_machine_name and TRITON_machine_bash_script\n"
-                        f"which form the file path based on TRITON_software_directory {TRITONSWMM_software_directory}\n"
-                        "Also consider inspecting available bash scripts within \n"
-                        f"{TRITONSWMM_software_directory / 'cmake' / 'machines'}"
-                    )
-                ut.fix_line_endings(machine_imports)
                 machine_import_lines = [
                     f"MACHINE_IMPORTS={machine_imports}",
+                    'if [ ! -f "${MACHINE_IMPORTS}" ]; then',
+                    '    echo "Error: Machine imports file not found: ${MACHINE_IMPORTS}"',
+                    "    exit 1",
+                    "fi",
+                    'dos2unix "${MACHINE_IMPORTS}" 2>/dev/null || sed -i "s/\\r$//" "${MACHINE_IMPORTS}"',
                     'source "${MACHINE_IMPORTS}"',
                 ]
                 bash_script_lines.extend(machine_import_lines)
