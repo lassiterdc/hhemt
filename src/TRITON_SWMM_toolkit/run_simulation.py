@@ -128,7 +128,8 @@ class TRITONSWMM_run:
         verbose: bool = True,
     ):
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
+        # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
+        using_srun = self._analysis.in_slurm
 
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
@@ -214,8 +215,8 @@ class TRITONSWMM_run:
                     f"-N {n_nodes_per_sim} "
                     f"--ntasks={n_mpi_procs} "
                     f"--cpus-per-task={n_omp_threads} "
-                    "--exclusive "
-                    "--cpu-bind=cores "
+                    # "--exclusive "
+                    "--cpu-bind=none "
                     f"{exe} {cfg}"
                 )
                 # cmd = [
@@ -228,7 +229,7 @@ class TRITONSWMM_run:
                 #         f"--ntasks={n_mpi_procs} "
                 #         f"--cpus-per-task={n_omp_threads} "
                 #         "--exclusive "
-                #         "--cpu-bind=cores "
+                #         "--cpu-bind=none "
                 #         f"{exe} {cfg}"
                 #     ),
                 # ]
@@ -252,8 +253,8 @@ class TRITONSWMM_run:
                     f"--ntasks={n_gpus} "
                     f"--cpus-per-task={n_omp_threads} "
                     "--gpus-per-task=1 "
-                    "--exclusive "
-                    "--cpu-bind=cores "
+                    # "--exclusive "
+                    "--cpu-bind=none "
                     f"{exe} {cfg}"
                 )
                 # cmd = [
@@ -267,7 +268,7 @@ class TRITONSWMM_run:
                 #         f"--cpus-per-task={n_omp_threads} "
                 #         "--gpus-per-task=1 "  # one GPU per task
                 #         "--exclusive "
-                #         "--cpu-bind=cores "
+                #         "--cpu-bind=none "
                 #         f"{exe} {cfg}"
                 #     ),
                 # ]
