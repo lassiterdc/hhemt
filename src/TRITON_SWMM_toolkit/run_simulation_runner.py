@@ -27,6 +27,7 @@ from pathlib import Path
 import traceback
 import logging
 import TRITON_SWMM_toolkit.utils as ut
+import pprint
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -139,7 +140,7 @@ def main():
         cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result  # type: ignore
 
         logger.info(
-            f"All environment returned by run.prepare_simulation_command: {env}"
+            f"All environment returned by run.prepare_simulation_command: \n{pprint.pformat(env)}"
         )
 
         # Execute the simulation command
@@ -159,7 +160,9 @@ def main():
             if "slurm" in key.lower():
                 slurm_vars[key] = item
 
-        logger.info(f"SLURM environmental vars: {slurm_vars}")
+        # logger.info(f"SLURM environmental vars: {slurm_vars}")
+
+        logger.info(f"SLURM environmental vars:\n{pprint.pformat(slurm_vars)}")
 
         # update the environment recorded in the log
         log_dic = scenario.latest_simlog
