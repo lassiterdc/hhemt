@@ -2234,12 +2234,12 @@ rule consolidate:
             - success: bool - Did submission succeed?
             - mode: str - "slurm"
             - snakefile_path: Path - Path to Snakefile
-            - job_id: str | None - SLURM job ID
+            - job_id: str | None - Always None (job ID not extracted)
             - message: str - Status message
-            - process: Popen | None - Process object (if non-blocking)
+            - process: Popen - Process object
             - wait_for_completion: bool - Whether we waited
             - completed: bool - True only if wait_for_completion=True and job finished
-            - completion_status: str | None - "success"/"failed"/"timeout" (only if waited)
+            - completion_status: str | None - "success"/"failed" (only if waited)
         """
         try:
             if verbose:
@@ -2255,7 +2255,7 @@ rule consolidate:
             if verbose:
                 print(f"[Snakemake] Using config from: {config_dir}", flush=True)
 
-            # Phase 1: Submit workflow (always non-blocking with Popen)
+            # Submit workflow as detached background process
             cmd_args = [
                 "snakemake",
                 "--executor",
@@ -2270,77 +2270,37 @@ rule consolidate:
             proc = subprocess.Popen(
                 cmd_args,
                 cwd=str(self.analysis_paths.analysis_dir),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=subprocess.DEVNULL,  # Don't capture output
+                stderr=subprocess.DEVNULL,
                 start_new_session=True,  # Detach from parent process
             )
 
-            # Extract job ID from stdout stream (non-blocking read)
-            job_id = self._parse_job_id_from_snakemake_output(proc.stdout)
-
-            # Save submission metadata
-            submission_time = time.time()
-            submission_log = {
-                "job_id": job_id,
-                "submission_time": submission_time,
-                "snakefile_path": str(snakefile_path),
-                "command": " ".join(cmd_args),
-            }
-            submission_log_path = (
-                self.analysis_paths.analysis_dir / ".snakemake_submission_log.json"
-            )
-
-            import json
-
-            with open(submission_log_path, "w") as f:
-                json.dump(submission_log, f, indent=2)
-
-            if verbose:
-                if job_id:
-                    print(
-                        f"[Snakemake] Workflow submitted with job ID: {job_id}",
-                        flush=True,
-                    )
-                    print(f"[Snakemake] Monitor with: squeue -j {job_id}", flush=True)
-                else:
-                    print(
-                        "[Snakemake] Workflow submitted (job ID not detected)",
-                        flush=True,
-                    )
-
-            # Phase 2: Conditional behavior based on wait_for_completion
+            # Return immediately (non-blocking)
             if not wait_for_completion:
-                # Non-blocking: return immediately
+                if verbose:
+                    print(
+                        f"[Snakemake] Workflow submitted to background (PID: {proc.pid})",
+                        flush=True,
+                    )
                 return {
                     "success": True,
                     "mode": "slurm",
                     "snakefile_path": snakefile_path,
-                    "job_id": job_id,
-                    "message": (
-                        f"Workflow submitted with job ID: {job_id}"
-                        if job_id
-                        else "Workflow submitted"
-                    ),
+                    "job_id": None,
+                    "message": "Workflow submitted to background",
                     "process": proc,
                     "wait_for_completion": False,
                     "completed": False,
                     "completion_status": None,
                 }
-            else:
-                # Blocking: wait for completion
-                if verbose:
-                    print(f"[Snakemake] Waiting for workflow completion...", flush=True)
 
-                if job_id:
-                    # Wait for job using squeue polling
-                    completion_status = self._wait_for_job_completion(
-                        job_id=job_id, verbose=verbose
-                    )
-                else:
-                    # Fallback: wait for process to complete
-                    proc.wait()
-                    completion_status = "success" if proc.returncode == 0 else "failed"
+            # Wait for completion (blocking)
+            else:
+                if verbose:
+                    print("[Snakemake] Waiting for workflow completion...", flush=True)
+                proc.wait()
+                success = proc.returncode == 0
+                completion_status = "success" if success else "failed"
 
                 if verbose:
                     print(
@@ -2349,10 +2309,10 @@ rule consolidate:
                     )
 
                 return {
-                    "success": completion_status == "success",
+                    "success": success,
                     "mode": "slurm",
                     "snakefile_path": snakefile_path,
-                    "job_id": job_id,
+                    "job_id": None,
                     "message": f"Workflow completed with status: {completion_status}",
                     "process": proc,
                     "wait_for_completion": True,
@@ -2375,133 +2335,6 @@ rule consolidate:
                 "completed": False,
                 "completion_status": None,
             }
-
-    def _parse_job_id_from_snakemake_output(self, stream) -> str | None:
-        """
-        Parse job ID from snakemake stdout stream without blocking.
-
-        Parameters
-        ----------
-        stream : IO
-            Stdout stream from Popen
-
-        Returns
-        -------
-        str | None
-            Job ID if found, None otherwise
-        """
-        import re
-        import select
-
-        job_id = None
-
-        # Non-blocking read with timeout
-        try:
-            # Read available output (non-blocking)
-            if stream and hasattr(stream, "readline"):
-                # Read first few lines to find job ID
-                for _ in range(50):  # Read up to 50 lines
-                    line = stream.readline()
-                    if not line:
-                        break
-
-                    # Look for job ID patterns
-                    if "Submitted SLURM job" in line or "job" in line.lower():
-                        match = re.search(r"\b(\d+)\b", line)
-                        if match:
-                            job_id = match.group(1)
-                            break
-
-                    # Also check for numeric IDs (6+ digits)
-                    matches = re.findall(r"\b(\d{6,})\b", line)
-                    if matches and not job_id:
-                        job_id = matches[-1]
-        except Exception:
-            pass  # If we can't read, just return None
-
-        return job_id
-
-    def _wait_for_job_completion(
-        self,
-        job_id: str,
-        timeout: int | None = None,
-        poll_interval: int = 10,
-        verbose: bool = False,
-    ) -> str:
-        """
-        Wait for SLURM job to complete by polling squeue.
-
-        Parameters
-        ----------
-        job_id : str
-            SLURM job ID to monitor
-        timeout : int | None
-            Maximum time to wait in seconds. If None, wait indefinitely.
-        poll_interval : int
-            Time between status checks in seconds
-        verbose : bool
-            If True, print progress messages
-
-        Returns
-        -------
-        str
-            Completion status: "success", "failed", or "timeout"
-        """
-        start_time = time.time()
-
-        while True:
-            # Check if job is still in queue
-            status = self._get_job_status_from_squeue(job_id)
-
-            if status is None:
-                # Job no longer in queue - it completed
-                if verbose:
-                    print(f"[Snakemake] Job {job_id} completed", flush=True)
-                # TODO: Could check sacct for exit code to determine success/failure
-                return "success"
-
-            # Check timeout
-            if timeout and (time.time() - start_time) > timeout:
-                if verbose:
-                    print(f"[Snakemake] Timeout waiting for job {job_id}", flush=True)
-                return "timeout"
-
-            # Wait before next poll
-            if verbose:
-                print(
-                    f"[Snakemake] Job {job_id} status: {status}, waiting...",
-                    flush=True,
-                )
-            time.sleep(poll_interval)
-
-    def _get_job_status_from_squeue(self, job_id: str) -> str | None:
-        """
-        Get job status from squeue.
-
-        Parameters
-        ----------
-        job_id : str
-            SLURM job ID
-
-        Returns
-        -------
-        str | None
-            Job status (e.g., "RUNNING", "PENDING") or None if job not in queue
-        """
-        try:
-            result = subprocess.run(
-                ["squeue", "-j", job_id, "-h", "-o", "%T"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
-            else:
-                return None  # Job not in queue
-        except Exception:
-            return None  # Error checking status
 
     @property
     def TRITONSWMM_runtimes(self):
