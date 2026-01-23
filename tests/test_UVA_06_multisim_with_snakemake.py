@@ -4,6 +4,11 @@ from tests.utils_for_testing import on_UVA_HPC
 
 pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
+# module purge
+# module load gompi/14.2.0_5.0.7 miniforge
+# source activate triton_swmm_toolkit
+# export PYTHONNOUSERSITE=1
+
 
 def test_snakemake_slurm_workflow_generation():
     """

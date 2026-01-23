@@ -2239,15 +2239,7 @@ rule consolidate:
             config_dir = self._write_snakemake_config(config, mode="slurm")
 
             if verbose:
-                print(
-                    f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
-                )
-                print(
-                    f"[Snakemake] Config: partition={config['default-resources']['slurm_partition']}, "
-                    f"account={config['default-resources']['slurm_account']}, "
-                    f"runtime={config['default-resources']['runtime']} min",
-                    flush=True,
-                )
+                print(f"[Snakemake] Using config from: {config_dir}", flush=True)
 
             result = subprocess.run(
                 [
