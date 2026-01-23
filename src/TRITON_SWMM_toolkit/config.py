@@ -398,6 +398,10 @@ class analysis_config(cfgBaseModel):
         60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
+    hpc_max_simultaneous_sims: Optional[int] = Field(
+        100,
+        description="Maximum number of concurrent simulations.",
+    )
     hpc_ensemble_partition: Optional[str] = Field(
         None,
         description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for running simulations. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
