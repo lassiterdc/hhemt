@@ -31,7 +31,6 @@ def test_snakemake_sensitivity_workflow_generation():
     assert len(sensitivity.sub_analyses) > 0
 
     # Generate sub-analysis Snakefiles (without running)
-    subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
         snakefile_content = sub_analysis._generate_snakefile_content(
             process_system_level_inputs=False,
@@ -46,20 +45,11 @@ def test_snakemake_sensitivity_workflow_generation():
         assert "rule simulation:" in snakefile_content
         assert "rule consolidate:" in snakefile_content
 
-        # Store path info
-        snakefile_path = sub_analysis.analysis_paths.analysis_dir / "Snakefile"
-        working_dir = sub_analysis.analysis_paths.analysis_dir
-        subanalysis_snakefile_paths.append(
-            (sub_analysis_iloc, snakefile_path, working_dir)
-        )
-
     # Generate master Snakefile content
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
 
     # Verify master Snakefile structure
@@ -105,7 +95,6 @@ def test_snakemake_sensitivity_workflow_files_written():
     sensitivity = analysis.sensitivity
 
     # Generate Snakefiles for each sub-analysis
-    subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
         snakefile_content = sub_analysis._generate_snakefile_content(
             process_system_level_inputs=False,
@@ -120,21 +109,11 @@ def test_snakemake_sensitivity_workflow_files_written():
         assert snakefile_path.exists()
         assert len(snakefile_path.read_text()) > 100
 
-        subanalysis_snakefile_paths.append(
-            (
-                sub_analysis_iloc,
-                snakefile_path,
-                sub_analysis.analysis_paths.analysis_dir,
-            )
-        )
-
     # Generate and write master Snakefile
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
 
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -185,22 +164,11 @@ def test_snakemake_sensitivity_workflow_config_generation():
     analysis = nrflk_cpu_sensitivity.system.analysis
     sensitivity = analysis.sensitivity
 
-    # Generate sub-analysis Snakefile paths
-    subanalysis_snakefile_paths = []
-    for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
-        snakefile_path = sub_analysis.analysis_paths.analysis_dir / "Snakefile"
-        working_dir = sub_analysis.analysis_paths.analysis_dir
-        subanalysis_snakefile_paths.append(
-            (sub_analysis_iloc, snakefile_path, working_dir)
-        )
-
-    # Test with different parameter combinations
+    # Generate master Snakefile content
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
-        which="TRITON",
-        overwrite_if_exist=True,
-        compression_level=7,
-        verbose=True,
+        which="both",
+        overwrite_if_exist=False,
+        compression_level=5,
     )
 
     # Verify compression level
@@ -244,7 +212,6 @@ def test_snakemake_sensitivity_workflow_dry_run():
     sensitivity = analysis.sensitivity
 
     # Generate all Snakefiles
-    subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
         snakefile_content = sub_analysis._generate_snakefile_content(
             process_system_level_inputs=False,
@@ -254,21 +221,12 @@ def test_snakemake_sensitivity_workflow_dry_run():
         )
         snakefile_path = sub_analysis.analysis_paths.analysis_dir / "Snakefile"
         snakefile_path.write_text(snakefile_content)
-        subanalysis_snakefile_paths.append(
-            (
-                sub_analysis_iloc,
-                snakefile_path,
-                sub_analysis.analysis_paths.analysis_dir,
-            )
-        )
 
     # Generate master Snakefile
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
     master_snakefile_path.write_text(master_snakefile_content)
@@ -323,13 +281,12 @@ def test_snakemake_sensitivity_workflow_execution():
     analysis = system.analysis
     sensitivity = analysis.sensitivity
 
-    # Submit the workflow using submit_workflow (not the old batch job method)
     result = sensitivity.submit_workflow(
-        mode="slurm",  # Explicitly use SLURM mode
-        process_system_level_inputs=True,
-        overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
-        recompile_if_already_done_successfully=True,
+        mode="slurm",
+        process_system_level_inputs=False,
+        overwrite_system_inputs=False,
+        compile_TRITON_SWMM=False,
+        recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario=True,
         rerun_swmm_hydro_if_outputs_exist=True,

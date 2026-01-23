@@ -176,51 +176,22 @@ class TRITONSWMM_sensitivity_analysis:
                 flush=True,
             )
 
-        # Generate Snakefiles for each sub-analysis
-        subanalysis_snakefile_paths = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            snakefile_content = sub_analysis._generate_snakefile_content(
-                process_system_level_inputs=False,
-                overwrite_system_inputs=False,
-                compile_TRITON_SWMM=False,
-                recompile_if_already_done_successfully=False,
-                prepare_scenarios=prepare_scenarios,
-                overwrite_scenario=overwrite_scenario,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                process_timeseries=process_timeseries,
-                which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
-                compression_level=compression_level,
-                pickup_where_leftoff=pickup_where_leftoff,
-            )
-            snakefile_path = sub_analysis.analysis_paths.analysis_dir / "Snakefile"
-            snakefile_path.write_text(snakefile_content)
-            subanalysis_snakefile_paths.append(
-                (
-                    sub_analysis_iloc,
-                    snakefile_path,
-                    sub_analysis.analysis_paths.analysis_dir,
-                )
-            )
-
-            if verbose:
-                print(
-                    f"[Snakemake] Generated sub-analysis {sub_analysis_iloc} Snakefile: {snakefile_path}",
-                    flush=True,
-                )
-
-        # Generate master Snakefile
+        # Generate master Snakefile with flattened hierarchy
+        # (no nested Snakemake calls - all rules in one file)
         master_snakefile_content = self._generate_master_snakefile_content(
-            subanalysis_snakefile_paths=subanalysis_snakefile_paths,
             which=which,
             overwrite_if_exist=overwrite_if_exist,
             compression_level=compression_level,
-            verbose=verbose,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
             compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+            prepare_scenarios=prepare_scenarios,
+            overwrite_scenario=overwrite_scenario,
+            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+            process_timeseries=process_timeseries,
+            clear_raw_outputs=clear_raw_outputs,
+            pickup_where_leftoff=pickup_where_leftoff,
         )
 
         master_snakefile_path = (
@@ -252,28 +223,32 @@ class TRITONSWMM_sensitivity_analysis:
 
     def _generate_master_snakefile_content(
         self,
-        subanalysis_snakefile_paths: list[tuple[int, Path, Path]],
         which: Literal["TRITON", "SWMM", "both"] = "both",
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
-        verbose: bool = True,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
         compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
+        prepare_scenarios: bool = True,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        process_timeseries: bool = True,
+        clear_raw_outputs: bool = True,
+        pickup_where_leftoff: bool = True,
     ) -> str:
         """
-        Generate master Snakefile that orchestrates sub-analysis workflows
-        and performs final consolidation using wildcards.
+        Generate flattened master Snakefile with individual simulation rules.
 
-        This method uses Snakemake wildcards to create a single rule that
-        automatically expands to handle all sub-analyses, similar to the
-        elegant pattern in analysis.py's _generate_snakefile_content().
+        This method generates a single Snakefile with all simulation rules
+        flattened directly into it (no nested Snakemake calls). Each simulation
+        gets its own rule with exact resource requirements from its sub-analysis config.
+
+        This avoids resource contention issues where sub-analyses with different
+        CPU/GPU requirements would fail due to incorrect resource allocation.
 
         Parameters
         ----------
-        subanalysis_snakefile_paths : list[tuple[int, Path, Path]]
-            List of tuples (sub_analysis_iloc, snakefile_path, working_dir)
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
         overwrite_if_exist : bool
@@ -290,6 +265,18 @@ class TRITONSWMM_sensitivity_analysis:
             If True, compile TRITON-SWMM in master setup rule
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
+        prepare_scenarios : bool
+            If True, prepare scenarios before running
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        process_timeseries : bool
+            If True, process timeseries outputs after simulations
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
 
         Returns
         -------
@@ -304,22 +291,23 @@ class TRITONSWMM_sensitivity_analysis:
         triton_toolkit_root = Path(__file__).parent.parent.parent
         conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
 
-        # Extract sub-analysis IDs for wildcard expansion
-        sub_analysis_ids = [
-            sub_analysis_iloc for sub_analysis_iloc, _, _ in subanalysis_snakefile_paths
-        ]
-        wildcard = "{wildcards.sub_analysis_id}"
-
-        # Build master Snakefile using wildcards (elegant pattern from analysis.py)
-        snakefile_content = f'''# Auto-generated master Snakefile for sensitivity analysis
+        # Start building the Snakefile
+        snakefile_content = f"""# Auto-generated flattened master Snakefile for sensitivity analysis
+# Each sub-analysis simulation gets its own rule with exact resource requirements
 
 import os
 
-# Sub-analysis IDs for wildcard expansion
-SUB_ANALYSIS_IDS = {sub_analysis_ids}
+"""
 
-rule all:
-    input: "_status/master_consolidation_complete.flag"
+        # Build the rule all with all dependencies
+        consolidation_flags = []
+        for sa_id in self.sub_analyses.keys():
+            consolidation_flags.append(f"_status/consolidate_sa{sa_id}_complete.flag")
+
+        snakefile_content += f'''rule all:
+    input: 
+        {', '.join([f'"{flag}"' for flag in consolidation_flags])},
+        "_status/master_consolidation_complete.flag"
 
 rule setup:
     output: "_status/setup_complete.flag"
@@ -345,41 +333,97 @@ rule setup:
         touch {{output}}
         """
 
-rule subanalysis:
+'''
+
+        # Generate simulation rules for each sub-analysis
+        subanalysis_flags = []
+        for sa_id, sub_analysis in self.sub_analyses.items():
+            # Extract resource requirements from sub-analysis config
+            n_mpi = sub_analysis.cfg_analysis.n_mpi_procs or 1
+            n_omp = sub_analysis.cfg_analysis.n_omp_threads or 1
+            n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
+            n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
+            hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
+            mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
+
+            # For each simulation in this sub-analysis
+            sub_analysis_sim_flags = []
+            for event_iloc in sub_analysis.df_sims.index:
+                rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
+                outflag = f"_status/{rule_name}_complete.flag"
+                sub_analysis_sim_flags.append(outflag)
+                mem_mb = int(mem_per_cpu * n_mpi * n_omp * 1000)
+
+                # Build resources block, handling optional gpus_per_task
+                resources_block = f"""        slurm_partition="{sub_analysis.cfg_analysis.hpc_ensemble_partition}",
+        runtime={int(hpc_time * 1.1)},
+        mem_mb={mem_mb},
+        nodes={n_nodes},
+        ntasks={n_mpi},
+        cpus_per_task={n_omp}"""
+                if n_gpus > 0:
+                    resources_block += f",\n        gpus_per_task={n_gpus}"
+
+                snakefile_content += f'''rule {rule_name}:
     input: "_status/setup_complete.flag"
-    output: "_status/subanalysis_{{sub_analysis_id}}_complete.flag"
-    log: "logs/subanalysis_{{sub_analysis_id}}.log"
+    output: "{outflag}"
+    log: "logs/sims/{rule_name}.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime={int((self.master_analysis.cfg_analysis.hpc_time_min_per_sim or 30)*1.1)},
-        mem_mb=1000,
+{resources_block}
+    shell:
+        """
+        mkdir -p logs _status
+        {python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\
+            --event-iloc {event_iloc} \\
+            --system-config {self.master_analysis._system.system_config_yaml} \\
+            --analysis-config {sub_analysis.analysis_config_yaml} \\
+            {"--prepare-scenario " if prepare_scenarios else ""}\\
+            {"--overwrite-scenario " if overwrite_scenario else ""}\\
+            {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            {"--process-timeseries " if process_timeseries else ""}\\
+            --which {which} \\
+            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
+            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            --compression-level {compression_level} \\
+            {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+'''
+            subanalysis_flag = f"_status/consolidate_sa{sa_id}_complete.flag"
+            subanalysis_flags.append(subanalysis_flag)
+            # consolidate outputs after all sims have been run
+            snakefile_content += f'''rule consolidate_sa{sa_id}:
+    input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
+    output: "{subanalysis_flag}"
+    log: "logs/consolidate_sa{sa_id}.log"
+    conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime=30,
+        mem_mb={sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         ntasks=1,
         cpus_per_task=1
     shell:
         """
         mkdir -p logs _status
-        SUBANALYSIS_DIR="{self.subanalysis_dir}/{self.sub_analyses_prefex}{{wildcards.sub_analysis_id}}"
-        SUBANALYSIS_LOG="{self.master_analysis.analysis_paths.analysis_dir}/logs/subanalysis_{{wildcards.sub_analysis_id}}.log"
-        SUBANALYSIS_ID="{{wildcards.sub_analysis_id}}"
-        
-        echo "Running subanalysis $SUBANALYSIS_ID from: $SUBANALYSIS_DIR" >> {{log}}
-        
-        cd "$SUBANALYSIS_DIR" && \\
-        snakemake --cores all --snakefile Snakefile >> "$SUBANALYSIS_LOG" 2>&1
-        
-        SNAKEMAKE_EXIT=$?
-        if [ $SNAKEMAKE_EXIT -ne 0 ]; then
-            echo "ERROR: Snakemake failed for subanalysis $SUBANALYSIS_ID with exit code $SNAKEMAKE_EXIT" >> {{log}}
-            echo "See subanalysis log for details: $SUBANALYSIS_LOG" >> {{log}}
-            exit $SNAKEMAKE_EXIT
-        fi
-        
-        touch {self.master_analysis.analysis_paths.analysis_dir}/{{output}}
+        {python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            --system-config {self.master_analysis._system.system_config_yaml} \\
+            --analysis-config {sub_analysis.analysis_config_yaml} \\
+            --which {which} \\
+            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
         """
 
-rule master_consolidation:
-    input: expand("_status/subanalysis_{{sub_analysis_id}}_complete.flag", sub_analysis_id=SUB_ANALYSIS_IDS)
+'''
+
+        # Generate master consolidation rule
+        snakefile_content += f'''rule master_consolidation:
+    input: {', '.join([f'"{flag}"' for flag in subanalysis_flags])}
     output: "_status/master_consolidation_complete.flag"
     log: "logs/master_consolidation.log"
     conda: "{conda_env_path}"
@@ -403,6 +447,7 @@ rule master_consolidation:
         touch {{output}}
         """
 '''
+
         return snakefile_content
 
     def run_sensitivity_analysis_as_batch_job(

@@ -57,11 +57,9 @@ def test_snakemake_sensitivity_workflow_generation():
 
     # Generate master Snakefile content
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
 
     # Verify master Snakefile structure
@@ -69,26 +67,17 @@ def test_snakemake_sensitivity_workflow_generation():
     assert "rule master_consolidation:" in master_snakefile_content
     assert "--consolidate-sensitivity-analysis-outputs" in master_snakefile_content
 
-    # Verify wildcard-based subanalysis rule (new pattern using Snakemake wildcards)
-    assert "rule subanalysis:" in master_snakefile_content
-    assert (
-        "_status/subanalysis_{sub_analysis_id}_complete.flag"
-        in master_snakefile_content
-    )
-    assert "logs/subanalysis_{sub_analysis_id}.log" in master_snakefile_content
-    assert "{wildcards.sub_analysis_id}" in master_snakefile_content
+    # Verify individual simulation rules exist (flattened architecture)
+    assert "rule simulation_sa" in master_snakefile_content
+    assert "rule consolidate_sa" in master_snakefile_content
 
-    # Verify SUB_ANALYSIS_IDS list is present
-    assert "SUB_ANALYSIS_IDS" in master_snakefile_content
-
-    # Verify expand function is used in master_consolidation dependencies
-    assert (
-        'expand("_status/subanalysis_{sub_analysis_id}_complete.flag", sub_analysis_id=SUB_ANALYSIS_IDS)'
-        in master_snakefile_content
-    )
+    # Verify sub-analysis consolidation rules exist
+    num_sub_analyses = len(sensitivity.sub_analyses)
+    for sa_id in range(num_sub_analyses):
+        assert f"rule consolidate_sa{sa_id}:" in master_snakefile_content
 
     # Verify master consolidation depends on all sub-analyses
-    assert "master_consolidation:" in master_snakefile_content
+    assert "rule master_consolidation:" in master_snakefile_content
 
 
 def test_snakemake_sensitivity_workflow_files_written():
@@ -132,11 +121,9 @@ def test_snakemake_sensitivity_workflow_files_written():
 
     # Generate and write master Snakefile
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
 
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -197,11 +184,9 @@ def test_snakemake_sensitivity_workflow_config_generation():
 
     # Test with different parameter combinations
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="TRITON",
         overwrite_if_exist=True,
         compression_level=7,
-        verbose=True,
     )
 
     # Verify compression level
@@ -265,11 +250,9 @@ def test_snakemake_sensitivity_workflow_dry_run():
 
     # Generate master Snakefile
     master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        subanalysis_snakefile_paths=subanalysis_snakefile_paths,
         which="both",
         overwrite_if_exist=False,
         compression_level=5,
-        verbose=True,
     )
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
     master_snakefile_path.write_text(master_snakefile_content)

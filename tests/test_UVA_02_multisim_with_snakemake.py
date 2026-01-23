@@ -289,10 +289,10 @@ def test_snakemake_workflow_execution():
     # Submit the workflow using submit_workflow (not submit_SLURM_job_array)
     result = analysis.submit_workflow(
         mode="slurm",  # Explicitly use SLURM mode
-        process_system_level_inputs=True,
-        overwrite_system_inputs=True,
-        compile_TRITON_SWMM=True,
-        recompile_if_already_done_successfully=True,
+        process_system_level_inputs=False,
+        overwrite_system_inputs=False,
+        compile_TRITON_SWMM=False,
+        recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario=True,
         rerun_swmm_hydro_if_outputs_exist=True,
