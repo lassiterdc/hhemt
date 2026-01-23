@@ -333,7 +333,7 @@ rule setup:
         runtime=5,
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
-        cpus_per_task=1
+        cpus_per_task=1,
         nodes=1
     shell:
         """
@@ -421,7 +421,7 @@ rule setup:
         runtime=30,
         mem_mb={sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
-        cpus_per_task=1
+        cpus_per_task=1,
         nodes=1
     shell:
         """
@@ -449,7 +449,7 @@ rule setup:
         runtime=5,
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
-        cpus_per_task=1
+        cpus_per_task=1,
         nodes=1
     shell:
         """
