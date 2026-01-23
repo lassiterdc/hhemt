@@ -2244,7 +2244,8 @@ rule consolidate:
             result = subprocess.run(
                 [
                     "snakemake",
-                    "--slurm",
+                    "--executor",
+                    "slurm",
                     "--profile",
                     str(config_dir),
                     "--snakefile",
