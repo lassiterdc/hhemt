@@ -332,7 +332,7 @@ rule setup:
         slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
         runtime=5,
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        ntasks=1,
+        tasks=1,
         cpus_per_task=1
     shell:
         """
@@ -374,7 +374,7 @@ rule setup:
         runtime={int(hpc_time * 1.1)},
         mem_mb={mem_mb},
         nodes={n_nodes},
-        ntasks={n_mpi},
+        tasks={n_mpi},
         cpus_per_task={n_omp}"""
                 if n_gpus > 0:
                     resources_block += f",\n        gpus_per_task={n_gpus}"
@@ -419,7 +419,7 @@ rule setup:
         slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
         runtime=30,
         mem_mb={sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        ntasks=1,
+        tasks=1,
         cpus_per_task=1
     shell:
         """
@@ -446,7 +446,7 @@ rule setup:
         slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
         runtime=5,
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        ntasks=1,
+        tasks=1,
         cpus_per_task=1
     shell:
         """

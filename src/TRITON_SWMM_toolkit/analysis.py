@@ -1324,7 +1324,7 @@ rule setup:
         slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
         runtime=5,
         mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
-        ntasks=1,
+        tasks=1,
         cpus_per_task=1
     shell:
         {setup_shell}
@@ -1337,7 +1337,7 @@ rule simulation:
     resources:
         slurm_partition="{self.cfg_analysis.hpc_ensemble_partition}",
         runtime={int(hpc_time_min)},
-        ntasks={self.cfg_analysis.n_mpi_procs or 1},
+        tasks={self.cfg_analysis.n_mpi_procs or 1},
         cpus_per_task={self.cfg_analysis.n_omp_threads or 1},
         mem_mb={mem_mb_per_sim},
     shell:
@@ -1368,7 +1368,7 @@ rule consolidate:
         slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
         runtime=30,
         mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
-        ntasks=1,
+        tasks=1,
         cpus_per_task=1
     shell:
         """
