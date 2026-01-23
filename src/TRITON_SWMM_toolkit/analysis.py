@@ -1283,6 +1283,7 @@ class TRITONSWMM_analysis:
 
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
+        n_nodes = self.cfg_analysis.n_nodes or 1
 
         # Get absolute path to conda environment file
         triton_toolkit_root = Path(__file__).parent.parent.parent
@@ -1326,6 +1327,7 @@ rule setup:
         mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
         cpus_per_task=1
+        nodes=1
     shell:
         {setup_shell}
 
@@ -1341,6 +1343,7 @@ rule simulation:
         tasks={self.cfg_analysis.n_mpi_procs or 1},
         cpus_per_task={self.cfg_analysis.n_omp_threads or 1},
         mem_mb={mem_mb_per_sim},
+        nodes={n_nodes}
     shell:
         """
         {self._python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\
@@ -1371,6 +1374,7 @@ rule consolidate:
         mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
         cpus_per_task=1
+        nodes=1
     shell:
         """
         {self._python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
@@ -1544,8 +1548,6 @@ rule consolidate:
                     "max-status-checks-per-second": 10,
                     "default-resources": [
                         f"nodes=1",
-                        f"tasks=1",
-                        f"cpus_per_task=1",
                         f"mem_mb=2000",
                         f"runtime=30",
                         f"slurm_partition={slurm_partition}",
@@ -1557,7 +1559,7 @@ rule consolidate:
                             "time": "{resources.runtime}:00",
                             "mem": "{resources.mem_mb}",
                             "nodes": "{resources.nodes}",
-                            "ntasks": "{resources.tasks}",
+                            "ntasks-per-node": "{resources.tasks}",
                             "cpus-per-task": "{resources.cpus_per_task}",
                         }
                     },
@@ -1750,9 +1752,9 @@ rule consolidate:
                 str(config_dir),
                 "--snakefile",
                 str(snakefile_path),
-                "--jobs",
-                "100",
             ]
+            if verbose:
+                cmd_args.append("--verbose")
 
             # Open log file for writing Snakemake output
             with open(snakemake_logfile, "w") as log_f:

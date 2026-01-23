@@ -334,6 +334,7 @@ rule setup:
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
         cpus_per_task=1
+        nodes=1
     shell:
         """
         mkdir -p logs _status
@@ -421,6 +422,7 @@ rule setup:
         mem_mb={sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
         cpus_per_task=1
+        nodes=1
     shell:
         """
         mkdir -p logs _status
@@ -448,6 +450,7 @@ rule setup:
         mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
         tasks=1,
         cpus_per_task=1
+        nodes=1
     shell:
         """
         mkdir -p logs _status
