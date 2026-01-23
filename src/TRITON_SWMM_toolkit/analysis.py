@@ -1650,7 +1650,13 @@ rule consolidate:
         config_path = config_dir / "config.yaml"
 
         with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(
+                config,
+                f,
+                default_flow_style=False,
+                sort_keys=False,
+                width=float("inf"),  # Prevent YAML from breaking long lines
+            )
 
         return config_dir
 
