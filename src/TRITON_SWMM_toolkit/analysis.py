@@ -1334,6 +1334,7 @@ rule simulation:
     output: "_status/sims/sim_{{event_iloc}}_complete.flag"
     log: "logs/sim_{{event_iloc}}.log"
     conda: "{conda_env_path}"
+    threads: {cpus_per_sim}
     resources:
         slurm_partition="{self.cfg_analysis.hpc_ensemble_partition}",
         runtime={int(hpc_time_min)},
@@ -1533,21 +1534,35 @@ rule consolidate:
             )
         else:  # slurm
             # SLURM mode: use analysis config for resource allocation
-            # Number of concurrent jobs = number of simulations
-            n_sims = len(self.df_sims)
-
-            # Calculate memory per job based on run mode
-            # This is memory allocated PER simulation/job
-
+            slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
             config.update(
                 {
                     "executor": "slurm",
-                    "jobs": n_sims,  # Max concurrent jobs = number of simulations
-                    "default-resources": {
-                        "slurm_account": self.cfg_analysis.hpc_account,
+                    "jobs": self.cfg_analysis.hpc_max_simultaneous_sims,  # Use fixed 100 as specified
+                    "default-resources": [
+                        f"nodes=1",
+                        f"tasks=1",
+                        f"cpus_per_task=1",
+                        f"mem_mb=2000",
+                        f"runtime=30",
+                        f"slurm_partition={slurm_partition}",
+                    ],
+                    "slurm": {
+                        "sbatch": {
+                            "partition": "{resources.slurm_partition}",
+                            "time": "{resources.runtime}:00",
+                            "mem": "{resources.mem_mb}",
+                            "nodes": "{resources.nodes}",
+                            "ntasks": "{resources.tasks}",
+                            "cpus-per-task": "{resources.cpus_per_task}",
+                        }
                     },
                 }
             )
+
+            # Add account if specified
+            if self.cfg_analysis.hpc_account:
+                config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account
 
         return config
 
