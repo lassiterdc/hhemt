@@ -137,8 +137,16 @@ def main():
         )
 
         cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result  # type: ignore
+        slurm_vars = {}
+        for key, item in env.items():
+            if "SLURM" in key:
+                slurm_vars[key] = item
 
-        logger.info(f"Environment returned by run.prepare_simulation_command: {env}")
+        logger.info(
+            f"All environment returned by run.prepare_simulation_command: {env}"
+        )
+
+        logger.info(f"SLURM environmental vars: {slurm_vars}")
 
         # Execute the simulation command
         logger.info(f"[{event_iloc}] Executing simulation command...")
