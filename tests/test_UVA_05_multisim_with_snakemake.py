@@ -283,7 +283,8 @@ def test_snakemake_workflow_execution():
     nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    system = nrflk_multisim_ensemble.system
+    analysis = system.analysis
 
     # Submit the workflow using submit_workflow (not submit_SLURM_job_array)
     result = analysis.submit_workflow(
@@ -309,10 +310,38 @@ def test_snakemake_workflow_execution():
     assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
     assert result["mode"] == "slurm", "Should be running in SLURM mode"
 
-    # Note: On SLURM, the workflow is submitted but may not complete immediately
-    # We would need to poll for completion or check logs
-    # For now, we just verify successful submission
+    # Verify Phase 1 outputs (system inputs and compilation)
+    dem_file = system.sys_paths.dem_processed
+    assert dem_file.exists(), "DEM file should be created in Phase 1"
 
-    if result.get("job_id"):
-        print(f"✅ Workflow submitted with job ID: {result['job_id']}")
-        print(f"Monitor with: squeue -j {result['job_id']}")
+    mannings_file = system.sys_paths.mannings_processed
+    assert mannings_file.exists(), "Mannings file should be created in Phase 1"
+
+    assert (
+        system.compilation_successful
+    ), "TRITON-SWMM should be compiled successfully in Phase 1"
+
+    # Verify Phase 2 outputs (simulations ran)
+    assert (
+        analysis.log.all_scenarios_created.get() == True
+    ), "All scenarios should be created in Phase 2"
+    assert (
+        analysis.log.all_sims_run.get() == True
+    ), "All simulations should run in Phase 2"
+
+    if analysis.log.all_sims_run.get() != True:
+        sims_not_run = "\n".join(analysis.scenarios_not_run)
+        pytest.fail(
+            f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
+        )
+
+    assert (
+        analysis.log.all_TRITON_timeseries_processed.get() == True
+    ), "All TRITON timeseries should be processed in Phase 2"
+
+    assert (
+        analysis.TRITON_analysis_summary_created
+    ), "TRITON analysis summary should be created in Phase 3"
+
+    triton_output = analysis.analysis_paths.output_triton_summary
+    assert triton_output.exists(), "TRITON consolidated output should exist"
