@@ -87,7 +87,7 @@ def main() -> int:
         if e.code != 0:
             logger.error("Failed to parse command-line arguments")
             return 2
-        return 0
+        return 2
 
     # Validate paths
     if not args.analysis_config.exists():

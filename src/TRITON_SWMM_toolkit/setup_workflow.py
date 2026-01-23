@@ -60,7 +60,7 @@ def main() -> int:
     parser.add_argument(
         "--process-system-inputs",
         action="store_true",
-        default=True,
+        default=False,
         help="Process system-level inputs (DEM, Mannings files)",
     )
     parser.add_argument(
@@ -72,7 +72,7 @@ def main() -> int:
     parser.add_argument(
         "--compile-triton-swmm",
         action="store_true",
-        default=True,
+        default=False,
         help="Compile TRITON-SWMM",
     )
     parser.add_argument(
@@ -87,7 +87,7 @@ def main() -> int:
         if e.code != 0:
             logger.error("Failed to parse command-line arguments")
             return 2
-        return 0
+        return 2
 
     # Validate paths
     if not args.analysis_config.exists():
@@ -111,6 +111,12 @@ def main() -> int:
             system=system,
             skip_log_update=False,
         )
+        if (not args.compile_triton_swmm) and not (args.process_system_inputs):
+            logger.info(
+                "Neither --process-system-inputs nor --compile-triton-swmm"
+                " were passed. Doing nothing."
+            )
+            return 0
 
         # Phase 1a: Process system-level inputs
         if args.process_system_inputs:

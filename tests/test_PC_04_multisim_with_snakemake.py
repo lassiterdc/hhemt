@@ -27,7 +27,6 @@ def test_snakemake_local_workflow_generation():
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
         process_timeseries=True,
-        consolidate_outputs=True,
     )
 
     # Verify Snakefile structure
@@ -40,7 +39,7 @@ def test_snakemake_local_workflow_generation():
     assert "/workflow/envs/triton_swmm.yaml" in snakefile_content
 
     # Verify wildcard-based simulation rule
-    assert "sims/sim_{event_iloc}/complete.flag" in snakefile_content
+    assert "_status/sims/sim_{event_iloc}_complete.flag" in snakefile_content
 
     # Verify setup phase commands
     assert "setup_workflow" in snakefile_content
@@ -75,7 +74,6 @@ def test_snakemake_local_workflow_submission_dry_run():
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
         process_timeseries=True,
-        consolidate_outputs=True,
     )
 
     # Write Snakefile to disk
@@ -139,7 +137,6 @@ def test_snakemake_workflow_config_generation():
         which="TRITON",
         clear_raw_outputs=True,
         compression_level=5,
-        consolidate_outputs=True,
     )
 
     # Verify compression level
@@ -176,7 +173,6 @@ def test_snakemake_multiple_configurations():
         compile_TRITON_SWMM=True,
         prepare_scenarios=False,
         process_timeseries=False,
-        consolidate_outputs=False,
     )
 
     # Configuration 2: Everything
@@ -185,7 +181,6 @@ def test_snakemake_multiple_configurations():
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
         process_timeseries=True,
-        consolidate_outputs=True,
     )
 
     # They should be different
@@ -239,7 +234,6 @@ def test_snakemake_workflow_dry_run():
         compile_TRITON_SWMM=False,
         prepare_scenarios=True,
         process_timeseries=False,
-        consolidate_outputs=False,
     )
 
     # Write Snakefile to disk

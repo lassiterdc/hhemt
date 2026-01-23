@@ -72,7 +72,7 @@ def main():
         if e.code != 0:
             logger.error("Failed to parse command-line arguments")
             return 2
-        return 0
+        return 2
 
     # Validate paths
     if not args.analysis_config.exists():
@@ -125,17 +125,18 @@ def main():
             verbose=True,
         )
 
-        if simprep_result is None:
+        if run.sim_run_completed:
             logger.info(
                 f"[{event_iloc}] Simulation already completed, skipping execution"
             )
+            logger.info(f"Simulation completed successfully")
             return 0
 
         logger.info(
             f"Expected modules in cmd: {system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc}"
         )
 
-        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
+        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result  # type: ignore
 
         logger.info(f"Environment returned by run.prepare_simulation_command: {env}")
 
@@ -184,7 +185,7 @@ def main():
             logger.error(f"[{event_iloc}] Latest sim log: {scenario.latest_simlog}")
             return 1
 
-        logger.info(f"[{event_iloc}] Simulation completed successfully")
+        logger.info(f"Simulation completed successfully")
         return 0
 
     except Exception as e:

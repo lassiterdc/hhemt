@@ -43,9 +43,14 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis = analysis
         self._system = analysis._system
         self.analysis_paths = analysis.analysis_paths
+        self.sub_analyses_prefex = "sa_"
+        self.subanalysis_dir = (
+            self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
+        )
         self.independent_vars = self._attributes_varied_for_analysis()
         self.df_setup = self._retieve_df_setup().loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
+
         # validate
         if "run_mode" in self.df_setup.columns:
             run_modes = self.df_setup.loc[:, "run_mode"].unique()
@@ -91,6 +96,279 @@ class TRITONSWMM_sensitivity_analysis:
             raise ValueError(
                 "prepare scenarios is not currently executable as batch_job."
             )
+
+    def submit_workflow(
+        self,
+        mode: Literal["local", "slurm", "auto"] = "auto",
+        # setup stuff
+        process_system_level_inputs: bool = True,
+        overwrite_system_inputs: bool = False,
+        compile_TRITON_SWMM: bool = True,
+        recompile_if_already_done_successfully: bool = False,
+        # ensemble run stuff
+        prepare_scenarios: bool = True,
+        overwrite_scenario: bool = False,
+        rerun_swmm_hydro_if_outputs_exist: bool = False,
+        process_timeseries: bool = True,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        clear_raw_outputs: bool = True,
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        pickup_where_leftoff: bool = True,
+        # other
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Submit sensitivity analysis workflow using Snakemake.
+
+        This orchestrates multiple sub-analysis workflows and a final master
+        consolidation step that combines all sub-analysis outputs.
+
+        Parameters
+        ----------
+        mode : Literal["local", "slurm", "auto"]
+            Execution mode. If "auto", detects based on SLURM environment variables.
+        process_system_level_inputs : bool
+            If True, process system-level inputs (DEM, Mannings)
+        overwrite_system_inputs : bool
+            If True, overwrite existing system input files
+        compile_TRITON_SWMM : bool
+            If True, compile TRITON-SWMM
+        recompile_if_already_done_successfully : bool
+            If True, recompile even if already compiled successfully
+        prepare_scenarios : bool
+            If True, prepare scenarios before running
+        overwrite_scenario : bool
+            If True, overwrite existing scenarios
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        process_timeseries : bool
+            If True, process timeseries outputs after simulations
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        compression_level : int
+            Compression level for output files (0-9)
+        pickup_where_leftoff : bool
+            If True, resume simulations from last checkpoint
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        dict
+            Status dictionary with keys:
+            - success: bool
+            - mode: str
+            - snakefile_path: Path
+            - message: str
+        """
+        # Detect execution mode
+        if mode == "auto":
+            mode = "slurm" if self.master_analysis.in_slurm else "local"
+
+        if verbose:
+            print(
+                f"[Snakemake] Submitting sensitivity analysis workflow in {mode} mode",
+                flush=True,
+            )
+
+        # Generate Snakefiles for each sub-analysis
+        subanalysis_snakefile_paths = []
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            snakefile_content = sub_analysis._generate_snakefile_content(
+                process_system_level_inputs=False,
+                overwrite_system_inputs=False,
+                compile_TRITON_SWMM=False,
+                recompile_if_already_done_successfully=False,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario=overwrite_scenario,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+            )
+            snakefile_path = sub_analysis.analysis_paths.analysis_dir / "Snakefile"
+            snakefile_path.write_text(snakefile_content)
+            subanalysis_snakefile_paths.append(
+                (
+                    sub_analysis_iloc,
+                    snakefile_path,
+                    sub_analysis.analysis_paths.analysis_dir,
+                )
+            )
+
+            if verbose:
+                print(
+                    f"[Snakemake] Generated sub-analysis {sub_analysis_iloc} Snakefile: {snakefile_path}",
+                    flush=True,
+                )
+
+        # Generate master Snakefile
+        master_snakefile_content = self._generate_master_snakefile_content(
+            subanalysis_snakefile_paths=subanalysis_snakefile_paths,
+            which=which,
+            overwrite_if_exist=overwrite_if_exist,
+            compression_level=compression_level,
+            verbose=verbose,
+            process_system_level_inputs=process_system_level_inputs,
+            overwrite_system_inputs=overwrite_system_inputs,
+            compile_TRITON_SWMM=compile_TRITON_SWMM,
+            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+        )
+
+        master_snakefile_path = (
+            self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
+        )
+        master_snakefile_path.write_text(master_snakefile_content)
+
+        if verbose:
+            print(
+                f"[Snakemake] Generated master Snakefile: {master_snakefile_path}",
+                flush=True,
+            )
+
+        # Submit workflow based on mode
+        if mode == "local":
+            result = self.master_analysis._run_snakemake_local(
+                snakefile_path=master_snakefile_path,
+                verbose=verbose,
+            )
+        else:  # slurm
+            result = self.master_analysis._run_snakemake_slurm(
+                snakefile_path=master_snakefile_path,
+                verbose=verbose,
+            )
+
+        self._update_master_analysis_log()
+        return result
+
+    def _generate_master_snakefile_content(
+        self,
+        subanalysis_snakefile_paths: list[tuple[int, Path, Path]],
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        overwrite_if_exist: bool = False,
+        compression_level: int = 5,
+        verbose: bool = True,
+        process_system_level_inputs: bool = False,
+        overwrite_system_inputs: bool = False,
+        compile_TRITON_SWMM: bool = True,
+        recompile_if_already_done_successfully: bool = False,
+    ) -> str:
+        """
+        Generate master Snakefile that orchestrates sub-analysis workflows
+        and performs final consolidation using wildcards.
+
+        This method uses Snakemake wildcards to create a single rule that
+        automatically expands to handle all sub-analyses, similar to the
+        elegant pattern in analysis.py's _generate_snakefile_content().
+
+        Parameters
+        ----------
+        subanalysis_snakefile_paths : list[tuple[int, Path, Path]]
+            List of tuples (sub_analysis_iloc, snakefile_path, working_dir)
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process
+        overwrite_if_exist : bool
+            If True, overwrite existing consolidated outputs
+        compression_level : int
+            Compression level for output files (0-9)
+        verbose : bool
+            If True, print progress messages
+        process_system_level_inputs : bool
+            If True, process system-level inputs in master setup rule
+        overwrite_system_inputs : bool
+            If True, overwrite existing system input files
+        compile_TRITON_SWMM : bool
+            If True, compile TRITON-SWMM in master setup rule
+        recompile_if_already_done_successfully : bool
+            If True, recompile even if already compiled successfully
+
+        Returns
+        -------
+        str
+            Master Snakefile content
+        """
+        python_executable = self.master_analysis._python_executable
+
+        # Get absolute path to conda environment file
+        from pathlib import Path
+
+        triton_toolkit_root = Path(__file__).parent.parent.parent
+        conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
+
+        # Extract sub-analysis IDs for wildcard expansion
+        sub_analysis_ids = [
+            sub_analysis_iloc for sub_analysis_iloc, _, _ in subanalysis_snakefile_paths
+        ]
+
+        # Build master Snakefile using wildcards (elegant pattern from analysis.py)
+        snakefile_content = f'''# Auto-generated master Snakefile for sensitivity analysis
+
+import os
+
+# Sub-analysis IDs for wildcard expansion
+SUB_ANALYSIS_IDS = {sub_analysis_ids}
+
+rule all:
+    input: "_status/master_consolidation_complete.flag"
+
+rule setup:
+    output: "_status/setup_complete.flag"
+    log: "logs/setup.log"
+    conda: "{conda_env_path}"
+    shell:
+        """
+        mkdir -p logs _status
+        {python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
+            --system-config {self.master_analysis._system.system_config_yaml} \\
+            --analysis-config {self.master_analysis.analysis_config_yaml} \\
+            {"--process-system-inputs " if process_system_level_inputs else ""}\\
+            {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
+            {"--compile-triton-swmm " if compile_TRITON_SWMM else ""}\\
+            {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+rule subanalysis:
+    input: "_status/setup_complete.flag"
+    output: "_status/subanalysis_{{sub_analysis_id}}_complete.flag"
+    log: "logs/subanalysis_{{sub_analysis_id}}.log"
+    shell:
+        """
+        mkdir -p logs _status
+        cd {self.subanalysis_dir}/{self.sub_analyses_prefex}{{wildcards.sub_analysis_id}} && \\
+        snakemake --cores all --snakefile Snakefile > {self.master_analysis.analysis_paths.analysis_dir}/{{log}} 2>&1
+        touch {self.master_analysis.analysis_paths.analysis_dir}/{{output}}
+        """
+
+rule master_consolidation:
+    input: expand("_status/subanalysis_{{sub_analysis_id}}_complete.flag", sub_analysis_id=SUB_ANALYSIS_IDS)
+    output: "_status/master_consolidation_complete.flag"
+    log: "logs/master_consolidation.log"
+    conda: "{conda_env_path}"
+    shell:
+        """
+        mkdir -p logs _status
+        {python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            --system-config {self.master_analysis._system.system_config_yaml} \\
+            --analysis-config {self.master_analysis.analysis_config_yaml} \\
+            --consolidate-sensitivity-analysis-outputs \\
+            --which {which} \\
+            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
+        return snakefile_content
 
     def run_sensitivity_analysis_as_batch_job(
         self,
@@ -462,15 +740,15 @@ class TRITONSWMM_sensitivity_analysis:
 
             for key, val in row.items():
                 setattr(cfg_snstvty_analysis, key, val)  # type: ignore
-            cfg_snstvty_analysis.analysis_id = f"subanalysis_{idx}"  # type: ignore
-            sub_analysis_directory = (
-                self.master_analysis.analysis_paths.analysis_dir
-                / str(cfg_snstvty_analysis.analysis_id)
+            sa_id = f"{self.sub_analyses_prefex}{idx}"
+            cfg_snstvty_analysis.analysis_id = sa_id  # type: ignore
+            sub_analysis_directory = self.subanalysis_dir / str(
+                cfg_snstvty_analysis.analysis_id
             )
             sub_analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
 
-            cfg_anlysys_yaml = sub_analysis_directory / f"subanalysis_{idx}.yaml"
+            cfg_anlysys_yaml = sub_analysis_directory / f"{sa_id}.yaml"
 
             cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
 

@@ -143,7 +143,7 @@ class TRITONSWMM_run:
         if pickup_where_leftoff:
             status, f_last_cfg = self._check_simulation_run_status()
             if status == "simulation completed":
-                return None
+                return
             if status == "simulation started but did not finish":
                 cfg = f_last_cfg
                 sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(
