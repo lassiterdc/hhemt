@@ -348,6 +348,13 @@ rule subanalysis:
     input: "_status/setup_complete.flag"
     output: "_status/subanalysis_{{sub_analysis_id}}_complete.flag"
     log: "logs/subanalysis_{{sub_analysis_id}}.log"
+    conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime={(self.master_analysis.cfg_analysis.hpc_time_min_per_sim or 30)*1.1},
+        mem_mb=1000,
+        ntasks=1,
+        cpus_per_task=1
     shell:
         """
         mkdir -p logs _status
