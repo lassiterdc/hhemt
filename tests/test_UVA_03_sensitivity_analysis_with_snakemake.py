@@ -283,9 +283,9 @@ def test_snakemake_sensitivity_workflow_execution():
 
     result = sensitivity.submit_workflow(
         mode="slurm",
-        process_system_level_inputs=False,
+        process_system_level_inputs=True,
         overwrite_system_inputs=False,
-        compile_TRITON_SWMM=False,
+        compile_TRITON_SWMM=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
         overwrite_scenario=True,
