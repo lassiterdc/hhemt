@@ -115,7 +115,7 @@ class TRITONSWMM_sensitivity_analysis:
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
-        # other
+        wait_for_completion: bool = False,  # relevant for slurm jobs only
         verbose: bool = True,
     ) -> dict:
         """
@@ -244,6 +244,7 @@ class TRITONSWMM_sensitivity_analysis:
             result = self.master_analysis._run_snakemake_slurm(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
+                wait_for_completion=wait_for_completion,
             )
 
         self._update_master_analysis_log()
