@@ -4,7 +4,7 @@ import socket
 import subprocess
 import time
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from tests.test_utils import on_UVA_HPC
+from tests.utils_for_testing import on_UVA_HPC
 
 pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 

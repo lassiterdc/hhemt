@@ -1,6 +1,6 @@
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from tests.test_utils import is_scheduler_context
+from tests.utils_for_testing import is_scheduler_context
 
 pytestmark = pytest.mark.skipif(
     is_scheduler_context(), reason="Only runs on non-HPC systems."
