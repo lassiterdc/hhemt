@@ -156,7 +156,7 @@ def main():
 
         slurm_vars = {}
         for key, item in merged_env.items():
-            if ("slurm" in key.lower()) or ("slurm" in (str(item).lower())):
+            if "slurm" in key.lower():
                 slurm_vars[key] = item
 
         logger.info(f"SLURM environmental vars: {slurm_vars}")
