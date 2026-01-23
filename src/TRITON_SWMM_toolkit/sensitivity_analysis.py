@@ -351,7 +351,7 @@ rule subanalysis:
     conda: "{conda_env_path}"
     resources:
         slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime={(self.master_analysis.cfg_analysis.hpc_time_min_per_sim or 30)*1.1},
+        runtime={int((self.master_analysis.cfg_analysis.hpc_time_min_per_sim or 30)*1.1)},
         mem_mb=1000,
         ntasks=1,
         cpus_per_task=1
