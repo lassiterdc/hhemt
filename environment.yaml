@@ -64,3 +64,4 @@ dependencies:
       - jupyter_server
       - ipywidgets
       - snakemake-executor-plugin-slurm
+      - snakemake-storage-plugin-fs
