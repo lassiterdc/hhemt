@@ -392,6 +392,10 @@ class analysis_config(cfgBaseModel):
             description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
         )
     )
+    use_legacy_cluster_mode: bool = Field(
+        False,
+        description="If True, uses Snakemake's legacy 'cluster' mode with direct sbatch submission instead of the modern 'executor: slurm' mode. Use this when srun causes issues (e.g., hanging on HPC systems). Legacy mode submits each rule as a standalone sbatch job. Modern mode uses job steps which may not provide full resource visibility to mpirun.",
+    )
     # HPC JOB ARRAY PARAMETERS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: Optional[int] = Field(

@@ -1508,6 +1508,10 @@ rule consolidate:
         """
         Generate dynamic snakemake config based on analysis_config and system_config.
 
+        Supports dual-mode execution:
+        - Modern mode (default): Uses 'executor: slurm' with job steps
+        - Legacy mode: Uses 'cluster' with direct sbatch submission
+
         Parameters
         ----------
         mode : Literal["local", "slurm"]
@@ -1537,40 +1541,89 @@ rule consolidate:
                 }
             )
         else:  # slurm
-            # SLURM mode: use analysis config for resource allocation
+            # SLURM mode: support both modern executor and legacy cluster modes
+            use_legacy = self.cfg_analysis.use_legacy_cluster_mode
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
-            config.update(
-                {
-                    "executor": "slurm",
-                    "jobs": self.cfg_analysis.hpc_max_simultaneous_sims,  # Use fixed 100 as specified
-                    "latency-wait": 60,
-                    "max-jobs-per-second": 5,
-                    "max-status-checks-per-second": 10,
-                    "default-resources": [
-                        f"nodes=1",
-                        f"mem_mb=2000",
-                        f"runtime=30",
-                        f"slurm_partition={slurm_partition}",
-                        # f"mpi=1",
-                    ],
-                    "slurm": {
-                        "sbatch": {
-                            "partition": "{resources.slurm_partition}",
-                            "time": "{resources.runtime}:00",
-                            "mem": "{resources.mem_mb}",
-                            "nodes": "{resources.nodes}",
-                            "ntasks-per-node": "{resources.tasks}",
-                            "cpus-per-task": "{resources.cpus_per_task}",
-                        }
-                    },
-                }
-            )
 
-            # Add account if specified
-            if self.cfg_analysis.hpc_account:
-                config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account
+            if use_legacy:
+                # Legacy cluster mode: direct sbatch submission (no job steps)
+                # This is needed when srun causes issues (e.g., hanging on HPC systems)
+                sbatch_template = self._build_sbatch_cluster_template(slurm_partition)
+                config.update(
+                    {
+                        "cluster": sbatch_template,
+                        "jobs": self.cfg_analysis.hpc_max_simultaneous_sims or 100,
+                        "latency-wait": 60,
+                        "max-jobs-per-second": 5,
+                        "max-status-checks-per-second": 10,
+                    }
+                )
+            else:
+                # Modern executor mode: uses 'executor: slurm' with job steps
+                config.update(
+                    {
+                        "executor": "slurm",
+                        "jobs": self.cfg_analysis.hpc_max_simultaneous_sims or 100,
+                        "latency-wait": 60,
+                        "max-jobs-per-second": 5,
+                        "max-status-checks-per-second": 10,
+                        "default-resources": [
+                            f"nodes=1",
+                            f"mem_mb=2000",
+                            f"runtime=30",
+                            f"slurm_partition={slurm_partition}",
+                        ],
+                        "slurm": {
+                            "sbatch": {
+                                "partition": "{resources.slurm_partition}",
+                                "time": "{resources.runtime}:00",
+                                "mem": "{resources.mem_mb}",
+                                "nodes": "{resources.nodes}",
+                                "ntasks-per-node": "{resources.tasks}",
+                                "cpus-per-task": "{resources.cpus_per_task}",
+                            }
+                        },
+                    }
+                )
+
+                # Add account if specified
+                if self.cfg_analysis.hpc_account:
+                    config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account
 
         return config
+
+    def _build_sbatch_cluster_template(self, slurm_partition: str) -> str:
+        """
+        Build sbatch command template for legacy cluster mode.
+
+        This bypasses the two-tier executor (which uses srun inside job steps)
+        and instead submits each rule as a direct sbatch job.
+
+        Parameters
+        ----------
+        slurm_partition : str
+            Default SLURM partition name
+
+        Returns
+        -------
+        str
+            sbatch command template for Snakemake's 'cluster' option
+        """
+        sbatch_cmd = (
+            "sbatch "
+            "-p {resources.slurm_partition} "
+            "-t {resources.runtime}:00 "
+            "--mem {resources.mem_mb} "
+            "--nodes {resources.nodes} "
+            "--ntasks {resources.tasks} "
+            "--cpus-per-task {resources.cpus_per_task}"
+        )
+
+        # Add account if specified
+        if self.cfg_analysis.hpc_account:
+            sbatch_cmd += f" -A {self.cfg_analysis.hpc_account}"
+
+        return sbatch_cmd
 
     def _write_snakemake_config(
         self, config: dict, mode: Literal["local", "slurm"]
