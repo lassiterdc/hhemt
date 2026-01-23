@@ -137,16 +137,10 @@ def main():
         )
 
         cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result  # type: ignore
-        slurm_vars = {}
-        for key, item in env.items():
-            if "SLURM" in key:
-                slurm_vars[key] = item
 
         logger.info(
             f"All environment returned by run.prepare_simulation_command: {env}"
         )
-
-        logger.info(f"SLURM environmental vars: {slurm_vars}")
 
         # Execute the simulation command
         logger.info(f"[{event_iloc}] Executing simulation command...")
@@ -159,6 +153,13 @@ def main():
         logger.info(
             f"Merged environment passed to subprocess running TRITON-SWMM: {merged_env}"
         )
+
+        slurm_vars = {}
+        for key, item in merged_env.items():
+            if ("slurm" in key.lower()) or ("slurm" in (str(item).lower())):
+                slurm_vars[key] = item
+
+        logger.info(f"SLURM environmental vars: {slurm_vars}")
 
         # update the environment recorded in the log
         log_dic = scenario.latest_simlog
