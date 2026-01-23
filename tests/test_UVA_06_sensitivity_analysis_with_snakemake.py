@@ -339,6 +339,7 @@ def test_snakemake_sensitivity_workflow_execution():
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,
+        wait_for_completion=True,
     )
 
     # Verify workflow submission was successful
