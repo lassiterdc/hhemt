@@ -205,6 +205,18 @@ class TRITONSWMM_sensitivity_analysis:
                 flush=True,
             )
 
+        # Create required directories BEFORE Snakemake DAG construction
+        # (onstart: in Snakefile runs AFTER DAG parsing, too late for file validation)
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
+
+        if verbose:
+            print(
+                f"[Snakemake] Created required directories (_status, logs/sims)",
+                flush=True,
+            )
+
         # Submit workflow based on mode
         if mode == "local":
             result = self.master_analysis._run_snakemake_local(

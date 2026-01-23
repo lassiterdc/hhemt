@@ -1289,6 +1289,11 @@ class TRITONSWMM_analysis:
         triton_toolkit_root = Path(__file__).parent.parent.parent
         conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
+        # make log dirs
+        analysis_dir = self.analysis_paths.analysis_dir
+        (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
+        (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
+
         if skip_setup:
             setup_shell = f'''"""
         touch {{output}}
