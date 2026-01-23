@@ -358,8 +358,21 @@ rule subanalysis:
     shell:
         """
         mkdir -p logs _status
-        cd {self.subanalysis_dir}/{self.sub_analyses_prefex}{{wildcards.sub_analysis_id}} && \\
-        snakemake --cores all --snakefile Snakefile > {self.master_analysis.analysis_paths.analysis_dir}/{{log}} 2>&1
+        SUBANALYSIS_DIR="{self.subanalysis_dir}/{self.sub_analyses_prefex}{{wildcards.sub_analysis_id}}"
+        SUBANALYSIS_LOG="{self.master_analysis.analysis_paths.analysis_dir}/logs/subanalysis_{{wildcards.sub_analysis_id}}.log"
+        
+        echo "Running subanalysis {{{{wildcards.sub_analysis_id}}}} from: $SUBANALYSIS_DIR" >> {{log}}
+        
+        cd "$SUBANALYSIS_DIR" && \\
+        snakemake --cores all --snakefile Snakefile >> "$SUBANALYSIS_LOG" 2>&1
+        
+        SNAKEMAKE_EXIT=$?
+        if [ $SNAKEMAKE_EXIT -ne 0 ]; then
+            echo "ERROR: Snakemake failed for subanalysis {{{{wildcards.sub_analysis_id}}}} with exit code $SNAKEMAKE_EXIT" >> {{log}}
+            echo "See subanalysis log for details: $SUBANALYSIS_LOG" >> {{log}}
+            exit $SNAKEMAKE_EXIT
+        fi
+        
         touch {self.master_analysis.analysis_paths.analysis_dir}/{{output}}
         """
 
