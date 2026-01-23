@@ -240,7 +240,7 @@ class TRITONSWMM_system:
     ):
         flt = round(flt, target_decimal_places)  # type: ignore
         str_flt = flt.astype(str)
-        str_flt = str_flt.apply(lambda x: x.ljust(longest_num, "0"))
+        str_flt = str_flt.apply(lambda x: str(x).ljust(longest_num, "0"))
         return str_flt
 
     # compilation stuff
