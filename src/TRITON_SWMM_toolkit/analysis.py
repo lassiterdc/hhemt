@@ -1609,14 +1609,18 @@ rule consolidate:
         str
             sbatch command template for Snakemake's 'cluster' option
         """
+        # Snakemake requires log file specifications in the cluster template
+        # {log} is a placeholder that Snakemake will fill in
         sbatch_cmd = (
             "sbatch "
             "-p {resources.slurm_partition} "
             "-t {resources.runtime}:00 "
             "--mem {resources.mem_mb} "
             "--nodes {resources.nodes} "
-            "--ntasks {resources.tasks} "
-            "--cpus-per-task {resources.cpus_per_task}"
+            "--ntasks-per-node {resources.tasks} "
+            "--cpus-per-task {resources.cpus_per_task} "
+            "-o {log}/slurm_%j.out "
+            "-e {log}/slurm_%j.out"
         )
 
         # Add account if specified
