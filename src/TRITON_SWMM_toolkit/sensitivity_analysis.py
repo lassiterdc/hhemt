@@ -218,6 +218,21 @@ class TRITONSWMM_sensitivity_analysis:
                 wait_for_completion=wait_for_completion,
             )
 
+        # Print snakemake log file location if available
+        if (
+            verbose
+            and result.get("snakemake_logfile") is not None
+            and not wait_for_completion
+        ):
+            print(
+                f"[Snakemake] Sensitivity analysis workflow submitted in background.",
+                flush=True,
+            )
+            print(
+                f"[Snakemake] Monitor progress with: tail -f {result.get('snakemake_logfile')}",
+                flush=True,
+            )
+
         self._update_master_analysis_log()
         return result
 
@@ -447,96 +462,7 @@ rule setup:
         touch {{output}}
         """
 '''
-
         return snakefile_content
-
-    def run_sensitivity_analysis_as_batch_job(
-        self,
-        # setup stuff
-        process_system_level_inputs: bool = True,
-        overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
-        recompile_if_already_done_successfully: bool = False,
-        # ensemble run stuff
-        prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
-        rerun_swmm_hydro_if_outputs_exist: bool = False,
-        process_timeseries: bool = True,
-        which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
-        compression_level: int = 5,
-        pickup_where_leftoff: bool = True,
-        # other
-        verbose: bool = True,
-    ):
-        subanalysis_consolidation_jobs = []
-        setup_script = self.master_analysis.generate_setup_workflow_script(
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            verbose=verbose,
-        )
-        setup_job_id = ut.run_bash_script(setup_script, verbose=verbose)
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            ensemble_script = sub_analysis.generate_SLURM_job_array_script(
-                prepare_scenarios=prepare_scenarios,
-                process_timeseries=process_timeseries,
-                which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
-                compression_level=compression_level,
-                pickup_where_leftoff=pickup_where_leftoff,
-                overwrite_scenario=overwrite_scenario,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                verbose=verbose,
-            )
-            ensemble_jobid = ut.run_bash_script(
-                ensemble_script, dependent_job_id=setup_job_id, verbose=verbose
-            )
-            subanalysis_consolidation_script = (
-                sub_analysis.generate_consolidation_workflow_script(
-                    overwrite_if_exist=overwrite_if_exist,
-                    compression_level=compression_level,
-                    verbose=verbose,
-                    which=which,
-                )
-            )
-            subanalysis_consolidation_jobid = ut.run_bash_script(
-                subanalysis_consolidation_script,
-                dependent_job_id=ensemble_jobid,
-                verbose=verbose,
-            )
-            subanalysis_consolidation_jobs.append(subanalysis_consolidation_jobid)
-
-        # Generate master consolidation script to consolidate subanalysis outputs
-        master_consolidation_script = (
-            self.master_analysis.generate_consolidation_workflow_script(
-                overwrite_if_exist=overwrite_if_exist,
-                compression_level=compression_level,
-                verbose=verbose,
-                which=which,
-                consolidate_sensitivity_analysis_outputs=True,
-            )
-        )
-
-        # Submit master consolidation job with dependencies on all subanalysis consolidation jobs
-        master_consolidation_jobid = ut.run_bash_script(
-            master_consolidation_script,
-            dependent_job_id=subanalysis_consolidation_jobs,
-            verbose=verbose,
-        )
-
-        if verbose:
-            print(
-                f"Sensitivity analysis batch job workflow submitted successfully",
-                flush=True,
-            )
-            print(
-                f"Master consolidation job ID: {master_consolidation_jobid}", flush=True
-            )
-        return master_consolidation_jobid
 
     def run_all_sims(
         self,

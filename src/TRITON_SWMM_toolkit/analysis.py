@@ -1695,6 +1695,7 @@ rule consolidate:
             - wait_for_completion: bool - Whether we waited
             - completed: bool - True only if wait_for_completion=True and job finished
             - completion_status: str | None - "success"/"failed" (only if waited)
+            - snakemake_logfile: Path - Path to snakemake output log
         """
         try:
             if verbose:
@@ -1710,7 +1711,18 @@ rule consolidate:
             if verbose:
                 print(f"[Snakemake] Using config from: {config_dir}", flush=True)
 
-            # Submit workflow as detached background process
+            # Create log directory and file for Snakemake output
+            logs_dir = self.analysis_paths.analysis_dir / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            snakemake_logfile = logs_dir / "snakemake_master.log"
+
+            if verbose:
+                print(
+                    f"[Snakemake] Snakemake output will be logged to: {snakemake_logfile}",
+                    flush=True,
+                )
+
+            # Submit workflow as detached background process, capturing output
             cmd_args = [
                 "snakemake",
                 "--executor",
@@ -1722,19 +1734,26 @@ rule consolidate:
                 "--jobs",
                 "100",
             ]
-            proc = subprocess.Popen(
-                cmd_args,
-                cwd=str(self.analysis_paths.analysis_dir),
-                stdout=subprocess.DEVNULL,  # Don't capture output
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,  # Detach from parent process
-            )
+
+            # Open log file for writing Snakemake output
+            with open(snakemake_logfile, "w") as log_f:
+                proc = subprocess.Popen(
+                    cmd_args,
+                    cwd=str(self.analysis_paths.analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
+                    start_new_session=True,  # Detach from parent process
+                )
 
             # Return immediately (non-blocking)
             if not wait_for_completion:
                 if verbose:
                     print(
                         f"[Snakemake] Workflow submitted to background (PID: {proc.pid})",
+                        flush=True,
+                    )
+                    print(
+                        f"[Snakemake] Monitor progress with: tail -f {snakemake_logfile}",
                         flush=True,
                     )
                 return {
@@ -1747,6 +1766,7 @@ rule consolidate:
                     "wait_for_completion": False,
                     "completed": False,
                     "completion_status": None,
+                    "snakemake_logfile": snakemake_logfile,
                 }
 
             # Wait for completion (blocking)
@@ -1762,6 +1782,10 @@ rule consolidate:
                         f"[Snakemake] Workflow completed with status: {completion_status}",
                         flush=True,
                     )
+                    print(
+                        f"[Snakemake] Full output available in: {snakemake_logfile}",
+                        flush=True,
+                    )
 
                 return {
                     "success": success,
@@ -1773,6 +1797,7 @@ rule consolidate:
                     "wait_for_completion": True,
                     "completed": True,
                     "completion_status": completion_status,
+                    "snakemake_logfile": snakemake_logfile,
                 }
 
         except Exception as e:
@@ -1789,6 +1814,7 @@ rule consolidate:
                 "wait_for_completion": wait_for_completion,
                 "completed": False,
                 "completion_status": None,
+                "snakemake_logfile": None,
             }
 
     @property
