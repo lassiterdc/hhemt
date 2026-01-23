@@ -217,6 +217,7 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     # "--exclusive "
                     "--cpu-bind=none "
+                    "--overlap "
                     f"{exe} {cfg}"
                 )
                 # cmd = [
@@ -255,6 +256,7 @@ class TRITONSWMM_run:
                     "--gpus-per-task=1 "
                     # "--exclusive "
                     "--cpu-bind=none "
+                    "--overlap "
                     f"{exe} {cfg}"
                 )
                 # cmd = [
