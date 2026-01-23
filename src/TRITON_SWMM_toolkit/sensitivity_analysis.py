@@ -308,6 +308,7 @@ class TRITONSWMM_sensitivity_analysis:
         sub_analysis_ids = [
             sub_analysis_iloc for sub_analysis_iloc, _, _ in subanalysis_snakefile_paths
         ]
+        wildcard = "{wildcards.sub_analysis_id}"
 
         # Build master Snakefile using wildcards (elegant pattern from analysis.py)
         snakefile_content = f'''# Auto-generated master Snakefile for sensitivity analysis
@@ -358,17 +359,17 @@ rule subanalysis:
     shell:
         """
         mkdir -p logs _status
-        SUBANALYSIS_DIR="{self.subanalysis_dir}/{self.sub_analyses_prefex}{{wildcards.sub_analysis_id}}"
-        SUBANALYSIS_LOG="{self.master_analysis.analysis_paths.analysis_dir}/logs/subanalysis_{{wildcards.sub_analysis_id}}.log"
+        SUBANALYSIS_DIR="{self.subanalysis_dir}/{self.sub_analyses_prefex}{wildcard}"
+        SUBANALYSIS_LOG="{self.master_analysis.analysis_paths.analysis_dir}/logs/subanalysis_{wildcard}.log"
         
-        echo "Running subanalysis {{wildcards.sub_analysis_id}} from: $SUBANALYSIS_DIR" >> {{log}}
+        echo "Running subanalysis {wildcard} from: $SUBANALYSIS_DIR" >> {{log}}
         
         cd "$SUBANALYSIS_DIR" && \\
         snakemake --cores all --snakefile Snakefile >> "$SUBANALYSIS_LOG" 2>&1
         
         SNAKEMAKE_EXIT=$?
         if [ $SNAKEMAKE_EXIT -ne 0 ]; then
-            echo "ERROR: Snakemake failed for subanalysis {{wildcards.sub_analysis_id}} with exit code $SNAKEMAKE_EXIT" >> {{log}}
+            echo "ERROR: Snakemake failed for subanalysis {wildcard} with exit code $SNAKEMAKE_EXIT" >> {{log}}
             echo "See subanalysis log for details: $SUBANALYSIS_LOG" >> {{log}}
             exit $SNAKEMAKE_EXIT
         fi
