@@ -1774,17 +1774,20 @@ rule consolidate:
         verbose: bool = True,
     ) -> tuple[Path, str]:
         """
-        Generate and submit a consolidated SLURM workflow using Snakemake.
+        Generate and submit a consolidated SLURM workflow script.
 
-        This method creates a Snakefile with three phases:
+        This method creates a heterogeneous SLURM job with three phases:
         1. Setup: Process system inputs and compile TRITON-SWMM
         2. Ensemble: Run all simulations in parallel using job array
         3. Consolidation: Consolidate outputs after all simulations complete
 
-        Snakemake orchestrates the workflow with automatic dependency management.
+        Each phase verifies the success of the previous phase before proceeding.
 
         Parameters
         ----------
+        job_script_path : Optional[Path]
+            Path where the job script will be saved. If None, defaults to
+            analysis_dir/run_consolidated_workflow.sh
         process_system_level_inputs : bool
             If True, process system-level inputs (DEM, Mannings) in Phase 1
         overwrite_system_inputs : bool
@@ -1819,17 +1822,17 @@ rule consolidate:
         Returns
         -------
         tuple[Path, str]
-            (snakefile_path, job_id) where job_id is the SLURM job ID
+            (job_script_path, job_id) where job_id is the SLURM job ID
 
         Raises
         ------
         RuntimeError
-            If snakemake submission fails
+            If sbatch submission fails
 
         Examples
         --------
         >>> analysis = TRITONSWMM_analysis(...)
-        >>> snakefile_path, job_id = analysis.submit_SLURM_job_array(
+        >>> script_path, job_id = analysis.submit_SLURM_job_array(
         ...     process_system_level_inputs=True,
         ...     compile_TRITON_SWMM=True,
         ...     consolidate_outputs=True,
@@ -1837,7 +1840,7 @@ rule consolidate:
         >>> print(f"Job submitted with ID: {job_id}")
         >>> print(f"Monitor with: squeue -j {job_id}")
         """
-        # Generate the three phase scripts (still needed - they're called by Snakefile)
+        # Generate the three phase scripts
         if process_system_level_inputs or compile_TRITON_SWMM:
             setup_script = self.generate_setup_workflow_script(
                 process_system_level_inputs=process_system_level_inputs,
@@ -1867,76 +1870,40 @@ rule consolidate:
                 which=which,
             )
 
-        # Generate Snakefile content
-        snakefile_content = self._generate_snakefile_content(
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            compression_level=compression_level,
-            overwrite_if_exist=overwrite_if_exist,
-            which=which,
-        )
-
-        # Write Snakefile to disk
-        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-        snakefile_path.write_text(snakefile_content)
-
+        # Submit the three scripts with dependencies
         if verbose:
-            print(f"Snakefile generated: {snakefile_path}", flush=True)
-            print("Submitting workflow with Snakemake...", flush=True)
-
-        # Run Snakemake to submit the workflow
-        try:
-            result = subprocess.run(
-                ["snakemake", "--slurm", "--cores", "1"],
-                cwd=str(self.analysis_paths.analysis_dir),
-                capture_output=True,
-                text=True,
-                check=False,
+            print(
+                "Submitting three-phase workflow with SLURM dependencies...",
+                flush=True,
             )
 
-            if result.returncode != 0:
-                error_msg = f"Snakemake submission failed:\n{result.stderr}"
-                if verbose:
-                    print(error_msg, flush=True)
-                raise RuntimeError(error_msg)
+        jobs = []
 
-            # Parse job ID from snakemake output
-            # Snakemake prints something like: "Submitted SLURM job 12345678"
-            job_id = None
-            for line in result.stdout.split("\n"):
-                if "Submitted SLURM job" in line or "job" in line.lower():
-                    # Try to extract numeric job ID
-                    import re
+        try:
+            if process_system_level_inputs or compile_TRITON_SWMM:
+                job_id_1 = ut.run_bash_script(setup_script, verbose=verbose)
+                jobs.append(job_id_1)
 
-                    match = re.search(r"\b(\d+)\b", line)
-                    if match:
-                        job_id = match.group(1)
-                        break
-
-            if job_id is None:
-                # Fallback: look for any numeric ID in output
-                import re
-
-                matches = re.findall(r"\b(\d{6,})\b", result.stdout)
-                if matches:
-                    job_id = matches[-1]  # Take the last large number
-
-            if job_id is None:
-                raise RuntimeError(
-                    "Could not extract job ID from Snakemake output. "
-                    f"Output was:\n{result.stdout}"
+                # Phase 2: Ensemble (depends on Phase 1)
+                job_id_2 = ut.run_bash_script(
+                    ensemble_script, dependent_job_id=job_id_1, verbose=verbose
                 )
+                jobs.append(job_id_2)
 
-            if verbose:
-                print(f"Workflow submitted with job ID: {job_id}", flush=True)
-                print(f"Monitor with: squeue -j {job_id}", flush=True)
+            else:
+                job_id_2 = ut.run_bash_script(ensemble_script, verbose=verbose)
+                jobs.append(job_id_2)
+            # Phase 3: Consolidation (depends on Phase 2)
+            if consolidate_outputs:
+                job_id_3 = ut.run_bash_script(
+                    consolidation_script, dependent_job_id=job_id_2, verbose=verbose
+                )
+                jobs.append(job_id_3)
+            # Return the ensemble script path and the final job ID
+            return ensemble_script, jobs[-1]
 
-            return snakefile_path, job_id
-
-        except Exception as e:
-            error_msg = f"Failed to submit workflow: {str(e)}"
+        except subprocess.CalledProcessError as e:
+            error_msg = f"sbatch submission failed: {e.stderr}"
             if verbose:
                 print(error_msg, flush=True)
             raise RuntimeError(error_msg)
