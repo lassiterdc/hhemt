@@ -1539,6 +1539,9 @@ rule consolidate:
                 {
                     "executor": "slurm",
                     "jobs": self.cfg_analysis.hpc_max_simultaneous_sims,  # Use fixed 100 as specified
+                    "latency-wait": 60,
+                    "max-jobs-per-second": 5,
+                    "max-status-checks-per-second": 10,
                     "default-resources": [
                         f"nodes=1",
                         f"tasks=1",
@@ -1546,6 +1549,7 @@ rule consolidate:
                         f"mem_mb=2000",
                         f"runtime=30",
                         f"slurm_partition={slurm_partition}",
+                        # f"mpi=1",
                     ],
                     "slurm": {
                         "sbatch": {
