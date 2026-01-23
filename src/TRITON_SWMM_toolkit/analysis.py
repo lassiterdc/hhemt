@@ -1584,7 +1584,7 @@ rule consolidate:
                                 "time": "{resources.runtime}:00",
                                 "mem": "{resources.mem_mb}",
                                 "nodes": "{resources.nodes}",
-                                "ntasks-per-node": "{resources.tasks}",
+                                "ntasks": "{resources.tasks}",
                                 "cpus-per-task": "{resources.cpus_per_task}",
                             }
                         },
@@ -1817,6 +1817,11 @@ rule consolidate:
                 str(config_dir),
                 "--snakefile",
                 str(snakefile_path),
+                "--executor",
+                "slurm",
+                "--default-resources",
+                "--slurm-efficiency-report",
+                "--slurm-status-command" "squeue",
             ]
             if verbose:
                 cmd_args.append("--verbose")
