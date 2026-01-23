@@ -472,7 +472,7 @@ class GetTS_TestCases:
                     "export PYTHONNOUSERSITE=1",
                     # "pip install -e .",
                 ],
-                use_legacy_cluster_mode=True,
+                # use_legacy_cluster_mode=True,
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
