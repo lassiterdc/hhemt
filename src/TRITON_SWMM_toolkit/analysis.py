@@ -1945,7 +1945,7 @@ rule consolidate:
         overwrite_if_exist: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
-        wait_for_completion: bool = False, # relevant for slurm jobs only
+        wait_for_completion: bool = False,  # relevant for slurm jobs only
         verbose: bool = True,
     ) -> dict:
         """
@@ -2038,7 +2038,7 @@ rule consolidate:
         else:  # slurm
             result = self._run_snakemake_slurm(
                 snakefile_path=snakefile_path,
-                wait_for_completion=wait_for_completion
+                wait_for_completion=wait_for_completion,
                 verbose=verbose,
             )
         self._refresh_log()
