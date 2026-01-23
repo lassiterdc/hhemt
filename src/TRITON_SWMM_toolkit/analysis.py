@@ -1821,8 +1821,6 @@ rule consolidate:
                 "slurm",
                 "--default-resources",
                 "--slurm-efficiency-report",
-                "--slurm-status-command",
-                "squeue",
             ]
             if verbose:
                 cmd_args.append("--verbose")
