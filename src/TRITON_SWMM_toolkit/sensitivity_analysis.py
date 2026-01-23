@@ -323,6 +323,12 @@ rule setup:
     output: "_status/setup_complete.flag"
     log: "logs/setup.log"
     conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime=5,
+        mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
+        ntasks=1,
+        cpus_per_task=1
     shell:
         """
         mkdir -p logs _status
@@ -354,6 +360,12 @@ rule master_consolidation:
     output: "_status/master_consolidation_complete.flag"
     log: "logs/master_consolidation.log"
     conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime=5,
+        mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
+        ntasks=1,
+        cpus_per_task=1
     shell:
         """
         mkdir -p logs _status
