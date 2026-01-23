@@ -4,6 +4,29 @@ from tests.utils_for_testing import on_UVA_HPC
 
 pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
+# ijob \
+#   -A ***REMOVED*** \
+#   -p standard \
+#   --time=08:00:00 \
+#   -N 1 \
+#  --cpus-per-task=1 \
+#  --ntasks-per-node=96
+
+# ijob \
+#   -A ***REMOVED*** \
+#   -p interactive \
+#   --time=08:00:00 \
+#   -N 1 \
+#  --cpus-per-task=1 \
+#  --ntasks-per-node=24
+
+#   --gres=gpu:1 \
+
+# module purge
+# module load gompi/14.2.0_5.0.7 miniforge
+# source activate triton_swmm_toolkit
+# export PYTHONNOUSERSITE=1
+
 
 def test_snakemake_sensitivity_workflow_generation():
     """
@@ -288,12 +311,12 @@ def test_snakemake_sensitivity_workflow_execution():
         compile_TRITON_SWMM=True,
         recompile_if_already_done_successfully=False,
         prepare_scenarios=True,
-        overwrite_scenario=True,
+        overwrite_scenario=False,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which="TRITON",
         clear_raw_outputs=True,
-        overwrite_if_exist=True,
+        overwrite_if_exist=False,
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,
