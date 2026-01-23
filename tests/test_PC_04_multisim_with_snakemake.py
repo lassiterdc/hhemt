@@ -300,7 +300,6 @@ def test_snakemake_workflow_execution():
         overwrite_if_exist=True,
         compression_level=5,
         pickup_where_leftoff=False,
-        consolidate_outputs=True,
         verbose=True,
     )
 

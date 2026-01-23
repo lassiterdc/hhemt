@@ -319,7 +319,8 @@ def test_snakemake_sensitivity_workflow_execution():
     nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
-    analysis = nrflk_cpu_sensitivity.system.analysis
+    system = nrflk_cpu_sensitivity.system
+    analysis = system.analysis
     sensitivity = analysis.sensitivity
 
     # Submit the workflow using submit_workflow (not the old batch job method)
@@ -350,8 +351,32 @@ def test_snakemake_sensitivity_workflow_execution():
     # We would need to poll for completion or check logs
     # For now, we just verify successful submission
 
-    if result.get("job_id"):
-        print(f"✅ Sensitivity workflow submitted with job ID: {result['job_id']}")
-        print(f"Monitor with: squeue -j {result['job_id']}")
+    # Verify Phase 1 outputs (system inputs and compilation)
+    dem_file = system.sys_paths.dem_processed
+    assert dem_file.exists(), "DEM file should be created"
 
-    print("✅ Snakemake sensitivity analysis workflow submitted successfully")
+    mannings_file = system.sys_paths.mannings_processed
+    assert mannings_file.exists(), "Mannings file should be created"
+
+    assert system.compilation_successful, "TRITON-SWMM should be compiled"
+
+    # Verify Phase 2 outputs (simulations ran)
+    assert sensitivity.all_scenarios_created, "All scenarios should be created"
+    assert sensitivity.all_sims_run, "All simulations should run"
+
+    if sensitivity.all_sims_run != True:
+        sims_not_run = "\n".join(sensitivity.scenarios_not_run)
+        pytest.fail(
+            f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
+        )
+
+    assert (
+        sensitivity.all_TRITON_timeseries_processed
+    ), "All TRITON timeseries should be processed"
+
+    assert (
+        analysis.TRITON_analysis_summary_created
+    ), "TRITON analysis summary should be created"
+
+    triton_output = analysis.analysis_paths.output_triton_summary
+    assert triton_output.exists(), "TRITON consolidated output should exist"
