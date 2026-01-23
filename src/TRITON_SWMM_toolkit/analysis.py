@@ -1277,8 +1277,14 @@ class TRITONSWMM_analysis:
         n_sims = len(self.df_sims)
         hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim or 30
 
-        # Get absolute path to conda environment file
+        mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+        omp_threads = self.cfg_analysis.n_omp_threads or 1
+        cpus_per_sim = mpi_ranks * omp_threads
 
+        # Conservative estimate: 2GB per CPU (can be made configurable later)
+        mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
+
+        # Get absolute path to conda environment file
         triton_toolkit_root = Path(__file__).parent.parent.parent
         conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
@@ -1314,9 +1320,14 @@ rule setup:
     output: "_status/setup_complete.flag"
     log: "logs/setup.log"
     conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime=5,
+        mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
+        ntasks=1,
+        cpus_per_task=1
     shell:
         {setup_shell}
-
 
 rule simulation:
     input: "_status/setup_complete.flag"
@@ -1324,7 +1335,11 @@ rule simulation:
     log: "logs/sim_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     resources:
-        runtime={int(hpc_time_min)}
+        slurm_partition="{self.cfg_analysis.hpc_ensemble_partition}",
+        runtime={int(hpc_time_min)},
+        ntasks={self.cfg_analysis.n_mpi_procs or 1},
+        cpus_per_task={self.cfg_analysis.n_omp_threads or 1},
+        mem_mb={mem_mb_per_sim},
     shell:
         """
         {self._python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\
@@ -1349,6 +1364,12 @@ rule consolidate:
     output: "_status/output_consolidation_complete.flag"
     log: "logs/consolidate.log"
     conda: "{conda_env_path}"
+    resources:
+        slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
+        runtime=30,
+        mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
+        ntasks=1,
+        cpus_per_task=1
     shell:
         """
         {self._python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
@@ -2022,6 +2043,85 @@ rule consolidate:
         self._refresh_log()
         return result
 
+    def _generate_snakemake_config(self, mode: Literal["local", "slurm"]) -> dict:
+        """
+        Generate dynamic snakemake config based on analysis_config and system_config.
+
+        Parameters
+        ----------
+        mode : Literal["local", "slurm"]
+            Execution mode (local or slurm)
+
+        Returns
+        -------
+        dict
+            Snakemake configuration dictionary
+        """
+        # Base config shared by both modes
+        config = {
+            "use-conda": False,
+            "conda-frontend": "mamba",
+            "printshellcmds": True,
+            "rerun-incomplete": True,
+        }
+
+        if mode == "local":
+            # Local mode: use cores based on system capabilities
+            physical_cores = psutil.cpu_count(logical=False)
+            cores = max(1, (physical_cores or 2) - 1)  # Leave one core free
+            config.update(
+                {
+                    "cores": cores,
+                    "keep-going": False,
+                }
+            )
+        else:  # slurm
+            # SLURM mode: use analysis config for resource allocation
+            # Number of concurrent jobs = number of simulations
+            n_sims = len(self.df_sims)
+
+            # Calculate memory per job based on run mode
+            # This is memory allocated PER simulation/job
+
+            config.update(
+                {
+                    "executor": "slurm",
+                    "jobs": n_sims,  # Max concurrent jobs = number of simulations
+                    "default-resources": {
+                        "slurm_account": self.cfg_analysis.hpc_account,
+                    },
+                }
+            )
+
+        return config
+
+    def _write_snakemake_config(
+        self, config: dict, mode: Literal["local", "slurm"]
+    ) -> Path:
+        """
+        Write snakemake config to analysis directory.
+
+        Parameters
+        ----------
+        config : dict
+            Snakemake configuration dictionary
+        mode : Literal["local", "slurm"]
+            Execution mode (local or slurm)
+
+        Returns
+        -------
+        Path
+            Path to the written config file
+        """
+        config_dir = self.analysis_paths.analysis_dir / ".snakemake_profile" / mode
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "config.yaml"
+
+        with open(config_path, "w") as f:
+            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+        return config_dir
+
     def _run_snakemake_local(
         self,
         snakefile_path: Path,
@@ -2049,15 +2149,20 @@ rule consolidate:
                     flush=True,
                 )
 
-            # Get absolute path to local profile
-            triton_toolkit_root = Path(__file__).parent.parent.parent
-            local_profile_path = triton_toolkit_root / "profiles" / "local"
+            # Generate and write dynamic config
+            config = self._generate_snakemake_config(mode="local")
+            config_dir = self._write_snakemake_config(config, mode="local")
+
+            if verbose:
+                print(
+                    f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
+                )
 
             result = subprocess.run(
                 [
                     "snakemake",
                     "--profile",
-                    str(local_profile_path),
+                    str(config_dir),
                     "--snakefile",
                     str(snakefile_path),
                 ],
@@ -2129,16 +2234,27 @@ rule consolidate:
                     flush=True,
                 )
 
-            # Get absolute path to SLURM profile
-            triton_toolkit_root = Path(__file__).parent.parent.parent
-            slurm_profile_path = triton_toolkit_root / "profiles" / "slurm"
+            # Generate and write dynamic config
+            config = self._generate_snakemake_config(mode="slurm")
+            config_dir = self._write_snakemake_config(config, mode="slurm")
+
+            if verbose:
+                print(
+                    f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
+                )
+                print(
+                    f"[Snakemake] Config: partition={config['default-resources']['slurm_partition']}, "
+                    f"account={config['default-resources']['slurm_account']}, "
+                    f"runtime={config['default-resources']['runtime']} min",
+                    flush=True,
+                )
 
             result = subprocess.run(
                 [
                     "snakemake",
                     "--slurm",
                     "--profile",
-                    str(slurm_profile_path),
+                    str(config_dir),
                     "--snakefile",
                     str(snakefile_path),
                     "--jobs",

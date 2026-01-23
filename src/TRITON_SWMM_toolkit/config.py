@@ -384,6 +384,7 @@ class analysis_config(cfgBaseModel):
     n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
     n_gpus: Optional[int] = Field(0, description="Number of GPUs")
     n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
+
     # MULTI-SIMULATION EXECUTION METHOD
     multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
         Field(
@@ -392,8 +393,9 @@ class analysis_config(cfgBaseModel):
         )
     )
     # HPC JOB ARRAY PARAMETERS
+    mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: Optional[int] = Field(
-        None,
+        60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
     hpc_ensemble_partition: Optional[str] = Field(
