@@ -128,8 +128,7 @@ class TRITONSWMM_run:
         verbose: bool = True,
     ):
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
-        # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
-        using_srun = self._analysis.in_slurm
+        using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
 
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
