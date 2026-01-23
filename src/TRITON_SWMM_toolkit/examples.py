@@ -377,7 +377,7 @@ class GetTS_TestCases:
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
-                hpc_time_min_per_sim=30,
+                hpc_time_min_per_sim=2,
                 hpc_ensemble_partition="standard",
                 hpc_setup_and_analysis_processing_partition="standard",
                 hpc_account="***REMOVED***",
@@ -416,7 +416,7 @@ class GetTS_TestCases:
             additional_analysis_configs=dict(
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu_full,
-                hpc_time_min_per_sim=30,
+                hpc_time_min_per_sim=2,
                 hpc_ensemble_partition="standard",
                 hpc_setup_and_analysis_processing_partition="standard",
                 hpc_account="***REMOVED***",
@@ -433,7 +433,6 @@ class GetTS_TestCases:
                     "export PYTHONNOUSERSITE=1",
                     # "pip install -e .",
                 ],
-                hpc_time_min=2,
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
@@ -456,7 +455,7 @@ class GetTS_TestCases:
             additional_analysis_configs=dict(
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu_minimal,
-                hpc_time_min_per_sim=30,
+                hpc_time_min_per_sim=2,
                 hpc_ensemble_partition="standard",
                 hpc_setup_and_analysis_processing_partition="standard",
                 hpc_account="***REMOVED***",
