@@ -1810,10 +1810,9 @@ rule consolidate:
                 )
 
             # Submit workflow as detached background process, capturing output
+            # Don't pass --executor; let Snakemake read the config (either 'executor' or 'cluster' mode)
             cmd_args = [
                 "snakemake",
-                "--executor",
-                "slurm",
                 "--profile",
                 str(config_dir),
                 "--snakefile",
