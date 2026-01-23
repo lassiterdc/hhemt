@@ -311,12 +311,12 @@ class TRITONSWMM_run:
             tritonswmm_logfile_dir
             / f"{current_datetime_string(filepath_friendly=True)}.log"
         )  # individual sim log
-        self._write_repro_script(
-            script_path=self._scenario.scen_paths.sim_folder / "tritonswmm_run.sh",
-            module_load_cmd=module_load_cmd,
-            env=env,
-            launch_cmd_str=launch_cmd_str,
-        )
+        # self._write_repro_script(
+        #     script_path=self._scenario.scen_paths.sim_folder / "tritonswmm_run.sh",
+        #     module_load_cmd=module_load_cmd,
+        #     env=env,
+        #     launch_cmd_str=launch_cmd_str,
+        # )
         return cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
 
     def _obsolete_retrieve_sim_launcher(
