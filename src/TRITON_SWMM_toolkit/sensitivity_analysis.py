@@ -312,6 +312,9 @@ class TRITONSWMM_sensitivity_analysis:
 
 import os
 
+onstart:
+    shell("mkdir -p _status logs/sims logs")
+
 """
 
         # Build the rule all with all dependencies
