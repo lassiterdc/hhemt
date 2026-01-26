@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_scenario:
+    log: TRITONSWMM_scenario_log
+
     def __init__(self, event_iloc: int, analysis: "TRITONSWMM_analysis") -> None:
         self.event_iloc = event_iloc
         self._analysis = analysis
@@ -71,6 +73,10 @@ class TRITONSWMM_scenario:
             sim_tritonswmm_executable=sim_folder / "build" / "triton.exe",
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
             # OUTPUTS
+            output_tritonswmm_performance_timeserie=sim_folder
+            / f"TRITONSWMM_perf_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
+            output_tritonswmm_performance_summary=sim_folder
+            / f"TRITONSWMM_perf_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
             output_triton_timeseries=sim_folder
             / f"TRITON_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_link_time_series=sim_folder

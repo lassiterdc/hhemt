@@ -248,6 +248,12 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
     # POST PROCESSING
+    TRITONSWMM_performance_timeseries_written: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    TRITONSWMM_performance_summary_written: LogField[bool] = Field(
+        default_factory=LogField
+    )
     TRITON_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_node_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
@@ -282,6 +288,8 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
         "TRITON_timeseries_written",
+        "TRITONSWMM_performance_timeseries_written",
+        "TRITONSWMM_performance_summary_written",
         "SWMM_node_timeseries_written",
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
@@ -326,6 +334,8 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
         "TRITON_timeseries_written",
+        "TRITONSWMM_performance_timeseries_written",
+        "TRITONSWMM_performance_summary_written",
         "SWMM_node_timeseries_written",
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
@@ -371,6 +381,8 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
         "TRITON_timeseries_written",
+        "TRITONSWMM_performance_timeseries_written",
+        "TRITONSWMM_performance_summary_written",
         "SWMM_node_timeseries_written",
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",

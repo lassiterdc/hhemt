@@ -57,6 +57,8 @@ class ScenarioPaths(MainDataClass):
     triton_swmm_cfg: Path
     sim_tritonswmm_executable: Path
     tritonswmm_logfile_dir: Path
+    output_tritonswmm_performance_timeserie: Path
+    output_tritonswmm_performance_summary: Path
     output_triton_timeseries: Path
     output_swmm_link_time_series: Path
     output_swmm_node_time_series: Path

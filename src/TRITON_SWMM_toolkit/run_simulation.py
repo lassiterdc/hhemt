@@ -20,6 +20,7 @@ class TRITONSWMM_run:
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
 
+    @property
     def _triton_swmm_raw_output_directory(self):
         tritonswmm_output_dir = self._scenario.scen_paths.sim_folder / "output"
         if not tritonswmm_output_dir.exists():
@@ -33,23 +34,33 @@ class TRITONSWMM_run:
     @property
     def raw_triton_output_dir(self):
         return (
-            self._triton_swmm_raw_output_directory()
+            self._triton_swmm_raw_output_directory
             / self._analysis.cfg_analysis.TRITON_raw_output_type
         )
 
     @property
     def raw_swmm_output(self):
-        return self._triton_swmm_raw_output_directory() / "swmm" / "hydraulics.rpt"
+        return self._triton_swmm_raw_output_directory / "swmm" / "hydraulics.rpt"
 
     @property
     def sim_run_completed(self):
         status, __ = self._check_simulation_run_status()
         return status == "simulation completed"
 
-    def _check_simulation_run_status(self):
-        tritonswmm_output_dir = self._triton_swmm_raw_output_directory()
-        status = "simulation never started"
+    @property
+    def performance_timeseries_dir(self):
+        return self._triton_swmm_raw_output_directory / "performance"
+
+    @property
+    def performance_file(self):
+        tritonswmm_output_dir = self._triton_swmm_raw_output_directory
         perf_txt = tritonswmm_output_dir / "performance.txt"
+        return perf_txt
+
+    def _check_simulation_run_status(self):
+        tritonswmm_output_dir = self._triton_swmm_raw_output_directory
+        status = "simulation never started"
+        perf_txt = self.performance_file
         tritonswmm_output_cfg_dir = tritonswmm_output_dir / "cfg"
         cfgs = list(tritonswmm_output_cfg_dir.glob("*.cfg"))
         f_last_cfg = self._scenario.scen_paths.triton_swmm_cfg

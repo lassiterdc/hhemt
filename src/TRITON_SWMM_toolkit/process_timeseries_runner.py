@@ -150,9 +150,17 @@ def main():
             verbose=True,
             compression_level=args.compression_level,
         )
+        proc._export_TRITONSWMM_performance_tseries(
+            comp_level=args.compression_level, verbose=True
+        )
 
         # Verify that processing was successful
         scenario.log.refresh()
+        if not proc.TRITONSWMM_performance_timeseries_written:
+            logger.error(
+                f"TRITONSWMM performance time series not processed for scenario {args.event_iloc}"
+            )
+            return 1
         if args.which == "TRITON" or args.which == "both":
             if not proc.TRITON_outputs_processed:
                 logger.error(
@@ -168,7 +176,7 @@ def main():
 
         logger.info(f"Scenario {args.event_iloc} timeseries processed successfully")
 
-        # Always create summaries from full timeseries
+        # create summaries from full timeseries
         logger.info(f"Creating summaries for scenario {args.event_iloc}")
         proc.write_summary_outputs(
             which=args.which,  # type: ignore

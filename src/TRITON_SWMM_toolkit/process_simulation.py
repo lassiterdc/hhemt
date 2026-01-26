@@ -207,6 +207,102 @@ class TRITONSWMM_sim_post_processing:
 
         return launcher
 
+    def _export_TRITONSWMM_performance_tseries(
+        self,
+        comp_level: int = 5,
+        verbose: bool = True,
+        overwrite_if_exist: bool = False,
+    ):
+        fname_out = self.scen_paths.output_tritonswmm_performance_timeserie
+        if self._already_written(fname_out) and not overwrite_if_exist:
+            if verbose:
+                print(f"{fname_out.name} already written. Not overwriting.")
+            return
+
+        start_time = time.time()
+        reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        min_per_tstep = reporting_interval_s / 60
+        fpattern_prefix = "performance"
+        varname = "performance"
+        fldr_out_triton = self._run.performance_timeseries_dir
+        perf_tseries = return_filelist_by_tstep(
+            fldr_out_triton, fpattern_prefix, min_per_tstep, varname
+        )
+        if len(perf_tseries) == 0:
+            raise Warning(
+                f"Attempted to call _export_TRITONSWMM_performance_tseries"
+                " but no performance.txt files were found."
+            )
+            return
+        lst_perf_tseries = []
+        for tstep, f in perf_tseries.items():
+            df_ranks, ___ = parse_performance_file(f)
+            df_ranks[perf_tseries.index.name] = tstep
+            df_ranks = df_ranks.reset_index().set_index(
+                [perf_tseries.index.name, "Rank"]
+            )
+            lst_perf_tseries.append(df_ranks)
+        full_perf_timeseries = pd.concat(lst_perf_tseries)
+        full_perf_timeseries.loc[pd.IndexSlice[0, 0], :] = 0
+        full_perf_timeseries = full_perf_timeseries.sort_index()
+        perf_timeseries_deltas = full_perf_timeseries.diff().dropna()
+        # a reset is assumed if all values are less than or equal to zero
+        idx_resets = (full_perf_timeseries.diff().dropna() <= 0).all(axis=1)
+        idx = idx_resets[idx_resets].index
+        perf_timeseries_deltas.loc[idx, :] = full_perf_timeseries.loc[idx, :]
+        # convert cumulative values to magnitude per timestep accounting for potential resets
+        ds = perf_timeseries_deltas.to_xarray()
+
+        event_iloc = self._scenario.event_iloc
+        ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
+        ds = ds.expand_dims("event_iloc")
+
+        self._write_output(ds, fname_out, comp_level, verbose)
+
+        elapsed_s = time.time() - start_time
+        self.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
+        self.TRITONSWMM_performance_timeseries_written  # updates log
+        return
+
+    @property
+    def TRITONSWMM_performance_tseries(self):
+        return self._open(self.scen_paths.output_tritonswmm_performance_timeserie)
+
+    @property
+    def TRITONSWMM_performance_summary(self):
+        return self._open(self.scen_paths.output_tritonswmm_performance_summary)
+
+    def _export_TRITONSWMM_performance_summary(
+        self,
+        compression_level: int = 5,
+        verbose: bool = True,
+        overwrite_if_exist: bool = False,
+    ):
+        start_time = time.time()
+        ds = self.TRITONSWMM_performance_tseries
+        fname_out = self.scen_paths.output_tritonswmm_performance_summary
+        if self._already_written(fname_out) and not overwrite_if_exist:
+            if verbose:
+                print(f"{fname_out.name} already written. Not overwriting.")
+            return
+
+        event_iloc = self._scenario.event_iloc
+
+        ds = ds.sum(dim="timestep_min").mean(dim="Rank")
+        ds.attrs["units"] = "seconds"
+        ds.attrs["notes"] = (
+            "Values represent the sum of compute times per timestep averaged across MPI ranks."
+        )
+        self._write_output(ds, fname_out, compression_level, verbose)
+        elapsed_s = time.time() - start_time
+        self.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
+        self.TRITONSWMM_performance_summary_written  # updates log
+        return
+
     def _export_TRITON_outputs(
         self,
         overwrite_if_exist: bool = False,
@@ -246,6 +342,7 @@ class TRITONSWMM_sim_post_processing:
             print(
                 f"Time to load {raw_out_type} triton outputs (min) {(time.time()-bm_time)/60:.2f}"
             )
+        # write performance over time
         ds_combined = xr.merge(lst_ds_vars)
         self._write_output(ds_combined, fname_out, comp_level, verbose)  # type: ignore
         elapsed_s = time.time() - start_time
@@ -377,6 +474,22 @@ class TRITONSWMM_sim_post_processing:
         return bool(self.log.raw_SWMM_outputs_cleared.get())
 
     @property
+    def TRITONSWMM_performance_timeseries_written(self) -> bool:
+        written = self._already_written(
+            self.scen_paths.output_tritonswmm_performance_timeserie
+        )
+        self.log.TRITONSWMM_performance_timeseries_written.set(written)
+        return written
+
+    @property
+    def TRITONSWMM_performance_summary_written(self) -> bool:
+        written = self._already_written(
+            self.scen_paths.output_tritonswmm_performance_summary
+        )
+        self.log.TRITONSWMM_performance_summary_written.set(written)
+        return written
+
+    @property
     def _SWMM_link_outputs_processed(self):
         swmm_links = self._already_written(self.scen_paths.output_swmm_link_time_series)
         self.log.SWMM_link_timeseries_written.set(swmm_links)
@@ -448,6 +561,12 @@ class TRITONSWMM_sim_post_processing:
 
         if verbose:
             print(f"Creating summaries for scenario {scen.event_iloc}", flush=True)
+
+        self._export_TRITONSWMM_performance_summary(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
 
         if (which == "both") or (which == "TRITON"):
             self._export_TRITON_summary(
@@ -668,7 +787,49 @@ class TRITONSWMM_sim_post_processing:
         )
 
 
-# %% WORK - SWMM STUFF
+def parse_performance_file(filepath):
+    """
+    Parse a TRITON-SWMM performance metrics file.
+
+    Returns a tuple containing:
+    - DataFrame with performance metrics for each MPI rank
+    - Series with average performance metrics
+
+    Parameters
+    ----------
+    filepath : str or Path
+        Path to the performance.txt file
+
+    Returns
+    -------
+    tuple
+        (df_ranks, s_average) where:
+        - df_ranks: DataFrame with rank-specific performance metrics
+          Index: Rank number (int), Columns: performance metric names (str)
+        - s_average: Series with average performance metrics
+          Index: performance metric names (str), Name: "Average"
+    """
+    # Read the file with flexible spacing around commas
+    df = pd.read_csv(filepath, sep=",\s*", engine="python")
+
+    # Clean up column names (remove leading % and whitespace)
+    df.columns = df.columns.str.lstrip("%").str.strip()
+
+    # Separate average row from rank rows
+    s_average = df[df["Rank"] == "Average"].iloc[0].drop("Rank")
+    s_average.name = "Average"
+
+    # Get rank rows and convert Rank to int
+    df_ranks = df[df["Rank"] != "Average"].copy()
+    df_ranks["Rank"] = df_ranks["Rank"].astype(int)
+    df_ranks.set_index("Rank", inplace=True)
+
+    # Ensure all numeric columns are float
+    df_ranks = df_ranks.astype(float)
+    s_average = s_average.astype(float)
+
+    return df_ranks, s_average
+
 
 from TRITON_SWMM_toolkit.constants import (
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
@@ -1532,21 +1693,27 @@ def isel_first_and_slice_longest(ds, n=5):
     return ds.isel(isel_dict)
 
 
-# %% END WORK
 def return_filelist_by_tstep(
     fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname
 ):
     lst_f_out = list(fldr_out_triton.glob(f"{fpattern_prefix}*"))
     if len(lst_f_out) == 0:
-        return None
+        return pd.Series()
     lst_reporting_tstep_min = []
     for f in lst_f_out:
-        tstep_parts = f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
-        reporting_tstep_iloc = int(tstep_parts[0])
-        if int(tstep_parts[1]) != 0:
-            sys.exit(
-                f"problem parsing reporting timestep for file {f}\nnot expecting nonzero values behind the last underscore"
+        if "_" in f.name:
+            tstep_parts = (
+                f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
             )
+            if int(tstep_parts[1]) != 0:
+                sys.exit(
+                    f"problem parsing reporting timestep for file {f}\nnot expecting nonzero values behind the last underscore"
+                )
+            reporting_tstep_iloc = int(tstep_parts[0])
+        else:
+            tstep_parts = f.name.split(fpattern_prefix)[-1].split(".")[0]
+            reporting_tstep_iloc = int(tstep_parts)
+
         reporting_tstep_min = reporting_tstep_iloc * min_per_tstep
         lst_reporting_tstep_min.append(reporting_tstep_min)
     s_outputs = pd.Series(index=lst_reporting_tstep_min, data=lst_f_out)
