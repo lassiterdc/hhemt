@@ -235,6 +235,14 @@ class system_config(cfgBaseModel):
         ...,
         description="Folder containing the TRITONSWMM model software.",
     )
+    TRITONSWMM_git_URL: str = Field(
+        ...,
+        description="Git repository with TRITONSWMM",
+    )
+    TRITONSWMM_branch_key: Optional[str] = Field(
+        None,
+        description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+    )
     TRITON_machine_name: Optional[str] = Field(
         None,
         description="Machine name corresponding to the folder containing bash scripts"
@@ -420,7 +428,7 @@ class analysis_config(cfgBaseModel):
     )
     additional_bash_lines: Optional[List[str]] = Field(
         None,
-        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'source activate myenv'). These lines will be added after module loading and before the main command.",
+        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'conda activate myenv'). These lines will be added after module loading and before the main command.",
     )
     # TOGGLES
     # TODO - create validatoin checks for bash script toggle

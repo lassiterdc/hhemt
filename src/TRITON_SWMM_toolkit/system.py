@@ -299,11 +299,17 @@ class TRITONSWMM_system:
             redownload_triton_swmm_if_exists
             or not TRITONSWMM_software_directory.exists()
         ):
+            clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
+            branch_checkout_cmd = ""
+            if self.cfg_system.TRITONSWMM_branch_key:
+                branch_checkout_cmd = (
+                    f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
+                )
             print(f"Pulling TRITON-SWMM from repo to {TRITONSWMM_software_directory}")
             download_lines = [
                 f'cd "{TRITONSWMM_software_directory.parent}"',
                 'rm -rf "${TRITON_DIR}"',
-                "git clone https://code.ornl.gov/hydro/triton.git && cd triton && git checkout 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+                f"{clone_cmd} && cd triton{branch_checkout_cmd}",
                 "git submodule update --init --recursive",
             ]
             bash_script_lines.extend(download_lines)
