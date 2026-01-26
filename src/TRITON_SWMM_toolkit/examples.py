@@ -416,7 +416,7 @@ class GetTS_TestCases:
             additional_analysis_configs=dict(
                 toggle_sensitivity_analysis=True,
                 sensitivity_analysis=cls.sensitivity_UVA_cpu_full,
-                hpc_time_min_per_sim=2,
+                hpc_time_min_per_sim=10,
                 hpc_ensemble_partition="standard",
                 hpc_setup_and_analysis_processing_partition="standard",
                 hpc_account="***REMOVED***",
