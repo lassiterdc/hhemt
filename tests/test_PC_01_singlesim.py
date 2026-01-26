@@ -35,7 +35,10 @@ def test_create_mannings_file_for_TRITON():
 # COMPILING TRITON-SWMM
 def test_compile_TRITONSWMM_for_cpu_sims():
     single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
-    single_sim_single_core.system.compile_TRITON_SWMM()
+    single_sim_single_core.system.compile_TRITON_SWMM(
+        recompile_if_already_done_successfully=True,
+        redownload_triton_swmm_if_exists=True,
+    )
     assert single_sim_single_core.system.compilation_successful
 
 
