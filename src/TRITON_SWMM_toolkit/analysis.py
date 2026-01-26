@@ -1315,12 +1315,27 @@ class TRITONSWMM_analysis:
 
 import os
 import glob
+import subprocess
 
 # Read simulation IDs from config
 SIM_IDS = {list(range(n_sims))}
 
 rule all:
     input: "_status/output_consolidation_complete.flag"
+
+onsuccess:
+    shell("""
+        {self._python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            --system-config {self._system.system_config_yaml} \\
+            --analysis-config {self.analysis_config_yaml}
+    """)
+
+onerror:
+    shell("""
+        {self._python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            --system-config {self._system.system_config_yaml} \\
+            --analysis-config {self.analysis_config_yaml}
+    """)
 
 rule setup:
     output: "_status/setup_complete.flag"
@@ -1883,6 +1898,37 @@ rule consolidate:
     @property
     def SWMM_link_summary(self):
         return self.process.SWMM_link_summary
+
+    @property
+    def df_status(self):
+        """
+        Get status DataFrame for all scenarios in the analysis.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns:
+            - All columns from df_sims (weather event indices)
+            - scenarios_setup: bool - Whether scenario preparation succeeded
+            - scen_runs_completed: bool - Whether simulation completed
+            - scenario_directory: str - Path to scenario directory
+        """
+        scenarios_setup = []
+        scen_runs_completed = []
+        scenario_dirs = []
+
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            scenarios_setup.append(scen.log.scenario_creation_complete.get() == True)
+            scen_runs_completed.append(scen.sim_run_completed)
+            scenario_dirs.append(str(scen.log.logfile.parent))
+
+        df_status = self.df_sims.copy()
+        df_status["scenarios_setup"] = scenarios_setup
+        df_status["scen_runs_completed"] = scen_runs_completed
+        df_status["scenario_directory"] = scenario_dirs
+
+        return df_status
 
     @property
     def TRITON_summary(self):

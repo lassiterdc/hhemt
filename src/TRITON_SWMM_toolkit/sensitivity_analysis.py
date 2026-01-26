@@ -319,7 +319,7 @@ class TRITONSWMM_sensitivity_analysis:
         conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
 
         # Start building the Snakefile
-        snakefile_content = f"""# Auto-generated flattened master Snakefile for sensitivity analysis
+        snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
 # Each sub-analysis simulation gets its own rule with exact resource requirements
 
 import os
@@ -327,7 +327,22 @@ import os
 onstart:
     shell("mkdir -p _status logs/sims logs")
 
-"""
+onsuccess:
+    shell("""
+        {self.master_analysis._python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            --system-config {self._system.system_config_yaml} \\
+            --analysis-config {self.master_analysis.analysis_config_yaml}
+    """)
+
+onerror:
+    shell("""
+        {self.master_analysis._python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            --system-config {self._system.system_config_yaml} \\
+            --analysis-config {self.master_analysis.analysis_config_yaml}
+    """)
+
+
+'''
 
         # Build the rule all with all dependencies
         consolidation_flags = []
@@ -829,16 +844,29 @@ rule setup:
     def df_status(self):
         scenarios_setup = []
         scen_runs_completed = []
+        scenario_dirs = []
+        sub_analysis_ilocs = []
+        event_ilocs = []
+        df_setup_rows = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                sub_analysis_ilocs.append(sub_analysis_iloc)
+                event_ilocs.append(event_iloc)
                 scenarios_setup.append(
                     scen.log.scenario_creation_complete.get() == True
                 )
                 scen_runs_completed.append(scen.sim_run_completed)
-        df_status = self.df_setup.copy()
+                scenario_dirs.append(str(scen.log.logfile.parent))
+                subanalysis_definition_row = self.df_setup.iloc[sub_analysis_iloc, :]
+                df_setup_rows.append(subanalysis_definition_row)
+        df_status = self.df_setup.iloc[sub_analysis_ilocs, :].reset_index(drop=True)
+        # df_status = pd.concat(df_setup_rows)
+        df_status["sub_analysis_ilocs"] = sub_analysis_ilocs
+        df_status["event_ilocs"] = event_ilocs
         df_status["scenarios_setup"] = scenarios_setup
         df_status["scen_runs_completed"] = scen_runs_completed
+        df_status["scenario_directory"] = scenario_dirs
         return df_status
 
     @property
