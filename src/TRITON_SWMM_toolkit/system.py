@@ -280,7 +280,11 @@ class TRITONSWMM_system:
         compilation_script = self.sys_paths.compilation_script
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        if self.compilation_successful and not recompile_if_already_done_successfully:
+        if (
+            self.compilation_successful
+            and not recompile_if_already_done_successfully
+            and not redownload_triton_swmm_if_exists
+        ):
             if verbose:
                 print("TRITON-SWMM already compiled", flush=True)
             return
