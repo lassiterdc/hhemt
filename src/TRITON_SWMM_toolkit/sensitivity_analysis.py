@@ -43,7 +43,7 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis = analysis
         self._system = analysis._system
         self.analysis_paths = analysis.analysis_paths
-        self.sub_analyses_prefex = "sa_"
+        self.sub_analyses_prefix = "sa_"
         self.subanalysis_dir = (
             self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         )
@@ -332,7 +332,9 @@ onstart:
         # Build the rule all with all dependencies
         consolidation_flags = []
         for sa_id in self.sub_analyses.keys():
-            consolidation_flags.append(f"_status/consolidate_sa{sa_id}_complete.flag")
+            consolidation_flags.append(
+                f"_status/consolidate_{self.sub_analyses_prefix}{sa_id}_complete.flag"
+            )
 
         snakefile_content += f'''rule all:
     input: 
@@ -423,13 +425,15 @@ rule setup:
         """
 
 '''
-            subanalysis_flag = f"_status/consolidate_sa{sa_id}_complete.flag"
+            subanalysis_flag = (
+                f"_status/consolidate_{self.sub_analyses_prefix}{sa_id}_complete.flag"
+            )
             subanalysis_flags.append(subanalysis_flag)
             # consolidate outputs after all sims have been run
-            snakefile_content += f'''rule consolidate_sa{sa_id}:
+            snakefile_content += f'''rule consolidate_{self.sub_analyses_prefix}{sa_id}:
     input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
     output: "{subanalysis_flag}"
-    log: "logs/consolidate_sa{sa_id}.log"
+    log: "logs/sims/consolidate_{self.sub_analyses_prefix}{sa_id}.log"
     conda: "{conda_env_path}"
     resources:
         slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
@@ -764,7 +768,7 @@ rule setup:
 
             for key, val in row.items():
                 setattr(cfg_snstvty_analysis, key, val)  # type: ignore
-            sa_id = f"{self.sub_analyses_prefex}{idx}"
+            sa_id = f"{self.sub_analyses_prefix}{idx}"
             cfg_snstvty_analysis.analysis_id = sa_id  # type: ignore
             sub_analysis_directory = self.subanalysis_dir / str(
                 cfg_snstvty_analysis.analysis_id
@@ -820,6 +824,22 @@ rule setup:
                 if scen.sim_run_completed != True:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
+
+    @property
+    def df_status(self):
+        scenarios_setup = []
+        scen_runs_completed = []
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            for event_iloc in sub_analysis.df_sims.index:
+                scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                scenarios_setup.append(
+                    scen.log.scenario_creation_complete.get() == True
+                )
+                scen_runs_completed.append(scen.sim_run_completed)
+        df_status = self.df_setup.copy()
+        df_status["scenarios_setup"] = scenarios_setup
+        df_status["scen_runs_completed"] = scen_runs_completed
+        return df_status
 
     @property
     def all_scenarios_created(self):
