@@ -74,7 +74,7 @@ def test_snakemake_sensitivity_workflow_generation():
     # Verify sub-analysis consolidation rules exist
     num_sub_analyses = len(sensitivity.sub_analyses)
     for sa_id in range(num_sub_analyses):
-        assert f"rule consolidate_sa{sa_id}:" in master_snakefile_content
+        assert f"rule consolidate_sa_{sa_id}:" in master_snakefile_content
 
     # Verify master consolidation depends on all sub-analyses
     assert "rule master_consolidation:" in master_snakefile_content
