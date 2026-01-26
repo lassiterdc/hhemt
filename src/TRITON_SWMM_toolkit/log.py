@@ -253,6 +253,13 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     SWMM_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    # SUMMARY PROCESSING
+    TRITON_summary_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_node_summary_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_link_summary_written: LogField[bool] = Field(default_factory=LogField)
+    # FULL TIMESERIES CLEANUP
+    full_TRITON_timeseries_cleared: LogField[bool] = Field(default_factory=LogField)
+    full_SWMM_timeseries_cleared: LogField[bool] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
@@ -279,6 +286,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        "TRITON_summary_written",
+        "SWMM_node_summary_written",
+        "SWMM_link_summary_written",
+        "full_TRITON_timeseries_cleared",
+        "full_SWMM_timeseries_cleared",
         mode="before",
     )
     @classmethod
@@ -318,6 +330,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        "TRITON_summary_written",
+        "SWMM_node_summary_written",
+        "SWMM_link_summary_written",
+        "full_TRITON_timeseries_cleared",
+        "full_SWMM_timeseries_cleared",
         mode="before",
     )
     @classmethod
@@ -358,6 +375,11 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "SWMM_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        "TRITON_summary_written",
+        "SWMM_node_summary_written",
+        "SWMM_link_summary_written",
+        "full_TRITON_timeseries_cleared",
+        "full_SWMM_timeseries_cleared",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):

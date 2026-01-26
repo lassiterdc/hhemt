@@ -77,6 +77,12 @@ class TRITONSWMM_scenario:
             / f"SWMM_link_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_node_time_series=sim_folder
             / f"SWMM_node_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
+            output_triton_summary=sim_folder
+            / f"TRITON_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
+            output_swmm_node_summary=sim_folder
+            / f"SWMM_node_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
+            output_swmm_link_summary=sim_folder
+            / f"SWMM_link_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
         )
         self._create_directories()
         if self.scen_paths.f_log.exists():

@@ -60,3 +60,6 @@ class ScenarioPaths(MainDataClass):
     output_triton_timeseries: Path
     output_swmm_link_time_series: Path
     output_swmm_node_time_series: Path
+    output_triton_summary: Path
+    output_swmm_node_summary: Path
+    output_swmm_link_summary: Path

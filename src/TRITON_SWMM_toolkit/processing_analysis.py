@@ -30,35 +30,47 @@ class TRITONSWMM_analysis_post_processing:
     def _retrieve_combined_output(
         self, mode: Literal["TRITON", "SWMM_node", "SWMM_link"]
     ) -> xr.Dataset:  # type: ignore
+        """
+        Load pre-created summary files for each scenario and concatenate them.
+
+        Note: Summaries are now created during individual scenario processing
+        by process_timeseries_runner.py, not during analysis consolidation.
+        This significantly reduces memory usage for large ensembles.
+        """
         lst_ds = []
         for event_iloc in self._analysis.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self._analysis)
-            proc = self._analysis._sim_run_processing_objects[event_iloc]
+
+            # Load pre-created summary files (not full timeseries)
             if mode.lower() == "triton":
-                ds = proc.TRITON_timeseries
-                ds = self._summarize_triton_simulation_results(ds)
+                summary_file = scen.scen_paths.output_triton_summary
             elif mode.lower() == "swmm_node":
-                ds = proc.SWMM_node_timeseries
-                ds = self._summarize_swmm_simulation_results(ds)
+                summary_file = scen.scen_paths.output_swmm_node_summary
             elif mode.lower() == "swmm_link":
-                ds = proc.SWMM_link_timeseries
-                ds = self._summarize_swmm_simulation_results(ds)
-            ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
-            ds = ds.expand_dims("event_iloc")
-            # add computation time as a data array
-            df = pd.DataFrame(
-                index=[event_iloc],
-                data=dict(compute_time_min=[scen.sim_compute_time_min]),
+                summary_file = scen.scen_paths.output_swmm_link_summary
+
+            # Check if summary file exists
+            if not summary_file.exists():
+                raise FileNotFoundError(
+                    f"Summary file not found: {summary_file}. "
+                    f"Make sure to run timeseries processing with summary creation "
+                    f"before consolidating analysis outputs."
+                )
+
+            # Load summary (already has event_iloc coordinate and compute_time)
+            ds = xr.open_dataset(
+                summary_file,
+                chunks="auto",
+                engine=self._open_engine(),
+                consolidated=False,
             )
-            df.index.name = "event_iloc"
-            da_compute_time = df.to_xarray()["compute_time_min"]
-            ds["compute_time_min"] = da_compute_time
             lst_ds.append(ds)
-        # merge
-        ds_triton_outputs = xr.concat(
+
+        # Concatenate all summaries
+        ds_combined_outputs = xr.concat(
             lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
         )
-        return ds_triton_outputs  # type: ignore
+        return ds_combined_outputs  # type: ignore
 
     def _chunk_for_writing(
         self,
@@ -286,81 +298,6 @@ Log:\n{self._analysis.log._as_json()}\n id(self._analysis.log) = {id(self._analy
         if verbose:
             print(f"finished writing {fname_out}")
         return
-
-    def _summarize_swmm_simulation_results(self, ds, tstep_dimname="date_time"):
-        tsteps = ds[tstep_dimname].to_series()
-        lst_time_variant_vars = []
-        for var in ds.data_vars:
-            if tstep_dimname in ds[var].coords:
-                lst_time_variant_vars.append(var)
-
-        for var in lst_time_variant_vars:
-            ds[f"{var}_max"] = ds[var].max(dim=tstep_dimname, skipna=True)
-            ds[f"{var}_last"] = ds[var].sel(date_time=tsteps.max())
-            ds = ds.drop_vars(var)
-        ds = ds.drop_dims(tstep_dimname)
-        return ds
-
-    def _summarize_triton_simulation_results(self, ds, tstep_dimname="timestep_min"):
-        tsteps = ds[tstep_dimname].to_series()
-        # compute max velocity, time of max velocity, and the x and y components of the max velocity
-        ds["velocity_mps"] = (
-            ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2
-        ) ** 0.5
-        ## compute max velocity
-        ds["max_velocity_mps"] = ds["velocity_mps"].max(dim=tstep_dimname, skipna=True)
-        ## compute time of max velocity
-        ds["time_of_max_velocity_min"] = ds["velocity_mps"].idxmax(
-            dim=tstep_dimname, skipna=True
-        )
-        ## return x and y velocities at time of max velocity
-        ds["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
-            timestep_min=ds["time_of_max_velocity_min"]
-        )
-        ds["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
-            timestep_min=ds["time_of_max_velocity_min"]
-        )
-        ## drop velocity_mps
-        ds = ds.drop_vars("velocity_mps")
-        ############################################
-        # compute max water level and time of max water level
-        if tstep_dimname in ds.max_wlevel_m.dims:
-            ds["max_wlevel_m"] = ds.max_wlevel_m.sel(
-                timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
-            ).reset_coords(drop=True)
-        ds["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(
-            dim=tstep_dimname, skipna=True
-        )
-        ## get water levels in last reported time step for mass balance
-        ds["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max())
-        ds["wlevel_m_last_tstep"].attrs[
-            "notes"
-        ] = "this is the water level in the last reported time step for computing mass balance"
-        # drop vars with timestep as a coordinate
-        for var in ds.data_vars:
-            if tstep_dimname in ds[var].coords:
-                ds = ds.drop_vars(var)
-
-        ds = ds.drop_dims(tstep_dimname)
-
-        # compute final stored volume after confirming grid specs
-        x_dim = ds.x.to_series().diff().mode().iloc[0]
-        y_dim = ds.y.to_series().diff().mode().iloc[0]
-        if (x_dim != y_dim) or (
-            x_dim != self._analysis._system.cfg_system.target_dem_resolution
-        ):
-            raise ValueError(
-                f"Output dimensions do not line up with expectations\
-Target DEM res: {self._analysis._system.cfg_system.target_dem_resolution}\n x_dim, y_dim = {x_dim}, {y_dim}"
-            )
-
-        ds["final_surface_flood_volume_cm"] = (
-            ds["wlevel_m_last_tstep"] * x_dim * y_dim
-        ).sum()
-
-        ds["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
-
-        return ds
 
 
 def prev_power_of_two(n: int | float) -> int:

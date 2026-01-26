@@ -86,6 +86,12 @@ def main():
         default=5,
         help="Compression level for output files (0-9)",
     )
+    parser.add_argument(
+        "--clear-full-timeseries",
+        action="store_true",
+        default=False,
+        help="Clear full timeseries files after creating summaries (to save disk space)",
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -161,6 +167,43 @@ def main():
                 return 1
 
         logger.info(f"Scenario {args.event_iloc} timeseries processed successfully")
+
+        # Always create summaries from full timeseries
+        logger.info(f"Creating summaries for scenario {args.event_iloc}")
+        proc.write_summary_outputs(
+            which=args.which,  # type: ignore
+            overwrite_if_exist=args.overwrite_if_exist,
+            verbose=True,
+            compression_level=args.compression_level,
+        )
+
+        # Verify summary creation
+        scenario.log.refresh()
+        if args.which == "TRITON" or args.which == "both":
+            if not proc.TRITON_summary_processed:
+                logger.error(
+                    f"TRITON summary not created for scenario {args.event_iloc}"
+                )
+                return 1
+        if args.which == "SWMM" or args.which == "both":
+            if not proc.SWMM_summary_processed:
+                logger.error(
+                    f"SWMM summaries not created for scenario {args.event_iloc}"
+                )
+                return 1
+
+        logger.info(f"Scenario {args.event_iloc} summaries created successfully")
+
+        # Optionally clear full timeseries files to save disk space
+        if args.clear_full_timeseries:
+            logger.info(f"Clearing full timeseries for scenario {args.event_iloc}")
+            proc._clear_full_timeseries_outputs(
+                which=args.which,  # type: ignore
+                verbose=True,
+            )
+            scenario.log.refresh()
+            logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
+
         return 0
 
     except Exception as e:

@@ -423,6 +423,250 @@ class TRITONSWMM_sim_post_processing:
             self.log.raw_SWMM_outputs_cleared.set(True)
         return
 
+    def write_summary_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        """
+        Create summary files from full timeseries by applying summarization functions.
+
+        Parameters
+        ----------
+        which : Literal["TRITON", "SWMM", "both"]
+            Which summaries to create
+        overwrite_if_exist : bool
+            If True, overwrite existing summaries
+        verbose : bool
+            If True, print progress messages
+        compression_level : int
+            Compression level for output files (0-9)
+        """
+        scen = self._scenario
+
+        if verbose:
+            print(f"Creating summaries for scenario {scen.event_iloc}", flush=True)
+
+        if (which == "both") or (which == "TRITON"):
+            self._export_TRITON_summary(
+                overwrite_if_exist,
+                verbose,
+                compression_level,
+            )
+            if verbose:
+                print(
+                    f"Created TRITON summary for scenario {scen.event_iloc}", flush=True
+                )
+
+        if (which == "both") or (which == "SWMM"):
+            self._export_SWMM_summaries(
+                overwrite_if_exist,
+                verbose,
+                compression_level,
+            )
+            if verbose:
+                print(
+                    f"Created SWMM summaries for scenario {scen.event_iloc}", flush=True
+                )
+
+        return
+
+    def _export_TRITON_summary(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        comp_level: int = 5,
+    ):
+        """Create TRITON summary from full timeseries."""
+        fname_out = self.scen_paths.output_triton_summary
+
+        if self._already_written(fname_out) and not overwrite_if_exist:
+            if verbose:
+                print(f"{fname_out.name} already written. Not overwriting.")
+            return
+
+        start_time = time.time()
+
+        # Load full timeseries
+        ds_full = self.TRITON_timeseries
+
+        # Summarize
+        target_dem_res = self._system.cfg_system.target_dem_resolution
+        ds_summary = summarize_triton_simulation_results(
+            ds_full, self._scenario.event_iloc, target_dem_res
+        )
+
+        # Add compute time
+        df = pd.DataFrame(
+            index=[self._scenario.event_iloc],
+            data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
+        )
+        df.index.name = "event_iloc"
+        da_compute_time = df.to_xarray()["compute_time_min"]
+        ds_summary["compute_time_min"] = da_compute_time
+
+        # Write
+        self._write_output(ds_summary, fname_out, comp_level, verbose)
+        elapsed_s = time.time() - start_time
+        self.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
+        self.log.TRITON_summary_written.set(True)
+        return
+
+    def _export_SWMM_summaries(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        comp_level: int = 5,
+    ):
+        """Create SWMM node and link summaries from full timeseries."""
+        start_time = time.time()
+
+        f_out_nodes = self.scen_paths.output_swmm_node_summary
+        f_out_links = self.scen_paths.output_swmm_link_summary
+
+        nodes_already_written = self._already_written(f_out_nodes)
+        links_already_written = self._already_written(f_out_links)
+
+        if (nodes_already_written and links_already_written) and not overwrite_if_exist:
+            if verbose:
+                print(
+                    f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
+                )
+            return
+
+        # Load full timeseries
+        ds_nodes_full = self.SWMM_node_timeseries
+        ds_links_full = self.SWMM_link_timeseries
+
+        # Summarize nodes
+        if not nodes_already_written or overwrite_if_exist:
+            ds_nodes_summary = summarize_swmm_simulation_results(
+                ds_nodes_full, self._scenario.event_iloc
+            )
+
+            # Add compute time
+            df = pd.DataFrame(
+                index=[self._scenario.event_iloc],
+                data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
+            )
+            df.index.name = "event_iloc"
+            da_compute_time = df.to_xarray()["compute_time_min"]
+            ds_nodes_summary["compute_time_min"] = da_compute_time
+
+            elapsed_s = time.time() - start_time
+            self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose)
+            self.log.add_sim_processing_entry(
+                f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
+            )
+            self.log.SWMM_node_summary_written.set(True)
+
+        # Summarize links
+        if not links_already_written or overwrite_if_exist:
+            ds_links_summary = summarize_swmm_simulation_results(
+                ds_links_full, self._scenario.event_iloc
+            )
+
+            # Add compute time
+            df = pd.DataFrame(
+                index=[self._scenario.event_iloc],
+                data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
+            )
+            df.index.name = "event_iloc"
+            da_compute_time = df.to_xarray()["compute_time_min"]
+            ds_links_summary["compute_time_min"] = da_compute_time
+
+            elapsed_s = time.time() - start_time
+            self._write_output(ds_links_summary, f_out_links, comp_level, verbose)
+            self.log.add_sim_processing_entry(
+                f_out_links,
+                get_file_size_MiB(f_out_links),
+                elapsed_s,
+                True,
+                notes="links summary written after nodes summary",
+            )
+            self.log.SWMM_link_summary_written.set(True)
+
+        return
+
+    def _clear_full_timeseries_outputs(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        verbose: bool = False,
+    ):
+        """
+        Clear full timeseries files after summaries have been successfully created.
+
+        Parameters
+        ----------
+        which : Literal["TRITON", "SWMM", "both"]
+            Which full timeseries to clear
+        verbose : bool
+            If True, print progress messages
+        """
+        if (which == "both") or (which == "TRITON"):
+            if self.log.TRITON_summary_written.get():
+                if self.scen_paths.output_triton_timeseries.exists():
+                    if verbose:
+                        print(
+                            f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}"
+                        )
+                    if self.scen_paths.output_triton_timeseries.is_dir():
+                        shutil.rmtree(self.scen_paths.output_triton_timeseries)
+                    else:
+                        self.scen_paths.output_triton_timeseries.unlink()
+                    self.log.full_TRITON_timeseries_cleared.set(True)
+            elif verbose:
+                print("TRITON summary not created yet, not clearing full timeseries")
+
+        if (which == "both") or (which == "SWMM"):
+            if (
+                self.log.SWMM_node_summary_written.get()
+                and self.log.SWMM_link_summary_written.get()
+            ):
+                # Clear node timeseries
+                if self.scen_paths.output_swmm_node_time_series.exists():
+                    if verbose:
+                        print(
+                            f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}"
+                        )
+                    if self.scen_paths.output_swmm_node_time_series.is_dir():
+                        shutil.rmtree(self.scen_paths.output_swmm_node_time_series)
+                    else:
+                        self.scen_paths.output_swmm_node_time_series.unlink()
+
+                # Clear link timeseries
+                if self.scen_paths.output_swmm_link_time_series.exists():
+                    if verbose:
+                        print(
+                            f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}"
+                        )
+                    if self.scen_paths.output_swmm_link_time_series.is_dir():
+                        shutil.rmtree(self.scen_paths.output_swmm_link_time_series)
+                    else:
+                        self.scen_paths.output_swmm_link_time_series.unlink()
+
+                self.log.full_SWMM_timeseries_cleared.set(True)
+            elif verbose:
+                print("SWMM summaries not created yet, not clearing full timeseries")
+
+        return
+
+    @property
+    def TRITON_summary_processed(self) -> bool:
+        """Check if TRITON summary has been created."""
+        return bool(self.log.TRITON_summary_written.get())
+
+    @property
+    def SWMM_summary_processed(self) -> bool:
+        """Check if SWMM summaries have been created."""
+        return bool(self.log.SWMM_node_summary_written.get()) and bool(
+            self.log.SWMM_link_summary_written.get()
+        )
+
 
 # %% WORK - SWMM STUFF
 
@@ -1361,3 +1605,132 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
     )
     ds_triton_output = df_triton_output.to_xarray()
     return ds_triton_output
+
+
+# %% SUMMARIZATION FUNCTIONS
+def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time"):
+    """
+    Summarize SWMM simulation results by computing max and last values for time-variant variables.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        SWMM timeseries dataset
+    event_iloc : int
+        Event index for coordinate assignment
+    tstep_dimname : str, optional
+        Name of timestep dimension (default: "date_time")
+
+    Returns
+    -------
+    xr.Dataset
+        Summarized dataset with event_iloc coordinate and expanded dimensions
+    """
+    tsteps = ds[tstep_dimname].to_series()
+    lst_time_variant_vars = []
+    for var in ds.data_vars:
+        if tstep_dimname in ds[var].coords:
+            lst_time_variant_vars.append(var)
+
+    for var in lst_time_variant_vars:
+        ds[f"{var}_max"] = ds[var].max(dim=tstep_dimname, skipna=True)
+        ds[f"{var}_last"] = ds[var].sel(date_time=tsteps.max())
+        ds = ds.drop_vars(var)
+    ds = ds.drop_dims(tstep_dimname)
+
+    # Assign event_iloc coordinate and expand dims
+    ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
+    ds = ds.expand_dims("event_iloc")
+
+    return ds
+
+
+def summarize_triton_simulation_results(
+    ds, event_iloc, target_dem_resolution, tstep_dimname="timestep_min"
+):
+    """
+    Summarize TRITON simulation results by computing max velocity, time of max velocity,
+    water level statistics, and final flood volume.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        TRITON timeseries dataset
+    event_iloc : int
+        Event index for coordinate assignment
+    target_dem_resolution : float
+        Target DEM resolution for grid validation (meters)
+    tstep_dimname : str, optional
+        Name of timestep dimension (default: "timestep_min")
+
+    Returns
+    -------
+    xr.Dataset
+        Summarized dataset with event_iloc coordinate and expanded dimensions
+    """
+    tsteps = ds[tstep_dimname].to_series()
+
+    # compute max velocity, time of max velocity, and the x and y components of the max velocity
+    ds["velocity_mps"] = (ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
+
+    ## compute max velocity
+    ds["max_velocity_mps"] = ds["velocity_mps"].max(dim=tstep_dimname, skipna=True)
+
+    ## compute time of max velocity
+    ds["time_of_max_velocity_min"] = ds["velocity_mps"].idxmax(
+        dim=tstep_dimname, skipna=True
+    )
+
+    ## return x and y velocities at time of max velocity
+    ds["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
+        timestep_min=ds["time_of_max_velocity_min"]
+    )
+    ds["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
+        timestep_min=ds["time_of_max_velocity_min"]
+    )
+
+    ## drop velocity_mps
+    ds = ds.drop_vars("velocity_mps")
+
+    ############################################
+    # compute max water level and time of max water level
+    if tstep_dimname in ds.max_wlevel_m.dims:
+        ds["max_wlevel_m"] = ds.max_wlevel_m.sel(
+            timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
+        ).reset_coords(drop=True)
+
+    ds["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(dim=tstep_dimname, skipna=True)
+
+    ## get water levels in last reported time step for mass balance
+    ds["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max())
+    ds["wlevel_m_last_tstep"].attrs[
+        "notes"
+    ] = "this is the water level in the last reported time step for computing mass balance"
+
+    # drop vars with timestep as a coordinate
+    for var in ds.data_vars:
+        if tstep_dimname in ds[var].coords:
+            ds = ds.drop_vars(var)
+
+    ds = ds.drop_dims(tstep_dimname)
+
+    # compute final stored volume after confirming grid specs
+    x_dim = ds.x.to_series().diff().mode().iloc[0]
+    y_dim = ds.y.to_series().diff().mode().iloc[0]
+    if (x_dim != y_dim) or (x_dim != target_dem_resolution):
+        raise ValueError(
+            f"Output dimensions do not line up with expectations. "
+            f"Target DEM res: {target_dem_resolution}. x_dim, y_dim = {x_dim}, {y_dim}"
+        )
+
+    ds["final_surface_flood_volume_cm"] = (
+        ds["wlevel_m_last_tstep"] * x_dim * y_dim
+    ).sum()
+
+    ds["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
+
+    # Assign event_iloc coordinate and expand dims
+    ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
+    ds = ds.expand_dims("event_iloc")
+
+    return ds
