@@ -75,10 +75,14 @@ class TRITONSWMM_analysis_post_processing:
     def _chunk_for_writing(
         self,
         ds_combined_outputs: xr.Dataset,
-        spatial_coords: List[str] | str,
+        spatial_coords: List[str] | str | None,
         spatial_coord_size: int = 65536,  # 256x256 for x,y coords
         max_mem_usage_MiB: float = 200,
     ):
+        # Handle non-spatial data (e.g., performance summaries)
+        if spatial_coords is None:
+            return "auto"
+
         if isinstance(spatial_coords, str):
             spatial_coords = [spatial_coords]
 
@@ -204,6 +208,94 @@ class TRITONSWMM_analysis_post_processing:
     @property
     def TRITON_summary(self):
         return self._open(self._analysis.analysis_paths.output_triton_summary)
+
+    @property
+    def TRITONSWMM_performance_summary(self):
+        return self._open(
+            self._analysis.analysis_paths.output_tritonswmm_performance_summary
+        )
+
+    def consolidate_TRITONSWMM_performance_summaries(
+        self,
+        overwrite_if_exist: bool = False,
+        verbose: bool = False,
+        compression_level: int = 5,
+    ):
+        """
+        Consolidate TRITONSWMM performance summaries across all scenarios.
+
+        This is a simplified consolidation that doesn't require spatial chunking
+        since performance data only has event_iloc and performance metric dimensions.
+
+        Parameters
+        ----------
+        overwrite_if_exist : bool
+            If True, overwrite existing consolidated outputs
+        verbose : bool
+            If True, print progress messages
+        compression_level : int
+            Compression level for output files (0-9)
+        """
+        start_time = time.time()
+        self._analysis._refresh_log()
+
+        fname_out = self._analysis.analysis_paths.output_tritonswmm_performance_summary
+
+        if (
+            self._already_written(fname_out)
+            and (not overwrite_if_exist)
+            and fname_out.exists()
+        ):
+            if verbose:
+                print(
+                    f"File already written and overwrite_if_exists is set to False. Not overwriting:\n{fname_out}"
+                )
+            return
+
+        # Load and concatenate performance summaries from all scenarios
+        lst_ds = []
+        for event_iloc in self._analysis.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            proc = scen.run.proc
+
+            summary_file = scen.scen_paths.output_tritonswmm_performance_summary
+
+            if not summary_file.exists():
+                raise FileNotFoundError(
+                    f"Performance summary file not found: {summary_file}. "
+                    f"Make sure to run timeseries processing with summary creation "
+                    f"before consolidating analysis outputs."
+                )
+
+            # Load summary (already has event_iloc coordinate)
+            ds = proc.TRITONSWMM_performance_summary
+            lst_ds.append(ds)
+
+        # Concatenate all summaries
+        ds_combined_outputs = xr.concat(
+            lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
+        )
+
+        # Write output
+        self._write_output(
+            ds_combined_outputs,  # type: ignore
+            fname_out,
+            compression_level,
+            chunks="auto",  # Use auto chunking for performance data
+            verbose=verbose,
+        )
+
+        # Logging
+        self._analysis.log.TRITONSWMM_performance_analysis_summary_created.set(True)
+        elapsed_s = time.time() - start_time
+        self._analysis.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
+
+        if verbose:
+            print(f"Consolidated TRITONSWMM performance summaries to {fname_out}")
+
+        return
 
     def _already_written(self, f_out) -> bool:
         """

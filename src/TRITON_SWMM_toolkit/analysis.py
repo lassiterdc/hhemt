@@ -64,6 +64,8 @@ class TRITONSWMM_analysis:
             / f"SWMM_links.{self.cfg_analysis.TRITON_processed_output_type}",
             output_swmm_node_summary=analysis_dir
             / f"SWMM_nodes.{self.cfg_analysis.TRITON_processed_output_type}",
+            output_tritonswmm_performance_summary=analysis_dir
+            / f"TRITONSWMM_performance.{self.cfg_analysis.TRITON_processed_output_type}",
         )
 
         # if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
@@ -118,6 +120,13 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 compression_level=compression_level,
             )
+
+        # ALWAYS consolidate performance summaries (independent of 'which' parameter)
+        self.process.consolidate_TRITONSWMM_performance_summaries(
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
         return
 
     def consolidate_TRITON_simulation_summaries(
@@ -226,6 +235,7 @@ class TRITONSWMM_analysis:
         all_sims_run = True
         all_TRITON_outputs_processed = True
         all_SWMM_outputs_processed = True
+        all_TRITONSWMM_performance_outputs_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
         if self.cfg_analysis.toggle_sensitivity_analysis == True:
@@ -234,6 +244,9 @@ class TRITONSWMM_analysis:
             all_sims_run = sens.all_sims_run
             all_TRITON_outputs_processed = sens.all_TRITON_timeseries_processed
             all_SWMM_outputs_processed = sens.all_SWMM_timeseries_processed
+            all_TRITONSWMM_performance_outputs_processed = (
+                sens.all_TRITONSWMM_performance_timeseries_processed
+            )
             all_raw_TRITON_outputs_cleared = sens.all_raw_TRITON_outputs_cleared
             all_raw_SWMM_outputs_cleared = sens.all_raw_SWMM_outputs_cleared
         else:
@@ -254,6 +267,11 @@ class TRITONSWMM_analysis:
                 all_SWMM_outputs_processed = (
                     all_SWMM_outputs_processed and proc.SWMM_outputs_processed
                 )
+                # TRITONSWMM performance processing status
+                all_TRITONSWMM_performance_outputs_processed = (
+                    all_TRITONSWMM_performance_outputs_processed
+                    and proc.TRITONSWMM_performance_timeseries_written
+                )
                 # output clear status
                 all_raw_TRITON_outputs_cleared = (
                     all_raw_TRITON_outputs_cleared and proc.raw_TRITON_outputs_cleared
@@ -265,6 +283,9 @@ class TRITONSWMM_analysis:
         self.log.all_sims_run.set(all_sims_run)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
         self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
+        self.log.all_TRITONSWMM_performance_timeseries_processed.set(
+            all_TRITONSWMM_performance_outputs_processed
+        )
         self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
         self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return

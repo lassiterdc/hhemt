@@ -12,6 +12,7 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.constants import Mode
 from typing import Literal, Optional
+from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 
 
 class TRITONSWMM_run:
@@ -19,6 +20,7 @@ class TRITONSWMM_run:
         self._scenario = scenario
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
+        self.proc = TRITONSWMM_sim_post_processing(self)
 
     @property
     def _triton_swmm_raw_output_directory(self):

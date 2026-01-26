@@ -460,11 +460,17 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     all_sims_run: LogField[bool] = Field(default_factory=LogField)
     all_TRITON_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
     all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
+    all_TRITONSWMM_performance_timeseries_processed: LogField[bool] = Field(
+        default_factory=LogField
+    )
     all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     TRITON_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
     SWMM_node_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
     SWMM_link_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
+    TRITONSWMM_performance_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
     processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
@@ -476,11 +482,13 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
         "TRITON_analysis_summary_created",
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
+        "TRITONSWMM_performance_analysis_summary_created",
         mode="before",
     )
     @classmethod
@@ -498,11 +506,13 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
         "TRITON_analysis_summary_created",
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
+        "TRITONSWMM_performance_analysis_summary_created",
         mode="before",
     )
     @classmethod
@@ -520,11 +530,13 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_sims_run",
         "all_TRITON_timeseries_processed",
         "all_SWMM_timeseries_processed",
+        "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
         "TRITON_analysis_summary_created",
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
+        "TRITONSWMM_performance_analysis_summary_created",
     )
     def serialize_logfield(self, v):
         if isinstance(v, (LogField, LogFieldDict)):

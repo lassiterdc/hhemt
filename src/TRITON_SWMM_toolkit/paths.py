@@ -38,6 +38,7 @@ class AnalysisPaths(MainDataClass):
     output_triton_summary: Path
     output_swmm_links_summary: Path
     output_swmm_node_summary: Path
+    output_tritonswmm_performance_summary: Path
     bash_script_path: Optional[Path] = None
 
 

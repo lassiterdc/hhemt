@@ -125,17 +125,18 @@ def main() -> int:
         logger.info("All simulations completed successfully")
 
         # Check if all timeseries were processed
-        if not analysis.log.all_TRITON_timeseries_processed.get():
-            logger.warning("Not all TRITON timeseries were processed")
-            logger.warning(
-                f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed()}"
-            )
-
-        if not analysis.log.all_SWMM_timeseries_processed.get():
-            logger.warning("Not all SWMM timeseries were processed")
-            logger.warning(
-                f"Scenarios with unprocessed SWMM timeseries: {analysis.SWMM_time_series_not_processed()}"
-            )
+        if args.which in ["both", "TRITON"]:
+            if not analysis.log.all_TRITON_timeseries_processed.get():
+                logger.warning("Not all TRITON timeseries were processed")
+                logger.warning(
+                    f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed()}"
+                )
+        if args.which in ["both", "SWMM"]:
+            if not analysis.log.all_SWMM_timeseries_processed.get():
+                logger.warning("Not all SWMM timeseries were processed")
+                logger.warning(
+                    f"Scenarios with unprocessed SWMM timeseries: {analysis.SWMM_time_series_not_processed()}"
+                )
 
         # Phase 3b: Consolidate outputs
         if args.consolidate_sensitivity_analysis_outputs:

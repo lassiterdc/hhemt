@@ -6,6 +6,7 @@ from pathlib import Path
 from TRITON_SWMM_toolkit.config import analysis_config
 import pandas as pd
 from typing import Literal
+import time
 
 # from TRITON_SWMM_toolkit.paths import SensitivityAnalysisPaths
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
@@ -618,6 +619,33 @@ rule setup:
         )
         return ds_link_outputs
 
+    def _combine_TRITONSWMM_performance_per_subanalysis(self):
+        """
+        Combine TRITONSWMM performance summaries from all sub-analyses.
+
+        Returns
+        -------
+        xr.Dataset
+            Combined performance dataset with sensitivity analysis dimensions
+        """
+        lst_ds = []
+        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            config = self.df_setup.iloc[sub_analysis_iloc,]
+            # Access the performance summary from the sub-analysis
+            ds = sub_analysis.process.TRITONSWMM_performance_summary
+
+            # Add sensitivity analysis dimensions
+            for new_dim, dim_value in config.items():
+                ds = ds.assign_coords(coords={new_dim: dim_value})
+                ds = ds.expand_dims(new_dim)
+
+            lst_ds.append(ds)
+
+        ds_performance = xr.combine_by_coords(
+            lst_ds, combine_attrs="drop", join="outer"
+        )
+        return ds_performance
+
     def _consolidate_outputs_in_each_subanalysis(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -711,6 +739,30 @@ rule setup:
                 verbose=verbose,
                 compression_level=compression_level,
             )
+
+        # consolidate performance summaries (independent of 'which' parameter)
+        start_time = time.time()
+        ds_performance = self._combine_TRITONSWMM_performance_per_subanalysis()
+        proc_log = (
+            self.master_analysis.log.TRITONSWMM_performance_analysis_summary_created
+        )
+        fname_out = (
+            self.master_analysis.analysis_paths.output_tritonswmm_performance_summary
+        )
+        self.master_analysis.process._write_output(
+            ds=ds_performance,
+            fname_out=fname_out,
+            compression_level=compression_level,
+            chunks="auto",
+            verbose=verbose,
+        )
+
+        proc_log.set(True)
+        elapsed_s = time.time() - start_time
+        self.master_analysis.log.add_sim_processing_entry(
+            fname_out, ut.get_file_size_MiB(fname_out), elapsed_s, True
+        )
+
         return
 
     def create_subanalysis_summaries(
@@ -908,6 +960,17 @@ rule setup:
                 and sub_analysis.log.all_SWMM_timeseries_processed.get()
             )
         return all_SWMM_timeseries_processed == True
+
+    @property
+    def all_TRITONSWMM_performance_timeseries_processed(self):
+        all_TRITONSWMM_performance_timeseries_processed = True
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            all_TRITONSWMM_performance_timeseries_processed = (
+                all_TRITONSWMM_performance_timeseries_processed
+                and sub_analysis.log.all_TRITONSWMM_performance_timeseries_processed.get()
+            )
+        return all_TRITONSWMM_performance_timeseries_processed == True
 
     @property
     def TRITON_time_series_not_processed(self):
