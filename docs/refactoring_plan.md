@@ -369,6 +369,11 @@ Extract methods:
    - Ensure consistent code formatting
    - Remove any remaining commented-out code
 
+5. **Script organization restructuring:**
+   - Assess the current organization and naming of files in the src directory
+   - Improve file names to be more pythonic and apply best practices
+   - Identify opportunities for improved folder structure to be more pythonic and apply best practices
+
 **Risk:** Low - These are non-functional improvements
 
 **Target:** ~50 lines reduction, improved code quality
@@ -605,18 +610,21 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Remove dead imports from process_simulation.py
 - [x] Run smoke tests (22/22 passing)
 
-### Phase 8: Extract Scenario Preparation
-- [ ] Create scenario_inputs.py
-- [ ] Move _write_swmm_rainfall_dat_files()
-- [ ] Move _write_swmm_waterlevel_dat_files()
-- [ ] Move _create_external_boundary_condition_files()
-- [ ] Move _write_hydrograph_files()
-- [ ] Create swmm_model_builder.py
-- [ ] Move _create_swmm_model_from_template()
-- [ ] Move _update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()
-- [ ] Move _run_swmm_hydro_model()
-- [ ] Update scenario.py to use new components
-- [ ] Run smoke tests (22/22 passing)
+### Phase 8: Extract Scenario Preparation ✅ COMPLETE
+- [x] Create scenario_inputs.py
+- [x] Move _write_swmm_rainfall_dat_files() → swmm_runoff_modeling.py
+- [x] Move _write_swmm_waterlevel_dat_files() → swmm_runoff_modeling.py
+- [x] Move _create_external_boundary_condition_files() → scenario_inputs.py
+- [x] Move _write_hydrograph_files() → swmm_runoff_modeling.py
+- [x] Create swmm_runoff_modeling.py (SWMM hydrology modeling)
+- [x] Create swmm_full_model.py (placeholder for future)
+- [x] Move _create_swmm_model_from_template() → split into 3 modules
+- [x] Move _update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell() → scenario_inputs.py
+- [x] Move _run_swmm_hydro_model() → swmm_runoff_modeling.py
+- [x] Update scenario.py to use new components
+- [x] Remove duplicate find_lowest_inv() function
+- [x] Delete obsolete swmm_model_builder.py
+- [x] Run smoke tests (22/22 passing)
 
 ### Phase 9: Unify Sensitivity Workflow
 - [ ] Create SensitivityAnalysisWorkflowBuilder

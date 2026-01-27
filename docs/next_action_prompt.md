@@ -1,137 +1,130 @@
-# Phase 8: Extract Scenario Preparation Logic
+# Phase 9: Unify Sensitivity Analysis Workflow Generation
 
-**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Decompose `TRITONSWMM_scenario` into focused components for input generation and model building
+**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Refactor sensitivity analysis to reuse `SnakemakeWorkflowBuilder` and eliminate duplicate workflow generation code
 
-**Previous Phase:** Phase 7a (Subprocess Logging Consolidation) completed - 22/22 tests passing ✅
+**Previous Phase:** Phase 8 (Extract Scenario Preparation Logic) completed - 22/22 tests passing ✅
 
 ---
 
 ## Objective
 
-Extract scenario preparation logic from `scenario.py` (~700 lines, 25+ methods) into two focused modules: `scenario_inputs.py` for weather/boundary condition file generation and `swmm_model_builder.py` for SWMM model creation and modification.
+Refactor `TRITONSWMM_sensitivity_analysis` to reuse the `SnakemakeWorkflowBuilder` class, eliminating ~200 lines of duplicate workflow generation code and creating consistency across analysis types.
 
 **Expected Impact:**
-- Reduces `scenario.py` by ~300 lines
-- Clear separation of concerns: input generation vs. model building
-- Easier to test each component independently
-- Makes scenario preparation logic more maintainable
+- Reduces `sensitivity_analysis.py` by ~200 lines
+- Eliminates duplicate workflow generation logic
+- Creates consistent workflow patterns across regular and sensitivity analyses
+- Makes workflow generation easier to maintain and extend
 
-**Risk Level:** Medium - These methods have interdependencies with scenario state
+**Risk Level:** Medium - Sensitivity analysis has unique workflow requirements that must be preserved
 
 ---
 
-## New Modules to Create
+## Current Problem
 
-### 1. `scenario_inputs.py` - Weather/Boundary Condition File Generation
+**Duplicate Workflow Generation:**
+- `sensitivity_analysis.py` has its own `_generate_master_snakefile_content()` method (~200 lines)
+- This duplicates workflow generation logic from `workflow.py`
+- Inconsistent with the refactored `TRITONSWMM_analysis` approach (Phases 1-3)
+- Makes it harder to maintain and extend workflow generation
 
-**Purpose:** Handle all external input file generation for scenarios
-
-**Methods to Extract:**
-- `_write_swmm_rainfall_dat_files()` - Generates rainfall input files from weather data
-- `_write_swmm_waterlevel_dat_files()` - Generates water level input files for boundary conditions
-- `_create_external_boundary_condition_files()` - Creates boundary condition files for TRITON
-- `_write_hydrograph_files()` - Generates hydrograph input files
-
-**Design Pattern:**
+**Code Smell:**
 ```python
-class ScenarioInputGenerator:
-    """
-    Generates external input files for TRITON-SWMM scenarios.
-    
-    Handles weather data, boundary conditions, and hydrograph file generation.
-    """
-    
-    def __init__(self, scenario: "TRITONSWMM_scenario"):
-        self.scenario = scenario
-        self.cfg_analysis = scenario.cfg_analysis
-        self.system = scenario._system
-        
-    def write_swmm_rainfall_dat_files(self) -> None:
-        """Generate rainfall input files from weather data."""
-        ...
-        
-    def write_swmm_waterlevel_dat_files(self) -> None:
-        """Generate water level input files for boundary conditions."""
+# sensitivity_analysis.py
+class TRITONSWMM_sensitivity_analysis:
+    def _generate_master_snakefile_content(self):
+        # ~200 lines of Snakefile generation
+        # Duplicates patterns from SnakemakeWorkflowBuilder
         ...
 ```
 
-### 2. `swmm_model_builder.py` - SWMM Model Generation
+---
 
-**Purpose:** Handle SWMM model creation, modification, and execution
+## Target Architecture
 
-**Methods to Extract:**
-- `_create_swmm_model_from_template()` - Creates SWMM model from template file
-- `_update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()` - Updates SWMM model structure to match DEM grid
-- `_run_swmm_hydro_model()` - Executes SWMM hydraulic model
+### Option 1: Composition (Recommended)
 
-**Design Pattern:**
+Create a `SensitivityAnalysisWorkflowBuilder` that **composes** `SnakemakeWorkflowBuilder`:
+
 ```python
-class SWMMModelBuilder:
+class SensitivityAnalysisWorkflowBuilder:
     """
-    Builds and modifies SWMM models for TRITON-SWMM scenarios.
+    Builds Snakemake workflows for sensitivity analysis.
     
-    Handles model template processing, structural updates, and execution.
+    Composes SnakemakeWorkflowBuilder to reuse common workflow patterns
+    while adding sensitivity-specific workflow generation.
     """
     
-    def __init__(self, scenario: "TRITONSWMM_scenario"):
-        self.scenario = scenario
-        self.cfg_analysis = scenario.cfg_analysis
-        self.system = scenario._system
+    def __init__(self, sensitivity_analysis: "TRITONSWMM_sensitivity_analysis"):
+        self.sensitivity_analysis = sensitivity_analysis
+        # Reuse base workflow builder for common patterns
+        self._base_builder = SnakemakeWorkflowBuilder(sensitivity_analysis)
         
-    def create_swmm_model_from_template(self) -> None:
-        """Create SWMM model from template file."""
-        ...
-        
-    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self) -> None:
-        """Update SWMM model structure to match DEM grid."""
+    def generate_master_snakefile_content(self) -> str:
+        """Generate master Snakefile for sensitivity analysis."""
+        # Use base builder for common patterns
+        # Add sensitivity-specific rules
         ...
 ```
+
+### Option 2: Inheritance
+
+Create a `SensitivityAnalysisWorkflowBuilder` that **extends** `SnakemakeWorkflowBuilder`:
+
+```python
+class SensitivityAnalysisWorkflowBuilder(SnakemakeWorkflowBuilder):
+    """
+    Extends SnakemakeWorkflowBuilder for sensitivity analysis workflows.
+    """
+    
+    def generate_master_snakefile_content(self) -> str:
+        """Generate master Snakefile for sensitivity analysis."""
+        # Override to add sensitivity-specific workflow
+        ...
+```
+
+**Recommendation:** Use **Option 1 (Composition)** because:
+- Sensitivity analysis workflow is fundamentally different (master + sub-workflows)
+- Composition is more flexible and explicit
+- Avoids inheritance complexity
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Analyze Dependencies
-1. Read `scenario.py` to understand method dependencies
-2. Identify which methods depend on scenario state vs. pure functions
-3. Map out data flow between methods
-4. Identify any circular dependencies
+### Step 1: Analyze Current Workflow Generation
 
-### Step 2: Create `scenario_inputs.py`
-1. Create new file `src/TRITON_SWMM_toolkit/scenario_inputs.py`
-2. Define `ScenarioInputGenerator` class
-3. Extract and adapt the 4 input generation methods:
-   - `_write_swmm_rainfall_dat_files()`
-   - `_write_swmm_waterlevel_dat_files()`
-   - `_create_external_boundary_condition_files()`
-   - `_write_hydrograph_files()`
-4. Update method signatures to accept necessary parameters
-5. Add comprehensive docstrings
+1. Read `sensitivity_analysis.py` to understand `_generate_master_snakefile_content()`
+2. Identify common patterns with `SnakemakeWorkflowBuilder`
+3. Identify sensitivity-specific requirements
+4. Map out data flow and dependencies
 
-### Step 3: Create `swmm_model_builder.py`
-1. Create new file `src/TRITON_SWMM_toolkit/swmm_model_builder.py`
-2. Define `SWMMModelBuilder` class
-3. Extract and adapt the 3 model building methods:
-   - `_create_swmm_model_from_template()`
-   - `_update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()`
-   - `_run_swmm_hydro_model()`
-4. Update method signatures to accept necessary parameters
-5. Add comprehensive docstrings
+### Step 2: Extract Common Patterns
 
-### Step 4: Update `scenario.py`
-1. Import new classes: `ScenarioInputGenerator` and `SWMMModelBuilder`
+1. Identify reusable workflow generation patterns in `SnakemakeWorkflowBuilder`
+2. Consider extracting common patterns to utility functions if needed
+3. Document which parts can be reused vs. need customization
+
+### Step 3: Create `SensitivityAnalysisWorkflowBuilder`
+
+1. Create new class in `workflow.py` (or new `sensitivity_workflow.py` if large)
+2. Implement composition pattern with `SnakemakeWorkflowBuilder`
+3. Move `_generate_master_snakefile_content()` logic to new builder
+4. Add comprehensive docstrings
+
+### Step 4: Update `sensitivity_analysis.py`
+
+1. Import `SensitivityAnalysisWorkflowBuilder`
 2. Initialize in `__init__`:
    ```python
-   self._input_generator = ScenarioInputGenerator(self)
-   self._model_builder = SWMMModelBuilder(self)
+   self._workflow_builder = SensitivityAnalysisWorkflowBuilder(self)
    ```
 3. Replace method calls with delegation:
-   - `self._write_swmm_rainfall_dat_files()` → `self._input_generator.write_swmm_rainfall_dat_files()`
-   - `self._create_swmm_model_from_template()` → `self._model_builder.create_swmm_model_from_template()`
-   - etc.
-4. Remove the extracted method definitions
+   - `self._generate_master_snakefile_content()` → `self._workflow_builder.generate_master_snakefile_content()`
+4. Remove the old `_generate_master_snakefile_content()` method
 
 ### Step 5: Validate
+
 Run all smoke tests:
 ```bash
 conda activate triton_swmm_toolkit
@@ -146,16 +139,16 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 ## Key Constraints
 
 ✅ **DO:**
-- Maintain scenario state access through `self.scenario` reference
-- Keep method behavior identical (pure refactoring)
-- Add type hints and docstrings to new classes
-- Test each component independently if possible
+- Reuse `SnakemakeWorkflowBuilder` patterns where possible
+- Maintain sensitivity analysis workflow behavior exactly
+- Add type hints and comprehensive docstrings
+- Test sensitivity analysis workflow thoroughly
 
 ❌ **DON'T:**
-- Change any logic or behavior
+- Change sensitivity analysis workflow behavior
 - Modify public API methods
 - Touch log file structures
-- Break scenario preparation workflow
+- Break any sensitivity analysis tests
 
 ---
 
@@ -163,67 +156,66 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 **Before:**
 ```python
-class TRITONSWMM_scenario:
-    def prepare_scenario(self):
-        self._write_swmm_rainfall_dat_files()  # 50 lines
-        self._write_swmm_waterlevel_dat_files()  # 40 lines
-        self._create_swmm_model_from_template()  # 80 lines
-        self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()  # 60 lines
-        self._run_swmm_hydro_model()  # 70 lines
-        # Total: ~300 lines in scenario.py
+# sensitivity_analysis.py (~800 lines)
+class TRITONSWMM_sensitivity_analysis:
+    def _generate_master_snakefile_content(self):
+        # ~200 lines of workflow generation
+        # Duplicates patterns from workflow.py
+        ...
 ```
 
 **After:**
 ```python
-# scenario.py (~400 lines, down from ~700)
-class TRITONSWMM_scenario:
+# sensitivity_analysis.py (~600 lines, down from ~800)
+class TRITONSWMM_sensitivity_analysis:
     def __init__(self, ...):
-        self._input_generator = ScenarioInputGenerator(self)
-        self._model_builder = SWMMModelBuilder(self)
+        self._workflow_builder = SensitivityAnalysisWorkflowBuilder(self)
     
-    def prepare_scenario(self):
-        self._input_generator.write_swmm_rainfall_dat_files()
-        self._input_generator.write_swmm_waterlevel_dat_files()
-        self._model_builder.create_swmm_model_from_template()
-        self._model_builder.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()
-        self._model_builder.run_swmm_hydro_model()
+    # Delegates to workflow builder
+    # ~200 lines removed
 
-# scenario_inputs.py (~150 lines)
-class ScenarioInputGenerator:
-    # Input generation methods
-
-# swmm_model_builder.py (~150 lines)
-class SWMMModelBuilder:
-    # Model building methods
+# workflow.py or sensitivity_workflow.py (~200 lines added)
+class SensitivityAnalysisWorkflowBuilder:
+    """Builds Snakemake workflows for sensitivity analysis."""
+    
+    def __init__(self, sensitivity_analysis):
+        self.sensitivity_analysis = sensitivity_analysis
+        self._base_builder = SnakemakeWorkflowBuilder(sensitivity_analysis)
+    
+    def generate_master_snakefile_content(self) -> str:
+        """Generate master Snakefile for sensitivity analysis."""
+        # Reuses base builder patterns
+        # Adds sensitivity-specific rules
+        ...
 ```
 
 ---
 
 ## Validation Checklist
 
-- [ ] Analyzed method dependencies in scenario.py
-- [ ] Created scenario_inputs.py with ScenarioInputGenerator class
-- [ ] Extracted 4 input generation methods
-- [ ] Created swmm_model_builder.py with SWMMModelBuilder class
-- [ ] Extracted 3 model building methods
-- [ ] Updated scenario.py to use new components
-- [ ] Removed extracted method definitions from scenario.py
-- [ ] Added type hints and docstrings to new classes
+- [ ] Analyzed _generate_master_snakefile_content() in sensitivity_analysis.py
+- [ ] Identified common patterns with SnakemakeWorkflowBuilder
+- [ ] Identified sensitivity-specific requirements
+- [ ] Created SensitivityAnalysisWorkflowBuilder class
+- [ ] Moved workflow generation logic to new builder
+- [ ] Updated sensitivity_analysis.py to use new builder
+- [ ] Removed old _generate_master_snakefile_content() method
+- [ ] Added type hints and docstrings to new class
 - [ ] All 22 smoke tests passing (test_PC_01, test_PC_02, test_PC_04, test_PC_05)
 - [ ] No changes to public API
 - [ ] No changes to log file structures
-- [ ] Scenario preparation workflow unchanged
+- [ ] Sensitivity analysis workflow behavior unchanged
 
 ---
 
 ## Notes
 
-- This phase has medium risk due to method interdependencies
-- Careful attention needed to maintain scenario state access
-- Consider keeping methods as instance methods (not static) to maintain access to scenario state
-- The new classes act as "strategy" objects that encapsulate related behavior
-- This follows the same pattern as Phases 1-3 (ResourceManager, ExecutionStrategy, SnakemakeWorkflowBuilder)
+- This phase follows the same pattern as Phases 1-3 (extract to focused component)
+- Sensitivity analysis has unique workflow requirements (master + sub-workflows)
+- Composition pattern recommended over inheritance for flexibility
+- The new builder acts as a "strategy" object that encapsulates workflow generation
+- This creates consistency across all workflow generation in the toolkit
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 8 Implementation Guide
+**Last Updated:** January 27, 2026 - Phase 9 Implementation Guide
