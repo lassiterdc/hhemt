@@ -44,7 +44,7 @@ def test_snakemake_sensitivity_workflow_execution():
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
     nrflk_cpu_sensitivity = (
-        tst.retreive_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
+        tst.retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
             start_from_scratch=True
         )
     )

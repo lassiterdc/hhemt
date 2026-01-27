@@ -11,7 +11,7 @@ pytestmark = pytest.mark.skipif(False, reason="Skipping for now...")
 
 
 def test_run_multisim_concurrently():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_multi_sim_test_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -30,7 +30,7 @@ def test_run_multisim_concurrently():
 
 
 def test_concurrently_process_scenario_timeseries():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_multi_sim_test_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis

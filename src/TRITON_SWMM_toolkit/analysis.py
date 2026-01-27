@@ -545,7 +545,7 @@ class TRITONSWMM_analysis:
             print("Log file:", flush=True)
             print(scen.log.print())
             raise ValueError("TRITONSWMM has not been compiled")
-        run = self._retreive_sim_runs(event_iloc)
+        run = self._retrieve_sim_runs(event_iloc)
         if verbose:
             print("run instance instantiated", flush=True)
 
@@ -635,19 +635,19 @@ class TRITONSWMM_analysis:
         return
 
     def sim_run_status(self, event_iloc):
-        run = self._retreive_sim_runs(event_iloc)
+        run = self._retrieve_sim_runs(event_iloc)
         status = run._scenario.latest_simlog
         self._simulation_run_statuses[event_iloc] = status
         return status
 
-    def _retreive_sim_runs(self, event_iloc):
+    def _retrieve_sim_runs(self, event_iloc):
         scen = TRITONSWMM_scenario(event_iloc, self)
         run = scen.run
         self._sim_run_objects[event_iloc] = run
         return run
 
     def _retrieve_sim_run_processing_object(self, event_iloc):
-        run = self._retreive_sim_runs(event_iloc)
+        run = self._retrieve_sim_runs(event_iloc)
         proc = TRITONSWMM_sim_post_processing(run)
         self._sim_run_processing_objects[event_iloc] = proc
         return proc
@@ -680,7 +680,7 @@ class TRITONSWMM_analysis:
         """
         launch_and_finalize_functions_tuples = []
         for event_iloc in self.df_sims.index:
-            run = self._retreive_sim_runs(event_iloc)
+            run = self._retrieve_sim_runs(event_iloc)
             launch_and_finalize_functions_tuple = (
                 run._create_subprocess_sim_run_launcher(
                     pickup_where_leftoff=pickup_where_leftoff,

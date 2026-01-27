@@ -19,7 +19,7 @@ def test_snakemake_slurm_workflow_generation():
     2. Snakefile contains all necessary rules
     3. Snakefile uses correct conda environment
     """
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -66,7 +66,7 @@ def test_snakemake_slurm_workflow_submission_dry_run():
     2. submit_workflow() returns success status (but doesn't actually run snakemake)
     3. Workflow mode is detected correctly (SLURM)
     """
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -103,7 +103,7 @@ def test_submit_workflow_detects_slurm_mode():
 
     Note: This test does NOT actually run snakemake, only verifies detection logic.
     """
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -127,7 +127,7 @@ def test_snakemake_workflow_config_generation():
     2. Resource specifications are valid
     3. Command-line arguments are properly escaped
     """
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -165,7 +165,7 @@ def test_snakemake_multiple_configurations():
     1. Different parameter combinations generate different Snakefiles
     2. Optional parameters are correctly included/excluded
     """
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -224,7 +224,7 @@ def test_snakemake_workflow_dry_run():
     """
     import subprocess
 
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -280,7 +280,7 @@ def test_snakemake_workflow_execution():
     """
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     system = nrflk_multisim_ensemble.system

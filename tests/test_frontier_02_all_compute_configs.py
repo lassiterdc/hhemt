@@ -13,13 +13,13 @@ pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier
 
 
 def test_retrieve_test():
-    nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(
+    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
         start_from_scratch=True
     )
 
 
 def test_compile():
-    nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(
+    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis
@@ -28,7 +28,7 @@ def test_compile():
 
 
 def test_prepare_scenarios():
-    nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(
+    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis
@@ -39,7 +39,7 @@ def test_prepare_scenarios():
 
 
 def test_run_all_sims():
-    nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(
+    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis
@@ -62,7 +62,7 @@ def test_run_all_sims():
 
 
 def test_consolidate_outputs():
-    nrflk_multiconfig = tst.retreive_norfolk_frontier_all_configs(
+    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
         start_from_scratch=False
     )
     analysis = nrflk_multiconfig.system.analysis

@@ -31,7 +31,7 @@ pytestmark = pytest.mark.skipif(not on_UVA_HPC(), reason="Only runs on UVA HPC")
 
 
 def test_load_system_and_analysis():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=True
     )
     assert (
@@ -40,7 +40,7 @@ def test_load_system_and_analysis():
 
 
 def test_create_dem_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_dem_for_TRITON()
@@ -49,7 +49,7 @@ def test_create_dem_for_TRITON():
 
 
 def test_create_mannings_file_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_mannings_file_for_TRITON()
@@ -58,7 +58,7 @@ def test_create_mannings_file_for_TRITON():
 
 
 def test_compile_TRITONSWMM_for_cpu_sims():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.compile_TRITON_SWMM(
@@ -70,7 +70,7 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 
 
 def test_prepare_scenarios():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_UVA_multisim_1cpu_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_UVA_multisim_1cpu_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis

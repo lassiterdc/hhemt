@@ -15,7 +15,7 @@ pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier
 
 
 def test_load_system_and_analysis():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=True
     )
     assert (
@@ -24,7 +24,7 @@ def test_load_system_and_analysis():
 
 
 def test_create_dem_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_dem_for_TRITON()
@@ -33,7 +33,7 @@ def test_create_dem_for_TRITON():
 
 
 def test_create_mannings_file_for_TRITON():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_mannings_file_for_TRITON()
@@ -42,7 +42,7 @@ def test_create_mannings_file_for_TRITON():
 
 
 def test_compile_TRITONSWMM_for_cpu_sims():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.compile_TRITON_SWMM()
@@ -50,7 +50,7 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 
 
 def test_prepare_scenarios():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -68,7 +68,7 @@ def test_prepare_scenarios():
 def test_run_sims():
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
@@ -86,12 +86,12 @@ def test_run_sims():
 
 
 def test_concurrently_process_scenario_timeseries():
-    nrflk_multisim_ensemble = tst.retreive_norfolk_frontier_multisim_cpu_serial_case(
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=False
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     scenario_timeseries_processing_launchers = (
-        analysis.retreive_scenario_timeseries_processing_launchers(which="TRITON")
+        analysis.retrieve_scenario_timeseries_processing_launchers(which="TRITON")
     )
     analysis.run_python_functions_concurrently(
         scenario_timeseries_processing_launchers, verbose=True

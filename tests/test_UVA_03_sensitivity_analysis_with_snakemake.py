@@ -38,7 +38,7 @@ def test_snakemake_sensitivity_workflow_generation():
     3. Master Snakefile contains all necessary rules
     4. Master Snakefile has proper dependencies
     """
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
@@ -111,7 +111,7 @@ def test_snakemake_sensitivity_workflow_files_written():
     2. Master Snakefile is written to master analysis directory
     3. All files are valid and non-empty
     """
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
@@ -158,7 +158,7 @@ def test_submit_workflow_detects_slurm_mode():
 
     Note: This test does NOT actually run snakemake, only verifies detection logic.
     """
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
@@ -181,7 +181,7 @@ def test_snakemake_sensitivity_workflow_config_generation():
     2. Consolidation command includes correct flags
     3. Sub-analysis references are correct
     """
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
@@ -228,7 +228,7 @@ def test_snakemake_sensitivity_workflow_dry_run():
     """
     import subprocess
 
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     analysis = nrflk_cpu_sensitivity.system.analysis
@@ -297,7 +297,7 @@ def test_snakemake_sensitivity_workflow_execution():
     """
     from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
-    nrflk_cpu_sensitivity = tst.retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    nrflk_cpu_sensitivity = tst.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         start_from_scratch=True
     )
     system = nrflk_cpu_sensitivity.system

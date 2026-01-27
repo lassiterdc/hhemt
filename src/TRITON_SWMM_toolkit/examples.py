@@ -365,7 +365,7 @@ class GetTS_TestCases:
         return nrflk_test
 
     @classmethod
-    def retreive_norfolk_UVA_multisim_1cpu_case(
+    def retrieve_norfolk_UVA_multisim_1cpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "UVA_multisim"
@@ -402,7 +402,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
+    def retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "UVA_sensitivity_CPU_full_ensemble_short_sims"
@@ -441,7 +441,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_UVA_sensitivity_CPU_minimal(
+    def retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "UVA_sensitivity_CPU"
@@ -482,7 +482,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_frontier_multisim_cpu_serial_case(
+    def retrieve_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "frontier_multisim"
@@ -502,7 +502,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_frontier_all_configs(
+    def retrieve_norfolk_frontier_all_configs(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "frontier_all_configs_sensitivity"
@@ -524,7 +524,7 @@ class GetTS_TestCases:
         )
 
     # @classmethod
-    # def retreive_norfolk_hcp_cpu_sensitivity_case(
+    # def retrieve_norfolk_hcp_cpu_sensitivity_case(
     #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
     # ):
     #     analysis_name = "cpu_config_sensitivity"
@@ -548,7 +548,7 @@ class GetTS_TestCases:
     #     )
 
     @classmethod
-    def retreive_norfolk_cpu_config_sensitivity_case(
+    def retrieve_norfolk_cpu_config_sensitivity_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "cpu_config_sensitivity"
@@ -566,7 +566,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_single_sim_test_case(
+    def retrieve_norfolk_single_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "single_sim"
@@ -580,7 +580,7 @@ class GetTS_TestCases:
         )
 
     @classmethod
-    def retreive_norfolk_multi_sim_test_case(
+    def retrieve_norfolk_multi_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "multi_sim"

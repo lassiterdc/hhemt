@@ -10,7 +10,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_load_system_and_analysis():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case(
         start_from_scratch=True,
     )
     analysis = single_sim_single_core.system.analysis
@@ -19,14 +19,14 @@ def test_load_system_and_analysis():
 
 # SYSTEM TESTS
 def test_create_dem_for_TRITON():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case()
     single_sim_single_core.system.create_dem_for_TRITON()
     rds = single_sim_single_core.system.processed_dem_rds
     assert rds.shape == (1, 537, 551)  # type: ignore
 
 
 def test_create_mannings_file_for_TRITON():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case()
     single_sim_single_core.system.create_mannings_file_for_TRITON()
     rds = single_sim_single_core.system.open_processed_mannings_as_rds()
     assert rds.shape == (1, 537, 551)  # type: ignore
@@ -34,7 +34,7 @@ def test_create_mannings_file_for_TRITON():
 
 # COMPILING TRITON-SWMM
 def test_compile_TRITONSWMM_for_cpu_sims():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case()
     single_sim_single_core.system.compile_TRITON_SWMM(
         recompile_if_already_done_successfully=True,
         redownload_triton_swmm_if_exists=True,
@@ -44,7 +44,7 @@ def test_compile_TRITONSWMM_for_cpu_sims():
 
 # SCENARIO SET UP
 def test_prepare_all_scenarios():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case(
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case(
         start_from_scratch=False
     )
     analysis = single_sim_single_core.system.analysis
@@ -58,7 +58,7 @@ def test_prepare_all_scenarios():
 
 
 def test_run_sim():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case()
     analysis = single_sim_single_core.system.analysis
     analysis.run_sims_in_sequence(pickup_where_leftoff=False)
 
@@ -71,7 +71,7 @@ def test_run_sim():
 
 
 def test_process_sim():
-    single_sim_single_core = tst.retreive_norfolk_single_sim_test_case()
+    single_sim_single_core = tst.retrieve_norfolk_single_sim_test_case()
     analysis = single_sim_single_core.system.analysis
     analysis.process_all_sim_timeseries_serially()
     success_processing = (
