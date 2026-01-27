@@ -1,6 +1,6 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 26, 2026 | **Status:** Phase 2 Complete ✅ | **Goal:** Decompose `TRITONSWMM_analysis` god class
+**Date:** January 26, 2026 | **Status:** Phase 3 Complete ✅ | **Goal:** Decompose `TRITONSWMM_analysis` god class
 
 ---
 
@@ -324,29 +324,131 @@ class TRITONSWMM_analysis:
 
 ---
 
-## Phase 3: Extract Workflow Generation ⏸️ FUTURE
+## Phase 3: Extract Workflow Generation ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
 
 **Goal:** Make Snakemake workflow generation testable
 
-**Create:** `src/TRITON_SWMM_toolkit/workflow.py`
+**Created:** `src/TRITON_SWMM_toolkit/workflow.py`
 
-**Extract:**
-- `_generate_snakefile_content()`
-- `_generate_snakemake_config()`
-- `_write_snakemake_config()`
-- `_run_snakemake_local()`
-- `_run_snakemake_slurm()`
+**What Changed:**
+- Created `src/TRITON_SWMM_toolkit/workflow.py` with `SnakemakeWorkflowBuilder` class
+- Extracted 5 workflow methods from `analysis.py`:
+  - `generate_snakefile_content()` - Generates Snakefile content for workflow
+  - `generate_snakemake_config()` - Generates dynamic Snakemake configuration
+  - `write_snakemake_config()` - Writes config to analysis directory
+  - `run_snakemake_local()` - Executes workflow on local machine
+  - `run_snakemake_slurm()` - Executes workflow on SLURM HPC
+  - `submit_workflow()` - Main entry point that orchestrates workflow submission
+- `analysis.py` now delegates all workflow operations to `self._workflow_builder`
+- **All 4 smoke tests passing:**
+  - `test_PC_01_singlesim.py` - 7/7 passed ✅
+  - `test_PC_02_multisim.py` - 2/2 passed ✅
+  - `test_PC_04_multisim_with_snakemake.py` - 7/7 passed ✅
+  - `test_PC_05_sensitivity_analysis_with_snakemake.py` - 6/6 passed ✅
+
+**Changes Summary:**
+```python
+# analysis.py - BEFORE
+class TRITONSWMM_analysis:
+    def _generate_snakefile_content(...):
+        # 150+ lines of Snakefile generation
+    
+    def submit_workflow(...):
+        # 100+ lines of workflow orchestration
+    
+    def _generate_snakemake_config(...):
+        # 70+ lines of config generation
+    
+    def _write_snakemake_config(...):
+        # 20+ lines of file writing
+    
+    def _run_snakemake_local(...):
+        # 70+ lines of local execution
+    
+    def _run_snakemake_slurm(...):
+        # 150+ lines of SLURM execution
+
+# analysis.py - AFTER
+from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+class TRITONSWMM_analysis:
+    def __init__(...):
+        self._workflow_builder = SnakemakeWorkflowBuilder(self)
+    
+    def _generate_snakefile_content(...):
+        return self._workflow_builder.generate_snakefile_content(...)
+    
+    def submit_workflow(...):
+        return self._workflow_builder.submit_workflow(...)
+    
+    # All other workflow methods delegate to builder
+```
 
 ---
 
-## Phase 4: Simplify Facade ⏸️ FUTURE
+## Phase 4: Simplify Facade ⏸️ READY TO START
 
-**Goal:** Clean up `analysis.py` to ~500-700 lines
+**Goal:** Clean up `analysis.py` and `sensitivity_analysis.py` to reduce cruft and improve maintainability
 
-**Actions:**
-- Remove all extracted methods
-- Add clear component delegation
-- Document responsibilities
+**Estimated Impact:** Remove ~100-150 lines from unused imports and dead code across both files
+
+### Specific Tasks
+
+#### 1. Remove Unused Imports from `analysis.py`
+The following imports are no longer used after Phases 1-3:
+- `subprocess` - Moved to workflow.py
+- `shutil` - Not used anywhere
+- `yaml` - Moved to workflow.py
+- `ProcessPoolExecutor` - Not used (imported twice)
+- `traceback` - Not used
+- `redirect_stdout` - Not used
+- `redirect_stderr` - Not used
+- `threading` - Not used
+- `psutil` - Moved to workflow.py
+- `warnings` - Not used
+- `Mode` from constants - Not used
+
+#### 2. Fix Duplicate Imports in `analysis.py`
+The following are imported multiple times:
+- `as_completed` from `concurrent.futures` (imported twice)
+- `Optional` from `typing` (imported twice)
+- `Path` (imported multiple times - once from pathlib, then shadowed)
+
+#### 3. Remove Dead Code Methods from `analysis.py`
+The following methods should be removed:
+- `retreive_scenario_timeseries_processing_launchers()` (line ~582) - Typo duplicate of `retrieve_scenario_timeseries_processing_launchers()`
+- `consolidate_analysis_outptus()` (line ~618) - Typo in function name (should be `consolidate_analysis_outputs`)
+- `minutes_to_hhmmss()` (line ~1486) - Module-level utility, verify usage before removing
+
+#### 4. Clean Up `sensitivity_analysis.py` Imports
+The following imports are unused:
+- `subprocess` - Not used
+- `shutil` - Not used
+- `Mode` from constants - Not used
+- `pprint` - Not used
+- `json` - Not used
+
+#### 5. Fix Typo Method Calls in `sensitivity_analysis.py`
+The following calls reference typo methods that will be removed:
+- Line ~489: `sub_analysis.retreive_scenario_timeseries_processing_launchers()` → `retrieve_scenario_timeseries_processing_launchers()`
+- Line ~556: `sub_analysis.consolidate_analysis_outptus()` → Must be updated based on what we do with the typo method
+
+#### 6. Optional Cleanup
+- Consider removing or documenting commented-out code in both files
+- Verify all remaining methods have proper docstrings
+- Check for any other typos or inconsistencies
+- (Future) Consider extracting `_generate_master_snakefile_content()` (~200 lines) to reuse `SnakemakeWorkflowBuilder`
+
+### Implementation Steps
+1. Search codebase for usage of `minutes_to_hhmmss()` and `consolidate_analysis_outptus()`
+2. Remove unused imports from both `analysis.py` and `sensitivity_analysis.py`
+3. Consolidate duplicate imports in `analysis.py`
+4. Remove dead code methods from `analysis.py`
+5. Fix typo method calls in `sensitivity_analysis.py`
+6. Run smoke tests to verify no breakage (especially test_PC_05_sensitivity_analysis_with_snakemake.py)
+7. Update this document to mark Phase 4 complete
 
 ---
 
@@ -440,17 +542,35 @@ Tests may be modified to:
 - [x] Run smoke tests (22/22 passing)
 - [x] Verify execution behavior unchanged
 
-### Phase 3: Workflow Generation ⏸️ NOT STARTED
-- [ ] Create workflow.py
-- [ ] Move workflow generation methods
-- [ ] Update analysis.py to use builder
-- [ ] Run smoke tests
-- [ ] Verify Snakefiles unchanged
+### Phase 3: Workflow Generation ✅ COMPLETE
+- [x] Create workflow.py
+- [x] Define SnakemakeWorkflowBuilder class
+- [x] Move generate_snakefile_content()
+- [x] Move generate_snakemake_config()
+- [x] Move write_snakemake_config()
+- [x] Move run_snakemake_local()
+- [x] Move run_snakemake_slurm()
+- [x] Move submit_workflow() orchestration
+- [x] Update analysis.py to use builder
+- [x] Run smoke tests (22/22 passing)
+- [x] Verify Snakefiles unchanged
 
 ### Phase 4: Simplify Facade ⏸️ NOT STARTED
-- [ ] Remove extracted methods
-- [ ] Document components
-- [ ] Final smoke test validation
+- [ ] Search codebase for usage of dead code candidates
+  - [ ] Check for `minutes_to_hhmmss` usage
+  - [ ] Check for `consolidate_analysis_outptus` usage (also used in sensitivity_analysis.py)
+- [ ] Clean up analysis.py
+  - [ ] Remove unused imports (`subprocess`, `shutil`, `yaml`, `ProcessPoolExecutor`, `traceback`, `redirect_stdout`, `redirect_stderr`, `threading`, `psutil`, `warnings`, `Mode`)
+  - [ ] Fix duplicate imports (`as_completed`, `Optional`, `Path`)
+  - [ ] Remove `retreive_scenario_timeseries_processing_launchers()` typo method
+  - [ ] Remove `consolidate_analysis_outptus()` typo method
+  - [ ] Remove `minutes_to_hhmmss()` if unused
+- [ ] Clean up sensitivity_analysis.py
+  - [ ] Remove unused imports (`subprocess`, `shutil`, `Mode`, `pprint`, `json`)
+  - [ ] Fix typo method call: `retreive_scenario_timeseries_processing_launchers()` → `retrieve_scenario_timeseries_processing_launchers()`
+  - [ ] Fix typo method call: `consolidate_analysis_outptus()` → update based on analysis.py changes
+- [ ] Run smoke tests (22/22 expected, especially test_PC_05 for sensitivity_analysis.py)
+- [ ] Update refactoring plan to mark Phase 4 complete
 
 ---
 
@@ -511,4 +631,4 @@ Tests may be modified to:
 
 ---
 
-**Last Updated:** January 26, 2026 - Phase 2 Complete, All Tests Passing ✅
+**Last Updated:** January 26, 2026 - Phase 3 Complete, All Tests Passing ✅
