@@ -1,0 +1,487 @@
+# TRITON-SWMM Toolkit Refactoring Plan
+
+**Date:** January 26, 2026 | **Status:** Phase 1 Complete ✅ | **Goal:** Decompose `TRITONSWMM_analysis` god class
+
+---
+
+## Executive Summary
+
+Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused components while **preserving all public APIs**. Conducted in 4 phases with full test validation after each phase.
+
+**Phase Completion Criteria:**
+- ✅ Code changes complete
+- ✅ **All 4 smoke tests passing**
+- ✅ No public API changes
+- ✅ Log file structures unchanged
+- ✅ Dead code identified for removal
+
+---
+
+## Global Architectural Overview
+
+### System Architecture
+
+```
+TRITON-SWMM Toolkit
+├── Configuration Layer (config.py, paths.py)
+│   ├── Pydantic validation models
+│   ├── YAML config loaders
+│   └── Path management
+│
+├── System Setup Layer (system.py)
+│   ├── DEM processing
+│   ├── Manning's coefficient processing
+│   └── TRITON-SWMM compilation
+│
+├── Analysis Orchestration Layer (analysis.py) ⚠️ GOD CLASS
+│   ├── Scenario iteration/management
+│   ├── Execution strategies (serial, concurrent, SLURM)
+│   ├── Resource management (SLURM constraints)
+│   ├── Snakemake workflow generation
+│   └── Output consolidation coordination
+│
+├── Scenario Management Layer (scenario.py)
+│   ├── Individual scenario setup
+│   ├── SWMM model generation
+│   ├── Boundary condition creation
+│   └── TRITON config generation
+│
+├── Execution Layer (run_simulation.py)
+│   ├── Command building
+│   ├── Subprocess management
+│   └── Checkpoint recovery
+│
+├── Post-Processing Layer
+│   ├── Per-scenario processing (process_simulation.py)
+│   ├── Ensemble consolidation (processing_analysis.py)
+│   └── Sensitivity analysis (sensitivity_analysis.py)
+│
+├── Logging & State Layer (log.py)
+│   ├── JSON-based state tracking
+│   └── Pydantic log models
+│
+├── Visualization Layer (plot_*.py)
+│   ├── System plots
+│   ├── Analysis plots
+│   └── Utility functions
+│
+└── CLI Entry Points (*_runner.py, setup_workflow.py, etc.)
+    └── Subprocess entry points for Snakemake
+```
+
+### Data Flow
+
+```
+User Config (YAML)
+    ↓
+System Setup (DEM, Manning's, Compilation)
+    ↓
+Analysis Creation (scenario list, paths)
+    ↓
+Scenario Preparation (SWMM models, boundary conditions)
+    ↓
+Simulation Execution (TRITON-SWMM run)
+    ↓
+Output Processing (timeseries extraction)
+    ↓
+Consolidation (ensemble-level summaries)
+    ↓
+Visualization & Analysis
+```
+
+### Public API Surface (Must Remain Stable)
+
+**Entry Points:**
+1. `TRITONSWMM_system(system_config_yaml)` - System setup
+2. `TRITONSWMM_system.add_analysis(analysis_config_yaml)` → `TRITONSWMM_analysis`
+3. `TRITONSWMM_analysis.submit_workflow()` - Snakemake-based execution
+4. `TRITONSWMM_sensitivity_analysis.submit_workflow()` - Sensitivity analysis
+5. All CLI modules (`setup_workflow`, `run_single_simulation`, etc.)
+
+**Key Public Methods:**
+- `TRITONSWMM_analysis.run_prepare_scenarios_serially()`
+- `TRITONSWMM_analysis.run_simulations_concurrently()`
+- `TRITONSWMM_analysis.consolidate_TRITON_and_SWMM_simulation_summaries()`
+- `TRITONSWMM_analysis.df_status` (property)
+
+### High-Risk Coupling Points
+
+1. **Circular Type Dependencies:**
+   - `analysis.py` ↔ `scenario.py` ↔ `run_simulation.py` ↔ `process_simulation.py`
+   - All use `TYPE_CHECKING` imports to break cycles
+
+2. **Config Sprawl:**
+   - `analysis_config` has 40+ fields mixing simulation params, HPC config, output preferences
+
+3. **Subprocess Python Executable:**
+   - Hardcoded `"python"` vs `sys.executable` causes environment issues
+   - Fixed by using `cfg_analysis.python_path` or defaulting to `"python"`
+
+---
+
+## Problem Statement
+
+### God Class: `TRITONSWMM_analysis`
+
+**Current State:** 1,400+ lines, 50+ methods mixing 6+ responsibilities:
+1. Scenario iteration/management
+2. Serial execution orchestration
+3. Concurrent execution (ThreadPool/ProcessPool)
+4. SLURM resource management and constraint parsing
+5. Snakemake workflow generation
+6. Output consolidation coordination
+
+**Impact:**
+- Every change risks breaking unrelated functionality
+- Impossible to test individual concerns in isolation
+- High cognitive load for modifications
+- Difficult for AI agents to reason about locally
+
+---
+
+## Target Architecture
+
+```
+TRITONSWMM_analysis (Thin Facade)
+├── ResourceManager ✅ (Phase 1 - COMPLETE)
+│   ├── calculate_effective_max_parallel()
+│   ├── _get_slurm_resource_constraints()
+│   └── _parse_slurm_tasks_per_node()
+│
+├── ExecutionStrategy (Phase 2)
+│   ├── SerialExecutor
+│   ├── LocalConcurrentExecutor
+│   └── SlurmExecutor
+│
+├── SnakemakeWorkflowBuilder (Phase 3)
+│   ├── generate_snakefile_content()
+│   └── generate_snakemake_config()
+│
+└── OutputConsolidator (already exists as TRITONSWMM_analysis_post_processing)
+```
+
+---
+
+## Phase 1: Extract Resource Management ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
+
+**What Changed:**
+- Created `src/TRITON_SWMM_toolkit/resource_management.py` with `ResourceManager` class
+- Extracted 3 methods from `analysis.py`:
+  - `calculate_effective_max_parallel()` - Calculates effective parallelism based on CPU, GPU, memory, and SLURM constraints
+  - `_get_slurm_resource_constraints()` - Extracts SLURM resource constraints from environment variables
+  - `_parse_slurm_tasks_per_node()` - Parses SLURM_TASKS_PER_NODE format
+- `analysis.py` now delegates to `self._resource_manager`
+- **All 4 smoke tests passing:**
+  - `test_PC_01_singlesim.py` - 7/7 passed ✅
+  - `test_PC_02_multisim.py` - 2/2 passed ✅
+  - `test_PC_04_multisim_with_snakemake.py` - 7/7 passed ✅
+  - `test_PC_05_sensitivity_analysis_with_snakemake.py` - 6/6 passed ✅
+
+**Changes Summary:**
+```python
+# analysis.py - BEFORE
+class TRITONSWMM_analysis:
+    def calculate_effective_max_parallel(...):
+        # 100+ lines of SLURM logic
+    
+    def _get_slurm_resource_constraints(...):
+        # 80+ lines of env var parsing
+    
+    def _parse_slurm_tasks_per_node(...):
+        # 20+ lines of string parsing
+
+# analysis.py - AFTER
+from TRITON_SWMM_toolkit.resource_management import ResourceManager
+
+class TRITONSWMM_analysis:
+    def __init__(...):
+        self._resource_manager = ResourceManager(self.cfg_analysis, self.in_slurm)
+    
+    def calculate_effective_max_parallel(...):
+        return self._resource_manager.calculate_effective_max_parallel(...)
+    
+    # Thin wrappers that delegate to ResourceManager
+```
+
+---
+
+## Phase 2: Extract Execution Strategies ⏸️ NEXT
+
+**Goal:** Separate "how to run" from "what to run"
+
+**Create:** `src/TRITON_SWMM_toolkit/execution.py`
+
+### Components to Extract
+
+#### 1. ExecutionStrategy Protocol
+```python
+from typing import Protocol, List, Tuple, Optional
+
+class ExecutionStrategy(Protocol):
+    """Protocol for simulation execution strategies."""
+    
+    def execute_simulations(
+        self,
+        launch_functions: List[Tuple],
+        max_concurrent: Optional[int],
+        verbose: bool
+    ) -> List[str]:
+        """Execute simulations and return completion statuses."""
+        ...
+```
+
+#### 2. SerialExecutor
+**Extract from:** `run_sims_in_sequence()`
+
+```python
+class SerialExecutor:
+    """Sequential simulation execution."""
+    
+    def __init__(self, analysis: "TRITONSWMM_analysis"):
+        self.analysis = analysis
+    
+    def execute_simulations(
+        self,
+        launch_functions: List[Tuple],
+        max_concurrent: Optional[int] = None,
+        verbose: bool = True
+    ) -> List[str]:
+        """Execute simulations sequentially."""
+        results = []
+        for launcher, finalize_sim in launch_functions:
+            proc, start_time, sim_logfile, lf = launcher()
+            finalize_sim(proc, start_time, sim_logfile, lf)
+            results.append("completed")
+        self.analysis._update_log()
+        return results
+```
+
+#### 3. LocalConcurrentExecutor
+**Extract from:** `run_simulations_concurrently_on_local_machine()`
+
+#### 4. SlurmExecutor
+**Extract from:** `run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks()`
+
+### Changes to `analysis.py`
+
+```python
+from TRITON_SWMM_toolkit.execution import (
+    SerialExecutor,
+    LocalConcurrentExecutor,
+    SlurmExecutor
+)
+
+class TRITONSWMM_analysis:
+    def __init__(self, ...):
+        self._resource_manager = ResourceManager(...)
+        self._execution_strategy = self._select_execution_strategy()
+    
+    def _select_execution_strategy(self):
+        method = self.cfg_analysis.multi_sim_run_method
+        if method == "1_job_many_srun_tasks":
+            return SlurmExecutor(self)
+        elif method == "local":
+            return LocalConcurrentExecutor(self)
+        else:
+            return SerialExecutor(self)
+    
+    def run_simulations_concurrently(self, launch_functions, max_concurrent=None, verbose=True):
+        """Delegate to execution strategy."""
+        return self._execution_strategy.execute_simulations(
+            launch_functions, max_concurrent, verbose
+        )
+```
+
+**Risk:** Medium - Must preserve exact execution order and logging behavior
+
+---
+
+## Phase 3: Extract Workflow Generation ⏸️ FUTURE
+
+**Goal:** Make Snakemake workflow generation testable
+
+**Create:** `src/TRITON_SWMM_toolkit/workflow.py`
+
+**Extract:**
+- `_generate_snakefile_content()`
+- `_generate_snakemake_config()`
+- `_write_snakemake_config()`
+- `_run_snakemake_local()`
+- `_run_snakemake_slurm()`
+
+---
+
+## Phase 4: Simplify Facade ⏸️ FUTURE
+
+**Goal:** Clean up `analysis.py` to ~500-700 lines
+
+**Actions:**
+- Remove all extracted methods
+- Add clear component delegation
+- Document responsibilities
+
+---
+
+## Dead Code Candidates
+
+### Confirmed Issues
+
+1. **Typo/Duplicate Methods:**
+   - `retreive_scenario_timeseries_processing_launchers()` (line 582) - typo, duplicate of `retrieve_scenario_timeseries_processing_launchers()` (line 308)
+   - `consolidate_analysis_outptus()` (line 618) - typo in function name
+
+2. **Potentially Unused:**
+   - `minutes_to_hhmmss()` at module level (line 1486) - utility function that may not be called
+
+### Removal Strategy
+
+**Phase 1.5 (Optional Cleanup):**
+- Remove duplicate `retreive_scenario_timeseries_processing_launchers()`
+- Fix or remove `consolidate_analysis_outptus()` typo
+- Search codebase for `minutes_to_hhmmss` usage
+
+**Future Phases:**
+- Conduct comprehensive dead code analysis using tools like `vulture` or `coverage`
+- Remove unused imports
+- Consolidate duplicate logic
+
+---
+
+## Smoke Test Requirements
+
+**All phases must pass these tests before completion:**
+
+1. `pytest tests/test_PC_01_singlesim.py -v` - Single simulation end-to-end
+2. `pytest tests/test_PC_02_multisim.py -v` - Multi-simulation concurrent execution
+3. `pytest tests/test_PC_04_multisim_with_snakemake.py -v` - Snakemake workflow
+4. `pytest tests/test_PC_05_sensitivity_analysis_with_snakemake.py -v` - Sensitivity analysis
+
+**Test Command:**
+```bash
+conda activate triton_swmm_toolkit
+cd /home/***REMOVED***/dev/TRITON-SWMM_toolkit
+python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py tests/test_PC_04_multisim_with_snakemake.py tests/test_PC_05_sensitivity_analysis_with_snakemake.py -v
+```
+
+**Phase Completion Criteria:**
+- ✅ Code changes complete
+- ✅ All 4 smoke tests passing
+- ✅ No public API changes
+- ✅ Log file structures unchanged
+- ✅ Dead code identified
+
+---
+
+## Test Improvement Guidelines
+
+Tests may be modified to:
+1. **Strengthen coverage** - Add assertions for edge cases
+2. **Improve clarity** - Better test names, more explicit assertions
+3. **Accommodate improvements** - Update when refactoring improves behavior
+4. **Fix brittleness** - Replace hardcoded paths with dynamic values
+
+**Restrictions:**
+- Must not reduce coverage
+- Must not bypass validation of core functionality
+- Changes must be documented in commit messages
+
+---
+
+## Progress Checklist
+
+### Phase 1: Resource Management ✅ COMPLETE
+- [x] Create resource_management.py
+- [x] Define ResourceManager class
+- [x] Move calculate_effective_max_parallel()
+- [x] Move _get_slurm_resource_constraints()
+- [x] Move _parse_slurm_tasks_per_node()
+- [x] Update analysis.py to use ResourceManager
+- [x] Run smoke tests (all 4 passing)
+- [x] Document architecture overview
+- [x] Identify dead code candidates
+
+### Phase 2: Execution Strategies ⏸️ NOT STARTED
+- [ ] Create execution.py
+- [ ] Define ExecutionStrategy protocol
+- [ ] Implement SerialExecutor
+- [ ] Implement LocalConcurrentExecutor
+- [ ] Implement SlurmExecutor
+- [ ] Update analysis.py strategy selection
+- [ ] Remove old execution methods
+- [ ] Run smoke tests
+- [ ] Verify execution behavior unchanged
+
+### Phase 3: Workflow Generation ⏸️ NOT STARTED
+- [ ] Create workflow.py
+- [ ] Move workflow generation methods
+- [ ] Update analysis.py to use builder
+- [ ] Run smoke tests
+- [ ] Verify Snakefiles unchanged
+
+### Phase 4: Simplify Facade ⏸️ NOT STARTED
+- [ ] Remove extracted methods
+- [ ] Document components
+- [ ] Final smoke test validation
+
+---
+
+## Validation Strategy
+
+### After Each Phase
+
+1. **Run full smoke test suite**
+2. **Check invariants:**
+   - Simulation order matches (serial execution)
+   - Resource allocation decisions match
+   - SLURM command construction matches
+   - Log entries identical
+   - File paths unchanged
+
+3. **Regression detection:**
+   ```bash
+   # Capture baseline before phase
+   pytest tests/ -v > baseline_tests.log
+   
+   # After phase
+   pytest tests/ -v > phase_N_tests.log
+   diff baseline_tests.log phase_N_tests.log
+   ```
+
+### Rollback Strategy
+
+- Git commit after each phase passes validation
+- Tag stable points: `refactor-phase-1`, `refactor-phase-2`, etc.
+- Keep `analysis_v1.py.backup` until Phase 4 complete
+
+---
+
+## Benefits for AI Agents
+
+### Reduced Context Requirements
+
+**Before:** 1,400 lines of context required for any change
+
+**After Phase 1:** 
+- Modifying SLURM logic: Only read `resource_management.py` (~300 lines)
+- Clear component boundaries reduce context by 75%
+
+**After Phase 2:**
+- Adding execution backend: Only implement `ExecutionStrategy` protocol
+- Modifying local execution: Only touch `LocalConcurrentExecutor`
+
+**After All Phases:**
+- Each component has explicit inputs/outputs
+- Changes contained within component boundaries
+- Side effects explicit through method signatures
+
+### Local Reasoning
+
+- Each component testable in isolation
+- Unit tests with mocked dependencies
+- Integration tests verify component interactions
+
+---
+
+**Last Updated:** January 26, 2026 - Phase 1 Complete, All Tests Passing ✅
