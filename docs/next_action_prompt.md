@@ -256,7 +256,7 @@ src/TRITON_SWMM_toolkit/
 3. Ensure consistent formatting
 
 ### Step 4: Validation
-Run all smoke tests:
+Run all smoke tests after double checking that all changes have attempted.
 ```bash
 conda activate triton_swmm_toolkit
 cd /home/***REMOVED***/dev/TRITON-SWMM_toolkit
