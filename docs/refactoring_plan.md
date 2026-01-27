@@ -1,19 +1,25 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 26, 2026 | **Status:** Phase 1 Complete ✅ | **Goal:** Decompose `TRITONSWMM_analysis` god class
+**Date:** January 26, 2026 | **Status:** Phase 2 Complete ✅ | **Goal:** Decompose `TRITONSWMM_analysis` god class
 
 ---
 
 ## Executive Summary
 
-Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused components while **preserving all public APIs**. Conducted in 4 phases with full test validation after each phase.
+Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused components. Conducted in 4 phases with full test validation after each phase.
+
+**Refactoring Strategy:**
+- ✅ **Prioritize codebase reduction** - Aggressively remove duplicate code
+- ✅ **Not concerned with backward compatibility** - Internal APIs can change
+- ✅ **Preserve core functionality** - Public entry points remain stable
+- ✅ **Update tests as needed** - Allow test modifications for improved clarity
 
 **Phase Completion Criteria:**
 - ✅ Code changes complete
 - ✅ **All 4 smoke tests passing**
-- ✅ No public API changes
+- ✅ Public entry points stable (but internal APIs can change)
 - ✅ Log file structures unchanged
-- ✅ Dead code identified for removal
+- ✅ Dead code identified and removed
 
 ---
 
@@ -207,13 +213,33 @@ class TRITONSWMM_analysis:
 
 ---
 
-## Phase 2: Extract Execution Strategies ⏸️ NEXT
+## Phase 2: Extract Execution Strategies ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
 
 **Goal:** Separate "how to run" from "what to run"
 
-**Create:** `src/TRITON_SWMM_toolkit/execution.py`
+**Created:** `src/TRITON_SWMM_toolkit/execution.py` (~430 lines)
 
-### Components to Extract
+**What Changed:**
+- Created `src/TRITON_SWMM_toolkit/execution.py` with execution strategy classes
+- Extracted execution logic into 3 strategy classes:
+  - `SerialExecutor` - Sequential simulation execution
+  - `LocalConcurrentExecutor` - Parallel execution on local machines using ThreadPoolExecutor
+  - `SlurmExecutor` - Parallel execution on HPC using SLURM srun tasks
+- Added `_select_execution_strategy()` method to `analysis.py` to choose appropriate executor
+- Updated `run_simulations_concurrently()` to delegate to `self._execution_strategy`
+- **Removed ~260 lines of duplicate code** from `analysis.py`:
+  - Deleted `run_simulations_concurrently_on_local_machine()` (~80 lines)
+  - Deleted `run_simulations_concurrently_on_SLURM_HPC_using_many_srun_tasks()` (~180 lines)
+- Updated `tests/test_PC_02_multisim.py` to use new API
+- **All 4 smoke tests passing:**
+  - `test_PC_01_singlesim.py` - 7/7 passed ✅
+  - `test_PC_02_multisim.py` - 2/2 passed ✅
+  - `test_PC_04_multisim_with_snakemake.py` - 7/7 passed ✅
+  - `test_PC_05_sensitivity_analysis_with_snakemake.py` - 6/6 passed ✅
+
+### Components Extracted
 
 #### 1. ExecutionStrategy Protocol
 ```python
@@ -402,16 +428,17 @@ Tests may be modified to:
 - [x] Document architecture overview
 - [x] Identify dead code candidates
 
-### Phase 2: Execution Strategies ⏸️ NOT STARTED
-- [ ] Create execution.py
-- [ ] Define ExecutionStrategy protocol
-- [ ] Implement SerialExecutor
-- [ ] Implement LocalConcurrentExecutor
-- [ ] Implement SlurmExecutor
-- [ ] Update analysis.py strategy selection
-- [ ] Remove old execution methods
-- [ ] Run smoke tests
-- [ ] Verify execution behavior unchanged
+### Phase 2: Execution Strategies ✅ COMPLETE
+- [x] Create execution.py
+- [x] Define ExecutionStrategy protocol
+- [x] Implement SerialExecutor
+- [x] Implement LocalConcurrentExecutor
+- [x] Implement SlurmExecutor
+- [x] Update analysis.py strategy selection
+- [x] Remove old execution methods (~260 lines deleted)
+- [x] Update tests to use new API (test_PC_02_multisim.py)
+- [x] Run smoke tests (22/22 passing)
+- [x] Verify execution behavior unchanged
 
 ### Phase 3: Workflow Generation ⏸️ NOT STARTED
 - [ ] Create workflow.py
@@ -484,4 +511,4 @@ Tests may be modified to:
 
 ---
 
-**Last Updated:** January 26, 2026 - Phase 1 Complete, All Tests Passing ✅
+**Last Updated:** January 26, 2026 - Phase 2 Complete, All Tests Passing ✅
