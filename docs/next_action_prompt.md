@@ -1,112 +1,130 @@
-# Phase 6: Extract SWMM Output Parsing
+# Phase 7: Remove Delegation Wrappers in analysis.py
 
-**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Extract SWMM parsing logic into dedicated module
+**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Clean up thin wrapper methods that delegate to extracted components
 
 ---
 
 ## Objective
 
-Extract SWMM output parsing functions from `process_simulation.py` (~1100 lines) into a new dedicated module `swmm_output_parser.py`. This creates clear separation between simulation processing orchestration and SWMM output parsing logic.
+Remove delegation wrapper methods from `analysis.py` that simply forward calls to `ResourceManager` and `SnakemakeWorkflowBuilder`. This makes the delegation explicit and reduces unnecessary indirection.
 
 **Expected Impact:**
-- Reduces `process_simulation.py` from ~1100 to ~600 lines
-- Makes SWMM parsing reusable across different contexts
-- Easier to test SWMM parsing logic in isolation
-- Clear separation of concerns
+- Reduces `analysis.py` by ~100 lines
+- Makes component delegation explicit and clear
+- Reduces method call indirection
+- Improves code readability
 
-**Risk Level:** Low - These are pure functions with no class dependencies
-
----
-
-## Functions to Extract
-
-Create new file: `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
-
-### Primary SWMM Parsing Functions (18 total)
-
-**Main Entry Points:**
-1. `retrieve_SWMM_outputs_as_datasets()` - Main entry point for SWMM output retrieval
-2. `return_swmm_outputs()` - Returns SWMM outputs from .out or .rpt file
-3. `return_swmm_system_outputs()` - Returns system-level SWMM outputs (continuity errors, flooding)
-
-**RPT File Parsing:**
-4. `return_lines_for_section_of_rpt()` - Extracts lines from RPT file sections
-5. `return_data_from_rpt()` - Generic RPT data extraction with error handling
-6. `format_rpt_section_into_dataframe()` - Formats RPT sections as DataFrames
-7. `return_analysis_end_date()` - Parses analysis end date from RPT
-
-**Timeseries Parsing:**
-8. `return_node_time_series_results_from_rpt()` - Parses node timeseries from RPT
-9. `return_node_time_series_results_from_outfile()` - Parses node timeseries from .out file
-10. `create_tseries_ds()` - Creates timeseries xarray Dataset from parsed data
-11. `convert_pyswmm_output_to_df()` - Converts pyswmm output to DataFrame
-
-**Data Type Conversion:**
-12. `convert_swmm_tdeltas_to_minutes()` - Converts SWMM time deltas to minutes
-13. `convert_coords_to_dtype()` - Coerces xarray coordinates to proper dtypes
-14. `convert_datavars_to_dtype()` - Coerces xarray data variables to proper dtypes
-
-**String Parsing Helpers:**
-15. `extract_substring()` - Extracts substring using index tuple
-16. `find_substring_indices()` - Finds all occurrences of substring
-17. `split_at_index()` - Splits string at given index
-18. `isel_first_and_slice_longest()` - xarray selection helper for sampling
+**Risk Level:** Low - Simple mechanical refactoring with clear call sites
 
 ---
 
-## Functions to Keep in process_simulation.py
+## Methods to Remove
 
-**Keep these in `process_simulation.py`:**
-- `TRITONSWMM_sim_post_processing` class (entire class stays)
-- `parse_performance_file()` - TRITON performance parsing
-- `return_filelist_by_tstep()` - TRITON file listing
-- `return_fpath_wlevels()` - TRITON file path retrieval
-- `load_triton_output_w_xarray()` - TRITON output loading
-- `summarize_swmm_simulation_results()` - Summarization function
-- `summarize_triton_simulation_results()` - Summarization function
+### From Phase 1 (ResourceManager) - 2 wrappers
 
----
-
-## Required Imports for swmm_output_parser.py
-
+**1. `_parse_slurm_tasks_per_node()`**
 ```python
-import sys
-import re
-import warnings
-from datetime import datetime
-from pathlib import Path
-from typing import Literal, Optional
+# CURRENT: Wrapper method in analysis.py
+def _parse_slurm_tasks_per_node(self, tasks_per_node_str: str) -> dict:
+    return self._resource_manager.parse_slurm_tasks_per_node(tasks_per_node_str)
 
-import numpy as np
-import pandas as pd
-import xarray as xr
-import swmmio
+# AFTER: Direct access
+# Replace: self._parse_slurm_tasks_per_node(...)
+# With: self._resource_manager.parse_slurm_tasks_per_node(...)
+```
 
-from pyswmm import Output, NodeSeries, LinkSeries
+**2. `_get_slurm_resource_constraints()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _get_slurm_resource_constraints(self) -> dict:
+    return self._resource_manager.get_slurm_resource_constraints()
 
-from TRITON_SWMM_toolkit.constants import (
-    LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
-    LST_COL_HEADERS_NODE_FLOW_SUMMARY,
-    LST_COL_HEADERS_LINK_FLOW_SUMMARY,
-)
+# AFTER: Direct access
+# Replace: self._get_slurm_resource_constraints()
+# With: self._resource_manager.get_slurm_resource_constraints()
+```
+
+### From Phase 3 (SnakemakeWorkflowBuilder) - 5 wrappers
+
+**3. `_generate_snakefile_content()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _generate_snakefile_content(self, ...) -> str:
+    return self._workflow_builder.generate_snakefile_content(...)
+
+# AFTER: Direct access
+# Replace: self._generate_snakefile_content(...)
+# With: self._workflow_builder.generate_snakefile_content(...)
+```
+
+**4. `_generate_snakemake_config()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _generate_snakemake_config(self) -> dict:
+    return self._workflow_builder.generate_snakemake_config()
+
+# AFTER: Direct access
+# Replace: self._generate_snakemake_config()
+# With: self._workflow_builder.generate_snakemake_config()
+```
+
+**5. `_write_snakemake_config()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _write_snakemake_config(self, config: dict):
+    return self._workflow_builder.write_snakemake_config(config)
+
+# AFTER: Direct access
+# Replace: self._write_snakemake_config(...)
+# With: self._workflow_builder.write_snakemake_config(...)
+```
+
+**6. `_run_snakemake_local()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _run_snakemake_local(self, ...):
+    return self._workflow_builder.run_snakemake_local(...)
+
+# AFTER: Direct access
+# Replace: self._run_snakemake_local(...)
+# With: self._workflow_builder.run_snakemake_local(...)
+```
+
+**7. `_run_snakemake_slurm()`**
+```python
+# CURRENT: Wrapper method in analysis.py
+def _run_snakemake_slurm(self, ...):
+    return self._workflow_builder.run_snakemake_slurm(...)
+
+# AFTER: Direct access
+# Replace: self._run_snakemake_slurm(...)
+# With: self._workflow_builder.run_snakemake_slurm(...)
 ```
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Create swmm_output_parser.py
-1. Create new file: `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
-2. Add required imports (see above)
-3. Copy all 18 functions listed above from `process_simulation.py`
-4. Verify no class dependencies exist (all functions should be standalone)
+### Step 1: Find All Call Sites
+Search `analysis.py` for all calls to the 7 wrapper methods:
+```bash
+grep -n "_parse_slurm_tasks_per_node\|_get_slurm_resource_constraints\|_generate_snakefile_content\|_generate_snakemake_config\|_write_snakemake_config\|_run_snakemake_local\|_run_snakemake_slurm" src/TRITON_SWMM_toolkit/analysis.py
+```
 
-### Step 2: Update process_simulation.py
-1. Add import at top: `from TRITON_SWMM_toolkit.swmm_output_parser import retrieve_SWMM_outputs_as_datasets`
-2. Remove all 18 functions that were moved
-3. Verify `_export_SWMM_outputs()` method still works (it calls `retrieve_SWMM_outputs_as_datasets()`)
+### Step 2: Update Call Sites
+For each call site, update to use direct component access:
+- `self._parse_slurm_tasks_per_node(...)` → `self._resource_manager.parse_slurm_tasks_per_node(...)`
+- `self._get_slurm_resource_constraints()` → `self._resource_manager.get_slurm_resource_constraints()`
+- `self._generate_snakefile_content(...)` → `self._workflow_builder.generate_snakefile_content(...)`
+- `self._generate_snakemake_config()` → `self._workflow_builder.generate_snakemake_config()`
+- `self._write_snakemake_config(...)` → `self._workflow_builder.write_snakemake_config(...)`
+- `self._run_snakemake_local(...)` → `self._workflow_builder.run_snakemake_local(...)`
+- `self._run_snakemake_slurm(...)` → `self._workflow_builder.run_snakemake_slurm(...)`
 
-### Step 3: Validate
+### Step 3: Remove Wrapper Methods
+Delete all 7 wrapper method definitions from `analysis.py`
+
+### Step 4: Validate
 Run all smoke tests:
 ```bash
 conda activate triton_swmm_toolkit
@@ -121,45 +139,66 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 ## Key Constraints
 
 ✅ **DO:**
-- Move all 18 functions as standalone functions
-- Keep function signatures identical
-- Update imports in `process_simulation.py`
-- Verify no circular import issues
+- Update all call sites before removing wrapper methods
+- Use direct component access (`self._resource_manager.*`, `self._workflow_builder.*`)
+- Keep method signatures and behavior identical
+- Verify no other files import these wrapper methods
 
 ❌ **DON'T:**
-- Modify function logic or signatures
-- Move TRITON-specific functions
-- Move summarization functions
-- Touch the `TRITONSWMM_sim_post_processing` class
+- Change any logic or behavior
+- Modify the component classes themselves
+- Touch any public API methods
+- Skip any call sites
 
 ---
 
-## Expected File Sizes After Refactoring
+## Expected Results
 
-- `swmm_output_parser.py`: ~500 lines (new file)
-- `process_simulation.py`: ~600 lines (reduced from ~1100)
+**Before:**
+```python
+class TRITONSWMM_analysis:
+    def some_method(self):
+        constraints = self._get_slurm_resource_constraints()  # Wrapper call
+        config = self._generate_snakemake_config()  # Wrapper call
+        
+    def _get_slurm_resource_constraints(self):  # Wrapper method
+        return self._resource_manager.get_slurm_resource_constraints()
+        
+    def _generate_snakemake_config(self):  # Wrapper method
+        return self._workflow_builder.generate_snakemake_config()
+```
+
+**After:**
+```python
+class TRITONSWMM_analysis:
+    def some_method(self):
+        constraints = self._resource_manager.get_slurm_resource_constraints()  # Direct call
+        config = self._workflow_builder.generate_snakemake_config()  # Direct call
+        
+    # Wrapper methods removed - ~100 lines deleted
+```
 
 ---
 
 ## Validation Checklist
 
-- [ ] Created `swmm_output_parser.py` with all 18 functions
-- [ ] Updated imports in `process_simulation.py`
-- [ ] Removed moved functions from `process_simulation.py`
-- [ ] No circular import issues
+- [ ] Found all call sites for 7 wrapper methods
+- [ ] Updated all call sites to use direct component access
+- [ ] Removed all 7 wrapper method definitions
+- [ ] Verified no other files import these methods
 - [ ] All 22 smoke tests passing (test_PC_01, test_PC_02, test_PC_04, test_PC_05)
-- [ ] `_export_SWMM_outputs()` method still works correctly
-- [ ] No changes to public API or log file structures
+- [ ] No changes to public API
+- [ ] No changes to component classes
 
 ---
 
 ## Notes
 
-- This is a pure code movement refactoring - no logic changes
-- All functions are standalone with no class dependencies
-- The `TRITONSWMM_sim_post_processing` class will call `retrieve_SWMM_outputs_as_datasets()` from the new module
-- TRITON-specific parsing remains in `process_simulation.py` for now (may be extracted in future phase)
+- This is a pure refactoring - no logic changes
+- Makes delegation explicit and reduces indirection
+- Improves code clarity by showing which component handles each responsibility
+- Sets up cleaner architecture for future phases
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 6 Implementation Guide
+**Last Updated:** January 27, 2026 - Phase 7 Implementation Guide

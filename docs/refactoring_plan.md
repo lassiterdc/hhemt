@@ -1,6 +1,6 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 26, 2026 | **Status:** Phase 5 Complete ✅ - Continuation Phases 6-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
+**Date:** January 27, 2026 | **Status:** Phase 6 Complete ✅ - Continuation Phases 7-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
 ---
 
@@ -511,19 +511,22 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Run smoke tests (22/22 passing)
 - [x] Document new logging patterns
 
-### Phase 6: Extract SWMM Output Parsing
-- [ ] Create swmm_output_parser.py
-- [ ] Move retrieve_SWMM_outputs_as_datasets()
-- [ ] Move return_swmm_outputs()
-- [ ] Move return_swmm_system_outputs()
-- [ ] Move return_lines_for_section_of_rpt()
-- [ ] Move return_node_time_series_results_from_rpt()
-- [ ] Move return_node_time_series_results_from_outfile()
-- [ ] Move format_rpt_section_into_dataframe()
-- [ ] Move return_data_from_rpt()
-- [ ] Move all RPT parsing helper functions
-- [ ] Update process_simulation.py imports
-- [ ] Run smoke tests (22/22 passing)
+### Phase 6: Extract SWMM Output Parsing ✅ COMPLETE
+- [x] Create swmm_output_parser.py
+- [x] Move retrieve_SWMM_outputs_as_datasets()
+- [x] Move return_swmm_outputs()
+- [x] Move return_swmm_system_outputs()
+- [x] Move return_lines_for_section_of_rpt()
+- [x] Move return_node_time_series_results_from_rpt()
+- [x] Move return_node_time_series_results_from_outfile()
+- [x] Move format_rpt_section_into_dataframe()
+- [x] Move return_data_from_rpt()
+- [x] Move all RPT parsing helper functions (18 total)
+- [x] Update process_simulation.py imports
+- [x] Update processing_analysis.py imports
+- [x] Update plot_analysis.py imports
+- [x] Update plot_system.py imports
+- [x] Run smoke tests (22/22 passing)
 
 ### Phase 7: Remove Delegation Wrappers
 - [ ] Identify all delegation wrapper methods in analysis.py
@@ -627,4 +630,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 26, 2026 - Phase 5 Complete ✅ - Continuation Phases 6-10 Planned - All 22 Tests Passing
+**Last Updated:** January 27, 2026 - Phase 6 Complete ✅ - Continuation Phases 7-10 Planned - All 22 Tests Passing
