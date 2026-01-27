@@ -137,7 +137,6 @@ Do **not** propose refactors until that map is complete.
 
 After completing a refactoring phase, use this prompt to validate the work:
 
-```
 Please review and validate the Phase [N] changes that were just completed:
 
 1. **Code Quality Review:**
@@ -164,6 +163,6 @@ Please review and validate the Phase [N] changes that were just completed:
 5. **Summary Report:**
    - Rate the phase completion: Excellent / Good / Needs Improvement
    - List any concerns or recommendations for follow-up
-```
+
 
 **Note:** This validation should be performed in Plan Mode after tests have passed and documentation has been updated in Act Mode.
