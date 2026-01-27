@@ -369,10 +369,13 @@ Extract methods:
    - Ensure consistent code formatting
    - Remove any remaining commented-out code
 
-5. **Script organization restructuring:**
+6. **Script organization restructuring:**
    - Assess the current organization and naming of files in the src directory
    - Improve file names to be more pythonic and apply best practices
    - Identify opportunities for improved folder structure to be more pythonic and apply best practices
+
+6. **Ensure all outputs are directed to snakemake logs:**
+  - Currently, outputs from TRITON-SWMM compilation are not written to the snakemake setup log file. This should be fixed.
 
 **Risk:** Low - These are non-functional improvements
 
