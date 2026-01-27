@@ -168,7 +168,7 @@ Please review and validate the Phase [N] changes that were just completed:
    - If there are any changes that should be completed as part of this phase based on your review, create an action plan now.
 
 7. **Plan next phase**
-   - Create an immediate action plan for updating refactoring_plan.md and next_action_prompt.md. 
+   - Create a plan for updating refactoring_plan.md and next_action_prompt.md before moving onto the next phase.
 
 ## final prompt
 Please review and validate the latest changes that that were just completed and confirm that we are ready to proceed with the next phase as a new task. If substantive code changes were made, ensure that smoke testing was re-done successfully.

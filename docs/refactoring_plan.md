@@ -1,6 +1,6 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 27, 2026 | **Status:** Phase 7 Complete ✅ - Continuation Phases 8-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
+**Date:** January 27, 2026 | **Status:** Phase 7a Complete ✅ - Continuation Phases 8-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
 ---
 
@@ -105,6 +105,57 @@ Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused componen
 - Reduced from 4 places to 3 places (field definition + validator list + serializer list)
 - Helper functions make type coercion explicit and reusable
 - No changes to external API or log file structure
+
+---
+
+## Phase 6: Extract SWMM Output Parsing ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
+
+**What Changed:**
+- Created `src/TRITON_SWMM_toolkit/swmm_output_parser.py` with SWMM parsing functions
+- Extracted 19 functions from `process_simulation.py`:
+  - `retrieve_SWMM_outputs_as_datasets()` - Main entry point
+  - 18 helper functions for RPT and .out file parsing
+- Updated imports in 4 files: `process_simulation.py`, `processing_analysis.py`, `plot_analysis.py`, `plot_system.py`
+- **Reduced `process_simulation.py` from ~1100 to ~600 lines**
+- **All 4 smoke tests passing:** 22/22 tests passed ✅
+
+---
+
+## Phase 7: Remove Delegation Wrappers ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
+
+**What Changed:**
+- Removed 7 thin wrapper methods from `analysis.py`
+- Updated call sites to use direct component access (`self._resource_manager.*`, `self._workflow_builder.*`)
+- Updated `sensitivity_analysis.py` to use direct component access
+- Updated 6 test files to use direct component access
+- **Removed ~100 lines of delegation code**
+- **All 4 smoke tests passing:** 22/22 tests passed ✅
+
+---
+
+## Phase 7a: Subprocess Logging Consolidation ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
+
+**What Changed:**
+- Created `src/TRITON_SWMM_toolkit/subprocess_utils.py` with `run_subprocess_with_tee()` function
+- Updated 5 files to use unified subprocess logging:
+  - `process_simulation.py` - Timeseries processing subprocess
+  - `run_simulation_runner.py` - TRITON-SWMM simulation execution
+  - `scenario.py` - Scenario preparation subprocess
+  - `run_simulation.py` - Added import
+  - `system.py` - Added import
+- Removed dead imports from `process_simulation.py`
+- **All 4 smoke tests passing:** 22/22 tests passed ✅
+
+**Benefits:**
+- Subprocess output now appears in BOTH scenario-level logs AND Snakemake centralized logs
+- Consistent subprocess handling pattern across codebase
+- Warnings/errors visible in Snakemake workflow logs
 
 ---
 
@@ -388,7 +439,9 @@ TRITON-SWMM Toolkit
 │   └── Utility functions
 │
 └── CLI Entry Points (*_runner.py, setup_workflow.py, etc.)
-    └── Subprocess entry points for Snakemake
+    ├── Subprocess entry points for Snakemake
+    └── Subprocess Utilities (subprocess_utils.py) ✅ NEW
+        └── run_subprocess_with_tee() - Unified subprocess logging
 ```
 
 ### Public API Surface (Must Remain Stable)
@@ -542,6 +595,16 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Update test files (6 test files updated)
 - [x] Run smoke tests (22/22 passing)
 
+### Phase 7a: Subprocess Logging Consolidation ✅ COMPLETE
+- [x] Create subprocess_utils.py with run_subprocess_with_tee()
+- [x] Update process_simulation.py to use tee logging
+- [x] Update run_simulation_runner.py to use tee logging
+- [x] Update scenario.py to use tee logging
+- [x] Add import to run_simulation.py
+- [x] Add import to system.py
+- [x] Remove dead imports from process_simulation.py
+- [x] Run smoke tests (22/22 passing)
+
 ### Phase 8: Extract Scenario Preparation
 - [ ] Create scenario_inputs.py
 - [ ] Move _write_swmm_rainfall_dat_files()
@@ -632,4 +695,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 7 Complete ✅ - Continuation Phases 8-10 Planned - All 22 Tests Passing
+**Last Updated:** January 27, 2026 - Phase 7a Complete ✅ - Continuation Phases 8-10 Planned - All 22 Tests Passing
