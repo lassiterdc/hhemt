@@ -388,7 +388,9 @@ rule consolidate:
             )
 
             if result.returncode != 0:
-                error_msg = f"Snakemake workflow failed:\n{result.stderr}"
+                error_msg = (
+                    f"Snakemake workflow failed.\nSee logs for {snakefile_path.parent}"
+                )
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
