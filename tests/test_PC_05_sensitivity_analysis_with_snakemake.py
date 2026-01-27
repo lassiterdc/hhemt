@@ -56,10 +56,12 @@ def test_snakemake_sensitivity_workflow_generation():
         )
 
     # Generate master Snakefile content
-    master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        which="both",
-        overwrite_if_exist=False,
-        compression_level=5,
+    master_snakefile_content = (
+        sensitivity._workflow_builder.generate_master_snakefile_content(
+            which="both",
+            overwrite_if_exist=False,
+            compression_level=5,
+        )
     )
 
     # Verify master Snakefile structure
@@ -120,10 +122,12 @@ def test_snakemake_sensitivity_workflow_files_written():
         )
 
     # Generate and write master Snakefile
-    master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        which="both",
-        overwrite_if_exist=False,
-        compression_level=5,
+    master_snakefile_content = (
+        sensitivity._workflow_builder.generate_master_snakefile_content(
+            which="both",
+            overwrite_if_exist=False,
+            compression_level=5,
+        )
     )
 
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -183,10 +187,12 @@ def test_snakemake_sensitivity_workflow_config_generation():
         )
 
     # Test with different parameter combinations
-    master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        which="TRITON",
-        overwrite_if_exist=True,
-        compression_level=7,
+    master_snakefile_content = (
+        sensitivity._workflow_builder.generate_master_snakefile_content(
+            which="TRITON",
+            overwrite_if_exist=True,
+            compression_level=7,
+        )
     )
 
     # Verify compression level
@@ -249,10 +255,12 @@ def test_snakemake_sensitivity_workflow_dry_run():
         )
 
     # Generate master Snakefile
-    master_snakefile_content = sensitivity._generate_master_snakefile_content(
-        which="both",
-        overwrite_if_exist=False,
-        compression_level=5,
+    master_snakefile_content = (
+        sensitivity._workflow_builder.generate_master_snakefile_content(
+            which="both",
+            overwrite_if_exist=False,
+            compression_level=5,
+        )
     )
     master_snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
     master_snakefile_path.write_text(master_snakefile_content)
