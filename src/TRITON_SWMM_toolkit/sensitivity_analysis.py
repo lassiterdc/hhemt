@@ -6,12 +6,6 @@ import pandas as pd
 from typing import Literal, TYPE_CHECKING
 import time
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
-from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
-from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
-from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
-from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
-from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
 import yaml
 import TRITON_SWMM_toolkit.analysis as anlysis
@@ -23,9 +17,34 @@ if TYPE_CHECKING:
 
 class TRITONSWMM_sensitivity_analysis:
     """
-    Docstring for TRITONSWMM_sensitivity_analysis
-    - Creates subanalyses for each sensitivity analysis table row
-    - Consolidates results at the 'master_analysis' level
+    Manages sensitivity analysis by creating and orchestrating multiple sub-analyses.
+
+    This class creates a separate TRITONSWMM_analysis instance for each row in a
+    sensitivity analysis configuration table (CSV or Excel). Each sub-analysis runs
+    with different parameter values, and results are consolidated at the master level.
+
+    The sensitivity analysis workflow:
+    1. Reads sensitivity configuration (CSV/Excel with parameter combinations)
+    2. Creates sub-analysis for each configuration row
+    3. Runs simulations for all sub-analyses
+    4. Consolidates outputs across all parameter combinations
+    5. Produces multi-dimensional datasets with sensitivity dimensions
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        Master analysis instance that contains the sensitivity configuration
+
+    Attributes
+    ----------
+    master_analysis : TRITONSWMM_analysis
+        Reference to the master analysis
+    sub_analyses : dict
+        Dictionary mapping sub-analysis index to TRITONSWMM_analysis instances
+    df_setup : pd.DataFrame
+        Sensitivity configuration table with parameter combinations
+    independent_vars : list
+        List of parameters being varied in the sensitivity analysis
     """
 
     def __init__(
@@ -40,7 +59,7 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         )
         self.independent_vars = self._attributes_varied_for_analysis()
-        self.df_setup = self._retieve_df_setup().loc[:, self.independent_vars]  # type: ignore
+        self.df_setup = self._retrieve_df_setup().loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
 
         # Initialize workflow builder for sensitivity analysis
@@ -554,7 +573,7 @@ class TRITONSWMM_sensitivity_analysis:
         return self.master_analysis.TRITONSWMM_runtimes
 
     def _attributes_varied_for_analysis(self):
-        df_setup = self._retieve_df_setup()
+        df_setup = self._retrieve_df_setup()
         keys_targeted_for_sensitivity = []
         for key, val in self.master_analysis.cfg_analysis.model_dump().items():
             # print(key)
@@ -563,7 +582,7 @@ class TRITONSWMM_sensitivity_analysis:
                     keys_targeted_for_sensitivity.append(key)
         return keys_targeted_for_sensitivity
 
-    def _retieve_df_setup(self) -> pd.DataFrame:
+    def _retrieve_df_setup(self) -> pd.DataFrame:
         snstivity_definition = self.master_analysis.cfg_analysis.sensitivity_analysis
         f_extension = snstivity_definition.name.lower().split(".")[-1]  # type: ignore
         if f_extension == "csv":
