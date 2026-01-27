@@ -1,11 +1,7 @@
-import sys
-import pandas as pd
 import xarray as xr
-import numpy as np
 from TRITON_SWMM_toolkit.utils import (
     write_zarr,
     write_zarr_then_netcdf,
-    paths_to_strings,
     current_datetime_string,
     get_file_size_MiB,
 )
@@ -300,7 +296,7 @@ class TRITONSWMM_analysis_post_processing:
         proc_log = self._analysis.log.processing_log.outputs
         already_written = False
         if f_out.name in proc_log.keys():
-            if proc_log[f_out.name].success == True:
+            if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
 

@@ -1,7 +1,5 @@
 # %%
 import TRITON_SWMM_toolkit.utils as ut
-from pathlib import Path
-from TRITON_SWMM_toolkit.config import analysis_config
 import pandas as pd
 from typing import Literal, TYPE_CHECKING
 import time
@@ -100,7 +98,7 @@ class TRITONSWMM_sensitivity_analysis:
                 for launcher in prepare_scenario_launchers:
                     launcher()
 
-            if self.all_scenarios_created != True:
+            if self.all_scenarios_created is not True:
                 scens_not_created = "\n\t".join(self.scenarios_not_created)
                 raise RuntimeError(
                     f"Preparation failed for the following scenarios:\n{scens_not_created}"
@@ -646,7 +644,7 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
-                if scen.log.scenario_creation_complete.get() != True:
+                if scen.log.scenario_creation_complete.get() is not True:
                     scenarios_not_created.append(str(scen.log.logfile.parent))
         return scenarios_not_created
 
@@ -656,7 +654,7 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
-                if scen.sim_run_completed != True:
+                if scen.sim_run_completed is not True:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
@@ -674,7 +672,7 @@ class TRITONSWMM_sensitivity_analysis:
                 sub_analysis_ilocs.append(sub_analysis_iloc)
                 event_ilocs.append(event_iloc)
                 scenarios_setup.append(
-                    scen.log.scenario_creation_complete.get() == True
+                    scen.log.scenario_creation_complete.get() is True
                 )
                 scen_runs_completed.append(scen.sim_run_completed)
                 scenario_dirs.append(str(scen.log.logfile.parent))
@@ -697,7 +695,7 @@ class TRITONSWMM_sensitivity_analysis:
             all_scenarios_created = (
                 all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
             )
-        return all_scenarios_created == True
+        return all_scenarios_created is True
 
     @property
     def all_sims_run(self):
@@ -705,7 +703,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
-        return all_sims_run == True
+        return all_sims_run is True
 
     @property
     def all_TRITON_timeseries_processed(self):
@@ -716,7 +714,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_TRITON_timeseries_processed
                 and sub_analysis.log.all_TRITON_timeseries_processed.get()
             )
-        return all_TRITON_timeseries_processed == True
+        return all_TRITON_timeseries_processed is True
 
     @property
     def all_SWMM_timeseries_processed(self):
@@ -727,7 +725,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_SWMM_timeseries_processed
                 and sub_analysis.log.all_SWMM_timeseries_processed.get()
             )
-        return all_SWMM_timeseries_processed == True
+        return all_SWMM_timeseries_processed is True
 
     @property
     def all_TRITONSWMM_performance_timeseries_processed(self):
@@ -738,7 +736,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_TRITONSWMM_performance_timeseries_processed
                 and sub_analysis.log.all_TRITONSWMM_performance_timeseries_processed.get()
             )
-        return all_TRITONSWMM_performance_timeseries_processed == True
+        return all_TRITONSWMM_performance_timeseries_processed is True
 
     @property
     def TRITON_time_series_not_processed(self):
@@ -765,7 +763,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_raw_TRITON_outputs_cleared
                 and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
             )
-        return all_raw_TRITON_outputs_cleared == True
+        return all_raw_TRITON_outputs_cleared is True
 
     @property
     def all_raw_SWMM_outputs_cleared(self):
@@ -776,7 +774,7 @@ class TRITONSWMM_sensitivity_analysis:
                 all_raw_SWMM_outputs_cleared
                 and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
             )
-        return all_raw_SWMM_outputs_cleared == True
+        return all_raw_SWMM_outputs_cleared is True
 
     def _update_master_analysis_log(self):
         self.master_analysis._update_log()

@@ -8,12 +8,10 @@ from pydantic import (
 from typing import ClassVar, List, Dict
 from pathlib import Path
 import yaml
-from typing import Literal, Annotated, Any
+from typing import Literal, Annotated, Any, Optional, Tuple
 import re
 import pandas as pd
 from tabulate import tabulate
-import pandas as pd
-from typing import Optional, Tuple
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 
 

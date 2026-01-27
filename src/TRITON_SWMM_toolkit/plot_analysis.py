@@ -1,15 +1,8 @@
-import sys
-import pandas as pd
-import xarray as xr
-import numpy as np
 
 import TRITON_SWMM_toolkit.utils as utils
 import TRITON_SWMM_toolkit.plot_utils as plt_utils
 
-from typing import Literal, List
 from typing import TYPE_CHECKING
-from pathlib import Path
-import time
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis

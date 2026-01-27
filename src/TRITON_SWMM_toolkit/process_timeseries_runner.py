@@ -27,7 +27,6 @@ import argparse
 from pathlib import Path
 import traceback
 import logging
-from typing import Literal
 
 # Configure logging to stderr
 logging.basicConfig(

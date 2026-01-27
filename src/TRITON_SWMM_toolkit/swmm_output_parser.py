@@ -3,14 +3,11 @@ import re
 import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Optional
 
 import numpy as np
 import pandas as pd
 import xarray as xr
-import swmmio
 
-from pyswmm import Output, NodeSeries, LinkSeries
 
 from TRITON_SWMM_toolkit.constants import (
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
@@ -63,7 +60,7 @@ def return_swmm_outputs(
             if "Element Count" in line:
                 valid = True
                 break
-        if valid == False:
+        if valid is False:
             print(
                 "The RPT file seems to not contain any information: {}".format(
                     swmm_timeseries_result_file
@@ -156,7 +153,7 @@ def return_swmm_outputs(
         link_id = row.link_id
         try:
             link_id = str(int(link_id))
-        except:
+        except Exception:
             lst_val_substrings = link_id.split(" ")
             for substring in lst_val_substrings:
                 if len(substring) > 0:
@@ -233,7 +230,7 @@ def return_swmm_system_outputs(rpt_lines):
             encountered_flow_routing_continuity = True
         if "Continuity Error (%)" in line:
             # runoff routing is reported BEFORE flow routing
-            if encountered_flow_routing_continuity == False:
+            if encountered_flow_routing_continuity is False:
                 runoff_continuity_error_line = line
             else:
                 flow_continuity_error_line = line
@@ -282,7 +279,7 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
             first_line = line_num
             # print("encountered header")
             encountered_header = True
-        if encountered_header == False:
+        if encountered_header is False:
             continue
         if "No nodes were flooded." in line:
             break
@@ -298,7 +295,7 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
         if len(line.split(" ")) <= 3:
             encountered_end = True
             break
-        if encountered_end == False:
+        if encountered_end is False:
             lst_section_lines.append(line)
     return lst_section_lines
 
@@ -379,7 +376,7 @@ def return_node_time_series_results_from_rpt(
         if section_header in line:
             section_start_line = line_num
             encountered_header = True
-        if encountered_header == False:
+        if encountered_header is False:
             continue
         if "<<<" in line:
             # define new list for values and the node name
@@ -409,7 +406,7 @@ def return_node_time_series_results_from_rpt(
                 dict_lst_link_time_series[key] = lst_vals
             if is_node:
                 dict_lst_node_time_series[key] = lst_vals
-        if encountered_end == False:
+        if encountered_end is False:
             # dict_lst_node_time_series[node_id].append(line)
             lst_vals.append(line)
     #
@@ -814,7 +811,7 @@ def convert_coords_to_dtype(
                     converted = True
                     # print(f"converted {coord} to {dtype}")
                     break
-                except:
+                except Exception:
                     continue
             if not converted:
                 print(f"{coord} unable to be converted to either {lst_dtypes_to_try}")
@@ -853,7 +850,6 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
             except Exception as e:
                 # print(f"Failed to convert variable to datatype = {var}, {dtype}. Trying next datatype. Error encountered: {e}")
                 first_attempt = False
-                pass
         if not converted:
             print(f"{var} unable to be converted to either {lst_dtypes_to_try}")
     return ds

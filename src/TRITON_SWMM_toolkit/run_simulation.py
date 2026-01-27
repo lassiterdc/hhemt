@@ -6,16 +6,13 @@ import pandas as pd
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
     current_datetime_string,
-    read_text_file_as_string,
     read_text_file_as_list_of_strings,
 )
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from TRITON_SWMM_toolkit.constants import Mode
-from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
-from typing import Literal, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
+    pass
 
 
 class TRITONSWMM_run:

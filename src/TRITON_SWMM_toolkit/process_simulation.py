@@ -3,11 +3,8 @@ import time
 import xarray as xr
 import pandas as pd
 import numpy as np
-from glob import glob
 import shutil
-import zarr
-import rioxarray as rxr
-from typing import Literal, Optional
+from typing import Literal
 import warnings
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
@@ -20,10 +17,6 @@ from TRITON_SWMM_toolkit.utils import (
 )
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
-import re
-from datetime import datetime
-from contextlib import redirect_stdout, redirect_stderr
-from TRITON_SWMM_toolkit.log import log_function_to_file
 from TRITON_SWMM_toolkit.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
 
 
@@ -391,7 +384,6 @@ class TRITONSWMM_sim_post_processing:
         if nodes_already_written and not overwrite_if_exist:
             if verbose:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
-            pass
         else:
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes, f_out_nodes, comp_level, verbose)
@@ -402,7 +394,6 @@ class TRITONSWMM_sim_post_processing:
         if links_already_written and not overwrite_if_exist:
             if verbose:
                 print(f"{f_out_links.name} already written. Not overwriting.")
-            pass
         else:
             elapsed_s = time.time() - start_time
             self._write_output(ds_links, f_out_links, comp_level, verbose)
@@ -460,7 +451,7 @@ class TRITONSWMM_sim_post_processing:
         proc_log = self.log.processing_log.outputs
         already_written = False
         if f_out.name in proc_log.keys():
-            if proc_log[f_out.name].success == True:
+            if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
 
@@ -518,7 +509,7 @@ class TRITONSWMM_sim_post_processing:
     def _clear_raw_TRITON_outputs(self):
         self._log_write_status()
         if self._run.raw_triton_output_dir.exists() and (
-            self.log.TRITON_timeseries_written.get() == True
+            self.log.TRITON_timeseries_written.get() is True
         ):
             shutil.rmtree(self._run.raw_triton_output_dir)
             self.log.raw_TRITON_outputs_cleared.set(True)

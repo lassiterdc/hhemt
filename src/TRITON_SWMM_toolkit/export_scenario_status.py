@@ -9,11 +9,8 @@ debugging by identifying which scenarios failed and why.
 import argparse
 from pathlib import Path
 from typing import Optional
-import pandas as pd
-from TRITON_SWMM_toolkit.config import load_analysis_config
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 import TRITON_SWMM_toolkit.analysis as anlysis
-import yaml
 
 
 def export_scenario_status_to_csv(analysis, output_path: Optional[Path] = None) -> Path:

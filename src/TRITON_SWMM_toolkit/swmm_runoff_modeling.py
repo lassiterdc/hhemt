@@ -9,13 +9,11 @@ that serve as inputs to TRITON-SWMM. This includes:
 """
 
 import pandas as pd
-import numpy as np
 import sys
 from pathlib import Path
 from pyswmm import Simulation, Output
 from swmm.toolkit.shared_enum import NodeAttribute
 from typing import TYPE_CHECKING
-import TRITON_SWMM_toolkit.utils as utils
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
@@ -199,7 +197,7 @@ class SWMMRunoffModeler:
         verbose : bool, optional
             If True, print status messages (default: False)
         """
-        sim_complete = self.scenario.log.hydro_swmm_sim_completed.get() == True
+        sim_complete = self.scenario.log.hydro_swmm_sim_completed.get() is True
         if (not sim_complete) or rerun_if_exists:
             self.scenario.log.hydro_swmm_sim_completed.set(False)
             with Simulation(str(self.scenario.scen_paths.inp_hydro)) as sim:

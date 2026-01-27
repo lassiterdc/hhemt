@@ -3,38 +3,27 @@ import pandas as pd
 import rioxarray as rxr
 import numpy as np
 import xarray as xr
-from pathlib import Path
 import sys
 import shutil
-from pyswmm import Simulation, Output
-import geopandas as gpd
 import swmmio
 import warnings
-from swmm.toolkit.shared_enum import NodeAttribute
-from scipy.stats import rankdata
 import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
 from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
-from typing import TYPE_CHECKING, Literal, Optional
-from contextlib import redirect_stdout, redirect_stderr
+from typing import TYPE_CHECKING, Literal
 import threading
-import traceback
-from TRITON_SWMM_toolkit.log import log_function_to_file
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 from TRITON_SWMM_toolkit.scenario_inputs import ScenarioInputGenerator
 from TRITON_SWMM_toolkit.swmm_runoff_modeling import SWMMRunoffModeler
 from TRITON_SWMM_toolkit.swmm_full_model import SWMMFullModelBuilder
-import logging
 
-import sys
 
 lock = threading.Lock()
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
-    from .run_simulation import TRITONSWMM_run
 
 
 class TRITONSWMM_scenario:
@@ -395,8 +384,6 @@ class TRITONSWMM_scenario:
         callable
             A launcher function that executes the subprocess
         """
-        import os
-        import subprocess
 
         event_iloc = self.event_iloc
         scenario_logfile = self.log.logfile.parent / f"scenario_prep_{event_iloc}.log"

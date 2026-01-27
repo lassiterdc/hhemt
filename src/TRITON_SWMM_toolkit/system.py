@@ -13,7 +13,6 @@ from TRITON_SWMM_toolkit.paths import SysPaths
 from typing import Optional
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
-from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 import subprocess
 import time
 
@@ -290,7 +289,6 @@ class TRITONSWMM_system:
                 print("TRITON-SWMM already compiled", flush=True)
             return
 
-        import shutil
 
         bash_script_lines = [
             "#!/bin/bash",

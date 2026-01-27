@@ -1,5 +1,4 @@
 # %%
-import TRITON_SWMM_toolkit.utils as ut
 
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_analysis_config
@@ -7,7 +6,6 @@ import pandas as pd
 from typing import Literal, Callable, List, Optional, TYPE_CHECKING
 from TRITON_SWMM_toolkit.paths import AnalysisPaths
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
@@ -61,7 +59,7 @@ class TRITONSWMM_analysis:
             / f"TRITONSWMM_performance.{self.cfg_analysis.TRITON_processed_output_type}",
         )
 
-        # if self.cfg_analysis.toggle_run_ensemble_with_bash_script == True:
+        # if self.cfg_analysis.toggle_run_ensemble_with_bash_script is True:
         #     self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
@@ -82,7 +80,7 @@ class TRITONSWMM_analysis:
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
-        if self.cfg_analysis.toggle_sensitivity_analysis == True:
+        if self.cfg_analysis.toggle_sensitivity_analysis is True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
         if not skip_log_update:
             # self._add_all_scenarios()
@@ -211,7 +209,7 @@ class TRITONSWMM_analysis:
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
-            if scen.log.scenario_creation_complete.get() != True:
+            if scen.log.scenario_creation_complete.get() is not True:
                 scens_not_created.append(str(scen.log.logfile.parent))
         return scens_not_created
 
@@ -220,7 +218,7 @@ class TRITONSWMM_analysis:
         scens_not_run = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            if scen.sim_run_completed != True:
+            if scen.sim_run_completed is not True:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
@@ -228,7 +226,7 @@ class TRITONSWMM_analysis:
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            if scen.log.TRITON_timeseries_written.get() != True:
+            if scen.log.TRITON_timeseries_written.get() is not True:
                 scens_not_processed.append(str(scen.log.logfile.parent))
         return scens_not_processed
 
@@ -252,7 +250,7 @@ class TRITONSWMM_analysis:
         all_TRITONSWMM_performance_outputs_processed = True
         all_raw_TRITON_outputs_cleared = True
         all_raw_SWMM_outputs_cleared = True
-        if self.cfg_analysis.toggle_sensitivity_analysis == True:
+        if self.cfg_analysis.toggle_sensitivity_analysis is True:
             sens = self.sensitivity
             all_scens_created = sens.all_scenarios_created
             all_sims_run = sens.all_sims_run
@@ -498,8 +496,9 @@ class TRITONSWMM_analysis:
                 idx = futures[future]
                 try:
                     results.append(future.result())
-                except:
-                    pass
+                except Exception as e:
+                    if verbose:
+                        print(f"Function {idx} failed with error: {e}", flush=True)
 
         self._update_log()
         return results
@@ -904,7 +903,7 @@ class TRITONSWMM_analysis:
 
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            scenarios_setup.append(scen.log.scenario_creation_complete.get() == True)
+            scenarios_setup.append(scen.log.scenario_creation_complete.get() is True)
             scen_runs_completed.append(scen.sim_run_completed)
             scenario_dirs.append(str(scen.log.logfile.parent))
 

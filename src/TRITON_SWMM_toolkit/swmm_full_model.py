@@ -24,12 +24,8 @@ The primary use case for full SWMM models would be:
 - Benchmarking and performance comparison studies
 """
 
-import pandas as pd
-import numpy as np
-import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
-import TRITON_SWMM_toolkit.utils as utils
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario

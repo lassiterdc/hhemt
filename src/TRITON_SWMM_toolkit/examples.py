@@ -11,7 +11,6 @@ from TRITON_SWMM_toolkit.constants import (
 )
 import sys
 import warnings
-from typing import Iterable, Union
 from typing import Optional
 
 with warnings.catch_warnings():
@@ -46,7 +45,6 @@ from TRITON_SWMM_toolkit.utils import (
 )
 import numpy as np
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
 
 #  define test case class
@@ -660,7 +658,7 @@ def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
     cfg_filled = fill_template(cfg_template, mapping)
     try:
         cfg_filled_yaml = yaml.safe_load(cfg_filled)
-    except:
+    except Exception:
         print(cfg_filled)
         sys.exit("failed to load yaml")
     return cfg_filled_yaml

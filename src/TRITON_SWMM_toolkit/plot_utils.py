@@ -4,14 +4,12 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 from matplotlib import colormaps
 import pandas as pd
-import rioxarray as rxr
 import geopandas as gpd
 from pathlib import Path
 import xarray as xr
-from typing import Optional
+from typing import Optional, Union
 from matplotlib.axes import Axes
 import json
-from typing import Union, Optional
 
 
 def plot_polygon_boundary_on_ax(ax, shp_path: Path, color="black", linewidth=1):

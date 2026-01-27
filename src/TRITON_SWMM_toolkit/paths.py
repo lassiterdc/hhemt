@@ -1,9 +1,7 @@
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict
 from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, Optional
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
-from typing import Optional
 
 
 @dataclass

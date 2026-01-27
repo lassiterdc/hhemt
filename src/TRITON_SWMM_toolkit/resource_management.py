@@ -10,7 +10,6 @@ Classes:
 
 import os
 import psutil
-from typing import Optional
 
 
 class ResourceManager:
@@ -72,7 +71,7 @@ class ResourceManager:
         # ----------------------------
         # Determine if we should use SLURM constraints
         # ----------------------------
-        use_slurm_constraints = self.in_slurm == True
+        use_slurm_constraints = self.in_slurm is True
 
         # ----------------------------
         # CPU-based limit (with SLURM awareness)

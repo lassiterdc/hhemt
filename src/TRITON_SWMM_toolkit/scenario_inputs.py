@@ -13,13 +13,10 @@ The ScenarioInputGenerator class coordinates:
 
 import pandas as pd
 import numpy as np
-import sys
-import warnings
 from pathlib import Path
 import swmmio
 from scipy.stats import rankdata
 from typing import TYPE_CHECKING
-import TRITON_SWMM_toolkit.utils as utils
 
 if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario

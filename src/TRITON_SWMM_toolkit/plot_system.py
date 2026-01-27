@@ -1,21 +1,8 @@
-import sys
 import pandas as pd
-import xarray as xr
-import numpy as np
-from TRITON_SWMM_toolkit.utils import (
-    write_zarr,
-    write_zarr_then_netcdf,
-    paths_to_strings,
-    current_datetime_string,
-    get_file_size_MiB,
-)
-from typing import Literal, List
 from typing import TYPE_CHECKING
-from pathlib import Path
-import time
 from TRITON_SWMM_toolkit.plot_utils import plot_discrete_raster, plot_continuous_raster
 from matplotlib.axes import Axes
-from typing import Optional, Literal
+from typing import Optional
 import rioxarray as rxr
 import matplotlib.pyplot as plt
 

@@ -315,8 +315,6 @@ def read_text_file_as_list_of_strings(file):
 
 
 def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
-    from numcodecs import Blosc
-
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.
 

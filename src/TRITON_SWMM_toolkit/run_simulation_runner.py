@@ -21,12 +21,10 @@ Exit codes:
 
 import sys
 import argparse
-import subprocess
 import os
 from pathlib import Path
 import traceback
 import logging
-import TRITON_SWMM_toolkit.utils as ut
 import pprint
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 
