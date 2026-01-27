@@ -35,7 +35,7 @@ def test_concurrently_process_scenario_timeseries():
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     scenario_timeseries_processing_launchers = (
-        analysis.retrieve_scenario_timeseries_processing_launchers()
+        analysis.retrieve_scenario_timeseries_processing_launchers(which="both")
     )
     analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
     # verify that time series outputs processed
@@ -47,7 +47,9 @@ def test_concurrently_process_scenario_timeseries():
         analysis.print_logfile_for_scenario(0)
         pytest.fail(f"Processing TRITON and SWMM time series failed.")
 
-    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(overwrite_if_exist=True)
+    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
+        overwrite_if_exist=True, which="both"
+    )
     assert analysis.TRITON_analysis_summary_created
     assert analysis.SWMM_node_analysis_summary_created
     assert analysis.SWMM_link_analysis_summary_created
