@@ -374,9 +374,6 @@ Extract methods:
    - Improve file names to be more pythonic and apply best practices
    - Identify opportunities for improved folder structure to be more pythonic and apply best practices
 
-6. **Ensure all outputs are directed to snakemake logs:**
-  - Currently, outputs from TRITON-SWMM compilation are not written to the snakemake setup log file. This should be fixed.
-
 **Risk:** Low - These are non-functional improvements
 
 **Target:** ~50 lines reduction, improved code quality
