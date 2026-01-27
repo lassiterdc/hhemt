@@ -1,30 +1,20 @@
 # %%
-import subprocess
-import shutil
 import TRITON_SWMM_toolkit.utils as ut
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import analysis_config
 import pandas as pd
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
 import time
-
-# from TRITON_SWMM_toolkit.paths import SensitivityAnalysisPaths
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
-
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
-from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
 import yaml
-from pprint import pprint
-import json
 import TRITON_SWMM_toolkit.analysis as anlysis
 import xarray as xr
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -553,7 +543,7 @@ rule setup:
     ):
         scenario_timeseries_processing_launchers = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            launchers = sub_analysis.retreive_scenario_timeseries_processing_launchers(
+            launchers = sub_analysis.retrieve_scenario_timeseries_processing_launchers(
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
                 overwrite_if_exist=overwrite_if_exist,
@@ -654,7 +644,7 @@ rule setup:
         compression_level: int = 5,
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            sub_analysis.consolidate_analysis_outptus(
+            sub_analysis.consolidate_analysis_outputs(
                 which=which,
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,

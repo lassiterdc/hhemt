@@ -1,19 +1,15 @@
 # %%
-import subprocess
-import shutil
 import TRITON_SWMM_toolkit.utils as ut
 
 from pathlib import Path
 from TRITON_SWMM_toolkit.config import load_analysis_config
 import pandas as pd
-from typing import Literal
+from typing import Literal, Callable, List, Optional, TYPE_CHECKING
 from TRITON_SWMM_toolkit.paths import AnalysisPaths
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
-
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
-from TRITON_SWMM_toolkit.constants import Mode
 from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
 from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
@@ -25,19 +21,9 @@ from TRITON_SWMM_toolkit.execution import (
     SlurmExecutor,
 )
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
-import yaml
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, List, Optional
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import TYPE_CHECKING, Optional
-import traceback
-from contextlib import redirect_stdout, redirect_stderr
-from pathlib import Path
-import threading
-import psutil
-import warnings
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
@@ -586,27 +572,6 @@ class TRITONSWMM_analysis:
             )
         return
 
-    def retreive_scenario_timeseries_processing_launchers(
-        self,
-        which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        scenario_timeseries_processing_launchers = []
-        for event_iloc in self.df_sims.index:
-            proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
-            launcher = proc._create_subprocess_timeseries_processing_launcher(
-                which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
-            scenario_timeseries_processing_launchers.append(launcher)
-        return scenario_timeseries_processing_launchers
-
     def process_sim_timeseries(
         self,
         event_iloc,
@@ -648,7 +613,7 @@ class TRITONSWMM_analysis:
         self._update_log()
         return
 
-    def consolidate_analysis_outptus(
+    def consolidate_analysis_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         overwrite_if_exist: bool = False,
@@ -1067,11 +1032,3 @@ class TRITONSWMM_analysis:
     @property
     def TRITON_summary(self):
         return self.process.TRITON_summary
-
-
-# %%
-def minutes_to_hhmmss(minutes: int) -> str:
-    secs = 0
-    hours = minutes // 60
-    minutes = minutes % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
