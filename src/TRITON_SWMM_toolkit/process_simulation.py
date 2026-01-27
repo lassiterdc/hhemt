@@ -244,8 +244,9 @@ class TRITONSWMM_sim_post_processing:
             df_ranks = df_ranks.reset_index().set_index(
                 [perf_tseries.index.name, "Rank"]
             )
+            lst_perf_tseries.append(df_ranks)
             if (df_ranks < 0).any().any():
-                perfs_with_negatives.append(f)
+                perfs_with_negatives.append(str(f))
                 dfs_with_negatives.append(df_ranks)
         if len(perfs_with_negatives) > 0:
             all_files = "\n    - ".join(perfs_with_negatives)
@@ -261,8 +262,6 @@ class TRITONSWMM_sim_post_processing:
                 UserWarning,
                 stacklevel=2,
             )
-
-            lst_perf_tseries.append(df_ranks)
         full_perf_timeseries = pd.concat(lst_perf_tseries)
         full_perf_timeseries.loc[pd.IndexSlice[0, 0], :] = 0
         full_perf_timeseries = full_perf_timeseries.sort_index()
