@@ -49,6 +49,22 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         analysis: "TRITONSWMM_analysis",
     ) -> None:
+        """
+        Initialize a sensitivity analysis orchestrator.
+
+        Creates sub-analyses for each parameter combination defined in the sensitivity
+        configuration file, enabling systematic exploration of parameter space.
+
+        Parameters
+        ----------
+        analysis : TRITONSWMM_analysis
+            Master analysis instance containing sensitivity configuration
+
+        Raises
+        ------
+        ValueError
+            If sensitivity configuration mixes GPU and non-GPU run modes
+        """
         self.master_analysis = analysis
         self._system = analysis._system
         self.analysis_paths = analysis.analysis_paths
@@ -689,6 +705,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_scenarios_created(self):
+        """
+        Check if all scenarios across all sub-analyses have been created.
+
+        Returns
+        -------
+        bool
+            True if all scenarios in all sub-analyses are created successfully
+        """
         all_scenarios_created = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -699,6 +723,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_sims_run(self):
+        """
+        Check if all simulations across all sub-analyses have completed.
+
+        Returns
+        -------
+        bool
+            True if all simulations in all sub-analyses completed successfully
+        """
         all_sims_run = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -707,6 +739,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_TRITON_timeseries_processed(self):
+        """
+        Check if all TRITON timeseries across all sub-analyses have been processed.
+
+        Returns
+        -------
+        bool
+            True if all TRITON outputs in all sub-analyses are processed
+        """
         all_TRITON_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -718,6 +758,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_SWMM_timeseries_processed(self):
+        """
+        Check if all SWMM timeseries across all sub-analyses have been processed.
+
+        Returns
+        -------
+        bool
+            True if all SWMM outputs in all sub-analyses are processed
+        """
         all_SWMM_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -729,6 +777,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_TRITONSWMM_performance_timeseries_processed(self):
+        """
+        Check if all performance timeseries across all sub-analyses have been processed.
+
+        Returns
+        -------
+        bool
+            True if all performance outputs in all sub-analyses are processed
+        """
         all_TRITONSWMM_performance_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -756,6 +812,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_raw_TRITON_outputs_cleared(self):
+        """
+        Check if all raw TRITON outputs across all sub-analyses have been cleared.
+
+        Returns
+        -------
+        bool
+            True if all raw TRITON outputs in all sub-analyses are cleared
+        """
         all_raw_TRITON_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
@@ -767,6 +831,14 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def all_raw_SWMM_outputs_cleared(self):
+        """
+        Check if all raw SWMM outputs across all sub-analyses have been cleared.
+
+        Returns
+        -------
+        bool
+            True if all raw SWMM outputs in all sub-analyses are cleared
+        """
         all_raw_SWMM_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()

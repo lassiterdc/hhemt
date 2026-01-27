@@ -32,10 +32,10 @@ class ResourceManager:
 
         Parameters
         ----------
-        cfg_analysis : analysis_config
+        cfg_analysis : AnalysisConfig
             Configuration object containing HPC and execution parameters
-        in_slurm : bool
-            Whether the code is running in a SLURM environment
+        in_slurm : bool, optional
+            Whether the code is running in a SLURM environment (default: False)
         """
         self.cfg_analysis = cfg_analysis
         self.in_slurm = in_slurm
@@ -163,6 +163,13 @@ class ResourceManager:
         - Memory constraints (SLURM_MEM_PER_NODE, SLURM_MEM_PER_CPU)
         - Multi-node distribution (SLURM_TASKS_PER_NODE, SLURM_JOB_NUM_NODES)
 
+        Parameters
+        ----------
+        verbose : bool, optional
+            If True, print detailed resource constraint information (default: False)
+        min_mem_per_sim_MiB : int, optional
+            Minimum memory per simulation in MiB (default: 1024)
+
         Returns
         -------
         dict
@@ -175,7 +182,12 @@ class ResourceManager:
             - num_nodes: int - Number of nodes allocated
             - cpus_per_node: int - CPUs per node
             - memory_per_node_MiB: int - Memory per node in MiB
-            - run_mode: str - CPU or GPU mode
+
+        Raises
+        ------
+        RuntimeError
+            If GPU mode is requested but no GPUs are detected, or if GPU
+            requirements exceed allocation
         """
         # ----------------------------
         # Read basic SLURM allocation

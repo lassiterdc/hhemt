@@ -34,6 +34,23 @@ class TRITONSWMM_analysis:
         system: "TRITONSWMM_system",
         skip_log_update: bool = False,
     ) -> None:
+        """
+        Initialize a TRITON-SWMM analysis orchestrator.
+
+        This class manages the complete lifecycle of a TRITON-SWMM analysis including
+        scenario preparation, simulation execution, output processing, and result
+        consolidation. It supports multiple execution strategies (serial, local
+        concurrent, SLURM) and workflow management via Snakemake.
+
+        Parameters
+        ----------
+        analysis_config_yaml : Path
+            Path to the analysis configuration YAML file
+        system : TRITONSWMM_system
+            The TRITON-SWMM system object containing system configuration
+        skip_log_update : bool, optional
+            If True, skip initial log update (default: False)
+        """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
@@ -120,6 +137,23 @@ class TRITONSWMM_analysis:
         compression_level: int = 5,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ):
+        """
+        Consolidate simulation outputs from all scenarios into analysis-level summaries.
+
+        This method aggregates individual scenario outputs into consolidated files for
+        TRITON outputs, SWMM outputs, and performance metrics.
+
+        Parameters
+        ----------
+        overwrite_if_exist : bool, optional
+            If True, overwrite existing consolidated files (default: False)
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+        compression_level : int, optional
+            Compression level for output files, 0-9 (default: 5)
+        which : Literal["TRITON", "SWMM", "both"], optional
+            Which outputs to consolidate (default: "both")
+        """
         if which in ["TRITON", "both"]:
             self.consolidate_TRITON_simulation_summaries(
                 overwrite_if_exist=overwrite_if_exist,
@@ -147,6 +181,21 @@ class TRITONSWMM_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        """
+        Consolidate TRITON simulation outputs from all scenarios.
+
+        Aggregates TRITON output files from individual scenarios into a single
+        analysis-level summary file.
+
+        Parameters
+        ----------
+        overwrite_if_exist : bool, optional
+            If True, overwrite existing consolidated file (default: False)
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+        compression_level : int, optional
+            Compression level for output file, 0-9 (default: 5)
+        """
         self.process.consolidate_TRITON_outputs_for_analysis(
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
@@ -159,6 +208,21 @@ class TRITONSWMM_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        """
+        Consolidate SWMM simulation outputs from all scenarios.
+
+        Aggregates SWMM node and link output files from individual scenarios into
+        analysis-level summary files.
+
+        Parameters
+        ----------
+        overwrite_if_exist : bool, optional
+            If True, overwrite existing consolidated files (default: False)
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+        compression_level : int, optional
+            Compression level for output files, 0-9 (default: 5)
+        """
         self.process.consolidate_SWMM_outputs_for_analysis(
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
@@ -166,6 +230,14 @@ class TRITONSWMM_analysis:
         )
 
     def print_cfg(self, which: Literal["system", "analysis", "both"] = "both"):
+        """
+        Print configuration settings in tabular format.
+
+        Parameters
+        ----------
+        which : Literal["system", "analysis", "both"], optional
+            Which configuration to print (default: "both")
+        """
         if which == ["system", "both"]:
             print("=== System Configuration ===", flush=True)
             self._system.cfg_system.display_tabulate_cfg()
@@ -205,6 +277,14 @@ class TRITONSWMM_analysis:
 
     @property
     def scenarios_not_created(self):
+        """
+        Get list of scenarios that have not been created successfully.
+
+        Returns
+        -------
+        list of str
+            Paths to scenario directories where creation is incomplete
+        """
         scens_not_created = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -215,6 +295,14 @@ class TRITONSWMM_analysis:
 
     @property
     def scenarios_not_run(self):
+        """
+        Get list of scenarios that have not been run successfully.
+
+        Returns
+        -------
+        list of str
+            Paths to scenario directories where simulation is incomplete
+        """
         scens_not_run = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -509,6 +597,21 @@ class TRITONSWMM_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
+        """
+        Prepare all scenarios sequentially.
+
+        Executes scenario preparation for all scenarios in serial order, updating
+        logs after each scenario completes.
+
+        Parameters
+        ----------
+        overwrite_scenarios : bool, optional
+            If True, overwrite existing scenarios (default: False)
+        rerun_swmm_hydro_if_outputs_exist : bool, optional
+            If True, rerun SWMM hydrology model even if outputs exist (default: False)
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+        """
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
             overwrite_scenario=overwrite_scenarios,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
@@ -534,6 +637,36 @@ class TRITONSWMM_analysis:
         compression_level: int,
         verbose=False,
     ):
+        """
+        Run a single simulation for the specified scenario.
+
+        Executes the TRITON-SWMM simulation for a specific weather event scenario,
+        optionally processing outputs after completion.
+
+        Parameters
+        ----------
+        event_iloc : int
+            Integer index of the scenario in df_sims
+        pickup_where_leftoff : bool
+            If True, resume simulation from last checkpoint
+        process_outputs_after_sim_completion : bool
+            If True, process timeseries outputs after simulation completes
+        which : Literal["TRITON", "SWMM", "both"]
+            Which outputs to process (only used if process_outputs_after_sim_completion=True)
+        clear_raw_outputs : bool
+            If True, clear raw outputs after processing
+        overwrite_if_exist : bool
+            If True, overwrite existing processed outputs
+        compression_level : int
+            Compression level for output files, 0-9
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+
+        Raises
+        ------
+        ValueError
+            If scenario creation is incomplete or TRITONSWMM is not compiled
+        """
         scen = TRITONSWMM_scenario(event_iloc, self)
 
         if not scen.log.scenario_creation_complete.get():
@@ -581,7 +714,25 @@ class TRITONSWMM_analysis:
         compression_level: int = 5,
     ):
         """
-        Creates time series of TRITON-SWMM outputs
+        Process and write timeseries outputs for a single simulation.
+
+        Converts raw TRITON and/or SWMM outputs into processed timeseries files,
+        optionally clearing raw outputs after processing.
+
+        Parameters
+        ----------
+        event_iloc : int
+            Integer index of the scenario in df_sims
+        which : Literal["TRITON", "SWMM", "both"], optional
+            Which outputs to process (default: "both")
+        clear_raw_outputs : bool, optional
+            If True, clear raw outputs after processing (default: True)
+        overwrite_if_exist : bool, optional
+            If True, overwrite existing processed outputs (default: False)
+        verbose : bool, optional
+            If True, print progress messages (default: False)
+        compression_level : int, optional
+            Compression level for output files, 0-9 (default: 5)
         """
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
         proc.write_timeseries_outputs(
@@ -916,4 +1067,12 @@ class TRITONSWMM_analysis:
 
     @property
     def TRITON_summary(self):
+        """
+        Get consolidated TRITON output summary for the analysis.
+
+        Returns
+        -------
+        xarray.Dataset
+            Consolidated TRITON outputs from all scenarios
+        """
         return self.process.TRITON_summary

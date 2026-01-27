@@ -38,6 +38,14 @@ class SnakemakeWorkflowBuilder:
     """
 
     def __init__(self, analysis: "TRITONSWMM_analysis"):
+        """
+        Initialize the workflow builder.
+
+        Parameters
+        ----------
+        analysis : TRITONSWMM_analysis
+            The parent analysis object containing configuration and paths
+        """
         self.analysis = analysis
         self.cfg_analysis = analysis.cfg_analysis
         self.system = analysis._system
@@ -717,6 +725,14 @@ class SensitivityAnalysisWorkflowBuilder:
     """
 
     def __init__(self, sensitivity_analysis: "TRITONSWMM_sensitivity_analysis"):
+        """
+        Initialize the sensitivity analysis workflow builder.
+
+        Parameters
+        ----------
+        sensitivity_analysis : TRITONSWMM_sensitivity_analysis
+            The parent sensitivity analysis object containing configuration and sub-analyses
+        """
         self.sensitivity_analysis = sensitivity_analysis
         self.master_analysis = sensitivity_analysis.master_analysis
         self.system = self.master_analysis._system
