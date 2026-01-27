@@ -1,60 +1,81 @@
-# Phase 11: Code Quality Polish
+# Phase 12: Documentation Quality
 
-**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Complete code quality improvements
+**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Add comprehensive docstrings to public methods
 
-**Previous Phase:** Phase 10 (Fix Naming Inconsistencies and Polish) completed - 22/22 tests passing ✅
+**Previous Phase:** Phase 11 (Import Cleanup & Linting) completed - 22/22 tests passing ✅
 
 ---
 
 ## Objective
 
-Complete remaining code quality improvements that were deferred from Phase 10. These enhancements will further improve code maintainability and ensure comprehensive code quality across the codebase.
+Add comprehensive docstrings to public methods in priority files to improve code maintainability and developer experience. This phase focuses on documentation quality without changing functionality.
 
 **Expected Impact:**
-- Comprehensive unused import cleanup across all files
-- Complete documentation coverage for public methods
-- Enhanced type safety with type hints
-- Consistent error handling patterns
-- Linter-compliant codebase
+- Complete documentation coverage for public methods in 5 priority files
+- Improved code readability and maintainability
+- Better developer onboarding experience
+- Cleaner codebase with obsolete commented code removed
 
-**Risk Level:** Low - Non-functional improvements only
+**Risk Level:** Low - Documentation-only changes
 
-**Priority:** Medium - Completes the code quality improvements started in Phase 10
-
----
-
-## Tasks
-
-### 1. Full Unused Import Scan
-
-**Scope:** All source files in `src/TRITON_SWMM_toolkit/`
-
-**Approach:**
-```bash
-# Using autoflake to detect unused imports
-autoflake --check --remove-all-unused-imports src/TRITON_SWMM_toolkit/*.py
-
-# Or using pylint
-pylint --disable=all --enable=unused-import src/TRITON_SWMM_toolkit/
-```
-
-**Files to Check:**
-- All `.py` files in `src/TRITON_SWMM_toolkit/`
-- Focus on files modified during Phases 1-10
-- Verify each unused import before removal
+**Priority:** High - Completes the documentation improvements needed for long-term maintainability
 
 ---
 
-### 2. Comprehensive Public Method Docstring Audit
+## Priority Files for Docstring Addition
 
-**Priority Files:**
-1. `analysis.py` - Main orchestration class
-2. `sensitivity_analysis.py` - Sensitivity analysis orchestration
-3. `workflow.py` - Workflow generation
-4. `execution.py` - Execution strategies
-5. `resource_management.py` - Resource management
+### 1. `analysis.py` - Main Orchestration Class
+**Public Methods to Document:**
+- `__init__()` - Constructor
+- `consolidate_TRITON_and_SWMM_simulation_summaries()` - Output consolidation
+- `consolidate_TRITON_simulation_summaries()` - TRITON output consolidation
+- `consolidate_SWMM_simulation_summaries()` - SWMM output consolidation
+- `print_cfg()` - Configuration display
+- `retrieve_prepare_scenario_launchers()` - Scenario preparation launcher creation
+- `retrieve_scenario_timeseries_processing_launchers()` - Timeseries processing launcher creation
+- `calculate_effective_max_parallel()` - Parallelism calculation
+- `run_python_functions_concurrently()` - Concurrent function execution
+- `run_prepare_scenarios_serially()` - Serial scenario preparation
+- `run_sim()` - Single simulation execution
+- `process_sim_timeseries()` - Timeseries processing
+- `submit_workflow()` - Workflow submission (already has docstring, verify completeness)
+- Properties: `scenarios_not_created`, `scenarios_not_run`, `TRITON_summary`, `df_status`
 
-**Docstring Format (NumPy/Google Style):**
+### 2. `sensitivity_analysis.py` - Sensitivity Analysis Orchestration
+**Public Methods to Document:**
+- `__init__()` - Constructor
+- `submit_workflow()` - Workflow submission
+- Properties: `all_scenarios_created`, `all_sims_run`, `all_TRITON_timeseries_processed`, etc.
+
+### 3. `workflow.py` - Workflow Generation
+**Public Methods to Document:**
+- `__init__()` - Constructor
+- `generate_snakefile_content()` - Snakefile generation
+- `generate_snakemake_config()` - Config generation
+- `write_snakemake_config()` - Config writing
+- `run_snakemake_local()` - Local execution
+- `run_snakemake_slurm()` - SLURM execution
+- `submit_workflow()` - Workflow submission
+
+### 4. `execution.py` - Execution Strategies
+**Public Methods to Document:**
+- `SerialExecutor.execute_simulations()` - Serial execution
+- `LocalConcurrentExecutor.execute_simulations()` - Local concurrent execution
+- `SlurmExecutor.execute_simulations()` - SLURM execution
+
+### 5. `resource_management.py` - Resource Management
+**Public Methods to Document:**
+- `__init__()` - Constructor
+- `calculate_effective_max_parallel()` - Parallelism calculation
+- `get_slurm_resource_constraints()` - SLURM constraint extraction
+- `parse_slurm_tasks_per_node()` - SLURM task parsing
+
+---
+
+## Docstring Format (NumPy Style)
+
+Use this format for all public methods:
+
 ```python
 def method_name(param1: Type1, param2: Type2) -> ReturnType:
     """
@@ -79,128 +100,53 @@ def method_name(param1: Type1, param2: Type2) -> ReturnType:
     ------
     ExceptionType
         When this exception is raised
+    
+    Examples
+    --------
+    >>> obj.method_name(value1, value2)
+    expected_result
     """
 ```
 
-**Search for Methods Without Docstrings:**
-```bash
-# Find public methods without docstrings
-grep -A 1 "def [^_]" src/TRITON_SWMM_toolkit/*.py | grep -v '"""'
+**For properties:**
+```python
+@property
+def property_name(self) -> ReturnType:
+    """
+    Brief description of what the property returns.
+    
+    Returns
+    -------
+    ReturnType
+        Description of return value
+    """
 ```
 
 ---
 
-### 3. Add Type Hints to Public Methods
+## Implementation Steps
 
-**Priority:**
-1. All public method parameters and return types
-2. Class attributes in `__init__` methods
-3. Complex internal methods
+### Step 1: Add Docstrings to Priority Files
+1. Start with `analysis.py` - most critical file
+2. Then `sensitivity_analysis.py`
+3. Then `workflow.py`
+4. Then `execution.py`
+5. Finally `resource_management.py`
 
-**Check for Missing Type Hints:**
-```bash
-# Use mypy to find missing type hints
-mypy --disallow-untyped-defs src/TRITON_SWMM_toolkit/
-```
-
-**Note:** Don't add type hints to simple, obvious cases where they add no value.
-
----
-
-### 4. Review and Standardize Error Handling
-
-**Check Error Handling Patterns:**
-
-1. **Consistent Exception Types:**
-   - Use `ValueError` for invalid input values
-   - Use `FileNotFoundError` for missing files
-   - Use `RuntimeError` for runtime failures
-   - Use `TypeError` for type mismatches
-
-2. **Error Messages Should Be Descriptive:**
-   ```python
-   # BAD
-   raise ValueError("Invalid input")
-   
-   # GOOD
-   raise ValueError(
-       f"Invalid analysis_id '{analysis_id}': must be alphanumeric, "
-       f"got '{analysis_id}' with invalid characters"
-   )
-   ```
-
-3. **Add Context to Exceptions:**
-   ```python
-   try:
-       result = process_data(data)
-   except Exception as e:
-       raise RuntimeError(
-           f"Failed to process data for scenario {scenario_id}: {e}"
-       ) from e
-   ```
-
----
-
-### 5. Run Code Quality Checks
-
-**Linters to Run:**
-
-1. **flake8** - Style guide enforcement:
-   ```bash
-   flake8 src/TRITON_SWMM_toolkit/ --max-line-length=100 --ignore=E203,W503
-   ```
-
-2. **pylint** - Code quality:
-   ```bash
-   pylint src/TRITON_SWMM_toolkit/ --disable=C0103,R0913,R0914
-   ```
-
-3. **mypy** - Type checking:
-   ```bash
-   mypy src/TRITON_SWMM_toolkit/ --ignore-missing-imports
-   ```
-
-**Address High-Priority Issues:**
-- Fix any errors (E-level in flake8)
-- Fix critical warnings (C-level in pylint)
-- Consider fixing other warnings if they improve code quality
-
----
-
-### 6. Remove Commented-Out Code
-
-**Search for Commented-Out Code:**
+### Step 2: Remove Obsolete Commented Code
+Search for and remove:
 ```bash
 # Find commented-out code blocks
 grep -n "^[[:space:]]*#.*def \|^[[:space:]]*#.*class \|^[[:space:]]*#.*import " src/TRITON_SWMM_toolkit/*.py
 ```
 
 **Guidelines:**
-- Remove commented-out code blocks (use git history if needed)
+- Remove commented-out `def`, `class`, and `import` statements
 - Keep explanatory comments that add value
 - Keep TODO/FIXME comments if they're actionable
+- Keep commented-out code only if there's a clear reason (add explanation)
 
----
-
-## Implementation Steps
-
-### Step 1: Automated Cleanup
-1. Run autoflake to identify unused imports
-2. Run flake8 to identify style issues
-3. Create a list of issues to address
-
-### Step 2: Manual Fixes
-1. Remove confirmed unused imports
-2. Add missing docstrings (prioritize public methods)
-3. Add missing type hints (prioritize public methods)
-4. Review and improve error messages
-
-### Step 3: Code Quality
-1. Run linters again and address remaining issues
-2. Remove commented-out code
-3. Ensure consistent formatting
-
-### Step 4: Validation
+### Step 3: Validation
 Run all smoke tests:
 ```bash
 conda activate triton_swmm_toolkit
@@ -215,63 +161,57 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 ## Key Constraints
 
 ✅ **DO:**
-- Remove confirmed unused imports
-- Add docstrings to public methods
-- Improve error messages for clarity
-- Run linters and address high-priority issues
+- Add comprehensive docstrings to all public methods
+- Use NumPy-style docstring format consistently
+- Remove clearly obsolete commented-out code
+- Keep explanatory comments that add value
 
 ❌ **DON'T:**
 - Change functionality or behavior
-- Modify public API methods
+- Modify public API signatures
 - Touch log file structures
 - Break any tests
-- Make large structural changes
+- Remove TODO/FIXME comments that are actionable
 
 ---
 
 ## Expected Results
 
 **Before:**
-- Some unused imports in various files
-- Some public methods without docstrings
-- Some missing type hints
-- Some linter warnings
+- Many public methods lack docstrings
+- Some obsolete commented-out code present
+- Inconsistent documentation style
 
 **After:**
-- All imports used or removed
-- Complete docstrings on public methods
-- Type hints on public methods
-- Consistent, descriptive error messages
-- Clean linter output (or documented exceptions)
+- All public methods in 5 priority files have comprehensive docstrings
+- Consistent NumPy-style documentation
+- Obsolete commented code removed
 - All 22 tests passing
 
 ---
 
 ## Validation Checklist
 
-- [ ] Removed all unused imports across all source files
-- [ ] Added docstrings to all public methods
-- [ ] Added type hints to public methods
-- [ ] Reviewed and improved error handling
-- [ ] Ran flake8 and addressed issues
-- [ ] Ran pylint and addressed critical issues
-- [ ] Ran mypy and addressed type issues
-- [ ] Removed commented-out code
+- [ ] Added docstrings to all public methods in analysis.py
+- [ ] Added docstrings to all public methods in sensitivity_analysis.py
+- [ ] Added docstrings to all public methods in workflow.py
+- [ ] Added docstrings to all public methods in execution.py
+- [ ] Added docstrings to all public methods in resource_management.py
+- [ ] Removed obsolete commented-out code
 - [ ] All 22 smoke tests passing (test_PC_01, test_PC_02, test_PC_04, test_PC_05)
-- [ ] No changes to public API
+- [ ] No changes to public API signatures
 - [ ] No changes to log file structures
-- [ ] Documentation updated
+- [ ] Documentation style consistent across all files
 
 ---
 
 ## Notes
 
-- Phase 11 completes the code quality improvements started in Phase 10
-- Focus on high-value improvements that enhance maintainability
-- Don't spend excessive time on minor style issues
-- Document any decisions about what NOT to change
-- After Phase 11, the refactoring project is fully complete!
+- Phase 12 focuses on documentation quality
+- Docstrings should be clear, concise, and helpful
+- Don't spend excessive time on perfect wording - clarity is key
+- After Phase 12, Phase 13 (Type Safety & Final Polish) will complete the refactoring
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 11 Implementation Guide (Optional)
+**Last Updated:** January 27, 2026 - Phase 12 Implementation Guide

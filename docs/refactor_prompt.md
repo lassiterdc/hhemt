@@ -173,4 +173,7 @@ Please review and validate the Phase [N] changes that were just completed:
 ## final prompt
 Please review and validate the latest changes that that were just completed and confirm that we are ready to proceed with the next phase as a new task. If substantive code changes were made, ensure that smoke testing was re-done successfully.
 
+## next action prompt
+Please proceed with Phase [N] of the refactoring defined in @/docs/next_action_prompt.md . Please double check that all items have been addressed before smoke testing. Ask me for verification before smoke testing.
+
 **Note:** This validation should be performed in Plan Mode after tests have passed and documentation has been updated in Act Mode.

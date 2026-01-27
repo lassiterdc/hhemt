@@ -1,6 +1,6 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 27, 2026 | **Status:** Phase 10 Complete ✅ - Phase 11 (Code Quality Polish) Remaining | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
+**Date:** January 27, 2026 | **Status:** Phase 11 Complete ✅ - Phase 12-13 (Documentation & Type Safety) Remaining | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
 ---
 
@@ -646,13 +646,36 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Run smoke tests (22/22 passing)
 - [x] Final documentation update
 
-### Phase 11: Code Quality Polish
-- [ ] Full unused import scan across all source files
-- [ ] Comprehensive public method docstring audit
-- [ ] Add type hints to public methods
-- [ ] Review and standardize error handling patterns
-- [ ] Run linters (flake8, pylint, mypy) and address issues
-- [ ] Remove commented-out code
+### Phase 11: Import Cleanup & Linting ✅ COMPLETE
+- [x] Full unused import scan across all source files (autoflake)
+- [x] Remove unused imports (83 net lines removed across 24 files)
+- [x] Fix F811 duplicate imports (config.py, paths.py, plot_utils.py, scenario.py)
+- [x] Fix E712 boolean comparisons (7 files: == True → is True)
+- [x] Fix E722 bare except statements (3 files: except: → except Exception:)
+- [x] Fix F821 undefined names (paths.py: added asdict import)
+- [x] Run flake8 and verify 0 critical errors
+- [x] Run smoke tests (22/22 passing)
+
+### Phase 12: Documentation Quality
+- [ ] Add comprehensive docstrings to public methods in priority files:
+  - [ ] analysis.py - Main orchestration class
+  - [ ] sensitivity_analysis.py - Sensitivity analysis orchestration
+  - [ ] workflow.py - Workflow generation
+  - [ ] execution.py - Execution strategies
+  - [ ] resource_management.py - Resource management
+- [ ] Remove clearly obsolete commented-out code
+- [ ] Run smoke tests (22/22 passing)
+
+### Phase 13: Type Safety & Final Polish
+- [ ] Add type hints to public methods (focus on 5 priority files)
+- [ ] Run mypy type checker and address critical issues
+- [ ] Run pylint and address high-priority issues
+- [ ] Analyze folder structure and file organization
+  - [ ] Assess current src directory organization
+  - [ ] Identify files with non-pythonic naming
+  - [ ] Propose/implement filename improvements (snake_case, clearer names)
+  - [ ] Evaluate folder structure for pythonic best practices
+- [ ] Final documentation update (mark refactoring complete)
 - [ ] Run smoke tests (22/22 passing)
 
 ---
@@ -712,4 +735,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 10 Complete ✅ - Phase 11 (Code Quality Polish) Remaining - All 22 Tests Passing
+**Last Updated:** January 27, 2026 - Phase 11 Complete ✅ - Phase 12-13 (Documentation & Type Safety) Remaining - All 22 Tests Passing
