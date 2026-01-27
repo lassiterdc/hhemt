@@ -1,130 +1,261 @@
-# Phase 9: Unify Sensitivity Analysis Workflow Generation
+# Phase 10: Fix Naming Inconsistencies and Polish
 
-**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Refactor sensitivity analysis to reuse `SnakemakeWorkflowBuilder` and eliminate duplicate workflow generation code
+**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Final code quality improvements and cleanup
 
-**Previous Phase:** Phase 8 (Extract Scenario Preparation Logic) completed - 22/22 tests passing ✅
+**Previous Phase:** Phase 9 (Unify Sensitivity Analysis Workflow Generation) completed - 22/22 tests passing ✅
 
 ---
 
 ## Objective
 
-Refactor `TRITONSWMM_sensitivity_analysis` to reuse the `SnakemakeWorkflowBuilder` class, eliminating ~200 lines of duplicate workflow generation code and creating consistency across analysis types.
+Address remaining code quality issues, fix naming inconsistencies, remove unused code, and ensure consistent documentation across the codebase.
 
 **Expected Impact:**
-- Reduces `sensitivity_analysis.py` by ~200 lines
-- Eliminates duplicate workflow generation logic
-- Creates consistent workflow patterns across regular and sensitivity analyses
-- Makes workflow generation easier to maintain and extend
+- Improved code readability and maintainability
+- Consistent naming conventions
+- Complete documentation coverage
+- Clean, linter-compliant codebase
+- ~50-100 lines reduction through cleanup
 
-**Risk Level:** Medium - Sensitivity analysis has unique workflow requirements that must be preserved
-
----
-
-## Current Problem
-
-**Duplicate Workflow Generation:**
-- `sensitivity_analysis.py` has its own `_generate_master_snakefile_content()` method (~200 lines)
-- This duplicates workflow generation logic from `workflow.py`
-- Inconsistent with the refactored `TRITONSWMM_analysis` approach (Phases 1-3)
-- Makes it harder to maintain and extend workflow generation
-
-**Code Smell:**
-```python
-# sensitivity_analysis.py
-class TRITONSWMM_sensitivity_analysis:
-    def _generate_master_snakefile_content(self):
-        # ~200 lines of Snakefile generation
-        # Duplicates patterns from SnakemakeWorkflowBuilder
-        ...
-```
+**Risk Level:** Low - Non-functional improvements only
 
 ---
 
-## Target Architecture
+## Tasks
 
-### Option 1: Composition (Recommended)
+### 1. Fix Typos and Naming Inconsistencies
 
-Create a `SensitivityAnalysisWorkflowBuilder` that **composes** `SnakemakeWorkflowBuilder`:
-
-```python
-class SensitivityAnalysisWorkflowBuilder:
-    """
-    Builds Snakemake workflows for sensitivity analysis.
-    
-    Composes SnakemakeWorkflowBuilder to reuse common workflow patterns
-    while adding sensitivity-specific workflow generation.
-    """
-    
-    def __init__(self, sensitivity_analysis: "TRITONSWMM_sensitivity_analysis"):
-        self.sensitivity_analysis = sensitivity_analysis
-        # Reuse base workflow builder for common patterns
-        self._base_builder = SnakemakeWorkflowBuilder(sensitivity_analysis)
-        
-    def generate_master_snakefile_content(self) -> str:
-        """Generate master Snakefile for sensitivity analysis."""
-        # Use base builder for common patterns
-        # Add sensitivity-specific rules
-        ...
+**Search for remaining typos:**
+```bash
+# Search for common typos
+grep -r "retreive" src/TRITON_SWMM_toolkit/
+grep -r "outptus" src/TRITON_SWMM_toolkit/
+grep -r "occured" src/TRITON_SWMM_toolkit/
+grep -r "sucessful" src/TRITON_SWMM_toolkit/
 ```
 
-### Option 2: Inheritance
+**Known issues to fix:**
+- Any remaining `retreive` → `retrieve` typos
+- Check for other common spelling errors in method names
+- Ensure consistent naming patterns across modules
 
-Create a `SensitivityAnalysisWorkflowBuilder` that **extends** `SnakemakeWorkflowBuilder`:
+---
 
+### 2. Remove Unused Imports
+
+**Files with potential unused imports (from Phase 9 review):**
+- `sensitivity_analysis.py` - Several imports appear unused after refactoring:
+  - `analysis_config`
+  - `TRITONSWMM_run`
+  - `TRITONSWMM_sim_post_processing`
+  - `TRITONSWMM_analysis_post_processing`
+  - `print_json_file_tree`
+  - `TRITONSWMM_analysis_log`
+  - `TRITONSWMM_analysis_plotting`
+
+**Approach:**
+1. Use automated tools to detect unused imports:
+   ```bash
+   # Using autoflake
+   autoflake --check --remove-all-unused-imports src/TRITON_SWMM_toolkit/*.py
+   
+   # Or using pylint
+   pylint --disable=all --enable=unused-import src/TRITON_SWMM_toolkit/
+   ```
+
+2. Manually verify each unused import before removal
+3. Remove confirmed unused imports
+4. Run smoke tests to ensure no breakage
+
+---
+
+### 3. Add Missing Docstrings
+
+**Priority files for docstring improvements:**
+
+1. **`sensitivity_analysis.py`:**
+   - Class docstring is incomplete: "Docstring for TRITONSWMM_sensitivity_analysis"
+   - Should describe purpose, responsibilities, and usage
+
+2. **All public methods without docstrings:**
+   - Search for methods without docstrings:
+     ```bash
+     # Find methods without docstrings
+     grep -A 1 "def " src/TRITON_SWMM_toolkit/*.py | grep -v '"""'
+     ```
+
+3. **Complex internal methods:**
+   - Methods with >20 lines should have docstrings explaining logic
+   - Methods with non-obvious behavior should be documented
+
+**Docstring Format (Google Style):**
 ```python
-class SensitivityAnalysisWorkflowBuilder(SnakemakeWorkflowBuilder):
+def method_name(param1: Type1, param2: Type2) -> ReturnType:
     """
-    Extends SnakemakeWorkflowBuilder for sensitivity analysis workflows.
-    """
+    Brief one-line description.
     
-    def generate_master_snakefile_content(self) -> str:
-        """Generate master Snakefile for sensitivity analysis."""
-        # Override to add sensitivity-specific workflow
-        ...
+    Longer description if needed, explaining what the method does,
+    when to use it, and any important details.
+    
+    Parameters
+    ----------
+    param1 : Type1
+        Description of param1
+    param2 : Type2
+        Description of param2
+    
+    Returns
+    -------
+    ReturnType
+        Description of return value
+    
+    Raises
+    ------
+    ExceptionType
+        When this exception is raised
+    """
 ```
 
-**Recommendation:** Use **Option 1 (Composition)** because:
-- Sensitivity analysis workflow is fundamentally different (master + sub-workflows)
-- Composition is more flexible and explicit
-- Avoids inheritance complexity
+---
+
+### 4. Add Missing Type Hints
+
+**Check for missing type hints:**
+```bash
+# Use mypy to find missing type hints
+mypy --disallow-untyped-defs src/TRITON_SWMM_toolkit/
+```
+
+**Priority:**
+1. All public method parameters and return types
+2. Class attributes in `__init__` methods
+3. Complex internal methods
+
+**Note:** Don't add type hints to simple, obvious cases where they add no value.
+
+---
+
+### 5. Review and Standardize Error Handling
+
+**Check error handling patterns:**
+
+1. **Consistent exception types:**
+   - Use `ValueError` for invalid input values
+   - Use `FileNotFoundError` for missing files
+   - Use `RuntimeError` for runtime failures
+   - Use `TypeError` for type mismatches
+
+2. **Error messages should be descriptive:**
+   ```python
+   # BAD
+   raise ValueError("Invalid input")
+   
+   # GOOD
+   raise ValueError(
+       f"Invalid analysis_id '{analysis_id}': must be alphanumeric, "
+       f"got '{analysis_id}' with invalid characters"
+   )
+   ```
+
+3. **Add context to exceptions:**
+   ```python
+   try:
+       result = process_data(data)
+   except Exception as e:
+       raise RuntimeError(
+           f"Failed to process data for scenario {scenario_id}: {e}"
+       ) from e
+   ```
+
+---
+
+### 6. Run Code Quality Checks
+
+**Linters to run:**
+
+1. **flake8** - Style guide enforcement:
+   ```bash
+   flake8 src/TRITON_SWMM_toolkit/ --max-line-length=100 --ignore=E203,W503
+   ```
+
+2. **pylint** - Code quality:
+   ```bash
+   pylint src/TRITON_SWMM_toolkit/ --disable=C0103,R0913,R0914
+   ```
+
+3. **mypy** - Type checking:
+   ```bash
+   mypy src/TRITON_SWMM_toolkit/ --ignore-missing-imports
+   ```
+
+**Address high-priority issues:**
+- Fix any errors (E-level in flake8)
+- Fix critical warnings (C-level in pylint)
+- Consider fixing other warnings if they improve code quality
+
+---
+
+### 7. Remove Commented-Out Code
+
+**Search for commented-out code:**
+```bash
+# Find commented-out code blocks
+grep -n "^[[:space:]]*#.*def \|^[[:space:]]*#.*class \|^[[:space:]]*#.*import " src/TRITON_SWMM_toolkit/*.py
+```
+
+**Guidelines:**
+- Remove commented-out code blocks (use git history if needed)
+- Keep explanatory comments that add value
+- Keep TODO/FIXME comments if they're actionable
+
+---
+
+### 8. Assess File Organization (Optional - Time Permitting)
+
+**Current structure:**
+```
+src/TRITON_SWMM_toolkit/
+├── Core orchestration: analysis.py, sensitivity_analysis.py
+├── Components: resource_management.py, execution.py, workflow.py
+├── Scenario: scenario.py, scenario_inputs.py
+├── SWMM: swmm_*.py (5 files)
+├── Processing: process_*.py, processing_*.py
+├── Plotting: plot_*.py (3 files)
+├── Utilities: utils.py, subprocess_utils.py, paths.py
+├── Config/Log: config.py, log.py, constants.py
+├── CLI runners: *_runner.py (4 files)
+└── Other: system.py, examples.py, gui.py, cli.py
+```
+
+**Potential improvements (for future consideration):**
+- Group related files into subdirectories (e.g., `swmm/`, `plotting/`, `cli/`)
+- Consider renaming files to be more descriptive
+- Document any organizational decisions in README or architecture docs
+
+**Note:** File reorganization is optional and should only be done if time permits and benefits are clear.
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Analyze Current Workflow Generation
+### Step 1: Automated Cleanup
+1. Run autoflake to identify unused imports
+2. Run flake8 to identify style issues
+3. Create a list of issues to address
 
-1. Read `sensitivity_analysis.py` to understand `_generate_master_snakefile_content()`
-2. Identify common patterns with `SnakemakeWorkflowBuilder`
-3. Identify sensitivity-specific requirements
-4. Map out data flow and dependencies
+### Step 2: Manual Fixes
+1. Fix typos and naming inconsistencies
+2. Remove confirmed unused imports
+3. Add missing docstrings (prioritize public methods)
+4. Add missing type hints (prioritize public methods)
+5. Review and improve error messages
 
-### Step 2: Extract Common Patterns
+### Step 3: Code Quality
+1. Run linters again and address remaining issues
+2. Remove commented-out code
+3. Ensure consistent formatting
 
-1. Identify reusable workflow generation patterns in `SnakemakeWorkflowBuilder`
-2. Consider extracting common patterns to utility functions if needed
-3. Document which parts can be reused vs. need customization
-
-### Step 3: Create `SensitivityAnalysisWorkflowBuilder`
-
-1. Create new class in `workflow.py` (or new `sensitivity_workflow.py` if large)
-2. Implement composition pattern with `SnakemakeWorkflowBuilder`
-3. Move `_generate_master_snakefile_content()` logic to new builder
-4. Add comprehensive docstrings
-
-### Step 4: Update `sensitivity_analysis.py`
-
-1. Import `SensitivityAnalysisWorkflowBuilder`
-2. Initialize in `__init__`:
-   ```python
-   self._workflow_builder = SensitivityAnalysisWorkflowBuilder(self)
-   ```
-3. Replace method calls with delegation:
-   - `self._generate_master_snakefile_content()` → `self._workflow_builder.generate_master_snakefile_content()`
-4. Remove the old `_generate_master_snakefile_content()` method
-
-### Step 5: Validate
-
+### Step 4: Validation
 Run all smoke tests:
 ```bash
 conda activate triton_swmm_toolkit
@@ -139,83 +270,65 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 ## Key Constraints
 
 ✅ **DO:**
-- Reuse `SnakemakeWorkflowBuilder` patterns where possible
-- Maintain sensitivity analysis workflow behavior exactly
-- Add type hints and comprehensive docstrings
-- Test sensitivity analysis workflow thoroughly
+- Fix obvious typos and naming issues
+- Remove confirmed unused imports
+- Add docstrings to public methods
+- Improve error messages for clarity
+- Run linters and address high-priority issues
 
 ❌ **DON'T:**
-- Change sensitivity analysis workflow behavior
+- Change functionality or behavior
 - Modify public API methods
 - Touch log file structures
-- Break any sensitivity analysis tests
+- Break any tests
+- Make large structural changes (save for future phases)
 
 ---
 
 ## Expected Results
 
 **Before:**
-```python
-# sensitivity_analysis.py (~800 lines)
-class TRITONSWMM_sensitivity_analysis:
-    def _generate_master_snakefile_content(self):
-        # ~200 lines of workflow generation
-        # Duplicates patterns from workflow.py
-        ...
-```
+- Some typos in method names
+- Unused imports in several files
+- Incomplete docstrings
+- Inconsistent error handling
+- Some linter warnings
 
 **After:**
-```python
-# sensitivity_analysis.py (~600 lines, down from ~800)
-class TRITONSWMM_sensitivity_analysis:
-    def __init__(self, ...):
-        self._workflow_builder = SensitivityAnalysisWorkflowBuilder(self)
-    
-    # Delegates to workflow builder
-    # ~200 lines removed
-
-# workflow.py or sensitivity_workflow.py (~200 lines added)
-class SensitivityAnalysisWorkflowBuilder:
-    """Builds Snakemake workflows for sensitivity analysis."""
-    
-    def __init__(self, sensitivity_analysis):
-        self.sensitivity_analysis = sensitivity_analysis
-        self._base_builder = SnakemakeWorkflowBuilder(sensitivity_analysis)
-    
-    def generate_master_snakefile_content(self) -> str:
-        """Generate master Snakefile for sensitivity analysis."""
-        # Reuses base builder patterns
-        # Adds sensitivity-specific rules
-        ...
-```
+- No typos in method names
+- All imports used or removed
+- Complete docstrings on public methods
+- Consistent, descriptive error messages
+- Clean linter output (or documented exceptions)
+- All 22 tests passing
 
 ---
 
 ## Validation Checklist
 
-- [ ] Analyzed _generate_master_snakefile_content() in sensitivity_analysis.py
-- [ ] Identified common patterns with SnakemakeWorkflowBuilder
-- [ ] Identified sensitivity-specific requirements
-- [ ] Created SensitivityAnalysisWorkflowBuilder class
-- [ ] Moved workflow generation logic to new builder
-- [ ] Updated sensitivity_analysis.py to use new builder
-- [ ] Removed old _generate_master_snakefile_content() method
-- [ ] Added type hints and docstrings to new class
+- [ ] Searched for and fixed all typos
+- [ ] Removed all unused imports
+- [ ] Added docstrings to public methods
+- [ ] Added type hints where missing
+- [ ] Reviewed and improved error handling
+- [ ] Ran flake8 and addressed issues
+- [ ] Ran pylint and addressed critical issues
+- [ ] Removed commented-out code
 - [ ] All 22 smoke tests passing (test_PC_01, test_PC_02, test_PC_04, test_PC_05)
 - [ ] No changes to public API
 - [ ] No changes to log file structures
-- [ ] Sensitivity analysis workflow behavior unchanged
+- [ ] Documentation updated
 
 ---
 
 ## Notes
 
-- This phase follows the same pattern as Phases 1-3 (extract to focused component)
-- Sensitivity analysis has unique workflow requirements (master + sub-workflows)
-- Composition pattern recommended over inheritance for flexibility
-- The new builder acts as a "strategy" object that encapsulates workflow generation
-- This creates consistency across all workflow generation in the toolkit
+- This is the final cleanup phase of the refactoring project
+- Focus on high-value improvements that enhance maintainability
+- Don't spend excessive time on minor style issues
+- Document any decisions about what NOT to change
+- After Phase 10, the refactoring project is complete!
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 9 Implementation Guide
+**Last Updated:** January 27, 2026 - Phase 10 Implementation Guide

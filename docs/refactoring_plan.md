@@ -626,14 +626,14 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Delete obsolete swmm_model_builder.py
 - [x] Run smoke tests (22/22 passing)
 
-### Phase 9: Unify Sensitivity Workflow
-- [ ] Create SensitivityAnalysisWorkflowBuilder
-- [ ] Extract common workflow patterns to base class
-- [ ] Move _generate_master_snakefile_content() logic
-- [ ] Update sensitivity_analysis.py to use builder
-- [ ] Remove duplicate workflow generation code
-- [ ] Run smoke tests (22/22 passing)
-- [ ] Verify sensitivity analysis workflow unchanged
+### Phase 9: Unify Sensitivity Workflow ✅ COMPLETE
+- [x] Create SensitivityAnalysisWorkflowBuilder
+- [x] Extract common workflow patterns to base class
+- [x] Move _generate_master_snakefile_content() logic
+- [x] Update sensitivity_analysis.py to use builder
+- [x] Remove duplicate workflow generation code
+- [x] Run smoke tests (22/22 passing)
+- [x] Verify sensitivity analysis workflow unchanged
 
 ### Phase 10: Fix Naming & Polish
 - [ ] Search for remaining typos (retreive, etc.)
@@ -703,4 +703,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 7a Complete ✅ - Continuation Phases 8-10 Planned - All 22 Tests Passing
+**Last Updated:** January 27, 2026 - Phase 9 Complete ✅ - Phase 10 (Polish) Remaining - All 22 Tests Passing
