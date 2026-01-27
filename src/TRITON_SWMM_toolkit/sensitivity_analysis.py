@@ -210,12 +210,12 @@ class TRITONSWMM_sensitivity_analysis:
 
         # Submit workflow based on mode
         if mode == "local":
-            result = self.master_analysis._run_snakemake_local(
+            result = self.master_analysis._workflow_builder.run_snakemake_local(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
             )
         else:  # slurm
-            result = self.master_analysis._run_snakemake_slurm(
+            result = self.master_analysis._workflow_builder.run_snakemake_slurm(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,

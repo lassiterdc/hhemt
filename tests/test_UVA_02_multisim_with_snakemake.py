@@ -25,7 +25,7 @@ def test_snakemake_slurm_workflow_generation():
     analysis = nrflk_multisim_ensemble.system.analysis
 
     # Generate Snakefile content
-    snakefile_content = analysis._generate_snakefile_content(
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
@@ -72,7 +72,7 @@ def test_snakemake_slurm_workflow_submission_dry_run():
     analysis = nrflk_multisim_ensemble.system.analysis
 
     # Generate Snakefile (without actually running snakemake)
-    snakefile_content = analysis._generate_snakefile_content(
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
@@ -132,7 +132,7 @@ def test_snakemake_workflow_config_generation():
     )
     analysis = nrflk_multisim_ensemble.system.analysis
 
-    snakefile_content = analysis._generate_snakefile_content(
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
@@ -171,7 +171,7 @@ def test_snakemake_multiple_configurations():
     analysis = nrflk_multisim_ensemble.system.analysis
 
     # Configuration 1: Setup only
-    snakefile_1 = analysis._generate_snakefile_content(
+    snakefile_1 = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
         prepare_scenarios=False,
@@ -179,7 +179,7 @@ def test_snakemake_multiple_configurations():
     )
 
     # Configuration 2: Everything
-    snakefile_2 = analysis._generate_snakefile_content(
+    snakefile_2 = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
@@ -230,7 +230,7 @@ def test_snakemake_workflow_dry_run():
     analysis = nrflk_multisim_ensemble.system.analysis
 
     # Generate Snakefile content
-    snakefile_content = analysis._generate_snakefile_content(
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
         compile_TRITON_SWMM=False,
         prepare_scenarios=True,

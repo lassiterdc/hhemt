@@ -652,42 +652,6 @@ class TRITONSWMM_analysis:
         self._sim_run_processing_objects[event_iloc] = proc
         return proc
 
-    def _parse_slurm_tasks_per_node(self, tasks_per_node_str: str) -> list[int]:
-        """
-        Parse SLURM_TASKS_PER_NODE format. Delegates to ResourceManager.
-
-        Examples:
-            "4,4,4,4" -> [4, 4, 4, 4]
-            "4(x4)" -> [4, 4, 4, 4]
-            "8(x2),4" -> [8, 8, 4]
-
-        Parameters
-        ----------
-        tasks_per_node_str : str
-            SLURM_TASKS_PER_NODE environment variable value
-
-        Returns
-        -------
-        list[int]
-            Tasks per node for each allocated node
-        """
-        return self._resource_manager._parse_slurm_tasks_per_node(tasks_per_node_str)
-
-    def _get_slurm_resource_constraints(
-        self, verbose: bool = False, min_mem_per_sim_MiB: int = 1024
-    ) -> dict:
-        """
-        Extract and validate SLURM resource constraints. Delegates to ResourceManager.
-
-        Returns
-        -------
-        dict
-            Dictionary containing resource allocation information
-        """
-        return self._resource_manager._get_slurm_resource_constraints(
-            verbose=verbose, min_mem_per_sim_MiB=min_mem_per_sim_MiB
-        )
-
     def _create_launchable_sims(
         self,
         pickup_where_leftoff: bool = False,
@@ -802,43 +766,6 @@ class TRITONSWMM_analysis:
             )
         self._update_log()
 
-    def _generate_snakefile_content(
-        self,
-        process_system_level_inputs: bool = False,
-        overwrite_system_inputs: bool = False,
-        compile_TRITON_SWMM: bool = True,
-        recompile_if_already_done_successfully: bool = False,
-        prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
-        rerun_swmm_hydro_if_outputs_exist: bool = False,
-        process_timeseries: bool = True,
-        which: str = "TRITON",
-        clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
-        compression_level: int = 5,
-        pickup_where_leftoff: bool = False,
-    ) -> str:
-        """
-        Generate Snakefile content for the three-phase workflow using wildcards.
-
-        Delegates to SnakemakeWorkflowBuilder.
-        """
-        return self._workflow_builder.generate_snakefile_content(
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
-            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-            process_timeseries=process_timeseries,
-            which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
-            compression_level=compression_level,
-            pickup_where_leftoff=pickup_where_leftoff,
-        )
-
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -927,47 +854,6 @@ class TRITONSWMM_analysis:
             pickup_where_leftoff=pickup_where_leftoff,
             wait_for_completion=wait_for_completion,
             verbose=verbose,
-        )
-
-    def _generate_snakemake_config(self, mode: Literal["local", "slurm"]) -> dict:
-        """
-        Generate dynamic snakemake config. Delegates to SnakemakeWorkflowBuilder.
-        """
-        return self._workflow_builder.generate_snakemake_config(mode=mode)
-
-    def _write_snakemake_config(
-        self, config: dict, mode: Literal["local", "slurm"]
-    ) -> Path:
-        """
-        Write snakemake config to analysis directory. Delegates to SnakemakeWorkflowBuilder.
-        """
-        return self._workflow_builder.write_snakemake_config(config=config, mode=mode)
-
-    def _run_snakemake_local(
-        self,
-        snakefile_path: Path,
-        verbose: bool = True,
-    ) -> dict:
-        """
-        Run Snakemake workflow on local machine. Delegates to SnakemakeWorkflowBuilder.
-        """
-        return self._workflow_builder.run_snakemake_local(
-            snakefile_path=snakefile_path, verbose=verbose
-        )
-
-    def _run_snakemake_slurm(
-        self,
-        snakefile_path: Path,
-        verbose: bool = True,
-        wait_for_completion: bool = False,
-    ) -> dict:
-        """
-        Run Snakemake workflow on SLURM HPC system. Delegates to SnakemakeWorkflowBuilder.
-        """
-        return self._workflow_builder.run_snakemake_slurm(
-            snakefile_path=snakefile_path,
-            verbose=verbose,
-            wait_for_completion=wait_for_completion,
         )
 
     @property

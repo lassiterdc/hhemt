@@ -35,7 +35,7 @@ def test_snakemake_sensitivity_workflow_generation():
     # Generate sub-analysis Snakefiles (without running)
     subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
-        snakefile_content = sub_analysis._generate_snakefile_content(
+        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
             process_system_level_inputs=False,
             compile_TRITON_SWMM=True,
             prepare_scenarios=True,
@@ -98,7 +98,7 @@ def test_snakemake_sensitivity_workflow_files_written():
     # Generate Snakefiles for each sub-analysis
     subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
-        snakefile_content = sub_analysis._generate_snakefile_content(
+        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
             process_system_level_inputs=False,
             compile_TRITON_SWMM=True,
             prepare_scenarios=True,
@@ -232,7 +232,7 @@ def test_snakemake_sensitivity_workflow_dry_run():
     # Generate all Snakefiles
     subanalysis_snakefile_paths = []
     for sub_analysis_iloc, sub_analysis in sensitivity.sub_analyses.items():
-        snakefile_content = sub_analysis._generate_snakefile_content(
+        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
             process_system_level_inputs=False,
             compile_TRITON_SWMM=False,
             prepare_scenarios=True,
