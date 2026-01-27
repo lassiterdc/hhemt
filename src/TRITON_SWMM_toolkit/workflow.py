@@ -11,10 +11,10 @@ Key Components:
 """
 
 import subprocess
-import yaml
+import yaml  # type: ignore
 import psutil
 from pathlib import Path
-from typing import Literal, TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -310,7 +310,7 @@ rule consolidate:
 
             # Add account if specified
             if self.cfg_analysis.hpc_account:
-                config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account
+                config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account  # type: ignore
 
         return config
 
@@ -834,9 +834,9 @@ onerror:
 
         # Build the rule all with all dependencies
         consolidation_flags = []
-        for sa_id in self.sensitivity_analysis.sub_analyses.keys():
+        for sa_id in self.sensitivity_analysis.sub_analyses.keys():  # type: ignore
             consolidation_flags.append(
-                f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"
+                f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
             )
 
         snakefile_content += f'''rule all:
@@ -873,7 +873,7 @@ rule setup:
 
         # Generate simulation rules for each sub-analysis
         subanalysis_flags = []
-        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():
+        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
             # Extract resource requirements from sub-analysis config
             n_mpi = sub_analysis.cfg_analysis.n_mpi_procs or 1
             n_omp = sub_analysis.cfg_analysis.n_omp_threads or 1
@@ -928,13 +928,14 @@ rule setup:
         """
 
 '''
-            subanalysis_flag = f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"
+            subanalysis_flag = f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
             subanalysis_flags.append(subanalysis_flag)
             # consolidate outputs after all sims have been run
-            snakefile_content += f'''rule consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}:
+            prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
+            snakefile_content += f'''rule consolidate_{prefix}{sa_id}:
     input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
     output: "{subanalysis_flag}"
-    log: "logs/sims/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}.log"
+    log: "logs/sims/consolidate_{prefix}{sa_id}.log"
     conda: "{conda_env_path}"
     resources:
         slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",

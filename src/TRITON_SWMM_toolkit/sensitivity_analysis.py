@@ -5,7 +5,7 @@ from typing import Literal, TYPE_CHECKING
 import time
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
-import yaml
+import yaml  # type: ignore
 import TRITON_SWMM_toolkit.analysis as anlysis
 import xarray as xr
 

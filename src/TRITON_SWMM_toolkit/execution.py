@@ -298,7 +298,9 @@ class SlurmExecutor:
         # ----------------------------
         # Get SLURM resource constraints
         # ----------------------------
-        constraints = self.analysis._get_slurm_resource_constraints(verbose=verbose)
+        constraints = self.analysis._resource_manager._get_slurm_resource_constraints(
+            verbose=verbose
+        )
         num_nodes = constraints["num_nodes"]
         total_cpus = constraints["total_cpus"]
         total_gpus = constraints["total_gpus"]
@@ -350,7 +352,9 @@ class SlurmExecutor:
         # Process polling-based concurrent execution
         # ----------------------------
         results: List[str] = []
-        running_processes = {}  # {proc: (finalize_sim, start_time, sim_logfile, lf)}
+        running_processes: dict = (
+            {}
+        )  # {proc: (finalize_sim, start_time, sim_logfile, lf)}
         pending_launchers = list(
             launch_functions
         )  # Queue of (launcher, finalize_sim) tuples

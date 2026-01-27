@@ -81,9 +81,9 @@ class TRITONSWMM_analysis:
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
-        self._sim_run_objects = {}
-        self._sim_run_processing_objects = {}
-        self._simulation_run_statuses = {}
+        self._sim_run_objects: dict = {}
+        self._sim_run_processing_objects: dict = {}
+        self._simulation_run_statuses: dict = {}
         # self.run_modes = Mode
         # self._system.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
