@@ -21,6 +21,7 @@ from contextlib import redirect_stdout, redirect_stderr
 import threading
 import traceback
 from TRITON_SWMM_toolkit.log import log_function_to_file
+from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 import logging
 
 import sys
@@ -922,40 +923,27 @@ class TRITONSWMM_scenario:
                     flush=True,
                 )
 
-            # Open log file for subprocess output
-            with open(scenario_logfile, "w") as lf:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=lf,
-                    stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
-                )
+            # Use tee logging to write to both file and stdout
+            proc = run_subprocess_with_tee(
+                cmd=cmd,
+                logfile=scenario_logfile,
+                env=None,  # Uses os.environ by default
+                echo_to_stdout=True,
+            )
 
-                # Wait for subprocess to complete
-                rc = proc.wait()
+            rc = proc.returncode
 
-                if verbose:
-                    if rc == 0:
-                        print(
-                            f"[Scenario {event_iloc}] Subprocess completed successfully",
-                            flush=True,
-                        )
-                    else:
-                        print(
-                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
-                            flush=True,
-                        )
-
-                if rc != 0:
-                    # Log the error
-                    if scenario_logfile.exists():
-                        with open(scenario_logfile, "r") as f:
-                            error_output = f.read()
-                        if verbose:
-                            print(
-                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
-                                flush=True,
-                            )
+            if verbose:
+                if rc == 0:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess completed successfully",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                        flush=True,
+                    )
 
         return launcher
 

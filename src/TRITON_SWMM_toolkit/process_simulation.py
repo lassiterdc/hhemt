@@ -19,6 +19,7 @@ from TRITON_SWMM_toolkit.utils import (
     current_datetime_string,
 )
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
+from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 import re
 from datetime import datetime
 from contextlib import redirect_stdout, redirect_stderr
@@ -132,9 +133,6 @@ class TRITONSWMM_sim_post_processing:
         callable
             A launcher function that executes the subprocess
         """
-        import os
-        import subprocess
-
         event_iloc = self._scenario.event_iloc
         processing_logfile = (
             self.log.logfile.parent / f"timeseries_processing_{event_iloc}.log"
@@ -171,40 +169,27 @@ class TRITONSWMM_sim_post_processing:
                     flush=True,
                 )
 
-            # Open log file for subprocess output
-            with open(processing_logfile, "w") as lf:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=lf,
-                    stderr=subprocess.STDOUT,
-                    env=os.environ.copy(),
-                )
+            # Use tee logging to write to both file and stdout
+            proc = run_subprocess_with_tee(
+                cmd=cmd,
+                logfile=processing_logfile,
+                env=None,  # Uses os.environ by default
+                echo_to_stdout=True,
+            )
 
-                # Wait for subprocess to complete
-                rc = proc.wait()
+            rc = proc.returncode
 
-                if verbose:
-                    if rc == 0:
-                        print(
-                            f"[Scenario {event_iloc}] Subprocess completed successfully",
-                            flush=True,
-                        )
-                    else:
-                        print(
-                            f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
-                            flush=True,
-                        )
-
-                if rc != 0:
-                    # Log the error
-                    if processing_logfile.exists():
-                        with open(processing_logfile, "r") as f:
-                            error_output = f.read()
-                        if verbose:
-                            print(
-                                f"[Scenario {event_iloc}] Subprocess output:\n{error_output}",
-                                flush=True,
-                            )
+            if verbose:
+                if rc == 0:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess completed successfully",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        f"[Scenario {event_iloc}] Subprocess failed with return code {rc}",
+                        flush=True,
+                    )
 
         return launcher
 

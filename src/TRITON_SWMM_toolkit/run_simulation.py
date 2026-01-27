@@ -11,6 +11,7 @@ from TRITON_SWMM_toolkit.utils import (
 )
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.constants import Mode
+from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 from typing import Literal, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

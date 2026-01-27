@@ -28,6 +28,7 @@ import traceback
 import logging
 import TRITON_SWMM_toolkit.utils as ut
 import pprint
+from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -171,22 +172,18 @@ def main():
         # Update the simlog with final status
         scenario.log.add_sim_entry(**log_dic)
 
-        with open(tritonswmm_logfile, "w") as lf:
-            proc = subprocess.Popen(
-                cmd,
-                env=merged_env,
-                stdout=lf,
-                stderr=subprocess.STDOUT,
-                shell=False,
-            )
-            rc = proc.wait()
+        # Use tee logging to write to both file and stdout
+        proc = run_subprocess_with_tee(
+            cmd=cmd,
+            logfile=tritonswmm_logfile,
+            env=env,
+            echo_to_stdout=True,
+        )
 
-            if rc != 0:
-                logger.error(f"[{event_iloc}] Subprocess exited with return code {rc}")
-                if tritonswmm_logfile.exists():
-                    with open(tritonswmm_logfile, "r") as f:
-                        error_output = f.read()
-                    logger.error(f"[{event_iloc}] Subprocess output:\n{error_output}")
+        rc = proc.returncode
+
+        if rc != 0:
+            logger.error(f"[{event_iloc}] Subprocess exited with return code {rc}")
 
         logger.info(f"[{event_iloc}] Simulation process completed")
 
