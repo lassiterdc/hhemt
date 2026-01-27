@@ -1,130 +1,135 @@
-# Phase 7: Remove Delegation Wrappers in analysis.py
+# Phase 8: Extract Scenario Preparation Logic
 
-**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Clean up thin wrapper methods that delegate to extracted components
+**Date:** January 27, 2026 | **Status:** Ready for Implementation | **Goal:** Decompose `TRITONSWMM_scenario` into focused components for input generation and model building
 
 ---
 
 ## Objective
 
-Remove delegation wrapper methods from `analysis.py` that simply forward calls to `ResourceManager` and `SnakemakeWorkflowBuilder`. This makes the delegation explicit and reduces unnecessary indirection.
+Extract scenario preparation logic from `scenario.py` (~700 lines, 25+ methods) into two focused modules: `scenario_inputs.py` for weather/boundary condition file generation and `swmm_model_builder.py` for SWMM model creation and modification.
 
 **Expected Impact:**
-- Reduces `analysis.py` by ~100 lines
-- Makes component delegation explicit and clear
-- Reduces method call indirection
-- Improves code readability
+- Reduces `scenario.py` by ~300 lines
+- Clear separation of concerns: input generation vs. model building
+- Easier to test each component independently
+- Makes scenario preparation logic more maintainable
 
-**Risk Level:** Low - Simple mechanical refactoring with clear call sites
+**Risk Level:** Medium - These methods have interdependencies with scenario state
 
 ---
 
-## Methods to Remove
+## New Modules to Create
 
-### From Phase 1 (ResourceManager) - 2 wrappers
+### 1. `scenario_inputs.py` - Weather/Boundary Condition File Generation
 
-**1. `_parse_slurm_tasks_per_node()`**
+**Purpose:** Handle all external input file generation for scenarios
+
+**Methods to Extract:**
+- `_write_swmm_rainfall_dat_files()` - Generates rainfall input files from weather data
+- `_write_swmm_waterlevel_dat_files()` - Generates water level input files for boundary conditions
+- `_create_external_boundary_condition_files()` - Creates boundary condition files for TRITON
+- `_write_hydrograph_files()` - Generates hydrograph input files
+
+**Design Pattern:**
 ```python
-# CURRENT: Wrapper method in analysis.py
-def _parse_slurm_tasks_per_node(self, tasks_per_node_str: str) -> dict:
-    return self._resource_manager.parse_slurm_tasks_per_node(tasks_per_node_str)
-
-# AFTER: Direct access
-# Replace: self._parse_slurm_tasks_per_node(...)
-# With: self._resource_manager.parse_slurm_tasks_per_node(...)
+class ScenarioInputGenerator:
+    """
+    Generates external input files for TRITON-SWMM scenarios.
+    
+    Handles weather data, boundary conditions, and hydrograph file generation.
+    """
+    
+    def __init__(self, scenario: "TRITONSWMM_scenario"):
+        self.scenario = scenario
+        self.cfg_analysis = scenario.cfg_analysis
+        self.system = scenario._system
+        
+    def write_swmm_rainfall_dat_files(self) -> None:
+        """Generate rainfall input files from weather data."""
+        ...
+        
+    def write_swmm_waterlevel_dat_files(self) -> None:
+        """Generate water level input files for boundary conditions."""
+        ...
 ```
 
-**2. `_get_slurm_resource_constraints()`**
+### 2. `swmm_model_builder.py` - SWMM Model Generation
+
+**Purpose:** Handle SWMM model creation, modification, and execution
+
+**Methods to Extract:**
+- `_create_swmm_model_from_template()` - Creates SWMM model from template file
+- `_update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()` - Updates SWMM model structure to match DEM grid
+- `_run_swmm_hydro_model()` - Executes SWMM hydraulic model
+
+**Design Pattern:**
 ```python
-# CURRENT: Wrapper method in analysis.py
-def _get_slurm_resource_constraints(self) -> dict:
-    return self._resource_manager.get_slurm_resource_constraints()
-
-# AFTER: Direct access
-# Replace: self._get_slurm_resource_constraints()
-# With: self._resource_manager.get_slurm_resource_constraints()
-```
-
-### From Phase 3 (SnakemakeWorkflowBuilder) - 5 wrappers
-
-**3. `_generate_snakefile_content()`**
-```python
-# CURRENT: Wrapper method in analysis.py
-def _generate_snakefile_content(self, ...) -> str:
-    return self._workflow_builder.generate_snakefile_content(...)
-
-# AFTER: Direct access
-# Replace: self._generate_snakefile_content(...)
-# With: self._workflow_builder.generate_snakefile_content(...)
-```
-
-**4. `_generate_snakemake_config()`**
-```python
-# CURRENT: Wrapper method in analysis.py
-def _generate_snakemake_config(self) -> dict:
-    return self._workflow_builder.generate_snakemake_config()
-
-# AFTER: Direct access
-# Replace: self._generate_snakemake_config()
-# With: self._workflow_builder.generate_snakemake_config()
-```
-
-**5. `_write_snakemake_config()`**
-```python
-# CURRENT: Wrapper method in analysis.py
-def _write_snakemake_config(self, config: dict):
-    return self._workflow_builder.write_snakemake_config(config)
-
-# AFTER: Direct access
-# Replace: self._write_snakemake_config(...)
-# With: self._workflow_builder.write_snakemake_config(...)
-```
-
-**6. `_run_snakemake_local()`**
-```python
-# CURRENT: Wrapper method in analysis.py
-def _run_snakemake_local(self, ...):
-    return self._workflow_builder.run_snakemake_local(...)
-
-# AFTER: Direct access
-# Replace: self._run_snakemake_local(...)
-# With: self._workflow_builder.run_snakemake_local(...)
-```
-
-**7. `_run_snakemake_slurm()`**
-```python
-# CURRENT: Wrapper method in analysis.py
-def _run_snakemake_slurm(self, ...):
-    return self._workflow_builder.run_snakemake_slurm(...)
-
-# AFTER: Direct access
-# Replace: self._run_snakemake_slurm(...)
-# With: self._workflow_builder.run_snakemake_slurm(...)
+class SWMMModelBuilder:
+    """
+    Builds and modifies SWMM models for TRITON-SWMM scenarios.
+    
+    Handles model template processing, structural updates, and execution.
+    """
+    
+    def __init__(self, scenario: "TRITONSWMM_scenario"):
+        self.scenario = scenario
+        self.cfg_analysis = scenario.cfg_analysis
+        self.system = scenario._system
+        
+    def create_swmm_model_from_template(self) -> None:
+        """Create SWMM model from template file."""
+        ...
+        
+    def update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(self) -> None:
+        """Update SWMM model structure to match DEM grid."""
+        ...
 ```
 
 ---
 
 ## Implementation Steps
 
-### Step 1: Find All Call Sites
-Search `analysis.py` for all calls to the 7 wrapper methods:
-```bash
-grep -n "_parse_slurm_tasks_per_node\|_get_slurm_resource_constraints\|_generate_snakefile_content\|_generate_snakemake_config\|_write_snakemake_config\|_run_snakemake_local\|_run_snakemake_slurm" src/TRITON_SWMM_toolkit/analysis.py
-```
+### Step 1: Analyze Dependencies
+1. Read `scenario.py` to understand method dependencies
+2. Identify which methods depend on scenario state vs. pure functions
+3. Map out data flow between methods
+4. Identify any circular dependencies
 
-### Step 2: Update Call Sites
-For each call site, update to use direct component access:
-- `self._parse_slurm_tasks_per_node(...)` → `self._resource_manager.parse_slurm_tasks_per_node(...)`
-- `self._get_slurm_resource_constraints()` → `self._resource_manager.get_slurm_resource_constraints()`
-- `self._generate_snakefile_content(...)` → `self._workflow_builder.generate_snakefile_content(...)`
-- `self._generate_snakemake_config()` → `self._workflow_builder.generate_snakemake_config()`
-- `self._write_snakemake_config(...)` → `self._workflow_builder.write_snakemake_config(...)`
-- `self._run_snakemake_local(...)` → `self._workflow_builder.run_snakemake_local(...)`
-- `self._run_snakemake_slurm(...)` → `self._workflow_builder.run_snakemake_slurm(...)`
+### Step 2: Create `scenario_inputs.py`
+1. Create new file `src/TRITON_SWMM_toolkit/scenario_inputs.py`
+2. Define `ScenarioInputGenerator` class
+3. Extract and adapt the 4 input generation methods:
+   - `_write_swmm_rainfall_dat_files()`
+   - `_write_swmm_waterlevel_dat_files()`
+   - `_create_external_boundary_condition_files()`
+   - `_write_hydrograph_files()`
+4. Update method signatures to accept necessary parameters
+5. Add comprehensive docstrings
 
-### Step 3: Remove Wrapper Methods
-Delete all 7 wrapper method definitions from `analysis.py`
+### Step 3: Create `swmm_model_builder.py`
+1. Create new file `src/TRITON_SWMM_toolkit/swmm_model_builder.py`
+2. Define `SWMMModelBuilder` class
+3. Extract and adapt the 3 model building methods:
+   - `_create_swmm_model_from_template()`
+   - `_update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()`
+   - `_run_swmm_hydro_model()`
+4. Update method signatures to accept necessary parameters
+5. Add comprehensive docstrings
 
-### Step 4: Validate
+### Step 4: Update `scenario.py`
+1. Import new classes: `ScenarioInputGenerator` and `SWMMModelBuilder`
+2. Initialize in `__init__`:
+   ```python
+   self._input_generator = ScenarioInputGenerator(self)
+   self._model_builder = SWMMModelBuilder(self)
+   ```
+3. Replace method calls with delegation:
+   - `self._write_swmm_rainfall_dat_files()` → `self._input_generator.write_swmm_rainfall_dat_files()`
+   - `self._create_swmm_model_from_template()` → `self._model_builder.create_swmm_model_from_template()`
+   - etc.
+4. Remove the extracted method definitions
+
+### Step 5: Validate
 Run all smoke tests:
 ```bash
 conda activate triton_swmm_toolkit
@@ -139,16 +144,16 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 ## Key Constraints
 
 ✅ **DO:**
-- Update all call sites before removing wrapper methods
-- Use direct component access (`self._resource_manager.*`, `self._workflow_builder.*`)
-- Keep method signatures and behavior identical
-- Verify no other files import these wrapper methods
+- Maintain scenario state access through `self.scenario` reference
+- Keep method behavior identical (pure refactoring)
+- Add type hints and docstrings to new classes
+- Test each component independently if possible
 
 ❌ **DON'T:**
 - Change any logic or behavior
-- Modify the component classes themselves
-- Touch any public API methods
-- Skip any call sites
+- Modify public API methods
+- Touch log file structures
+- Break scenario preparation workflow
 
 ---
 
@@ -156,49 +161,67 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 **Before:**
 ```python
-class TRITONSWMM_analysis:
-    def some_method(self):
-        constraints = self._get_slurm_resource_constraints()  # Wrapper call
-        config = self._generate_snakemake_config()  # Wrapper call
-        
-    def _get_slurm_resource_constraints(self):  # Wrapper method
-        return self._resource_manager.get_slurm_resource_constraints()
-        
-    def _generate_snakemake_config(self):  # Wrapper method
-        return self._workflow_builder.generate_snakemake_config()
+class TRITONSWMM_scenario:
+    def prepare_scenario(self):
+        self._write_swmm_rainfall_dat_files()  # 50 lines
+        self._write_swmm_waterlevel_dat_files()  # 40 lines
+        self._create_swmm_model_from_template()  # 80 lines
+        self._update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()  # 60 lines
+        self._run_swmm_hydro_model()  # 70 lines
+        # Total: ~300 lines in scenario.py
 ```
 
 **After:**
 ```python
-class TRITONSWMM_analysis:
-    def some_method(self):
-        constraints = self._resource_manager.get_slurm_resource_constraints()  # Direct call
-        config = self._workflow_builder.generate_snakemake_config()  # Direct call
-        
-    # Wrapper methods removed - ~100 lines deleted
+# scenario.py (~400 lines, down from ~700)
+class TRITONSWMM_scenario:
+    def __init__(self, ...):
+        self._input_generator = ScenarioInputGenerator(self)
+        self._model_builder = SWMMModelBuilder(self)
+    
+    def prepare_scenario(self):
+        self._input_generator.write_swmm_rainfall_dat_files()
+        self._input_generator.write_swmm_waterlevel_dat_files()
+        self._model_builder.create_swmm_model_from_template()
+        self._model_builder.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell()
+        self._model_builder.run_swmm_hydro_model()
+
+# scenario_inputs.py (~150 lines)
+class ScenarioInputGenerator:
+    # Input generation methods
+
+# swmm_model_builder.py (~150 lines)
+class SWMMModelBuilder:
+    # Model building methods
 ```
 
 ---
 
 ## Validation Checklist
 
-- [ ] Found all call sites for 7 wrapper methods
-- [ ] Updated all call sites to use direct component access
-- [ ] Removed all 7 wrapper method definitions
-- [ ] Verified no other files import these methods
+- [ ] Analyzed method dependencies in scenario.py
+- [ ] Created scenario_inputs.py with ScenarioInputGenerator class
+- [ ] Extracted 4 input generation methods
+- [ ] Created swmm_model_builder.py with SWMMModelBuilder class
+- [ ] Extracted 3 model building methods
+- [ ] Updated scenario.py to use new components
+- [ ] Removed extracted method definitions from scenario.py
+- [ ] Added type hints and docstrings to new classes
 - [ ] All 22 smoke tests passing (test_PC_01, test_PC_02, test_PC_04, test_PC_05)
 - [ ] No changes to public API
-- [ ] No changes to component classes
+- [ ] No changes to log file structures
+- [ ] Scenario preparation workflow unchanged
 
 ---
 
 ## Notes
 
-- This is a pure refactoring - no logic changes
-- Makes delegation explicit and reduces indirection
-- Improves code clarity by showing which component handles each responsibility
-- Sets up cleaner architecture for future phases
+- This phase has medium risk due to method interdependencies
+- Careful attention needed to maintain scenario state access
+- Consider keeping methods as instance methods (not static) to maintain access to scenario state
+- The new classes act as "strategy" objects that encapsulate related behavior
+- This follows the same pattern as Phases 1-3 (ResourceManager, ExecutionStrategy, SnakemakeWorkflowBuilder)
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 7 Implementation Guide
+**Last Updated:** January 27, 2026 - Phase 8 Implementation Guide

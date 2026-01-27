@@ -1,12 +1,12 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 27, 2026 | **Status:** Phase 6 Complete ✅ - Continuation Phases 7-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
+**Date:** January 27, 2026 | **Status:** Phase 7 Complete ✅ - Continuation Phases 8-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
 ---
 
 ## Executive Summary
 
-Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused components. Phases 1-4 completed successfully with full test validation. Phases 5-10 planned for continued refactoring.
+Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused components. Phases 1-7 completed successfully with full test validation. Phases 8-10 planned for continued refactoring.
 
 **Refactoring Strategy:**
 - ✅ **Prioritize codebase reduction** - Aggressively remove duplicate code
@@ -25,7 +25,7 @@ Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused componen
 
 # Part 1: Completed Phases (1-4) - Historical Record
 
-## Phase 1: Extract Resource Management ✅ COMPLETE
+## Phase 1com: Extract Resource Management ✅ COMPLETE
 
 **Status:** Code complete, all tests passing
 
@@ -528,17 +528,19 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Update plot_system.py imports
 - [x] Run smoke tests (22/22 passing)
 
-### Phase 7: Remove Delegation Wrappers
-- [ ] Identify all delegation wrapper methods in analysis.py
-- [ ] Update call sites to use direct component access
-- [ ] Remove _parse_slurm_tasks_per_node() wrapper
-- [ ] Remove _get_slurm_resource_constraints() wrapper
-- [ ] Remove _generate_snakefile_content() wrapper
-- [ ] Remove _generate_snakemake_config() wrapper
-- [ ] Remove _write_snakemake_config() wrapper
-- [ ] Remove _run_snakemake_local() wrapper
-- [ ] Remove _run_snakemake_slurm() wrapper
-- [ ] Run smoke tests (22/22 passing)
+### Phase 7: Remove Delegation Wrappers ✅ COMPLETE
+- [x] Identify all delegation wrapper methods in analysis.py
+- [x] Update call sites to use direct component access
+- [x] Remove _parse_slurm_tasks_per_node() wrapper
+- [x] Remove _get_slurm_resource_constraints() wrapper
+- [x] Remove _generate_snakefile_content() wrapper
+- [x] Remove _generate_snakemake_config() wrapper
+- [x] Remove _write_snakemake_config() wrapper
+- [x] Remove _run_snakemake_local() wrapper
+- [x] Remove _run_snakemake_slurm() wrapper
+- [x] Update sensitivity_analysis.py to use direct component access
+- [x] Update test files (6 test files updated)
+- [x] Run smoke tests (22/22 passing)
 
 ### Phase 8: Extract Scenario Preparation
 - [ ] Create scenario_inputs.py
@@ -630,4 +632,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 27, 2026 - Phase 6 Complete ✅ - Continuation Phases 7-10 Planned - All 22 Tests Passing
+**Last Updated:** January 27, 2026 - Phase 7 Complete ✅ - Continuation Phases 8-10 Planned - All 22 Tests Passing

@@ -164,5 +164,13 @@ Please review and validate the Phase [N] changes that were just completed:
    - Rate the phase completion: Excellent / Good / Needs Improvement
    - List any concerns or recommendations for follow-up
 
+6. **Plan immediate action based on review:**
+   - If there are any changes that should be completed as part of this phase based on your review, create an action plan now.
+
+7. **Plan next phase**
+   - Create an immediate action plan for updating refactoring_plan.md and next_action_prompt.md. 
+
+## final prompt
+Please review and validate the latest changes that that were just completed and confirm that we are ready to proceed with the next phase as a new task. If substantive code changes were made, ensure that smoke testing was re-done successfully.
 
 **Note:** This validation should be performed in Plan Mode after tests have passed and documentation has been updated in Act Mode.
