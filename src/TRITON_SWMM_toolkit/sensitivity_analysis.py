@@ -563,6 +563,8 @@ rule setup:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = sub_analysis.TRITON_summary
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
                 ds = ds.assign_coords(coords={new_dim: dim_value})
                 ds = ds.expand_dims(new_dim)
@@ -580,6 +582,8 @@ rule setup:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = sub_analysis.SWMM_node_summary
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
                 ds = ds.assign_coords(coords={new_dim: dim_value})
                 ds = ds.expand_dims(new_dim)
@@ -598,6 +602,8 @@ rule setup:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = sub_analysis.SWMM_link_summary
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
                 ds = ds.assign_coords(coords={new_dim: dim_value})
                 ds = ds.expand_dims(new_dim)
@@ -623,6 +629,8 @@ rule setup:
             config = self.df_setup.iloc[sub_analysis_iloc,]
             # Access the performance summary from the sub-analysis
             ds = sub_analysis.process.TRITONSWMM_performance_summary
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.expand_dims("sub_analysis_iloc")
 
             # Add sensitivity analysis dimensions
             for new_dim, dim_value in config.items():
