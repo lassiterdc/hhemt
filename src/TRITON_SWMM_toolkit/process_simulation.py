@@ -236,12 +236,32 @@ class TRITONSWMM_sim_post_processing:
             )
             return
         lst_perf_tseries = []
+        perfs_with_negatives = []
+        dfs_with_negatives = []
         for tstep, f in perf_tseries.items():
             df_ranks, ___ = parse_performance_file(f)
             df_ranks[perf_tseries.index.name] = tstep
             df_ranks = df_ranks.reset_index().set_index(
                 [perf_tseries.index.name, "Rank"]
             )
+            if (df_ranks < 0).any().any():
+                perfs_with_negatives.append(f)
+                dfs_with_negatives.append(df_ranks)
+        if len(perfs_with_negatives) > 0:
+            all_files = "\n    - ".join(perfs_with_negatives)
+            warning_text = (
+                f"Negative times encountered in {len(perfs_with_negatives)} performance.txt files.\n"
+                f"E.g., {perfs_with_negatives[0]}:\n{dfs_with_negatives[0].to_markdown()}\n"
+                "This is a known issue in some versions of TRITON-SWMM that should\n"
+                " not cause significant bias in performance measurement.\n"
+                f" Files with negative time values: {all_files}"
+            )
+            warnings.warn(
+                warning_text,
+                UserWarning,
+                stacklevel=2,
+            )
+
             lst_perf_tseries.append(df_ranks)
         full_perf_timeseries = pd.concat(lst_perf_tseries)
         full_perf_timeseries.loc[pd.IndexSlice[0, 0], :] = 0
