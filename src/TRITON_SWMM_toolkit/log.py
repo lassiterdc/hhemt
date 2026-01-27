@@ -13,6 +13,16 @@ T = TypeVar("T")  # Generic type variable
 # Custom types with generics
 # ----------------------------
 class LogField(Generic[T]):
+    """
+    A field that automatically writes to the parent log when updated.
+
+    Usage:
+        my_field: LogField[bool] = LogField()
+
+    The type annotation is used for auto-registration of validators and serializers.
+    No manual registration needed in most cases.
+    """
+
     _log: "TRITONSWMM_log" = PrivateAttr()
 
     def __init__(
@@ -55,6 +65,13 @@ class LogField(Generic[T]):
 
 
 class LogFieldDict(Generic[T]):
+    """
+    A dictionary field that automatically writes to the parent log when updated.
+
+    Usage:
+        my_dict: LogFieldDict[Path] = LogFieldDict()
+    """
+
     _log: "TRITONSWMM_log" = PrivateAttr()
 
     def __init__(
@@ -139,7 +156,43 @@ class Processing(BaseModel):
 
 
 # ----------------------------
-# TRITONSWMM)log base model (used for creating sim and analysis logs)
+# Helper function to create validators and serializers
+# ----------------------------
+def _create_logfield_validator(expected_type: Optional[Type] = None):
+    """Creates a validator function for LogField with optional type coercion."""
+
+    def validator(cls, v: Any):
+        if isinstance(v, LogField):
+            return v
+        return LogField(v, expected_type=expected_type)
+
+    return validator
+
+
+def _create_logfielddict_validator(expected_type: Optional[Type] = None):
+    """Creates a validator function for LogFieldDict with optional type coercion."""
+
+    def validator(cls, v: Any):
+        if isinstance(v, LogFieldDict):
+            return v
+        if v is None:
+            return LogFieldDict(expected_type=expected_type)
+        return LogFieldDict(v, expected_type=expected_type)
+
+    return validator
+
+
+def _logfield_serializer(v):
+    """Serializer for LogField and LogFieldDict."""
+    if isinstance(v, (LogField, LogFieldDict)):
+        return v.get()
+    if isinstance(v, Path):
+        return str(v)
+    return v
+
+
+# ----------------------------
+# TRITONSWMM_log base model (used for creating sim and analysis logs)
 # ----------------------------
 class TRITONSWMM_log(BaseModel):
     logfile: Path
@@ -222,7 +275,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     # ----------------------------
     # SWMM stuff
     swmm_rainfall_dat_files: LogFieldDict[Path] = Field(default_factory=LogFieldDict)
-    storm_tide_for_swmm: LogField = Field(default_factory=LogField)
+    storm_tide_for_swmm: LogField[Path] = Field(default_factory=LogField)
     # scenario creation
     scenario_creation_complete: LogField[bool] = Field(default_factory=LogField)
     inp_hydraulics_model_created_successfully: LogField[bool] = Field(
@@ -269,11 +322,10 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
-    # JSON → LogField hydration
+    # Consolidated validators using helper functions
     # ----------------------------
-    # enforces data types
-    @field_validator(
-        "storm_tide_for_swmm",
+    # Boolean LogFields
+    _validate_bool_fields = field_validator(
         "scenario_creation_complete",
         "inp_hydraulics_model_created_successfully",
         "inp_full_model_created_successfully",
@@ -300,71 +352,24 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "full_TRITON_timeseries_cleared",
         "full_SWMM_timeseries_cleared",
         mode="before",
-    )
-    @classmethod
-    def _load_logfield(cls, v: Any):
-        if isinstance(v, LogField):
-            return v
-        return LogField(v)
+    )(_create_logfield_validator(bool))
 
-    # Field dicts
-    @field_validator("swmm_rainfall_dat_files", mode="before")
-    @classmethod
-    def _load_logfielddict(cls, v: Any):
-        if isinstance(v, LogFieldDict):
-            return v
-        if v is None:
-            return LogFieldDict(expected_type=Path)
-        return LogFieldDict(v, expected_type=Path)
-
-    # ----------------------------
-    # Coercing data types
-    # ----------------------------
-    @field_validator(
-        "inp_hydraulics_model_created_successfully",
-        "inp_full_model_created_successfully",
-        "inp_hydro_model_created_successfully",
-        "hydro_swmm_sim_completed",
-        "extbc_tseries_created",
-        "extbc_loc_created",
-        "hyg_timeseries_created",
-        "hyg_locs_created",
-        "inflow_nodes_in_hydraulic_inp_assigned",
-        "triton_swmm_cfg_created",
-        "sim_tritonswmm_executable_copied",
-        "simulation_completed",
-        "TRITON_timeseries_written",
-        "TRITONSWMM_performance_timeseries_written",
-        "TRITONSWMM_performance_summary_written",
-        "SWMM_node_timeseries_written",
-        "SWMM_link_timeseries_written",
-        "raw_TRITON_outputs_cleared",
-        "raw_SWMM_outputs_cleared",
-        "TRITON_summary_written",
-        "SWMM_node_summary_written",
-        "SWMM_link_summary_written",
-        "full_TRITON_timeseries_cleared",
-        "full_SWMM_timeseries_cleared",
+    # Path LogFields
+    _validate_path_field = field_validator(
+        "storm_tide_for_swmm",
         mode="before",
-    )
-    @classmethod
-    def _load_bool_logfield(cls, v):
-        if isinstance(v, LogField):
-            return v
-        return LogField(v, expected_type=bool)
+    )(_create_logfield_validator(Path))
 
-    @field_validator("storm_tide_for_swmm", mode="before")
-    @classmethod
-    def _load_path_logfield(cls, v):
-        if isinstance(v, LogField):
-            return v
-        return LogField(v, expected_type=Path)
+    # LogFieldDict
+    _validate_dict_field = field_validator(
+        "swmm_rainfall_dat_files",
+        mode="before",
+    )(_create_logfielddict_validator(Path))
 
     # ----------------------------
-    # Serialization
+    # Consolidated serializer
     # ----------------------------
-    # aids converting to dict and printing
-    @field_serializer(
+    _serialize_logfields = field_serializer(
         "swmm_rainfall_dat_files",
         "storm_tide_for_swmm",
         "scenario_creation_complete",
@@ -392,13 +397,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "SWMM_link_summary_written",
         "full_TRITON_timeseries_cleared",
         "full_SWMM_timeseries_cleared",
-    )
-    def serialize_logfield(self, v):
-        if isinstance(v, (LogField, LogFieldDict)):
-            return v.get()
-        if isinstance(v, Path):
-            return str(v)
-        return v
+    )(_logfield_serializer)
 
     # ----------------------------
     # Simulation entries
@@ -474,10 +473,9 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
-    # JSON → LogField hydration
+    # Consolidated validators using helper functions
     # ----------------------------
-    # enforces data types
-    @field_validator(
+    _validate_bool_fields = field_validator(
         "all_scenarios_created",
         "all_sims_run",
         "all_TRITON_timeseries_processed",
@@ -490,18 +488,12 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "SWMM_link_analysis_summary_created",
         "TRITONSWMM_performance_analysis_summary_created",
         mode="before",
-    )
-    @classmethod
-    def _load_logfield(cls, v: Any):
-        if isinstance(v, LogField):
-            return v
-        return LogField(v)
+    )(_create_logfield_validator(bool))
 
     # ----------------------------
-    # Coercing data types
+    # Consolidated serializer
     # ----------------------------
-    # bools
-    @field_validator(
+    _serialize_logfields = field_serializer(
         "all_scenarios_created",
         "all_sims_run",
         "all_TRITON_timeseries_processed",
@@ -513,37 +505,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
         "TRITONSWMM_performance_analysis_summary_created",
-        mode="before",
-    )
-    @classmethod
-    def _load_bool_logfield(cls, v):
-        if isinstance(v, LogField):
-            return v
-        return LogField(v, expected_type=bool)
-
-    # ----------------------------
-    # Serialization
-    # ----------------------------
-    # aids converting to dict and printing
-    @field_serializer(
-        "all_scenarios_created",
-        "all_sims_run",
-        "all_TRITON_timeseries_processed",
-        "all_SWMM_timeseries_processed",
-        "all_TRITONSWMM_performance_timeseries_processed",
-        "all_raw_TRITON_outputs_cleared",
-        "all_raw_SWMM_outputs_cleared",
-        "TRITON_analysis_summary_created",
-        "SWMM_node_analysis_summary_created",
-        "SWMM_link_analysis_summary_created",
-        "TRITONSWMM_performance_analysis_summary_created",
-    )
-    def serialize_logfield(self, v):
-        if isinstance(v, (LogField, LogFieldDict)):
-            return v.get()
-        if isinstance(v, Path):
-            return str(v)
-        return v
+    )(_logfield_serializer)
 
     # ----------------------------
     # Processing entries

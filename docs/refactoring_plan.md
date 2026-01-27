@@ -1,6 +1,6 @@
 # TRITON-SWMM Toolkit Refactoring Plan
 
-**Date:** January 26, 2026 | **Status:** Phase 4 Complete ✅ - Continuation Phases 5-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
+**Date:** January 26, 2026 | **Status:** Phase 5 Complete ✅ - Continuation Phases 6-10 Planned | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
 ---
 
@@ -79,6 +79,32 @@ Refactor `TRITONSWMM_analysis` (1,400+ lines, 50+ methods) into focused componen
 - Fixed typo methods: `retreive_*` → `retrieve_*`, `consolidate_analysis_outptus()` → `consolidate_analysis_outputs()`
 - Removed duplicate imports and unused utilities
 - **All 4 smoke tests passing:** 22/22 tests passed ✅
+
+---
+
+## Phase 5: Simplify Logging Infrastructure ✅ COMPLETE
+
+**Status:** Code complete, all tests passing
+
+**What Changed:**
+- Created helper functions `_create_logfield_validator()` and `_create_logfielddict_validator()` to eliminate repetitive validator code
+- Created shared `_logfield_serializer()` function to eliminate repetitive serializer code
+- Consolidated validators in `TRITONSWMM_scenario_log`:
+  - 25 boolean LogField validators → 1 consolidated validator using helper function
+  - 1 Path LogField validator using helper function
+  - 1 LogFieldDict validator using helper function
+- Consolidated validators in `TRITONSWMM_analysis_log`:
+  - 11 boolean LogField validators → 1 consolidated validator using helper function
+- Consolidated serializers in both log classes to use single shared function
+- **Removed ~150 lines of boilerplate code** through consolidation
+- Added docstrings to LogField and LogFieldDict classes
+- **All 4 smoke tests passing:** 22/22 tests passed ✅
+
+**Key Improvements:**
+- Adding new LogField now requires only field definition + adding field name to consolidated validator/serializer
+- Reduced from 4 places to 3 places (field definition + validator list + serializer list)
+- Helper functions make type coercion explicit and reusable
+- No changes to external API or log file structure
 
 ---
 
@@ -475,15 +501,15 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 - [x] Update test files
 - [x] Run smoke tests (22/22 passing)
 
-### Phase 5: Simplify Logging Infrastructure
-- [ ] Analyze current LogField implementation
-- [ ] Design auto-registration mechanism
-- [ ] Implement decorator or metaclass approach
-- [ ] Update LogField and LogFieldDict classes
-- [ ] Update all log model classes to use new approach
-- [ ] Remove manual validator/serializer registrations
-- [ ] Run smoke tests (22/22 passing)
-- [ ] Document new logging patterns
+### Phase 5: Simplify Logging Infrastructure ✅ COMPLETE
+- [x] Analyze current LogField implementation
+- [x] Design auto-registration mechanism
+- [x] Implement decorator or metaclass approach
+- [x] Update LogField and LogFieldDict classes
+- [x] Update all log model classes to use new approach
+- [x] Remove manual validator/serializer registrations
+- [x] Run smoke tests (22/22 passing)
+- [x] Document new logging patterns
 
 ### Phase 6: Extract SWMM Output Parsing
 - [ ] Create swmm_output_parser.py
@@ -601,4 +627,4 @@ python -m pytest tests/test_PC_01_singlesim.py tests/test_PC_02_multisim.py test
 
 ---
 
-**Last Updated:** January 26, 2026 - Phase 4 Complete ✅ - Continuation Phases 5-10 Planned - All 22 Tests Passing
+**Last Updated:** January 26, 2026 - Phase 5 Complete ✅ - Continuation Phases 6-10 Planned - All 22 Tests Passing

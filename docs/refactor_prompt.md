@@ -130,3 +130,40 @@ For the top-ranked target:
 
 Begin by scanning the repository to build a high-level architectural map.
 Do **not** propose refactors until that map is complete.
+
+---
+
+## Post-Phase QA/QC Validation Prompt
+
+After completing a refactoring phase, use this prompt to validate the work:
+
+```
+Please review and validate the Phase [N] changes that were just completed:
+
+1. **Code Quality Review:**
+   - Read the modified files and confirm the implementation matches the phase goals in docs/refactoring_plan.md
+   - Check for any code smells, unnecessary complexity, or missed opportunities for simplification
+   - Verify no duplicate code was introduced
+   - Confirm no functionality was accidentally removed or altered
+
+2. **Completeness Check:**
+   - Compare what was done against the phase checklist - were all items truly completed?
+   - Were there any edge cases or aspects mentioned in the plan that weren't addressed?
+   - Is the line reduction claim accurate? (count lines before/after if needed)
+
+3. **Consistency Verification:**
+   - Does the new code follow the same patterns/conventions as existing code?
+   - Are naming conventions consistent?
+   - Do new helper functions/classes have appropriate docstrings?
+
+4. **Potential Issues:**
+   - Are there any potential regression risks not covered by the smoke tests?
+   - Any tight coupling introduced that could cause issues in future phases?
+   - Any technical debt created that should be noted for Phase 10 (Polish)?
+
+5. **Summary Report:**
+   - Rate the phase completion: Excellent / Good / Needs Improvement
+   - List any concerns or recommendations for follow-up
+```
+
+**Note:** This validation should be performed in Plan Mode after tests have passed and documentation has been updated in Act Mode.
