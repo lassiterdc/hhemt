@@ -555,60 +555,6 @@ class TestPerformance:
 
 
 # =============================================================================
-# Integration Tests
-# =============================================================================
-
-
-class TestIntegration:
-    """Integration tests using the full test case setup."""
-
-    @pytest.mark.slow
-    def test_full_multisim_processing(self):
-        """
-        Test full processing pipeline similar to test_PC_02_multisim.py.
-
-        This test verifies that the refactored code works correctly in the
-        context of the full TRITON-SWMM toolkit workflow.
-        """
-        # try:
-        from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-        from tests.utils_for_testing import is_scheduler_context
-
-        # except ImportError:
-        #     pytest.skip("Required modules not available")
-
-        if is_scheduler_context():
-            pytest.skip("Only runs on non-HPC systems")
-
-        # This mirrors the setup in test_PC_02_multisim.py
-        nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-            start_from_scratch=False
-        )
-        analysis = nrflk_multisim_ensemble.system.analysis
-
-        # Process timeseries with warning capture
-        with warnings.catch_warnings(record=True) as caught_warnings:
-            warnings.simplefilter("always")
-
-            scenario_timeseries_processing_launchers = (
-                analysis.retrieve_scenario_timeseries_processing_launchers(
-                    which="SWMM", clear_raw_outputs=False
-                )
-            )
-            analysis.run_python_functions_concurrently(
-                scenario_timeseries_processing_launchers
-            )
-
-        assert len(caught_warnings) == 0, (
-            f"Found {len(caught_warnings)} warning(s): "
-            f"{[str(w.message) for w in caught_warnings]}"
-        )
-
-        # Verify processing succeeded
-        assert analysis.log.all_SWMM_timeseries_processed.get()
-
-
-# =============================================================================
 # Marker Configuration
 # =============================================================================
 
