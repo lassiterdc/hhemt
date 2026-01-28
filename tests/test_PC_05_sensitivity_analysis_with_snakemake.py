@@ -187,50 +187,30 @@ def test_snakemake_sensitivity_workflow_dry_run(
     3. No actual execution occurs
     4. Snakemake exit code is 0
     """
-    import subprocess
-
     analysis = norfolk_sensitivity_analysis
-    sensitivity = analysis.sensitivity
-
-    for sub_analysis in sensitivity.sub_analyses.values():
-        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
-            process_system_level_inputs=False,
-            compile_TRITON_SWMM=False,
-            prepare_scenarios=True,
-            process_timeseries=False,
-        )
-        tst_ut.write_snakefile(sub_analysis, snakefile_content)
-
-    master_snakefile_content = (
-        sensitivity._workflow_builder.generate_master_snakefile_content(
-            which="both",
-            overwrite_if_exist=False,
-            compression_level=5,
-        )
-    )
-    master_snakefile_path = tst_ut.write_snakefile(analysis, master_snakefile_content)
-
-    logs_dir = analysis.analysis_paths.analysis_dir / "logs"
-    logs_dir.mkdir(exist_ok=True, parents=True)
-
-    status_dir = analysis.analysis_paths.analysis_dir / "_status"
-    status_dir.mkdir(exist_ok=True, parents=True)
-
-    result = subprocess.run(
-        ["snakemake", "--snakefile", str(master_snakefile_path), "--dry-run", "-p"],
-        cwd=str(analysis.analysis_paths.analysis_dir),
-        capture_output=True,
-        text=True,
-        timeout=60,
+    result = analysis.submit_workflow(
+        mode="local",
+        process_system_level_inputs=True,
+        overwrite_system_inputs=True,
+        compile_TRITON_SWMM=True,
+        recompile_if_already_done_successfully=True,
+        prepare_scenarios=True,
+        overwrite_scenario=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
+        process_timeseries=True,
+        which="both",
+        clear_raw_outputs=True,
+        overwrite_if_exist=True,
+        compression_level=5,
+        pickup_where_leftoff=False,
+        dry_run=True,
+        verbose=True,
     )
 
-    assert (
-        result.returncode == 0
-    ), f"Snakemake dry-run failed:\n{result.stdout}\n{result.stderr}"
-
-    assert "rule" in result.stdout or "DAG" in result.stdout
-
-    print("✅ Snakemake sensitivity analysis dry-run successful - DAG validated")
+    assert result.get(
+        "success"
+    ), f"Snakemake dry-run failed: {result.get('message', '')}"
+    assert result.get("mode") == "local"
 
 
 @pytest.mark.slow
