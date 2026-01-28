@@ -285,6 +285,8 @@ class TRITONSWMM_analysis:
         list of str
             Paths to scenario directories where creation is incomplete
         """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.scenarios_not_created
         scens_not_created = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -303,6 +305,8 @@ class TRITONSWMM_analysis:
         list of str
             Paths to scenario directories where simulation is incomplete
         """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.scenarios_not_run
         scens_not_run = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -310,7 +314,45 @@ class TRITONSWMM_analysis:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
+    @property
+    def all_scenarios_created(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_scenarios_created
+        return bool(self.log.all_scenarios_created.get())
+
+    @property
+    def all_sims_run(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_sims_run
+        return bool(self.log.all_sims_run.get())
+
+    @property
+    def all_TRITONSWMM_performance_timeseries_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_TRITONSWMM_performance_timeseries_processed
+        return bool(self.log.all_TRITONSWMM_performance_timeseries_processed.get())
+
+    @property
+    def TRITONSWMM_performance_time_series_not_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.TRITONSWMM_performance_time_series_not_processed
+        scens_not_processed = []
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            if scen.log.TRITONSWMM_performance_timeseries_written.get() is not True:
+                scens_not_processed.append(str(scen.log.logfile.parent))
+        return scens_not_processed
+
+    @property
+    def all_SWMM_timeseries_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_SWMM_timeseries_processed
+        return bool(self.log.all_SWMM_timeseries_processed.get())
+
+    @property
     def TRITON_time_series_not_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.TRITON_time_series_not_processed
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -318,7 +360,10 @@ class TRITONSWMM_analysis:
                 scens_not_processed.append(str(scen.log.logfile.parent))
         return scens_not_processed
 
+    @property
     def SWMM_time_series_not_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.SWMM_time_series_not_processed
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
@@ -327,6 +372,12 @@ class TRITONSWMM_analysis:
             if not (node_tseries_written and link_tseries_written):
                 scens_not_processed.append(str(scen.log.logfile.parent))
         return scens_not_processed
+
+    @property
+    def all_TRITON_timeseries_processed(self):
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_TRITON_timeseries_processed
+        return bool(self.log.all_TRITON_timeseries_processed.get())
 
     def _update_log(self):
         self._refresh_log()
@@ -987,6 +1038,26 @@ class TRITONSWMM_analysis:
             - job_id: str | None - Job ID (only for slurm mode)
             - message: str - Status message
         """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.submit_workflow(
+                mode=mode,
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario=overwrite_scenario,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+                wait_for_completion=wait_for_completion,
+                verbose=verbose,
+            )
+
         return self._workflow_builder.submit_workflow(
             mode=mode,
             process_system_level_inputs=process_system_level_inputs,
