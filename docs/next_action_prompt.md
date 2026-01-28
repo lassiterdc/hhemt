@@ -12,28 +12,6 @@ You are starting Phase 4 of the SWMM Output Parser Optimization Plan. The focus 
 
 Refactor dataframe construction in `src/TRITON_SWMM_toolkit/swmm_output_parser.py` to reduce per-row pandas overhead, while preserving output parity.
 
----
-
-## ✅ Completed in Phase 1
-
-- Suppressed Zarr V3 string warnings in `utils.write_zarr()`.
-- Vectorized `convert_swmm_tdeltas_to_minutes()`.
-- Replaced `iterrows()` link_id cleaning with `_clean_link_id()` helper.
-- Simplified substring parsing in `return_data_from_rpt()` while preserving newline tokens.
-- Removed `Zone.Identifier` artifacts from test data.
-- Refactoring and multisim tests pass (including warnings-as-errors).
-
-## ✅ Completed in Phase 2
-
-- Optimized `return_data_from_rpt()` with precompiled regex and cached substring lookups.
-- Streamlined `return_node_time_series_results_from_rpt()`.
-- Consolidated DataFrame/xarray ops in `return_swmm_outputs()`.
-- Reduced exception-driven dtype conversions with numeric prechecks + safe fallbacks.
-- Added helper for normal-row selection in RPT parsing.
-- Baseline timing: 19.14s vs 20.30s (5.7% savings).
-
----
-
 ## Phase 4 Tasks: DataFrame Construction Refactor
 
 ### Task 1: Refactor `format_rpt_section_into_dataframe`
