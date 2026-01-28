@@ -1,13 +1,13 @@
 import pytest
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from tests.utils_for_testing import is_scheduler_context
+
+import tests.utils_for_testing as tst_ut
 
 pytestmark = pytest.mark.skipif(
-    is_scheduler_context(), reason="Only runs on non-HPC systems."
+    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
 )
 
 
-def test_snakemake_local_workflow_generation():
+def test_snakemake_local_workflow_generation(norfolk_multi_sim_analysis):
     """
     Test Snakemake workflow generation for local execution.
 
@@ -16,12 +16,8 @@ def test_snakemake_local_workflow_generation():
     2. Snakefile contains all necessary rules
     3. Snakefile uses correct conda environment
     """
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
-    # Generate Snakefile content
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
@@ -29,32 +25,25 @@ def test_snakemake_local_workflow_generation():
         process_timeseries=True,
     )
 
-    # Verify Snakefile structure
-    assert "rule all:" in snakefile_content
-    assert "rule setup:" in snakefile_content
-    assert "rule simulation:" in snakefile_content
-    assert "rule consolidate:" in snakefile_content
-
-    # Verify conda environment specification
-    assert "/workflow/envs/triton_swmm.yaml" in snakefile_content
-
-    # Verify wildcard-based simulation rule
-    assert "_status/sims/sim_{event_iloc}_complete.flag" in snakefile_content
-
-    # Verify setup phase commands
-    assert "setup_workflow" in snakefile_content
-    assert "--process-system-inputs" in snakefile_content
-    assert "--compile-triton-swmm" in snakefile_content
-
-    # Verify simulation phase commands
-    assert "run_single_simulation" in snakefile_content
-    assert "--prepare-scenario" in snakefile_content
-
-    # Verify consolidation phase commands
-    assert "consolidate_workflow" in snakefile_content
+    tst_ut.assert_snakefile_has_rules(
+        snakefile_content, ["all", "setup", "simulation", "consolidate"]
+    )
+    tst_ut.assert_snakefile_has_flags(
+        snakefile_content,
+        [
+            "/workflow/envs/triton_swmm.yaml",
+            "_status/sims/sim_{event_iloc}_complete.flag",
+            "setup_workflow",
+            "--process-system-inputs",
+            "--compile-triton-swmm",
+            "run_single_simulation",
+            "--prepare-scenario",
+            "consolidate_workflow",
+        ],
+    )
 
 
-def test_snakemake_local_workflow_submission_dry_run():
+def test_snakemake_local_workflow_submission_dry_run(norfolk_multi_sim_analysis):
     """
     Test Snakemake workflow submission in local mode (dry-run).
 
@@ -63,12 +52,8 @@ def test_snakemake_local_workflow_submission_dry_run():
     2. submit_workflow() returns success status (but doesn't actually run snakemake)
     3. Workflow mode is detected correctly (local)
     """
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
-    # Generate Snakefile (without actually running snakemake)
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
@@ -76,46 +61,32 @@ def test_snakemake_local_workflow_submission_dry_run():
         process_timeseries=True,
     )
 
-    # Write Snakefile to disk
-    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
-    snakefile_path.write_text(snakefile_content)
+    snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
 
-    # Verify Snakefile was written
     assert snakefile_path.exists()
-
-    # Verify Snakefile is not empty
     assert len(snakefile_path.read_text()) > 100
 
-    # Verify Snakefile contains expected rules
     content = snakefile_path.read_text()
-    assert "rule all:" in content
-    assert "rule setup:" in content
-    assert "rule simulation:" in content
-    assert "rule consolidate:" in content
+    tst_ut.assert_snakefile_has_rules(
+        content, ["all", "setup", "simulation", "consolidate"]
+    )
 
 
-def test_submit_workflow_detects_local_mode():
+def test_submit_workflow_detects_local_mode(norfolk_multi_sim_analysis):
     """
     Test that submit_workflow() correctly detects local mode.
 
     Note: This test does NOT actually run snakemake, only verifies detection logic.
     """
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
-    # Verify that analysis is not in SLURM context
     assert not analysis.in_slurm, "Test must run on local machine, not in SLURM"
 
-    # Test mode detection
-    # If we call submit_workflow with mode="auto", it should detect "local"
-    # For this test, we just verify the detection logic works
     detected_mode = "slurm" if analysis.in_slurm else "local"
     assert detected_mode == "local"
 
 
-def test_snakemake_workflow_config_generation():
+def test_snakemake_workflow_config_generation(norfolk_multi_sim_analysis):
     """
     Test configuration passed to Snakemake.
 
@@ -124,10 +95,7 @@ def test_snakemake_workflow_config_generation():
     2. Resource specifications are valid
     3. Command-line arguments are properly escaped
     """
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
@@ -139,77 +107,64 @@ def test_snakemake_workflow_config_generation():
         compression_level=5,
     )
 
-    # Verify compression level
-    assert "--compression-level 5" in snakefile_content
+    tst_ut.assert_snakefile_has_flags(
+        snakefile_content,
+        [
+            "--compression-level 5",
+            "--which both",
+            f"--system-config {analysis._system.system_config_yaml}",
+            f"--analysis-config {analysis.analysis_config_yaml}",
+        ],
+    )
 
-    # Verify which parameter
-    assert "--which both" in snakefile_content
-
-    # Verify path handling
-    assert f"--system-config {analysis._system.system_config_yaml}" in snakefile_content
-    assert f"--analysis-config {analysis.analysis_config_yaml}" in snakefile_content
-
-    # Verify simulation IDs are generated
     n_sims = len(analysis.df_sims)
     assert f"SIM_IDS = {list(range(n_sims))}" in snakefile_content
 
 
-def test_snakemake_multiple_configurations():
+@pytest.mark.parametrize(
+    "config,expected_flags,forbidden_flags",
+    [
+        (
+            {
+                "process_system_level_inputs": True,
+                "compile_TRITON_SWMM": True,
+                "prepare_scenarios": False,
+                "process_timeseries": False,
+            },
+            ["--process-system-inputs", "--compile-triton-swmm"],
+            ["--prepare-scenario", "--process-timeseries"],
+        ),
+        (
+            {
+                "process_system_level_inputs": True,
+                "compile_TRITON_SWMM": True,
+                "prepare_scenarios": True,
+                "process_timeseries": True,
+            },
+            ["--prepare-scenario", "--process-timeseries"],
+            [],
+        ),
+    ],
+)
+def test_snakemake_multiple_configurations(
+    norfolk_multi_sim_analysis, config, expected_flags, forbidden_flags
+):
     """
     Test Snakemake generation with different parameter combinations.
 
     Verifies that:
-    1. Different parameter combinations generate different Snakefiles
-    2. Optional parameters are correctly included/excluded
+    1. Optional parameters are correctly included/excluded
     """
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
-    # Configuration 1: Setup only
-    snakefile_1 = analysis._workflow_builder.generate_snakefile_content(
-        process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
-        prepare_scenarios=False,
-        process_timeseries=False,
-    )
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(**config)
 
-    # Configuration 2: Everything
-    snakefile_2 = analysis._workflow_builder.generate_snakefile_content(
-        process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
-        prepare_scenarios=True,
-        process_timeseries=True,
-    )
-
-    # They should be different
-    assert snakefile_1 != snakefile_2
-
-    # Configuration 1 should have --process-system-inputs and --compile-triton-swmm
-    assert "--process-system-inputs" in snakefile_1
-    assert "--compile-triton-swmm" in snakefile_1
-
-    # Configuration 1 should NOT have --prepare-scenario (since prepare_scenarios=False)
-    # Note: We need to check in the simulation rule
-    assert "rule simulation:" in snakefile_1
-    # The shell command should not have --prepare-scenario
-    lines = snakefile_1.split("\n")
-    simulation_section = False
-    for line in lines:
-        if "rule simulation:" in line:
-            simulation_section = True
-        if simulation_section and "--prepare-scenario" in line:
-            pytest.fail(
-                "--prepare-scenario should not be in simulation rule when prepare_scenarios=False"
-            )
-
-    # Configuration 2 should have --prepare-scenario
-    assert "--prepare-scenario" in snakefile_2
-    assert "--process-timeseries" in snakefile_2
+    tst_ut.assert_snakefile_has_flags(snakefile_content, expected_flags)
+    for flag in forbidden_flags:
+        assert flag not in snakefile_content
 
 
-def test_snakemake_workflow_dry_run():
+def test_snakemake_workflow_dry_run(norfolk_multi_sim_analysis):
     """
     Test Snakemake dry-run (--dry-run flag).
 
@@ -220,15 +175,9 @@ def test_snakemake_workflow_dry_run():
     4. Snakemake exit code is 0
     """
     import subprocess
-    import tempfile
-    from pathlib import Path
 
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = norfolk_multi_sim_analysis
 
-    # Generate Snakefile content
     snakefile_content = analysis._workflow_builder.generate_snakefile_content(
         process_system_level_inputs=False,
         compile_TRITON_SWMM=False,
@@ -236,15 +185,11 @@ def test_snakemake_workflow_dry_run():
         process_timeseries=False,
     )
 
-    # Write Snakefile to disk
-    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
-    snakefile_path.write_text(snakefile_content)
+    snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
 
-    # Create logs directory
     logs_dir = analysis.analysis_paths.analysis_dir / "logs"
     logs_dir.mkdir(exist_ok=True, parents=True)
 
-    # Run snakemake --dry-run
     result = subprocess.run(
         ["snakemake", "--snakefile", str(snakefile_path), "--dry-run", "-p"],
         cwd=str(analysis.analysis_paths.analysis_dir),
@@ -253,19 +198,17 @@ def test_snakemake_workflow_dry_run():
         timeout=60,
     )
 
-    # Verify DAG construction was successful
     assert (
         result.returncode == 0
     ), f"Snakemake dry-run failed:\n{result.stdout}\n{result.stderr}"
 
-    # Verify rules are present in output
     assert "rule" in result.stdout or "DAG" in result.stdout
 
-    print(f"✅ Snakemake dry-run successful - DAG validated")
+    print("✅ Snakemake dry-run successful - DAG validated")
 
 
 @pytest.mark.slow
-def test_snakemake_workflow_execution():
+def test_snakemake_workflow_execution(norfolk_multi_sim_analysis):
     """
     Test Snakemake workflow execution (2 simulations).
 
@@ -277,14 +220,9 @@ def test_snakemake_workflow_execution():
     5. Simulations run successfully
     6. Analysis summaries are generated
     """
-    from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+    analysis = norfolk_multi_sim_analysis
+    which = "both"  # which outputs to process
 
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=True
-    )
-    analysis = nrflk_multisim_ensemble.system.analysis
-
-    # Submit the workflow
     result = analysis.submit_workflow(
         mode="local",
         process_system_level_inputs=True,
@@ -295,7 +233,7 @@ def test_snakemake_workflow_execution():
         overwrite_scenario=True,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
-        which="both",
+        which=which,
         clear_raw_outputs=True,
         overwrite_if_exist=True,
         compression_level=5,
@@ -303,29 +241,4 @@ def test_snakemake_workflow_execution():
         verbose=True,
     )
 
-    # Verify workflow submission was successful
-    assert result["success"], "Workflow submission failed"
-
-    # Verify TRITON compilation was successful
-    assert analysis._system.compilation_successful, "TRITON compilation failed"
-
-    # Verify scenario preparation completed
-    assert analysis.log.all_scenarios_created.get(), "All scenarios should be created"
-
-    # Verify simulations completed
-    assert analysis.log.all_sims_run.get(), "All simulations should complete"
-
-    # Verify output summaries were generated
-    if not analysis.log.all_TRITON_timeseries_processed.get():
-        pytest.fail("TRITON time series were not processed")
-    if not analysis.log.all_SWMM_timeseries_processed.get():
-        pytest.fail("TRITON time series were not processed")
-    if not analysis.log.all_TRITONSWMM_performance_timeseries_processed.get():
-        pytest.fail("TRITON time series were not processed")
-
-    assert (
-        analysis.TRITON_analysis_summary_created
-    ), "TRITON analysis summary should be created"
-    assert analysis.SWMM_node_analysis_summary_created
-    assert analysis.SWMM_link_analysis_summary_created
-    assert analysis.TRITONSWMM_performance_analysis_summary_created
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
