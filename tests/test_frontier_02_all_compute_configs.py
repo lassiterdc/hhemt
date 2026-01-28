@@ -1,5 +1,4 @@
 import pytest
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 import tests.utils_for_testing as tst_ut
 
 pytestmark = pytest.mark.skipif(
@@ -14,60 +13,48 @@ pytestmark = pytest.mark.skipif(
 # ps -o pid= --ppid $$ | xargs kill -9 # kills all srun processes
 
 
-def test_retrieve_test():
-    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
-        start_from_scratch=True
-    )
+def test_retrieve_test(norfolk_frontier_all_configs_analysis):
+    analysis = norfolk_frontier_all_configs_analysis
+    assert analysis.analysis_paths.simulation_directory.exists()
 
 
-def test_compile():
-    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
-        start_from_scratch=False
-    )
-    analysis = nrflk_multiconfig.system.analysis
+def test_compile(norfolk_frontier_all_configs_analysis_cached):
+    analysis = norfolk_frontier_all_configs_analysis_cached
     analysis.sensitivity.compile_TRITON_SWMM_for_sensitivity_analysis(verbose=True)
     assert analysis._system.compilation_successful, "TRITON-SWMM not compiled"
 
 
-def test_prepare_scenarios():
-    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
-        start_from_scratch=False
-    )
-    analysis = nrflk_multiconfig.system.analysis
+def test_prepare_scenarios(norfolk_frontier_all_configs_analysis_cached):
+    analysis = norfolk_frontier_all_configs_analysis_cached
     analysis.sensitivity.prepare_scenarios_in_each_subanalysis(
         concurrent=True, verbose=True
     )
     assert analysis.sensitivity.all_scenarios_created
 
 
-def test_run_all_sims():
-    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
-        start_from_scratch=False
-    )
-    analysis = nrflk_multiconfig.system.analysis
+def test_run_all_sims(norfolk_frontier_all_configs_analysis_cached):
+    analysis = norfolk_frontier_all_configs_analysis_cached
     analysis.sensitivity.run_all_sims(
         pickup_where_leftoff=False, concurrent=False, verbose=True, which="TRITON"
     )
     assert analysis.sensitivity.all_sims_run == True
-    success_processing = (
+    if not (
         analysis.sensitivity.all_TRITON_timeseries_processed
         and analysis.sensitivity.all_SWMM_timeseries_processed
-    )
-    if not success_processing:
+    ):
         unprcsd_triton = "\n".join(
             analysis.sensitivity.TRITON_time_series_not_processed
         )
         unprcsd_swmm = "\n".join(analysis.sensitivity.SWMM_time_series_not_processed)
         pytest.fail(
-            f"Processing TRITON and SWMM time series failed.\nUnprocessed TRITON: {unprcsd_triton}\nUnprocessed SWMM: {unprcsd_swmm}"
+            "Processing TRITON and SWMM time series failed.\n"
+            f"Unprocessed TRITON: {unprcsd_triton}\n"
+            f"Unprocessed SWMM: {unprcsd_swmm}"
         )
 
 
-def test_consolidate_outputs():
-    nrflk_multiconfig = tst.retrieve_norfolk_frontier_all_configs(
-        start_from_scratch=False
-    )
-    analysis = nrflk_multiconfig.system.analysis
+def test_consolidate_outputs(norfolk_frontier_all_configs_analysis_cached):
+    analysis = norfolk_frontier_all_configs_analysis_cached
     analysis.sensitivity.consolidate_outputs(which="TRITON")
     assert analysis.log.TRITON_analysis_summary_created.get() == True
     # analysis.sensitivity.consolidate_SWMM_outputs_for_analysis()
