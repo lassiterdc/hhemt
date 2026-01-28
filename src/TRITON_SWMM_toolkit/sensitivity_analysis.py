@@ -795,11 +795,19 @@ class TRITONSWMM_sensitivity_analysis:
         return all_TRITONSWMM_performance_timeseries_processed is True
 
     @property
+    def TRITONSWMM_performance_time_series_not_processed(self):
+        lst_scens = []
+        for key, sub_analysis in self.sub_analyses.items():
+            sub_analysis._update_log()
+            lst_scens += sub_analysis.TRITONSWMM_performance_time_series_not_processed
+        return lst_scens
+
+    @property
     def TRITON_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
-            lst_scens += sub_analysis.TRITON_time_series_not_processed()
+            lst_scens += sub_analysis.TRITON_time_series_not_processed
         return lst_scens
 
     @property
@@ -807,7 +815,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
-            lst_scens += sub_analysis.SWMM_time_series_not_processed()
+            lst_scens += sub_analysis.SWMM_time_series_not_processed
         return lst_scens
 
     @property
