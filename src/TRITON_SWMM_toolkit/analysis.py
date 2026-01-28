@@ -1015,6 +1015,10 @@ class TRITONSWMM_analysis:
         )
 
     @property
+    def TRITONSWMM_performance_analysis_summary_created(self):
+        return bool(self.log.TRITONSWMM_performance_analysis_summary_created.get())
+
+    @property
     def TRITON_analysis_summary_created(self):
         return bool(self.log.TRITON_analysis_summary_created.get())
 

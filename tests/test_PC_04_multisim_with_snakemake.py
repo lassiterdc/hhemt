@@ -134,7 +134,7 @@ def test_snakemake_workflow_config_generation():
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
         process_timeseries=True,
-        which="TRITON",
+        which="both",
         clear_raw_outputs=True,
         compression_level=5,
     )
@@ -143,7 +143,7 @@ def test_snakemake_workflow_config_generation():
     assert "--compression-level 5" in snakefile_content
 
     # Verify which parameter
-    assert "--which TRITON" in snakefile_content
+    assert "--which both" in snakefile_content
 
     # Verify path handling
     assert f"--system-config {analysis._system.system_config_yaml}" in snakefile_content
@@ -295,7 +295,7 @@ def test_snakemake_workflow_execution():
         overwrite_scenario=True,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
-        which="TRITON",
+        which="both",
         clear_raw_outputs=True,
         overwrite_if_exist=True,
         compression_level=5,
@@ -318,7 +318,14 @@ def test_snakemake_workflow_execution():
     # Verify output summaries were generated
     if not analysis.log.all_TRITON_timeseries_processed.get():
         pytest.fail("TRITON time series were not processed")
+    if not analysis.log.all_SWMM_timeseries_processed.get():
+        pytest.fail("TRITON time series were not processed")
+    if not analysis.log.all_TRITONSWMM_performance_timeseries_processed.get():
+        pytest.fail("TRITON time series were not processed")
 
     assert (
         analysis.TRITON_analysis_summary_created
     ), "TRITON analysis summary should be created"
+    assert analysis.SWMM_node_analysis_summary_created
+    assert analysis.SWMM_link_analysis_summary_created
+    assert analysis.TRITONSWMM_performance_analysis_summary_created
