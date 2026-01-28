@@ -2,6 +2,14 @@
 
 **Date:** January 27, 2026 | **Status:** 🎉 **REFACTORING INITIATIVE COMPLETE** ✅ - All 13 Phases Successfully Completed | **Goal:** Decompose `TRITONSWMM_analysis` god class and continue refactoring
 
+**SWMM Output Parser Optimization (Phase 1):** ✅ Complete
+- Vectorized `convert_swmm_tdeltas_to_minutes()`.
+- Replaced `iterrows()` link_id cleanup with `_clean_link_id()` helper.
+- Simplified substring parsing in `return_data_from_rpt()` while preserving newline tokens.
+- Suppressed Zarr V3 string warnings in `utils.write_zarr()`.
+- Warning hygiene cleanup (removed Zone.Identifier artifacts).
+- Refactoring, baseline timing, and multisim tests pass (including warnings-as-errors).
+
 ---
 
 ## Executive Summary
