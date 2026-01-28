@@ -470,7 +470,6 @@ class GetTS_TestCases:
                     "export PYTHONNOUSERSITE=1",
                     # "pip install -e .",
                 ],
-                hpc_time_min=2,
                 # use_legacy_cluster_mode=True,
             ),
             additional_system_configs=dict(
