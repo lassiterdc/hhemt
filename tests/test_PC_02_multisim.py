@@ -35,7 +35,9 @@ def test_concurrently_process_scenario_timeseries():
     )
     analysis = nrflk_multisim_ensemble.system.analysis
     scenario_timeseries_processing_launchers = (
-        analysis.retrieve_scenario_timeseries_processing_launchers(which="both")
+        analysis.retrieve_scenario_timeseries_processing_launchers(
+            which="both", clear_raw_outputs=False
+        )
     )
     analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
     # verify that time series outputs processed

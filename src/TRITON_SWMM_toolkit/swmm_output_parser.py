@@ -3,7 +3,6 @@ import re
 import warnings
 from datetime import datetime
 from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -16,7 +15,9 @@ from TRITON_SWMM_toolkit.constants import (
 )
 
 
-def retrieve_SWMM_outputs_as_datasets(f_swmm_inp, swmm_timeseries_result_file: Path):
+def retrieve_SWMM_outputs_as_datasets(
+    f_swmm_inp: Path, swmm_timeseries_result_file: Path
+):
     # TODO - reindex nodes and links by entity type; this will likely resolve parsing errors as well
     # TODO - record warnings as attributes in dataset and in sim processing log
     ds_nodes, ds_links = return_swmm_outputs(
@@ -164,7 +165,7 @@ def return_swmm_outputs(
     #
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        model = swmmio.Model(str(f_swmm_inp))
+        model = swmmio.Model(str(f_swmm_inp), include_rpt=False)
         nodes = model.nodes.geodataframe
         nodes.index.name = "node_id"
         links = model.links.geodataframe
