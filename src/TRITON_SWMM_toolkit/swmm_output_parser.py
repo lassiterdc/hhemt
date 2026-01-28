@@ -1,6 +1,8 @@
 import sys
 import re
 import warnings
+from functools import lru_cache
+from typing import cast
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -13,6 +15,9 @@ from TRITON_SWMM_toolkit.constants import (
     LST_COL_HEADERS_NODE_FLOW_SUMMARY,
     LST_COL_HEADERS_LINK_FLOW_SUMMARY,
 )
+
+
+TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 
 
 def retrieve_SWMM_outputs_as_datasets(
@@ -176,44 +181,30 @@ def return_swmm_outputs(
         links = links.drop(columns="geometry")
         nodes = nodes.drop(columns="geometry")
     # assign proper data types to coordinates and data variables
-    ds_node_summaries = df_node_summaries.to_xarray()
-    ds_node_characteristics = nodes.to_xarray()
-    ds_link_flow_summary = df_link_flow_summary.to_xarray()
-    ds_link_characteristics = links.to_xarray()
+    df_node_combined = df_node_summaries.join(nodes, how="outer")
+    df_link_combined = df_link_flow_summary.join(links, how="outer")
+    ds_node_combined = df_node_combined.to_xarray()
+    ds_link_combined = df_link_combined.to_xarray()
     #
-    dict_ds = dict(
-        ds_node_summaries=ds_node_summaries,
-        ds_node_characteristics=ds_node_characteristics,
-        ds_link_flow_summary=ds_link_flow_summary,
-        ds_link_characteristics=ds_link_characteristics,
+    ds_node_combined = convert_coords_to_dtype(
+        ds_node_combined,
+        lst_dtypes_to_try=[str],
+        coords_to_coerce=["node_id", "link_id"],
     )
-    for key in dict_ds:
-        dict_ds[key] = convert_coords_to_dtype(
-            dict_ds[key],
-            lst_dtypes_to_try=[str],
-            coords_to_coerce=["node_id", "link_id"],
-        )
-        ds, lst_dtypes_to_try = dict_ds[key], [float, str]
-        dict_ds[key] = convert_datavars_to_dtype(
-            dict_ds[key], lst_dtypes_to_try=[float, str]
-        )
+    ds_node_combined = convert_datavars_to_dtype(
+        ds_node_combined, lst_dtypes_to_try=[float, str]
+    )
+    ds_link_combined = convert_coords_to_dtype(
+        ds_link_combined,
+        lst_dtypes_to_try=[str],
+        coords_to_coerce=["node_id", "link_id"],
+    )
+    ds_link_combined = convert_datavars_to_dtype(
+        ds_link_combined, lst_dtypes_to_try=[float, str]
+    )
 
-    ds_nodes = xr.merge(
-        [
-            dict_ds["ds_node_summaries"],
-            ds_node_tseries,
-            dict_ds["ds_node_characteristics"],
-        ],
-        join="outer",
-    )
-    ds_links = xr.merge(
-        [
-            dict_ds["ds_link_flow_summary"],
-            ds_link_tseries,
-            dict_ds["ds_link_characteristics"],
-        ],
-        join="outer",
-    )
+    ds_nodes = xr.merge([ds_node_combined, ds_node_tseries], join="outer")
+    ds_links = xr.merge([ds_link_combined, ds_link_tseries], join="outer")
     #
     ds_nodes.attrs = dict_system_results
     ds_links.attrs = dict_system_results
@@ -369,33 +360,34 @@ def return_node_time_series_results_from_rpt(
         with open(f_rpt, "r", encoding="latin-1") as file:  # type: ignore
             # Read all lines from the file
             lines = file.readlines()
-    line_num = -1
     encountered_header = False
     dict_lst_node_time_series = {}
     dict_lst_link_time_series = {}
     begin_header_line_num = None
     end_header_line_num = None
     encountered_end = False
-    for line in lines:
-        line_num += 1
+    key = None
+    is_link = False
+    is_node = False
+    lst_vals = []
+    for line_num, line in enumerate(lines):
         # return node flooding summaries
-        if section_header in line:
-            section_start_line = line_num
-            encountered_header = True
-        if encountered_header is False:
-            continue
+        if not encountered_header:
+            if section_header in line:
+                encountered_header = True
+            else:
+                continue
         if "<<<" in line:
             # define new list for values and the node name
             key = line.split("<<<")[1].split(" ")[2]
-            is_link = is_node = False
-            if "link" in line.lower():
-                is_link = True
-            if "node" in line.lower():
-                is_node = True
+            lower_line = line.lower()
+            is_link = "link" in lower_line
+            is_node = "node" in lower_line
             lst_vals = []
             begin_header_line_num = None
             end_header_line_num = None
             encountered_end = False
+            continue
         # find the start of the next node flow section
         if begin_header_line_num is None and "------------" in line:
             begin_header_line_num = line_num
@@ -408,10 +400,11 @@ def return_node_time_series_results_from_rpt(
             continue
         if len(line.split(" ")) <= 3:
             encountered_end = True
-            if is_link:
-                dict_lst_link_time_series[key] = lst_vals
-            if is_node:
-                dict_lst_node_time_series[key] = lst_vals
+            if key is not None:
+                if is_link:
+                    dict_lst_link_time_series[key] = lst_vals
+                if is_node:
+                    dict_lst_node_time_series[key] = lst_vals
         if encountered_end is False:
             # dict_lst_node_time_series[node_id].append(line)
             lst_vals.append(line)
@@ -608,8 +601,7 @@ def convert_swmm_tdeltas_to_minutes(s_tdelta):
     if len(s_tdelta) == 0:
         return []
 
-    pattern = r"^\s*(\d+)\s+(\d+):(\d+)"
-    extracted = s_tdelta.astype(str).str.extract(pattern)
+    extracted = s_tdelta.astype(str).str.extract(TDELTA_PATTERN)
 
     days = pd.to_numeric(extracted[0], errors="coerce")
     hours = pd.to_numeric(extracted[1], errors="coerce")
@@ -626,19 +618,25 @@ def return_data_from_rpt(lst_section_lines):
     dict_line_contents_aslist = {}
     dict_line_contents_asline = {}
     dict_content_lengths = {}
-    line_idx = 0
     # extract and parse data in each line using spaces
-    for i, line in enumerate(lst_section_lines):
+    line_contents = []
+    line_strings = []
+    line_lengths = []
+    for line in lst_section_lines:
         lst_substrings_with_content = [
             substring
             for substring in line.split(" ")
             if substring and substring not in lst_substrings_to_ignore
         ]
-        if len(lst_substrings_with_content) > 0:
-            dict_line_contents_aslist[line_idx] = lst_substrings_with_content
-            dict_line_contents_asline[line_idx] = line
-            dict_content_lengths[line_idx] = len(lst_substrings_with_content)
-            line_idx += 1
+        if lst_substrings_with_content:
+            line_contents.append(lst_substrings_with_content)
+            line_strings.append(line)
+            line_lengths.append(len(lst_substrings_with_content))
+    dict_line_contents_aslist = {
+        idx: contents for idx, contents in enumerate(line_contents)
+    }
+    dict_line_contents_asline = {idx: line for idx, line in enumerate(line_strings)}
+    dict_content_lengths = {idx: length for idx, length in enumerate(line_lengths)}
     # make sure the lines all have the same lengths
     s_lengths = pd.Series(dict_content_lengths)
     target_length = s_lengths.mode().iloc[0]
@@ -646,24 +644,18 @@ def return_data_from_rpt(lst_section_lines):
     # if there is an issue
     if len(idx_problem_rows) > 0:
         s_lines = pd.Series(dict_line_contents_asline)
-        s_str_lengths = s_lines.str.len()
-        # identify a normal row
-        idx_odd_stringlengths = s_lines[
-            s_str_lengths != s_str_lengths.mode().iloc[0]
-        ].index
-        for normal_idx in s_lengths.index:
-            if (normal_idx not in idx_odd_stringlengths) and (
-                normal_idx not in idx_problem_rows
-            ):
-                break
-        normal_row = s_lines.loc[normal_idx]
-        normal_row_list = dict_line_contents_aslist[normal_idx]
+        normal_row, normal_row_list = _select_normal_row(
+            s_lines, s_lengths, idx_problem_rows, dict_line_contents_aslist
+        )
         # loop through the problem rows and correct known issues
+        s_lines = s_lines.astype(str)
         for idx, problem_row in s_lines.loc[idx_problem_rows].items():
-            problem_row_list = dict_line_contents_aslist[idx]
+            idx_int = cast(int, idx)
+            problem_row_list = dict_line_contents_aslist[idx_int]
             solution = None
+            problem_row_lower = problem_row.lower()
             for prob_index, val in enumerate(problem_row_list):
-                if len(val.split(".")) > 2:
+                if val.count(".") > 1:
                     solution = "Two values in the rpt were right next to each other and couldn't be parsed using spacing. Parsing by referencing a normal line."
                     print("##################################")
                     print(f"Found problem. {solution}")
@@ -671,7 +663,7 @@ def return_data_from_rpt(lst_section_lines):
                     print(normal_row)
                     print(problem_row)
                     break
-                if "orifice" in problem_row.lower():  # type: ignore
+                if "orifice" in problem_row_lower:  # type: ignore
                     solution = "Orifice conduits do not return max velocity or max over full flow. Filling with empty string"
                     print("##################################")
                     print(f"Found problem. {solution}")
@@ -720,8 +712,8 @@ def return_data_from_rpt(lst_section_lines):
                             substring not in lst_substrings_to_ignore
                         ):  # the latter part is to deal with issues
                             lst_substrings_corrected.append(substring)
-                dict_line_contents_aslist[idx] = lst_substrings_corrected
-                dict_content_lengths[idx] = len(lst_substrings_corrected)
+                dict_line_contents_aslist[idx_int] = lst_substrings_corrected
+                dict_content_lengths[idx_int] = len(lst_substrings_corrected)
                 print(f"Properly parsed values:\n{lst_substrings_corrected}")
             elif (
                 solution
@@ -729,8 +721,8 @@ def return_data_from_rpt(lst_section_lines):
             ):
                 problem_row_list.insert(5, "")
                 problem_row_list.insert(6, "")
-                dict_line_contents_aslist[idx] = problem_row_list
-                print(f"Properly parsed values:\n{dict_line_contents_aslist[idx]}")
+                dict_line_contents_aslist[idx_int] = problem_row_list
+                print(f"Properly parsed values:\n{dict_line_contents_aslist[idx_int]}")
             else:
                 print(
                     "####################################################################"
@@ -766,6 +758,21 @@ def extract_substring(main_string, indices):
     return main_string[start : end + 1]  # Use slicing to extract the substring
 
 
+def _select_normal_row(s_lines, s_lengths, idx_problem_rows, dict_line_contents_aslist):
+    s_str_lengths = s_lines.str.len()
+    # identify a normal row
+    idx_odd_stringlengths = s_lines[s_str_lengths != s_str_lengths.mode().iloc[0]].index
+    for normal_idx in s_lengths.index:
+        if (normal_idx not in idx_odd_stringlengths) and (
+            normal_idx not in idx_problem_rows
+        ):
+            break
+    normal_idx_int = cast(int, normal_idx)
+    normal_row = s_lines.loc[normal_idx]
+    normal_row_list = dict_line_contents_aslist[normal_idx_int]
+    return normal_row, normal_row_list
+
+
 def find_substring_indices(main_string, substring):
     """
     Finds all occurrences of a substring in a string.
@@ -777,7 +784,15 @@ def find_substring_indices(main_string, substring):
     Returns:
     list of tuples: A list of (start, end) tuples representing the start and end index of each occurrence.
     """
-    return [(m.start(), m.end() - 1) for m in re.finditer(substring, main_string)]
+    return [
+        (m.start(), m.end() - 1)
+        for m in _substring_pattern(substring).finditer(main_string)
+    ]
+
+
+@lru_cache(maxsize=256)
+def _substring_pattern(substring: str) -> re.Pattern:
+    return re.compile(re.escape(substring))
 
 
 def split_at_index(main_string, index):
@@ -809,16 +824,16 @@ def convert_coords_to_dtype(
                 if ds[coord].dtype == dtype:
                     converted = True
                     break
+                if dtype == int:
+                    numeric = pd.to_numeric(ds[coord].values, errors="coerce")
+                    if np.isnan(numeric).any():
+                        continue
+                    if np.any(numeric % 1 != 0):
+                        dtype = float
+                    ds[coord] = ds[coord].astype(dtype)
+                    converted = True
+                    break
                 try:
-                    if dtype == int:
-                        # make sure this doesn't change its value from a float
-                        invalid_conversion = ~(
-                            (ds[coord].astype(dtype) % 1)
-                            == (ds[coord].astype(float) % 1)
-                        )
-                        if sum(invalid_conversion) > 0:
-                            # use float datatype instead
-                            dtype = float
                     ds[coord] = ds[coord].astype(dtype)
                     converted = True
                     # print(f"converted {coord} to {dtype}")
@@ -842,26 +857,47 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
             if ds[var].dtype == dtype:
                 converted = True
                 break
-            try:
-                # deal with common problem in SWMM results
-                if (dtype == float) or (dtype == int):
-                    if ds[var].dtype == object:
-                        # first coerce to string
-                        ds[var] = ds[var].astype(str)
-                        # convert "" to "0"
-                        ds[var] = xr.where(ds[var] == "", "0", ds[var])
+            # deal with common problem in SWMM results
+            if (dtype == float) or (dtype == int):
+                sample = isel_first_and_slice_longest(ds[var], n=10)
+                sample_values = sample.values
+                if sample.dtype == object:
+                    sample_values = np.where(sample_values == "", "0", sample_values)
+                sample_numeric = pd.to_numeric(sample_values.ravel(), errors="coerce")
+                if np.isnan(sample_numeric).any():
+                    non_null_mask = ~pd.isna(sample_values.ravel())
+                    invalid_mask = non_null_mask & np.isnan(sample_numeric)
+                    if invalid_mask.any():
+                        first_attempt = False
+                        continue
+                if dtype == int:
+                    if np.any(sample_numeric % 1 != 0):
+                        first_attempt = False
+                        continue
+                data_to_convert = ds[var]
+                if data_to_convert.dtype == object:
+                    data_to_convert = data_to_convert.astype(str)
+                    data_to_convert = xr.where(
+                        data_to_convert == "", "0", data_to_convert
+                    )
+                try:
+                    ds[var] = data_to_convert.astype(dtype)
+                    converted = True
+                except (ValueError, TypeError):
+                    first_attempt = False
+                    continue
+            else:
+                try:
                     ds[var] = ds[var].astype(dtype)
-                # verify conversion
-                sample = isel_first_and_slice_longest(ds[var], n=10).values
-                test = np.array(sample, dtype=dtype)
-                ds[var] = ds[var].astype(dtype)
-                converted = True
+                    converted = True
+                except (ValueError, TypeError):
+                    first_attempt = False
+                    continue
+            if converted:
                 if not first_attempt:
                     print(f"Converted variable to datatype = {var}, {dtype}")
                 break
-            except Exception as e:
-                # print(f"Failed to convert variable to datatype = {var}, {dtype}. Trying next datatype. Error encountered: {e}")
-                first_attempt = False
+            first_attempt = False
         if not converted:
             print(f"{var} unable to be converted to either {lst_dtypes_to_try}")
     return ds
