@@ -1,5 +1,4 @@
 import pytest
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 import tests.utils_for_testing as tst_ut
 
 pytestmark = pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UVA HPC")
@@ -29,7 +28,9 @@ pytestmark = pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UV
 
 
 @pytest.mark.slow
-def test_snakemake_sensitivity_workflow_execution():
+def test_snakemake_sensitivity_workflow_execution(
+    norfolk_uva_sensitivity_full_ensemble_analysis,
+):
     """
     Test Snakemake sensitivity analysis workflow execution on UVA HPC with SLURM.
 
@@ -41,19 +42,11 @@ def test_snakemake_sensitivity_workflow_execution():
     5. Master consolidation completes
     6. Final sensitivity analysis summaries are generated
     """
-    from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-
-    nrflk_cpu_sensitivity = (
-        tst.retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
-            start_from_scratch=True
-        )
-    )
-    system = nrflk_cpu_sensitivity.system
-    analysis = system.analysis
-    sensitivity = analysis.sensitivity
+    analysis = norfolk_uva_sensitivity_full_ensemble_analysis
+    which = "both"
 
     # Submit the workflow using submit_workflow (not the old batch job method)
-    result = sensitivity.submit_workflow(
+    result = analysis.submit_workflow(
         mode="slurm",  # Explicitly use SLURM mode
         process_system_level_inputs=True,
         overwrite_system_inputs=True,
@@ -63,7 +56,7 @@ def test_snakemake_sensitivity_workflow_execution():
         overwrite_scenario=True,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
-        which="TRITON",
+        which=which,
         clear_raw_outputs=True,
         overwrite_if_exist=True,
         compression_level=5,
@@ -76,36 +69,4 @@ def test_snakemake_sensitivity_workflow_execution():
     assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
     assert result["mode"] == "slurm", "Should be running in SLURM mode"
 
-    # Note: On SLURM, the workflow is submitted but may not complete immediately
-    # We would need to poll for completion or check logs
-    # For now, we just verify successful submission
-
-    # Verify Phase 1 outputs (system inputs and compilation)
-    dem_file = system.sys_paths.dem_processed
-    assert dem_file.exists(), "DEM file should be created"
-
-    mannings_file = system.sys_paths.mannings_processed
-    assert mannings_file.exists(), "Mannings file should be created"
-
-    assert system.compilation_successful, "TRITON-SWMM should be compiled"
-
-    # Verify Phase 2 outputs (simulations ran)
-    assert sensitivity.all_scenarios_created, "All scenarios should be created"
-    assert sensitivity.all_sims_run, "All simulations should run"
-
-    if sensitivity.all_sims_run != True:
-        sims_not_run = "\n".join(sensitivity.scenarios_not_run)
-        pytest.fail(
-            f"Running TRITONSWMM ensemble failed. Scenarios not run: \n{sims_not_run}"
-        )
-
-    assert (
-        sensitivity.all_TRITON_timeseries_processed
-    ), "All TRITON timeseries should be processed"
-
-    assert (
-        analysis.TRITON_analysis_summary_created
-    ), "TRITON analysis summary should be created"
-
-    triton_output = analysis.analysis_paths.output_triton_summary
-    assert triton_output.exists(), "TRITON consolidated output should exist"
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
