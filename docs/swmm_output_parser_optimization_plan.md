@@ -9,6 +9,7 @@ This plan tracks performance and warning-hygiene improvements for `src/TRITON_SW
 - Experimental mmap + parallel parsing were removed for simplicity.
 - Reference tests now drop static geodataframe attributes for node/link tseries comparisons.
 - Phase 4 dataframe construction refactor completed with new baseline timing.
+- Phase 5 optional micro-optimizations applied and validated with profiling/tests.
 
 **Performance tracking:**
 - **Baseline (Phase 0):** 20.295690 seconds
@@ -17,6 +18,7 @@ This plan tracks performance and warning-hygiene improvements for `src/TRITON_SW
 - **Phase 3 (in progress):** single-pass parser adopted; new baseline pending
 - **Phase 4 (2026-01-28):** unprofiled 1.18 seconds (baseline test), savings 19.12s (94.2%) vs Phase 0
 - **Profiling run (2026-01-28):** unprofiled ~1.18 seconds (cProfile run ~43.6s due to profiler overhead)
+- **Phase 5 (2026-01-28):** optional micro-optimizations applied; unprofiled 1.22s (baseline test), savings 19.08s (94.0%) vs Phase 0
 
 ---
 
@@ -194,6 +196,30 @@ The following inefficiencies were identified in `swmm_output_parser.py`:
 
 **Estimated Effort:** 6-10 hours
 **Risk Level:** Medium
+
+---
+
+### Phase 5: Documentation + Optional Micro-Optimizations ✅ Complete
+
+**Objective:** Record Phase 4 results, update prompts, and apply low-risk micro-optimizations before final profiling.
+
+**Tasks:**
+1. **Document Phase 4 timing results** ✅
+2. **Apply low-hanging micro-optimizations** ✅
+   - Removed `sorted(...)` over row indices in `format_rpt_section_into_dataframe`
+   - Cached `len(lst_col_headers)` to avoid repeated length checks
+   - Pre-split lines in `parse_rpt_single_pass` to reuse `line.split(" ")`
+   - Added fixed datetime format parsing in `create_tseries_ds`
+3. **Re-run profiling and tests** ✅
+   - `python -m cProfile -o profiling/retrieve_profile.out profiling/profile_runner.py`
+   - `kernprof -l -v profiling/profile_runner.py`
+   - `pytest tests/test_swmm_output_parser_refactoring.py -v`
+   - `pytest tests/test_swmm_output_parser_refactoring.py -k retrieve_swmm_outputs_baseline -s`
+   - `pytest tests/test_PC_02_multisim.py -v`
+   - `pytest tests/test_PC_02_multisim.py -v -W error::UserWarning`
+
+**Estimated Effort:** 2-4 hours
+**Risk Level:** Low
 
 ---
 
