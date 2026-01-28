@@ -104,6 +104,10 @@ class TRITONSWMM_system:
         return rds_mannings_processed
 
     @property
+    def mannings_rds(self):
+        return self.open_processed_mannings_as_rds()
+
+    @property
     def processed_dem_rds(self):
         return rxr.open_rasterio(self.sys_paths.dem_processed)
 
@@ -288,7 +292,6 @@ class TRITONSWMM_system:
             if verbose:
                 print("TRITON-SWMM already compiled", flush=True)
             return
-
 
         bash_script_lines = [
             "#!/bin/bash",

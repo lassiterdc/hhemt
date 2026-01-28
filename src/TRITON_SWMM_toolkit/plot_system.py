@@ -52,7 +52,7 @@ class TRITONSWMM_system_plotting:
 
     def processed_mannings(self, ax=None):
 
-        rds_mannings = self._system.open_processed_mannings_as_rds()
+        rds_mannings = self._system.mannings_rds
         vmin = rds_mannings.min()  # type: ignore
         vmax = rds_mannings.max()  # type: ignore
         watershed_shapefile = self.cfg_system.watershed_gis_polygon
