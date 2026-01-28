@@ -205,7 +205,7 @@ def test_snakemake_sensitivity_workflow_execution(
     analysis = norfolk_uva_sensitivity_analysis
     which = "both"
 
-    result = analysis.sensitivity.submit_workflow(
+    result = analysis.submit_workflow(
         mode="slurm",
         process_system_level_inputs=True,
         overwrite_system_inputs=False,
