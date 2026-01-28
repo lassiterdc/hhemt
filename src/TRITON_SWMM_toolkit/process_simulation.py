@@ -380,7 +380,6 @@ class TRITONSWMM_sim_post_processing:
         ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
             f_inp,
             swmm_timeseries_result_file,
-            resource_manager=self._analysis._resource_manager,
         )
         # WRITE NODES
         if nodes_already_written and not overwrite_if_exist:
