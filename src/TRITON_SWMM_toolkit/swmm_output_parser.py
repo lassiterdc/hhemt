@@ -21,7 +21,8 @@ TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 
 
 def retrieve_SWMM_outputs_as_datasets(
-    f_swmm_inp: Path, swmm_timeseries_result_file: Path
+    f_swmm_inp: Path,
+    swmm_timeseries_result_file: Path,
 ):
     # TODO - reindex nodes and links by entity type; this will likely resolve parsing errors as well
     # TODO - record warnings as attributes in dataset and in sim processing log
@@ -52,31 +53,20 @@ def return_swmm_outputs(
             f"SWMM output file not recognized while parsing time series. File passed: {swmm_timeseries_result_file}"
         )
 
-    # from pyswmm import Nodes
-    import swmmio
-
     if use_rpt_for_tseries:
-        with open(swmm_timeseries_result_file, "r", encoding="latin-1") as file:
-            # Read all lines from the file
-            rpt_lines = file.readlines()
-        # file.close()
-        # verify validity of rpt file
-        valid = False
-        for line in rpt_lines:
-            if "Element Count" in line:
-                valid = True
-                break
+        (
+            dict_section_lines,
+            ds_node_tseries,
+            ds_link_tseries,
+            dict_system_results,
+            valid,
+        ) = parse_rpt_single_pass(swmm_timeseries_result_file)
         if valid is False:
             print(
                 "The RPT file seems to not contain any information: {}".format(
                     swmm_timeseries_result_file
                 )
             )
-        section_header = "Node Time Series Results"
-        lines = rpt_lines
-        ds_node_tseries, ds_link_tseries = return_node_time_series_results_from_rpt(
-            section_header=section_header, lines=lines
-        )
         # make sure the data arrays are data type float
         ds_node_tseries = convert_datavars_to_dtype(
             ds_node_tseries, lst_dtypes_to_try=[float]
@@ -100,24 +90,15 @@ def return_swmm_outputs(
             swmm_timeseries_result_file
         )
     #
-    dict_system_results = return_swmm_system_outputs(rpt_lines)
-    # create dataframes of node and link outputs
-    lst_node_fld_summary = return_lines_for_section_of_rpt(
-        section_header="Node Flooding Summary", lines=rpt_lines
-    )
+    if use_rpt_for_tseries:
+        lst_node_fld_summary = dict_section_lines.get("Node Flooding Summary", [])
+        lst_node_flow_summary = dict_section_lines.get("Node Inflow Summary", [])
+        lst_link_flow_summary = dict_section_lines.get("Link Flow Summary", [])
     df_node_flood_summary = format_rpt_section_into_dataframe(
         lst_node_fld_summary, lst_col_headers_node_flood_summary
     )
-    #
-    lst_node_flow_summary = return_lines_for_section_of_rpt(
-        section_header="Node Inflow Summary", lines=rpt_lines
-    )
     df_node_flow_summary = format_rpt_section_into_dataframe(
         lst_node_flow_summary, lst_col_headers_node_flow_summary
-    )
-    #
-    lst_link_flow_summary = return_lines_for_section_of_rpt(
-        section_header="Link Flow Summary", lines=rpt_lines
     )
     df_link_flow_summary = format_rpt_section_into_dataframe(
         lst_link_flow_summary, lst_col_headers_link_flow_summary
@@ -170,41 +151,29 @@ def return_swmm_outputs(
         _clean_link_id
     )
     df_link_flow_summary.set_index("link_id", inplace=True)
+
+    ds_node_summaries = df_node_summaries.to_xarray()
+    ds_link_flow_summary = df_link_flow_summary.to_xarray()
     #
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        model = swmmio.Model(str(f_swmm_inp), include_rpt=False)
-        nodes = model.nodes.geodataframe
-        nodes.index.name = "node_id"
-        links = model.links.geodataframe
-        links.index.name = "link_id"
-        links = links.drop(columns="geometry")
-        nodes = nodes.drop(columns="geometry")
-    # assign proper data types to coordinates and data variables
-    df_node_combined = df_node_summaries.join(nodes, how="outer")
-    df_link_combined = df_link_flow_summary.join(links, how="outer")
-    ds_node_combined = df_node_combined.to_xarray()
-    ds_link_combined = df_link_combined.to_xarray()
-    #
-    ds_node_combined = convert_coords_to_dtype(
-        ds_node_combined,
+    ds_node_summaries = convert_coords_to_dtype(
+        ds_node_summaries,
         lst_dtypes_to_try=[str],
         coords_to_coerce=["node_id", "link_id"],
     )
-    ds_node_combined = convert_datavars_to_dtype(
-        ds_node_combined, lst_dtypes_to_try=[float, str]
+    ds_node_summaries = convert_datavars_to_dtype(
+        ds_node_summaries, lst_dtypes_to_try=[float, str]
     )
-    ds_link_combined = convert_coords_to_dtype(
-        ds_link_combined,
+    ds_link_flow_summary = convert_coords_to_dtype(
+        ds_link_flow_summary,
         lst_dtypes_to_try=[str],
         coords_to_coerce=["node_id", "link_id"],
     )
-    ds_link_combined = convert_datavars_to_dtype(
-        ds_link_combined, lst_dtypes_to_try=[float, str]
+    ds_link_flow_summary = convert_datavars_to_dtype(
+        ds_link_flow_summary, lst_dtypes_to_try=[float, str]
     )
 
-    ds_nodes = xr.merge([ds_node_combined, ds_node_tseries], join="outer")
-    ds_links = xr.merge([ds_link_combined, ds_link_tseries], join="outer")
+    ds_nodes = xr.merge([ds_node_summaries, ds_node_tseries], join="outer")
+    ds_links = xr.merge([ds_link_flow_summary, ds_link_tseries], join="outer")
     #
     ds_nodes.attrs = dict_system_results
     ds_links.attrs = dict_system_results
@@ -256,6 +225,234 @@ def return_swmm_system_outputs(rpt_lines):
         system_flooding_10e6_ltr=system_flooding,
     )
     return dict_system_results
+
+
+def parse_rpt_single_pass(f_rpt: Path):
+    """
+    Parse an RPT file in a single pass, extracting summaries and time series.
+
+    Returns section lines for summary tables, node/link time series datasets,
+    system-level outputs, and a validity flag.
+    """
+    summary_section_headers = (
+        "Node Flooding Summary",
+        "Node Inflow Summary",
+        "Link Flow Summary",
+    )
+    dict_section_lines = {header: [] for header in summary_section_headers}
+    dict_lst_node_time_series = {}
+    dict_lst_link_time_series = {}
+
+    valid = False
+    encountered_flow_routing_continuity = False
+    line_flw_units = None
+    runoff_continuity_error_line = None
+    flow_continuity_error_line = None
+    system_flood_loss_line = None
+    analysis_end_line = None
+
+    current_summary_section = None
+    summary_begin_header = False
+    summary_end_header = False
+
+    tseries_started = False
+    tseries_key = None
+    tseries_is_link = False
+    tseries_is_node = False
+    tseries_begin_header = False
+    tseries_end_header = False
+    tseries_vals = []
+
+    for line_num, line in enumerate(_iter_rpt_lines(f_rpt)):
+        if "Element Count" in line:
+            valid = True
+        if "Flow Units" in line:
+            line_flw_units = line
+        if "Flow Routing Continuity" in line:
+            encountered_flow_routing_continuity = True
+        if "Continuity Error (%)" in line:
+            if encountered_flow_routing_continuity is False:
+                runoff_continuity_error_line = line
+            else:
+                flow_continuity_error_line = line
+        if "Flooding Loss" in line:
+            system_flood_loss_line = line
+        if "Analysis ended on" in line:
+            analysis_end_line = line
+
+        if not tseries_started and "Node Time Series Results" in line:
+            tseries_started = True
+
+        if tseries_started:
+            if "<<<" in line:
+                tseries_key = line.split("<<<")[1].split(" ")[2]
+                lower_line = line.lower()
+                tseries_is_link = "link" in lower_line
+                tseries_is_node = "node" in lower_line
+                tseries_vals = []
+                tseries_begin_header = False
+                tseries_end_header = False
+                continue
+            if tseries_key is not None:
+                if "------------" in line:
+                    if not tseries_begin_header:
+                        tseries_begin_header = True
+                        continue
+                    if not tseries_end_header:
+                        tseries_end_header = True
+                        continue
+                if not (tseries_begin_header and tseries_end_header):
+                    continue
+                if len(line.split(" ")) <= 3:
+                    if tseries_is_link:
+                        dict_lst_link_time_series[tseries_key] = tseries_vals
+                    if tseries_is_node:
+                        dict_lst_node_time_series[tseries_key] = tseries_vals
+                    tseries_key = None
+                    tseries_vals = []
+                    continue
+                tseries_vals.append(line)
+
+        for header in summary_section_headers:
+            if header in line:
+                current_summary_section = header
+                summary_begin_header = False
+                summary_end_header = False
+                break
+        if current_summary_section is None:
+            continue
+        if "No nodes were flooded." in line:
+            current_summary_section = None
+            continue
+        if "------------" in line:
+            if not summary_begin_header:
+                summary_begin_header = True
+                continue
+            if not summary_end_header:
+                summary_end_header = True
+                continue
+        if not (summary_begin_header and summary_end_header):
+            continue
+        if line_num == 0:
+            continue
+        if len(line.split(" ")) <= 3:
+            current_summary_section = None
+            continue
+        dict_section_lines[current_summary_section].append(line)
+
+    if tseries_key is not None and tseries_vals:
+        if tseries_is_link:
+            dict_lst_link_time_series[tseries_key] = tseries_vals
+        if tseries_is_node:
+            dict_lst_node_time_series[tseries_key] = tseries_vals
+
+    dict_system_results = _build_system_results(
+        line_flw_units,
+        runoff_continuity_error_line,
+        flow_continuity_error_line,
+        system_flood_loss_line,
+        analysis_end_line,
+    )
+    ds_node_tseries, ds_link_tseries = _build_tseries_datasets(
+        dict_lst_node_time_series,
+        dict_lst_link_time_series,
+    )
+    return (
+        dict_section_lines,
+        ds_node_tseries,
+        ds_link_tseries,
+        dict_system_results,
+        valid,
+    )
+
+
+def _iter_rpt_lines(f_rpt: Path):
+    """Yield lines from an RPT file."""
+    with open(f_rpt, "r", encoding="latin-1") as file:
+        for line in file:
+            yield line
+
+
+def _build_system_results(
+    line_flw_units,
+    runoff_continuity_error_line,
+    flow_continuity_error_line,
+    system_flood_loss_line,
+    analysis_end_line,
+):
+    """Build system-level result attributes from parsed RPT metadata."""
+    if line_flw_units is None:
+        raise ValueError("Flow units line not found in RPT file.")
+    if flow_continuity_error_line is None:
+        raise ValueError("Flow continuity error line not found in RPT file.")
+    if system_flood_loss_line is None:
+        raise ValueError("System flooding loss line not found in RPT file.")
+    if analysis_end_line is None:
+        raise ValueError("Analysis end line not found in RPT file.")
+    flow_units = line_flw_units.split(".")[-1].split("\n")[0].split(" ")[-1].lower()
+
+    if runoff_continuity_error_line is not None:
+        runoff_continuity_error_perc = float(
+            runoff_continuity_error_line.split(" ")[-1].split("\n")[0]
+        )
+    else:
+        runoff_continuity_error_perc = np.nan
+    flow_continuity_error_perc = float(
+        flow_continuity_error_line.split(" ")[-1].split("\n")[0]  # type: ignore
+    )
+    system_flooding = float(system_flood_loss_line.split(" ")[-1].split("\n")[0])
+    analysis_end_datetime = _parse_analysis_end_line(analysis_end_line)
+    dict_system_results = dict(
+        analysis_end_datetime=str(analysis_end_datetime),
+        flow_units=flow_units,
+        runoff_continuity_error_perc=runoff_continuity_error_perc,
+        flow_continuity_error_perc=flow_continuity_error_perc,
+        system_flooding_10e6_ltr=system_flooding,
+    )
+    return dict_system_results
+
+
+def _parse_analysis_end_line(end_line: str):
+    """Parse the analysis end datetime line from the RPT file."""
+    # parse analysis end time
+    lst_end_line = end_line.split("on:")[-1].split(" ")
+    lst_info_in_line = []
+    for substring in lst_end_line:
+        if len(substring) > 0:
+            lst_info_in_line.append(substring)
+    month = lst_info_in_line[1]
+    day = lst_info_in_line[2]
+    assumed_year = datetime.today().year
+    time = lst_info_in_line[3]
+    datetime_string = "{}-{}-{} {}".format(month, day, assumed_year, time)
+    return pd.to_datetime(datetime_string, format="%b-%d-%Y %H:%M:%S")
+
+
+def _build_tseries_datasets(dict_nodes, dict_links):
+    """Create node/link time series datasets."""
+    ds_node_tseries = create_tseries_ds(
+        dict_nodes,
+        [
+            "date_time",
+            "inflow_flow_cms",
+            "flooding_cms",
+            "depth_m",
+            "head_m",
+        ],
+        "node_id",
+    )
+    ds_link_tseries = create_tseries_ds(
+        dict_links,
+        [
+            "date_time",
+            "flow_cms",
+            "velocity_mps",
+            "link_depth_m",
+            "capacity_setting",
+        ],
+        "link_id",
+    )
+    return ds_node_tseries, ds_link_tseries
 
 
 def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
@@ -335,24 +532,13 @@ def return_analysis_end_date(rpt_lines):
     for line in rpt_lines:
         if "Analysis ended on" in line:
             end_line = line
-    # parse analysis end time
-    lst_end_line = end_line.split("on:")[-1].split(" ")
-    lst_info_in_line = []
-    for substring in lst_end_line:
-        if len(substring) > 0:
-            lst_info_in_line.append(substring)
-    # day_of_week = lst_info_in_line[0]
-    month = lst_info_in_line[1]
-    day = lst_info_in_line[2]
-    assumed_year = datetime.today().year
-    time = lst_info_in_line[3]
-    datetime_string = "{}-{}-{} {}".format(month, day, assumed_year, time)
-    analysis_end_datetime = pd.to_datetime(datetime_string, format="%b-%d-%Y %H:%M:%S")
-    return analysis_end_datetime
+    return _parse_analysis_end_line(end_line)
 
 
 def return_node_time_series_results_from_rpt(
-    section_header="Node Time Series Results", f_rpt=None, lines=None
+    section_header="Node Time Series Results",
+    f_rpt=None,
+    lines=None,
 ):
     # section_header, lines = "Node Time Series Results", rpt_lines
     # lst_section_lines = []
@@ -409,26 +595,9 @@ def return_node_time_series_results_from_rpt(
             # dict_lst_node_time_series[node_id].append(line)
             lst_vals.append(line)
     #
-    lst_col_headers = [
-        "date_time",
-        "inflow_flow_cms",
-        "flooding_cms",
-        "depth_m",
-        "head_m",
-    ]
-    ds_node_tseries = create_tseries_ds(
-        dict_lst_node_time_series, lst_col_headers, "node_id"
-    )
-    #
-    lst_col_headers = [
-        "date_time",
-        "flow_cms",
-        "velocity_mps",
-        "link_depth_m",
-        "capacity_setting",
-    ]
-    ds_link_tseries = create_tseries_ds(
-        dict_lst_link_time_series, lst_col_headers, "link_id"
+    ds_node_tseries, ds_link_tseries = _build_tseries_datasets(
+        dict_lst_node_time_series,
+        dict_lst_link_time_series,
     )
     #
     return ds_node_tseries, ds_link_tseries

@@ -87,7 +87,7 @@ class TRITONSWMM_analysis:
         # self.run_modes = Mode
         # self._system.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
-        self._resource_manager = ResourceManager(self.cfg_analysis, self.in_slurm)
+        self._resource_manager = ResourceManager(self.cfg_analysis)
         self._execution_strategy = self._select_execution_strategy()
         if self.cfg_analysis.python_path is not None:
             python_executable = str(self.cfg_analysis.python_path)

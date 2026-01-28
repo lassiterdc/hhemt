@@ -18,6 +18,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 from importlib.resources import files
+from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
 
 import tempfile
 from TRITON_SWMM_toolkit.utils import write_zarr
@@ -71,21 +72,75 @@ BASELINE_RETRIEVE_SECONDS = 20.295690
 
 
 @pytest.fixture(scope="module")
+def test_case_analysis():
+    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = nrflk_multisim_ensemble.system.analysis
+    return analysis
+
+
+@pytest.fixture(scope="module")
 def reference_link_tseries():
     """Load reference link time series dataset."""
-    return xr.open_dataset(REF_LINK_TSERIES_ZARR, engine="zarr", consolidated=False)
+    ds_links = xr.open_dataset(REF_LINK_TSERIES_ZARR, engine="zarr", consolidated=False)
+    drop_vars = {
+        "Barrels",
+        "CrestHeight",
+        "DischCoeff",
+        "FlapGate",
+        "Geom1",
+        "Geom2",
+        "Geom3",
+        "Geom4",
+        "InitFlow",
+        "InletNode",
+        "InOffset",
+        "Length",
+        "MaxFlow",
+        "OpenCloseTime",
+        "OrificeType",
+        "OutletNode",
+        "OutOffset",
+        "Roughness",
+        "Shape",
+    }
+    return ds_links.drop_vars([var for var in drop_vars if var in ds_links.data_vars])
 
 
 @pytest.fixture(scope="module")
 def reference_node_tseries():
     """Load reference node time series dataset."""
-    return xr.open_dataset(REF_NODE_TSERIES_ZARR, engine="zarr", consolidated=False)
+    ds_nodes = xr.open_dataset(REF_NODE_TSERIES_ZARR, engine="zarr", consolidated=False)
+    drop_vars = {
+        "Coefficient",
+        "Constant",
+        "Exponent",
+        "InitDepth",
+        "InvertElev",
+        "MaxD",
+        "MaxDepth",
+        "OutfallType",
+        "PondedArea",
+        "SurchargeDepth",
+        "StageOrTimeseries",
+        "StorageCurve",
+    }
+    return ds_nodes.drop_vars([var for var in drop_vars if var in ds_nodes.data_vars])
+
+
+def wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis):
+    ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
+        REF_INP,
+        REF_HYDRAULICS_RPT,
+    )
+    return ds_nodes, ds_links
 
 
 @pytest.fixture(scope="module")
-def parsed_outputs():
+def parsed_outputs(test_case_analysis):
     """Parse SWMM outputs using the current implementation."""
-    ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
+    ds_nodes, ds_links = wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
 
@@ -355,7 +410,7 @@ class TestWarningSuppression:
             f"{[str(w.message) for w in caught_warnings]}"
         )
 
-    def test_full_pipeline_no_warnings(self):
+    def test_full_pipeline_no_warnings(self, test_case_analysis):
         """Verify full parsing pipeline produces no warnings."""
         # if not REF_INP.exists() or not REF_HYDRAULICS_RPT.exists():
         #     pytest.skip("Reference input files not found")
@@ -363,9 +418,7 @@ class TestWarningSuppression:
         with warnings.catch_warnings(record=True) as caught_warnings:
             warnings.simplefilter("always")
 
-            ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
-                REF_INP, REF_HYDRAULICS_RPT
-            )
+            wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
 
         assert len(caught_warnings) == 0, (
             f"Found {len(caught_warnings)} warning(s): "
@@ -462,32 +515,10 @@ class TestPerformance:
     """Tests to ensure no performance regression."""
 
     @pytest.mark.slow
-    def test_parsing_performance(self):
-        """Measure parsing performance (informational, not a hard assertion)."""
-        # if not REF_INP.exists() or not REF_HYDRAULICS_RPT.exists():
-        #     pytest.skip("Reference input files not found")
-
-        # Warm-up run
-        retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
-
-        # Timed run
-        start_time = time.time()
-        ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
-            REF_INP, REF_HYDRAULICS_RPT
-        )
-        elapsed = time.time() - start_time
-
-        print(f"\nParsing time: {elapsed:.2f} seconds")
-
-        # This is informational - we don't fail on performance
-        # but we record it for tracking
-        assert elapsed < 300, f"Parsing took too long: {elapsed:.2f}s (limit: 300s)"
-
-    @pytest.mark.slow
-    def test_retrieve_swmm_outputs_baseline(self):
+    def test_retrieve_swmm_outputs_baseline(self, test_case_analysis):
         """Track retrieve_SWMM_outputs_as_datasets baseline timing across phases."""
         start_time = time.time()
-        retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
+        wrap_retrieve_SWMM_outputs_as_datasets(test_case_analysis)
         elapsed = time.time() - start_time
 
         savings = BASELINE_RETRIEVE_SECONDS - elapsed

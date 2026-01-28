@@ -26,7 +26,7 @@ class ResourceManager:
         cfg_analysis: Analysis configuration object
     """
 
-    def __init__(self, cfg_analysis, in_slurm: bool = False):
+    def __init__(self, cfg_analysis):
         """
         Initialize ResourceManager.
 
@@ -38,7 +38,7 @@ class ResourceManager:
             Whether the code is running in a SLURM environment (default: False)
         """
         self.cfg_analysis = cfg_analysis
-        self.in_slurm = in_slurm
+        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
 
     def calculate_effective_max_parallel(
         self,

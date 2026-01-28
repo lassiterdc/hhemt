@@ -378,7 +378,9 @@ class TRITONSWMM_sim_post_processing:
             return
 
         ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(
-            f_inp, swmm_timeseries_result_file
+            f_inp,
+            swmm_timeseries_result_file,
+            resource_manager=self._analysis._resource_manager,
         )
         # WRITE NODES
         if nodes_already_written and not overwrite_if_exist:
@@ -386,7 +388,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose)
+            self._write_output(ds_nodes, f_out_nodes, comp_level, verbose)  # type: ignore
             self.log.add_sim_processing_entry(
                 f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
             )
@@ -396,7 +398,7 @@ class TRITONSWMM_sim_post_processing:
                 print(f"{f_out_links.name} already written. Not overwriting.")
         else:
             elapsed_s = time.time() - start_time
-            self._write_output(ds_links, f_out_links, comp_level, verbose)
+            self._write_output(ds_links, f_out_links, comp_level, verbose)  # type: ignore
             self.log.add_sim_processing_entry(
                 f_out_links,
                 get_file_size_MiB(f_out_links),
