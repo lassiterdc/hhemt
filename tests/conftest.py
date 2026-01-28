@@ -97,3 +97,15 @@ def norfolk_uva_sensitivity_full_ensemble_analysis():
         start_from_scratch=True
     )
     return case.system.analysis
+
+
+@pytest.fixture
+def norfolk_frontier_sensitivity_analysis():
+    case = tst.retrieve_norfolk_frontier_sensitivity_minimal(start_from_scratch=True)
+    return case.system.analysis
+
+
+@pytest.fixture
+def norfolk_frontier_sensitivity_analysis_cached():
+    case = tst.retrieve_norfolk_frontier_sensitivity_minimal(start_from_scratch=False)
+    return case.system.analysis
