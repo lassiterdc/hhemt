@@ -1,6 +1,7 @@
 import sys
 import re
 import warnings
+from collections import Counter
 from functools import lru_cache
 from typing import cast
 from datetime import datetime
@@ -8,6 +9,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import xarray as xr
+
+
+try:  # pragma: no cover - used by line_profiler
+    profile  # type: ignore[name-defined]
+except NameError:  # pragma: no cover
+
+    def profile(func):  # type: ignore[no-redef]
+        return func
 
 
 from TRITON_SWMM_toolkit.constants import (
@@ -227,6 +236,7 @@ def return_swmm_system_outputs(rpt_lines):
     return dict_system_results
 
 
+@profile
 def parse_rpt_single_pass(f_rpt: Path):
     """
     Parse an RPT file in a single pass, extracting summaries and time series.
@@ -494,38 +504,30 @@ def return_lines_for_section_of_rpt(section_header, f_rpt=None, lines=None):
     return lst_section_lines
 
 
+@profile
 def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers):
-    lst_series = []
-    df_rpt_section = pd.DataFrame(columns=lst_col_headers)
-    if len(lst_section_lines) > 0:
-        dict_line_contents_aslist = return_data_from_rpt(lst_section_lines)
-        for line_idx_with_vals in dict_line_contents_aslist:
-            lst_substrings_with_content = dict_line_contents_aslist[line_idx_with_vals]
-            # datetime = f"{lst_substrings_with_content[0]} {lst_substrings_with_content[1]}"
-            # lst_values.append(datetime)
-            s_vals = pd.Series(index=lst_col_headers).astype(str)
-            idx_val = 0
-            for idx_str, substring in enumerate(lst_substrings_with_content):
-                if "\n" in substring:
-                    substring = substring.split("\n")[0]
-                if substring == "ltr":
-                    continue
-                # handling times
-                if (
-                    ":" in substring
-                ):  # this is either a datetime or time of max occurence; this and the previous value should be combined
-                    # update previous value
-                    s_vals.iloc[idx_val - 1] = (
-                        f"{str(s_vals.iloc[idx_val-1])} {substring}"
-                    )
-                    continue
-                s_vals.iloc[idx_val] = substring
-                idx_val += 1
-                # lst_values.append(val)
-            new_row = s_vals.to_frame().T
-            lst_series.append(new_row)
-        df_rpt_section = pd.concat(lst_series, ignore_index=True)
-    return df_rpt_section
+    if len(lst_section_lines) == 0:
+        return pd.DataFrame(columns=lst_col_headers)
+    dict_line_contents_aslist = return_data_from_rpt(lst_section_lines)
+    records = []
+    for line_idx_with_vals in sorted(dict_line_contents_aslist):
+        lst_substrings_with_content = dict_line_contents_aslist[line_idx_with_vals]
+        row = ["" for _ in lst_col_headers]
+        idx_val = 0
+        for substring in lst_substrings_with_content:
+            if "\n" in substring:
+                substring = substring.split("\n")[0]
+            if substring == "ltr":
+                continue
+            if ":" in substring:
+                if idx_val > 0:
+                    row[idx_val - 1] = f"{row[idx_val - 1]} {substring}".strip()
+                continue
+            if idx_val < len(row):
+                row[idx_val] = substring
+            idx_val += 1
+        records.append(row)
+    return pd.DataFrame.from_records(records, columns=lst_col_headers)
 
 
 def return_analysis_end_date(rpt_lines):
@@ -725,18 +727,24 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "link_id"
     # dict_lst_time_series, lst_col_headers, idx_colname = dict_lst_node_time_series, lst_col_headers, "node_id"
     lst_dfs = []
-    for key in dict_lst_time_series:
-        lst_section_lines = dict_lst_time_series[key]
+    for key, lst_section_lines in dict_lst_time_series.items():
         df_tseries = format_rpt_section_into_dataframe(
             lst_section_lines, lst_col_headers
         )
+        if df_tseries.empty:
+            continue
         df_tseries[idx_colname] = key
-        df_tseries["date_time"] = pd.to_datetime(df_tseries.date_time)
-        df_tseries = df_tseries.set_index([idx_colname, "date_time"])
         lst_dfs.append(df_tseries)
-    df_tseries = pd.concat(lst_dfs)
-    ds_tseries = df_tseries.to_xarray()
-    return ds_tseries
+    if not lst_dfs:
+        empty_df = pd.DataFrame(columns=[idx_colname, *lst_col_headers])
+        if "date_time" not in empty_df.columns:
+            empty_df["date_time"] = pd.to_datetime([])
+        empty_df = empty_df.set_index([idx_colname, "date_time"])
+        return empty_df.to_xarray()
+    df_tseries = pd.concat(lst_dfs, ignore_index=True)
+    df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"])
+    df_tseries = df_tseries.set_index([idx_colname, "date_time"])
+    return df_tseries.to_xarray()
 
 
 def convert_pyswmm_output_to_df(
@@ -781,6 +789,7 @@ def convert_swmm_tdeltas_to_minutes(s_tdelta):
     return total_minutes.tolist()
 
 
+@profile
 def return_data_from_rpt(lst_section_lines):
     lst_substrings_to_ignore = ["ltr\n"]
     # initialize vars
@@ -807,19 +816,21 @@ def return_data_from_rpt(lst_section_lines):
     dict_line_contents_asline = {idx: line for idx, line in enumerate(line_strings)}
     dict_content_lengths = {idx: length for idx, length in enumerate(line_lengths)}
     # make sure the lines all have the same lengths
-    s_lengths = pd.Series(dict_content_lengths)
-    target_length = s_lengths.mode().iloc[0]
-    idx_problem_rows = s_lengths[s_lengths != target_length].index
+    if not line_lengths:
+        return dict_line_contents_aslist
+    target_length = Counter(line_lengths).most_common(1)[0][0]
+    idx_problem_rows = [
+        idx for idx, length in dict_content_lengths.items() if length != target_length
+    ]
     # if there is an issue
     if len(idx_problem_rows) > 0:
-        s_lines = pd.Series(dict_line_contents_asline)
         normal_row, normal_row_list = _select_normal_row(
-            s_lines, s_lengths, idx_problem_rows, dict_line_contents_aslist
+            line_strings, line_lengths, idx_problem_rows, dict_line_contents_aslist
         )
         # loop through the problem rows and correct known issues
-        s_lines = s_lines.astype(str)
-        for idx, problem_row in s_lines.loc[idx_problem_rows].items():
+        for idx in idx_problem_rows:
             idx_int = cast(int, idx)
+            problem_row = str(line_strings[idx_int])
             problem_row_list = dict_line_contents_aslist[idx_int]
             solution = None
             problem_row_lower = problem_row.lower()
@@ -902,10 +913,10 @@ def return_data_from_rpt(lst_section_lines):
                 print("Here is an example of a normal row:")
                 print(normal_row)
                 print(
-                    f"There are {len(s_lines.loc[idx_problem_rows])} problem rows. Here are examples:"
+                    f"There are {len(idx_problem_rows)} problem rows. Here are examples:"
                 )
-                for idx, problem_row in s_lines.loc[idx_problem_rows].head(5).items():
-                    print(problem_row)
+                for idx in idx_problem_rows[:5]:
+                    print(line_strings[idx])
                 print(
                     "####################################################################"
                 )
@@ -927,17 +938,20 @@ def extract_substring(main_string, indices):
     return main_string[start : end + 1]  # Use slicing to extract the substring
 
 
-def _select_normal_row(s_lines, s_lengths, idx_problem_rows, dict_line_contents_aslist):
-    s_str_lengths = s_lines.str.len()
-    # identify a normal row
-    idx_odd_stringlengths = s_lines[s_str_lengths != s_str_lengths.mode().iloc[0]].index
-    for normal_idx in s_lengths.index:
-        if (normal_idx not in idx_odd_stringlengths) and (
-            normal_idx not in idx_problem_rows
-        ):
+def _select_normal_row(
+    line_strings, line_lengths, idx_problem_rows, dict_line_contents_aslist
+):
+    str_lengths = [len(line) for line in line_strings]
+    str_length_mode = Counter(str_lengths).most_common(1)[0][0]
+    normal_idx = None
+    for idx, (str_len, content_len) in enumerate(zip(str_lengths, line_lengths)):
+        if str_len == str_length_mode and idx not in idx_problem_rows:
+            normal_idx = idx
             break
+    if normal_idx is None:
+        normal_idx = 0
     normal_idx_int = cast(int, normal_idx)
-    normal_row = s_lines.loc[normal_idx]
+    normal_row = line_strings[normal_idx]
     normal_row_list = dict_line_contents_aslist[normal_idx_int]
     return normal_row, normal_row_list
 
