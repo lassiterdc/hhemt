@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 import importlib.util
 from platformdirs import user_data_dir
@@ -383,7 +384,13 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
     if chunks == "auto":
         chunks = return_dic_autochunk(ds)
     ds = ds.chunk(chunks)
-    ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*does not have a Zarr V3 specification.*",
+            category=Warning,
+        )
+        ds.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
 
 
 def write_zarr_then_netcdf(

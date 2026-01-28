@@ -200,14 +200,16 @@ def return_swmm_outputs(
             dict_ds["ds_node_summaries"],
             ds_node_tseries,
             dict_ds["ds_node_characteristics"],
-        ]
+        ],
+        join="outer",
     )
     ds_links = xr.merge(
         [
             dict_ds["ds_link_flow_summary"],
             ds_link_tseries,
             dict_ds["ds_link_characteristics"],
-        ]
+        ],
+        join="outer",
     )
     #
     ds_nodes.attrs = dict_system_results
@@ -584,14 +586,14 @@ def convert_pyswmm_output_to_df(
 def convert_swmm_tdeltas_to_minutes(s_tdelta):
     lst_tdeltas_min = []
     for val in s_tdelta:
-        if pd.Series(val).isna()[0]:
+        if pd.isna(val):
             lst_tdeltas_min.append(np.nan)
             continue
-        lst_val_substrings_all = val.split(" ")
+        lst_val_substrings_all = str(val).split(" ")
         lst_val_substring_data = []
-        for val in lst_val_substrings_all:
-            if len(val) > 0:
-                lst_val_substring_data.append(val)
+        for substring in lst_val_substrings_all:
+            if len(substring) > 0:
+                lst_val_substring_data.append(substring)
 
         days = int(lst_val_substring_data[0])
         hh_mm = lst_val_substring_data[-1]

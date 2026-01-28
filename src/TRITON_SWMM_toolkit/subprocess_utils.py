@@ -69,4 +69,6 @@ def run_subprocess_with_tee(
                     sys.stdout.flush()
 
     proc.wait()
+    if proc.stdout:
+        proc.stdout.close()
     return proc
