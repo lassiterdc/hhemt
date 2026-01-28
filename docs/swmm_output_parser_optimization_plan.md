@@ -14,7 +14,8 @@ This plan tracks performance and warning-hygiene improvements for `src/TRITON_SW
 - **Baseline (Phase 0):** 20.295690 seconds
 - **Phase 1:** 19.89 seconds (2.0% savings)
 - **Phase 2:** 19.14 seconds (5.7% savings)
-- **Phase 3 (in progress):** TBD (single-pass parser adopted; new baseline pending)
+- **Phase 3 (in progress):** single-pass parser adopted; new baseline pending
+- **Profiling run (2026-01-28):** unprofiled ~18.29 seconds (cProfile run ~43.6s due to profiler overhead)
 
 ---
 
@@ -57,6 +58,29 @@ The following inefficiencies were identified in `swmm_output_parser.py`:
 | `convert_datavars_to_dtype()` | Try/except loops for type conversion | Low-Medium |
 | `convert_coords_to_dtype()` | Try/except loops for type conversion | Low-Medium |
 | `return_node_time_series_results_from_rpt()` | Multiple passes over file lines | Medium |
+
+#### 1.2.1 Profiling Findings (2026-01-28)
+
+**cProfile (cumtime, top hotspots):**
+- `parse_rpt_single_pass` ~38.8s
+- `_build_tseries_datasets` ~38.7s
+- `create_tseries_ds` ~19.36s per call (two calls)
+- `format_rpt_section_into_dataframe` ~32.4s
+- Pandas internals dominate (Series/DataFrame construction, indexing, transpose)
+
+**Line profiler (line-level hotspots):**
+- `parse_rpt_single_pass`: 99.3% of time in `_build_tseries_datasets` call
+- `format_rpt_section_into_dataframe` (43.996s total):
+  - `pd.Series(...).astype(str)` ~23.8%
+  - `s_vals.iloc[idx_val] = substring` ~28.8%
+  - `new_row = s_vals.to_frame().T` ~18.8%
+  - `pd.concat(lst_series, ...)` ~6.5%
+  - `return_data_from_rpt(...)` ~6.8%
+- `return_data_from_rpt` (2.86s total):
+  - list comprehension splitting lines ~21.4%
+  - `pd.Series(dict_content_lengths)` ~22.0%
+  - `s_lengths.mode().iloc[0]` ~23.5%
+  - `idx_problem_rows = ...` ~28.1%
 
 ---
 
@@ -129,6 +153,33 @@ The following inefficiencies were identified in `swmm_output_parser.py`:
 
 **Estimated Effort:** 8-16 hours
 **Risk Level:** High
+
+---
+
+### Phase 4: DataFrame Construction Refactor (New)
+
+**Objective:** Reduce pandas overhead in `format_rpt_section_into_dataframe`, `return_data_from_rpt`, and `create_tseries_ds` based on line-profiler hotspots.
+
+**Tasks (proposed):**
+1. **Replace per-row Series creation in `format_rpt_section_into_dataframe()`**
+   - Build rows as Python lists/dicts and use `pd.DataFrame.from_records()` once
+   - Avoid `.to_frame().T` and repeated `.iloc` assignments
+2. **Reduce per-section concatenations**
+   - Accumulate row dicts/lists and instantiate DataFrame once per section
+3. **Optimize `return_data_from_rpt()` length checks**
+   - Replace `pd.Series(...).mode()` with `collections.Counter` for mode length
+   - Track problematic rows using list indices to avoid pandas overhead
+4. **Vectorize datetime parsing in `create_tseries_ds()`**
+   - Convert `date_time` column once per combined DataFrame (avoid per-key `to_datetime`)
+5. **Document and validate behavior**
+   - Preserve newline handling, `ltr` filtering, and current error corrections
+6. **Re-run profiling and report savings**
+   - Run `python -m cProfile -o profiling/retrieve_profile.out profiling/profile_runner.py`
+   - Run `kernprof -l -v profiling/profile_runner.py`
+   - Record new unprofiled runtime and compare to 18.29s baseline
+
+**Estimated Effort:** 6-10 hours
+**Risk Level:** Medium
 
 ---
 
@@ -244,6 +295,12 @@ def compare_zarr_datasets(ds_new: xr.Dataset, ds_ref: xr.Dataset, rtol=1e-5, ato
 - [ ] All Phase 2 criteria maintained
 - [ ] Performance does not regress vs Phase 2 baseline
 - [ ] Optional: measurable improvement if single-pass gains are confirmed
+
+### Phase 4 Completion Criteria
+- [ ] All Phase 3 criteria maintained
+- [ ] `format_rpt_section_into_dataframe` no longer dominated by per-row Series creation
+- [ ] End-to-end runtime improves vs Phase 2 baseline (target: ≥10% reduction)
+- [ ] Profiling summary updated with new timings and savings
 
 ---
 

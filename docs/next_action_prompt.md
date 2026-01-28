@@ -1,8 +1,8 @@
-. # Phase 3 Implementation Prompt for AI Agent
+ # Phase 4 Implementation Prompt for AI Agent
 
 ## Context
 
-You are wrapping up Phase 3 of the SWMM Output Parser Optimization Plan. The focus has shifted to locking in the single-pass parser and removing experimental mmap/parallel paths while preserving output parity.
+You are starting Phase 4 of the SWMM Output Parser Optimization Plan. The focus is on reducing pandas overhead in RPT parsing based on profiling evidence.
 
 **Reference Document:** `docs/swmm_output_parser_optimization_plan.md`
 
@@ -10,7 +10,7 @@ You are wrapping up Phase 3 of the SWMM Output Parser Optimization Plan. The foc
 
 ## Objective
 
-Finalize Phase 3 updates in `src/TRITON_SWMM_toolkit/swmm_output_parser.py`, update tests to ignore static geodataframe attributes, and confirm readiness for the next phase.
+Refactor dataframe construction in `src/TRITON_SWMM_toolkit/swmm_output_parser.py` to reduce per-row pandas overhead, while preserving output parity.
 
 ---
 
@@ -34,31 +34,34 @@ Finalize Phase 3 updates in `src/TRITON_SWMM_toolkit/swmm_output_parser.py`, upd
 
 ---
 
-## Phase 3 Tasks: Advanced Parser Optimization
+## Phase 4 Tasks: DataFrame Construction Refactor
 
-### Task 1: Single-pass RPT parser
-
-**Status:** ✅ Implemented and now the only RPT parsing path.
+### Task 1: Refactor `format_rpt_section_into_dataframe`
 
 **Goals:**
-- Use a state-machine parser that extracts sections in one pass.
-- Preserve existing error-handling behavior and newline-token semantics.
+- Replace per-row Series construction with row lists/dicts
+- Use `DataFrame.from_records` or `DataFrame` once per section
+- Avoid `.to_frame().T` and `.iloc` inside loops
 
-### Task 2: Memory usage improvements
+### Task 2: Streamline `return_data_from_rpt`
 
-**Status:** ⚠️ Deferred (mmap removed for simplicity).
+**Goals:**
+- Replace pandas-based mode calculation with `collections.Counter`
+- Track problematic rows using list indices
+- Preserve error correction behavior and warnings
 
-**Goals (future):**
-- Explore chunked or memory-mapped reading for large RPT files.
-- Ensure behavior matches current parsing logic.
+### Task 3: Optimize `create_tseries_ds`
 
-### Task 3: Optional parallelization experiments
+**Goals:**
+- Convert `date_time` in one batch per combined DataFrame
+- Minimize repeated `pd.concat` calls
 
-**Status:** ⚠️ Deferred (parallel path removed for simplicity).
+### Task 4: Re-run profiling and report savings
 
-**Goals (future):**
-- Evaluate whether node/link time series parsing can be parallelized safely.
-- Maintain deterministic outputs and warning hygiene.
+**Goals:**
+- Run `python -m cProfile -o profiling/retrieve_profile.out profiling/profile_runner.py`
+- Run `kernprof -l -v profiling/profile_runner.py`
+- Record updated unprofiled runtime and report savings vs 18.29s baseline
 
 ---
 
@@ -74,7 +77,7 @@ find test_data -name '*Zone.Identifier*' -print -delete
 
 ## Testing Requirements
 
-After Phase 3 changes:
+After Phase 4 changes:
 
 ### 1. Refactoring Suite
 ```bash
@@ -102,9 +105,9 @@ pytest tests/test_PC_02_multisim.py -v -W error::UserWarning
 
 Make separate commits for each task (or grouped by function):
 
-1. `perf(swmm_output_parser): add single-pass parser`
-2. `chore(swmm_output_parser): remove legacy/mmap/parallel parsing paths`
-3. `test(swmm_output_parser): drop static geodataframe vars from reference tseries`
+1. `perf(swmm_output_parser): reduce pandas overhead in rpt parsing`
+2. `perf(swmm_output_parser): optimize tseries dataset creation`
+3. `test(swmm_output_parser): confirm refactor parity + timing`
 
 ---
 
@@ -115,7 +118,7 @@ Make separate commits for each task (or grouped by function):
 - [ ] No functional changes to output data (excluding removal of static geodataframe vars)
 - [ ] Performance should not regress vs Phase 2 baseline (target improvements optional)
 
-**Note:** Phase 3 is complete only when all tests pass and performance improves without altering outputs.
+**Note:** Phase 4 is complete only when all tests pass and performance improves without altering outputs.
 
 ---
 
