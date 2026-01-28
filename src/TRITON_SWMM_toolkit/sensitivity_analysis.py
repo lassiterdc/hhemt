@@ -144,6 +144,7 @@ class TRITONSWMM_sensitivity_analysis:
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
+        dry_run: bool = False,
         verbose: bool = True,
     ) -> dict:
         """
@@ -182,6 +183,8 @@ class TRITONSWMM_sensitivity_analysis:
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
+        dry_run : bool
+            If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
 
@@ -194,22 +197,8 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
-        # Detect execution mode
-        if mode == "auto":
-            mode = "slurm" if self.master_analysis.in_slurm else "local"
-
-        if verbose:
-            print(
-                f"[Snakemake] Submitting sensitivity analysis workflow in {mode} mode",
-                flush=True,
-            )
-
-        # Generate master Snakefile with flattened hierarchy
-        # (no nested Snakemake calls - all rules in one file)
-        master_snakefile_content = self._workflow_builder.generate_master_snakefile_content(
-            which=which,
-            overwrite_if_exist=overwrite_if_exist,
-            compression_level=compression_level,
+        return self._workflow_builder.submit_workflow(
+            mode=mode,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
             compile_TRITON_SWMM=compile_TRITON_SWMM,
@@ -218,63 +207,15 @@ class TRITONSWMM_sensitivity_analysis:
             overwrite_scenario=overwrite_scenario,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
+            which=which,
             clear_raw_outputs=clear_raw_outputs,
+            overwrite_if_exist=overwrite_if_exist,
+            compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
+            wait_for_completion=wait_for_completion,
+            dry_run=dry_run,
+            verbose=verbose,
         )
-
-        master_snakefile_path = (
-            self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-        )
-        master_snakefile_path.write_text(master_snakefile_content)
-
-        if verbose:
-            print(
-                f"[Snakemake] Generated master Snakefile: {master_snakefile_path}",
-                flush=True,
-            )
-
-        # Create required directories BEFORE Snakemake DAG construction
-        # (onstart: in Snakefile runs AFTER DAG parsing, too late for file validation)
-        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
-        (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
-        (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
-
-        if verbose:
-            print(
-                f"[Snakemake] Created required directories (_status, logs/sims)",
-                flush=True,
-            )
-
-        # Submit workflow based on mode
-        if mode == "local":
-            result = self._workflow_builder.run_snakemake_local(
-                snakefile_path=master_snakefile_path,
-                verbose=verbose,
-            )
-        else:  # slurm
-            result = self._workflow_builder.run_snakemake_slurm(
-                snakefile_path=master_snakefile_path,
-                verbose=verbose,
-                wait_for_completion=wait_for_completion,
-            )
-
-        # Print snakemake log file location if available
-        if (
-            verbose
-            and result.get("snakemake_logfile") is not None
-            and not wait_for_completion
-        ):
-            print(
-                f"[Snakemake] Sensitivity analysis workflow submitted in background.",
-                flush=True,
-            )
-            print(
-                f"[Snakemake] Monitor progress with: tail -f {result.get('snakemake_logfile')}",
-                flush=True,
-            )
-
-        self._update_master_analysis_log()
-        return result
 
     def run_all_sims(
         self,
