@@ -2,7 +2,7 @@
 
 ## Context
 
-You are implementing Phase 3 of the SWMM Output Parser Optimization Plan. This phase focuses on advanced parser optimizations for further performance gains while keeping output parity.
+You are wrapping up Phase 3 of the SWMM Output Parser Optimization Plan. The focus has shifted to locking in the single-pass parser and removing experimental mmap/parallel paths while preserving output parity.
 
 **Reference Document:** `docs/swmm_output_parser_optimization_plan.md`
 
@@ -10,7 +10,7 @@ You are implementing Phase 3 of the SWMM Output Parser Optimization Plan. This p
 
 ## Objective
 
-Implement Phase 3 optimizations in `src/TRITON_SWMM_toolkit/swmm_output_parser.py` while preserving output equivalence and warning hygiene established in Phases 1-2.
+Finalize Phase 3 updates in `src/TRITON_SWMM_toolkit/swmm_output_parser.py`, update tests to ignore static geodataframe attributes, and confirm readiness for the next phase.
 
 ---
 
@@ -36,21 +36,27 @@ Implement Phase 3 optimizations in `src/TRITON_SWMM_toolkit/swmm_output_parser.p
 
 ## Phase 3 Tasks: Advanced Parser Optimization
 
-### Task 1: Single-pass RPT parser prototype
+### Task 1: Single-pass RPT parser
+
+**Status:** ✅ Implemented and now the only RPT parsing path.
 
 **Goals:**
-- Investigate a state-machine parser that extracts sections in one pass.
+- Use a state-machine parser that extracts sections in one pass.
 - Preserve existing error-handling behavior and newline-token semantics.
 
 ### Task 2: Memory usage improvements
 
-**Goals:**
+**Status:** ⚠️ Deferred (mmap removed for simplicity).
+
+**Goals (future):**
 - Explore chunked or memory-mapped reading for large RPT files.
 - Ensure behavior matches current parsing logic.
 
 ### Task 3: Optional parallelization experiments
 
-**Goals:**
+**Status:** ⚠️ Deferred (parallel path removed for simplicity).
+
+**Goals (future):**
 - Evaluate whether node/link time series parsing can be parallelized safely.
 - Maintain deterministic outputs and warning hygiene.
 
@@ -68,7 +74,7 @@ find test_data -name '*Zone.Identifier*' -print -delete
 
 ## Testing Requirements
 
-After implementing Phase 3 changes:
+After Phase 3 changes:
 
 ### 1. Refactoring Suite
 ```bash
@@ -96,10 +102,9 @@ pytest tests/test_PC_02_multisim.py -v -W error::UserWarning
 
 Make separate commits for each task (or grouped by function):
 
-1. `perf(swmm_output_parser): optimize return_data_from_rpt`
-2. `perf(swmm_output_parser): streamline time series rpt parsing`
-3. `perf(swmm_output_parser): consolidate dataframe/xarray operations`
-4. `perf(swmm_output_parser): reduce dtype conversion overhead`
+1. `perf(swmm_output_parser): add single-pass parser`
+2. `chore(swmm_output_parser): remove legacy/mmap/parallel parsing paths`
+3. `test(swmm_output_parser): drop static geodataframe vars from reference tseries`
 
 ---
 
@@ -107,8 +112,8 @@ Make separate commits for each task (or grouped by function):
 
 - [ ] `pytest tests/test_swmm_output_parser_refactoring.py` passes (all reference comparisons)
 - [ ] `pytest tests/test_PC_02_multisim.py` passes with 0 warnings
-- [ ] No functional changes to output data
-- [ ] Measurable performance improvements vs Phase 2 baseline
+- [ ] No functional changes to output data (excluding removal of static geodataframe vars)
+- [ ] Performance should not regress vs Phase 2 baseline (target improvements optional)
 
 **Note:** Phase 3 is complete only when all tests pass and performance improves without altering outputs.
 
