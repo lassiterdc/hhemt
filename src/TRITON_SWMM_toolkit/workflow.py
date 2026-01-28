@@ -242,25 +242,29 @@ rule consolidate:
 '''
         return snakefile_content
 
-    def generate_snakemake_config(self, mode: Literal["local", "slurm"]) -> dict:
+    def generate_snakemake_config(
+        self, mode: Literal["local", "slurm", "single_job"]
+    ) -> dict:
         """
         Generate dynamic snakemake config based on analysis_config and system_config.
 
-        Supports dual-mode execution:
-        - Modern mode (default): Uses 'executor: slurm' with job steps
-        - Legacy mode: Uses 'cluster' with direct sbatch submission
+        Supports three execution modes:
+        - local: Uses cores based on system capabilities
+        - slurm: Uses 'executor: slurm' with job steps (many SLURM jobs)
+        - single_job: Behaves like local execution but respects SLURM allocation
+          (one SLURM job with many srun tasks inside)
 
         Parameters
         ----------
-        mode : Literal["local", "slurm"]
-            Execution mode (local or slurm)
+        mode : Literal["local", "slurm", "single_job"]
+            Execution mode (local, slurm, or single_job)
 
         Returns
         -------
         dict
             Snakemake configuration dictionary
         """
-        # Base config shared by both modes
+        # Base config shared by all modes
         config = {
             "use-conda": False,
             "conda-frontend": "mamba",
@@ -278,6 +282,25 @@ rule consolidate:
                     "keep-going": False,
                 }
             )
+        elif mode == "single_job":
+            # Single-job mode: behaves like local execution but respects SLURM allocation
+            sim_resources = (
+                self.analysis._resource_manager._get_simulation_resource_requirements()
+            )
+            total_cpus = sim_resources["total_cpus"]
+
+            # Snakemake will use the threads directive on rules to limit concurrency
+            config.update(
+                {
+                    "cores": total_cpus,
+                    "keep-going": True,  # Continue other sims if one fails
+                    "latency-wait": 30,
+                }
+            )
+            # Add GPU resources if needed
+            if sim_resources["n_gpus"] > 0:
+                total_gpus = sim_resources["total_gpus"]
+                config["resources"] = [f"gpu={total_gpus}"]
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
@@ -315,7 +338,7 @@ rule consolidate:
         return config
 
     def write_snakemake_config(
-        self, config: dict, mode: Literal["local", "slurm"]
+        self, config: dict, mode: Literal["local", "slurm", "single_job"]
     ) -> Path:
         """
         Write snakemake config to analysis directory.
@@ -324,8 +347,8 @@ rule consolidate:
         ----------
         config : dict
             Snakemake configuration dictionary
-        mode : Literal["local", "slurm"]
-            Execution mode (local or slurm)
+        mode : Literal["local", "slurm", "single_job"]
+            Execution mode (local, slurm, or single_job)
 
         Returns
         -------
@@ -346,6 +369,99 @@ rule consolidate:
             )
 
         return config_dir
+
+    def _generate_single_job_submission_script(
+        self, snakefile_path: Path, config_dir: Path
+    ) -> Path:
+        """
+        Generate SLURM batch script that runs Snakemake.
+
+        For 1_job_many_srun_tasks mode, this requests FULL resources needed for
+        max_concurrent simulations running simultaneously. Otherwise, it
+        generates a job that is just a Snakemake orchestrator for
+        multi_sim_run_method = batch_job.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile
+        config_dir : Path
+            Path to the Snakemake profile config directory
+
+        Returns
+        -------
+        Path
+            Path to the generated batch script
+        """
+        # Get per-simulation resource requirements
+        sim_resources = (
+            self.analysis._resource_manager._get_simulation_resource_requirements()
+        )
+
+        # Estimate total time needed (with safety factor)
+        n_sims = self.analysis.nsims
+        time_per_sim_min = self.cfg_analysis.hpc_time_min_per_sim
+        assert isinstance(time_per_sim_min, int), "time_per_sim_min is required"
+        max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
+        assert isinstance(max_concurrent, int), "max_concurrent is required"
+        assert (
+            self.analysis.in_slurm
+        ), "_generate_submission_script only makes sense to run in a SLURM environment."
+
+        # Get actual concurrent limit from SLURM constraints if in SLURM
+        # Estimate time: (total_sims / concurrent) * time_per_sim * safety_factor
+        estimated_time_min = int(
+            (n_sims / max(1, max_concurrent)) * time_per_sim_min * 1.2
+        )
+
+        # Apply upper limit if specified
+        if self.cfg_analysis.hpc_sbatch_time_upper_limit_min:
+            estimated_time_min = min(
+                estimated_time_min, self.cfg_analysis.hpc_sbatch_time_upper_limit_min
+            )
+
+        # Convert to HH:MM:SS format
+        hours = estimated_time_min // 60
+        minutes = estimated_time_min % 60
+        estimated_time = f"{hours:02d}:{minutes:02d}:00"
+
+        # Calculate TOTAL resources for max_concurrent simulations
+        total_gpus = sim_resources["total_gpus"]
+        total_nodes = sim_resources["total_nodes"]
+        total_mem_mb = sim_resources["total_mem_mb"]
+
+        # Build additional bash lines if specified
+        additional_lines = ""
+        if self.cfg_analysis.additional_bash_lines:
+            additional_lines = "\n".join(self.cfg_analysis.additional_bash_lines)
+            additional_lines = f"\n# Additional configuration\n{additional_lines}\n"
+
+        # Build GPU directive if needed
+        gpu_directive = ""
+        if total_gpus > 0:
+            gpu_directive = f"#SBATCH --gpus={total_gpus}\n"
+
+        script_content = f"""#!/bin/bash
+#SBATCH --job-name=triton_workflow
+#SBATCH --partition={self.cfg_analysis.hpc_ensemble_partition}
+#SBATCH --account={self.cfg_analysis.hpc_account}
+#SBATCH --nodes={total_nodes}
+#SBATCH --ntasks={max_concurrent}
+#SBATCH --cpus-per-task={sim_resources["n_cpus_per_sim"]}
+{gpu_directive}#SBATCH --mem={total_mem_mb}
+#SBATCH --time={estimated_time}
+#SBATCH --output=logs/workflow_%j.out
+#SBATCH --error=logs/workflow_%j.err
+{additional_lines}
+# Snakemake with single_job profile (runs inside this allocation)
+snakemake --profile {config_dir} --snakefile {snakefile_path}
+"""
+
+        script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
+        script_path.write_text(script_content)
+        script_path.chmod(0o755)
+
+        return script_path
 
     def run_snakemake_local(
         self,
@@ -610,6 +726,118 @@ rule consolidate:
                 "snakemake_logfile": None,
             }
 
+    def _submit_single_job_workflow(
+        self,
+        snakefile_path: Path,
+        verbose: bool,
+    ) -> dict:
+        """
+        Submit workflow as a single SLURM batch job.
+
+        This method generates a batch script that submits a single SLURM job
+        which runs Snakemake inside the allocation using the single_job profile.
+        Each simulation is then launched via srun within that allocation.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile
+        wait_for_completion : bool
+            If True, wait for job completion
+        verbose : bool
+            If True, print progress messages
+        dry_run : bool
+            If True, only generate script without submitting
+
+        Returns
+        -------
+        dict
+            Status dictionary with keys:
+            - success: bool
+            - mode: str ("single_job")
+            - job_id: str | None
+            - script_path: Path
+            - message: str
+        """
+        try:
+            if verbose:
+                print(
+                    "[Snakemake] Preparing single-job workflow submission",
+                    flush=True,
+                )
+
+            # Generate single_job profile
+            config = self.generate_snakemake_config(mode="single_job")
+            config_dir = self.write_snakemake_config(config, mode="single_job")
+
+            # Generate submission script
+            script_path = self._generate_single_job_submission_script(
+                snakefile_path, config_dir
+            )
+
+            if verbose:
+                print(
+                    f"[Snakemake] Generated submission script: {script_path}",
+                    flush=True,
+                )
+
+            # Submit with sbatch
+            if verbose:
+                print(f"[Snakemake] Submitting with sbatch: {script_path}", flush=True)
+
+            result = subprocess.run(
+                ["sbatch", str(script_path)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.analysis_paths.analysis_dir),
+            )
+
+            # Parse job ID from sbatch output
+            job_id = None
+            if result.returncode == 0 and result.stdout:
+                # sbatch output typically: "Submitted batch job 12345"
+                parts = result.stdout.strip().split()
+                if len(parts) >= 4 and parts[0] == "Submitted":
+                    job_id = parts[-1]
+
+            if result.returncode != 0:
+                error_msg = f"sbatch submission failed: {result.stderr}"
+                if verbose:
+                    print(f"[Snakemake] ERROR: {error_msg}", flush=True)
+                return {
+                    "success": False,
+                    "mode": "single_job",
+                    "job_id": None,
+                    "script_path": script_path,
+                    "message": error_msg,
+                }
+
+            if verbose:
+                print(
+                    f"[Snakemake] Single-job workflow submitted successfully (Job ID: {job_id})",
+                    flush=True,
+                )
+
+            return {
+                "success": True,
+                "mode": "single_job",
+                "job_id": job_id,
+                "script_path": script_path,
+                "message": f"Single-job workflow submitted (Job ID: {job_id})",
+            }
+
+        except Exception as e:
+            error_msg = f"Failed to submit single-job workflow: {str(e)}"
+            if verbose:
+                print(f"[Snakemake] EXCEPTION: {error_msg}", flush=True)
+            return {
+                "success": False,
+                "mode": "single_job",
+                "job_id": None,
+                "script_path": None,
+                "message": error_msg,
+            }
+
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -634,6 +862,8 @@ rule consolidate:
         Submit workflow using Snakemake.
 
         Automatically detects execution context (local vs. HPC) and submits accordingly.
+        If multi_sim_run_method is "1_job_many_srun_tasks", submits as a single SLURM
+        job with multiple srun tasks inside.
 
         Parameters
         ----------
@@ -677,6 +907,50 @@ rule consolidate:
         dict
             Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
         """
+        # Check if we should use 1-job mode based on config
+        multi_sim_method = self.cfg_analysis.multi_sim_run_method
+
+        if multi_sim_method == "1_job_many_srun_tasks":
+            # Always submit a batch job for 1-job mode
+            if verbose:
+                print(
+                    "[Snakemake] Using 1-job many-srun-tasks mode",
+                    flush=True,
+                )
+
+            # Generate Snakefile content
+            snakefile_content = self.generate_snakefile_content(
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario=overwrite_scenario,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+            )
+
+            # Write Snakefile to disk
+            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            snakefile_path.write_text(snakefile_content)
+
+            if verbose:
+                print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
+
+            result = self._submit_single_job_workflow(
+                snakefile_path=snakefile_path,
+                verbose=verbose,
+            )
+
+            self.analysis._refresh_log()
+            return result
+
+        # Standard workflow submission (existing logic)
         # Detect execution mode
         if mode == "auto":
             mode = "slurm" if self.analysis.in_slurm else "local"
@@ -1059,6 +1333,8 @@ rule setup:
 
         This orchestrates multiple sub-analysis workflows and a final master
         consolidation step that combines all sub-analysis outputs.
+        If multi_sim_run_method is "1_job_many_srun_tasks", submits as a single SLURM
+        job with multiple srun tasks inside.
 
         Parameters
         ----------
@@ -1104,6 +1380,59 @@ rule setup:
             - snakefile_path: Path
             - message: str
         """
+        # Check if we should use 1-job mode based on config
+        multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
+
+        if multi_sim_method == "1_job_many_srun_tasks":
+            # Always submit a batch job for 1-job mode
+            if verbose:
+                print(
+                    "[Snakemake] Using 1-job many-srun-tasks mode for sensitivity analysis",
+                    flush=True,
+                )
+
+            # Generate master Snakefile
+            master_snakefile_content = self.generate_master_snakefile_content(
+                which=which,
+                overwrite_if_exist=overwrite_if_exist,
+                compression_level=compression_level,
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario=overwrite_scenario,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                clear_raw_outputs=clear_raw_outputs,
+                pickup_where_leftoff=pickup_where_leftoff,
+            )
+
+            master_snakefile_path = (
+                self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
+            )
+            master_snakefile_path.write_text(master_snakefile_content)
+
+            if verbose:
+                print(
+                    f"[Snakemake] Generated master Snakefile: {master_snakefile_path}",
+                    flush=True,
+                )
+
+            # Create required directories
+            analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+            (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
+            (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
+
+            result = self._base_builder._submit_single_job_workflow(
+                snakefile_path=master_snakefile_path,
+                verbose=verbose,
+            )
+
+            self.sensitivity_analysis._update_master_analysis_log()
+            return result
+
+        # Standard workflow submission (existing logic)
         # Detect execution mode
         if mode == "auto":
             mode = "slurm" if self.master_analysis.in_slurm else "local"

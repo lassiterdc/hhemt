@@ -87,7 +87,6 @@ class TRITONSWMM_analysis:
         # self.run_modes = Mode
         # self._system.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
-        self._resource_manager = ResourceManager(self.cfg_analysis)
         self._execution_strategy = self._select_execution_strategy()
         if self.cfg_analysis.python_path is not None:
             python_executable = str(self.cfg_analysis.python_path)
@@ -97,14 +96,17 @@ class TRITONSWMM_analysis:
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
+        self.nsims = len(self.df_sims)
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
+            self.nsims *= len(self.sensitivity.df_setup)
         if not skip_log_update:
             # self._add_all_scenarios()
             self._refresh_log()
             if self._system.sys_paths.compilation_logfile.exists():
                 self._system.compilation_successful
             self._update_log()
+        self._resource_manager = ResourceManager(self)
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():

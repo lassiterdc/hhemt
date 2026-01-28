@@ -10,6 +10,10 @@ Classes:
 
 import os
 import psutil
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .analysis import TRITONSWMM_analysis
 
 
 class ResourceManager:
@@ -26,7 +30,7 @@ class ResourceManager:
         cfg_analysis: Analysis configuration object
     """
 
-    def __init__(self, cfg_analysis):
+    def __init__(self, analysis: "TRITONSWMM_analysis"):
         """
         Initialize ResourceManager.
 
@@ -37,8 +41,66 @@ class ResourceManager:
         in_slurm : bool, optional
             Whether the code is running in a SLURM environment (default: False)
         """
-        self.cfg_analysis = cfg_analysis
+        self.analysis = analysis
+        self.cfg_analysis = analysis.cfg_analysis
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
+
+    def _get_simulation_resource_requirements(self) -> dict:
+        """
+        Get resource requirements for a single simulation.
+        If this is a sensitivity analysis, return the most demanding
+        requirements across all subanalyses.
+
+        Returns dict with: n_nodes, n_cpus_per_sim, n_gpus, mem_mb_per_sim
+        """
+        max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
+        assert isinstance(
+            max_concurrent, int
+        ), "max_concurrent is required for _get_simulation_resource_requirements"
+
+        mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
+        omp_threads = self.cfg_analysis.n_omp_threads or 1
+        max_nodes = self.cfg_analysis.n_nodes or 1
+
+        max_cpus = mpi_ranks * omp_threads
+        max_gpus = self.cfg_analysis.n_gpus or 0
+        max_mem_mb = self.cfg_analysis.mem_gb_per_cpu * max_cpus * 1000
+
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            for (
+                sub_analysis_iloc,
+                sub_analysis,
+            ) in self.analysis.sensitivity.sub_analyses.items():
+                mpi_ranks = sub_analysis.cfg_analysis.n_mpi_procs or 1
+                omp_threads = sub_analysis.cfg_analysis.n_omp_threads or 1
+                n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
+                n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
+
+                cpus_per_sim = mpi_ranks * omp_threads
+                mem_mb_per_sim = (
+                    sub_analysis.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
+                )
+
+                max_nodes = max(max_nodes, n_nodes)
+                max_cpus = max(max_cpus, cpus_per_sim)
+                max_gpus = max(max_gpus, n_gpus)
+                max_mem_mb = max(max_mem_mb, int(mem_mb_per_sim))
+
+        total_nodes = max_nodes * max_concurrent
+        total_cpus = max_cpus * max_concurrent
+        total_gpus = max_gpus * max_concurrent
+        total_mem_mb = max_mem_mb * max_concurrent
+
+        return {
+            "n_nodes": max_nodes,
+            "n_cpus_per_sim": max_cpus,
+            "n_gpus": max_gpus,
+            "mem_mb_per_sim": max_mem_mb,
+            "total_nodes": total_nodes,
+            "total_cpus": total_cpus,
+            "total_gpus": total_gpus,
+            "total_mem_mb": total_mem_mb,
+        }
 
     def calculate_effective_max_parallel(
         self,
@@ -151,13 +213,15 @@ class ResourceManager:
         return tasks
 
     def _get_slurm_resource_constraints(
-        self, verbose: bool = False, min_mem_per_sim_MiB: int = 1024
+        self,
+        verbose: bool = False,
     ) -> dict:
         """
         Extract and validate SLURM resource constraints from environment variables.
 
         This method reads all relevant SLURM environment variables and calculates
         the effective maximum concurrency based on:
+        - Simulation requirements (using maximally demanding sensitity scenario if applicable)
         - CPU allocation (SLURM_CPUS_PER_TASK, SLURM_CPUS_ON_NODE)
         - GPU allocation (SLURM_GPUS, SLURM_GPUS_ON_NODE, SLURM_GPUS_PER_TASK)
         - Memory constraints (SLURM_MEM_PER_NODE, SLURM_MEM_PER_CPU)
@@ -189,6 +253,10 @@ class ResourceManager:
             If GPU mode is requested but no GPUs are detected, or if GPU
             requirements exceed allocation
         """
+        # ----------------------------
+        # Retrieve sim demand upper limit
+        # ----------------------------
+        sim_reqs = self._get_simulation_resource_requirements()
         # ----------------------------
         # Read basic SLURM allocation
         # ----------------------------
@@ -247,9 +315,9 @@ class ResourceManager:
         # GPU constraints (if GPU mode)
         # ----------------------------
         total_gpus = 0
-        gpus_per_task = self.cfg_analysis.n_gpus or 0
+        gpus_per_task = sim_reqs["max_gpus"]
 
-        if self.cfg_analysis.run_mode == "gpu":
+        if gpus_per_task > 0:
             # Try SLURM_GPUS first (total GPUs)
             total_gpus = int(os.environ.get("SLURM_GPUS", 0))
 
@@ -274,19 +342,18 @@ class ResourceManager:
         # ----------------------------
         # Calculate max concurrency based on mode
         # ----------------------------
-        if self.cfg_analysis.run_mode == "gpu":
+        if gpus_per_task > 0:
             # GPU-based limit
             max_concurrent = max(1, total_gpus // gpus_per_task)
         else:
             # CPU-based limit
-            mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
-            omp_threads = self.cfg_analysis.n_omp_threads or 1
-            cpus_per_sim = mpi_ranks * omp_threads
+            cpus_per_sim = sim_reqs["n_cpus_per_sim"]
 
             max_concurrent = max(1, total_cpus // cpus_per_sim) - 1
         # ----------------------------
         # Apply memory constraints
         # ----------------------------
+        min_mem_per_sim_MiB = sim_reqs["mem_mb_per_sim"]
         if mem_per_node_MiB > 0:
             # Estimate memory per simulation
             # This is conservative: assume each sim uses proportional memory
