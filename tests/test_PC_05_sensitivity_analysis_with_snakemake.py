@@ -7,15 +7,16 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_snakemake_sensitivity_workflow_generation(norfolk_sensitivity_analysis):
+def test_snakemake_sensitivity_workflow_generation_and_write(
+    norfolk_sensitivity_analysis,
+):
     """
     Test Snakemake workflow generation for sensitivity analysis.
 
     Verifies that:
-    1. Master Snakefile is generated correctly
-    2. Sub-analysis Snakefiles are generated for each sub-analysis
-    3. Master Snakefile contains all necessary rules
-    4. Master Snakefile has proper dependencies
+    1. Sub-analysis Snakefiles are generated and written correctly
+    2. Master Snakefile is generated and written correctly
+    3. Master Snakefile contains required rules and flags
     """
     analysis = norfolk_sensitivity_analysis
 
@@ -37,6 +38,10 @@ def test_snakemake_sensitivity_workflow_generation(norfolk_sensitivity_analysis)
         tst_ut.assert_snakefile_has_rules(
             snakefile_content, ["all", "setup", "simulation", "consolidate"]
         )
+
+        sub_snakefile_path = tst_ut.write_snakefile(sub_analysis, snakefile_content)
+        assert sub_snakefile_path.exists()
+        assert len(sub_snakefile_path.read_text()) > 100
 
     master_snakefile_content = (
         sensitivity._workflow_builder.generate_master_snakefile_content(
@@ -61,60 +66,9 @@ def test_snakemake_sensitivity_workflow_generation(norfolk_sensitivity_analysis)
     for sa_id in range(num_sub_analyses):
         assert f"rule consolidate_sa_{sa_id}:" in master_snakefile_content
 
-
-def test_snakemake_sensitivity_workflow_files_written(norfolk_sensitivity_analysis):
-    """
-    Test that Snakemake workflow files are written to disk correctly.
-
-    Verifies that:
-    1. Sub-analysis Snakefiles are written to correct locations
-    2. Master Snakefile is written to master analysis directory
-    3. All files are valid and non-empty
-    """
-    analysis = norfolk_sensitivity_analysis
-    sensitivity = analysis.sensitivity
-
-    for sub_analysis in sensitivity.sub_analyses.values():
-        snakefile_content = sub_analysis._workflow_builder.generate_snakefile_content(
-            process_system_level_inputs=False,
-            compile_TRITON_SWMM=True,
-            prepare_scenarios=True,
-            process_timeseries=True,
-        )
-        snakefile_path = tst_ut.write_snakefile(sub_analysis, snakefile_content)
-
-        assert snakefile_path.exists()
-        assert len(snakefile_path.read_text()) > 100
-
-    master_snakefile_content = (
-        sensitivity._workflow_builder.generate_master_snakefile_content(
-            which="both",
-            overwrite_if_exist=False,
-            compression_level=5,
-        )
-    )
-
     master_snakefile_path = tst_ut.write_snakefile(analysis, master_snakefile_content)
-
     assert master_snakefile_path.exists()
     assert len(master_snakefile_path.read_text()) > 100
-
-    content = master_snakefile_path.read_text()
-    tst_ut.assert_snakefile_has_rules(content, ["all", "master_consolidation"])
-
-
-def test_submit_workflow_detects_local_mode(norfolk_sensitivity_analysis):
-    """
-    Test that submit_workflow() correctly detects local mode for sensitivity analysis.
-
-    Note: This test does NOT actually run snakemake, only verifies detection logic.
-    """
-    analysis = norfolk_sensitivity_analysis
-
-    assert not analysis.in_slurm, "Test must run on local machine, not in SLURM"
-
-    detected_mode = "slurm" if analysis.in_slurm else "local"
-    assert detected_mode == "local"
 
 
 @pytest.mark.parametrize(

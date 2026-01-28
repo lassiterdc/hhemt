@@ -7,50 +7,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_snakemake_local_workflow_generation(norfolk_multi_sim_analysis):
+def test_snakemake_local_workflow_generation_and_write(norfolk_multi_sim_analysis):
     """
     Test Snakemake workflow generation for local execution.
 
     Verifies that:
-    1. Snakefile is generated correctly
-    2. Snakefile contains all necessary rules
-    3. Snakefile uses correct conda environment
-    """
-    analysis = norfolk_multi_sim_analysis
-
-    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
-        process_system_level_inputs=True,
-        compile_TRITON_SWMM=True,
-        prepare_scenarios=True,
-        process_timeseries=True,
-    )
-
-    tst_ut.assert_snakefile_has_rules(
-        snakefile_content, ["all", "setup", "simulation", "consolidate"]
-    )
-    tst_ut.assert_snakefile_has_flags(
-        snakefile_content,
-        [
-            "/workflow/envs/triton_swmm.yaml",
-            "_status/sims/sim_{event_iloc}_complete.flag",
-            "setup_workflow",
-            "--process-system-inputs",
-            "--compile-triton-swmm",
-            "run_single_simulation",
-            "--prepare-scenario",
-            "consolidate_workflow",
-        ],
-    )
-
-
-def test_snakemake_local_workflow_submission_dry_run(norfolk_multi_sim_analysis):
-    """
-    Test Snakemake workflow submission in local mode (dry-run).
-
-    Verifies that:
     1. Snakefile can be written to disk
-    2. submit_workflow() returns success status (but doesn't actually run snakemake)
-    3. Workflow mode is detected correctly (local)
+    2. Snakefile contains required rules and flags
+    3. Snakefile is non-empty
     """
     analysis = norfolk_multi_sim_analysis
 
@@ -70,20 +34,19 @@ def test_snakemake_local_workflow_submission_dry_run(norfolk_multi_sim_analysis)
     tst_ut.assert_snakefile_has_rules(
         content, ["all", "setup", "simulation", "consolidate"]
     )
-
-
-def test_submit_workflow_detects_local_mode(norfolk_multi_sim_analysis):
-    """
-    Test that submit_workflow() correctly detects local mode.
-
-    Note: This test does NOT actually run snakemake, only verifies detection logic.
-    """
-    analysis = norfolk_multi_sim_analysis
-
-    assert not analysis.in_slurm, "Test must run on local machine, not in SLURM"
-
-    detected_mode = "slurm" if analysis.in_slurm else "local"
-    assert detected_mode == "local"
+    tst_ut.assert_snakefile_has_flags(
+        content,
+        [
+            "/workflow/envs/triton_swmm.yaml",
+            "_status/sims/sim_{event_iloc}_complete.flag",
+            "setup_workflow",
+            "--process-system-inputs",
+            "--compile-triton-swmm",
+            "run_single_simulation",
+            "--prepare-scenario",
+            "consolidate_workflow",
+        ],
+    )
 
 
 def test_snakemake_workflow_config_generation(norfolk_multi_sim_analysis):
