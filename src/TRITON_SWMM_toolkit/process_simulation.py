@@ -75,6 +75,12 @@ class TRITONSWMM_sim_post_processing:
             )
         print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
 
+        self._export_TRITONSWMM_performance_tseries(
+            comp_level=compression_level,
+            verbose=verbose,
+            overwrite_if_exist=overwrite_if_exist,
+        )
+
         if (which == "both") or (which == "TRITON"):
             self._export_TRITON_outputs(
                 overwrite_if_exist,
