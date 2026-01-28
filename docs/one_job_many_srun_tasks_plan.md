@@ -1,24 +1,29 @@
-# Next Actions: 1-Job Many `srun` Tasks
+# 1-Job Many `srun` Tasks: Goal, Findings, and Implementation Plan
 
-## Context
+## Goal
 
-We need to support HPC environments (e.g., Frontier) where **a single SLURM
-allocation** is used to run all simulations. The workflow should still use
-Snakemake, but **each simulation must be launched via `srun`** inside the
-allocation. The execution mode is controlled by
-`multi_sim_run_method = "1_job_many_srun_tasks"`.
+Enable Snakemake-based orchestration for HPC systems that require a single big
+SLURM allocation, so that **`submit_workflow()` can be invoked from a shell and
+submits one batch job** in which **each simulation is launched via `srun`**.
+This corresponds to `multi_sim_run_method="1_job_many_srun_tasks"`.
 
-**Reference Plan:** `docs/one_job_many_srun_tasks_plan.md`
+## Findings
 
----
+- `multi_sim_run_method` currently controls the execution strategy in
+  `analysis._select_execution_strategy()`. The `SlurmExecutor` already enforces
+  concurrency constraints using SLURM environment variables.
+- `run_simulation.prepare_simulation_command()` already builds `srun` launch
+  commands when running inside a SLURM job (`analysis.in_slurm`). Per direction,
+  this behavior should **remain unchanged** and `srun` should be used for each
+  simulation in big-job environments.
+- `workflow.py` currently generates Snakemake profiles that submit **many**
+  SLURM jobs (executor/cluster mode). This does **not** fit one-big-job systems
+  where every rule must run inside a single allocation.
+- `submit_workflow()` currently runs Snakemake directly (local or SLURM), but
+  does not always submit a batch job. For big-job systems, it should **submit**
+  a single job, and Snakemake should run *inside* that allocation.
 
-## Objective
-
-Implement Snakemake orchestration for one-big-job systems such that
-`submit_workflow()` submits a single SLURM batch job, and all simulations run
-via `srun` within that allocation.
-
----
+## Proposed Implementation Plan
 
 ## Comprehensive Implementation Plan: 1-Job Many `srun` Tasks
 
@@ -206,53 +211,51 @@ def test_submit_workflow_uses_sbatch_for_1job_mode():
 
 ---
 
-## Next Actions
-
 ### 1) Add a single-job Snakemake profile
 
-- Extend `workflow.py` to generate a `single_job` profile that behaves like
-  local execution (no `executor: slurm`), but **caps `cores`/`jobs` based on
-  SLURM allocation limits**.
+- Add a new Snakemake profile mode (e.g., `single_job`) that does **not** use
+  `executor: slurm` or `cluster` submission. It should behave like local
+  execution but cap `cores`/`jobs` based on SLURM allocation variables.
 - Compute `max_concurrent` as the **minimum** of:
   - `hpc_max_simultaneous_sims`
   - `total_sims` constrained by per-simulation resource requirements
     (based on the **most intensive** configuration when sensitivity analyses
     vary per-simulation settings).
-- Use `ResourceManager._get_slurm_resource_constraints()` to compute resource
-  limits used in the per-simulation calculation.
+- Use `ResourceManager._get_slurm_resource_constraints()` to compute
+  resource limits used in the per-simulation calculation, then set:
+  - `cores: max_concurrent`
+  - `jobs: max_concurrent`
 
-### 2) Add batch submission for 1-job mode
+### 2) Ensure `submit_workflow()` *always* submits a batch job for
+`1_job_many_srun_tasks`
 
-- In `SnakemakeWorkflowBuilder.submit_workflow()` and
-  `SensitivityAnalysisWorkflowBuilder.submit_workflow()`, detect
-  `multi_sim_run_method == "1_job_many_srun_tasks"` and:
-  - generate a SLURM submission script (e.g., `run_workflow_1job.sh`),
-  - submit it with `sbatch`,
-  - run Snakemake with the `single_job` profile inside the allocation.
+- Add a `submit_workflow` pathway that writes a **single SLURM submission
+  script** to the analysis directory (e.g., `run_workflow_1job.sh`) and submits
+  it with `sbatch`.
+- The script should invoke Snakemake with the new `single_job` profile.
 - Add a new optional config parameter (required when
   `multi_sim_run_method == "1_job_many_srun_tasks"`) to specify the maximum
   SLURM job time for the one-job run.
-- If batch submission fails, **raise an error** (no fallback).
+- Keep `submit_workflow()` callable from a shell in all modes, but when
+  `multi_sim_run_method == "1_job_many_srun_tasks"`, it should always submit a
+  batch job (even if the caller is not in a SLURM allocation).
+  If batch submission fails, **raise an error** (no fallback).
 
-### 3) Preserve `using_srun` logic
+### 3) Keep `using_srun` logic unchanged
 
-- Keep `using_srun = self._analysis.in_slurm` in
-  `run_simulation.prepare_simulation_command()`.
-- Ensure one-job workflows run inside a SLURM allocation so srun is always used.
+- Maintain `using_srun = self._analysis.in_slurm` in
+  `run_simulation.prepare_simulation_command()` as requested.
+- Ensure the one-job batch script runs Snakemake inside a SLURM allocation so
+  all simulations launch via `srun`.
 
-### 4) Add minimal validation tests
+### 4) Sensitivity analysis parity
 
-- Validate that the `single_job` profile is created with expected
-  `cores`/`jobs` values.
-- Validate that `submit_workflow()` writes a batch script and uses `sbatch` when
-  `multi_sim_run_method == "1_job_many_srun_tasks"`.
+- Apply the same `single_job` Snakemake profile and batch submission logic to
+  `SensitivityAnalysisWorkflowBuilder.submit_workflow()`.
 
----
+### 5) Testing/Validation
 
-## Success Criteria
-
-- [ ] One-job Snakemake profile exists and respects SLURM allocation
-- [ ] `submit_workflow()` always submits a single batch job for
-      `1_job_many_srun_tasks`
-- [ ] Each simulation runs via `srun` inside the allocation
-- [ ] Sensitivity workflows follow the same behavior
+- Add/update unit tests to validate:
+  - the new Snakemake profile is created with the expected `cores/jobs`
+  - the batch script is generated for `1_job_many_srun_tasks`
+  - `submit_workflow()` uses `sbatch` for single-job mode
