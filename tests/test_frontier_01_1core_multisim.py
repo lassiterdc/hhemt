@@ -1,9 +1,11 @@
 import os
 import pytest
 from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
-from tests.utils_for_testing import on_frontier
+import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(not on_frontier(), reason="Only runs on Frontier HPC")
+pytestmark = pytest.mark.skipif(
+    not tst_ut.on_frontier(), reason="Only runs on Frontier HPC"
+)
 
 # cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
 # salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
@@ -37,7 +39,7 @@ def test_create_mannings_file_for_TRITON():
         start_from_scratch=False
     )
     nrflk_multisim_ensemble.system.create_mannings_file_for_TRITON()
-    rds = nrflk_multisim_ensemble.system.open_processed_mannings_as_rds()
+    rds = nrflk_multisim_ensemble.system.mannings_rds
     assert rds.shape == (1, 537, 551)  # type: ignore
 
 
