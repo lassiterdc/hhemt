@@ -150,17 +150,20 @@ def return_swmm_outputs(
     df_link_flow_summary = df_link_flow_summary.drop(
         columns=["time_of_max_flow_d_hr_mn"]
     )
-    for idx, row in df_link_flow_summary.iterrows():
-        link_id = row.link_id
+
+    def _clean_link_id(link_id):
+        """Clean a single link_id value."""
         try:
-            link_id = str(int(link_id))
-        except Exception:
-            lst_val_substrings = link_id.split(" ")
-            for substring in lst_val_substrings:
-                if len(substring) > 0:
-                    link_id = substring
-                    break
-        df_link_flow_summary.loc[idx, "link_id"] = link_id  # type: ignore
+            return str(int(float(link_id)))
+        except (ValueError, TypeError):
+            if isinstance(link_id, str):
+                parts = link_id.split()
+                return parts[0] if parts else link_id
+            return str(link_id)
+
+    df_link_flow_summary["link_id"] = df_link_flow_summary["link_id"].apply(
+        _clean_link_id
+    )
     df_link_flow_summary.set_index("link_id", inplace=True)
     #
     with warnings.catch_warnings():
@@ -584,28 +587,37 @@ def convert_pyswmm_output_to_df(
 
 
 def convert_swmm_tdeltas_to_minutes(s_tdelta):
-    lst_tdeltas_min = []
-    for val in s_tdelta:
-        if pd.isna(val):
-            lst_tdeltas_min.append(np.nan)
-            continue
-        lst_val_substrings_all = str(val).split(" ")
-        lst_val_substring_data = []
-        for substring in lst_val_substrings_all:
-            if len(substring) > 0:
-                lst_val_substring_data.append(substring)
+    """
+    Convert SWMM time delta strings (e.g., "0  05:30") to minutes.
 
-        days = int(lst_val_substring_data[0])
-        hh_mm = lst_val_substring_data[-1]
-        hr = int(hh_mm.split(":")[0])
-        min = int(hh_mm.split(":")[1])
-        tdelta = (
-            pd.Timedelta(days, unit="D")
-            + pd.Timedelta(hr, unit="hr")
-            + pd.Timedelta(min, unit="min")
-        )
-        lst_tdeltas_min.append(tdelta.total_seconds() / 60)
-    return lst_tdeltas_min
+    Vectorized implementation using pandas string methods for improved performance.
+
+    Parameters
+    ----------
+    s_tdelta : pd.Series or list-like
+        Series of time delta strings in format "D  HH:MM" where D is days
+
+    Returns
+    -------
+    list
+        List of time deltas in minutes (float), with NaN for invalid entries
+    """
+    if not isinstance(s_tdelta, pd.Series):
+        s_tdelta = pd.Series(s_tdelta)
+
+    if len(s_tdelta) == 0:
+        return []
+
+    pattern = r"^\s*(\d+)\s+(\d+):(\d+)"
+    extracted = s_tdelta.astype(str).str.extract(pattern)
+
+    days = pd.to_numeric(extracted[0], errors="coerce")
+    hours = pd.to_numeric(extracted[1], errors="coerce")
+    minutes = pd.to_numeric(extracted[2], errors="coerce")
+
+    total_minutes = days * 1440 + hours * 60 + minutes
+
+    return total_minutes.tolist()
 
 
 def return_data_from_rpt(lst_section_lines):
@@ -617,14 +629,11 @@ def return_data_from_rpt(lst_section_lines):
     line_idx = 0
     # extract and parse data in each line using spaces
     for i, line in enumerate(lst_section_lines):
-        lst_substrings_with_content = []
-        # lst_values = []
-        # isolate strings with relevant values
-        for substring in line.split(" "):
-            if (len(substring) > 0) and (
-                substring not in lst_substrings_to_ignore
-            ):  # the latter part is to deal with issues
-                lst_substrings_with_content.append(substring)
+        lst_substrings_with_content = [
+            substring
+            for substring in line.split(" ")
+            if substring and substring not in lst_substrings_to_ignore
+        ]
         if len(lst_substrings_with_content) > 0:
             dict_line_contents_aslist[line_idx] = lst_substrings_with_content
             dict_line_contents_asline[line_idx] = line

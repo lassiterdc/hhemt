@@ -14,6 +14,7 @@ This document outlines a comprehensive plan to optimize `src/TRITON_SWMM_toolkit
 **Performance Tracking:** Baseline timing for `retrieve_SWMM_outputs_as_datasets()` is now recorded in the refactoring test suite. The benchmark prints elapsed time and savings relative to the baseline on each run to quantify time savings per phase.
 
 - **Baseline (Phase 0):** 20.295690 seconds (captured 2026-01-27)
+- **Phase 1 (passing run):** 19.89 seconds (savings: 0.41s, 2.0%)
 - **Phase 1+:** Use the benchmark output to update savings after each optimization step
 
 ---
@@ -323,3 +324,41 @@ The SWMM `.rpt` file contains multiple sections that are parsed:
 8. **Link Time Series Results** - Time series data per link (implied)
 
 Each section has a header line with dashes (`------------`) marking the start and end of the data table.
+
+# Prompts
+1. **Code Quality Review:**
+   - Read the modified files and confirm the implementation matches the phase goals in docs/swmm_output_parser_optimization_plan.md
+   - Check for any code smells, unnecessary complexity, or missed opportunities for simplification
+   - Verify no duplicate code was introduced
+   - Confirm no functionality was accidentally removed or altered
+
+2. **Completeness Check:**
+   - Compare what was done against the phase checklist - were all items truly completed?
+   - Were there any edge cases or aspects mentioned in the plan that weren't addressed?
+
+3. **Consistency Verification:**
+   - Does the new code follow the same patterns/conventions as existing code?
+   - Are naming conventions consistent?
+   - Do new helper functions/classes have appropriate docstrings?
+
+4. **Potential Issues:**
+   - Are there any potential regression risks not covered by the smoke tests?
+   - Any tight coupling introduced that could cause issues in future phases?
+   - Any technical debt created that should be noted for Final phase (Polish)?
+
+5. **Summary Report:**
+   - Rate the phase completion: Excellent / Good / Needs Improvement
+   - List any concerns or recommendations for follow-up
+   - How much time was saved in this round of refactoring?
+
+6. **Plan immediate action based on review:**
+   - If there are any changes that should be completed as part of this phase based on your review, create an action plan now.
+
+7. **Plan next phase**
+   - Create a plan for updating refactoring_plan.md and next_action_prompt.md before moving onto the next phase. Be sure to note the time savings achieved with this round of work.
+
+## final prompt
+Please review and validate the latest changes that that were just completed and confirm that we are ready to proceed with the next phase as a new task. If substantive code changes were made, ensure that smoke testing was re-done successfully.
+
+## next action prompt
+Please proceed with Phase [N] of the refactoring defined in @/docs/next_action_prompt.md . Please double check that all items have been addressed before smoke testing. Ask me for verification before smoke testing.
