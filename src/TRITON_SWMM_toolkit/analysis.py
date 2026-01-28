@@ -990,6 +990,7 @@ class TRITONSWMM_analysis:
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
+        dry_run: bool = False,
         verbose: bool = True,
     ) -> dict:
         """
@@ -1031,6 +1032,8 @@ class TRITONSWMM_analysis:
             If True, resume simulations from last checkpoint
         wait_for_completion : bool
             If True, wait for workflow completion (relevant for slurm jobs only)
+        dry_run : bool
+            If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
 
@@ -1061,6 +1064,7 @@ class TRITONSWMM_analysis:
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
+                dry_run=dry_run,
                 verbose=verbose,
             )
 
@@ -1080,6 +1084,7 @@ class TRITONSWMM_analysis:
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             wait_for_completion=wait_for_completion,
+            dry_run=dry_run,
             verbose=verbose,
         )
 
