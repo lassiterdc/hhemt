@@ -51,7 +51,11 @@ The current `tests/test_PC_*` suite contains repeated setup logic (retrieving an
    - `test_PC_04_multisim_with_snakemake.py`
    - `test_PC_05_sensitivity_analysis_with_snakemake.py`
 
-### Success Criteria
+### Status
+**Complete.** PC tests were refactored with shared fixtures/helpers, parametrized
+Snakefile checks, and reduced duplication. PC test suite passes.
+
+### Success Criteria (met)
 - All `test_PC_*` tests pass unchanged
 - No loss of assertion strength (ideally stronger via shared checks)
 - Boilerplate reduced substantially and new tests are shorter to write
@@ -78,6 +82,7 @@ pytest -k "test_PC" -v
 ### Success Criteria
 - Non-PC tests still pass in their respective environments
 - 50%+ reduction in repeated setup/assert blocks
+- Reuse Phase 1 helpers consistently
 
 ---
 
@@ -104,3 +109,59 @@ pytest -k "test_PC" -v
 |------------|-----------------|
 | `tests/test_frontier_*` | Reuse fixtures + helpers |
 | `tests/test_UVA_*` | Reuse fixtures + helpers |
+
+---
+
+## Phase 2 Checklist (Draft)
+- [ ] Audit Frontier/UVA tests for duplicated setup/assertions
+- [ ] Replace duplicated logic with Phase 1 fixtures/helpers
+- [ ] Add parametrized Snakefile checks where applicable
+- [ ] Run environment-appropriate test subset(s)
+
+---
+
+## Post-Phase Review + Next Action Prompt (Template)
+
+Use the following prompts after completing each phase. These are intended for a **final review** of the phase work and to define the **next action prompt**.
+
+### Final Review Prompt (Phase [N])
+
+Please review and validate the Phase **[N]** changes that were just completed:
+
+1. **Code Quality Review**
+   - Read the modified files and confirm the implementation matches the phase goals in `docs/test_refactor_plan.md`
+   - Check for any code smells, unnecessary complexity, or missed opportunities for simplification
+   - Verify no duplicate code was introduced
+   - Confirm no functionality was accidentally removed or altered
+
+2. **Completeness Check**
+   - Compare what was done against the phase checklist — were all items truly completed?
+   - Were there any edge cases or aspects mentioned in the plan that weren't addressed?
+   - Is any line-reduction claim accurate? (count lines before/after if needed)
+
+3. **Consistency Verification**
+   - Does the new code follow the same patterns/conventions as existing code?
+   - Are naming conventions consistent?
+   - Do new helper functions/classes have appropriate docstrings?
+
+4. **Potential Issues**
+   - Are there any potential regression risks not covered by the smoke tests?
+   - Any tight coupling introduced that could cause issues in future phases?
+   - Any technical debt created that should be noted for later polish?
+
+5. **Summary Report**
+   - Rate the phase completion: **Excellent / Good / Needs Improvement**
+   - List any concerns or recommendations for follow-up
+
+6. **Plan immediate action based on review**
+   - If there are any changes that should be completed as part of this phase based on your review, create an action plan now.
+
+7. **Plan next phase**
+   - Create a plan for updating `docs/test_refactor_plan.md` and `docs/next_action_prompt.md` before moving onto the next phase.
+
+**Final prompt:**
+Please review and validate the latest changes that were just completed and confirm that we are ready to proceed with the next phase as a new task. If substantive code changes were made, ensure that smoke testing was re-done successfully.
+
+### Next Action Prompt (Phase [N])
+
+Please proceed with **Phase [N]** of the refactoring defined in `docs/next_action_prompt.md`. Please double check that all items have been addressed before smoke testing. Ask me for verification before smoke testing.

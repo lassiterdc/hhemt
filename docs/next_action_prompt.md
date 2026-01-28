@@ -1,8 +1,8 @@
-# Phase 1 Implementation Prompt for AI Agent
+# Phase 2 Implementation Prompt for AI Agent
 
 ## Context
 
-You are starting Phase 1 of the test refactor plan focused on PC-prefixed tests. The goal is to reduce duplication while preserving or strengthening test coverage.
+You are starting Phase 2 of the test refactor plan focused on non-PC test suites (Frontier/UVA). The goal is to reuse Phase 1 fixtures/helpers and reduce duplication while preserving or strengthening test coverage.
 
 **Reference Document:** `docs/test_refactor_plan.md`
 
@@ -10,50 +10,50 @@ You are starting Phase 1 of the test refactor plan focused on PC-prefixed tests.
 
 ## Objective
 
-Refactor `test_PC_*` tests by introducing shared fixtures, helper assertions, and parametrized Snakefile checks.
+Refactor non-PC tests (Frontier/UVA) by introducing shared fixtures/helpers and parametrized Snakefile checks.
 
-## Phase 1 Tasks: PC Tests Refactor
+## Phase 2 Tasks: Non-PC Tests Refactor
 
-### Task 1: Add Shared Fixtures
-
-**Goals:**
-- Add reusable analysis fixtures in `tests/conftest.py`
-- Ensure fixtures preserve `start_from_scratch` semantics
-
-### Task 2: Add Helper Assertions
+### Task 1: Reuse Shared Fixtures
 
 **Goals:**
-- Add shared assertion helpers in `tests/utils_for_testing.py`
+- Reuse analysis fixtures in `tests/conftest.py`
+- Ensure fixtures preserve `start_from_scratch` semantics for new suites
+
+### Task 2: Reuse Helper Assertions
+
+**Goals:**
+- Apply shared assertion helpers in `tests/utils_for_testing.py`
 - Consolidate repeated log checks and Snakefile validation logic
 
-### Task 3: Refactor PC Test Modules
+### Task 3: Refactor Non-PC Test Modules
 
-**Goals (optional):**
-- Update `test_PC_01_singlesim.py`
-- Update `test_PC_02_multisim.py`
-- Update `test_PC_04_multisim_with_snakemake.py`
-- Update `test_PC_05_sensitivity_analysis_with_snakemake.py`
+**Targets:**
+- Update `tests/test_frontier_01_1core_multisim.py`
+- Update `tests/test_frontier_02_all_compute_configs.py`
+- Update `tests/test_UVA_01_1core_multisim.py`
+- Update `tests/test_UVA_02_multisim_with_snakemake.py`
+- Update `tests/test_UVA_03_sensitivity_analysis_with_snakemake.py`
+- Update `tests/test_UVA_04_multiCPU_sensitivity_analysis_minirun.py`
 
 ### Task 4: Parametrize Snakefile Variants
 
 **Goals:**
 - Replace repeated Snakefile config tests with `pytest.mark.parametrize`
 - Ensure inclusion/exclusion of flags is still validated
-
 ---
 
 ## Testing Requirements
 
-After Phase 6 changes:
-
-### 1. PC Test Suite
+### 1. Frontier Tests (if available)
 ```bash
-pytest -k "test_PC" -v
+pytest -k "test_frontier" -v
 ```
 
-### 2. PC Tests With Warnings as Errors
+### 2. UVA Tests (if available)
 ```bash
-pytest -k "test_PC" -v -W error::UserWarning
+pytest -k "test_UVA" -v
+```
 ```
 
 ---
@@ -62,19 +62,19 @@ pytest -k "test_PC" -v -W error::UserWarning
 
 Make separate commits for each task (or grouped by function):
 
-1. `tests(pc): add shared fixtures + helpers`
-2. `tests(pc): refactor PC test modules`
-3. `tests(pc): parametrize Snakefile checks`
+1. `tests(non-pc): refactor Frontier tests`
+2. `tests(non-pc): refactor UVA tests`
+3. `tests(non-pc): parametrize Snakefile checks`
 
 ---
 
 ## Success Criteria
 
-- [ ] Shared fixtures + helpers added
-- [ ] PC tests refactored + parametrized
-- [ ] PC test suite passes
+- [ ] Frontier/UVA tests refactored to use shared fixtures/helpers
+- [ ] Snakefile checks parametrized where applicable
+- [ ] Relevant non-PC test suites pass in their environments
 
-**Note:** Phase 1 is complete once PC tests are refactored and all `test_PC_*` cases pass.
+**Note:** Phase 2 is complete once non-PC tests are refactored and the relevant test suites pass.
 
 ---
 
@@ -82,10 +82,10 @@ Make separate commits for each task (or grouped by function):
 
 | File | Action |
 |------|--------|
-| `tests/conftest.py` | Add shared fixtures |
-| `tests/utils_for_testing.py` | Add helper assertions |
-| `tests/test_PC_01_singlesim.py` | Refactor |
-| `tests/test_PC_02_multisim.py` | Refactor |
-| `tests/test_PC_04_multisim_with_snakemake.py` | Refactor + parametrize |
-| `tests/test_PC_05_sensitivity_analysis_with_snakemake.py` | Refactor + parametrize |
+| `tests/test_frontier_01_1core_multisim.py` | Refactor |
+| `tests/test_frontier_02_all_compute_configs.py` | Refactor |
+| `tests/test_UVA_01_1core_multisim.py` | Refactor |
+| `tests/test_UVA_02_multisim_with_snakemake.py` | Refactor + parametrize |
+| `tests/test_UVA_03_sensitivity_analysis_with_snakemake.py` | Refactor + parametrize |
+| `tests/test_UVA_04_multiCPU_sensitivity_analysis_minirun.py` | Refactor |
 | `docs/next_action_prompt.md` | This prompt |
