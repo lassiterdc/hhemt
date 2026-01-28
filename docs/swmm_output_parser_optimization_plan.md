@@ -4,6 +4,18 @@
 
 This document outlines a comprehensive plan to optimize `src/TRITON_SWMM_toolkit/swmm_output_parser.py` for improved performance and to address Zarr V3 warnings that appear during test execution. The current implementation takes approximately 92 seconds to process SWMM outputs in `tests/test_PC_02_multisim.py`, and generates multiple `UnstableSpecificationWarning` messages related to fixed-length UTF-32 string types.
 
+**Status Update (2026-01-27):** Phase 1 warning suppression is partially complete. The test suite now passes with strict warning checks for `tests/test_swmm_output_parser_refactoring.py` after:
+- Suppressing Zarr V3 string warnings in `write_zarr()`.
+- Cleaning Windows `Zone.Identifier` files from reference `.zarr` test data.
+- Explicitly setting `join="outer"` in `xr.merge()` to remove xarray FutureWarnings.
+- Fixing NaN handling in `convert_swmm_tdeltas_to_minutes()` (still iterative, not yet vectorized).
+- Closing subprocess stdout in `run_subprocess_with_tee()` to avoid unclosed-file warnings.
+
+**Performance Tracking:** Baseline timing for `retrieve_SWMM_outputs_as_datasets()` is now recorded in the refactoring test suite. The benchmark prints elapsed time and savings relative to the baseline on each run to quantify time savings per phase.
+
+- **Baseline (Phase 0):** 20.295690 seconds (captured 2026-01-27)
+- **Phase 1+:** Use the benchmark output to update savings after each optimization step
+
 ---
 
 ## 1. Problem Analysis
@@ -56,20 +68,23 @@ The following inefficiencies were identified in `swmm_output_parser.py`:
 
 **Tasks:**
 
-1. **Suppress Zarr V3 string warnings in `utils.py`**
-   - Add `warnings.filterwarnings` context manager around Zarr write operations
-   - Document the reason for suppression with a comment
+1. **Suppress Zarr V3 string warnings in `utils.py`** ✅
+   - Implemented `warnings.filterwarnings` context manager around Zarr write operations
+   - Documented the reason for suppression with a comment
 
 2. **Vectorize `convert_swmm_tdeltas_to_minutes()`**
-   - Replace loop with pandas `str.extract()` and vectorized arithmetic
+   - Pending: current implementation only fixes NaN handling (still iterative)
+   - Planned: replace loop with pandas `str.extract()` and vectorized arithmetic
    - Expected speedup: 10-50x for large datasets
 
 3. **Replace `iterrows()` in `return_swmm_outputs()`**
-   - Use vectorized pandas operations for link_id processing
+   - Pending: still using `iterrows()` for link_id cleanup
+   - Planned: use vectorized pandas operations for link_id processing
    - Expected speedup: 5-20x for this section
 
 4. **Simplify string parsing in `format_rpt_section_into_dataframe()`**
-   - Use `filter(bool, line.split())` pattern
+   - Pending: still using explicit substring filtering loops
+   - Planned: use `filter(bool, line.split())` pattern
    - Reduce intermediate object creation
 
 **Estimated Effort:** 2-4 hours
@@ -168,6 +183,7 @@ Create a new test file: `tests/test_swmm_output_parser_refactoring.py`
    - Measure execution time before and after changes
    - Ensure no significant performance degradation
    - Optional: Assert minimum speedup threshold
+   - Capture benchmark output from `test_retrieve_swmm_outputs_baseline` for time savings
 
 4. **Edge Case Tests**
    - Empty sections in RPT file
@@ -228,8 +244,8 @@ def compare_zarr_datasets(ds_new: xr.Dataset, ds_ref: xr.Dataset, rtol=1e-5, ato
 ## 4. Success Criteria
 
 ### Phase 1 Completion Criteria
-- [ ] No `UnstableSpecificationWarning` warnings during test execution
-- [ ] All reference output comparisons pass
+- [x] No `UnstableSpecificationWarning` warnings during test execution (suppressed in `write_zarr()`)
+- [x] All reference output comparisons pass (`pytest tests/test_swmm_output_parser_refactoring.py`)
 - [ ] `tests/test_PC_02_multisim.py` passes without warnings
 - [ ] Execution time ≤ original (no regression)
 

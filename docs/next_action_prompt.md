@@ -10,11 +10,11 @@ You are implementing Phase 1 of the SWMM Output Parser Optimization Plan. This p
 
 ## Objective
 
-Implement the following changes to eliminate Zarr V3 `UnstableSpecificationWarning` messages and improve performance of basic operations in the SWMM output parser.
+Complete remaining Phase 1 quick wins and confirm the broader pipeline runs warning-free. Recent fixes already removed strict-warning failures in `tests/test_swmm_output_parser_refactoring.py`, but several optimization items remain.
 
 ---
 
-## Task 1: Suppress Zarr V3 String Warnings
+## ✅ Completed: Suppress Zarr V3 String Warnings
 
 ### File to Modify
 `src/TRITON_SWMM_toolkit/utils.py`
@@ -49,16 +49,16 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
 ```
 
 ### Verification
-After this change, running `pytest tests/test_PC_02_multisim.py` should produce no `UnstableSpecificationWarning` messages.
+`pytest tests/test_swmm_output_parser_refactoring.py` passes without warnings after this change (strict warning checks enabled).
 
 ---
 
-## Task 2: Vectorize `convert_swmm_tdeltas_to_minutes()`
+## Task 1: Vectorize `convert_swmm_tdeltas_to_minutes()`
 
 ### File to Modify
 `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
 
-### Current Implementation (Inefficient)
+### Current Implementation (Iterative, NaN handling fixed)
 ```python
 def convert_swmm_tdeltas_to_minutes(s_tdelta):
     lst_tdeltas_min = []
@@ -85,7 +85,7 @@ def convert_swmm_tdeltas_to_minutes(s_tdelta):
     return lst_tdeltas_min
 ```
 
-### New Implementation (Vectorized)
+### Target Implementation (Vectorized)
 ```python
 def convert_swmm_tdeltas_to_minutes(s_tdelta):
     """
@@ -137,7 +137,7 @@ test_input = ["0  05:30", "1  12:00", "0  00:15", None]
 
 ---
 
-## Task 3: Replace `iterrows()` in `return_swmm_outputs()`
+## Task 2: Replace `iterrows()` in `return_swmm_outputs()`
 
 ### File to Modify
 `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
@@ -193,7 +193,7 @@ df_link_flow_summary["link_id"] = (
 
 ---
 
-## Task 4: Simplify String Parsing in `format_rpt_section_into_dataframe()`
+## Task 3: Simplify String Parsing in `format_rpt_section_into_dataframe()`
 
 ### File to Modify
 `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
@@ -227,6 +227,15 @@ The `line.split()` without arguments automatically splits on whitespace and remo
 
 ---
 
+## Additional Maintenance (Warning Hygiene)
+
+To keep strict warning checks green, ensure Windows `Zone.Identifier` files do not exist inside `test_data/swmm_refactoring_reference/*.zarr` directories. They trigger `ZarrUserWarning` during `xr.open_dataset()`.
+
+- If present, remove them:
+  ```bash
+  find test_data -name '*Zone.Identifier*' -print -delete
+  ```
+
 ## Testing Requirements
 
 After implementing all changes, run the following tests:
@@ -236,12 +245,21 @@ After implementing all changes, run the following tests:
 pytest tests/test_swmm_output_parser_refactoring.py -v
 ```
 
-### 2. Run the Original Multi-sim Test
+### 1a. Print Baseline Timing and Savings
+```bash
+pytest tests/test_swmm_output_parser_refactoring.py -k retrieve_swmm_outputs_baseline -s
+```
+This prints:
+- Elapsed time for `retrieve_SWMM_outputs_as_datasets`
+- Baseline time (20.295690s)
+- Savings in seconds and percent
+
+### 2. Run the Original Multi-sim Test (still pending)
 ```bash
 pytest tests/test_PC_02_multisim.py -v
 ```
 
-### 3. Verify No Warnings
+### 3. Verify No Warnings (still pending)
 ```bash
 pytest tests/test_PC_02_multisim.py -v -W error::UserWarning
 ```
@@ -262,7 +280,7 @@ Make separate commits for each task:
 
 ## Success Criteria
 
-- [ ] `pytest tests/test_swmm_output_parser_refactoring.py` passes (all reference comparisons)
+- [x] `pytest tests/test_swmm_output_parser_refactoring.py` passes (all reference comparisons)
 - [ ] `pytest tests/test_PC_02_multisim.py` passes with 0 warnings
 - [ ] No functional changes to output data (verified by reference comparison)
 - [ ] Code is cleaner and more readable
@@ -275,6 +293,6 @@ Make separate commits for each task:
 
 | File | Action |
 |------|--------|
-| `src/TRITON_SWMM_toolkit/utils.py` | Modify `write_zarr()` |
-| `src/TRITON_SWMM_toolkit/swmm_output_parser.py` | Modify multiple functions |
-| `tests/test_swmm_output_parser_refactoring.py` | Create (see separate test file) |
+| `src/TRITON_SWMM_toolkit/utils.py` | Warning suppression already applied |
+| `src/TRITON_SWMM_toolkit/swmm_output_parser.py` | Pending performance refactors |
+| `tests/test_swmm_output_parser_refactoring.py` | Tests already passing |

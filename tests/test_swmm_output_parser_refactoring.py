@@ -59,6 +59,11 @@ REF_NODE_TSERIES_ZARR = REFERENCE_DATA_DIR / "SWMM_node_tseries.zarr"
 RTOL = 1e-5  # Relative tolerance
 ATOL = 1e-8  # Absolute tolerance
 
+# Baseline performance (seconds) for retrieve_SWMM_outputs_as_datasets
+# Captured on 2026-01-27 using:
+#   ds_nodes, ds_links = retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
+BASELINE_RETRIEVE_SECONDS = 20.295690
+
 
 # =============================================================================
 # Fixtures
@@ -477,6 +482,26 @@ class TestPerformance:
         # This is informational - we don't fail on performance
         # but we record it for tracking
         assert elapsed < 300, f"Parsing took too long: {elapsed:.2f}s (limit: 300s)"
+
+    @pytest.mark.slow
+    def test_retrieve_swmm_outputs_baseline(self):
+        """Track retrieve_SWMM_outputs_as_datasets baseline timing across phases."""
+        start_time = time.time()
+        retrieve_SWMM_outputs_as_datasets(REF_INP, REF_HYDRAULICS_RPT)
+        elapsed = time.time() - start_time
+
+        savings = BASELINE_RETRIEVE_SECONDS - elapsed
+        savings_pct = (savings / BASELINE_RETRIEVE_SECONDS) * 100
+        print(
+            "\nBaseline timing (retrieve_SWMM_outputs_as_datasets): "
+            f"{elapsed:.2f}s | Baseline: {BASELINE_RETRIEVE_SECONDS:.2f}s | "
+            f"Savings: {savings:.2f}s ({savings_pct:.1f}%)"
+        )
+
+        assert elapsed <= BASELINE_RETRIEVE_SECONDS, (
+            "retrieve_SWMM_outputs_as_datasets exceeded baseline time: "
+            f"{elapsed:.2f}s > {BASELINE_RETRIEVE_SECONDS:.2f}s"
+        )
 
     def test_tdelta_conversion_performance(self):
         """Test that vectorized tdelta conversion is fast."""
