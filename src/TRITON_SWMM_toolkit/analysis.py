@@ -793,6 +793,12 @@ class TRITONSWMM_analysis:
             verbose=verbose,
             compression_level=compression_level,
         )
+        proc.write_summary_outputs(
+            which=which,
+            overwrite_if_exist=overwrite_if_exist,
+            verbose=verbose,
+            compression_level=compression_level,
+        )
 
     def process_all_sim_timeseries_serially(
         self,
