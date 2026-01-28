@@ -1,8 +1,8 @@
-. # Phase 2 Implementation Prompt for AI Agent
+. # Phase 3 Implementation Prompt for AI Agent
 
 ## Context
 
-You are implementing Phase 2 of the SWMM Output Parser Optimization Plan. This phase focuses on core parser optimizations for larger performance gains while keeping output parity.
+You are implementing Phase 3 of the SWMM Output Parser Optimization Plan. This phase focuses on advanced parser optimizations for further performance gains while keeping output parity.
 
 **Reference Document:** `docs/swmm_output_parser_optimization_plan.md`
 
@@ -10,7 +10,7 @@ You are implementing Phase 2 of the SWMM Output Parser Optimization Plan. This p
 
 ## Objective
 
-Implement Phase 2 optimizations in `src/TRITON_SWMM_toolkit/swmm_output_parser.py` while preserving output equivalence and warning hygiene established in Phase 1.
+Implement Phase 3 optimizations in `src/TRITON_SWMM_toolkit/swmm_output_parser.py` while preserving output equivalence and warning hygiene established in Phases 1-2.
 
 ---
 
@@ -23,42 +23,36 @@ Implement Phase 2 optimizations in `src/TRITON_SWMM_toolkit/swmm_output_parser.p
 - Removed `Zone.Identifier` artifacts from test data.
 - Refactoring and multisim tests pass (including warnings-as-errors).
 
+## ✅ Completed in Phase 2
+
+- Optimized `return_data_from_rpt()` with precompiled regex and cached substring lookups.
+- Streamlined `return_node_time_series_results_from_rpt()`.
+- Consolidated DataFrame/xarray ops in `return_swmm_outputs()`.
+- Reduced exception-driven dtype conversions with numeric prechecks + safe fallbacks.
+- Added helper for normal-row selection in RPT parsing.
+- Baseline timing: 19.14s vs 20.30s (5.7% savings).
+
 ---
 
-## Phase 2 Tasks: Core Parser Optimization
+## Phase 3 Tasks: Advanced Parser Optimization
 
-### Task 1: Optimize `return_data_from_rpt()`
-
-**File:** `src/TRITON_SWMM_toolkit/swmm_output_parser.py`
+### Task 1: Single-pass RPT parser prototype
 
 **Goals:**
-- Pre-compile any regex patterns used repeatedly.
-- Reduce nested loops where possible.
-- Minimize repeated string scanning while keeping error-handling behavior identical.
+- Investigate a state-machine parser that extracts sections in one pass.
+- Preserve existing error-handling behavior and newline-token semantics.
 
-**Notes:**
-- Preserve the newline-token behavior that tests rely on.
-- Maintain all existing issue-handling paths (e.g., “two values right next to each other”, orifice conduit handling).
-
-### Task 2: Streamline `return_node_time_series_results_from_rpt()`
+### Task 2: Memory usage improvements
 
 **Goals:**
-- Reduce redundant passes through `lines`.
-- Avoid repeated dictionary lookups when possible.
-- Consider using `io.StringIO` or intermediate buffers if it reduces overhead.
+- Explore chunked or memory-mapped reading for large RPT files.
+- Ensure behavior matches current parsing logic.
 
-### Task 3: Consolidate DataFrame / xarray operations in `return_swmm_outputs()`
-
-**Goals:**
-- Reduce number of `to_xarray()` calls where feasible.
-- Batch dtype conversions to reduce repeated type coercion overhead.
-- Keep join semantics identical (`join="outer"`).
-
-### Task 4: Optimize type conversion helpers
+### Task 3: Optional parallelization experiments
 
 **Goals:**
-- Reduce exception-driven loops in `convert_coords_to_dtype()` and `convert_datavars_to_dtype()`.
-- Consider pre-determining dtypes for known coordinate/value fields.
+- Evaluate whether node/link time series parsing can be parallelized safely.
+- Maintain deterministic outputs and warning hygiene.
 
 ---
 
@@ -74,7 +68,7 @@ find test_data -name '*Zone.Identifier*' -print -delete
 
 ## Testing Requirements
 
-After implementing Phase 2 changes:
+After implementing Phase 3 changes:
 
 ### 1. Refactoring Suite
 ```bash
@@ -114,9 +108,9 @@ Make separate commits for each task (or grouped by function):
 - [ ] `pytest tests/test_swmm_output_parser_refactoring.py` passes (all reference comparisons)
 - [ ] `pytest tests/test_PC_02_multisim.py` passes with 0 warnings
 - [ ] No functional changes to output data
-- [ ] Measurable performance improvements vs Phase 1 baseline
+- [ ] Measurable performance improvements vs Phase 2 baseline
 
-**Note:** Phase 2 is complete only when all tests pass and performance improves without altering outputs.
+**Note:** Phase 3 is complete only when all tests pass and performance improves without altering outputs.
 
 ---
 

@@ -10,6 +10,15 @@
 - Warning hygiene cleanup (removed Zone.Identifier artifacts).
 - Refactoring, baseline timing, and multisim tests pass (including warnings-as-errors).
 
+**SWMM Output Parser Optimization (Phase 2):** ✅ Complete
+- Optimized `return_data_from_rpt()` with precompiled regex, cached substring lookups, and a helper for normal-row selection.
+- Streamlined `return_node_time_series_results_from_rpt()` to reduce redundant passes.
+- Consolidated DataFrame/xarray operations in `return_swmm_outputs()` with batched dtype conversions.
+- Reduced exception-driven dtype conversion loops with numeric prechecks and safe fallbacks.
+- Type-checking cleanup for pandas index handling in parser diagnostics.
+- Tests run: refactoring suite, baseline timing, multisim, warnings-as-errors.
+- Baseline timing: 19.14s vs 20.30s (5.7% savings).
+
 ---
 
 ## Executive Summary
