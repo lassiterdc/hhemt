@@ -27,6 +27,7 @@ from TRITON_SWMM_toolkit.constants import (
 
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
+RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
 
 
 def retrieve_SWMM_outputs_as_datasets(
@@ -274,6 +275,8 @@ def parse_rpt_single_pass(f_rpt: Path):
     tseries_vals = []
 
     for line_num, line in enumerate(_iter_rpt_lines(f_rpt)):
+        line_split = line.split(" ")
+        line_split_len = len(line_split)
         if "Element Count" in line:
             valid = True
         if "Flow Units" in line:
@@ -313,7 +316,7 @@ def parse_rpt_single_pass(f_rpt: Path):
                         continue
                 if not (tseries_begin_header and tseries_end_header):
                     continue
-                if len(line.split(" ")) <= 3:
+                if line_split_len <= 3:
                     if tseries_is_link:
                         dict_lst_link_time_series[tseries_key] = tseries_vals
                     if tseries_is_node:
@@ -345,7 +348,7 @@ def parse_rpt_single_pass(f_rpt: Path):
             continue
         if line_num == 0:
             continue
-        if len(line.split(" ")) <= 3:
+        if line_split_len <= 3:
             current_summary_section = None
             continue
         dict_section_lines[current_summary_section].append(line)
@@ -510,9 +513,9 @@ def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers):
         return pd.DataFrame(columns=lst_col_headers)
     dict_line_contents_aslist = return_data_from_rpt(lst_section_lines)
     records = []
-    for line_idx_with_vals in sorted(dict_line_contents_aslist):
-        lst_substrings_with_content = dict_line_contents_aslist[line_idx_with_vals]
-        row = ["" for _ in lst_col_headers]
+    col_count = len(lst_col_headers)
+    for _, lst_substrings_with_content in dict_line_contents_aslist.items():
+        row = [""] * col_count
         idx_val = 0
         for substring in lst_substrings_with_content:
             if "\n" in substring:
@@ -523,7 +526,7 @@ def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers):
                 if idx_val > 0:
                     row[idx_val - 1] = f"{row[idx_val - 1]} {substring}".strip()
                 continue
-            if idx_val < len(row):
+            if idx_val < col_count:
                 row[idx_val] = substring
             idx_val += 1
         records.append(row)
@@ -738,11 +741,19 @@ def create_tseries_ds(dict_lst_time_series, lst_col_headers, idx_colname):
     if not lst_dfs:
         empty_df = pd.DataFrame(columns=[idx_colname, *lst_col_headers])
         if "date_time" not in empty_df.columns:
-            empty_df["date_time"] = pd.to_datetime([])
+            empty_df["date_time"] = pd.to_datetime([], format=RPT_DATETIME_FORMAT)
         empty_df = empty_df.set_index([idx_colname, "date_time"])
         return empty_df.to_xarray()
     df_tseries = pd.concat(lst_dfs, ignore_index=True)
-    df_tseries["date_time"] = pd.to_datetime(df_tseries["date_time"])
+    df_tseries["date_time"] = pd.to_datetime(
+        df_tseries["date_time"], format=RPT_DATETIME_FORMAT, errors="coerce"
+    )
+    if df_tseries["date_time"].isna().any():
+        raise ValueError(
+            "Parsed RPT date_time values contained NaT. "
+            "Verify the RPT datetime format matches "
+            f"{RPT_DATETIME_FORMAT}."
+        )
     df_tseries = df_tseries.set_index([idx_colname, "date_time"])
     return df_tseries.to_xarray()
 
