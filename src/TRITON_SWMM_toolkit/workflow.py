@@ -450,16 +450,25 @@ fi
 
 conda activate triton_swmm_toolkit
 
+# Fix for Frontier: conda activate in SLURM batch scripts doesn't add lib to LD_LIBRARY_PATH
+# Explicitly add conda lib directory to ensure shared libraries (like libproj.so.25) are found
+if [ -n "${CONDA_PREFIX}" ]; then
+    export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
+    echo "Added ${CONDA_PREFIX}/lib to LD_LIBRARY_PATH"
+else
+    echo "WARNING: CONDA_PREFIX not set after conda activate"
+fi
+
 # ===================================================================
-# DIAGNOSTIC OUTPUT - Environment state after module load + conda activate
+# DIAGNOSTIC OUTPUT - Environment state after LD_LIBRARY_PATH fix
 # ===================================================================
 echo "=========================================="
-echo "DIAGNOSTICS: Environment after conda activate"
+echo "DIAGNOSTICS: Environment after LD_LIBRARY_PATH fix"
 echo "=========================================="
 echo "CONDA_PREFIX: ${CONDA_PREFIX:-<not set>}"
 echo "CONDA_DEFAULT_ENV: ${CONDA_DEFAULT_ENV:-<not set>}"
 echo ""
-echo "LD_LIBRARY_PATH:"
+echo "LD_LIBRARY_PATH (line-by-line):"
 echo "${LD_LIBRARY_PATH:-<not set>}" | tr ':' '\n' | sed 's/^/  /'
 echo ""
 echo "Python executable:"
@@ -472,9 +481,12 @@ else
     echo "  CONDA_PREFIX not set, cannot check"
 fi
 echo ""
-echo "Python sys.prefix check:"
-python -c "import sys; print(f'  sys.prefix: {sys.prefix}')"
-python -c "import sys; import os; lib_path = os.path.join(sys.prefix, 'lib'); print(f'  Expected lib path: {lib_path}'); print(f'  In LD_LIBRARY_PATH: {lib_path in os.environ.get(\"LD_LIBRARY_PATH\", \"\")}')"
+echo "Verification: Is conda lib in LD_LIBRARY_PATH?"
+if [[ "${LD_LIBRARY_PATH}" == *"${CONDA_PREFIX}/lib"* ]]; then
+    echo "  ✓ YES - ${CONDA_PREFIX}/lib is in LD_LIBRARY_PATH"
+else
+    echo "  ✗ NO - ${CONDA_PREFIX}/lib is NOT in LD_LIBRARY_PATH"
+fi
 echo "=========================================="
 echo ""
 """
