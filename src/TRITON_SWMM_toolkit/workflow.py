@@ -438,10 +438,8 @@ rule consolidate:
 # After 'module load miniforge3', CONDA_EXE is set by the module system
 # Use conda's shell hook for robust initialization
 if [ -n "${CONDA_EXE}" ]; then
-    echo "INFO: Initializing conda from CONDA_EXE: ${CONDA_EXE}"
     eval "$(${CONDA_EXE} shell.bash hook)"
 elif [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]; then
-    echo "INFO: Initializing conda from CONDA_PREFIX: ${CONDA_PREFIX}"
     source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"
 else
     echo "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset."
@@ -449,7 +447,8 @@ else
     echo "  CONDA_PREFIX=${CONDA_PREFIX:-<not set>}"
     exit 1
 fi
-"""
+
+conda activate triton_swmm_toolkit"""
 
         # Build GPU directive if needed (use --gres for per-node specification)
         # Check if any simulation uses GPUs (handles sensitivity analysis)
@@ -486,9 +485,6 @@ module purge
 {module_load_cmd}
 
 {conda_init_cmd}
-
-# Activate conda environment
-conda activate triton_swmm_toolkit
 
 # Calculate total CPUs dynamically from SLURM allocation
 if [ -z "$SLURM_CPUS_ON_NODE" ]; then
