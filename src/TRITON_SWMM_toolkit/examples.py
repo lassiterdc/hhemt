@@ -464,7 +464,7 @@ class GetTS_TestCases:
     def retrieve_norfolk_frontier_multisim_gpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        analysis_name = "frontier_multisim_serial"
+        analysis_name = "frontier_multisim_GPU"
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
@@ -477,7 +477,7 @@ class GetTS_TestCases:
                 hpc_ensemble_partition="batch",
                 hpc_setup_and_analysis_processing_partition="batch",
                 hpc_account="***REMOVED***",
-                run_mode="serial",
+                run_mode="gpu",
                 n_mpi_procs=1,
                 n_omp_threads=1,
                 n_gpus=1,
@@ -497,7 +497,7 @@ class GetTS_TestCases:
     def retrieve_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        analysis_name = "frontier_multisim_serial"
+        analysis_name = "frontier_multisim_CPU"
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
