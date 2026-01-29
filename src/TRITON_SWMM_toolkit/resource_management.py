@@ -315,7 +315,7 @@ class ResourceManager:
         # GPU constraints (if GPU mode)
         # ----------------------------
         total_gpus = 0
-        gpus_per_task = sim_reqs["max_gpus"]
+        gpus_per_task = sim_reqs["n_gpus"]
 
         if gpus_per_task > 0:
             # Try SLURM_GPUS first (total GPUs)
