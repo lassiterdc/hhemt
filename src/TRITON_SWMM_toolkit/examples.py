@@ -479,6 +479,40 @@ class GetTS_TestCases:
         )
 
     @classmethod
+    def retrieve_norfolk_frontier_multisim_gpu_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        analysis_name = "frontier_multisim_serial"
+        return cls._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=20,
+            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
+            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
+            additional_analysis_configs=dict(
+                hpc_time_min_per_sim=2,
+                hpc_ensemble_partition="batch",
+                hpc_setup_and_analysis_processing_partition="batch",
+                hpc_account="***REMOVED***",
+                run_mode="serial",
+                n_mpi_procs=1,
+                n_omp_threads=1,
+                n_gpus=1,
+                n_nodes=1,
+                multi_sim_run_method="1_job_many_srun_tasks",
+                hpc_total_nodes=1,
+                hpc_total_job_duration_min=30,
+                hpc_gpus_per_node=8,
+                additional_SBATCH_params=["-q debug"],
+                additional_bash_lines=["conda activate triton_swmm_toolkit"],
+            ),
+            additional_system_configs=dict(
+                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
+            ),
+        )
+
+    @classmethod
     def retrieve_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
@@ -494,7 +528,6 @@ class GetTS_TestCases:
                 hpc_time_min_per_sim=2,
                 hpc_ensemble_partition="batch",
                 hpc_setup_and_analysis_processing_partition="batch",
-                hpc_max_simultaneous_sims=10,
                 hpc_account="***REMOVED***",
                 run_mode="serial",
                 n_mpi_procs=1,

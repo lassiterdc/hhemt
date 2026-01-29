@@ -56,15 +56,21 @@ def norfolk_frontier_multisim_analysis_cached():
 
 
 @pytest.fixture
-def norfolk_frontier_all_configs_analysis():
-    case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=True)
+def norfolk_frontier_multisim_gpu_analysis():
+    case = tst.retrieve_norfolk_frontier_multisim_gpu_case(start_from_scratch=True)
     return case.system.analysis
 
 
-@pytest.fixture
-def norfolk_frontier_all_configs_analysis_cached():
-    case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=False)
-    return case.system.analysis
+# @pytest.fixture
+# def norfolk_frontier_all_configs_analysis():
+#     case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=True)
+#     return case.system.analysis
+
+
+# @pytest.fixture
+# def norfolk_frontier_all_configs_analysis_cached():
+#     case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=False)
+#     return case.system.analysis
 
 
 @pytest.fixture
