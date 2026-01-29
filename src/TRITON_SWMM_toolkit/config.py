@@ -398,6 +398,20 @@ class analysis_config(cfgBaseModel):
             description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
         )
     )
+    hpc_total_nodes: Optional[int] = Field(
+        None,
+        description="This is the total number of nodes that will be requested when multi_sim_run_method = 1_job_many_srun_tasks",
+    )
+    hpc_total_job_duration_min: Optional[int] = Field(
+        None,
+        description="This is the job duration when multi_sim_run_method = 1_job_many_srun_tasks",
+    )
+    hpc_gpus_per_node: Optional[int] = Field(
+        None,
+        description="GPUs per node on the HPC cluster. Required when using GPUs with "
+        "multi_sim_run_method = 1_job_many_srun_tasks. "
+        "Used with --gres=gpu:{hpc_gpus_per_node} directive. ",
+    )
     # HPC JOB ARRAY PARAMETERS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: Optional[int] = Field(
@@ -406,11 +420,10 @@ class analysis_config(cfgBaseModel):
     )
     hpc_max_simultaneous_sims: Optional[int] = Field(
         None,
-        description="Maximum number of concurrent simulations. NOTE if this is a sensitivity analysis with multi_sim_run_method = 1_job_many_srun_tasks, the main SBATCH script will multiply this number by the MAXIMUM compute requiremens across all sims - so if the upper limit of compute intensity is high, it is recommended to make this a small number, e.g., 1 or 2.",
-    )
-    hpc_sbatch_time_upper_limit_min: Optional[int] = Field(
-        None,
-        description="Maximum SLURM job walltime in minutes. If specified, the sbatch script will use min(estimated_time, this_value). Useful for HPC systems with strict walltime limits.",
+        description="Maximum number of concurrent simulations. "
+        "NOTE: Not required for multi_sim_run_method=1_job_many_srun_tasks "
+        "(concurrency determined dynamically from SLURM allocation). "
+        "Required for setting an upper limit on the number of concurrent jobs submitted using sbatch for multi_sim_run_method=batch_job",
     )
     hpc_ensemble_partition: Optional[str] = Field(
         None,
