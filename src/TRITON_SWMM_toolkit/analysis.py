@@ -86,7 +86,9 @@ class TRITONSWMM_analysis:
         self._simulation_run_statuses: dict = {}
         # self.run_modes = Mode
         # self._system.compilation_successful = False
-        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy()
+        self.in_slurm = "SLURM_JOB_ID" in os.environ.copy() or (
+            cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
+        )
         self._execution_strategy = self._select_execution_strategy()
         if self.cfg_analysis.python_path is not None:
             python_executable = str(self.cfg_analysis.python_path)
