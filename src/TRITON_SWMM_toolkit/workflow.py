@@ -389,10 +389,7 @@ rule consolidate:
         import TRITON_SWMM_toolkit.utils as ut
 
         batch_log_path = (
-            self.analysis.analysis_paths.analysis_dir
-            / "logs"
-            / "_slurm_logs"
-            / ut.current_datetime_string(filepath_friendly=True)
+            self.analysis.analysis_paths.analysis_dir / "logs" / "_slurm_logs"
         )
         batch_log_path.mkdir(exist_ok=True, parents=True)
         # Get per-simulation resource requirements (without requiring totals)
@@ -426,18 +423,26 @@ rule consolidate:
                 self.cfg_analysis.additional_SBATCH_params
             )
 
-        # Build additional bash lines if specified
-        additional_lines = ""
-        if self.cfg_analysis.additional_bash_lines:
-            additional_lines = "\n".join(self.cfg_analysis.additional_bash_lines)
-            additional_lines = f"\n# Additional configuration\n{additional_lines}\n"
-
         modules = (
             self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         )
         module_load_cmd = ""
         if modules:
             module_load_cmd = f"module load {modules}"
+
+        # Conda initialization for non-interactive shells
+        # In SLURM batch scripts, conda's shell integration is not automatically available
+        # We need to source conda.sh before conda activate will work
+        conda_init_cmd = """
+# Initialize conda for non-interactive shell (required in SLURM batch scripts)
+if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]; then
+    source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"
+elif [ -f "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh" ]; then
+    source "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh"
+else
+    echo "WARNING: Could not find conda.sh for initialization"
+fi
+"""
 
         # Build GPU directive if needed (use --gres for per-node specification)
         # Check if any simulation uses GPUs (handles sensitivity analysis)
@@ -464,12 +469,18 @@ rule consolidate:
 #SBATCH --nodes={total_nodes}
 #SBATCH --exclusive
 {gpu_directive}#SBATCH --time={estimated_time}
-#SBATCH --output={str(batch_log_path)}/workflow_%j.out
-#SBATCH --error={str(batch_log_path)}/workflow_%j.err
+#SBATCH --output={str(batch_log_path)}/workflow_{ut.current_datetime_string(filepath_friendly=True)}_%j.out
+#SBATCH --error={str(batch_log_path)}/workflow_{ut.current_datetime_string(filepath_friendly=True)}_%j.out
 {additional_sbatch_args}
-{additional_lines}
 
+module purge
+
+# Load required modules
 {module_load_cmd}
+
+{conda_init_cmd}
+
+# Activate conda environment
 conda activate triton_swmm_toolkit
 
 # Calculate total CPUs dynamically from SLURM allocation
