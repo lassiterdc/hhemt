@@ -56,7 +56,7 @@ class ResourceManager:
         max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
         assert isinstance(
             max_concurrent, int
-        ), "max_concurrent is required for _get_simulation_resource_requirements"
+        ), "hpc_max_simultaneous_sims is required for _get_simulation_resource_requirements"
 
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
         omp_threads = self.cfg_analysis.n_omp_threads or 1

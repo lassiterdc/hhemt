@@ -304,11 +304,15 @@ rule consolidate:
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
+            max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
                     "executor": "slurm",
-                    "jobs": self.cfg_analysis.hpc_max_simultaneous_sims or 100,
+                    "jobs": max_concurrent,
                     "latency-wait": 60,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
@@ -403,7 +407,9 @@ rule consolidate:
         time_per_sim_min = self.cfg_analysis.hpc_time_min_per_sim
         assert isinstance(time_per_sim_min, int), "time_per_sim_min is required"
         max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-        assert isinstance(max_concurrent, int), "max_concurrent is required"
+        assert isinstance(
+            max_concurrent, int
+        ), "hpc_max_simultaneous_sims is required for _generate_single_job_submission_script"
         assert (
             self.analysis.in_slurm
         ), "_generate_submission_script only makes sense to run in a SLURM environment."

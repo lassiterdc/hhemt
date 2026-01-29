@@ -405,7 +405,7 @@ class analysis_config(cfgBaseModel):
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
     hpc_max_simultaneous_sims: Optional[int] = Field(
-        100,
+        None,
         description="Maximum number of concurrent simulations. NOTE if this is a sensitivity analysis with multi_sim_run_method = 1_job_many_srun_tasks, the main SBATCH script will multiply this number by the MAXIMUM compute requiremens across all sims - so if the upper limit of compute intensity is high, it is recommended to make this a small number, e.g., 1 or 2.",
     )
     hpc_sbatch_time_upper_limit_min: Optional[int] = Field(
