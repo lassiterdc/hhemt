@@ -436,6 +436,12 @@ rule consolidate:
         total_nodes = sim_resources["total_nodes"]
         total_mem_mb = sim_resources["total_mem_mb"]
 
+        additional_sbatch_args = ""
+        if self.cfg_analysis.additional_SBATCH_params:
+            additional_sbatch_args = "\n#SBATCH ".join(
+                self.cfg_analysis.additional_SBATCH_params
+            )
+
         # Build additional bash lines if specified
         additional_lines = ""
         if self.cfg_analysis.additional_bash_lines:
@@ -454,10 +460,10 @@ rule consolidate:
 #SBATCH --nodes={total_nodes}
 #SBATCH --ntasks={max_concurrent}
 #SBATCH --cpus-per-task={sim_resources["n_cpus_per_sim"]}
-{gpu_directive}#SBATCH --mem={total_mem_mb}
+{gpu_directive}#SBATCH --mem=0
 #SBATCH --time={estimated_time}
 #SBATCH --output=logs/workflow_%j.out
-#SBATCH --error=logs/workflow_%j.err
+#SBATCH --error=logs/workflow_%j.err{additional_sbatch_args}
 {additional_lines}
 # Snakemake with single_job profile (runs inside this allocation)
 snakemake --profile {config_dir} --snakefile {snakefile_path}
