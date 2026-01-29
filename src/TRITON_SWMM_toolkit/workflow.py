@@ -438,7 +438,7 @@ rule consolidate:
 
         additional_sbatch_args = ""
         if self.cfg_analysis.additional_SBATCH_params:
-            additional_sbatch_args = "\n#SBATCH "
+            additional_sbatch_args = "#SBATCH "
             additional_sbatch_args += "\n#SBATCH ".join(
                 self.cfg_analysis.additional_SBATCH_params
             )
