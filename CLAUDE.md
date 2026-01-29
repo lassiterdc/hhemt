@@ -198,5 +198,36 @@ The `.claude/agents/` directory contains detailed guidance for specific subsyste
 - `hpc-slurm-integration.md` - SLURM execution modes and cluster configs
 - `output-processing.md` - SWMM/TRITON output parsing
 - `sensitivity-analysis.md` - Parameter sweep orchestration
+- `swmm-model-generation.md` - SWMM .inp generation and hydrology/hydraulics split
 - `triton-test-suite.md` - Testing patterns and fixtures
 - `triton-debugger.md` - Debugging workflow failures
+
+## Maintaining This Documentation
+
+### When to Update CLAUDE.md
+
+Update this file when:
+- Adding new modules or major refactoring existing ones
+- Changing build/test/lint commands or tooling
+- Modifying the three-layer architecture (System/Analysis/Scenario)
+- Adding new execution modes or HPC integration patterns
+- Changing critical configuration fields or validation patterns
+- Discovering new "gotchas" that developers should know upfront
+
+### When to Update Agent Documentation
+
+Update `.claude/agents/*.md` when:
+- Modifying core patterns in agent's domain (e.g., changing toggle validation logic → update `pydantic-config-specialist.md`)
+- Adding new runner scripts or changing subprocess invocation patterns → update `snakemake-workflow.md`
+- Changing SLURM execution modes or resource management → update `hpc-slurm-integration.md`
+- Modifying SWMM model generation patterns → update `swmm-model-generation.md`
+- Adding new test utilities or platform detection helpers → update `triton-test-suite.md`
+
+### Documentation Update Checklist
+
+When making significant code changes:
+- [ ] Does this change affect architecture described in CLAUDE.md?
+- [ ] Does this change affect patterns documented in any agent file?
+- [ ] Are there new "gotchas" or non-obvious behaviors to document?
+- [ ] Do build/test commands still work as documented?
+- [ ] Are there new critical configuration fields to highlight?

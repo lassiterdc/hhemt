@@ -1,0 +1,23 @@
+# Pre-commit hooks for TRITON-SWMM toolkit
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Ruff linting and formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # Documentation freshness check
+  - repo: local
+    hooks:
+      - id: check-claude-docs
+        name: Check if CLAUDE.md or agent docs need updating
+        entry: scripts/check_doc_freshness.py
+        language: python
+        pass_filenames: false
+        always_run: false
+        files: ^(src/TRITON_SWMM_toolkit/(config|workflow|execution|resource_management|sensitivity_analysis|swmm_.*|log|system|analysis|scenario)\.py|tests/conftest\.py|tests/utils_for_testing\.py)$

@@ -1,0 +1,59 @@
+# Documentation freshness check
+# Reminds developers when CLAUDE.md or agent docs might need updating
+
+name: Documentation Check
+
+on:
+  pull_request:
+    branches: [ "main", "master", "implement_snakemake" ]
+    paths:
+      - 'src/TRITON_SWMM_toolkit/config.py'
+      - 'src/TRITON_SWMM_toolkit/workflow.py'
+      - 'src/TRITON_SWMM_toolkit/execution.py'
+      - 'src/TRITON_SWMM_toolkit/resource_management.py'
+      - 'src/TRITON_SWMM_toolkit/sensitivity_analysis.py'
+      - 'src/TRITON_SWMM_toolkit/swmm_*.py'
+      - 'src/TRITON_SWMM_toolkit/log.py'
+      - 'src/TRITON_SWMM_toolkit/system.py'
+      - 'src/TRITON_SWMM_toolkit/analysis.py'
+      - 'src/TRITON_SWMM_toolkit/scenario.py'
+      - 'tests/conftest.py'
+      - 'tests/utils_for_testing.py'
+      - 'pyproject.toml'
+      - 'setup.py'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  check-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Need full history to compare
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+
+    - name: Check documentation freshness
+      id: doc-check
+      run: |
+        python scripts/check_doc_freshness.py || true
+        echo "check_complete=true" >> $GITHUB_OUTPUT
+
+    - name: Comment on PR
+      if: steps.doc-check.outputs.check_complete == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '📝 **Documentation Reminder**\n\nYou\'ve modified core files that may require documentation updates. Please review:\n\n- [ ] `CLAUDE.md` - If architecture, commands, or critical patterns changed\n- [ ] `.claude/agents/*.md` - If domain-specific patterns changed\n\nSee [CLAUDE.md "Maintaining This Documentation"](https://github.com/' + context.repo.owner + '/' + context.repo.repo + '/blob/' + context.ref + '/CLAUDE.md#maintaining-this-documentation) for guidance.'
+          })

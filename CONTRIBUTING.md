@@ -28,6 +28,35 @@ Look through the GitHub issues for features. Anything tagged with "enhancement" 
 
 TRITON-SWMM Toolkit could always use more documentation, whether as part of the official docs, in docstrings, or even on the web in blog posts, articles, and such.
 
+#### Maintaining CLAUDE.md and Agent Documentation
+
+The project uses CLAUDE.md and specialized agent documentation (`.claude/agents/*.md`) to help Claude Code work effectively in this codebase. When contributing:
+
+**Update CLAUDE.md when:**
+- Adding new modules or refactoring architecture
+- Changing build/test/lint commands
+- Modifying critical configuration fields
+- Adding new execution modes or HPC patterns
+- Discovering new "gotchas"
+
+**Update agent docs when:**
+- Changing core patterns in an agent's domain (e.g., toggle validation → update `pydantic-config-specialist.md`)
+- Adding runner scripts → update `snakemake-workflow.md`
+- Modifying SLURM execution → update `hpc-slurm-integration.md`
+- Changing SWMM model generation → update `swmm-model-generation.md`
+
+**Automated checks:**
+```sh
+# Install pre-commit hooks (recommended)
+pip install pre-commit
+pre-commit install
+
+# Manual check before committing
+./scripts/update_docs_check.sh
+```
+
+See [CLAUDE.md "Maintaining This Documentation"](CLAUDE.md#maintaining-this-documentation) and [scripts/README.md](scripts/README.md) for details.
+
 ### Submit Feedback
 
 The best way to send feedback is to file an issue at https://github.com/lassiterdc/TRITON_SWMM_toolkit/issues.
