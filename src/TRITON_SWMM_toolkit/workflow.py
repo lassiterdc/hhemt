@@ -448,7 +448,36 @@ else
     exit 1
 fi
 
-conda activate triton_swmm_toolkit"""
+conda activate triton_swmm_toolkit
+
+# ===================================================================
+# DIAGNOSTIC OUTPUT - Environment state after module load + conda activate
+# ===================================================================
+echo "=========================================="
+echo "DIAGNOSTICS: Environment after conda activate"
+echo "=========================================="
+echo "CONDA_PREFIX: ${CONDA_PREFIX:-<not set>}"
+echo "CONDA_DEFAULT_ENV: ${CONDA_DEFAULT_ENV:-<not set>}"
+echo ""
+echo "LD_LIBRARY_PATH:"
+echo "${LD_LIBRARY_PATH:-<not set>}" | tr ':' '\n' | sed 's/^/  /'
+echo ""
+echo "Python executable:"
+which python
+echo ""
+echo "Checking for libproj.so.25 in conda env:"
+if [ -n "${CONDA_PREFIX}" ]; then
+    ls -la ${CONDA_PREFIX}/lib/libproj.so* 2>&1 || echo "  libproj.so* not found"
+else
+    echo "  CONDA_PREFIX not set, cannot check"
+fi
+echo ""
+echo "Python sys.prefix check:"
+python -c "import sys; print(f'  sys.prefix: {sys.prefix}')"
+python -c "import sys; import os; lib_path = os.path.join(sys.prefix, 'lib'); print(f'  Expected lib path: {lib_path}'); print(f'  In LD_LIBRARY_PATH: {lib_path in os.environ.get(\"LD_LIBRARY_PATH\", \"\")}')"
+echo "=========================================="
+echo ""
+"""
 
         # Build GPU directive if needed (use --gres for per-node specification)
         # Check if any simulation uses GPUs (handles sensitivity analysis)
