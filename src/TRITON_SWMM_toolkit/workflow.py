@@ -823,7 +823,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         ----------
         job_id : str
             SLURM job ID to monitor
-        poll_interval : int, default=30
+        poll_interval : int, default=2
             Seconds between status checks
         timeout : int | None, default=None
             Maximum seconds to wait (None = indefinite)
@@ -1026,7 +1026,6 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 if job_id:
                     completion_info = self._wait_for_slurm_job_completion(
                         job_id=job_id,
-                        poll_interval=30,
                         timeout=None,
                         verbose=verbose,
                     )
