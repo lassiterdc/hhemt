@@ -810,7 +810,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
     def _wait_for_slurm_job_completion(
         self,
         job_id: str,
-        poll_interval: int = 30,
+        poll_interval: int = 2,
         timeout: int | None = None,
         verbose: bool = True,
     ) -> dict:
