@@ -506,6 +506,7 @@ class GetTS_TestCases:
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug", "--exclusive"],
+                additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
@@ -563,6 +564,7 @@ class GetTS_TestCases:
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug", "--exclusive"],
+                additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,

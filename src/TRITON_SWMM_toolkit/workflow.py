@@ -390,9 +390,11 @@ rule consolidate:
 
         batch_log_path = (
             self.analysis.analysis_paths.analysis_dir
+            / "logs"
             / "_slurm_logs"
             / ut.current_datetime_string(filepath_friendly=True)
         )
+        batch_log_path.mkdir(exist_ok=True, parents=True)
         # Get per-simulation resource requirements (without requiring totals)
         sim_resources = (
             self.analysis._resource_manager._get_simulation_resource_requirements()
