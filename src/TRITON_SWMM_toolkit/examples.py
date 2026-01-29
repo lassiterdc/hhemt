@@ -505,7 +505,7 @@ class GetTS_TestCases:
                 hpc_total_nodes=1,
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
-                additional_SBATCH_params=["-q debug", "--exclusive"],
+                additional_SBATCH_params=["-q debug"],
                 additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
@@ -563,7 +563,7 @@ class GetTS_TestCases:
                 hpc_total_nodes=1,
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
-                additional_SBATCH_params=["-q debug", "--exclusive"],
+                additional_SBATCH_params=["-q debug"],
                 additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
