@@ -432,15 +432,22 @@ rule consolidate:
 
         # Conda initialization for non-interactive shells
         # In SLURM batch scripts, conda's shell integration is not automatically available
-        # We need to source conda.sh before conda activate will work
+        # Strategy: After module load sets CONDA_EXE, use conda's shell hook to initialize
         conda_init_cmd = """
 # Initialize conda for non-interactive shell (required in SLURM batch scripts)
-if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]; then
+# After 'module load miniforge3', CONDA_EXE is set by the module system
+# Use conda's shell hook for robust initialization
+if [ -n "${CONDA_EXE}" ]; then
+    echo "INFO: Initializing conda from CONDA_EXE: ${CONDA_EXE}"
+    eval "$(${CONDA_EXE} shell.bash hook)"
+elif [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]; then
+    echo "INFO: Initializing conda from CONDA_PREFIX: ${CONDA_PREFIX}"
     source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"
-elif [ -f "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh" ]; then
-    source "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh"
 else
-    echo "WARNING: Could not find conda.sh for initialization"
+    echo "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset."
+    echo "  CONDA_EXE=${CONDA_EXE:-<not set>}"
+    echo "  CONDA_PREFIX=${CONDA_PREFIX:-<not set>}"
+    exit 1
 fi
 """
 

@@ -226,3 +226,50 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_wit
         workflow_builder._generate_single_job_submission_script(
             snakefile_path, config_dir
         )
+
+
+def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
+    """Verify that SBATCH script includes conda initialization for non-interactive shells."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir
+    )
+
+    script_content = script_path.read_text()
+
+    # Verify conda initialization logic is present
+    assert (
+        "Initialize conda for non-interactive shell" in script_content
+    ), "Should include conda initialization comment"
+    assert (
+        'if [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]' in script_content
+    ), "Should check for conda.sh using CONDA_PREFIX"
+    assert (
+        'source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"' in script_content
+    ), "Should source conda.sh from CONDA_PREFIX path"
+    assert (
+        'elif [ -f "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh" ]' in script_content
+    ), "Should have fallback check using CONDA_EXE"
+    assert (
+        'source "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh"' in script_content
+    ), "Should source conda.sh from CONDA_EXE path"
+    assert (
+        "WARNING: Could not find conda.sh" in script_content
+    ), "Should warn if conda.sh not found"
+
+    # Verify conda initialization happens BEFORE conda activate
+    init_pos = script_content.find("Initialize conda for non-interactive shell")
+    activate_pos = script_content.find("conda activate triton_swmm_toolkit")
+    assert init_pos > 0, "Conda initialization should be present"
+    assert activate_pos > 0, "Conda activation should be present"
+    assert (
+        init_pos < activate_pos
+    ), "Conda initialization must come before conda activate"
