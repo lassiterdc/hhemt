@@ -482,18 +482,19 @@ class GetTS_TestCases:
     def retrieve_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
-        analysis_name = "frontier_multisim"
+        analysis_name = "frontier_multisim_serial"
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            n_events=128,
+            n_events=20,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
             additional_analysis_configs=dict(
                 hpc_time_min_per_sim=2,
                 hpc_ensemble_partition="batch",
                 hpc_setup_and_analysis_processing_partition="batch",
+                hpc_max_simultaneous_sims=10,
                 hpc_sbatch_time_upper_limit_min=120,
                 hpc_account="***REMOVED***",
                 run_mode="serial",
