@@ -386,12 +386,6 @@ class GetTS_TestCases:
                 n_nodes=1,
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-                additional_bash_lines=[
-                    'eval "$(conda shell.bash hook)"',
-                    "conda activate triton_swmm_toolkit",
-                    "export PYTHONNOUSERSITE=1",
-                    # "pip install -e .",
-                ],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
@@ -425,12 +419,6 @@ class GetTS_TestCases:
                 n_nodes=1,
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-                additional_bash_lines=[
-                    'eval "$(conda shell.bash hook)"',
-                    "conda activate triton_swmm_toolkit",
-                    "export PYTHONNOUSERSITE=1",
-                    # "pip install -e .",
-                ],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
@@ -464,12 +452,6 @@ class GetTS_TestCases:
                 n_nodes=1,
                 multi_sim_run_method="batch_job",
                 python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-                additional_bash_lines=[
-                    'eval "$(conda shell.bash hook)"',
-                    "conda activate triton_swmm_toolkit",
-                    "export PYTHONNOUSERSITE=1",
-                    # "pip install -e .",
-                ],
                 # use_legacy_cluster_mode=True,
             ),
             additional_system_configs=dict(
