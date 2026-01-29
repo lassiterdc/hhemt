@@ -99,8 +99,12 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     ), "Should pass dynamic cores to Snakemake"
 
     # Verify GPU directive NOT present for CPU-only
-    assert "--gres=gpu:" not in script_content, "Should not have GPU directive for CPU-only"
-    assert "TOTAL_GPUS" not in script_content, "Should not calculate TOTAL_GPUS for CPU-only"
+    assert (
+        "--gres=gpu:" not in script_content
+    ), "Should not have GPU directive for CPU-only"
+    assert (
+        "TOTAL_GPUS" not in script_content
+    ), "Should not calculate TOTAL_GPUS for CPU-only"
     assert (
         "--resources gpu=" not in script_content
     ), "Should not pass GPU resources for CPU-only"
@@ -256,13 +260,11 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
         'source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"' in script_content
     ), "Should source conda.sh from CONDA_PREFIX path"
     assert (
-        'elif [ -f "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh" ]' in script_content
-    ), "Should have fallback check using CONDA_EXE"
+        'eval "$(${CONDA_EXE} shell.bash hook)' in script_content
+    ), "Should use using CONDA_EXE"
     assert (
-        'source "${CONDA_EXE%/bin/conda}/etc/profile.d/conda.sh"' in script_content
-    ), "Should source conda.sh from CONDA_EXE path"
-    assert (
-        "WARNING: Could not find conda.sh" in script_content
+        "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset"
+        in script_content
     ), "Should warn if conda.sh not found"
 
     # Verify conda initialization happens BEFORE conda activate
