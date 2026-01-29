@@ -352,7 +352,7 @@ class TRITONSWMM_system:
                 "rm -rf build",
                 "mkdir -p build",
                 "cd build",
-                "cmake -DTRITON_ENABLE_SWMM=ON ..",
+                "cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON ..",
                 "make -j4",
                 "",
                 "echo 'script finished'",
