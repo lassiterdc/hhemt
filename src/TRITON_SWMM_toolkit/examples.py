@@ -503,6 +503,9 @@ class GetTS_TestCases:
                 n_gpus=0,
                 n_nodes=1,
                 multi_sim_run_method="1_job_many_srun_tasks",
+                hpc_total_nodes=1,
+                hpc_total_job_duration_min=30,
+                hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug", "--exclusive"],
             ),
             additional_system_configs=dict(
@@ -558,6 +561,9 @@ class GetTS_TestCases:
                 n_gpus=0,
                 n_nodes=1,
                 multi_sim_run_method="1_job_many_srun_tasks",
+                hpc_total_nodes=1,
+                hpc_total_job_duration_min=30,
+                hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug", "--exclusive"],
             ),
             additional_system_configs=dict(
