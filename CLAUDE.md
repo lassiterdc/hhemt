@@ -140,6 +140,34 @@ Snakemake workflows follow three phases:
 2. **Simulation**: Parallel scenario execution via wildcards
 3. **Processing**: Output consolidation
 
+## Conda Environment Architecture
+
+The toolkit uses **two separate conda environments** for clean separation of concerns:
+
+### Primary Environment (`environment.yaml`)
+- **Purpose**: Orchestration layer (Snakemake, workflow management, development tools)
+- **Contains**: Snakemake, Snakemake plugins (SLURM executor), Typer CLI, testing/linting tools
+- **Location**: Root directory
+- **When to update**: When adding orchestration features or new CLI commands
+
+### Task Environment (`workflow/envs/triton_swmm.yaml`)
+- **Purpose**: Simulation execution layer (individual runner scripts)
+- **Contains**: SWMM, scientific Python stack (scipy, dask, zarr), geospatial tools (geopandas, cartopy), data I/O
+- **Location**: `workflow/envs/`
+- **When to update**: When runner scripts need new dependencies (e.g., new output formats, scientific libraries)
+
+**Why this split?**
+1. **Lightweight execution**: Snakemake doesn't need simulation dependencies; runner scripts don't need Snakemake
+2. **HPC efficiency**: Smaller task environment = faster conda solve times on clusters
+3. **Clean separation**: Orchestration (Snakemake rules) vs. execution (runner scripts) are isolated
+4. **Caching**: Snakemake can cache and reuse the lighter task environment across jobs
+
+**How it works:**
+- Main environment (primary) is activated on login
+- Snakemake reads Snakefile and generates rules
+- Each rule's `conda:` directive specifies `workflow/envs/triton_swmm.yaml`
+- Snakemake creates/caches the task environment and runs rules within it
+
 ## Testing
 
 ### Platform-Organized Tests
