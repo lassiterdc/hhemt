@@ -47,17 +47,29 @@ class ResourceManager:
 
     def _get_simulation_resource_requirements(self) -> dict:
         """
-        Get resource requirements for a single simulation.
-        If this is a sensitivity analysis, return the most demanding
-        requirements across all subanalyses.
+        Get resource requirements for simulations.
 
-        Returns dict with: n_nodes, n_cpus_per_sim, n_gpus, mem_mb_per_sim
+        Returns
+        -------
+        dict
+            Dictionary with per-simulation requirements:
+            - n_nodes: int - Nodes per simulation
+            - n_cpus_per_sim: int - CPUs per simulation
+            - n_gpus: int - GPUs per simulation
+            - mem_mb_per_sim: int - Memory per simulation
+
+            If require_max_concurrent=True, also includes:
+            - total_nodes: int - Total nodes for max_concurrent simulations
+            - total_cpus: int - Total CPUs for max_concurrent simulations
+            - total_gpus: int - Total GPUs for max_concurrent simulations
+            - total_mem_mb: int - Total memory for max_concurrent simulations
+
+        Notes
+        -----
+        If this is a sensitivity analysis, returns the most demanding requirements
+        across all sub-analyses.
         """
-        max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-        assert isinstance(
-            max_concurrent, int
-        ), "hpc_max_simultaneous_sims is required for _get_simulation_resource_requirements"
-
+        # Get per-simulation requirements from config
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
         omp_threads = self.cfg_analysis.n_omp_threads or 1
         max_nodes = self.cfg_analysis.n_nodes or 1
@@ -66,11 +78,9 @@ class ResourceManager:
         max_gpus = self.cfg_analysis.n_gpus or 0
         max_mem_mb = self.cfg_analysis.mem_gb_per_cpu * max_cpus * 1000
 
+        # For sensitivity analysis, find max demands across sub-analyses
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            for (
-                sub_analysis_iloc,
-                sub_analysis,
-            ) in self.analysis.sensitivity.sub_analyses.items():
+            for sub_analysis in self.analysis.sensitivity.sub_analyses.values():
                 mpi_ranks = sub_analysis.cfg_analysis.n_mpi_procs or 1
                 omp_threads = sub_analysis.cfg_analysis.n_omp_threads or 1
                 n_gpus = sub_analysis.cfg_analysis.n_gpus or 0
@@ -86,21 +96,14 @@ class ResourceManager:
                 max_gpus = max(max_gpus, n_gpus)
                 max_mem_mb = max(max_mem_mb, int(mem_mb_per_sim))
 
-        total_nodes = max_nodes * max_concurrent
-        total_cpus = max_cpus * max_concurrent
-        total_gpus = max_gpus * max_concurrent
-        total_mem_mb = max_mem_mb * max_concurrent
-
-        return {
+        result = {
             "n_nodes": max_nodes,
             "n_cpus_per_sim": max_cpus,
             "n_gpus": max_gpus,
             "mem_mb_per_sim": max_mem_mb,
-            "total_nodes": total_nodes,
-            "total_cpus": total_cpus,
-            "total_gpus": total_gpus,
-            "total_mem_mb": total_mem_mb,
         }
+
+        return result
 
     def calculate_effective_max_parallel(
         self,
