@@ -445,10 +445,6 @@ class analysis_config(cfgBaseModel):
         None,
         description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when multi_sim_run_method = 1_job_many_srun_tasks.",
     )
-    additional_bash_lines: Optional[List[str]] = Field(
-        None,
-        description="Optional list of additional bash commands to include in SLURM scripts. Useful for setting environment variables (e.g., 'export PYTHONNOUSERSITE=1') or sourcing activation scripts (e.g., 'conda activate myenv'). These lines will be added after module loading and before the main command.",
-    )
     # TOGGLES
     # TODO - create validatoin checks for bash script toggle
     # toggle_run_ensemble_with_bash_script: bool = Field(
