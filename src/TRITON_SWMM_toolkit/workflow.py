@@ -432,6 +432,13 @@ rule consolidate:
             additional_lines = "\n".join(self.cfg_analysis.additional_bash_lines)
             additional_lines = f"\n# Additional configuration\n{additional_lines}\n"
 
+        modules = (
+            self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        )
+        module_load_cmd = ""
+        if modules:
+            module_load_cmd = f"module load {modules}"
+
         # Build GPU directive if needed (use --gres for per-node specification)
         # Check if any simulation uses GPUs (handles sensitivity analysis)
         n_gpus_per_sim = sim_resources["n_gpus"]
@@ -461,6 +468,10 @@ rule consolidate:
 #SBATCH --error={str(batch_log_path)}/workflow_%j.err
 {additional_sbatch_args}
 {additional_lines}
+
+{module_load_cmd}
+conda activate triton_swmm_toolkit
+
 # Calculate total CPUs dynamically from SLURM allocation
 if [ -z "$SLURM_CPUS_ON_NODE" ]; then
     echo "ERROR: SLURM_CPUS_ON_NODE not set. Cannot determine CPU allocation."
@@ -741,10 +752,122 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "snakemake_logfile": None,
             }
 
+    def _wait_for_slurm_job_completion(
+        self,
+        job_id: str,
+        poll_interval: int = 30,
+        timeout: int | None = None,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Wait for SLURM job to complete by polling job status.
+
+        Uses squeue for active jobs and sacct for completed jobs.
+
+        Parameters
+        ----------
+        job_id : str
+            SLURM job ID to monitor
+        poll_interval : int, default=30
+            Seconds between status checks
+        timeout : int | None, default=None
+            Maximum seconds to wait (None = indefinite)
+        verbose : bool, default=True
+            Print status updates
+
+        Returns
+        -------
+        dict
+            Job completion info:
+            - completed: bool - True if job finished successfully
+            - state: str - SLURM job state (COMPLETED, FAILED, etc.)
+            - exit_code: int | None - Job exit code
+            - message: str - Human-readable status
+        """
+        import time
+
+        start_time = time.time()
+        last_state = None
+
+        if verbose:
+            print(
+                f"[Snakemake] Waiting for SLURM job {job_id} to complete...", flush=True
+            )
+
+        while True:
+            # Check timeout
+            if timeout and (time.time() - start_time) > timeout:
+                msg = f"Job {job_id} timed out after {timeout}s"
+                if verbose:
+                    print(f"[Snakemake] ERROR: {msg}", flush=True)
+                return {
+                    "completed": False,
+                    "state": "TIMEOUT",
+                    "exit_code": None,
+                    "message": msg,
+                }
+
+            # Query squeue for running/pending jobs
+            result = subprocess.run(
+                ["squeue", "-j", job_id, "-h", "-o", "%T"],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                state = result.stdout.strip()
+
+                # Print status update if changed
+                if verbose and state != last_state:
+                    elapsed = int(time.time() - start_time)
+                    print(
+                        f"[Snakemake] [{elapsed}s] Job {job_id}: {state}",
+                        flush=True,
+                    )
+                    last_state = state
+
+                if state in ["PENDING", "RUNNING", "CONFIGURING", "COMPLETING"]:
+                    time.sleep(poll_interval)
+                    continue
+
+            # Job not in squeue - check sacct for completion
+            result = subprocess.run(
+                ["sacct", "-j", job_id, "-n", "-X", "-o", "State,ExitCode"],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0 and result.stdout.strip():
+                parts = result.stdout.strip().split()
+                state = parts[0]
+                exit_code_str = parts[1] if len(parts) > 1 else "0:0"
+                exit_code = int(exit_code_str.split(":")[0])
+
+                completed = state == "COMPLETED" and exit_code == 0
+
+                if verbose:
+                    elapsed = int(time.time() - start_time)
+                    status = "✓" if completed else "✗"
+                    print(
+                        f"[Snakemake] [{elapsed}s] Job {job_id}: {state} {status}",
+                        flush=True,
+                    )
+
+                return {
+                    "completed": completed,
+                    "state": state,
+                    "exit_code": exit_code,
+                    "message": f"Job {job_id} {state} (exit {exit_code})",
+                }
+
+            # Job not found yet - might be starting up
+            time.sleep(poll_interval)
+
     def _submit_single_job_workflow(
         self,
         snakefile_path: Path,
-        verbose: bool,
+        wait_for_completion: bool = False,
+        verbose: bool = True,
     ) -> dict:
         """
         Submit workflow as a single SLURM batch job.
@@ -757,12 +880,10 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         ----------
         snakefile_path : Path
             Path to the Snakefile
-        wait_for_completion : bool
+        wait_for_completion : bool, default=False
             If True, wait for job completion
-        verbose : bool
+        verbose : bool, default=True
             If True, print progress messages
-        dry_run : bool
-            If True, only generate script without submitting
 
         Returns
         -------
@@ -773,6 +894,9 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             - job_id: str | None
             - script_path: Path
             - message: str
+            - completed: bool (only if wait_for_completion=True)
+            - state: str (only if wait_for_completion=True)
+            - exit_code: int | None (only if wait_for_completion=True)
         """
         try:
             if verbose:
@@ -833,13 +957,38 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     flush=True,
                 )
 
-            return {
+            # Base result
+            result_dict = {
                 "success": True,
                 "mode": "single_job",
                 "job_id": job_id,
                 "script_path": script_path,
                 "message": f"Single-job workflow submitted (Job ID: {job_id})",
             }
+
+            # Wait for completion if requested
+            if wait_for_completion:
+                if job_id:
+                    completion_info = self._wait_for_slurm_job_completion(
+                        job_id=job_id,
+                        poll_interval=30,
+                        timeout=None,
+                        verbose=verbose,
+                    )
+
+                    result_dict.update(completion_info)
+                    result_dict["success"] = completion_info["completed"]
+                else:
+                    if verbose:
+                        print(
+                            "[Snakemake] ERROR: Failed to parse job ID for wait",
+                            flush=True,
+                        )
+                    result_dict["success"] = False
+                    result_dict["completed"] = False
+                    result_dict["message"] = "Failed to parse job ID"
+
+            return result_dict
 
         except Exception as e:
             error_msg = f"Failed to submit single-job workflow: {str(e)}"
@@ -959,6 +1108,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
 
             result = self._submit_single_job_workflow(
                 snakefile_path=snakefile_path,
+                wait_for_completion=wait_for_completion,
                 verbose=verbose,
             )
 

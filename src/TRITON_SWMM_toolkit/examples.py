@@ -324,7 +324,7 @@ class GetTS_TestCases:
     frontier_compilation_script = (
         test_data_dir / "template_compile_triton_swmm_frontier.sh"
     )
-    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
     # UVA
     UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
     UVA_modules_to_load_for_srun = "gompi/14.2.0_5.0.7 miniforge"
@@ -505,7 +505,6 @@ class GetTS_TestCases:
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug"],
-                additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
@@ -539,7 +538,6 @@ class GetTS_TestCases:
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug"],
-                additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
@@ -597,7 +595,6 @@ class GetTS_TestCases:
                 hpc_total_job_duration_min=30,
                 hpc_gpus_per_node=8,
                 additional_SBATCH_params=["-q debug"],
-                additional_bash_lines=["conda activate triton_swmm_toolkit"],
             ),
             additional_system_configs=dict(
                 additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
