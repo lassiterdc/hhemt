@@ -438,7 +438,8 @@ rule consolidate:
 
         additional_sbatch_args = ""
         if self.cfg_analysis.additional_SBATCH_params:
-            additional_sbatch_args = "\n#SBATCH ".join(
+            additional_sbatch_args = "\n#SBATCH "
+            additional_sbatch_args += "\n#SBATCH ".join(
                 self.cfg_analysis.additional_SBATCH_params
             )
 
@@ -463,7 +464,8 @@ rule consolidate:
 {gpu_directive}#SBATCH --mem=0
 #SBATCH --time={estimated_time}
 #SBATCH --output=logs/workflow_%j.out
-#SBATCH --error=logs/workflow_%j.err{additional_sbatch_args}
+#SBATCH --error=logs/workflow_%j.err
+{additional_sbatch_args}
 {additional_lines}
 # Snakemake with single_job profile (runs inside this allocation)
 snakemake --profile {config_dir} --snakefile {snakefile_path}
