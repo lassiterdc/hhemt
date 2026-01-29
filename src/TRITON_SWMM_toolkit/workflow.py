@@ -386,6 +386,13 @@ rule consolidate:
         Path
             Path to the generated batch script
         """
+        import TRITON_SWMM_toolkit.utils as ut
+
+        batch_log_path = (
+            self.analysis.analysis_paths.analysis_dir
+            / "_slurm_logs"
+            / ut.current_datetime_string(filepath_friendly=True)
+        )
         # Get per-simulation resource requirements (without requiring totals)
         sim_resources = (
             self.analysis._resource_manager._get_simulation_resource_requirements()
@@ -448,8 +455,8 @@ rule consolidate:
 #SBATCH --nodes={total_nodes}
 #SBATCH --exclusive
 {gpu_directive}#SBATCH --time={estimated_time}
-#SBATCH --output=logs/workflow_%j.out
-#SBATCH --error=logs/workflow_%j.err
+#SBATCH --output={str(batch_log_path)}/workflow_%j.out
+#SBATCH --error={str(batch_log_path)}/workflow_%j.err
 {additional_sbatch_args}
 {additional_lines}
 # Calculate total CPUs dynamically from SLURM allocation
