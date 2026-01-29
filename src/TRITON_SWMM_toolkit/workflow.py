@@ -283,24 +283,14 @@ rule consolidate:
                 }
             )
         elif mode == "single_job":
-            # Single-job mode: behaves like local execution but respects SLURM allocation
-            sim_resources = (
-                self.analysis._resource_manager._get_simulation_resource_requirements()
-            )
-            total_cpus = sim_resources["total_cpus"]
-
-            # Snakemake will use the threads directive on rules to limit concurrency
+            # Single-job mode: cores and GPU resources set dynamically via CLI in SBATCH script
+            # Don't set cores or resources here - will be passed via CLI args in SBATCH script
             config.update(
                 {
-                    "cores": total_cpus,
                     "keep-going": True,  # Continue other sims if one fails
                     "latency-wait": 30,
                 }
             )
-            # Add GPU resources if needed
-            if sim_resources["n_gpus"] > 0:
-                total_gpus = sim_resources["total_gpus"]
-                config["resources"] = [f"gpu={total_gpus}"]
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
@@ -380,10 +370,9 @@ rule consolidate:
         """
         Generate SLURM batch script that runs Snakemake.
 
-        For 1_job_many_srun_tasks mode, this requests FULL resources needed for
-        max_concurrent simulations running simultaneously. Otherwise, it
-        generates a job that is just a Snakemake orchestrator for
-        multi_sim_run_method = batch_job.
+        For 1_job_many_srun_tasks mode, this requests exclusive access to nodes
+        specified by hpc_total_nodes. Concurrency is determined dynamically from
+        the SLURM allocation rather than being pre-calculated.
 
         Parameters
         ----------
@@ -397,44 +386,29 @@ rule consolidate:
         Path
             Path to the generated batch script
         """
-        # Get per-simulation resource requirements
+        # Get per-simulation resource requirements (without requiring totals)
         sim_resources = (
             self.analysis._resource_manager._get_simulation_resource_requirements()
         )
 
-        # Estimate total time needed (with safety factor)
-        n_sims = self.analysis.nsims
-        time_per_sim_min = self.cfg_analysis.hpc_time_min_per_sim
-        assert isinstance(time_per_sim_min, int), "time_per_sim_min is required"
-        max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
+        # Get total nodes from config (user specifies directly)
+        total_nodes = self.cfg_analysis.hpc_total_nodes
         assert isinstance(
-            max_concurrent, int
-        ), "hpc_max_simultaneous_sims is required for _generate_single_job_submission_script"
+            total_nodes, int
+        ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+
+        # Get job duration
+        job_time = self.cfg_analysis.hpc_total_job_duration_min
+        assert isinstance(job_time, int), "hpc_total_job_duration_min required"
+
         assert (
             self.analysis.in_slurm
         ), "_generate_submission_script only makes sense to run in a SLURM environment."
 
-        # Get actual concurrent limit from SLURM constraints if in SLURM
-        # Estimate time: (total_sims / concurrent) * time_per_sim * safety_factor
-        estimated_time_min = int(
-            (n_sims / max(1, max_concurrent)) * time_per_sim_min * 1.2
-        )
-
-        # Apply upper limit if specified
-        if self.cfg_analysis.hpc_sbatch_time_upper_limit_min:
-            estimated_time_min = min(
-                estimated_time_min, self.cfg_analysis.hpc_sbatch_time_upper_limit_min
-            )
-
         # Convert to HH:MM:SS format
-        hours = estimated_time_min // 60
-        minutes = estimated_time_min % 60
+        hours = job_time // 60
+        minutes = job_time % 60
         estimated_time = f"{hours:02d}:{minutes:02d}:00"
-
-        # Calculate TOTAL resources for max_concurrent simulations
-        total_gpus = sim_resources["total_gpus"]
-        total_nodes = sim_resources["total_nodes"]
-        total_mem_mb = sim_resources["total_mem_mb"]
 
         additional_sbatch_args = ""
         if self.cfg_analysis.additional_SBATCH_params:
@@ -449,26 +423,44 @@ rule consolidate:
             additional_lines = "\n".join(self.cfg_analysis.additional_bash_lines)
             additional_lines = f"\n# Additional configuration\n{additional_lines}\n"
 
-        # Build GPU directive if needed
+        # Build GPU directive if needed (use --gres for per-node specification)
+        # Check if any simulation uses GPUs (handles sensitivity analysis)
+        n_gpus_per_sim = sim_resources["n_gpus"]
         gpu_directive = ""
-        if total_gpus > 0:
-            gpu_directive = f"#SBATCH --gpus={total_gpus}\n"
+        gpu_calculation = ""
+        gpu_cli_arg = ""
+
+        if n_gpus_per_sim > 0:
+            gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
+            assert isinstance(
+                gpus_per_node, int
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            # --gres is per-node, SLURM will multiply by --nodes automatically
+            gpu_directive = f"#SBATCH --gres=gpu:{gpus_per_node}\n"
+            # Calculate total GPUs dynamically in bash script
+            gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"
+            gpu_cli_arg = " --resources gpu=$TOTAL_GPUS"
 
         script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_workflow
 #SBATCH --partition={self.cfg_analysis.hpc_ensemble_partition}
 #SBATCH --account={self.cfg_analysis.hpc_account}
 #SBATCH --nodes={total_nodes}
-#SBATCH --ntasks={max_concurrent}
-#SBATCH --cpus-per-task={sim_resources["n_cpus_per_sim"]}
-{gpu_directive}#SBATCH --mem=0
-#SBATCH --time={estimated_time}
+#SBATCH --exclusive
+{gpu_directive}#SBATCH --time={estimated_time}
 #SBATCH --output=logs/workflow_%j.out
 #SBATCH --error=logs/workflow_%j.err
 {additional_sbatch_args}
 {additional_lines}
-# Snakemake with single_job profile (runs inside this allocation)
-snakemake --profile {config_dir} --snakefile {snakefile_path}
+# Calculate total CPUs dynamically from SLURM allocation
+if [ -z "$SLURM_CPUS_ON_NODE" ]; then
+    echo "ERROR: SLURM_CPUS_ON_NODE not set. Cannot determine CPU allocation."
+    exit 1
+fi
+TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
+{gpu_calculation}
+# Run Snakemake with dynamic resource limits
+snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
