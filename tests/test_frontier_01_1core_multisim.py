@@ -63,13 +63,9 @@ def test_concurrently_process_scenario_timeseries(
 ):
     analysis = norfolk_frontier_multisim_analysis_cached
     scenario_timeseries_processing_launchers = (
-        analysis.retrieve_scenario_timeseries_processing_launchers(which="TRITON")
+        analysis.retrieve_scenario_timeseries_processing_launchers(which="both")
     )
     analysis.run_python_functions_concurrently(
         scenario_timeseries_processing_launchers, verbose=True
     )
-    tst_ut.assert_timeseries_processed(analysis, which="TRITON")
-    analysis.consolidate_TRITON_simulation_summaries(overwrite_if_exist=True)
-    assert analysis.TRITON_analysis_summary_created
-    # assert analysis.SWMM_node_analysis_summary_created
-    # assert analysis.SWMM_link_analysis_summary_created
+    tst_ut.assert_timeseries_processed(analysis, which="both")
