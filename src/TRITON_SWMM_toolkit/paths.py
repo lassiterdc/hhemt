@@ -23,9 +23,21 @@ class MainDataClass:
 class SysPaths(MainDataClass):
     dem_processed: Path
     mannings_processed: Path
-    TRITON_build_dir: Path
-    compilation_script: Path
-    compilation_logfile: Path
+
+    # Split build directories by backend
+    TRITON_build_dir_cpu: Path  # Always present
+    TRITON_build_dir_gpu: Optional[Path]  # Only if GPU configured
+
+    # Split compilation artifacts by backend
+    compilation_script_cpu: Path
+    compilation_script_gpu: Optional[Path]
+    compilation_logfile_cpu: Path
+    compilation_logfile_gpu: Optional[Path]
+
+    # Backwards compatibility aliases (point to CPU versions)
+    TRITON_build_dir: Optional[Path] = None
+    compilation_script: Optional[Path] = None
+    compilation_logfile: Optional[Path] = None
 
 
 @dataclass

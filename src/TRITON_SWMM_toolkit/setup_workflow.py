@@ -144,14 +144,19 @@ def main() -> int:
                     recompile_if_already_done_successfully=args.recompile_if_already_done,
                     verbose=True,
                 )
+
                 # Verify compilation was successful
-                if not system.compilation_successful:
-                    logger.error("TRITON-SWMM compilation failed")
-                    logger.error(
-                        f"Compilation log:\n{system.retrieve_compilation_log()}"
-                    )
+                if len(system.available_backends) == 0:
+                    logger.error("No backends compiled successfully")
+                    logger.error(f"CPU log:\n{system.retrieve_compilation_log('cpu')}")
+                    if system.cfg_system.gpu_compilation_backend:
+                        logger.error(
+                            f"GPU log:\n{system.retrieve_compilation_log('gpu')}"
+                        )
                     return 1
-                logger.info("TRITON-SWMM compiled successfully")
+                logger.info(
+                    f"Available backends: {', '.join(system.available_backends)}"
+                )
             except Exception as e:
                 logger.error(f"Failed to compile TRITON-SWMM: {e}")
                 logger.error(traceback.format_exc())

@@ -11,7 +11,7 @@ import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
 from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Optional
 import threading
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 from TRITON_SWMM_toolkit.scenario_inputs import ScenarioInputGenerator
@@ -23,7 +23,6 @@ lock = threading.Lock()
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
-
 
 
 class TRITONSWMM_scenario:
@@ -44,6 +43,7 @@ class TRITONSWMM_scenario:
         sim_folder = analysis_simulations_folder / self.sim_id_str
         swmm_folder = sim_folder / "swmm"
         swmm_folder.mkdir(parents=True, exist_ok=True)
+        self.backend = analysis.backend
 
         self.scen_paths = ScenarioPaths(
             sim_folder=sim_folder,
@@ -262,15 +262,55 @@ class TRITONSWMM_scenario:
         return
 
     def _copy_tritonswmm_build_folder_to_sim(self):
-        src_build_fpath = self._system.sys_paths.TRITON_build_dir
-        sim_tritonswmm_executable = self.scen_paths.sim_tritonswmm_executable
+        """
+        Copy TRITON-SWMM build folder to simulation directory.
 
+        Parameters
+        ----------
+        backend : str
+            Which backend to copy ("cpu" or "gpu")
+        """
+        # Select source build directory
+        if self.backend == "cpu":
+            src_build_fpath = self._system.sys_paths.TRITON_build_dir_cpu
+        elif self.backend == "gpu":
+            if self._system.sys_paths.TRITON_build_dir_gpu is None:
+                raise ValueError(
+                    f"GPU backend requested but gpu_compilation_backend not set in system config. "
+                    f"Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML."
+                )
+            src_build_fpath = self._system.sys_paths.TRITON_build_dir_gpu
+        else:
+            raise ValueError(f"Unknown backend: {self.backend}")
+
+        # Verify source exists and compilation successful
+        if not src_build_fpath.exists():
+            raise FileNotFoundError(
+                f"{self.backend.upper()} build directory not found: {src_build_fpath}"
+            )
+
+        if self.backend == "cpu" and not self._system.compilation_cpu_successful:
+            raise ValueError(
+                f"CPU backend build directory exists but compilation not successful.\n"
+                f"Check log: {self._system.sys_paths.compilation_logfile_cpu}"
+            )
+        elif self.backend == "gpu" and not self._system.compilation_gpu_successful:
+            raise ValueError(
+                f"GPU backend build directory exists but compilation not successful.\n"
+                f"Available backends: {self._system.available_backends}\n\n"
+                f"GPU compilation log:\n{self._system.retrieve_compilation_log('gpu')}"
+            )
+
+        # Copy to scenario
+        sim_tritonswmm_executable = self.scen_paths.sim_tritonswmm_executable
         target_build_fpath = sim_tritonswmm_executable.parent
         if target_build_fpath.exists():
             shutil.rmtree(target_build_fpath)
         shutil.copytree(src_build_fpath, target_build_fpath)
+
+        # Update log
         self.log.sim_tritonswmm_executable_copied.set(True)
-        return
+        self.log.triton_backend_used.set(self.backend)
 
     def _write_sim_weather_nc(self):
         weather_timeseries = self._analysis.cfg_analysis.weather_timeseries
@@ -298,7 +338,18 @@ class TRITONSWMM_scenario:
         overwrite_scenario: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
     ):
+        """
+        Prepare scenario for simulation.
 
+        Parameters
+        ----------
+        overwrite_scenario : bool
+            If True, overwrite existing scenario
+        rerun_swmm_hydro_if_outputs_exist : bool
+            If True, rerun SWMM hydrology model even if outputs exist
+        backend : Optional[str]
+            Force specific backend ("cpu" or "gpu"). If None, auto-selects based on run_mode.
+        """
         # Halt if scenario already complete
         if self.log.scenario_creation_complete.get() and not overwrite_scenario:
             print(  # type: ignore
@@ -307,6 +358,29 @@ class TRITONSWMM_scenario:
                 flush=True,
             )
             return
+
+        # Validate backend is available
+        if self.backend == "gpu" and not self._system.compilation_gpu_successful:
+            raise ValueError(
+                f"GPU backend requested (run_mode={self._analysis.cfg_analysis.run_mode}) "
+                f"but GPU build not available.\n\n"
+                f"Available backends: {self._system.available_backends}\n\n"
+                f"RECOMMENDATION:\n"
+                f"  1. Compile GPU backend: system.compile_TRITON_SWMM(self.backends=['gpu'])\n"
+                f"  2. OR change run_mode to: 'openmp', 'serial', 'mpi', or 'hybrid'\n\n"
+                f"GPU compilation log:\n{self._system.retrieve_compilation_log('gpu')}"
+            )
+
+        if self.backend == "cpu" and not self._system.compilation_cpu_successful:
+            raise ValueError(
+                f"CPU backend not compiled.\n\n"
+                f"CPU compilation log:\n{self._system.retrieve_compilation_log('cpu')}"
+            )
+
+        print(
+            f"[Scenario {self.event_iloc}] Using {self.backend.upper()} backend",
+            flush=True,
+        )
 
         # Main scenario setup
         self._write_sim_weather_nc()

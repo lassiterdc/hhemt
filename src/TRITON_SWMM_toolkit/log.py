@@ -297,6 +297,8 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     )
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
+    # Track which backend was used for this scenario
+    triton_backend_used: LogField[str] = Field(default_factory=LogField)  # "cpu" or "gpu"
     # RUNNING SIMULATIONS
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
@@ -354,6 +356,12 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfield_validator(bool))
 
+    # String LogFields
+    _validate_string_fields = field_validator(
+        "triton_backend_used",
+        mode="before",
+    )(_create_logfield_validator(str))
+
     # Path LogFields
     _validate_path_field = field_validator(
         "storm_tide_for_swmm",
@@ -384,6 +392,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
         "sim_tritonswmm_executable_copied",
+        "triton_backend_used",
         "simulation_completed",
         "TRITON_timeseries_written",
         "TRITONSWMM_performance_timeseries_written",
@@ -470,6 +479,9 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     TRITONSWMM_performance_analysis_summary_created: LogField[bool] = Field(
         default_factory=LogField
     )
+    # Track which backends are available at analysis creation time
+    cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
+    gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
     # ----------------------------
@@ -487,6 +499,8 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
         "TRITONSWMM_performance_analysis_summary_created",
+        "cpu_backend_available",
+        "gpu_backend_available",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -505,6 +519,8 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "SWMM_node_analysis_summary_created",
         "SWMM_link_analysis_summary_created",
         "TRITONSWMM_performance_analysis_summary_created",
+        "cpu_backend_available",
+        "gpu_backend_available",
     )(_logfield_serializer)
 
     # ----------------------------

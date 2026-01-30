@@ -241,16 +241,13 @@ class system_config(cfgBaseModel):
         None,
         description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
     )
-    TRITON_machine_name: Optional[str] = Field(
+    gpu_compilation_backend: Optional[Literal["HIP", "CUDA"]] = Field(
         None,
-        description="Machine name corresponding to the folder containing bash scripts"
-        " for setting machine-specific variables while compiling the software, e.g, Linux or Frontier"
-        "In other words, <MACHINE> in <TRITON top directory>/cmake/machines/<MACHINE>/COMPILER_BACKEND.sh",
-    )
-    TRITON_machine_bash_script: Optional[str] = Field(
-        None,
-        description="File name (e.g., 'default_OPENMP.sh') of bash script that sets machine-specific variables for compiling the software"
-        "In other words, COMPILER_BACKEND.sh in <TRITON top directory>/cmake/machines/<MACHINE>/COMPILER_BACKEND.sh",
+        description=(
+            "GPU backend for compilation: 'HIP' for AMD GPUs (ROCm), 'CUDA' for NVIDIA GPUs. "
+            "If None, only CPU (OPENMP) backend will be compiled. "
+            "When set, both CPU and GPU backends are compiled into separate build directories."
+        ),
     )
     additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
         None,

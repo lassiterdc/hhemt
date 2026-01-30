@@ -84,7 +84,8 @@ class TRITONSWMM_analysis:
         self._sim_run_objects: dict = {}
         self._sim_run_processing_objects: dict = {}
         self._simulation_run_statuses: dict = {}
-        # self.run_modes = Mode
+        self.backend = "gpu" if self.cfg_analysis.run_mode == "gpu" else "cpu"
+
         # self._system.compilation_successful = False
         self.in_slurm = "SLURM_JOB_ID" in os.environ.copy() or (
             cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
@@ -99,14 +100,18 @@ class TRITONSWMM_analysis:
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
         self.nsims = len(self.df_sims)
+
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
             self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
             self.nsims *= len(self.sensitivity.df_setup)
         if not skip_log_update:
             # self._add_all_scenarios()
             self._refresh_log()
-            if self._system.sys_paths.compilation_logfile.exists():
-                self._system.compilation_successful
+
+            # Record available backends at analysis creation time
+            self.log.cpu_backend_available.set(self._system.compilation_cpu_successful)
+            self.log.gpu_backend_available.set(self._system.compilation_gpu_successful)
+
             self._update_log()
         self._resource_manager = ResourceManager(self)
 
@@ -1140,17 +1145,25 @@ class TRITONSWMM_analysis:
         """
         scenarios_setup = []
         scen_runs_completed = []
+        backend_used = []
         scenario_dirs = []
 
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
+            scen.log.refresh()
             scenarios_setup.append(scen.log.scenario_creation_complete.get() is True)
             scen_runs_completed.append(scen.sim_run_completed)
+
+            # Get backend, infer from run_mode if not set
+            backend = scen.log.triton_backend_used.get()
+            backend_used.append(backend)
+
             scenario_dirs.append(str(scen.log.logfile.parent))
 
         df_status = self.df_sims.copy()
         df_status["scenarios_setup"] = scenarios_setup
         df_status["scen_runs_completed"] = scen_runs_completed
+        df_status["backend_used"] = backend_used
         df_status["scenario_directory"] = scenario_dirs
 
         return df_status

@@ -21,14 +21,40 @@ class TRITONSWMM_system:
     def __init__(self, system_config_yaml: Path) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
-        # define additional paths
+
+        system_dir = self.cfg_system.system_directory
+        tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
+
+        # Initialize paths with backend split
         self.sys_paths = SysPaths(
-            dem_processed=self.cfg_system.system_directory / "elevation.dem",
-            mannings_processed=self.cfg_system.system_directory / "mannings.dem",
-            TRITON_build_dir=self.cfg_system.TRITONSWMM_software_directory / "build",
-            compilation_logfile=self.cfg_system.system_directory / f"compilation.log",
-            compilation_script=self.cfg_system.system_directory / "compile.sh",
+            dem_processed=system_dir / "elevation.dem",
+            mannings_processed=system_dir / "mannings.dem",
+            # CPU paths (always present)
+            TRITON_build_dir_cpu=tritonswmm_dir / "build_cpu",
+            compilation_logfile_cpu=system_dir / "compilation_cpu.log",
+            compilation_script_cpu=system_dir / "compile_cpu.sh",
+            # GPU paths (optional, only if gpu_compilation_backend set)
+            TRITON_build_dir_gpu=(
+                tritonswmm_dir / "build_gpu"
+                if self.cfg_system.gpu_compilation_backend
+                else None
+            ),
+            compilation_logfile_gpu=(
+                system_dir / "compilation_gpu.log"
+                if self.cfg_system.gpu_compilation_backend
+                else None
+            ),
+            compilation_script_gpu=(
+                system_dir / "compile_gpu.sh"
+                if self.cfg_system.gpu_compilation_backend
+                else None
+            ),
+            # Backwards compatibility aliases (point to CPU versions)
+            TRITON_build_dir=tritonswmm_dir / "build_cpu",
+            compilation_logfile=system_dir / "compilation_cpu.log",
+            compilation_script=system_dir / "compile_cpu.sh",
         )
+
         self._analysis: Optional["TRITONSWMM_analysis"] = None
         self.plot = TRITONSWMM_system_plotting(self)
 
@@ -250,178 +276,349 @@ class TRITONSWMM_system:
     # compilation stuff
     def compile_TRITON_SWMM(
         self,
+        backends: Optional[list[str]] = None,
         recompile_if_already_done_successfully: bool = False,
         redownload_triton_swmm_if_exists: bool = False,
         verbose: bool = True,
     ):
         """
-        Compile TRITON-SWMM by generating the compilation bash script internally.
-
-        This method generates the compilation script directly within the function,
-        eliminating the need for external template files. It compiles SWMM first,
-        then TRITON with explicit SWMM paths. Builds are done in-place in the
-        original source directories to avoid git/cmake configuration issues.
+        Compile TRITON-SWMM for specified backend(s).
 
         Parameters
         ----------
+        backends : Optional[list[str]]
+            List of backends to compile ("cpu", "gpu", or both). If None:
+            - Always compiles CPU
+            - Compiles GPU only if gpu_compilation_backend is set in config
         recompile_if_already_done_successfully : bool
             If True, recompile even if already compiled successfully
+        redownload_triton_swmm_if_exists : bool
+            If True, re-download TRITON-SWMM source even if it exists
         verbose : bool
             If True, print progress messages
-
-        Returns
-        -------
-        None
-
-        Raises
-        ------
-        FileNotFoundError
-            If TRITON or SWMM software directories don't exist
-        subprocess.CalledProcessError
-            If compilation fails
         """
 
-        compilation_script = self.sys_paths.compilation_script
+        # Determine which backends to compile
+        if backends is None:
+            backends = ["cpu"]
+            if self.cfg_system.gpu_compilation_backend:
+                backends.append("gpu")
+
+        # Download TRITON-SWMM source if needed (shared across backends)
+        TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+        ):
+            self._download_tritonswmm_source(verbose=verbose)
+
+        # Compile each backend sequentially
+        for backend in backends:
+            if verbose:
+                print(f"\n{'=' * 60}", flush=True)
+                print(f"Compiling {backend.upper()} Backend", flush=True)
+                print("=" * 60, flush=True)
+
+            if backend == "cpu":
+                self._compile_backend(
+                    backend="cpu",
+                    build_dir=self.sys_paths.TRITON_build_dir_cpu,
+                    compilation_script=self.sys_paths.compilation_script_cpu,
+                    compilation_logfile=self.sys_paths.compilation_logfile_cpu,
+                    cmake_backend_flag="-DKokkos_ENABLE_OPENMP=ON",
+                    recompile=recompile_if_already_done_successfully,
+                    verbose=verbose,
+                )
+            elif backend == "gpu":
+                if self.cfg_system.gpu_compilation_backend is None:
+                    raise ValueError(
+                        "GPU backend requested but gpu_compilation_backend not set in config. "
+                        "Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML."
+                    )
+
+                # Determine Kokkos flag based on config
+                if self.cfg_system.gpu_compilation_backend == "HIP":
+                    cmake_backend_flag = "-DKokkos_ENABLE_HIP=ON"
+                elif self.cfg_system.gpu_compilation_backend == "CUDA":
+                    cmake_backend_flag = "-DKokkos_ENABLE_CUDA=ON"
+                else:
+                    raise ValueError(
+                        f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}. "
+                        "Must be 'HIP' or 'CUDA'."
+                    )
+
+                self._compile_backend(
+                    backend="gpu",
+                    build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
+                    compilation_script=self.sys_paths.compilation_script_gpu,  # type: ignore
+                    compilation_logfile=self.sys_paths.compilation_logfile_gpu,  # type: ignore
+                    cmake_backend_flag=cmake_backend_flag,
+                    recompile=recompile_if_already_done_successfully,
+                    verbose=verbose,
+                )
+            else:
+                raise ValueError(f"Unknown backend: {backend}")
+
+        # Print summary
+        if verbose:
+            self.print_compilation_status()
+
+    def _download_tritonswmm_source(self, verbose: bool = True):
+        """Download TRITON-SWMM source code from git repository."""
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        if (
-            self.compilation_successful
-            and not recompile_if_already_done_successfully
-            and not redownload_triton_swmm_if_exists
-        ):
+        clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
+        branch_checkout_cmd = ""
+        if self.cfg_system.TRITONSWMM_branch_key:
+            branch_checkout_cmd = (
+                f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
+            )
+
+        if verbose:
+            print(
+                f"[Download] Cloning TRITON-SWMM to {TRITONSWMM_software_directory}",
+                flush=True,
+            )
+
+        # Create parent directory
+        TRITONSWMM_software_directory.parent.mkdir(parents=True, exist_ok=True)
+
+        # Remove existing directory
+        if TRITONSWMM_software_directory.exists():
+            import shutil
+
+            shutil.rmtree(TRITONSWMM_software_directory)
+
+        # Clone and checkout
+        subprocess.run(
+            f'cd "{TRITONSWMM_software_directory.parent}" && {clone_cmd} && '
+            f"cd triton{branch_checkout_cmd} && git submodule update --init --recursive",
+            shell=True,
+            check=True,
+        )
+
+    def _compile_backend(
+        self,
+        backend: str,
+        build_dir: Path,
+        compilation_script: Path,
+        compilation_logfile: Path,
+        cmake_backend_flag: str,
+        recompile: bool,
+        verbose: bool,
+    ):
+        """Internal method to compile a single backend."""
+
+        # Check if already compiled
+        if backend == "cpu":
+            already_compiled = self.compilation_cpu_successful
+        else:
+            already_compiled = self.compilation_gpu_successful
+
+        if already_compiled and not recompile:
             if verbose:
-                print("TRITON-SWMM already compiled", flush=True)
+                print(
+                    f"[{backend.upper()}] Already compiled successfully (skipping)",
+                    flush=True,
+                )
             return
 
+        TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
+
+        # Generate compilation script
         bash_script_lines = [
             "#!/bin/bash",
             "set -e  # Exit on error",
             "",
             f"TRITON_DIR={TRITONSWMM_software_directory}",
+            f"BUILD_DIR={build_dir}",
             "",
         ]
 
-        if (
-            redownload_triton_swmm_if_exists
-            or not TRITONSWMM_software_directory.exists()
-        ):
-            clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
-            branch_checkout_cmd = ""
-            if self.cfg_system.TRITONSWMM_branch_key:
-                branch_checkout_cmd = (
-                    f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
-                )
-            print(f"Pulling TRITON-SWMM from repo to {TRITONSWMM_software_directory}")
-            download_lines = [
-                f'cd "{TRITONSWMM_software_directory.parent}"',
-                'rm -rf "${TRITON_DIR}"',
-                f"{clone_cmd} && cd triton{branch_checkout_cmd}",
-                "git submodule update --init --recursive",
-            ]
-            bash_script_lines.extend(download_lines)
-
-        machine_imports = ""
-        if self.cfg_system.TRITON_machine_name:
-            if self.cfg_system.TRITON_machine_bash_script:
-                machine_imports = (
-                    TRITONSWMM_software_directory
-                    / "cmake"
-                    / "machines"
-                    / self.cfg_system.TRITON_machine_name
-                    / self.cfg_system.TRITON_machine_bash_script
-                )
-                machine_import_lines = [
-                    f"MACHINE_IMPORTS={machine_imports}",
-                    'if [ ! -f "${MACHINE_IMPORTS}" ]; then',
-                    '    echo "Error: Machine imports file not found: ${MACHINE_IMPORTS}"',
-                    "    exit 1",
-                    "fi",
-                    'dos2unix "${MACHINE_IMPORTS}" 2>/dev/null || sed -i "s/\\r$//" "${MACHINE_IMPORTS}"',
-                    'source "${MACHINE_IMPORTS}"',
+        # Optional: Load HPC modules
+        if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
+            modules = (
+                self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            )
+            bash_script_lines.extend(
+                [
+                    f"# Load HPC modules",
+                    f"module load {modules}",
+                    "",
                 ]
-                bash_script_lines.extend(machine_import_lines)
-        # Build compilation script content (builds in-place in source directories)
+            )
 
+        # Build commands
         bash_script_lines.extend(
             [
                 'cd "${TRITON_DIR}"',
-                # 'if [ -f "${TRITON_DIR}/build/triton_clean.sh" ]; then',
-                # '    source "${TRITON_DIR}/build/triton_clean.sh"',
-                # '    echo "running triton_clean.sh"',
-                # "fi",
-                "rm -rf build",
-                "mkdir -p build",
-                "cd build",
-                "cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON ..",
+                'rm -rf "${BUILD_DIR}"',
+                'mkdir -p "${BUILD_DIR}"',
+                'cd "${BUILD_DIR}"',
+                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_backend_flag} ..",
                 "make -j4",
                 "",
                 "echo 'script finished'",
             ]
         )
 
-        bash_script_content = "\n".join(bash_script_lines)
-
-        # Write compilation script
+        # Write script
         compilation_script.parent.mkdir(parents=True, exist_ok=True)
-        compilation_script.write_text(bash_script_content)
+        compilation_script.write_text("\n".join(bash_script_lines))
         compilation_script.chmod(0o755)
 
         if verbose:
-            print(f"Compilation script generated: {compilation_script}", flush=True)
+            print(f"[{backend.upper()}] Starting compilation...", flush=True)
+            print(f"[{backend.upper()}]   Script: {compilation_script}", flush=True)
 
-        # Execute compilation script
-        compilation_logfile = self.sys_paths.compilation_logfile
-
-        if verbose:
-            print("Starting TRITON-SWMM compilation...", flush=True)
-
+        # Execute compilation
         with open(compilation_logfile, "w") as logfile:
             proc = subprocess.run(
                 ["/bin/bash", str(compilation_script)],
                 stdout=logfile,
                 stderr=subprocess.STDOUT,
-                check=True,
             )
 
-        # Wait for compilation to complete and verify
+        # Wait for completion marker
         start_time = time.time()
-        compilation_log = ut.read_text_file_as_string(compilation_logfile)
-        while "script finished" not in compilation_log:
-            time.sleep(0.1)
+        while time.time() - start_time < 10:
             compilation_log = ut.read_text_file_as_string(compilation_logfile)
-            elapsed = time.time() - start_time
-            if elapsed > 10:  # Timeout after 10 seconds of checking
+            if "script finished" in compilation_log:
                 break
+            time.sleep(0.1)
 
-        success = self.compilation_successful
+        # Check success
+        if backend == "cpu":
+            success = self.compilation_cpu_successful
+        else:
+            success = self.compilation_gpu_successful
 
         if verbose:
             if success:
-                print("TRITON-SWMM compiled successfully!", flush=True)
+                print(f"[{backend.upper()}] ✓ Compilation successful!", flush=True)
             else:
-                print(
-                    "Warning: TRITON-SWMM compilation may not have completed successfully. "
-                    "Check the compilation log for details.",
-                    flush=True,
-                )
+                print(f"[{backend.upper()}] ✗ Compilation failed", flush=True)
+                print(f"[{backend.upper()}]   Log: {compilation_logfile}", flush=True)
 
-        return
+    def retrieve_compilation_log(self, backend: str) -> str:
+        """
+        Retrieve compilation log for specified backend.
 
-    def retrieve_compilation_log(self):
-        if self.sys_paths.compilation_logfile.exists():
-            return ut.read_text_file_as_string(self.sys_paths.compilation_logfile)
-        return "no sim logfile created"
+        Parameters
+        ----------
+        backend : str
+            Which backend's log to retrieve ("cpu" or "gpu", default: "cpu")
 
-    def print_compilation_log(self):
-        print(self.retrieve_compilation_log(), flush=True)
+        Returns
+        -------
+        str
+            Log content, or error message if log doesn't exist
+        """
+        if backend == "cpu":
+            logfile = self.sys_paths.compilation_logfile_cpu
+        elif backend == "gpu":
+            if self.sys_paths.compilation_logfile_gpu is None:
+                return "GPU backend not configured (gpu_compilation_backend not set)"
+            logfile = self.sys_paths.compilation_logfile_gpu
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
+
+        if logfile.exists():
+            return ut.read_text_file_as_string(logfile)
+        return f"No compilation log found for {backend} backend at {logfile}"
+
+    def print_compilation_log(self, backend: str):
+        """
+        Print compilation log(s).
+
+        Parameters
+        ----------
+        backend : Optional[str]
+            Which backend to print ("cpu" or "gpu"). If None, prints all available backends.
+        """
+        if backend == "cpu":
+            # Print all available backends
+            print("=== CPU Backend Compilation Log ===", flush=True)
+            print(self.retrieve_compilation_log("cpu"), flush=True)
+            if self.cfg_system.gpu_compilation_backend:
+                print("\n=== GPU Backend Compilation Log ===", flush=True)
+                print(self.retrieve_compilation_log("gpu"), flush=True)
+        if backend == "gpu":
+            print(f"=== {backend.upper()} Backend Compilation Log ===", flush=True)
+            print(self.retrieve_compilation_log(backend), flush=True)
+        else:
+            raise ValueError(f"Unknown backend: {backend}")
 
     @property
-    def compilation_successful(self):
-        compilation_log = self.retrieve_compilation_log()
-        swmm_check = "Built target swmm5" in compilation_log
-        triton_check = "[100%] Built target triton.exe" in compilation_log
-        success = swmm_check and triton_check
+    def compilation_cpu_successful(self) -> bool:
+        """Check if CPU backend compiled successfully."""
+        log = self.retrieve_compilation_log("cpu")
+        swmm_check = "Built target swmm5" in log
+        triton_check = "[100%] Built target triton.exe" in log
+        return swmm_check and triton_check
+
+    @property
+    def compilation_gpu_successful(self) -> bool:
+        """Check if GPU backend compiled successfully."""
+        if self.sys_paths.compilation_logfile_gpu is None:
+            return False
+        if not self.sys_paths.compilation_logfile_gpu.exists():
+            return False
+        log = self.retrieve_compilation_log("gpu")
+        swmm_check = "Built target swmm5" in log
+        triton_check = "[100%] Built target triton.exe" in log
+        return swmm_check and triton_check
+
+    @property
+    def compilation_successful(self) -> bool:
+        """
+        Returns True if CPU backend (and GPU if configured) compiled successfully.
+        For individual backend checks, use compilation_cpu_successful and compilation_gpu_successful.
+        """
+        if self.cfg_system.gpu_compilation_backend:
+            success = (
+                self.compilation_cpu_successful and self.compilation_gpu_successful
+            )
+        else:
+            success = self.compilation_cpu_successful
         return success
+
+    @property
+    def available_backends(self) -> list[str]:
+        """Return list of successfully compiled backends."""
+        backends = []
+        if self.compilation_cpu_successful:
+            backends.append("cpu")
+        if self.compilation_gpu_successful:
+            backends.append("gpu")
+        return backends
+
+    def print_compilation_status(self):
+        """Print human-readable compilation status for both backends."""
+        print("\n" + "=" * 60, flush=True)
+        print("Compilation Status", flush=True)
+        print("=" * 60, flush=True)
+
+        # CPU backend (always required)
+        if self.compilation_cpu_successful:
+            print(f"✓ CPU backend: COMPILED SUCCESSFULLY", flush=True)
+            print(f"  Build: {self.sys_paths.TRITON_build_dir_cpu}", flush=True)
+        else:
+            print(f"✗ CPU backend: FAILED", flush=True)
+            print(f"  Log: {self.sys_paths.compilation_logfile_cpu}", flush=True)
+
+        # GPU backend (optional)
+        if self.cfg_system.gpu_compilation_backend is None:
+            print("  GPU backend: NOT REQUESTED", flush=True)
+        elif self.compilation_gpu_successful:
+            print(f"✓ GPU backend: COMPILED SUCCESSFULLY", flush=True)
+            print(f"  Build: {self.sys_paths.TRITON_build_dir_gpu}", flush=True)
+        else:
+            print(f"✗ GPU backend: FAILED", flush=True)
+            print(f"  Log: {self.sys_paths.compilation_logfile_gpu}", flush=True)
+
+        print(f"\nAvailable backends: {', '.join(self.available_backends)}", flush=True)
+        print("=" * 60 + "\n", flush=True)
 
 
 # %% helper functions
