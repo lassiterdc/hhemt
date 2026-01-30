@@ -449,12 +449,15 @@ class TRITONSWMM_system:
             )
 
         # Build cmake flags - explicitly enable one backend and disable others
+        # CRITICAL: Disable SWMM's OpenMP to prevent linker errors on Frontier/Cray
+        # SWMM has unconditional find_package(OpenMP) which causes issues when
+        # the OpenMP runtime library isn't properly linked in Cray environments
         if backend == "cpu":
             # CPU: Enable OpenMP, explicitly disable GPU backends
-            cmake_flags = "-DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_HIP=OFF -DKokkos_ENABLE_CUDA=OFF"
+            cmake_flags = "-DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_HIP=OFF -DKokkos_ENABLE_CUDA=OFF -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"
         else:
             # GPU: Enable GPU backend, explicitly disable OpenMP
-            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF"
+            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"
 
         # Build commands
         bash_script_lines.extend(
