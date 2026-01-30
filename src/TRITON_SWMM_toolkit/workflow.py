@@ -1448,7 +1448,7 @@ rule setup:
                 snakefile_content += f'''rule {rule_name}:
     input: "_status/setup_complete.flag"
     output: "{outflag}"
-    log: "logs/sims//{rule_name}.log"
+    log: "logs/sims/{rule_name}.log"
     conda: "{conda_env_path}"
     resources:
 {resources_block}
@@ -1480,7 +1480,7 @@ rule setup:
             snakefile_content += f'''rule consolidate_{prefix}{sa_id}:
     input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
     output: "{subanalysis_flag}"
-    log: "logs/sims//consolidate_{prefix}{sa_id}.log"
+    log: "logs/sims/consolidate_{prefix}{sa_id}.log"
     conda: "{conda_env_path}"
     resources:
         slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
