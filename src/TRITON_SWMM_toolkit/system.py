@@ -449,14 +449,21 @@ class TRITONSWMM_system:
             )
 
         # Build cmake flags - explicitly enable one backend and disable others
-        # CRITICAL: Disable SWMM's OpenMP to prevent linker errors on Frontier/Cray
-        # SWMM has unconditional find_package(OpenMP) which causes issues when
-        # the OpenMP runtime library isn't properly linked in Cray environments
         if backend == "cpu":
             # CPU: Enable OpenMP, explicitly disable GPU backends
-            cmake_flags = "-DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_HIP=OFF -DKokkos_ENABLE_CUDA=OFF -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"
+            # On Cray/Frontier: Use -fopenmp flag to ensure OpenMP runtime is linked
+            # This prevents "undefined reference to __kmpc_*" errors when SWMM uses OpenMP
+            cmake_flags = (
+                "-DKokkos_ENABLE_OPENMP=ON "
+                "-DKokkos_ENABLE_HIP=OFF "
+                "-DKokkos_ENABLE_CUDA=OFF "
+                "-DCMAKE_CXX_FLAGS='-fopenmp' "
+                "-DCMAKE_C_FLAGS='-fopenmp' "
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+            )
         else:
             # GPU: Enable GPU backend, explicitly disable OpenMP
+            # For GPU builds, we can disable OpenMP entirely since neither Kokkos nor SWMM need it
             cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"
 
         # Build commands
@@ -484,7 +491,7 @@ class TRITONSWMM_system:
 
         # Execute compilation
         with open(compilation_logfile, "w") as logfile:
-            proc = subprocess.run(
+            subprocess.run(
                 ["/bin/bash", str(compilation_script)],
                 stdout=logfile,
                 stderr=subprocess.STDOUT,
@@ -658,12 +665,12 @@ def compute_grid_resolution(rds):
 
 def coarsen_georaster(rds, target_resolution):
     crs = rds.rio.crs
-    __, og_avg_gridsize = compute_grid_resolution(rds)
+    _, og_avg_gridsize = compute_grid_resolution(rds)
     res_multiplier = target_resolution / og_avg_gridsize
     target_res = og_avg_gridsize * res_multiplier
     rds_coarse = rds.rio.reproject(  # type: ignore
         crs, resolution=target_res, resampling=Resampling.average
     )  # aggregate cells
-    __, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
+    _, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
     assert np.isclose(coarse_avg_gridsize, target_resolution)
     return rds_coarse
