@@ -34,6 +34,12 @@ from TRITON_SWMM_toolkit.examples import NorfolkExample
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
     from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
+from dataclasses import dataclass
+
+
+@dataclass
+class all_examples:
+    ex_Nrflk = NorfolkExample.load(download_if_exists=False)
 
 
 class GetTS_TestCases:
@@ -138,14 +144,6 @@ class GetTS_TestCases:
             additional_system_configs=final_system_configs,
         )
         return nrflk_test
-
-
-from dataclasses import dataclass
-
-
-@dataclass
-class all_examples:
-    ex_Nrflk = NorfolkExample.load(download_if_exists=False)
 
 
 class UVA_TestCases:

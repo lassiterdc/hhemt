@@ -79,15 +79,6 @@ class TRITONSWMM_sensitivity_analysis:
         # Initialize workflow builder for sensitivity analysis
         self._workflow_builder = SensitivityAnalysisWorkflowBuilder(self)
 
-        # validate
-        if "run_mode" in self.df_setup.columns:
-            run_modes = self.df_setup.loc[:, "run_mode"].unique()
-            if ("gpu" in run_modes) and len(run_modes) > 1:
-                raise ValueError(
-                    "A single sensitivity analysis is not currently configured to handle multi-CPU and multi-GPU "
-                    "configurations. The solution currently is to run two different sensitivity analyses."
-                )
-
     def prepare_scenarios_in_each_subanalysis(
         self,
         overwrite_scenarios: bool = False,
