@@ -455,18 +455,21 @@ class TRITONSWMM_system:
             # TRITON's machine detection scripts (e.g., frontier/default_default.sh) set
             # TRITON_BACKEND=HIP as an env var during cmake configuration, which enables
             # GPU-specific code compilation. Setting it beforehand prevents this override.
-            # CRITICAL: Undefine TRITON_HIP_LAUNCHER to prevent HIP/CUDA code compilation
-            # Even with TRITON_BACKEND=OPENMP, Frontier's machine detection adds -DTRITON_HIP_LAUNCHER
-            # based on hostname. We must explicitly undefine it to prevent CUDA syntax errors.
+            # CRITICAL: Use CXXFLAGS environment variable to undefine TRITON_HIP_LAUNCHER
+            # CMake's CMAKE_CXX_FLAGS command-line setting gets overridden by TRITON's CMakeLists.txt
+            # but CXXFLAGS environment variable gets prepended and cannot be overridden.
+            # Must undefine HIP/CUDA launcher macros to prevent CUDA syntax errors in CPU builds.
             # Also use -fopenmp flag to ensure OpenMP runtime is properly linked (prevents __kmpc_* errors)
-            env_setup = "export TRITON_BACKEND=OPENMP"
+            env_setup = [
+                "export TRITON_BACKEND=OPENMP",
+                "export CXXFLAGS='-fopenmp -UTRITON_HIP_LAUNCHER -UTRITON_CUDA_LAUNCHER'",
+                "export CFLAGS='-fopenmp'",
+                "export LDFLAGS='-fopenmp'",
+            ]
             cmake_flags = (
                 "-DKokkos_ENABLE_OPENMP=ON "
                 "-DKokkos_ENABLE_HIP=OFF "
-                "-DKokkos_ENABLE_CUDA=OFF "
-                "-DCMAKE_CXX_FLAGS='-fopenmp -UTRITON_HIP_LAUNCHER -UTRITON_CUDA_LAUNCHER' "
-                "-DCMAKE_C_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                "-DKokkos_ENABLE_CUDA=OFF"
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
@@ -494,9 +497,12 @@ class TRITONSWMM_system:
             ]
         )
 
-        # Add environment variable export if needed (for CPU builds)
+        # Add environment variable exports if needed (for CPU builds)
         if env_setup:
-            bash_script_lines.append(env_setup)
+            if isinstance(env_setup, list):
+                bash_script_lines.extend(env_setup)
+            else:
+                bash_script_lines.append(env_setup)
 
         bash_script_lines.extend(
             [
