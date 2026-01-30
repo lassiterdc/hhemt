@@ -628,7 +628,7 @@ class GetTS_TestCases:
         )
 
 
-def load_config_filepath(case_study_name: str, filename: str) -> Path
+def load_config_filepath(case_study_name: str, filename: str) -> Path:
     return files(APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
 
 
