@@ -319,16 +319,34 @@ class GetTS_TestCases:
     sensitivity_frontier_all_configs_minimal = (
         test_data_dir / "benchmarking_frontier_minimal.xlsx"
     )
-    sensitivity_UVA_cpu_minimal = test_data_dir / "benchmarking_uva_cpus_minimal.xlsx"
-    sensitivity_UVA_cpu_full = test_data_dir / "benchmarking_uva_cpus.xlsx"
-    frontier_compilation_script = (
-        test_data_dir / "template_compile_triton_swmm_frontier.sh"
-    )
-    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
     # UVA
     UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
     UVA_modules_to_load_for_srun = "gompi/14.2.0_5.0.7 miniforge"
     UVA_norfolk_data_dir = Path("/scratch/***REMOVED***/triton_swmm_toolkit_data")
+    sensitivity_UVA_cpu_minimal = test_data_dir / "benchmarking_uva_cpus_minimal.xlsx"
+    sensitivity_UVA_cpu_full = test_data_dir / "benchmarking_uva_cpus.xlsx"
+    # Frontier
+    frontier_analysis_configs = dict(
+        hpc_time_min_per_sim=2,
+        hpc_ensemble_partition="batch",
+        hpc_setup_and_analysis_processing_partition="batch",
+        hpc_account="***REMOVED***",
+        n_mpi_procs=1,
+        n_omp_threads=1,
+        n_nodes=1,
+        run_mode="serial",
+        n_gpus=0,
+        multi_sim_run_method="1_job_many_srun_tasks",
+        hpc_total_nodes=1,
+        hpc_total_job_duration_min=30,
+        hpc_gpus_per_node=8,
+        additional_SBATCH_params=["-q debug"],
+    )
+    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+    frontier_sys_configs = dict(
+        additional_modules_needed_to_run_TRITON_SWMM_on_hpc=frontier_modules_to_load_for_srun,
+        gpu_compilation_backend="HIP",
+    )
 
     def __init__(self) -> None:
         pass
@@ -465,6 +483,10 @@ class GetTS_TestCases:
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "frontier_multisim_GPU"
+        analysis_args = dict(
+                run_mode="gpu",
+                n_gpus=1,
+        )
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
@@ -472,25 +494,8 @@ class GetTS_TestCases:
             n_events=20,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                hpc_time_min_per_sim=2,
-                hpc_ensemble_partition="batch",
-                hpc_setup_and_analysis_processing_partition="batch",
-                hpc_account="***REMOVED***",
-                run_mode="gpu",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=1,
-                n_nodes=1,
-                multi_sim_run_method="1_job_many_srun_tasks",
-                hpc_total_nodes=1,
-                hpc_total_job_duration_min=30,
-                hpc_gpus_per_node=8,
-                additional_SBATCH_params=["-q debug"],
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
-            ),
+            additional_analysis_configs=cls.frontier_analysis_configs | analysis_args,
+            additional_system_configs=cls.frontier_sys_configs,
         )
 
     @classmethod
@@ -505,25 +510,8 @@ class GetTS_TestCases:
             n_events=20,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                hpc_time_min_per_sim=2,
-                hpc_ensemble_partition="batch",
-                hpc_setup_and_analysis_processing_partition="batch",
-                hpc_account="***REMOVED***",
-                run_mode="serial",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=0,
-                n_nodes=1,
-                multi_sim_run_method="1_job_many_srun_tasks",
-                hpc_total_nodes=1,
-                hpc_total_job_duration_min=30,
-                hpc_gpus_per_node=8,
-                additional_SBATCH_params=["-q debug"],
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
-            ),
+            additional_analysis_configs=cls.frontier_analysis_configs,
+            additional_system_configs=cls.frontier_sys_configs,
         )
 
     # @classmethod
@@ -553,6 +541,10 @@ class GetTS_TestCases:
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         analysis_name = "frontier_sensitivity_minimal"
+        analysis_args = dict(
+                toggle_sensitivity_analysis=True,
+                sensitivity_analysis=cls.sensitivity_frontier_all_configs_minimal,
+        )
         return cls._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
@@ -560,28 +552,9 @@ class GetTS_TestCases:
             n_events=1,
             n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
             TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_frontier_all_configs_minimal,
-                hpc_time_min_per_sim=2,
-                hpc_ensemble_partition="batch",
-                hpc_setup_and_analysis_processing_partition="batch",
-                hpc_account="***REMOVED***",
-                run_mode="serial",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=0,
-                n_nodes=1,
-                multi_sim_run_method="1_job_many_srun_tasks",
-                hpc_total_nodes=1,
-                hpc_total_job_duration_min=30,
-                hpc_gpus_per_node=8,
-                additional_SBATCH_params=["-q debug"],
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
-            ),
-        )
+            additional_analysis_configs=cls.frontier_analysis_configs | analysis_args,
+            additional_system_configs=cls.frontier_sys_configs,
+)
 
     # @classmethod
     # def retrieve_norfolk_hcp_cpu_sensitivity_case(
@@ -655,7 +628,7 @@ class GetTS_TestCases:
         )
 
 
-def load_config_filepath(case_study_name: str, filename: str) -> Path:
+def load_config_filepath(case_study_name: str, filename: str) -> Path
     return files(APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
 
 
