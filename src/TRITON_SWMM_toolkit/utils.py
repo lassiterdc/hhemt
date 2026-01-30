@@ -235,6 +235,7 @@ def load_json(file: Path):
 
 
 def write_json(data: dict, file: Path):
+    file.parent.mkdir(exist_ok=True, parents=True)
     with open(file, "w") as f:
         json.dump(data, f, indent=2, default=str)
 

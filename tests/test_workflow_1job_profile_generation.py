@@ -7,14 +7,16 @@ for dynamic concurrency (cores passed via CLI, not hardcoded in profile).
 
 import pytest
 import yaml
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
 def norfolk_1job_cpu_only():
     """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
@@ -30,8 +32,10 @@ def norfolk_1job_cpu_only():
 @pytest.fixture
 def norfolk_1job_with_gpus():
     """Norfolk test case configured for 1-job mode with GPUs."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
@@ -73,9 +77,7 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
     assert config["latency-wait"] == 30, "Should have latency-wait"
 
     # No GPU resources for CPU-only
-    assert (
-        "resources" not in config
-    ), "Should not have GPU resources for CPU-only mode"
+    assert "resources" not in config, "Should not have GPU resources for CPU-only mode"
 
 
 def test_1job_profile_with_gpu_resources(norfolk_1job_with_gpus):

@@ -11,15 +11,6 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 - Platform-appropriate HPC configurations
 - Short simulation durations for fast testing
 
-Usage:
-    from tests.fixtures.test_case_catalog import GetTS_TestCases as tst
-
-    # Local test
-    case = tst.retrieve_norfolk_single_sim_test_case(start_from_scratch=True)
-    system = case.system
-
-    # HPC test
-    case = tst.retrieve_norfolk_UVA_multisim_1cpu_case(start_from_scratch=False)
 """
 
 import os

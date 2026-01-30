@@ -1,7 +1,7 @@
 import pytest
 import tests.fixtures.test_case_catalog as cases
 
-# from tests.fixtures.test_case_catalog import GetTS_TestCases as tst
+# import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
@@ -90,18 +90,6 @@ def norfolk_frontier_sensitivity_analysis_cached():
         start_from_scratch=False
     )
     return case.analysis
-
-
-# @pytest.fixture
-# def norfolk_frontier_all_configs_analysis():
-#     case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=True)
-#     return case.analysis
-
-
-# @pytest.fixture
-# def norfolk_frontier_all_configs_analysis_cached():
-#     case = tst.retrieve_norfolk_frontier_all_configs(start_from_scratch=False)
-#     return case.analysis
 
 
 @pytest.fixture

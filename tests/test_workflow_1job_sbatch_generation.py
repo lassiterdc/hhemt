@@ -6,14 +6,16 @@ with dynamic concurrency (no --ntasks, using --exclusive instead).
 """
 
 import pytest
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
 def norfolk_1job_cpu_only():
     """Norfolk test case configured for 1-job mode (CPU-only)."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure for 1-job mode with CPU-only
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
@@ -34,8 +36,10 @@ def norfolk_1job_cpu_only():
 @pytest.fixture
 def norfolk_1job_with_gpus():
     """Norfolk test case configured for 1-job mode with GPUs."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure for 1-job mode with GPUs
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"

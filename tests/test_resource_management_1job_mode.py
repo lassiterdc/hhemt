@@ -6,14 +6,16 @@ per-simulation requirements (without totals based on max_concurrent).
 """
 
 import pytest
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+import tests.fixtures.test_case_catalog as cases
 
 
 @pytest.fixture
 def norfolk_analysis_cpu_only():
     """Norfolk test case configured with CPU-only simulation."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure basic CPU-only simulation
     analysis.cfg_analysis.n_gpus = 0
@@ -28,8 +30,10 @@ def norfolk_analysis_cpu_only():
 @pytest.fixture
 def norfolk_analysis_with_gpus():
     """Norfolk test case configured with GPU simulation."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    analysis = case.analysis
 
     # Configure GPU simulation
     analysis.cfg_analysis.n_gpus = 2
@@ -89,8 +93,10 @@ def test_sim_requirements_gpu_calculations(norfolk_analysis_with_gpus):
 
 def test_sim_requirements_multi_node_config():
     """Verify per-simulation requirements with multi-node configuration."""
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    analysis = case.system.analysis
+    case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=True
+    )
+    analysis = case.analysis
 
     # Configure multi-node simulation
     analysis.cfg_analysis.n_nodes = 4

@@ -18,7 +18,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 from importlib.resources import files
-from TRITON_SWMM_toolkit.examples import GetTS_TestCases as tst
+import tests.fixtures.test_case_catalog as cases
 
 import tempfile
 from TRITON_SWMM_toolkit.utils import write_zarr
@@ -73,10 +73,12 @@ BASELINE_RETRIEVE_SECONDS = 20.295690
 
 @pytest.fixture(scope="module")
 def test_case_analysis():
-    nrflk_multisim_ensemble = tst.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False
+    nrflk_multisim_ensemble = (
+        cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+            start_from_scratch=False
+        )
     )
-    analysis = nrflk_multisim_ensemble.system.analysis
+    analysis = nrflk_multisim_ensemble.analysis
     return analysis
 
 
