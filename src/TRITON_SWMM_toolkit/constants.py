@@ -1,10 +1,8 @@
 # from pathlib import Path
 from enum import Enum
-
-
-class Mode(str, Enum):
-    SINGLE_CORE = "single_core"
-
+from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
+import os
+from pathlib import Path
 
 # TESTING
 APP_NAME = "TRITON_SWMM_toolkit"
@@ -43,3 +41,31 @@ LST_COL_HEADERS_LINK_FLOW_SUMMARY = [
     "max_over_full_flow",
     "max_over_full_depth",
 ]
+
+TEST_SYSTEM_DIRNAME = "tests"
+TEST_N_REPORTING_TSTEPS_PER_SIM = 12
+TEST_TRITON_REPORTING_TIMESTEP_S = 10
+
+# Platform presets
+FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
+    name="frontier",
+    hpc_ensemble_partition="batch",
+    hpc_setup_and_analysis_processing_partition="batch",
+    hpc_account="***REMOVED***",
+    multi_sim_run_method="1_job_many_srun_tasks",
+    additional_modules="PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0",
+    gpu_backend="HIP",
+)
+
+UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
+    name="uva",
+    hpc_ensemble_partition="standard",
+    hpc_setup_and_analysis_processing_partition="standard",
+    hpc_account="***REMOVED***",
+    multi_sim_run_method="batch_job",
+    additional_modules="gompi/14.2.0_5.0.7 miniforge",
+    gpu_backend="CUDA",
+    example_data_dir=Path("/scratch")
+    / os.getenv("USER", "unknown")
+    / "triton_swmm_toolkit_data",
+)

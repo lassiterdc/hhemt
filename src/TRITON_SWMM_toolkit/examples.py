@@ -1,17 +1,75 @@
-import xarray as xr
-import pandas as pd
+"""
+Production examples for TRITON-SWMM toolkit.
+
+This module provides utilities for loading and running production examples.
+Examples are organized as case studies (e.g., Norfolk coastal flooding) with
+associated HydroShare data and configuration templates.
+
+Generic API (for any case study):
+    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
+    from TRITON_SWMM_toolkit.constants import *
+
+    # Load any case study
+    example = TRITON_SWMM_example.from_case_study(
+        app_name=APP_NAME,
+        case_name="norfolk_coastal_flooding",
+        system_config_template="template_system_config.yaml",
+        analysis_config_template="template_analysis_config.yaml",
+        case_config_filename="case.yaml",
+    )
+    system = example.system
+
+Case-Specific API (convenience wrappers):
+    from TRITON_SWMM_toolkit.examples import NorfolkExample
+
+    # Load Norfolk example (convenience wrapper)
+    norfolk = NorfolkExample.load()
+    system = norfolk.system
+
+Adding New Case Studies:
+    To add a new case study, create a thin wrapper class:
+
+    class MiamiExample:
+        @classmethod
+        def load(cls, download_if_exists=False, example_data_dir=None):
+            return TRITON_SWMM_example.from_case_study(
+                app_name=APP_NAME,
+                case_name="miami_flooding",
+                system_config_template="template_system_config.yaml",
+                analysis_config_template="template_analysis_config.yaml",
+                case_config_filename="case.yaml",
+                download_if_exists=download_if_exists,
+                example_data_dir=example_data_dir,
+            )
+
+For test infrastructure (synthetic weather, isolated test directories),
+see tests/fixtures/ instead.
+"""
+
 from pathlib import Path
-from TRITON_SWMM_toolkit.constants import (
-    APP_NAME,
-    NORFOLK_EX,
-    NORFOLK_SYSTEM_CONFIG,
-    NORFOLK_ANALYSIS_CONFIG,
-    # NORFOLK_sensitivity_EXP_CONFIG,
-    NORFOLK_CASE_CONFIG,
+from typing import Optional
+
+from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+import TRITON_SWMM_toolkit.constants as cnst
+
+from TRITON_SWMM_toolkit.utils import (
+    get_package_root,
+    get_package_data_root,
+    fill_template,
+    read_yaml,
+    write_yaml,
 )
 import sys
-import warnings
+import yaml
+import bagit
+import shutil
+from zipfile import ZipFile
+
+from pathlib import Path
 from typing import Optional
+import warnings
+from importlib.resources import files
 
 with warnings.catch_warnings():
     # Only ignore the pkg_resources deprecation warning
@@ -24,280 +82,125 @@ with warnings.catch_warnings():
         from hsclient import HydroShare
     except ImportError:
         HydroShare = None
-from importlib.resources import files
-import yaml
-from zipfile import ZipFile
-import bagit
-import shutil
 
 from TRITON_SWMM_toolkit.config import (
     load_system_config,
     load_system_config_from_dict,
-    load_analysis_config,
-    analysis_config,
 )
-from TRITON_SWMM_toolkit.utils import (
-    get_package_root,
-    get_package_data_root,
-    fill_template,
-    read_yaml,
-    write_yaml,
-)
-import numpy as np
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 
-#  define test case class
 class TRITON_SWMM_example:
-    # LOADING FROM SYSTEM CONFIG
-    def __init__(self, cfg_system_yaml: Path, cfg_analysis_yaml: Path):
-        self.system = TRITONSWMM_system(cfg_system_yaml)
-        self.system.add_analysis(cfg_analysis_yaml)
-
-
-class TRITON_SWMM_testcase:
     """
-    - everything is based on the single sim analysis so there is only 1 template yaml to keep up to date for testing
-    - retrieves one or more events and subsets time series to simulate a short duration
-    - writes a .csv file with event indices targeted for simulation
-    - creates a version of the analysis config file with a revised analysis name field and pointing to the subset weather index csv
+    Generic example loader for TRITON-SWMM case studies.
+
+    Provides both low-level initialization from YAML paths and high-level
+    class methods for loading case studies from configuration templates.
+
+    Attributes:
+        system: Configured TRITONSWMM_system instance with analysis loaded
     """
 
-    n_tsteps: int = 5
+    def __init__(self, cfg_system_yaml: Path, cfg_analysis_yaml: Path, case_name: str):
+        """
+        Initialize example from system and analysis configuration files.
 
-    # LOADING FROM SYSTEM CONFIG
-    def __init__(
-        self,
-        cfg_system_yaml: Path,
-        analysis_name: str,
-        n_events: int,
-        n_reporting_tsteps_per_sim: int,
-        TRITON_reporting_timestep_s: int,
-        test_system_dirname: str,
-        analysis_description: str = "",
-        start_from_scratch: bool = False,
-        additional_analysis_configs: dict = dict(),
-        additional_system_configs: dict = dict(),
-    ):
-        # load system
+        Args:
+            cfg_system_yaml: Path to system configuration YAML
+            cfg_analysis_yaml: Path to analysis configuration YAML
+        """
         self.system = TRITONSWMM_system(cfg_system_yaml)
-
-        for key, val in additional_system_configs.items():
-            setattr(self.system.cfg_system, key, val)
-        # update system directory
-        self.system.cfg_system.system_directory = (
-            self.system.cfg_system.system_directory.parent / test_system_dirname
+        self.analysis = TRITONSWMM_analysis(
+            analysis_config_yaml=cfg_analysis_yaml, system=self.system
         )
-        anlysys_dir = self.system.cfg_system.system_directory / analysis_name
+        self.test_case_directory = self.retrieve_test_data_directory(case_name)
+        #   # type: ignore
 
-        if start_from_scratch and anlysys_dir.exists():
-            shutil.rmtree(anlysys_dir)
-        anlysys_dir.mkdir(parents=True, exist_ok=True)
+    @classmethod
+    def retrieve_test_data_directory(cls, case_name: str):
+        test_data_dir = files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_name}/")  # type: ignore
+        return test_data_dir
 
-        new_system_config_yaml = (
-            self.system.cfg_system.system_directory / f"{test_system_dirname}.yaml"
-        )
+    @classmethod
+    def from_case_study(
+        cls,
+        case_name: str,
+        system_config_template: str,
+        analysis_config_template: str,
+        case_config_filename: str,
+        download_if_exists: bool = False,
+        example_data_dir: Optional[Path] = None,
+    ):
+        """
+        Load a case study example from configuration templates.
 
-        new_system_config_yaml.write_text(
-            yaml.safe_dump(
-                self.system.cfg_system.model_dump(mode="json"),
-                sort_keys=False,  # .dict() for pydantic v1
+        This is the high-level API for loading any case study. It handles:
+        - Template filling with data directory paths
+        - HydroShare data download
+        - System and analysis configuration generation
+
+        Args:
+            app_name: Application package name (e.g., "TRITON_SWMM_toolkit")
+            case_name: Case study name (e.g., "norfolk_coastal_flooding")
+            system_config_template: System config filename (e.g., "template_system_config.yaml")
+            analysis_config_template: Analysis config filename (e.g., "template_analysis_config.yaml")
+            case_config_filename: Case metadata filename (e.g., "case.yaml")
+            download_if_exists: If True, re-download HydroShare data even if it exists
+            example_data_dir: Optional override for data storage location
+
+        Returns:
+            TRITON_SWMM_example instance with loaded system and analysis
+
+        Example:
+            from TRITON_SWMM_toolkit.constants import *
+            example = TRITON_SWMM_example.from_case_study(
+                app_name=APP_NAME,
+                case_name=NORFOLK_EX,
+                system_config_template=NORFOLK_SYSTEM_CONFIG,
+                analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
+                case_config_filename=NORFOLK_CASE_CONFIG,
             )
-        )
-
-        self.system = TRITONSWMM_system(new_system_config_yaml)
-
-        # load single sime analysis
-        single_sim_anlysys_yaml = TRITON_SWMM_examples.load_norfolk_template_analysis()
-        anlysys = load_analysis_config(single_sim_anlysys_yaml)
-        # update analysis attributes
-        anlysys.analysis_id = analysis_name
-        anlysys.analysis_description = analysis_description
-        f_weather_indices = anlysys_dir / "weather_indices.csv"
-        anlysys.weather_events_to_simulate = f_weather_indices
-        event_index_name = "event_id"
-        anlysys.weather_event_indices = [event_index_name]
-        anlysys.TRITON_reporting_timestep_s = TRITON_reporting_timestep_s
-        # create weather indexer dataset
-        df_weather_indices = pd.DataFrame({event_index_name: np.arange(n_events)})
-        df_weather_indices.to_csv(f_weather_indices)
-        # add additional fields
-        for key, val in additional_analysis_configs.items():
-            setattr(anlysys, key, val)
-
-        f_weather_tseries = anlysys_dir / "weather_tseries.nc"
-        anlysys.weather_timeseries = f_weather_tseries
-
-        cfg_anlysys = analysis_config.model_validate(anlysys)
-        # write analysis as yaml
-        cfg_anlysys_yaml = anlysys_dir / f"{analysis_name}.yaml"
-        cfg_anlysys_yaml.write_text(
-            yaml.safe_dump(
-                cfg_anlysys.model_dump(mode="json"),
-                sort_keys=False,  # .dict() for pydantic v1
-            )
-        )
-
-        self.system.add_analysis(cfg_anlysys_yaml)
-        self.create_short_intense_weather_timeseries(
-            f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
-        )
-        self.system.process_system_level_inputs(overwrite_if_exists=start_from_scratch)
-        # write weather time series and update weather time series path
-
-        # self.system.analysis.cfg_analysis.weather_timeseries = f_weather_tseries  # type: ignore
-        # add analysis to the system
-
-    # create weather time series dataset
-    def create_short_intense_weather_timeseries(
-        self,
-        f_out,
-        n_reporting_tsteps_per_sim,
-        n_events,
-        event_index_name,
-        rain_intensity=50,
-        storm_tide=3,
-    ):
-        wlevel_name = (
-            self.system.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
-        )
-        tstep_coord_name = (
-            self.system.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-        )
-        df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
-        gage_colname = (
-            self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
-        )
-        gages = df_raingage_mapping[gage_colname].unique()
-
-        reporting_tstep_sec = (
-            self.system.analysis.cfg_analysis.TRITON_reporting_timestep_s
-        )
-
-        timesteps = pd.date_range(
-            start="2000-01-01",
-            periods=n_reporting_tsteps_per_sim + 1,
-            freq=f"{int(reporting_tstep_sec)}s",
-        )
-        columns = list(gages) + [wlevel_name]
-        df_tseries = pd.DataFrame(index=timesteps, columns=columns)
-        df_tseries.loc[:, wlevel_name] = storm_tide  # type: ignore
-        df_tseries.loc[:, gages] = rain_intensity
-        df_tseries.index.name = tstep_coord_name
-        df_tseries.columns = df_tseries.columns.astype(str)
-        lst_df = []
-        for event_idx in np.arange(n_events):
-            df = df_tseries.copy()
-            df[event_index_name] = event_idx
-            lst_df.append(df)
-        df_tseries = pd.concat(lst_df)
-        df_tseries = df_tseries.reset_index().set_index(
-            [event_index_name, tstep_coord_name]
-        )
-
-        ds_weather_tseries = df_tseries.to_xarray()
-        ds_weather_tseries.to_netcdf(f_out)
-        return
-
-    def _create_reduced_weather_file_for_testing_if_it_does_not_exist(self):
-        og_weather_timeseries = self.system.analysis.cfg_analysis.weather_timeseries
-        new_weather_timeseries = (
-            self.system.cfg_system.system_directory / "weather_subset.nc"
-        )
-        # weather_events_to_simulate = self.system.analysis.cfg_analysis.weather_events_to_simulate
-        # weather_event_indices = self.system.analysis.cfg_analysis.weather_event_indices
-        weather_time_series_timestep_dimension_name = (
-            self.system.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
-        )
-
-        ds_event_weather_series = xr.open_dataset(
-            og_weather_timeseries, engine="h5netcdf"
-        )
-
-        ds_event_weather_series = ds_event_weather_series.isel(
-            {weather_time_series_timestep_dimension_name: slice(0, self.n_tsteps)}
-        )
-
-        tsteps_new = ds_event_weather_series[
-            weather_time_series_timestep_dimension_name
-        ].to_series()
-
-        new_weather_timeseries.parent.mkdir(parents=True, exist_ok=True)
-
-        if new_weather_timeseries.exists():
-            with xr.open_dataset(
-                new_weather_timeseries, engine="h5netcdf"
-            ) as ds_existing:
-                tsteps_existing = ds_existing[
-                    weather_time_series_timestep_dimension_name
-                ].to_series()
-            if len(tsteps_new) == len(tsteps_existing):
-                if (
-                    tsteps_new == tsteps_existing
-                ).all():  # don't rewrite if it already matches
-                    return new_weather_timeseries
-            else:  # if they are not identical, remove the file and rerewrite
-                new_weather_timeseries.unlink()
-        ds_event_weather_series.to_netcdf(new_weather_timeseries)
-        # print(f"created weather netcdf {new_weather_timeseries}")
-        return new_weather_timeseries
-
-
-class TRITON_SWMM_examples:
-    def __init__(self) -> None:
-        pass
-
-    @classmethod
-    def retrieve_norfolk_irene_example(
-        cls,
-        download_if_exists=False,
-        example_data_dir: Optional[Path] = None,
-    ):
-        norfolk_system_yaml = load_norfolk_system_config(
-            download_if_exists=download_if_exists, example_data_dir=example_data_dir
-        )
-        norfolk_analysis_yaml = cls.load_norfolk_template_analysis()
-        norfolk_irene = TRITON_SWMM_example(norfolk_system_yaml, norfolk_analysis_yaml)
-        return norfolk_irene
-
-    # @classmethod
-    # def load_norfolk_sensitivity_config(cls):
-    #     return cls._load_example_analysis_config(
-    #         NORFOLK_EX, NORFOLK_sensitivity_EXP_CONFIG
-    # )
-
-    @classmethod
-    def load_norfolk_template_analysis(cls):
-        return cls._load_example_analysis_config(NORFOLK_EX, NORFOLK_ANALYSIS_CONFIG)
-
-    @classmethod
-    def _fill_analysis_yaml(
-        cls,
-        system_name: str,
-        analysis_config_filename: str,
-        example_data_dir: Optional[Path] = None,
-    ):
-        mapping = get_norfolk_data_and_package_directory_mapping_dict(
-            example_data_dir=example_data_dir
-        )
-        cfg_template = load_config_filepath(system_name, analysis_config_filename)
-        filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
-        return filled_yaml_data
-
-    @classmethod
-    def _load_example_analysis_config(
-        cls,
-        system_name: str,
-        analysis_config_filename: str,
-        example_data_dir: Optional[Path] = None,
-    ):
-        filled_yaml_data = cls._fill_analysis_yaml(
-            system_name=system_name,
-            analysis_config_filename=analysis_config_filename,
+        """
+        cfg_system_yaml = cls._load_case_system_config(
+            case_name=case_name,
+            system_config_template=system_config_template,
+            case_config_filename=case_config_filename,
+            download_if_exists=download_if_exists,
             example_data_dir=example_data_dir,
         )
-        cfg_system_yaml = load_norfolk_system_config(
-            download_if_exists=False, example_data_dir=example_data_dir
+        cfg_analysis_yaml = cls._load_case_analysis_config(
+            case_name=case_name,
+            analysis_config_template=analysis_config_template,
+            cfg_system_yaml=cfg_system_yaml,
+            example_data_dir=example_data_dir,
+        )
+
+        return cls(cfg_system_yaml, cfg_analysis_yaml, case_name)
+
+    @classmethod
+    def _load_case_analysis_config(
+        cls,
+        case_name: str,
+        analysis_config_template: str,
+        cfg_system_yaml: Path,
+        example_data_dir: Optional[Path] = None,
+    ):
+        """
+        Load analysis config for any case study.
+
+        Args:
+            app_name: Application package name
+            case_name: Case study name
+            analysis_config_template: Analysis config template filename
+            example_data_dir: Optional data directory override
+
+        Returns:
+            Path to generated analysis configuration YAML
+        """
+        filled_yaml_data = cls._fill_case_analysis_yaml(
+            app_name=cnst.APP_NAME,
+            case_name=case_name,
+            analysis_config_template=analysis_config_template,
+            example_data_dir=example_data_dir,
         )
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
@@ -308,443 +211,245 @@ class TRITON_SWMM_examples:
         write_yaml(filled_yaml_data, cfg_yaml)
         return cfg_yaml
 
-
-class GetTS_TestCases:
-    test_system_dirname = "tests"
-    n_reporting_tsteps_per_sim = 12
-    TRITON_reporting_timestep_s = 10
-    test_data_dir = files(APP_NAME).parents[1].joinpath(f"test_data/{NORFOLK_EX}/")  # type: ignore
-    cpu_sensitivity = test_data_dir / "cpu_benchmarking_analysis.xlsx"
-    # hpc_bash_script_ensemble_template = test_data_dir / "ensemble_template.sh"
-    sensitivity_frontier_all_configs_minimal = (
-        test_data_dir / "benchmarking_frontier_minimal.xlsx"
-    )
-    # UVA
-    UVA_compilation_script = test_data_dir / "template_compile_triton_swmm_UVA.sh"
-    UVA_modules_to_load_for_srun = "gompi/14.2.0_5.0.7 miniforge"
-    UVA_norfolk_data_dir = Path("/scratch/***REMOVED***/triton_swmm_toolkit_data")
-    sensitivity_UVA_cpu_minimal = test_data_dir / "benchmarking_uva_cpus_minimal.xlsx"
-    sensitivity_UVA_cpu_full = test_data_dir / "benchmarking_uva_cpus.xlsx"
-    # Frontier
-    frontier_analysis_configs = dict(
-        hpc_time_min_per_sim=2,
-        hpc_ensemble_partition="batch",
-        hpc_setup_and_analysis_processing_partition="batch",
-        hpc_account="***REMOVED***",
-        n_mpi_procs=1,
-        n_omp_threads=1,
-        n_nodes=1,
-        run_mode="serial",
-        n_gpus=0,
-        multi_sim_run_method="1_job_many_srun_tasks",
-        hpc_total_nodes=1,
-        hpc_total_job_duration_min=30,
-        hpc_gpus_per_node=8,
-        additional_SBATCH_params=["-q debug"],
-    )
-    frontier_modules_to_load_for_srun = "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0"  # additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-    frontier_sys_configs = dict(
-        additional_modules_needed_to_run_TRITON_SWMM_on_hpc=frontier_modules_to_load_for_srun,
-        gpu_compilation_backend="HIP",
-    )
-
-    def __init__(self) -> None:
-        pass
-
     @classmethod
-    def _retrieve_norfolk_case(
+    def _fill_case_analysis_yaml(
         cls,
-        analysis_name: str,
-        n_events: int,
-        n_reporting_tsteps_per_sim: int,
-        TRITON_reporting_timestep_s: int,
-        start_from_scratch: bool,
-        download_if_exists=False,
-        additional_analysis_configs=dict(),
-        additional_system_configs=dict(),
+        app_name: str,
+        case_name: str,
+        analysis_config_template: str,
         example_data_dir: Optional[Path] = None,
-    ) -> TRITON_SWMM_testcase:
-        norfolk_system_yaml = load_norfolk_system_config(
-            download_if_exists, example_data_dir=example_data_dir
+    ):
+        """
+        Fill analysis YAML template for any case study.
+
+        Args:
+            app_name: Application package name
+            case_name: Case study name
+            analysis_config_template: Analysis config template filename
+            example_data_dir: Optional data directory override
+
+        Returns:
+            Filled YAML data as dictionary
+        """
+        mapping = cls._get_case_data_and_package_directory_mapping_dict(
+            case_name=case_name,
+            example_data_dir=example_data_dir,
         )
-        nrflk_test = TRITON_SWMM_testcase(
-            norfolk_system_yaml,
-            analysis_name=analysis_name,
-            n_events=n_events,
-            n_reporting_tsteps_per_sim=n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=TRITON_reporting_timestep_s,
-            test_system_dirname=cls.test_system_dirname,
-            start_from_scratch=start_from_scratch,
-            additional_analysis_configs=additional_analysis_configs,
-            additional_system_configs=additional_system_configs,
+        cfg_template = cls._load_config_filepath(case_name, analysis_config_template)
+        filled_yaml_data = cls._return_filled_template_yaml_dictionary(
+            cfg_template, mapping
         )
-        return nrflk_test
+        return filled_yaml_data
 
     @classmethod
-    def retrieve_norfolk_UVA_multisim_1cpu_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    def _load_case_system_config(
+        cls,
+        case_name: str,
+        system_config_template: str,
+        case_config_filename: str,
+        download_if_exists: bool,
+        example_data_dir: Optional[Path] = None,
+        verbose: bool = True,
     ):
-        analysis_name = "UVA_multisim"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=8,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                hpc_time_min_per_sim=2,
-                hpc_ensemble_partition="standard",
-                hpc_setup_and_analysis_processing_partition="standard",
-                hpc_account="***REMOVED***",
-                run_mode="serial",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=0,
-                n_nodes=1,
-                multi_sim_run_method="batch_job",
-                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
-            ),
-            example_data_dir=cls.UVA_norfolk_data_dir,
+        """
+        Load system configuration for any case study.
+
+        Handles template filling, HydroShare download, and config generation.
+
+        Args:
+            app_name: Application package name
+            case_name: Case study name
+            system_config_template: System config template filename
+            case_config_filename: Case metadata filename
+            download_if_exists: If True, re-download HydroShare data
+            example_data_dir: Optional data directory override
+            verbose: If True, print download messages
+
+        Returns:
+            Path to generated system configuration YAML
+        """
+        case_details = cls._load_config_file_as_dic(case_name, case_config_filename)
+        res_identifier = case_details["res_identifier"]  # will come from the case yaml
+        mapping = cls._get_case_data_and_package_directory_mapping_dict(
+            case_name=case_name,
+            example_data_dir=example_data_dir,
         )
-
-    @classmethod
-    def retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "UVA_sensitivity_CPU_full_ensemble_short_sims"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_UVA_cpu_full,
-                hpc_time_min_per_sim=10,
-                hpc_ensemble_partition="standard",
-                hpc_setup_and_analysis_processing_partition="standard",
-                hpc_account="***REMOVED***",
-                run_mode="serial",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=0,
-                n_nodes=1,
-                multi_sim_run_method="batch_job",
-                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
-            ),
-            example_data_dir=cls.UVA_norfolk_data_dir,
+        cfg_template = cls._load_config_filepath(case_name, system_config_template)
+        filled_yaml_data = cls._return_filled_template_yaml_dictionary(
+            cfg_template, mapping
         )
+        cfg_system = load_system_config_from_dict(filled_yaml_data)
 
-    @classmethod
-    def retrieve_norfolk_UVA_sensitivity_CPU_minimal(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "UVA_sensitivity_CPU"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_UVA_cpu_minimal,
-                hpc_time_min_per_sim=2,
-                hpc_ensemble_partition="standard",
-                hpc_setup_and_analysis_processing_partition="standard",
-                hpc_account="***REMOVED***",
-                run_mode="serial",
-                n_mpi_procs=1,
-                n_omp_threads=1,
-                n_gpus=0,
-                n_nodes=1,
-                multi_sim_run_method="batch_job",
-                python_path="/home/***REMOVED***/.conda/envs/triton_swmm_toolkit/bin/python",
-                # use_legacy_cluster_mode=True,
-            ),
-            additional_system_configs=dict(
-                additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.UVA_modules_to_load_for_srun,
-            ),
-            example_data_dir=cls.UVA_norfolk_data_dir,
-        )
-
-    @classmethod
-    def retrieve_norfolk_frontier_multisim_gpu_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "frontier_multisim_GPU"
-        analysis_args = dict(
-                run_mode="gpu",
-                n_gpus=1,
-        )
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=20,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=cls.frontier_analysis_configs | analysis_args,
-            additional_system_configs=cls.frontier_sys_configs,
-        )
-
-    @classmethod
-    def retrieve_norfolk_frontier_multisim_cpu_serial_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "frontier_multisim_CPU"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=20,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=cls.frontier_analysis_configs,
-            additional_system_configs=cls.frontier_sys_configs,
-        )
-
-    # @classmethod
-    # def retrieve_norfolk_frontier_all_configs(
-    #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    # ):
-    #     analysis_name = "frontier_all_configs_sensitivity"
-    #     return cls._retrieve_norfolk_case(
-    #         analysis_name=analysis_name,
-    #         start_from_scratch=start_from_scratch,
-    #         download_if_exists=download_if_exists,
-    #         n_events=1,
-    #         n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-    #         TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-    #         additional_analysis_configs=dict(
-    #             toggle_sensitivity_analysis=True,
-    #             sensitivity_analysis=cls.sensitivity_frontier_all_configs_minimal,
-    #             multi_sim_run_method="1_job_many_srun_tasks",
-    #         ),
-    #         additional_system_configs=dict(
-    #             additional_modules_needed_to_run_TRITON_SWMM_on_hpc=cls.frontier_modules_to_load_for_srun,
-    #         ),
-    #     )
-
-    @classmethod
-    def retrieve_norfolk_frontier_sensitivity_minimal(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "frontier_sensitivity_minimal"
-        analysis_args = dict(
-                toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.sensitivity_frontier_all_configs_minimal,
-        )
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=cls.frontier_analysis_configs | analysis_args,
-            additional_system_configs=cls.frontier_sys_configs,
-)
-
-    # @classmethod
-    # def retrieve_norfolk_hcp_cpu_sensitivity_case(
-    #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    # ):
-    #     analysis_name = "cpu_config_sensitivity"
-    #     return cls._retrieve_norfolk_case(
-    #         analysis_name=analysis_name,
-    #         start_from_scratch=start_from_scratch,
-    #         download_if_exists=download_if_exists,
-    #         n_events=1,
-    #         n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-    #         TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-    #         additional_analysis_configs=dict(
-    #             toggle_sensitivity_analysis=True,
-    #             toggle_run_ensemble_with_bash_script=True,
-    #             hpc_bash_script_ensemble_template=cls.hpc_bash_script_ensemble_template,
-    #             sensitivity_analysis=cls.cpu_sensitivity,
-    #             hpc_account="***REMOVED***",
-    #             hpc_time_min=120,
-    #             hpc_ensemble_partition="batch",
-    #             hpc_n_nodes=1,
-    #         ),
-    #     )
-
-    @classmethod
-    def retrieve_norfolk_cpu_config_sensitivity_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "cpu_config_sensitivity"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-            additional_analysis_configs=dict(
-                toggle_sensitivity_analysis=True,
-                sensitivity_analysis=cls.cpu_sensitivity,
-            ),
-        )
-
-    @classmethod
-    def retrieve_norfolk_single_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "single_sim"
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-        )
-
-    @classmethod
-    def retrieve_norfolk_multi_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        analysis_name = "multi_sim"
-
-        return cls._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=2,
-            n_reporting_tsteps_per_sim=cls.n_reporting_tsteps_per_sim,
-            TRITON_reporting_timestep_s=cls.TRITON_reporting_timestep_s,
-        )
-
-
-def load_config_filepath(case_study_name: str, filename: str) -> Path:
-    return files(APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
-
-
-def load_config_file_as_dic(case_study_name: str, filename: str) -> dict:
-    path = load_config_filepath(case_study_name, filename)
-    return read_yaml(path)
-
-
-def download_data_from_hydroshare(
-    res_identifier: str,
-    target: Path,
-    hs,
-    download_if_exists=False,
-    validate=False,
-):
-    if target.exists() and download_if_exists:
-        shutil.rmtree(target)
-    if target.exists() and not download_if_exists:
-        return
-    target.parent.mkdir(parents=True, exist_ok=True)
-    hs_resource = hs.resource(res_identifier)
-    zip_path = Path(hs_resource.download(target.parent))
-    extract_to = target.parent
-
-    with ZipFile(zip_path, "r") as z:
-        z.extractall(extract_to)
-
-    # Detect the actual top-level folder
-    with ZipFile(zip_path, "r") as z:
-        top_level_dirs = {Path(f).parts[0] for f in z.namelist() if Path(f).parts}
-        if len(top_level_dirs) == 1:
-            unzipped_folder = extract_to / next(iter(top_level_dirs))
+        # download data if it doesn't exist
+        if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
+            pass
         else:
-            raise RuntimeError(
-                "ZIP has multiple top-level folders; cannot determine Bag root."
+            if verbose:
+                print(
+                    f"Download example data to {mapping['DATA_DIR']} using Hydroshare"
+                )
+            hs = cls._sign_into_hydroshare()
+            cls._download_data_from_hydroshare(
+                res_identifier,
+                Path(mapping["HYDROSHARE_ROOT"]),
+                hs,
+                download_if_exists=download_if_exists,
             )
-    # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
-    if validate:
-        bag = bagit.Bag(unzipped_folder)
-        if bag.is_valid():
-            print("Bag verified! All checksums match.")
+
+        cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
+        cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
+        write_yaml(filled_yaml_data, cfg_yaml)
+        return cfg_yaml
+
+    @classmethod
+    def _get_case_data_and_package_directory_mapping_dict(
+        cls,
+        case_name: str,
+        example_data_dir: Optional[Path] = None,
+    ):
+        """
+        Get directory mappings for any case study.
+
+        Args:
+            app_name: Application package name
+            case_name: Case study name
+            example_data_dir: Optional data directory override
+
+        Returns:
+            Dictionary with DATA_DIR, PACKAGE_DIR, HYDROSHARE_ROOT paths
+        """
+        if example_data_dir:
+            root = example_data_dir
         else:
-            print("Bag is invalid!")
-
-    outdir = unzipped_folder.rename(target)
-    zip_path.unlink()
-
-
-def sign_into_hydroshare():
-    if HydroShare is None:
-        raise RuntimeError(
-            "hsclient is not installed. Install optional dependencies with `pip install .[tests]`. Alternatively, you can download the data manually if you have issues installing this package with pip. Link: https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
+            root = get_package_data_root(cnst.APP_NAME)
+        hydroshare_root_dir = root / "examples" / case_name
+        data_dir = hydroshare_root_dir / "data" / "contents"
+        package_dir = (
+            get_package_root(cnst.APP_NAME).parents[1] / "test_data" / case_name
         )
-    hs = HydroShare()
-    print("Please log into hydroshare to download example.", flush=True)
-    hs.sign_in()
-    print("signed into Hydroshare successfully.")
-    return hs
+
+        mapping = dict(
+            DATA_DIR=str(data_dir),
+            PACKAGE_DIR=str(package_dir),
+            HYDROSHARE_ROOT=str(hydroshare_root_dir),
+        )
+        return mapping
+
+    @classmethod
+    def _load_config_filepath(cls, case_study_name: str, filename: str) -> Path:
+        return files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
+
+    @classmethod
+    def _load_config_file_as_dic(cls, case_study_name: str, filename: str) -> dict:
+        path = cls._load_config_filepath(case_study_name, filename)
+        return read_yaml(path)
+
+    @classmethod
+    def _download_data_from_hydroshare(
+        cls,
+        res_identifier: str,
+        target: Path,
+        hs,
+        download_if_exists=False,
+        validate=False,
+    ):
+        if target.exists() and download_if_exists:
+            shutil.rmtree(target)
+        if target.exists() and not download_if_exists:
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        hs_resource = hs.resource(res_identifier)
+        zip_path = Path(hs_resource.download(target.parent))
+        extract_to = target.parent
+
+        with ZipFile(zip_path, "r") as z:
+            z.extractall(extract_to)
+
+        # Detect the actual top-level folder
+        with ZipFile(zip_path, "r") as z:
+            top_level_dirs = {Path(f).parts[0] for f in z.namelist() if Path(f).parts}
+            if len(top_level_dirs) == 1:
+                unzipped_folder = extract_to / next(iter(top_level_dirs))
+            else:
+                raise RuntimeError(
+                    "ZIP has multiple top-level folders; cannot determine Bag root."
+                )
+        # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
+        if validate:
+            bag = bagit.Bag(unzipped_folder)
+            if bag.is_valid():
+                print("Bag verified! All checksums match.")
+            else:
+                print("Bag is invalid!")
+
+        outdir = unzipped_folder.rename(target)
+        zip_path.unlink()
+
+    @classmethod
+    def _sign_into_hydroshare(
+        cls,
+    ):
+        if HydroShare is None:
+            raise RuntimeError(
+                "hsclient is not installed. Install optional dependencies with `pip install .[tests]`. Alternatively, you can download the data manually if you have issues installing this package with pip. Link: https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
+            )
+        hs = HydroShare()
+        print("Please log into hydroshare to download example.", flush=True)
+        hs.sign_in()
+        print("signed into Hydroshare successfully.")
+        return hs
+
+    @classmethod
+    def _return_filled_template_yaml_dictionary(cls, cfg_template: Path, mapping: dict):
+        cfg_filled = fill_template(cfg_template, mapping)
+        try:
+            cfg_filled_yaml = yaml.safe_load(cfg_filled)
+        except Exception:
+            print(cfg_filled)
+            sys.exit("failed to load yaml")
+        return cfg_filled_yaml
 
 
-def return_filled_template_yaml_dictionary(cfg_template: Path, mapping: dict):
-    cfg_filled = fill_template(cfg_template, mapping)
-    try:
-        cfg_filled_yaml = yaml.safe_load(cfg_filled)
-    except Exception:
-        print(cfg_filled)
-        sys.exit("failed to load yaml")
-    return cfg_filled_yaml
+class NorfolkExample:
+    """
+    Convenience wrapper for Norfolk coastal flooding case study.
 
+    This is a thin wrapper around TRITON_SWMM_example that provides
+    Norfolk-specific defaults. Makes it easy to load the Norfolk example
+    without remembering all the constant names.
 
-def get_norfolk_data_and_package_directory_mapping_dict(
-    example_data_dir: Optional[Path] = None,
-):
-    if example_data_dir:
-        root = example_data_dir
-    else:
-        root = get_package_data_root(APP_NAME)
-    hydroshare_root_dir = root / "examples" / NORFOLK_EX
-    data_dir = hydroshare_root_dir / "data" / "contents"
-    package_dir = get_package_root(APP_NAME).parents[1] / "test_data" / NORFOLK_EX
+    Example:
+        from TRITON_SWMM_toolkit.examples import NorfolkExample
 
-    mapping = dict(
-        DATA_DIR=str(data_dir),
-        PACKAGE_DIR=str(package_dir),
-        HYDROSHARE_ROOT=str(hydroshare_root_dir),
-    )
-    return mapping
+        # Load Norfolk example with Hurricane Irene data
+        norfolk = NorfolkExample.load()
+        system = norfolk.system
 
+        # Or just load the analysis template
+    """
 
-def load_norfolk_system_config(
-    download_if_exists: bool,
-    example_data_dir: Optional[Path] = None,
-    verbose: bool = True,
-):
-    case_details = load_config_file_as_dic(NORFOLK_EX, NORFOLK_CASE_CONFIG)
-    res_identifier = case_details["res_identifier"]  # will come from the case yaml
-    mapping = get_norfolk_data_and_package_directory_mapping_dict(
-        example_data_dir=example_data_dir
-    )
-    cfg_template = load_config_filepath(NORFOLK_EX, NORFOLK_SYSTEM_CONFIG)
-    filled_yaml_data = return_filled_template_yaml_dictionary(cfg_template, mapping)
-    cfg_system = load_system_config_from_dict(filled_yaml_data)
-    # download data if it doesn't exist
-    if Path(mapping["DATA_DIR"]).exists() and not download_if_exists:
-        pass
-    else:
-        if verbose:
-            print(f"Download example data to {mapping['DATA_DIR']} using Hydroshare")
-        hs = sign_into_hydroshare()
-        download_data_from_hydroshare(
-            res_identifier,
-            Path(mapping["HYDROSHARE_ROOT"]),
-            hs,
+    @classmethod
+    def load(
+        cls,
+        download_if_exists: bool = False,
+        example_data_dir: Optional[Path] = None,
+    ) -> TRITON_SWMM_example:
+        """
+        Load Norfolk coastal flooding example.
+
+        Args:
+            download_if_exists: If True, re-download HydroShare data
+            example_data_dir: Optional override for data directory
+
+        Returns:
+            TRITON_SWMM_example instance with Norfolk system loaded
+        """
+
+        return TRITON_SWMM_example.from_case_study(
+            case_name=cnst.NORFOLK_EX,
+            system_config_template=cnst.NORFOLK_SYSTEM_CONFIG,
+            analysis_config_template=cnst.NORFOLK_ANALYSIS_CONFIG,
+            case_config_filename=cnst.NORFOLK_CASE_CONFIG,
             download_if_exists=download_if_exists,
+            example_data_dir=example_data_dir,
         )
-    cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
-    cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
-    write_yaml(filled_yaml_data, cfg_yaml)
-    return cfg_yaml

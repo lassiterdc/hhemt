@@ -64,14 +64,6 @@ class TRITONSWMM_system:
             raise RuntimeError("No analysis defined. Call add_analysis() first.")
         return self._analysis
 
-    def add_analysis(self, analysis_config_yaml: Path):
-        # from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-
-        exp = TRITONSWMM_analysis(analysis_config_yaml, self)
-        exp_name = exp.cfg_analysis.analysis_id
-        self._analysis = exp
-        return
-
     def process_system_level_inputs(
         self, overwrite_if_exists: bool = False, verbose: bool = False
     ):
@@ -316,9 +308,7 @@ class TRITONSWMM_system:
         for backend in backends:
             if backend == "cpu":
                 self._patch_triton_machine_cmake_for_openmp(
-                    TRITONSWMM_software_directory,
-                    backend,
-                    verbose=verbose
+                    TRITONSWMM_software_directory, backend, verbose=verbose
                 )
 
         # Compile each backend sequentially
@@ -407,10 +397,7 @@ class TRITONSWMM_system:
         )
 
     def _patch_triton_machine_cmake_for_openmp(
-        self,
-        triton_dir: Path,
-        backend: str,
-        verbose: bool = True
+        self, triton_dir: Path, backend: str, verbose: bool = True
     ) -> bool:
         """
         Patch TRITON's cmake/machine.cmake to filter GPU flags for OpenMP builds.
@@ -433,6 +420,7 @@ class TRITONSWMM_system:
             True if patch was applied, False if already patched or not needed
         """
         import logging
+
         logger = logging.getLogger(__name__)
 
         machine_cmake = triton_dir / "cmake" / "machine.cmake"
@@ -449,7 +437,7 @@ class TRITONSWMM_system:
             if verbose:
                 print(
                     "[CMAKE PATCH] cmake/machine.cmake already patched (skipping)",
-                    flush=True
+                    flush=True,
                 )
             return False
 
@@ -458,7 +446,9 @@ class TRITONSWMM_system:
             return False
 
         # Find the line to patch (should be around line 216)
-        target_line = 'set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")'
+        target_line = (
+            'set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")'
+        )
 
         if target_line not in content:
             warning_msg = (
@@ -480,7 +470,7 @@ class TRITONSWMM_system:
                 print(f"[CMAKE PATCH] Created backup: {backup_path}", flush=True)
 
         # Create patch
-        patch_code = '''# TRITON-SWMM toolkit auto-patch: Filter GPU flags for OpenMP backend
+        patch_code = """# TRITON-SWMM toolkit auto-patch: Filter GPU flags for OpenMP backend
 if(BACKEND STREQUAL "OPENMP")
   # Remove GPU-specific flags from COMPILER_FLAGS for CPU-only builds
   string(REPLACE "-DTRITON_HIP_LAUNCHER" "" COMPILER_FLAGS "${COMPILER_FLAGS}")
@@ -489,7 +479,7 @@ if(BACKEND STREQUAL "OPENMP")
   message(STATUS "OpenMP backend: Removed GPU launcher flags from COMPILER_FLAGS")
 endif()
 
-set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")'''
+set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")"""
 
         # Apply patch
         patched_content = content.replace(target_line, patch_code)
@@ -498,23 +488,33 @@ set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")'''
         # Print detailed before/after if verbose
         if verbose:
             print("\n" + "=" * 70, flush=True)
-            print("⚠️  PATCHING TRITON cmake/machine.cmake FOR CPU COMPILATION", flush=True)
+            print(
+                "⚠️  PATCHING TRITON cmake/machine.cmake FOR CPU COMPILATION", flush=True
+            )
             print("=" * 70, flush=True)
-            print("\nWhy: On Frontier HPC, machine detection injects GPU flags even for", flush=True)
-            print("     CPU builds, causing compilation errors. This patch filters them.", flush=True)
+            print(
+                "\nWhy: On Frontier HPC, machine detection injects GPU flags even for",
+                flush=True,
+            )
+            print(
+                "     CPU builds, causing compilation errors. This patch filters them.",
+                flush=True,
+            )
             print("\nFile: " + str(machine_cmake), flush=True)
             print("Backup: " + str(backup_path), flush=True)
             print("\n--- BEFORE (original line) ---", flush=True)
             print(target_line, flush=True)
             print("\n--- AFTER (patched section) ---", flush=True)
             # Show the patch with proper indentation
-            for line in patch_code.split('\n'):
+            for line in patch_code.split("\n"):
                 print(line, flush=True)
             print("\n" + "=" * 70, flush=True)
             print("✓ Patch applied successfully", flush=True)
             print("=" * 70 + "\n", flush=True)
 
-        logger.info("✓ Patched cmake/machine.cmake to filter GPU flags for OpenMP builds")
+        logger.info(
+            "✓ Patched cmake/machine.cmake to filter GPU flags for OpenMP builds"
+        )
         return True
 
     def _compile_backend(
