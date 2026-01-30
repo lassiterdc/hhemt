@@ -1654,6 +1654,7 @@ rule setup:
             result = self._base_builder._submit_single_job_workflow(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
+                wait_for_completion=wait_for_completion,
             )
 
             self.sensitivity_analysis._update_master_analysis_log()
@@ -1738,14 +1739,14 @@ rule setup:
             result = self._base_builder.run_snakemake_local(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
-                dry_run=dry_run,
+                dry_run=False,
             )
         else:  # slurm
             result = self._base_builder.run_snakemake_slurm(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
-                dry_run=dry_run,
+                dry_run=False,
             )
 
         # Print snakemake log file location if available
