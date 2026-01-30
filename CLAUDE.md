@@ -27,6 +27,47 @@ ruff check src/
 ruff format src/
 ```
 
+## Development Philosophy
+
+### Backward Compatibility
+
+**Backward compatibility is NOT a priority for this project.**
+
+Rationale:
+- Single developer codebase
+- Better to have clean code than maintain deprecated APIs
+- Refactoring should remove old patterns, not preserve them
+- Git history provides access to old implementations if needed
+
+When refactoring:
+- ❌ Don't add deprecation warnings
+- ❌ Don't keep old APIs "for compatibility"
+- ❌ Don't create compatibility shims or aliases
+- ✅ Do update all usage sites immediately
+- ✅ Do delete obsolete code completely
+- ✅ Do use git history if old patterns are needed later
+
+Exception: Configuration file formats should maintain backward compatibility
+where practical, since they may be versioned separately from code.
+
+Example:
+```python
+# BAD - Keeping deprecated API
+class OldAPI:
+    @classmethod
+    def old_method(cls):
+        warnings.warn("Use new_method instead", DeprecationWarning)
+        return cls.new_method()
+
+# GOOD - Clean replacement
+class NewAPI:
+    @classmethod
+    def improved_method(cls):
+        # New implementation
+        pass
+# Old API completely removed, all call sites updated
+```
+
 ## Architecture
 
 ### Three-Layer Hierarchy
