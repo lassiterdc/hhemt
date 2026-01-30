@@ -455,13 +455,16 @@ class TRITONSWMM_system:
             # TRITON's machine detection scripts (e.g., frontier/default_default.sh) set
             # TRITON_BACKEND=HIP as an env var during cmake configuration, which enables
             # GPU-specific code compilation. Setting it beforehand prevents this override.
+            # CRITICAL: Undefine TRITON_HIP_LAUNCHER to prevent HIP/CUDA code compilation
+            # Even with TRITON_BACKEND=OPENMP, Frontier's machine detection adds -DTRITON_HIP_LAUNCHER
+            # based on hostname. We must explicitly undefine it to prevent CUDA syntax errors.
             # Also use -fopenmp flag to ensure OpenMP runtime is properly linked (prevents __kmpc_* errors)
             env_setup = "export TRITON_BACKEND=OPENMP"
             cmake_flags = (
                 "-DKokkos_ENABLE_OPENMP=ON "
                 "-DKokkos_ENABLE_HIP=OFF "
                 "-DKokkos_ENABLE_CUDA=OFF "
-                "-DCMAKE_CXX_FLAGS='-fopenmp' "
+                "-DCMAKE_CXX_FLAGS='-fopenmp -UTRITON_HIP_LAUNCHER -UTRITON_CUDA_LAUNCHER' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
             )
@@ -469,11 +472,15 @@ class TRITONSWMM_system:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
             # SWMM's CMakeLists.txt unconditionally finds and links OpenMP, so we must ensure
             # the OpenMP runtime library is linked to prevent "undefined reference to __kmpc_*" errors
+            # Need -fopenmp in BOTH shared library and executable linker flags since libswmm5.so
+            # is a shared library that gets linked into runswmm executable
             # Kokkos won't use OpenMP since we explicitly disable it with -DKokkos_ENABLE_OPENMP=OFF
             env_setup = ""  # Let machine detection set HIP/CUDA backend
             cmake_flags = (
                 f"{cmake_backend_flag} "
                 "-DKokkos_ENABLE_OPENMP=OFF "
+                "-DCMAKE_C_FLAGS='-fopenmp' "
+                "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
                 "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
             )
 
