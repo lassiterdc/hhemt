@@ -816,7 +816,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
     def _wait_for_slurm_job_completion(
         self,
         job_id: str,
-        poll_interval: int = 2,
+        poll_interval: int = 1,
         timeout: int | None = None,
         verbose: bool = True,
     ) -> dict:
@@ -829,7 +829,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         ----------
         job_id : str
             SLURM job ID to monitor
-        poll_interval : int, default=2
+        poll_interval : int, default=1
             Seconds between status checks
         timeout : int | None, default=None
             Maximum seconds to wait (None = indefinite)
