@@ -448,15 +448,16 @@ class TRITONSWMM_system:
                 ]
             )
 
-        # Build cmake flags - explicitly enable one backend and disable others
+        # Build cmake flags and environment setup - explicitly enable one backend and disable others
         if backend == "cpu":
             # CPU: Enable OpenMP for Kokkos, explicitly disable GPU backends
-            # CRITICAL: Override TRITON_BACKEND to prevent machine detection from enabling HIP/CUDA
-            # On Cray/Frontier: Machine detection sets TRITON_BACKEND=HIP by default, which compiles
-            # GPU-specific code paths. We must override to OPENMP for CPU builds.
+            # CRITICAL: Set TRITON_BACKEND as environment variable BEFORE cmake runs
+            # TRITON's machine detection scripts (e.g., frontier/default_default.sh) set
+            # TRITON_BACKEND=HIP as an env var during cmake configuration, which enables
+            # GPU-specific code compilation. Setting it beforehand prevents this override.
             # Also use -fopenmp flag to ensure OpenMP runtime is properly linked (prevents __kmpc_* errors)
+            env_setup = "export TRITON_BACKEND=OPENMP"
             cmake_flags = (
-                "-DTRITON_BACKEND=OPENMP "
                 "-DKokkos_ENABLE_OPENMP=ON "
                 "-DKokkos_ENABLE_HIP=OFF "
                 "-DKokkos_ENABLE_CUDA=OFF "
@@ -466,9 +467,15 @@ class TRITONSWMM_system:
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
-            # SWMM still needs OpenMP to be found (it unconditionally links OpenMP::OpenMP_C)
-            # but Kokkos won't use it since we explicitly disable it
-            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF"
+            # SWMM's CMakeLists.txt unconditionally finds and links OpenMP, so we must ensure
+            # the OpenMP runtime library is linked to prevent "undefined reference to __kmpc_*" errors
+            # Kokkos won't use OpenMP since we explicitly disable it with -DKokkos_ENABLE_OPENMP=OFF
+            env_setup = ""  # Let machine detection set HIP/CUDA backend
+            cmake_flags = (
+                f"{cmake_backend_flag} "
+                "-DKokkos_ENABLE_OPENMP=OFF "
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+            )
 
         # Build commands
         bash_script_lines.extend(
@@ -477,6 +484,15 @@ class TRITONSWMM_system:
                 'rm -rf "${BUILD_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
                 'cd "${BUILD_DIR}"',
+            ]
+        )
+
+        # Add environment variable export if needed (for CPU builds)
+        if env_setup:
+            bash_script_lines.append(env_setup)
+
+        bash_script_lines.extend(
+            [
                 f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} ..",
                 "make -j4",
                 "",
