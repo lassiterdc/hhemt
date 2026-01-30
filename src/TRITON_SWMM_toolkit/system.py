@@ -450,10 +450,13 @@ class TRITONSWMM_system:
 
         # Build cmake flags - explicitly enable one backend and disable others
         if backend == "cpu":
-            # CPU: Enable OpenMP, explicitly disable GPU backends
-            # On Cray/Frontier: Use -fopenmp flag to ensure OpenMP runtime is linked
-            # This prevents "undefined reference to __kmpc_*" errors when SWMM uses OpenMP
+            # CPU: Enable OpenMP for Kokkos, explicitly disable GPU backends
+            # CRITICAL: Override TRITON_BACKEND to prevent machine detection from enabling HIP/CUDA
+            # On Cray/Frontier: Machine detection sets TRITON_BACKEND=HIP by default, which compiles
+            # GPU-specific code paths. We must override to OPENMP for CPU builds.
+            # Also use -fopenmp flag to ensure OpenMP runtime is properly linked (prevents __kmpc_* errors)
             cmake_flags = (
+                "-DTRITON_BACKEND=OPENMP "
                 "-DKokkos_ENABLE_OPENMP=ON "
                 "-DKokkos_ENABLE_HIP=OFF "
                 "-DKokkos_ENABLE_CUDA=OFF "
@@ -462,9 +465,10 @@ class TRITONSWMM_system:
                 "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
             )
         else:
-            # GPU: Enable GPU backend, explicitly disable OpenMP
-            # For GPU builds, we can disable OpenMP entirely since neither Kokkos nor SWMM need it
-            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF -DCMAKE_DISABLE_FIND_PACKAGE_OpenMP=TRUE"
+            # GPU: Enable GPU backend, disable OpenMP for Kokkos
+            # SWMM still needs OpenMP to be found (it unconditionally links OpenMP::OpenMP_C)
+            # but Kokkos won't use it since we explicitly disable it
+            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF"
 
         # Build commands
         bash_script_lines.extend(
