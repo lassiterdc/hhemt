@@ -448,6 +448,14 @@ class TRITONSWMM_system:
                 ]
             )
 
+        # Build cmake flags - explicitly enable one backend and disable others
+        if backend == "cpu":
+            # CPU: Enable OpenMP, explicitly disable GPU backends
+            cmake_flags = "-DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_HIP=OFF -DKokkos_ENABLE_CUDA=OFF"
+        else:
+            # GPU: Enable GPU backend, explicitly disable OpenMP
+            cmake_flags = f"{cmake_backend_flag} -DKokkos_ENABLE_OPENMP=OFF"
+
         # Build commands
         bash_script_lines.extend(
             [
@@ -455,7 +463,7 @@ class TRITONSWMM_system:
                 'rm -rf "${BUILD_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
                 'cd "${BUILD_DIR}"',
-                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_backend_flag} ..",
+                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} ..",
                 "make -j4",
                 "",
                 "echo 'script finished'",
