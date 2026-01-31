@@ -536,7 +536,7 @@ class analysis_config(cfgBaseModel):
     # extra inputs (currently only used by sensitivity analysis)
     analysis_dir: Optional[Path] = Field(
         None,
-        description="Optional path to analysis directory",
+        description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
     )
 
     # VALIDATION - STRING REQUIREMENTS
