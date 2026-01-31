@@ -10,7 +10,7 @@ pytestmark = pytest.mark.skipif(
 
 def test_run_multisim_concurrently(norfolk_multi_sim_analysis):
     analysis = norfolk_multi_sim_analysis
-    analysis._system.compile_TRITON_SWMM(recompile_if_already_done_successfully=True)
+    analysis._system.compile_TRITON_SWMM(recompile_if_already_done_successfully=False)
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario=True, verbose=True
     )
