@@ -131,9 +131,12 @@ def validate_resource_usage(analysis, logger=None):
 
         # Check GPUs (for GPU mode)
         if run_mode == "gpu":
-            if pd.notna(row["actual_gpus"]) and row["actual_gpus"] < expected_gpus:
+            if (
+                pd.notna(row["actual_total_gpus"])
+                and row["actual_total_gpus"] < expected_gpus
+            ):
                 issues.append(
-                    f"  - GPUs: expected >={expected_gpus}, actual {row['actual_gpus']}"
+                    f"  - Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}"
                 )
 
         # Check GPU backend
