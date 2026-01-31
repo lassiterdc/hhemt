@@ -401,7 +401,7 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         overwrite_if_exist: bool = False,
-        verbose: bool = False,
+        verbose: bool = True,
         compression_level: int = 5,
     ):
         self.create_subanalysis_summaries(

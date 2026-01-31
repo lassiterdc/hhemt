@@ -31,6 +31,7 @@ import TRITON_SWMM_toolkit.constants as cnst
 from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
 from TRITON_SWMM_toolkit.examples import NorfolkExample
 
+
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
     from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
@@ -39,7 +40,11 @@ from dataclasses import dataclass
 
 @dataclass
 class all_examples:
-    ex_Nrflk = NorfolkExample.load(download_if_exists=False)
+    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
+
+    @staticmethod
+    def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
+        return NorfolkExample.load(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -180,7 +185,7 @@ class UVA_TestCases:
     ):
         """UVA HPC CPU sensitivity analysis with full ensemble configuration."""
         sensitivity_analysis = (
-            all_examples.ex_Nrflk.test_case_directory / cls.sensitivity_UVA_cpu_full
+            all_examples.ex_Nrflk().test_case_directory / cls.sensitivity_UVA_cpu_full
         )
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -208,7 +213,8 @@ class UVA_TestCases:
     ):
         """UVA HPC CPU sensitivity analysis with minimal configuration."""
         sensitivity_analysis = (
-            all_examples.ex_Nrflk.test_case_directory / cls.sensitivity_UVA_cpu_minimal
+            all_examples.ex_Nrflk().test_case_directory
+            / cls.sensitivity_UVA_cpu_minimal
         )
 
         analysis_overrides = {
@@ -298,7 +304,7 @@ class Frontier_TestCases:
         """Frontier HPC sensitivity analysis with minimal configuration."""
         analysis_name = "frontier_sensitivity_minimal"
         sensitivity = (
-            all_examples.ex_Nrflk.test_case_directory
+            all_examples.ex_Nrflk().test_case_directory
             / cls.sensitivity_frontier_all_configs_minimal
         )
         analysis_overrides = {
@@ -336,7 +342,7 @@ class Local_TestCases:
     ):
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity"
-        sensitivity = all_examples.ex_Nrflk.test_case_directory / cls.cpu_sensitivity
+        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,

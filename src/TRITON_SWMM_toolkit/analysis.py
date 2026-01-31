@@ -142,7 +142,7 @@ class TRITONSWMM_analysis:
     def consolidate_TRITON_and_SWMM_simulation_summaries(
         self,
         overwrite_if_exist: bool = False,
-        verbose: bool = False,
+        verbose: bool = True,
         compression_level: int = 5,
         which: Literal["TRITON", "SWMM", "both"] = "both",
     ):
@@ -164,18 +164,21 @@ class TRITONSWMM_analysis:
             Which outputs to consolidate (default: "both")
         """
         if which in ["TRITON", "both"]:
-            self.consolidate_TRITON_simulation_summaries(
+            if verbose:
+                print("Consolidating analysis TRITON outputs...", flush=True)
+            self.process.consolidate_TRITON_outputs_for_analysis(
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         if which in ["SWMM", "both"]:
-            self.consolidate_SWMM_simulation_summaries(
+            print("Consolidating analysis SWMM outputs...", flush=True)
+            self.process.consolidate_SWMM_outputs_for_analysis(
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
             )
-
+        print("Consolidating analysis performance outputs...", flush=True)
         # ALWAYS consolidate performance summaries (independent of 'which' parameter)
         self.process.consolidate_TRITONSWMM_performance_summaries(
             overwrite_if_exist=overwrite_if_exist,
@@ -183,60 +186,6 @@ class TRITONSWMM_analysis:
             compression_level=compression_level,
         )
         return
-
-    def consolidate_TRITON_simulation_summaries(
-        self,
-        overwrite_if_exist: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate TRITON simulation outputs from all scenarios.
-
-        Aggregates TRITON output files from individual scenarios into a single
-        analysis-level summary file.
-
-        Parameters
-        ----------
-        overwrite_if_exist : bool, optional
-            If True, overwrite existing consolidated file (default: False)
-        verbose : bool, optional
-            If True, print progress messages (default: False)
-        compression_level : int, optional
-            Compression level for output file, 0-9 (default: 5)
-        """
-        self.process.consolidate_TRITON_outputs_for_analysis(
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-
-    def consolidate_SWMM_simulation_summaries(
-        self,
-        overwrite_if_exist: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate SWMM simulation outputs from all scenarios.
-
-        Aggregates SWMM node and link output files from individual scenarios into
-        analysis-level summary files.
-
-        Parameters
-        ----------
-        overwrite_if_exist : bool, optional
-            If True, overwrite existing consolidated files (default: False)
-        verbose : bool, optional
-            If True, print progress messages (default: False)
-        compression_level : int, optional
-            Compression level for output files, 0-9 (default: 5)
-        """
-        self.process.consolidate_SWMM_outputs_for_analysis(
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
 
     def print_cfg(self, which: Literal["system", "analysis", "both"] = "both"):
         """
@@ -1179,3 +1128,6 @@ class TRITONSWMM_analysis:
             Consolidated TRITON outputs from all scenarios
         """
         return self.process.TRITON_summary
+
+
+# %%
