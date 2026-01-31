@@ -10,6 +10,7 @@ analysis_description: 'Single Simulation of Hurricane Irene 8-27-2011'
 TRITON_SWMM_make_command: 'hpc_swmm_omp'
 run_mode: "serial"
 multi_sim_run_method: "local"
+local_cpu_cores_for_workflow: 4
 # UNITS
 rainfall_units: 'mm/hr'
 storm_tide_units: 'm'

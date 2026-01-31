@@ -409,6 +409,11 @@ class analysis_config(cfgBaseModel):
         "multi_sim_run_method = 1_job_many_srun_tasks. "
         "Used with --gres=gpu:{hpc_gpus_per_node} directive. ",
     )
+    # local run constraints
+    local_cpu_cores_for_workflow: Optional[int] = Field(
+        None,
+        description="This is passed to Snakemake to let it know how many CPU cores its allowed to use on your computer",
+    )
     # HPC JOB ARRAY PARAMETERS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
     hpc_time_min_per_sim: Optional[int] = Field(
