@@ -55,7 +55,7 @@ FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     hpc_account="***REMOVED***",
     multi_sim_run_method="1_job_many_srun_tasks",
     additional_modules="PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0",
-    gpu_backend="HIP",
+    gpu_compilation_backend="HIP",
     hpc_gpus_per_node=8,
     hpc_cpus_per_node=64,
 )
@@ -67,7 +67,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     hpc_account="***REMOVED***",
     multi_sim_run_method="batch_job",
     additional_modules="gompi/14.2.0_5.0.7 miniforge",
-    gpu_backend="CUDA",
+    gpu_compilation_backend="CUDA",
     example_data_dir=Path("/scratch")
     / os.getenv("USER", "unknown")
     / "triton_swmm_toolkit_data",

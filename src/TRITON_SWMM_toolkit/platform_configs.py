@@ -50,7 +50,7 @@ class PlatformConfig:
 
     # System configuration fields
     additional_modules: str
-    gpu_backend: str
+    gpu_compilation_backend: str
 
     # Optional fields with defaults
     python_path: str = field(default_factory=lambda: sys.executable)
@@ -71,6 +71,8 @@ class PlatformConfig:
             "hpc_account": self.hpc_account,
             "multi_sim_run_method": self.multi_sim_run_method,
             "python_path": self.python_path,
+            "hpc_gpus_per_node": self.hpc_gpus_per_node,
+            "hpc_cpus_per_node": self.hpc_cpus_per_node,
         }
 
     def to_system_dict(self) -> Dict:
@@ -82,5 +84,5 @@ class PlatformConfig:
         """
         return {
             "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": self.additional_modules,
-            "gpu_compilation_backend": self.gpu_backend,
+            "gpu_compilation_backend": self.gpu_compilation_backend,
         }
