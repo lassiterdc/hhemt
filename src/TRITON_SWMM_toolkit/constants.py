@@ -56,6 +56,8 @@ FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     multi_sim_run_method="1_job_many_srun_tasks",
     additional_modules="PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0",
     gpu_backend="HIP",
+    hpc_gpus_per_node=8,
+    hpc_cpus_per_node=64,
 )
 
 UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(

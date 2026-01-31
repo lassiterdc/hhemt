@@ -409,6 +409,11 @@ class analysis_config(cfgBaseModel):
         "multi_sim_run_method = 1_job_many_srun_tasks. "
         "Used with --gres=gpu:{hpc_gpus_per_node} directive. ",
     )
+    hpc_cpus_per_node: Optional[int] = Field(
+        None,
+        description="CPUs per node on the HPC cluster. Required for dry runs using "
+        "multi_sim_run_method = 1_job_many_srun_tasks.",
+    )
     # local run constraints
     local_cpu_cores_for_workflow: Optional[int] = Field(
         None,

@@ -709,6 +709,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         snakefile_path: Path,
         verbose: bool = True,
         dry_run: bool = False,
+        additional_args: list[str] | None = None,
     ) -> dict:
         """
         Run Snakemake workflow on local machine.
@@ -721,6 +722,8 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             If True, print progress messages
         dry_run : bool
             If True, perform a Snakemake dry run only
+        additional_args : list[str] | None
+            Additional command-line arguments to pass to snakemake (e.g., ["--cores", "64", "--resources", "gpu=16"])
 
         Returns
         -------
@@ -748,15 +751,24 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
                 )
 
+            cmd_args = [
+                "snakemake",
+                "--profile",
+                str(config_dir),
+                "--snakefile",
+                str(snakefile_path),
+            ]
+
+            # Add additional args if provided (CLI args override config)
+            if additional_args:
+                cmd_args.extend(additional_args)
+
+            # Add dry-run flag last
+            if dry_run:
+                cmd_args.append("--dry-run")
+
             result = subprocess.run(
-                [
-                    "snakemake",
-                    "--profile",
-                    str(config_dir),
-                    "--snakefile",
-                    str(snakefile_path),
-                    *(["--dry-run"] if dry_run else []),
-                ],
+                cmd_args,
                 cwd=str(self.analysis_paths.analysis_dir),
                 capture_output=True,
                 text=True,
@@ -1319,6 +1331,51 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
 
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
+
+            # Always perform a dry run validation first
+            # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS, --resources gpu=$TOTAL_GPUS)
+            assert isinstance(
+                self.cfg_analysis.hpc_cpus_per_node, int
+            ), "hpc_cpus_per_node required for 1_job_many_srun_tasks dry run validation"
+            assert isinstance(
+                self.cfg_analysis.hpc_total_nodes, int
+            ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+
+            expected_total_cpus = (
+                self.cfg_analysis.hpc_cpus_per_node * self.cfg_analysis.hpc_total_nodes
+            )
+
+            # Build additional args matching SBATCH script
+            additional_args = ["--cores", str(expected_total_cpus)]
+
+            # Add GPU resources if configured (matches SBATCH script logic)
+            sim_resources = (
+                self.analysis._resource_manager._get_simulation_resource_requirements()
+            )
+            if sim_resources["n_gpus"] > 0:
+                assert isinstance(
+                    self.cfg_analysis.hpc_gpus_per_node, int
+                ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+                expected_total_gpus = (
+                    self.cfg_analysis.hpc_gpus_per_node * self.cfg_analysis.hpc_total_nodes
+                )
+                additional_args.extend(["--resources", f"gpu={expected_total_gpus}"])
+
+            dry_run_result = self.run_snakemake_local(
+                snakefile_path=snakefile_path,
+                verbose=verbose,
+                dry_run=True,
+                additional_args=additional_args,
+            )
+
+            if not dry_run_result.get("success"):
+                raise RuntimeError("Dry run failed; workflow submission aborted.")
+
+            if dry_run:
+                # Override mode to indicate intended execution context
+                dry_run_result["mode"] = "single_job"
+                self.analysis._refresh_log()
+                return dry_run_result
 
             result = self._submit_single_job_workflow(
                 snakefile_path=snakefile_path,

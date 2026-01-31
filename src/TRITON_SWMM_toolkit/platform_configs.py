@@ -55,6 +55,8 @@ class PlatformConfig:
     # Optional fields with defaults
     python_path: str = field(default_factory=lambda: sys.executable)
     example_data_dir: Optional[Path] = None
+    hpc_gpus_per_node: Optional[int] = None
+    hpc_cpus_per_node: Optional[int] = None
 
     def to_analysis_dict(self) -> Dict:
         """
