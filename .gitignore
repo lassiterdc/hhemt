@@ -211,3 +211,19 @@ __marimo__/
 *test_data/triton/*
 profile_runner.py.lprof
 profiling/retrieve_profile.out
+
+# Local/large vendored or external content
+external/
+
+# Large test/model artifacts (keep only what you intend to version)
+test_data/norfolk_coastal_flooding/triton/
+
+# Common workflow outputs
+build/
+dist/
+
+# Scientific data
+*.nc
+*.nc4
+*.zarr
+*.h5
