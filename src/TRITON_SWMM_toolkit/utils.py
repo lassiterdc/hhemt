@@ -316,6 +316,135 @@ def read_text_file_as_list_of_strings(file):
     return contents
 
 
+def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
+    """
+    Parse TRITON log.out file to extract actual compute resource usage.
+
+    Parameters
+    ----------
+    log_file_path : Path
+        Path to the log.out file (typically in tritonswmm_logfile_dir)
+
+    Returns
+    -------
+    dict
+        Dictionary containing:
+        - nTasks: int - Number of MPI tasks
+        - omp_threads_per_task: int - OpenMP threads per task
+        - gpus_per_task: int - GPUs per task
+        - total_gpus: int - Total GPUs used
+        - gpu_backend: str - GPU backend (HIP/CUDA/none)
+        - build_type: str - Build type (e.g., "CPU+OMP", "GPU+HIP")
+        - triton_git_version: str - TRITON git version
+        - wall_time_s: float - Total wall time in seconds
+        - machine: str - Machine name
+        - cpu: str - CPU model
+
+    Returns None for all fields if file doesn't exist or parsing fails.
+    """
+    if not log_file_path.exists():
+        return {
+            "nTasks": None,
+            "omp_threads_per_task": None,
+            "gpus_per_task": None,
+            "total_gpus": None,
+            "gpu_backend": None,
+            "build_type": None,
+            "triton_git_version": None,
+            "wall_time_s": None,
+            "machine": None,
+            "cpu": None,
+        }
+
+    try:
+        content = read_text_file_as_string(log_file_path)
+
+        # Initialize result dictionary with None values
+        result = {
+            "nTasks": None,
+            "omp_threads_per_task": None,
+            "gpus_per_task": None,
+            "total_gpus": None,
+            "gpu_backend": None,
+            "build_type": None,
+            "triton_git_version": None,
+            "wall_time_s": None,
+            "machine": None,
+            "cpu": None,
+        }
+
+        # Parse each field using regex
+        # Machine name
+        match = re.search(r"Machine\s*:\s*(.+)", content)
+        if match:
+            result["machine"] = match.group(1).strip()  # type: ignore
+
+        # CPU model
+        match = re.search(r"CPU\s*:\s*(.+)", content)
+        if match:
+            result["cpu"] = match.group(1).strip()  # type: ignore
+
+        # nTasks
+        match = re.search(r"nTasks\s*:\s*(\d+)", content)
+        if match:
+            result["nTasks"] = int(match.group(1))  # type: ignore
+
+        # OMP threads per task
+        match = re.search(r"OMP threads per task\s*:\s*(\d+)", content)
+        if match:
+            result["omp_threads_per_task"] = int(match.group(1))  # type: ignore
+
+        # GPUs per task (handle "0 (CPU-only)" case)
+        match = re.search(r"GPUs per task\s*:\s*(\d+)", content)
+        if match:
+            result["gpus_per_task"] = int(match.group(1))  # type: ignore
+
+        # GPU backend
+        match = re.search(r"GPU backend\s*:\s*(\S+)", content)
+        if match:
+            result["gpu_backend"] = match.group(1).strip()  # type: ignore
+
+        # Total GPUs
+        match = re.search(r"Total GPUs\s*:\s*(\d+)", content)
+        if match:
+            result["total_gpus"] = int(match.group(1))  # type: ignore
+
+        # TRITON git version
+        match = re.search(r"TRITON_GIT_VERSION\s*:\s*(.+)", content)
+        if match:
+            result["triton_git_version"] = match.group(1).strip()  # type: ignore
+
+        # Build type
+        match = re.search(r"Build type\s*:\s*(.+)", content)
+        if match:
+            result["build_type"] = match.group(1).strip()  # type: ignore
+
+        # Wall time
+        match = re.search(r"TRITON total wall time \[s\]\s*:\s*([\d.]+)", content)
+        if match:
+            result["wall_time_s"] = float(match.group(1))  # type: ignore
+
+        return result
+
+    except Exception as e:
+        warnings.warn(
+            f"Failed to parse TRITON log file {log_file_path}: {str(e)}",
+            UserWarning,
+        )
+        return {
+            "nTasks": None,
+            "omp_threads_per_task": None,
+            "gpus_per_task": None,
+            "total_gpus": None,
+            "gpu_backend": None,
+            "build_type": None,
+            "triton_git_version": None,
+            "wall_time_s": None,
+            "machine": None,
+            "cpu": None,
+        }
+
+
 def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.

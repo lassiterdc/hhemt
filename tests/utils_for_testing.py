@@ -1,6 +1,8 @@
 import os
 import pytest
 import socket
+import pandas as pd
+from pathlib import Path
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
 
@@ -107,6 +109,96 @@ def assert_analysis_summaries_created(
             pytest.fail("SWMM link analysis summary missing")
 
 
+def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
+    """
+    Assert that actual resource usage matches expected configuration.
+
+    Uses the validate_resource_usage function from consolidate_workflow to check
+    that simulations used the expected compute resources (MPI tasks, OMP threads,
+    GPUs, backend).
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object containing scenario status
+
+    Raises
+    ------
+    AssertionError
+        If resource usage doesn't match expected configuration
+    """
+    from TRITON_SWMM_toolkit.consolidate_workflow import validate_resource_usage
+
+    # Use the validation function without a logger (prints to stdout instead)
+    validation_passed = validate_resource_usage(analysis, logger=None)
+
+    if not validation_passed:
+        pytest.fail(
+            "Resource usage validation failed: actual compute resources did not match "
+            "expected configuration. See output above for details."
+        )
+
+
+def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
+    """
+    Assert that scenario_status.csv was created with required resource usage columns.
+
+    Validates:
+    - CSV file exists in analysis directory
+    - CSV can be read successfully
+    - All expected resource usage columns are present
+    - Basic data integrity (matching number of scenarios)
+    """
+    csv_path = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
+
+    # Check file exists
+    if not csv_path.exists():
+        pytest.fail(f"scenario_status.csv not found at {csv_path}")
+
+    # Read CSV
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        pytest.fail(f"Failed to read scenario_status.csv: {e}")
+
+    # Check for required resource usage columns
+    required_columns = [
+        "scenarios_setup",
+        "scen_runs_completed",
+        "scenario_directory",
+        "actual_nTasks",
+        "actual_omp_threads",
+        "actual_gpus",
+        "actual_total_gpus",
+        "actual_gpu_backend",
+        "actual_build_type",
+        "actual_wall_time_s",
+    ]
+
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        pytest.fail(
+            f"scenario_status.csv missing required columns: {missing_columns}\n"
+            f"Available columns: {list(df.columns)}"
+        )
+
+    # Verify row count matches number of scenarios
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        # For sensitivity analysis, count scenarios across all sub-analyses
+        expected_rows = sum(
+            len(sub_analysis.df_sims)
+            for sub_analysis in analysis.sensitivity.sub_analyses.values()
+        )
+    else:
+        expected_rows = len(analysis.df_sims)
+
+    if len(df) != expected_rows:
+        pytest.fail(
+            f"scenario_status.csv has {len(df)} rows, expected {expected_rows} "
+            f"(one per scenario)"
+        )
+
+
 def assert_analysis_workflow_completed_successfully(
     analysis: TRITONSWMM_analysis, which: str = "both"
 ):
@@ -116,3 +208,5 @@ def assert_analysis_workflow_completed_successfully(
     assert_scenarios_run(analysis)
     assert_timeseries_processed(analysis, which=which)
     assert_analysis_summaries_created(analysis, which=which)
+    assert_scenario_status_csv_created(analysis)
+    assert_resource_usage_matches_config(analysis)

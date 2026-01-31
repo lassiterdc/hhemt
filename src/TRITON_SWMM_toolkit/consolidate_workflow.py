@@ -38,6 +38,152 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def validate_resource_usage(analysis, logger=None):
+    """
+    Validate that actual resource usage matches expected configuration.
+
+    Logs warnings if mismatches are detected between expected and actual
+    compute resources (MPI tasks, OMP threads, GPUs, backend).
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object containing scenario status
+    logger : logging.Logger, optional
+        Logger for writing warnings. If None, uses print statements.
+
+    Returns
+    -------
+    bool
+        True if all resources match expected values, False if any mismatches found
+    """
+    import pandas as pd
+
+    if logger:
+        logger.info("Validating actual vs expected resource usage...")
+    else:
+        print("Validating actual vs expected resource usage...")
+
+    df_status = analysis.df_status
+
+    # Skip validation if no log.out files were found (all actual values are None)
+    if df_status["actual_nTasks"].isna().all():
+        msg = (
+            "No log.out files found - skipping resource validation. "
+            "This is normal for simulations that haven't run yet or older TRITON versions."
+        )
+        if logger:
+            logger.warning(msg)
+        else:
+            print(f"WARNING: {msg}")
+        return True  # Return True since this is not a validation failure
+
+    # Check for mismatches
+    # For sensitivity analysis, each row has its own config values (run_mode, n_mpi_procs, etc.)
+    # For regular analysis, use the analysis config
+    mismatches = []
+
+    for idx, row in df_status.iterrows():
+        if not row["scen_runs_completed"]:
+            continue  # Skip scenarios that didn't complete
+
+        scenario_dir = row["scenario_directory"]
+        issues = []
+
+        # Get expected values from row if available (sensitivity analysis),
+        # otherwise from analysis config (regular analysis)
+        if "run_mode" in df_status.columns:
+            # Sensitivity analysis: each row has its own config
+            run_mode = row["run_mode"]
+            expected_nTasks = row.get("n_mpi_procs", 1) or 1
+            expected_omp_threads = row.get("n_omp_threads", 1) or 1
+            expected_gpus = row.get("n_gpus", 0) or 0
+        else:
+            # Regular analysis: use analysis config
+            cfg = analysis.cfg_analysis
+            run_mode = cfg.run_mode
+            expected_nTasks = cfg.n_mpi_procs or 1
+            expected_omp_threads = cfg.n_omp_threads or 1
+            expected_gpus = cfg.n_gpus or 0
+
+        # Determine expected GPU backend
+        if run_mode == "gpu":
+            expected_gpu_backend = (
+                analysis._system.cfg_system.gpu_compilation_backend or "unknown"
+            )
+        else:
+            expected_gpu_backend = "none"
+
+        # Check nTasks
+        if pd.notna(row["actual_nTasks"]) and row["actual_nTasks"] != expected_nTasks:
+            issues.append(
+                f"  - MPI tasks: expected {expected_nTasks}, actual {row['actual_nTasks']}"
+            )
+
+        # Check OMP threads
+        if (
+            pd.notna(row["actual_omp_threads"])
+            and row["actual_omp_threads"] != expected_omp_threads
+        ):
+            issues.append(
+                f"  - OMP threads: expected {expected_omp_threads}, actual {row['actual_omp_threads']}"
+            )
+
+        # Check GPUs (for GPU mode)
+        if run_mode == "gpu":
+            if pd.notna(row["actual_gpus"]) and row["actual_gpus"] < expected_gpus:
+                issues.append(
+                    f"  - GPUs: expected >={expected_gpus}, actual {row['actual_gpus']}"
+                )
+
+        # Check GPU backend
+        if pd.notna(row["actual_gpu_backend"]):
+            if run_mode == "gpu" and row["actual_gpu_backend"] == "none":
+                issues.append(
+                    f"  - GPU backend: expected {expected_gpu_backend}, actual {row['actual_gpu_backend']} (GPU not used!)"
+                )
+            elif run_mode != "gpu" and row["actual_gpu_backend"] != "none":
+                issues.append(
+                    f"  - GPU backend: expected 'none', actual {row['actual_gpu_backend']} (unexpected GPU usage)"
+                )
+
+        if issues:
+            mismatch_msg = (
+                f"\n⚠ Resource mismatch in scenario: {scenario_dir}\n"
+                + "\n".join(issues)
+            )
+            mismatches.append(mismatch_msg)
+            if logger:
+                logger.warning(mismatch_msg)
+            else:
+                print(f"WARNING: {mismatch_msg}")
+
+    if mismatches:
+        summary = (
+            f"\n{'='*70}\n"
+            f"⚠ RESOURCE VALIDATION SUMMARY: {len(mismatches)} scenario(s) with mismatches\n"
+            f"{'='*70}\n"
+            "Possible causes:\n"
+            "  1. SLURM/HPC scheduler allocated different resources than requested\n"
+            "  2. Machine files overrode configuration (use TRITON_IGNORE_MACHINE_FILES)\n"
+            "  3. Compilation used different backend than runtime configuration\n"
+            "  4. Environment variables affected runtime behavior\n"
+            f"{'='*70}"
+        )
+        if logger:
+            logger.warning(summary)
+        else:
+            print(f"WARNING: {summary}")
+        return False  # Validation failed
+    else:
+        msg = "✓ All scenarios used expected compute resources"
+        if logger:
+            logger.info(msg)
+        else:
+            print(msg)
+        return True  # Validation passed
+
+
 def main() -> int:
     """Main entry point for workflow consolidation."""
     parser = argparse.ArgumentParser(
@@ -123,6 +269,9 @@ def main() -> int:
             return 1
 
         logger.info("All simulations completed successfully")
+
+        # Validate resource usage
+        validate_resource_usage(analysis, logger)
 
         # Check if all timeseries were processed
         if args.which in ["both", "TRITON"]:
