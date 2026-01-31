@@ -14,7 +14,8 @@
 # 3. Faster environment creation on HPC systems (fewer packages)
 # 4. Isolation between orchestration and execution layers
 #
-# When Snakemake rules invoke runner scripts (run_single_simulation.py, etc.),
+# When Snakemake rules invoke runner scripts (prepare_scenario_runner.py,
+# run_simulation_runner.py, process_timeseries_runner.py, etc.),
 # they use this environment via the Snakefile 'conda:' directive.
 
 name: triton_swmm_toolkit

@@ -30,11 +30,10 @@ Snakemake rules invoke Python scripts as subprocesses. You understand these entr
 
 | Script | Invoked By | Purpose |
 |--------|------------|---------|
-| `setup_workflow.py` | `rule setup_system` | System inputs processing and TRITON compilation |
-| `run_single_simulation.py` | `rule run_simulation` | Standalone simulation execution (maps to SLURM_ARRAY_TASK_ID) |
+| `setup_workflow.py` | `rule setup` | System inputs processing and TRITON compilation |
 | `prepare_scenario_runner.py` | `rule prepare_scenario` | Scenario preparation in subprocess |
-| `run_simulation_runner.py` | `rule run_simulation` | Simulation execution wrapper |
-| `process_timeseries_runner.py` | `rule process_timeseries` | Output processing in subprocess |
+| `run_simulation_runner.py` | `rule run_simulation` | Simulation execution (runs TRITON-SWMM executable) |
+| `process_timeseries_runner.py` | `rule process_outputs` | Timeseries extraction and compression |
 | `consolidate_workflow.py` | `rule consolidate` | Analysis-level output consolidation |
 
 **Exit codes**: 0=success, 1=failure, 2=invalid arguments

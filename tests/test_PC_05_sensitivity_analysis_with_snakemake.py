@@ -36,7 +36,15 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         )
 
         tst_ut.assert_snakefile_has_rules(
-            snakefile_content, ["all", "setup", "simulation", "consolidate"]
+            snakefile_content,
+            [
+                "all",
+                "setup",
+                "prepare_scenario",
+                "run_simulation",
+                "process_outputs",
+                "consolidate",
+            ],
         )
 
         sub_snakefile_path = tst_ut.write_snakefile(sub_analysis, snakefile_content)
@@ -53,12 +61,22 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
 
     tst_ut.assert_snakefile_has_rules(
         master_snakefile_content,
-        ["all", "master_consolidation", "simulation_sa", "consolidate_"],
+        [
+            "all",
+            "master_consolidation",
+            "prepare_sa",
+            "simulation_sa",
+            "process_sa",
+            "consolidate_",
+        ],
     )
     tst_ut.assert_snakefile_has_flags(
         master_snakefile_content,
         [
             "--consolidate-sensitivity-analysis-outputs",
+            "prepare_scenario_runner",
+            "run_simulation_runner",
+            "process_timeseries_runner",
         ],
     )
 

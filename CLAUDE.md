@@ -109,13 +109,32 @@ Snakemake rules invoke these as subprocesses:
 | Script | Purpose |
 |--------|---------|
 | `setup_workflow.py` | System inputs processing and TRITON compilation |
-| `run_single_simulation.py` | Standalone simulation (maps to SLURM_ARRAY_TASK_ID) |
 | `prepare_scenario_runner.py` | Scenario preparation in subprocess |
 | `run_simulation_runner.py` | Simulation execution in subprocess |
 | `process_timeseries_runner.py` | Output processing in subprocess |
 | `consolidate_workflow.py` | Analysis-level output consolidation |
 
 Exit codes: 0=success, 1=failure, 2=invalid arguments.
+
+### Runner Script Architecture
+
+**IMPORTANT**: Runner scripts execute TRITON directly, not recursively.
+
+Each runner script should use `prepare_simulation_command()` to get the actual TRITON-SWMM executable command:
+
+```python
+# ✅ CORRECT (in runner scripts):
+simprep_result = run.prepare_simulation_command(pickup_where_leftoff=args.pickup_where_leftoff)
+cmd, env, logfile, tstep = simprep_result
+proc = subprocess.Popen(cmd, env={**os.environ, **env}, ...)  # Executes TRITON directly
+
+# ❌ WRONG (causes recursive fork bomb):
+launcher, finalize = run._create_subprocess_sim_run_launcher(...)  # Spawns another runner!
+```
+
+**Method Usage:**
+- `prepare_simulation_command()`: Use in runner scripts to get TRITON executable command
+- `_create_subprocess_sim_run_launcher()`: Use in analysis/executor classes for concurrent execution (spawns runner subprocess)
 
 ## Configuration System
 
@@ -176,10 +195,36 @@ Single SLURM allocation runs all simulations:
 
 ## Workflow Phases
 
-Snakemake workflows follow three phases:
-1. **Setup**: System inputs, compilation
-2. **Simulation**: Parallel scenario execution via wildcards
-3. **Processing**: Output consolidation
+Snakemake workflows follow five distinct phases with separate rules:
+
+1. **Setup** (`rule setup`): System inputs processing and TRITON compilation
+   - Runner: `setup_workflow.py`
+   - Resources: 1 CPU, minimal memory
+
+2. **Scenario Preparation** (`rule prepare_scenario`): SWMM model generation
+   - Runner: `prepare_scenario_runner.py`
+   - Resources: 1 CPU (lightweight file I/O)
+   - Runs in parallel for all simulations
+
+3. **Simulation Execution** (`rule run_simulation`): TRITON-SWMM runs
+   - Runner: `run_simulation_runner.py`
+   - Resources: Multi-CPU/GPU as configured (resource-intensive)
+   - Depends on scenario preparation completion
+
+4. **Output Processing** (`rule process_outputs`): Timeseries extraction and compression
+   - Runner: `process_timeseries_runner.py`
+   - Resources: 2 CPUs for parallel compression (I/O bound)
+   - Depends on simulation completion
+
+5. **Consolidation** (`rule consolidate`): Analysis-level output aggregation
+   - Runner: `consolidate_workflow.py`
+   - Resources: 1 CPU
+   - Depends on all output processing completion
+
+This separation allows:
+- **Checkpoint recovery**: Restart from any phase if failure occurs
+- **Resource optimization**: Each phase gets appropriate CPU/GPU/memory allocation
+- **Clear dependencies**: Snakemake DAG explicitly shows workflow structure
 
 ## Conda Environment Architecture
 

@@ -21,12 +21,9 @@ Exit codes:
 
 import sys
 import argparse
-import os
 from pathlib import Path
 import traceback
 import logging
-import pprint
-from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -118,72 +115,81 @@ def main():
 
         # Get the run object and prepare the simulation command
         run = scenario.run
-        logger.info(f"[{event_iloc}] Preparing simulation command...")
+        logger.info(f"[{event_iloc}] Preparing simulation...")
 
+        # Use prepare_simulation_command to get the actual TRITON executable command
+        # (NOT the recursive runner command)
         simprep_result = run.prepare_simulation_command(
             pickup_where_leftoff=args.pickup_where_leftoff,
             verbose=True,
         )
 
-        if run.sim_run_completed:
+        # Check if simulation already completed
+        if simprep_result is None:
             logger.info(
                 f"[{event_iloc}] Simulation already completed, skipping execution"
             )
             logger.info(f"Simulation completed successfully")
             return 0
 
-        logger.info(
-            f"Expected modules in cmd: {system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc}"
-        )
+        # Unpack simulation command and metadata
+        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
 
-        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result  # type: ignore
+        # Record simulation metadata in log
+        run_mode = analysis.cfg_analysis.run_mode
+        n_mpi_procs = analysis.cfg_analysis.n_mpi_procs or 1
+        n_omp_threads = analysis.cfg_analysis.n_omp_threads or 1
+        n_gpus = analysis.cfg_analysis.n_gpus if run_mode == "gpu" else 0
 
-        logger.info(
-            f"All environment returned by run.prepare_simulation_command: \n{pprint.pformat(env)}"
-        )
+        import TRITON_SWMM_toolkit.utils as ut
 
-        # Execute the simulation command
-        logger.info(f"[{event_iloc}] Executing simulation command...")
-        logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
-        logger.info(f"command: {' '.join(cmd)}")
+        sim_datetime = ut.current_datetime_string()
 
-        merged_env = os.environ.copy()
-        merged_env.update(env)
-
-        logger.info(
-            f"Merged environment passed to subprocess running TRITON-SWMM: {merged_env}"
-        )
-
-        slurm_vars = {}
-        for key, item in merged_env.items():
-            if "slurm" in key.lower():
-                slurm_vars[key] = item
-
-        # logger.info(f"SLURM environmental vars: {slurm_vars}")
-
-        logger.info(f"SLURM environmental vars:\n{pprint.pformat(slurm_vars)}")
-
-        # update the environment recorded in the log
-        log_dic = scenario.latest_simlog
-        log_dic["env"] = env
-
-        # Update the simlog with final status
-        scenario.log.add_sim_entry(**log_dic)
-
-        # Use tee logging to write to both file and stdout
-        proc = run_subprocess_with_tee(
-            cmd=cmd,
-            logfile=tritonswmm_logfile,
+        scenario.log.add_sim_entry(
+            sim_datetime=sim_datetime,
+            sim_start_reporting_tstep=sim_start_reporting_tstep,
+            tritonswmm_logfile=tritonswmm_logfile,
+            time_elapsed_s=0,
+            status="not started",
+            run_mode=run_mode,
+            cmd=" ".join(cmd),
+            n_mpi_procs=n_mpi_procs,
+            n_omp_threads=n_omp_threads,
+            n_gpus=n_gpus,
             env=env,
-            echo_to_stdout=True,
         )
 
-        rc = proc.returncode
+        # Launch the TRITON-SWMM executable (not the runner!)
+        logger.info(f"[{event_iloc}] Running TRITON-SWMM simulation...")
+        logger.info(f"[{event_iloc}] Command: {' '.join(cmd)}")
+        logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
 
-        if rc != 0:
-            logger.error(f"[{event_iloc}] Subprocess exited with return code {rc}")
+        import time
+        import subprocess
+        import os
 
-        logger.info(f"[{event_iloc}] Simulation process completed")
+        start_time = time.time()
+        with open(tritonswmm_logfile, "w") as lf:
+            proc = subprocess.Popen(
+                cmd,
+                env={**os.environ, **env},
+                stdout=lf,
+                stderr=subprocess.STDOUT,
+            )
+            _rc = proc.wait()  # Return code checked via status below
+
+        # Update simulation log with results
+        end_time = time.time()
+        elapsed = end_time - start_time
+
+        # Check simulation status
+        status, _last_cfg = run._check_simulation_run_status()
+
+        # Update log entry
+        log_dic = scenario.latest_simlog
+        log_dic["time_elapsed_s"] = elapsed
+        log_dic["status"] = status
+        scenario.log.add_sim_entry(**log_dic)
 
         # Check if simulation completed successfully
         scenario.log.refresh()

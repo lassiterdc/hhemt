@@ -52,6 +52,74 @@ class SnakemakeWorkflowBuilder:
         self.analysis_paths = analysis.analysis_paths
         self.python_executable = analysis._python_executable
 
+    def _get_conda_env_path(self) -> Path:
+        """Get absolute path to conda environment file."""
+        triton_toolkit_root = Path(__file__).parent.parent.parent
+        return triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
+
+    def _get_config_args(self, analysis_config_yaml: Path | None = None) -> str:
+        """
+        Generate common config path arguments.
+
+        Parameters
+        ----------
+        analysis_config_yaml : Path | None
+            If provided, use this analysis config instead of self.analysis.analysis_config_yaml
+
+        Returns
+        -------
+        str
+            Config arguments string
+        """
+        analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
+        return f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
+
+    def _build_resource_block(
+        self,
+        partition: str | None,
+        runtime_min: int,
+        mem_mb: int,
+        nodes: int,
+        tasks: int,
+        cpus_per_task: int,
+        gpus_per_task: int = 0,
+    ) -> str:
+        """
+        Build a Snakemake resources block.
+
+        Parameters
+        ----------
+        partition : str | None
+            SLURM partition name (defaults to "standard" if None)
+        runtime_min : int
+            Runtime limit in minutes
+        mem_mb : int
+            Memory in MB
+        nodes : int
+            Number of nodes
+        tasks : int
+            Number of MPI tasks
+        cpus_per_task : int
+            CPUs per task (OpenMP threads)
+        gpus_per_task : int
+            GPUs per task (0 if no GPUs)
+
+        Returns
+        -------
+        str
+            Formatted resources block
+        """
+        partition_name = partition or "standard"
+        block = f"""        slurm_partition="{partition_name}",
+        runtime={runtime_min},
+        tasks={tasks},
+        cpus_per_task={cpus_per_task},
+        mem_mb={mem_mb},
+        nodes={nodes}"""
+        if gpus_per_task > 0:
+            block += f",\n        gpus_per_task={gpus_per_task}"
+        return block
+
     def generate_snakefile_content(
         self,
         process_system_level_inputs: bool = False,
@@ -69,7 +137,14 @@ class SnakemakeWorkflowBuilder:
         pickup_where_leftoff: bool = False,
     ) -> str:
         """
-        Generate Snakefile content for the three-phase workflow using wildcards.
+        Generate Snakefile content with separate rules for prep, simulation, and processing.
+
+        This creates a five-phase workflow:
+        1. Setup: System inputs processing and compilation
+        2. Scenario preparation: SWMM model generation (lightweight, 1 CPU)
+        3. Simulation execution: TRITON-SWMM runs (resource-intensive, GPUs/CPUs)
+        4. Output processing: Timeseries extraction and compression (I/O bound, 1-2 CPUs)
+        5. Consolidation: Analysis-level output aggregation
 
         Parameters
         ----------
@@ -117,9 +192,9 @@ class SnakemakeWorkflowBuilder:
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
 
-        # Get absolute path to conda environment file
-        triton_toolkit_root = Path(__file__).parent.parent.parent
-        conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
+        # Get absolute path to conda environment file using helper
+        conda_env_path = self._get_conda_env_path()
+        config_args = self._get_config_args()
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
 
         # Make log dirs
@@ -135,8 +210,7 @@ class SnakemakeWorkflowBuilder:
         else:
             setup_shell = f'''"""
         {self.python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.analysis.analysis_config_yaml} \\
+            {config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
             {"--compile-triton-swmm " if compile_TRITON_SWMM else ""}\\
@@ -145,15 +219,56 @@ class SnakemakeWorkflowBuilder:
         touch {{output}}
         """'''
 
-        # Build simulation resources block, handling optional gpus_per_task
-        sim_resources_block = f"""        slurm_partition="{self.cfg_analysis.hpc_ensemble_partition}",
-        runtime={int(hpc_time_min)},
-        tasks={self.cfg_analysis.n_mpi_procs or 1},
-        cpus_per_task={self.cfg_analysis.n_omp_threads or 1},
-        mem_mb={mem_mb_per_sim},
-        nodes={n_nodes}"""
-        if n_gpus > 0:
-            sim_resources_block += f",\n        gpus_per_task={n_gpus}"
+        # Build resource blocks using helper
+        setup_resources = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=30,
+            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 1000,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=1,
+        )
+
+        # Scenario preparation: lightweight (1 CPU, minimal memory)
+        prep_resources = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=30,
+            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 1000,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=1,
+        )
+
+        # Simulation: resource-intensive (multi-CPU, GPUs, high memory)
+        sim_resources = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_ensemble_partition,
+            runtime_min=hpc_time_min,
+            mem_mb=mem_mb_per_sim,
+            nodes=n_nodes,
+            tasks=mpi_ranks,
+            cpus_per_task=omp_threads,
+            gpus_per_task=n_gpus,
+        )
+
+        # Output processing: I/O bound (1-2 CPUs for compression)
+        process_resources = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=30,
+            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 2 * 1000,  # 2 CPUs worth
+            nodes=1,
+            tasks=1,
+            cpus_per_task=2,  # Parallel compression
+        )
+
+        # Consolidation resources
+        consolidate_resources = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=30,
+            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 1000 * 2,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=2,
+        )
 
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
 
@@ -170,15 +285,13 @@ rule all:
 onsuccess:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.analysis.analysis_config_yaml}
+            {config_args}
     """)
 
 onerror:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.analysis.analysis_config_yaml}
+            {config_args}
     """)
 
 rule setup:
@@ -186,59 +299,101 @@ rule setup:
     log: "logs/setup.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime=5,
-        mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
-        tasks=1,
-        cpus_per_task=1,
-        nodes=1
+{setup_resources}
     shell:
         {setup_shell}
+'''
 
-rule simulation:
+        # Add scenario preparation rule if requested
+        if prepare_scenarios:
+            snakefile_content += f'''
+rule prepare_scenario:
     input: "_status/setup_complete.flag"
-    output: "_status/sims/sim_{{event_iloc}}_complete.flag"
-    log: "logs/sims/sim_{{event_iloc}}.log"
+    output: "_status/sims/scenario_{{event_iloc}}_prepared.flag"
+    log: "logs/sims/prepare_{{event_iloc}}.log"
+    conda: "{conda_env_path}"
+    resources:
+{prep_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
+            --event-iloc {{wildcards.event_iloc}} \\
+            {config_args} \\
+            {"--overwrite-scenario " if overwrite_scenario else ""}\\
+            {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
+
+        # Add simulation rule
+        sim_input = (
+            "_status/sims/scenario_{event_iloc}_prepared.flag"
+            if prepare_scenarios
+            else "_status/setup_complete.flag"
+        )
+        snakefile_content += f'''
+rule run_simulation:
+    input: "{sim_input}"
+    output: "_status/sims/simulation_{{event_iloc}}_complete.flag"
+    log: "logs/sims/simulation_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     threads: {cpus_per_sim}
     resources:
-{sim_resources_block}
+{sim_resources}
     shell:
         """
-        {self.python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\
+        {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.analysis.analysis_config_yaml} \\
-            {"--prepare-scenario " if prepare_scenarios else ""}\\
-            {"--overwrite-scenario " if overwrite_scenario else ""}\\
-            {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
-            {"--process-timeseries " if process_timeseries else ""}\\
-            --which {which} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
-            --compression-level {compression_level} \\
+            {config_args} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             > {{log}} 2>&1
         touch {{output}}
         """
+'''
 
+        # Add output processing rule if requested
+        if process_timeseries:
+            snakefile_content += f'''
+rule process_outputs:
+    input: "_status/sims/simulation_{{event_iloc}}_complete.flag"
+    output: "_status/sims/outputs_{{event_iloc}}_processed.flag"
+    log: "logs/sims/process_{{event_iloc}}.log"
+    conda: "{conda_env_path}"
+    resources:
+{process_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
+            --event-iloc {{wildcards.event_iloc}} \\
+            {config_args} \\
+            --which {which} \\
+            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
+            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
+
+        # Consolidation rule depends on final output of each sim
+        final_sim_output = (
+            "outputs_{event_iloc}_processed.flag"
+            if process_timeseries
+            else "simulation_{event_iloc}_complete.flag"
+        )
+        snakefile_content += f'''
 rule consolidate:
-    input: expand("_status/sims/sim_{{event_iloc}}_complete.flag", event_iloc=SIM_IDS)
+    input: expand("_status/sims/{final_sim_output}", event_iloc=SIM_IDS)
     output: "_status/output_consolidation_complete.flag"
     log: "logs/consolidate.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{self.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime=30,
-        mem_mb={self.cfg_analysis.mem_gb_per_cpu * 1000},
-        tasks=1,
-        cpus_per_task=1,
-        nodes=1
+{consolidate_resources}
     shell:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.analysis.analysis_config_yaml} \\
+            {config_args} \\
             --compression-level {compression_level} \\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
             --which {which} \\
@@ -277,14 +432,13 @@ rule consolidate:
             "printshellcmds": True,
             "rerun-incomplete": True,
         }
-
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
-            # Local mode: use cores based on system capabilities
-            physical_cores = psutil.cpu_count(logical=False)
-            cores = max(1, (physical_cores or 2) - 1)  # Leave one core free
             config.update(
                 {
-                    "cores": cores,
+                    "cores": self.cfg_analysis.local_cpu_cores_for_workflow,
                     "keep-going": False,
                 }
             )
@@ -1347,13 +1501,15 @@ class SensitivityAnalysisWorkflowBuilder:
         str
             Master Snakefile content
         """
-        # Get absolute path to conda environment file
-        triton_toolkit_root = Path(__file__).parent.parent.parent
-        conda_env_path = triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
+        # Get absolute path to conda environment file using helper
+        conda_env_path = self._base_builder._get_conda_env_path()
+        master_config_args = self._base_builder._get_config_args(
+            analysis_config_yaml=self.master_analysis.analysis_config_yaml
+        )
 
         # Start building the Snakefile
         snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
-# Each sub-analysis simulation gets its own rule with exact resource requirements
+# Each sub-analysis simulation phase gets its own rule with appropriate resources
 
 import os
 
@@ -1363,15 +1519,13 @@ onstart:
 onsuccess:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.master_analysis.analysis_config_yaml}
+            {master_config_args}
     """)
 
 onerror:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.master_analysis.analysis_config_yaml}
+            {master_config_args}
     """)
 
 
@@ -1394,18 +1548,19 @@ rule setup:
     log: "logs/setup.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime=5,
-        mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        tasks=1,
-        cpus_per_task=1,
-        nodes=1
+{self._base_builder._build_resource_block(
+    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+    runtime_min=30,
+    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+    nodes=1,
+    tasks=1,
+    cpus_per_task=1,
+)}
     shell:
         """
         mkdir -p logs _status
         {self.python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.master_analysis.analysis_config_yaml} \\
+            {master_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
             {"--compile-triton-swmm " if compile_TRITON_SWMM else ""}\\
@@ -1427,55 +1582,135 @@ rule setup:
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
 
+            sub_config_args = self._base_builder._get_config_args(
+                analysis_config_yaml=sub_analysis.analysis_config_yaml
+            )
+
+            # Build resource blocks for this sub-analysis
+            prep_resources_sa = self._base_builder._build_resource_block(
+                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=mem_per_cpu * 1000,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+
+            sim_resources_sa = self._base_builder._build_resource_block(
+                partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
+                runtime_min=hpc_time,
+                mem_mb=int(mem_per_cpu * n_mpi * n_omp * 1000),
+                nodes=n_nodes,
+                tasks=n_mpi,
+                cpus_per_task=n_omp,
+                gpus_per_task=n_gpus,
+            )
+
+            process_resources_sa = self._base_builder._build_resource_block(
+                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=mem_per_cpu * 2 * 1000,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=2,
+            )
+
             # For each simulation in this sub-analysis
             sub_analysis_sim_flags = []
             for event_iloc in sub_analysis.df_sims.index:
-                rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
-                outflag = f"_status/{rule_name}_complete.flag"
-                sub_analysis_sim_flags.append(outflag)
-                mem_mb = int(mem_per_cpu * n_mpi * n_omp * 1000)
+                # Phase 1: Scenario preparation (if enabled)
+                if prepare_scenarios:
+                    prep_rule_name = f"prepare_sa{sa_id}_evt{event_iloc}"
+                    prep_outflag = f"_status/{prep_rule_name}_complete.flag"
 
-                # Build resources block, handling optional gpus_per_task
-                resources_block = f"""        slurm_partition="{sub_analysis.cfg_analysis.hpc_ensemble_partition}",
-        runtime={int(hpc_time * 1.1)},
-        mem_mb={mem_mb},
-        nodes={n_nodes},
-        tasks={n_mpi},
-        cpus_per_task={n_omp}"""
-                if n_gpus > 0:
-                    resources_block += f",\n        gpus_per_task={n_gpus}"
-
-                snakefile_content += f'''rule {rule_name}:
+                    snakefile_content += f'''rule {prep_rule_name}:
     input: "_status/setup_complete.flag"
-    output: "{outflag}"
-    log: "logs/sims/{rule_name}.log"
+    output: "{prep_outflag}"
+    log: "logs/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
     resources:
-{resources_block}
+{prep_resources_sa}
     shell:
         """
         mkdir -p logs _status
-        {self.python_executable} -m TRITON_SWMM_toolkit.run_single_simulation \\
+        {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
             --event-iloc {event_iloc} \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {sub_analysis.analysis_config_yaml} \\
-            {"--prepare-scenario " if prepare_scenarios else ""}\\
+            {sub_config_args} \\
             {"--overwrite-scenario " if overwrite_scenario else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
-            {"--process-timeseries " if process_timeseries else ""}\\
-            --which {which} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
-            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+'''
+
+                # Phase 2: Simulation execution
+                sim_rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
+                sim_outflag = f"_status/{sim_rule_name}_complete.flag"
+                sim_input = (
+                    f'"{prep_outflag}"'
+                    if prepare_scenarios
+                    else '"_status/setup_complete.flag"'
+                )
+
+                snakefile_content += f'''rule {sim_rule_name}:
+    input: {sim_input}
+    output: "{sim_outflag}"
+    log: "logs/sims/{sim_rule_name}.log"
+    conda: "{conda_env_path}"
+    threads: {n_mpi * n_omp}
+    resources:
+{sim_resources_sa}
+    shell:
+        """
+        mkdir -p logs _status
+        {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
+            --event-iloc {event_iloc} \\
+            {sub_config_args} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             > {{log}} 2>&1
         touch {{output}}
         """
 
 '''
+
+                # Phase 3: Output processing (if enabled)
+                if process_timeseries:
+                    process_rule_name = f"process_sa{sa_id}_evt{event_iloc}"
+                    process_outflag = f"_status/{process_rule_name}_complete.flag"
+
+                    snakefile_content += f'''rule {process_rule_name}:
+    input: "{sim_outflag}"
+    output: "{process_outflag}"
+    log: "logs/sims/{process_rule_name}.log"
+    conda: "{conda_env_path}"
+    resources:
+{process_resources_sa}
+    shell:
+        """
+        mkdir -p logs _status
+        {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
+            --event-iloc {event_iloc} \\
+            {sub_config_args} \\
+            --which {which} \\
+            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
+            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+'''
+                    final_flag = process_outflag
+                else:
+                    final_flag = sim_outflag
+
+                sub_analysis_sim_flags.append(final_flag)
+
             subanalysis_flag = f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
             subanalysis_flags.append(subanalysis_flag)
-            # consolidate outputs after all sims have been run
+
+            # Consolidate outputs after all sims have been run
             prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
             snakefile_content += f'''rule consolidate_{prefix}{sa_id}:
     input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
@@ -1483,18 +1718,19 @@ rule setup:
     log: "logs/sims/consolidate_{prefix}{sa_id}.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime=30,
-        mem_mb={sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        tasks=1,
-        cpus_per_task=1,
-        nodes=1
+{self._base_builder._build_resource_block(
+    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+    runtime_min=30,
+    mem_mb=sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+    nodes=1,
+    tasks=1,
+    cpus_per_task=1,
+)}
     shell:
         """
         mkdir -p logs _status
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {sub_analysis.analysis_config_yaml} \\
+            {sub_config_args} \\
             --which {which} \\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
             --compression-level {compression_level} \\
@@ -1511,18 +1747,19 @@ rule setup:
     log: "logs/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:
-        slurm_partition="{self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition}",
-        runtime=5,
-        mem_mb={self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000},
-        tasks=1,
-        cpus_per_task=1,
-        nodes=1
+{self._base_builder._build_resource_block(
+    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+    runtime_min=30,
+    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+    nodes=1,
+    tasks=1,
+    cpus_per_task=1,
+)}
     shell:
         """
         mkdir -p logs _status
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
-            --system-config {self.system.system_config_yaml} \\
-            --analysis-config {self.master_analysis.analysis_config_yaml} \\
+            {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\

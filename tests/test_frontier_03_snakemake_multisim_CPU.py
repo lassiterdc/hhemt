@@ -37,18 +37,18 @@ def test_snakemake_slurm_workflow_generation_and_write(
 
     content = snakefile_path.read_text()
     tst_ut.assert_snakefile_has_rules(
-        content, ["all", "setup", "simulation", "consolidate"]
+        content, ["all", "setup", "prepare_scenario", "run_simulation", "process_outputs", "consolidate"]
     )
     tst_ut.assert_snakefile_has_flags(
         content,
         [
             "/workflow/envs/triton_swmm.yaml",
-            "_status/sims/sim_{event_iloc}_complete.flag",
             "setup_workflow",
             "--process-system-inputs",
             "--compile-triton-swmm",
-            "run_single_simulation",
-            "--prepare-scenario",
+            "prepare_scenario_runner",
+            "run_simulation_runner",
+            "process_timeseries_runner",
             "consolidate_workflow",
         ],
     )
