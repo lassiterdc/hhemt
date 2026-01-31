@@ -340,7 +340,7 @@ class Frontier_TestCases:
             "n_nodes": 1,
             "n_gpus": 0,
             "hpc_total_nodes": 8,
-            "hpc_total_job_duration_min": 30,
+            "hpc_total_job_duration_min": 120,
             "hpc_gpus_per_node": 8,
             "additional_SBATCH_params": ["-q debug"],
         }
