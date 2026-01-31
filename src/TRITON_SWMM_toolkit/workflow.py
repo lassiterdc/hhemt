@@ -812,6 +812,76 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "message": error_msg,
             }
 
+    def _validate_single_job_dry_run(
+        self,
+        snakefile_path: Path,
+        analysis: "TRITONSWMM_analysis",
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Perform dry-run validation for 1_job_many_srun_tasks mode.
+
+        Computes expected resource allocations and validates the workflow DAG
+        using the same CLI arguments that will be used in the SBATCH script.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile
+        analysis : TRITONSWMM_analysis
+            The analysis object (regular or master sensitivity analysis)
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        dict
+            Status dictionary with 'success' and 'mode' keys
+        """
+        # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS, --resources gpu=$TOTAL_GPUS)
+        assert isinstance(
+            analysis.cfg_analysis.hpc_cpus_per_node, int
+        ), "hpc_cpus_per_node required for 1_job_many_srun_tasks dry run validation"
+        assert isinstance(
+            analysis.cfg_analysis.hpc_total_nodes, int
+        ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+
+        expected_total_cpus = (
+            analysis.cfg_analysis.hpc_cpus_per_node
+            * analysis.cfg_analysis.hpc_total_nodes
+        )
+
+        # Build additional args matching SBATCH script
+        additional_args = ["--cores", str(expected_total_cpus)]
+
+        # Add GPU resources if configured (matches SBATCH script logic)
+        sim_resources = (
+            analysis._resource_manager._get_simulation_resource_requirements()
+        )
+        if sim_resources["n_gpus"] > 0:
+            assert isinstance(
+                analysis.cfg_analysis.hpc_gpus_per_node, int
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            expected_total_gpus = (
+                analysis.cfg_analysis.hpc_gpus_per_node
+                * analysis.cfg_analysis.hpc_total_nodes
+            )
+            additional_args.extend(["--resources", f"gpu={expected_total_gpus}"])
+
+        dry_run_result = self.run_snakemake_local(
+            snakefile_path=snakefile_path,
+            verbose=verbose,
+            dry_run=True,
+            additional_args=additional_args,
+        )
+
+        if not dry_run_result.get("success"):
+            raise RuntimeError("Dry run failed; workflow submission aborted.")
+
+        # Override mode to indicate intended execution context
+        dry_run_result["mode"] = "single_job"
+        return dry_run_result
+
     def run_snakemake_slurm(
         self,
         snakefile_path: Path,
@@ -1333,43 +1403,11 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
 
             # Always perform a dry run validation first
-            # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS, --resources gpu=$TOTAL_GPUS)
-            assert isinstance(
-                self.cfg_analysis.hpc_cpus_per_node, int
-            ), "hpc_cpus_per_node required for 1_job_many_srun_tasks dry run validation"
-            assert isinstance(
-                self.cfg_analysis.hpc_total_nodes, int
-            ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
-
-            expected_total_cpus = (
-                self.cfg_analysis.hpc_cpus_per_node * self.cfg_analysis.hpc_total_nodes
-            )
-
-            # Build additional args matching SBATCH script
-            additional_args = ["--cores", str(expected_total_cpus)]
-
-            # Add GPU resources if configured (matches SBATCH script logic)
-            sim_resources = (
-                self.analysis._resource_manager._get_simulation_resource_requirements()
-            )
-            if sim_resources["n_gpus"] > 0:
-                assert isinstance(
-                    self.cfg_analysis.hpc_gpus_per_node, int
-                ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-                expected_total_gpus = (
-                    self.cfg_analysis.hpc_gpus_per_node * self.cfg_analysis.hpc_total_nodes
-                )
-                additional_args.extend(["--resources", f"gpu={expected_total_gpus}"])
-
-            dry_run_result = self.run_snakemake_local(
+            dry_run_result = self._validate_single_job_dry_run(
                 snakefile_path=snakefile_path,
+                analysis=self.analysis,
                 verbose=verbose,
-                dry_run=True,
-                additional_args=additional_args,
             )
-
-            if not dry_run_result.get("success"):
-                raise RuntimeError("Dry run failed; workflow submission aborted.")
 
             if dry_run:
                 # Override mode to indicate intended execution context
@@ -1944,6 +1982,19 @@ rule setup:
             analysis_dir = self.master_analysis.analysis_paths.analysis_dir
             (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
             (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
+
+            # Always perform a dry run validation first
+            dry_run_result = self._base_builder._validate_single_job_dry_run(
+                snakefile_path=master_snakefile_path,
+                analysis=self.master_analysis,
+                verbose=verbose,
+            )
+
+            if dry_run:
+                # Override mode to indicate intended execution context
+                dry_run_result["mode"] = "single_job"
+                self.sensitivity_analysis._update_master_analysis_log()
+                return dry_run_result
 
             result = self._base_builder._submit_single_job_workflow(
                 snakefile_path=master_snakefile_path,
