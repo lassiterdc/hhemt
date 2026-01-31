@@ -50,7 +50,7 @@ TEST_TRITON_REPORTING_TIMESTEP_S = 10
 # Platform presets
 FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     name="frontier",
-    hpc_ensemble_partition="batch",
+    hpc_ensemble_partition="batch",  # or batch or extended
     hpc_setup_and_analysis_processing_partition="batch",
     hpc_account="***REMOVED***",
     multi_sim_run_method="1_job_many_srun_tasks",
