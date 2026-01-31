@@ -82,7 +82,7 @@ class SnakemakeWorkflowBuilder:
         nodes: int,
         tasks: int,
         cpus_per_task: int,
-        gpus_per_task: int = 0,
+        gpu: int = 0,
     ) -> str:
         """
         Build a Snakemake resources block.
@@ -101,8 +101,8 @@ class SnakemakeWorkflowBuilder:
             Number of MPI tasks
         cpus_per_task : int
             CPUs per task (OpenMP threads)
-        gpus_per_task : int
-            GPUs per task (0 if no GPUs)
+        gpu : int
+            Total GPUs per job (0 if no GPUs)
 
         Returns
         -------
@@ -116,8 +116,8 @@ class SnakemakeWorkflowBuilder:
         cpus_per_task={cpus_per_task},
         mem_mb={mem_mb},
         nodes={nodes}"""
-        if gpus_per_task > 0:
-            block += f",\n        gpus_per_task={gpus_per_task}"
+        if gpu > 0:
+            block += f",\n        gpu={gpu}"
         return block
 
     def generate_snakefile_content(
@@ -247,7 +247,7 @@ class SnakemakeWorkflowBuilder:
             nodes=n_nodes,
             tasks=mpi_ranks,
             cpus_per_task=omp_threads,
-            gpus_per_task=n_gpus,
+            gpu=n_gpus,
         )
 
         # Output processing: I/O bound (1-2 CPUs for compression)
@@ -480,6 +480,7 @@ rule consolidate:
                             "nodes": "{resources.nodes}",
                             "ntasks": "{resources.tasks}",
                             "cpus-per-task": "{resources.cpus_per_task}",
+                            "gpus": "{resources.gpu}",
                         }
                     },
                 }
@@ -1698,7 +1699,7 @@ rule setup:
                 nodes=n_nodes,
                 tasks=n_mpi,
                 cpus_per_task=n_omp,
-                gpus_per_task=n_gpus,
+                gpu=n_gpus,
             )
 
             process_resources_sa = self._base_builder._build_resource_block(
