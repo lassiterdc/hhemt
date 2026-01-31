@@ -123,7 +123,7 @@ class retrieve_TRITON_SWMM_test_case:
         self.system = TRITONSWMM_system(new_system_config_yaml)
 
         # load single sime analysis
-        # single_sim_anlysys_yaml = NorfolkExample.load_analysis_template()
+        # single_sim_anlysys_yaml = NorfolkIreneExample.load_analysis_template()
         cfg_analysis = example.analysis.cfg_analysis.model_copy()
 
         # update analysis attributes

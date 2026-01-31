@@ -29,7 +29,7 @@ import TRITON_SWMM_toolkit.constants as cnst
 
 # Import from test fixtures
 from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
-from TRITON_SWMM_toolkit.examples import NorfolkExample
+from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class all_examples:
 
     @staticmethod
     def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return NorfolkExample.load(download_if_exists=download_if_exists)
+        return NorfolkIreneExample.load(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -123,7 +123,7 @@ class GetTS_TestCases:
             final_analysis_configs = analysis_overrides or {}
             final_system_configs = system_overrides or {}
 
-        example = NorfolkExample.load(
+        example = NorfolkIreneExample.load(
             download_if_exists=download_if_exists, example_data_dir=example_data_dir
         )
 

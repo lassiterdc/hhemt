@@ -20,10 +20,10 @@ Generic API (for any case study):
     system = example.system
 
 Case-Specific API (convenience wrappers):
-    from TRITON_SWMM_toolkit.examples import NorfolkExample
+    from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
     # Load Norfolk example (convenience wrapper)
-    norfolk = NorfolkExample.load()
+    norfolk = NorfolkIreneExample.load()
     system = norfolk.system
 
 Adding New Case Studies:
@@ -410,7 +410,7 @@ class TRITON_SWMM_example:
         return cfg_filled_yaml
 
 
-class NorfolkExample:
+class NorfolkIreneExample:
     """
     Convenience wrapper for Norfolk coastal flooding case study.
 
@@ -419,10 +419,10 @@ class NorfolkExample:
     without remembering all the constant names.
 
     Example:
-        from TRITON_SWMM_toolkit.examples import NorfolkExample
+        from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
         # Load Norfolk example with Hurricane Irene data
-        norfolk = NorfolkExample.load()
+        norfolk = NorfolkIreneExample.load()
         system = norfolk.system
 
         # Or just load the analysis template
