@@ -1,42 +1,20 @@
-import os
-from pathlib import Path
-from typing import Optional, TYPE_CHECKING
-from importlib.resources import files
-import TRITON_SWMM_toolkit.constants as cnst
-
-import pandas as pd
-import numpy as np
 import shutil
-import yaml
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
+import yaml
+
 import TRITON_SWMM_toolkit.constants as cnst
-
-# Import from production package
-from TRITON_SWMM_toolkit.config import (
-    load_analysis_config,
-    analysis_config,
-)
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-
-from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
-
-# Import from test fixtures
-from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
-from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
-
+from TRITON_SWMM_toolkit.config import analysis_config
+from TRITON_SWMM_toolkit.examples import NorfolkIreneExample, TRITON_SWMM_example
+from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
-    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
-from dataclasses import dataclass
 
 
-@dataclass
 class all_examples:
-    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
-
     @staticmethod
     def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
         return NorfolkIreneExample.load(download_if_exists=download_if_exists)
@@ -49,8 +27,8 @@ class CaseStudyBuilder:
         case_system_dirname: str,
         analysis_name: str,
         start_from_scratch: bool = False,
-        additional_analysis_configs: Optional[dict] = None,
-        additional_system_configs: Optional[dict] = None,
+        additional_analysis_configs: dict | None = None,
+        additional_system_configs: dict | None = None,
     ):
         # Fix mutable default arguments
         additional_analysis_configs = additional_analysis_configs or {}
@@ -121,9 +99,9 @@ class getTS_CaseStudy:
         analysis_name: str,
         start_from_scratch: bool,
         platform_config: Optional["PlatformConfig"] = None,
-        example_data_dir: Optional[Path] = None,
-        analysis_overrides: Optional[dict] = None,
-        system_overrides: Optional[dict] = None,
+        example_data_dir: Path | None = None,
+        analysis_overrides: dict | None = None,
+        system_overrides: dict | None = None,
         download_if_exists: bool = False,
     ):
         example_data_dir = None
