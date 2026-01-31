@@ -304,13 +304,6 @@ class TRITONSWMM_system:
         ):
             self._download_tritonswmm_source(verbose=verbose)
 
-        # Auto-patch TRITON's cmake for OpenMP builds (before compilation)
-        for backend in backends:
-            if backend == "cpu":
-                self._patch_triton_machine_cmake_for_openmp(
-                    TRITONSWMM_software_directory, backend, verbose=verbose
-                )
-
         # Compile each backend sequentially
         for backend in backends:
             if verbose:
@@ -396,127 +389,6 @@ class TRITONSWMM_system:
             check=True,
         )
 
-    def _patch_triton_machine_cmake_for_openmp(
-        self, triton_dir: Path, backend: str, verbose: bool = True
-    ) -> bool:
-        """
-        Patch TRITON's cmake/machine.cmake to filter GPU flags for OpenMP builds.
-
-        On Frontier, machine detection loads cray_HIP.sh which sets HIP launcher flags.
-        These cause compilation errors in CPU/OpenMP builds. This patch filters them out.
-
-        Parameters
-        ----------
-        triton_dir : Path
-            Path to TRITON source directory
-        backend : str
-            Backend being compiled ("cpu" or "gpu")
-        verbose : bool
-            If True, print detailed before/after diagnostics
-
-        Returns
-        -------
-        bool
-            True if patch was applied, False if already patched or not needed
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        machine_cmake = triton_dir / "cmake" / "machine.cmake"
-
-        if not machine_cmake.exists():
-            logger.warning(f"cmake/machine.cmake not found at {machine_cmake}")
-            return False
-
-        # Read current content
-        content = machine_cmake.read_text()
-
-        # Check if already patched
-        if "# TRITON-SWMM toolkit auto-patch" in content:
-            if verbose:
-                print(
-                    "[CMAKE PATCH] cmake/machine.cmake already patched (skipping)",
-                    flush=True,
-                )
-            return False
-
-        # Only patch for CPU backend
-        if backend != "cpu":
-            return False
-
-        # Find the line to patch (should be around line 216)
-        target_line = (
-            'set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")'
-        )
-
-        if target_line not in content:
-            warning_msg = (
-                f"Target line not found in cmake/machine.cmake. "
-                f"Expected: {target_line}\n"
-                f"This may indicate a TRITON version change. Skipping patch."
-            )
-            logger.warning(warning_msg)
-            if verbose:
-                print(f"[CMAKE PATCH] ⚠ {warning_msg}", flush=True)
-            return False
-
-        # Create backup (only if not already backed up)
-        backup_path = machine_cmake.with_suffix(".cmake.backup")
-        if not backup_path.exists():
-            machine_cmake.rename(backup_path)
-            machine_cmake.write_text(content)  # Restore original for patching
-            if verbose:
-                print(f"[CMAKE PATCH] Created backup: {backup_path}", flush=True)
-
-        # Create patch
-        patch_code = """# TRITON-SWMM toolkit auto-patch: Filter GPU flags for OpenMP backend
-if(BACKEND STREQUAL "OPENMP")
-  # Remove GPU-specific flags from COMPILER_FLAGS for CPU-only builds
-  string(REPLACE "-DTRITON_HIP_LAUNCHER" "" COMPILER_FLAGS "${COMPILER_FLAGS}")
-  string(REPLACE "-DTRITON_CUDA_LAUNCHER" "" COMPILER_FLAGS "${COMPILER_FLAGS}")
-  string(REPLACE "-DACTIVE_GPU=1" "" COMPILER_FLAGS "${COMPILER_FLAGS}")
-  message(STATUS "OpenMP backend: Removed GPU launcher flags from COMPILER_FLAGS")
-endif()
-
-set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")"""
-
-        # Apply patch
-        patched_content = content.replace(target_line, patch_code)
-        machine_cmake.write_text(patched_content)
-
-        # Print detailed before/after if verbose
-        if verbose:
-            print("\n" + "=" * 70, flush=True)
-            print(
-                "⚠️  PATCHING TRITON cmake/machine.cmake FOR CPU COMPILATION", flush=True
-            )
-            print("=" * 70, flush=True)
-            print(
-                "\nWhy: On Frontier HPC, machine detection injects GPU flags even for",
-                flush=True,
-            )
-            print(
-                "     CPU builds, causing compilation errors. This patch filters them.",
-                flush=True,
-            )
-            print("\nFile: " + str(machine_cmake), flush=True)
-            print("Backup: " + str(backup_path), flush=True)
-            print("\n--- BEFORE (original line) ---", flush=True)
-            print(target_line, flush=True)
-            print("\n--- AFTER (patched section) ---", flush=True)
-            # Show the patch with proper indentation
-            for line in patch_code.split("\n"):
-                print(line, flush=True)
-            print("\n" + "=" * 70, flush=True)
-            print("✓ Patch applied successfully", flush=True)
-            print("=" * 70 + "\n", flush=True)
-
-        logger.info(
-            "✓ Patched cmake/machine.cmake to filter GPU flags for OpenMP builds"
-        )
-        return True
-
     def _compile_backend(
         self,
         backend: str,
@@ -568,41 +440,29 @@ set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")"""
                 ]
             )
 
-        # Build cmake flags and environment setup - explicitly enable one backend and disable others
+        # Build cmake flags - use TRITON_IGNORE_MACHINE_FILES to bypass machine-specific defaults
+        # This gives us full control over compilation settings regardless of the HPC system
         if backend == "cpu":
-            # CPU: Enable OpenMP for Kokkos, explicitly disable GPU backends
-            # CRITICAL: Set TRITON_BACKEND as environment variable BEFORE cmake runs
-            # TRITON's machine detection scripts (e.g., frontier/default_default.sh) set
-            # TRITON_BACKEND=HIP as an env var during cmake configuration, which enables
-            # GPU-specific code compilation. Setting it beforehand prevents this override.
-            # CRITICAL: Use CXXFLAGS environment variable to undefine TRITON_HIP_LAUNCHER
-            # CMake's CMAKE_CXX_FLAGS command-line setting gets overridden by TRITON's CMakeLists.txt
-            # but CXXFLAGS environment variable gets prepended and cannot be overridden.
-            # Must undefine HIP/CUDA launcher macros to prevent CUDA syntax errors in CPU builds.
-            # Also use -fopenmp flag to ensure OpenMP runtime is properly linked (prevents __kmpc_* errors)
-            env_setup = [
-                "export TRITON_BACKEND=OPENMP",
-                "export TRITON_ARCH=''",  # Prevent GPU architecture detection
-                "export CXXFLAGS='-fopenmp -UTRITON_HIP_LAUNCHER -UTRITON_CUDA_LAUNCHER'",
-                "export CFLAGS='-fopenmp'",
-                "export LDFLAGS='-fopenmp'",
-            ]
+            # CPU: Enable OpenMP, disable GPU backends
+            # -fopenmp ensures OpenMP runtime is linked (SWMM's CMakeLists.txt uses it)
             cmake_flags = (
+                "-DTRITON_IGNORE_MACHINE_FILES=ON "
                 "-DKokkos_ENABLE_OPENMP=ON "
                 "-DKokkos_ENABLE_HIP=OFF "
-                "-DKokkos_ENABLE_CUDA=OFF"
+                "-DKokkos_ENABLE_CUDA=OFF "
+                "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
+                "-DCMAKE_C_FLAGS='-fopenmp' "
+                "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
-            # SWMM's CMakeLists.txt unconditionally finds and links OpenMP, so we must ensure
-            # the OpenMP runtime library is linked to prevent "undefined reference to __kmpc_*" errors
-            # Need -fopenmp in BOTH shared library and executable linker flags since libswmm5.so
-            # is a shared library that gets linked into runswmm executable
-            # Kokkos won't use OpenMP since we explicitly disable it with -DKokkos_ENABLE_OPENMP=OFF
-            env_setup = ""  # Let machine detection set HIP/CUDA backend
+            # Still need -fopenmp for SWMM which unconditionally finds OpenMP
             cmake_flags = (
+                "-DTRITON_IGNORE_MACHINE_FILES=ON "
                 f"{cmake_backend_flag} "
                 "-DKokkos_ENABLE_OPENMP=OFF "
+                "-DCMAKE_CXX_FLAGS='-O3' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
                 "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
@@ -616,39 +476,10 @@ set(CMAKE_CXX_FLAGS "${COMPILER_FLAGS} ${COMPILER_FLAGS_APPEND}")"""
                 'mkdir -p "${BUILD_DIR}"',
                 'cd "${BUILD_DIR}"',
                 "",
-                "echo '=== ENVIRONMENT BEFORE CMAKE ==='",
-                'echo "TRITON_BACKEND=$TRITON_BACKEND"',
-                'echo "TRITON_ARCH=$TRITON_ARCH"',
-                'echo "CXXFLAGS=$CXXFLAGS"',
-                "",
-            ]
-        )
-
-        # Add environment variable exports if needed (for CPU builds)
-        if env_setup:
-            if isinstance(env_setup, list):
-                bash_script_lines.extend(env_setup)
-            else:
-                bash_script_lines.append(env_setup)
-
-            # Add diagnostic output after env setup
-            bash_script_lines.extend(
-                [
-                    "",
-                    "echo '=== ENVIRONMENT AFTER EXPORTS ==='",
-                    'echo "TRITON_BACKEND=$TRITON_BACKEND"',
-                    'echo "TRITON_ARCH=$TRITON_ARCH"',
-                    'echo "CXXFLAGS=$CXXFLAGS"',
-                    "",
-                ]
-            )
-
-        bash_script_lines.extend(
-            [
                 f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} .. 2>&1 | tee cmake_output.txt",
                 "",
-                "echo '=== CMAKE FLAGS FROM CACHE ==='",
-                "grep -E 'CMAKE_CXX_FLAGS|TRITON_BACKEND|TRITON_ARCH|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
+                "echo '=== CMAKE CONFIGURATION ==='",
+                "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
                 "",
                 "make -j4",
                 "",
