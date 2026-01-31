@@ -45,13 +45,7 @@ def export_scenario_status_to_csv(analysis, output_path: Optional[Path] = None) 
     # Ensure parent directory exists
     output_path_final.parent.mkdir(parents=True, exist_ok=True)
 
-    # Get the appropriate status DataFrame based on analysis type
-    if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        # Sensitivity analysis
-        df_status = analysis.sensitivity.df_status
-    else:
-        # Regular analysis
-        df_status = analysis.df_status
+    df_status = analysis.df_status
 
     # Write to CSV
     df_status.to_csv(output_path_final, index=False)

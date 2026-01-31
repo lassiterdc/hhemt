@@ -1092,6 +1092,8 @@ class TRITONSWMM_analysis:
             - scen_runs_completed: bool - Whether simulation completed
             - scenario_directory: str - Path to scenario directory
         """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.df_status
         scenarios_setup = []
         scen_runs_completed = []
         backend_used = []
