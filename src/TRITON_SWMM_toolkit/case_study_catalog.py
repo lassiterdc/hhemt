@@ -150,13 +150,14 @@ class FrontierCaseStudies:
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
+            "hpc_ensemble_partition": "extended",  # or batch or extended, see https://docs.olcf.ornl.gov/systems/frontier_user_guide.html
             "run_mode": "serial",
-            "hpc_time_min_per_sim": 120,
+            "hpc_time_min_per_sim": 60 * 12,
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
             "n_nodes": 1,
             "n_gpus": 0,
-            "hpc_total_nodes": 200,
+            "hpc_total_nodes": 64,  # extended partition is limited to 64 nodes
             "hpc_total_job_duration_min": 120,
             "hpc_gpus_per_node": 8,
         }
