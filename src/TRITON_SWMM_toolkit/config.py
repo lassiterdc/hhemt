@@ -385,7 +385,7 @@ class analysis_config(cfgBaseModel):
         1, description="Number of MPI ranks per simulation."
     )
     n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
-    n_gpus: Optional[int] = Field(0, description="Number of GPUs")
+    n_gpus: Optional[int] = Field(0, description="Number of GPUs per simulation")
     n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
 
     # MULTI-SIMULATION EXECUTION METHOD

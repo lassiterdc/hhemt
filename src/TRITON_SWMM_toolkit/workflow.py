@@ -775,6 +775,9 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 text=True,
                 check=False,
             )
+            if verbose:
+                cmd = " ".join(cmd_args)
+                print(f"[Snakemake] command: \n     {cmd}")
 
             if result.returncode != 0:
                 error_msg = (
