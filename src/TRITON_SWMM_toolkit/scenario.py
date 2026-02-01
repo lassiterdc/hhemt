@@ -45,6 +45,18 @@ class TRITONSWMM_scenario:
         swmm_folder.mkdir(parents=True, exist_ok=True)
         self.backend = analysis.backend
 
+        # Model toggles from system config
+        cfg_sys = self._system.cfg_system
+        out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
+
+        # Centralized logs directory
+        logs_dir = sim_folder / "logs"
+
+        # Model-specific output directories
+        out_triton = sim_folder / "out_triton" if cfg_sys.toggle_triton_model else None
+        out_tritonswmm = sim_folder / "out_tritonswmm" if cfg_sys.toggle_tritonswmm_model else None
+        out_swmm = sim_folder / "out_swmm" if cfg_sys.toggle_swmm_model else None
+
         self.scen_paths = ScenarioPaths(
             sim_folder=sim_folder,
             f_log=sim_folder / "log.json",
@@ -61,27 +73,35 @@ class TRITONSWMM_scenario:
             # inflow hydrographs
             hyg_timeseries=sim_folder / "strmflow" / "tseries.hyg",
             hyg_locs=sim_folder / "strmflow" / "loc.txt",
-            # TRITON-SWMM
-            triton_swmm_cfg=sim_folder / f"TRITONSWMM.cfg",
+            # Model-specific CFG files
+            triton_swmm_cfg=sim_folder / "TRITONSWMM.cfg",
+            triton_cfg=sim_folder / "TRITON.cfg" if cfg_sys.toggle_triton_model else None,
+            # Centralized logs
+            logs_dir=logs_dir,
+            # Model-specific output directories
+            out_triton=out_triton,
+            out_tritonswmm=out_tritonswmm,
+            out_swmm=out_swmm,
+            # Model-specific log files
+            log_run_triton=logs_dir / "run_triton.log" if cfg_sys.toggle_triton_model else None,
+            log_run_tritonswmm=logs_dir / "run_tritonswmm.log" if cfg_sys.toggle_tritonswmm_model else None,
+            log_run_swmm=logs_dir / "run_swmm.log" if cfg_sys.toggle_swmm_model else None,
+            # Executables (legacy location - kept for compatibility)
             sim_tritonswmm_executable=sim_folder / "build" / "triton.exe",
+            sim_triton_executable=(
+                sim_folder / "build_triton" / "triton.exe" if cfg_sys.toggle_triton_model else None
+            ),
+            sim_swmm_executable=self._system.swmm_executable if cfg_sys.toggle_swmm_model else None,
             tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
-            # OUTPUTS
-            output_tritonswmm_performance_timeserie=sim_folder
-            / f"TRITONSWMM_perf_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_tritonswmm_performance_summary=sim_folder
-            / f"TRITONSWMM_perf_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_triton_timeseries=sim_folder
-            / f"TRITON_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_swmm_link_time_series=sim_folder
-            / f"SWMM_link_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_swmm_node_time_series=sim_folder
-            / f"SWMM_node_tseries.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_triton_summary=sim_folder
-            / f"TRITON_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_swmm_node_summary=sim_folder
-            / f"SWMM_node_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
-            output_swmm_link_summary=sim_folder
-            / f"SWMM_link_summary.{self._analysis.cfg_analysis.TRITON_processed_output_type}",
+            # Legacy OUTPUTS (for TRITON-SWMM coupled model - backwards compatibility)
+            output_tritonswmm_performance_timeserie=sim_folder / f"TRITONSWMM_perf_tseries.{out_type}",
+            output_tritonswmm_performance_summary=sim_folder / f"TRITONSWMM_perf_summary.{out_type}",
+            output_triton_timeseries=sim_folder / f"TRITON_tseries.{out_type}",
+            output_swmm_link_time_series=sim_folder / f"SWMM_link_tseries.{out_type}",
+            output_swmm_node_time_series=sim_folder / f"SWMM_node_tseries.{out_type}",
+            output_triton_summary=sim_folder / f"TRITON_summary.{out_type}",
+            output_swmm_node_summary=sim_folder / f"SWMM_node_summary.{out_type}",
+            output_swmm_link_summary=sim_folder / f"SWMM_link_summary.{out_type}",
         )
         self._create_directories()
         if self.scen_paths.f_log.exists():
@@ -165,10 +185,26 @@ class TRITONSWMM_scenario:
                 return dt_str
 
     def _create_directories(self):
+        """Create all required directories for the scenario."""
         self.scen_paths.dir_weather_datfiles.mkdir(parents=True, exist_ok=True)
         self.scen_paths.extbc_tseries.parent.mkdir(parents=True, exist_ok=True)
         self.scen_paths.hyg_timeseries.parent.mkdir(parents=True, exist_ok=True)
-        self.scen_paths.tritonswmm_logfile_dir.mkdir(parents=True, exist_ok=True)
+
+        # Centralized logs directory
+        if self.scen_paths.logs_dir:
+            self.scen_paths.logs_dir.mkdir(parents=True, exist_ok=True)
+
+        # Model-specific output directories
+        if self.scen_paths.out_triton:
+            self.scen_paths.out_triton.mkdir(parents=True, exist_ok=True)
+        if self.scen_paths.out_tritonswmm:
+            self.scen_paths.out_tritonswmm.mkdir(parents=True, exist_ok=True)
+        if self.scen_paths.out_swmm:
+            self.scen_paths.out_swmm.mkdir(parents=True, exist_ok=True)
+
+        # Legacy logfile dir (for backwards compatibility)
+        if self.scen_paths.tritonswmm_logfile_dir:
+            self.scen_paths.tritonswmm_logfile_dir.mkdir(parents=True, exist_ok=True)
         return
 
     def _retrieve_sim_id_str(self):
@@ -261,6 +297,97 @@ class TRITONSWMM_scenario:
         self.log.triton_swmm_cfg_created.set(True)
         return
 
+    def _generate_TRITON_cfg(self):
+        """
+        Generate TRITON-only configuration file (no SWMM coupling).
+
+        This creates a TRITON.cfg with inp_filename commented out,
+        enabling standalone 2D hydrodynamic simulations without SWMM.
+        """
+        if not self._system.cfg_system.toggle_triton_model:
+            return  # Skip if TRITON-only not enabled
+
+        if self.scen_paths.triton_cfg is None:
+            return  # Path not configured
+
+        use_constant_mannings = self._system.cfg_system.toggle_use_constant_mannings
+        dem_processed = self._system.sys_paths.dem_processed
+        TRITON_raw_output_type = self._analysis.cfg_analysis.TRITON_raw_output_type
+        mannings_processed = self._system.sys_paths.mannings_processed
+        constant_mannings = self._system.cfg_system.constant_mannings
+        hydraulic_timestep_s = self._analysis.cfg_analysis.hydraulic_timestep_s
+        TRITON_reporting_timestep_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
+        open_boundaries = self._analysis.cfg_analysis.open_boundaries
+        triton_swmm_configuration_template = self._system.cfg_system.triton_swmm_configuration_template
+
+        if use_constant_mannings:
+            const_man_toggle = ""
+            man_file_toggle = "#"
+        else:
+            const_man_toggle = "#"
+            man_file_toggle = ""
+
+        # Get simulation duration from SWMM model (same as TRITON-SWMM)
+        swmmmodel = swmmio.Model(str(self.scen_paths.inp_hydro))
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            sim_options = swmmmodel.inp.options
+        start_datetime = pd.to_datetime(
+            sim_options.Value.START_DATE + " " + sim_options.Value.START_TIME
+        )
+        end_datetime = pd.to_datetime(
+            sim_options.Value.END_DATE + " " + sim_options.Value.END_TIME
+        )
+        sim_dur_s = int((end_datetime - start_datetime) / np.timedelta64(1, "s"))
+
+        df_extbc_loc = pd.read_csv(self.scen_paths.extbc_loc)
+        num_ext_bc = len(df_extbc_loc)
+
+        df_src_loc = pd.read_csv(self.scen_paths.hyg_locs)
+        num_srcs = len(df_src_loc)
+
+        sim_id_str = self.sim_id_str
+
+        # TRITON-only mapping - SWMM is commented out
+        mapping = dict(
+            CASE_DESC=f"{sim_id_str}_triton_only",
+            DEM=dem_processed,
+            SWMM="#DISABLED_FOR_TRITON_ONLY",  # Will be commented out in post-processing
+            MH_DIAM=0,  # Not used in TRITON-only
+            MH_LOSS=0,  # Not used in TRITON-only
+            NUM_SOURCES=num_srcs,
+            OUT_FORMAT=TRITON_raw_output_type.upper(),
+            HYDROGRAPH=self.scen_paths.hyg_timeseries,
+            HYDO_SRC_LOC=self.scen_paths.hyg_locs,
+            MANNINGS=mannings_processed,
+            CONST_MAN_TOGGLE=const_man_toggle,
+            MAN_FILE_TOGGLE=man_file_toggle,
+            CONST_MAN=constant_mannings,
+            NUM_EXT_BC=num_ext_bc,
+            EXTBC_DIR=str(self.scen_paths.extbc_loc.parent),
+            EXTBC_FILE=self.scen_paths.extbc_loc,
+            SIM_DUR_S=sim_dur_s,
+            TSTEP_S=hydraulic_timestep_s,
+            REPORTING_TSTEP_S=TRITON_reporting_timestep_s,
+            OPEN_BOUNDARIES=open_boundaries,
+        )
+
+        # Create CFG from template
+        utils.create_from_template(
+            triton_swmm_configuration_template, mapping, self.scen_paths.triton_cfg
+        )
+
+        # Post-process to comment out inp_filename line
+        cfg_content = self.scen_paths.triton_cfg.read_text()
+        cfg_content = cfg_content.replace(
+            'inp_filename="#DISABLED_FOR_TRITON_ONLY"',
+            '#inp_filename=""  # TRITON-only mode (no SWMM coupling)'
+        )
+        self.scen_paths.triton_cfg.write_text(cfg_content)
+
+        self.log.triton_cfg_created.set(True)
+        return
+
     def _copy_tritonswmm_build_folder_to_sim(self):
         """
         Copy TRITON-SWMM build folder to simulation directory.
@@ -272,14 +399,14 @@ class TRITONSWMM_scenario:
         """
         # Select source build directory
         if self.backend == "cpu":
-            src_build_fpath = self._system.sys_paths.TRITON_build_dir_cpu
+            src_build_fpath = self._system.sys_paths.TRITONSWMM_build_dir_cpu
         elif self.backend == "gpu":
-            if self._system.sys_paths.TRITON_build_dir_gpu is None:
+            if self._system.sys_paths.TRITONSWMM_build_dir_gpu is None:
                 raise ValueError(
                     f"GPU backend requested but gpu_compilation_backend not set in system config. "
                     f"Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML."
                 )
-            src_build_fpath = self._system.sys_paths.TRITON_build_dir_gpu
+            src_build_fpath = self._system.sys_paths.TRITONSWMM_build_dir_gpu
         else:
             raise ValueError(f"Unknown backend: {self.backend}")
 
@@ -396,8 +523,8 @@ class TRITONSWMM_scenario:
         )
         self.log.inp_hydraulics_model_created_successfully.set(True)
 
-        # Optional: Full SWMM model (placeholder functionality)
-        if self._system.cfg_system.toggle_full_swmm_model:
+        # Optional: Full SWMM model (standalone SWMM execution)
+        if self._system.cfg_system.toggle_swmm_model:
             self._full_model_builder.create_full_model_from_template(
                 self._system.cfg_system.SWMM_full,
                 self.scen_paths.inp_full,
@@ -422,7 +549,11 @@ class TRITONSWMM_scenario:
         self._input_generator.update_hydraulics_model_to_have_1_inflow_node_per_DEM_gridcell(
             verbose=False
         )
-        self._generate_TRITON_SWMM_cfg()
+
+        # Generate model-specific CFG files
+        self._generate_TRITON_SWMM_cfg()  # Coupled model CFG
+        self._generate_TRITON_cfg()  # TRITON-only CFG (if enabled)
+
         self._copy_tritonswmm_build_folder_to_sim()
 
         self.log.scenario_creation_complete.set(True)

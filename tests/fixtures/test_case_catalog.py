@@ -13,29 +13,17 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 
 """
 
-import os
-from pathlib import Path
-from typing import Optional, TYPE_CHECKING
-from importlib.resources import files
-import TRITON_SWMM_toolkit.constants as cnst
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
-# Import from production package
-# from TRITON_SWMM_toolkit.constants import (
-#     APP_NAME,
-#     NORFOLK_EX,
-#     NORFOLK_SYSTEM_CONFIG,
-#     NORFOLK_CASE_CONFIG,
-# )
+import TRITON_SWMM_toolkit.constants as cnst
 
 # Import from test fixtures
 from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
 from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
-
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
-    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
-from dataclasses import dataclass
 
 
 @dataclass
@@ -78,8 +66,8 @@ class GetTS_TestCases:
         start_from_scratch: bool,
         download_if_exists=False,
         platform_config: Optional["PlatformConfig"] = None,
-        analysis_overrides: Optional[dict] = None,
-        system_overrides: Optional[dict] = None,
+        analysis_overrides: dict | None = None,
+        system_overrides: dict | None = None,
         n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
         TRITON_reporting_timestep_s=cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
         test_system_dirname=cnst.TEST_SYSTEM_DIRNAME,
@@ -404,4 +392,82 @@ class Local_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=2,
+        )
+
+    # ========== Multi-Model Test Cases ==========
+
+    @classmethod
+    def retrieve_norfolk_triton_only_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """Local TRITON-only test (no SWMM coupling)."""
+        analysis_name = "triton_only"
+        system_overrides = {
+            "toggle_triton_model": True,
+            "toggle_tritonswmm_model": False,
+            "toggle_swmm_model": False,
+        }
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            system_overrides=system_overrides,
+        )
+
+    @classmethod
+    def retrieve_norfolk_swmm_only_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """Local SWMM-only test (EPA SWMM without TRITON coupling)."""
+        analysis_name = "swmm_only"
+        system_overrides = {
+            "toggle_triton_model": False,
+            "toggle_tritonswmm_model": False,
+            "toggle_swmm_model": True,
+        }
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            system_overrides=system_overrides,
+        )
+
+    @classmethod
+    def retrieve_norfolk_all_models_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """Local test with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
+        analysis_name = "all_models"
+        system_overrides = {
+            "toggle_triton_model": True,
+            "toggle_tritonswmm_model": True,
+            "toggle_swmm_model": True,
+        }
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            system_overrides=system_overrides,
+        )
+
+    @classmethod
+    def retrieve_norfolk_triton_and_tritonswmm_test_case(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """Local test with TRITON and TRITON-SWMM (no standalone SWMM)."""
+        analysis_name = "triton_and_tritonswmm"
+        system_overrides = {
+            "toggle_triton_model": True,
+            "toggle_tritonswmm_model": True,
+            "toggle_swmm_model": False,
+        }
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            system_overrides=system_overrides,
         )

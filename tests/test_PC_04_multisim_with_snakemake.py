@@ -206,11 +206,14 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
     expected_max = 1 + cores + 2  # = 7 processes
 
     # Run both monitors simultaneously (lightweight background threads)
-    with ProcessMonitor(
-        max_expected=expected_max,
-        sample_interval=0.2,
-        process_name_filter="python",  # Only count Python processes
-    ) as process_monitor, RunnerConcurrencyMonitor(sample_interval=0.1) as runner_monitor:
+    with (
+        ProcessMonitor(
+            max_expected=expected_max,
+            sample_interval=0.2,
+            process_name_filter="python",  # Only count Python processes
+        ) as process_monitor,
+        RunnerConcurrencyMonitor(sample_interval=0.1) as runner_monitor,
+    ):
         result = analysis.submit_workflow(
             mode="local",
             process_system_level_inputs=True,
@@ -230,6 +233,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
         )
 
         assert result["success"], "Workflow should complete successfully"
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
 
     # ========================================================================
     # Part 1: Process Explosion Regression Test

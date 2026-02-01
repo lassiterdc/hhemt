@@ -296,6 +296,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         default_factory=LogField
     )
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
+    triton_cfg_created: LogField[bool] = Field(default_factory=LogField)  # TRITON-only CFG
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
     # Track which backend was used for this scenario
     triton_backend_used: LogField[str] = Field(default_factory=LogField)  # "cpu" or "gpu"
@@ -339,6 +340,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "hyg_locs_created",
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
+        "triton_cfg_created",  # TRITON-only CFG
         "sim_tritonswmm_executable_copied",
         "simulation_completed",
         "TRITON_timeseries_written",
@@ -391,6 +393,7 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "hyg_locs_created",
         "inflow_nodes_in_hydraulic_inp_assigned",
         "triton_swmm_cfg_created",
+        "triton_cfg_created",  # TRITON-only CFG
         "sim_tritonswmm_executable_copied",
         "triton_backend_used",
         "simulation_completed",

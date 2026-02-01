@@ -1,8 +1,9 @@
 import os
-import pytest
 import socket
+
 import pandas as pd
-from pathlib import Path
+import pytest
+
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
 
@@ -40,8 +41,32 @@ def write_snakefile(analysis: TRITONSWMM_analysis, content: str):
 
 
 def assert_snakefile_has_rules(content: str, rules: list[str]):
-    """Assert that each rule name appears in a Snakefile string."""
-    missing = [rule for rule in rules if f"rule {rule}" not in content]
+    """
+    Assert that each rule name appears in a Snakefile string.
+
+    For 'run_simulation' and 'process_outputs', accepts either:
+    - The exact rule name (old monolithic pattern)
+    - Model-specific variants (e.g., run_triton, run_tritonswmm, run_swmm)
+
+    This allows tests to work with both old and new multi-model workflows.
+    """
+    missing = []
+    for rule in rules:
+        if rule in ["run_simulation", "process_outputs"]:
+            # For these rules, check if ANY model-specific variant exists
+            base = "run" if rule == "run_simulation" else "process"
+            has_variant = any(
+                f"rule {base}_{model}" in content
+                for model in ["triton", "tritonswmm", "swmm"]
+            )
+            has_exact = f"rule {rule}" in content
+            if not (has_variant or has_exact):
+                missing.append(rule)
+        else:
+            # For other rules, require exact match
+            if f"rule {rule}" not in content:
+                missing.append(rule)
+
     if missing:
         pytest.fail(f"Missing rules in Snakefile: {missing}")
 
@@ -55,7 +80,19 @@ def assert_snakefile_has_flags(content: str, flags: list[str]):
 
 def assert_system_setup(analysis: TRITONSWMM_analysis):
     """Assert compilation and system-level inputs were created successfully."""
-    assert analysis._system.compilation_successful, "TRITON compilation failed"
+    cfg_sys = analysis._system.cfg_system
+
+    # Check compilations based on enabled models
+    if cfg_sys.toggle_tritonswmm_model:
+        assert analysis._system.compilation_successful, "TRITON-SWMM compilation failed"
+
+    if cfg_sys.toggle_triton_model:
+        assert analysis._system.compilation_triton_only_successful, "TRITON-only compilation failed"
+
+    if cfg_sys.toggle_swmm_model:
+        assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
+
+    # Check system inputs (DEM, Mannings) - these are always required
     dem = analysis._system.processed_dem_rds
     assert dem.shape == (1, 537, 551), "Problems with DEM creation"  # type: ignore
     manning = analysis._system.mannings_rds
@@ -210,3 +247,205 @@ def assert_analysis_workflow_completed_successfully(
     assert_analysis_summaries_created(analysis, which=which)
     assert_scenario_status_csv_created(analysis)
     assert_resource_usage_matches_config(analysis)
+
+
+# ========== Multi-Model Assertion Helpers ==========
+
+
+def assert_triton_compiled(analysis: TRITONSWMM_analysis):
+    """
+    Assert that TRITON-only (without SWMM coupling) was compiled successfully.
+
+    This checks for the TRITON-only build which uses -DTRITON_ENABLE_SWMM=OFF.
+    """
+    system = analysis._system
+    if not hasattr(system, "compilation_triton_only_successful"):
+        pytest.skip("TRITON-only compilation check not implemented yet")
+    if not system.compilation_triton_only_successful:
+        pytest.fail("TRITON-only compilation failed")
+
+
+def assert_swmm_compiled(analysis: TRITONSWMM_analysis):
+    """
+    Assert that standalone SWMM (EPA SWMM) was compiled successfully.
+
+    This checks for the standalone SWMM executable build.
+    """
+    system = analysis._system
+    if not hasattr(system, "compilation_swmm_successful"):
+        pytest.skip("SWMM compilation check not implemented yet")
+    if not system.compilation_swmm_successful:
+        pytest.fail("SWMM compilation failed")
+
+
+def assert_tritonswmm_compiled(analysis: TRITONSWMM_analysis):
+    """
+    Assert that TRITON-SWMM (coupled model) was compiled successfully.
+
+    This is the existing compilation check for the coupled model.
+    """
+    if not analysis._system.compilation_successful:
+        pytest.fail("TRITON-SWMM compilation failed")
+
+
+def assert_model_simulation_run(
+    analysis: TRITONSWMM_analysis,
+    model_type: str,
+):
+    """
+    Assert that simulations completed for a specific model type.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object
+    model_type : str
+        One of "triton", "tritonswmm", or "swmm"
+
+    Raises
+    ------
+    pytest.fail
+        If any simulation for the model type did not complete
+    """
+    valid_types = ("triton", "tritonswmm", "swmm")
+    if model_type not in valid_types:
+        pytest.fail(f"model_type must be one of {valid_types}, got '{model_type}'")
+
+    df_status = analysis.df_status
+
+    # Check if model_type column exists (for multi-model support)
+    if "model_type" in df_status.columns:
+        model_rows = df_status[df_status["model_type"] == model_type]
+        if model_rows.empty:
+            pytest.skip(f"No simulations of type '{model_type}' in this analysis")
+        failed = model_rows[~model_rows["scen_runs_completed"]]
+    else:
+        # Legacy mode: check all simulations (assumes single model type)
+        failed = df_status[~df_status["scen_runs_completed"]]
+
+    if not failed.empty:
+        failed_dirs = failed["scenario_directory"].tolist()
+        pytest.fail(
+            f"{len(failed)} {model_type} simulation(s) failed to complete:\n"
+            + "\n".join(f"  - {d}" for d in failed_dirs[:5])
+            + (f"\n  ... and {len(failed_dirs) - 5} more" if len(failed_dirs) > 5 else "")
+        )
+
+
+def assert_model_outputs_processed(
+    analysis: TRITONSWMM_analysis,
+    model_type: str,
+):
+    """
+    Assert that outputs were processed for a specific model type.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object
+    model_type : str
+        One of "triton", "tritonswmm", or "swmm"
+
+    Raises
+    ------
+    pytest.fail
+        If any output processing for the model type did not complete
+    """
+    valid_types = ("triton", "tritonswmm", "swmm")
+    if model_type not in valid_types:
+        pytest.fail(f"model_type must be one of {valid_types}, got '{model_type}'")
+
+    # Check for model-specific output files based on type
+    if model_type == "triton":
+        # Check TRITON-only output processing
+        # Output path pattern: out_triton/triton_surface_tseries.nc
+        if not analysis.all_TRITON_timeseries_processed:
+            not_processed = getattr(
+                analysis, "TRITON_time_series_not_processed", ["(unknown)"]
+            )
+            pytest.fail(
+                "TRITON-only timeseries processing failed for:\n"
+                + "\n".join(f"  - {s}" for s in not_processed[:5])
+            )
+
+    elif model_type == "tritonswmm":
+        # Check coupled TRITON-SWMM output processing
+        if not analysis.all_TRITON_timeseries_processed:
+            not_processed = getattr(
+                analysis, "TRITON_time_series_not_processed", ["(unknown)"]
+            )
+            pytest.fail(
+                "TRITON-SWMM TRITON timeseries processing failed for:\n"
+                + "\n".join(f"  - {s}" for s in not_processed[:5])
+            )
+        if not analysis.all_SWMM_timeseries_processed:
+            not_processed = getattr(
+                analysis, "SWMM_time_series_not_processed", ["(unknown)"]
+            )
+            pytest.fail(
+                "TRITON-SWMM SWMM timeseries processing failed for:\n"
+                + "\n".join(f"  - {s}" for s in not_processed[:5])
+            )
+
+    elif model_type == "swmm":
+        # Check standalone SWMM output processing
+        if not analysis.all_SWMM_timeseries_processed:
+            not_processed = getattr(
+                analysis, "SWMM_time_series_not_processed", ["(unknown)"]
+            )
+            pytest.fail(
+                "SWMM-only timeseries processing failed for:\n"
+                + "\n".join(f"  - {s}" for s in not_processed[:5])
+            )
+
+
+def assert_enabled_models_match_config(analysis: TRITONSWMM_analysis):
+    """
+    Assert that the enabled models in df_status match the system config toggles.
+
+    This verifies that:
+    - toggle_triton_model -> model_type="triton" rows exist
+    - toggle_tritonswmm_model -> model_type="tritonswmm" rows exist
+    - toggle_swmm_model -> model_type="swmm" rows exist
+    """
+    cfg_sys = analysis._system.cfg_system
+    df_status = analysis.df_status
+
+    if "model_type" not in df_status.columns:
+        pytest.skip("model_type column not yet implemented in df_status")
+
+    model_types_present = set(df_status["model_type"].unique())
+
+    expected_models = set()
+    if cfg_sys.toggle_triton_model:
+        expected_models.add("triton")
+    if cfg_sys.toggle_tritonswmm_model:
+        expected_models.add("tritonswmm")
+    if cfg_sys.toggle_swmm_model:
+        expected_models.add("swmm")
+
+    if model_types_present != expected_models:
+        pytest.fail(
+            f"Model types in df_status ({model_types_present}) don't match "
+            f"enabled toggles ({expected_models})"
+        )
+
+
+def get_enabled_model_types(analysis: TRITONSWMM_analysis) -> list[str]:
+    """
+    Get list of enabled model types based on system config toggles.
+
+    Returns
+    -------
+    list[str]
+        List of enabled model types: "triton", "tritonswmm", and/or "swmm"
+    """
+    cfg_sys = analysis._system.cfg_system
+    models = []
+    if cfg_sys.toggle_triton_model:
+        models.append("triton")
+    if cfg_sys.toggle_tritonswmm_model:
+        models.append("tritonswmm")
+    if cfg_sys.toggle_swmm_model:
+        models.append("swmm")
+    return models

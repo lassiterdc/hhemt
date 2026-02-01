@@ -136,6 +136,96 @@ launcher, finalize = run._create_subprocess_sim_run_launcher(...)  # Spawns anot
 - `prepare_simulation_command()`: Use in runner scripts to get TRITON executable command
 - `_create_subprocess_sim_run_launcher()`: Use in analysis/executor classes for concurrent execution (spawns runner subprocess)
 
+## Multi-Model Integration
+
+The toolkit supports **concurrent execution** of three model types within a single analysis:
+
+### Model Types
+
+| Model Type | Description | Use Case |
+|------------|-------------|----------|
+| **TRITON-only** | 2D hydrodynamic (no SWMM coupling) | Pure surface water modeling, coastal flooding |
+| **TRITON-SWMM** | Coupled 2D surface + 1D drainage | Urban flooding with stormwater infrastructure |
+| **SWMM-only** | Standalone EPA SWMM | Stormwater network analysis without surface routing |
+
+### Configuration Toggles
+
+Enable model types via `system_config.yaml`:
+
+```yaml
+toggle_triton_model: true      # Enable TRITON-only
+toggle_tritonswmm_model: true  # Enable TRITON-SWMM coupled
+toggle_swmm_model: true        # Enable standalone SWMM
+```
+
+**Key behaviors:**
+- Models run **concurrently** via separate Snakemake rules
+- Each model has its own compilation, executable, and output directories
+- Resource allocation: SWMM limited to 4 CPUs (no GPU), TRITON/TRITON-SWMM use configured resources
+
+### Directory Structure (Per Scenario)
+
+```
+{scenario_dir}/
+├── logs/                      # Centralized logs
+│   ├── run_triton.log
+│   ├── run_tritonswmm.log
+│   └── run_swmm.log
+├── out_triton/                # TRITON-only outputs
+├── out_tritonswmm/            # Coupled model outputs
+├── out_swmm/                  # SWMM-only outputs
+├── TRITON.cfg                 # TRITON-only config (inp_filename commented)
+├── TRITONSWMM.cfg             # Coupled model config
+└── swmm_full.inp              # SWMM input
+```
+
+### Compilation
+
+Setup workflow compiles enabled models:
+
+```bash
+python -m TRITON_SWMM_toolkit.setup_workflow \
+    --system-config system.yaml \
+    --analysis-config analysis.yaml \
+    --compile-tritonswmm \    # Compile coupled model
+    --compile-triton-only \   # Compile TRITON-only
+    --compile-swmm            # Compile standalone SWMM
+```
+
+**Build directories:**
+- TRITON-SWMM: `build_tritonswmm_cpu/`, `build_tritonswmm_gpu/`
+- TRITON-only: `build_triton_cpu/`, `build_triton_gpu/` (CMake flag: `-DTRITON_ENABLE_SWMM=OFF`)
+- SWMM: `swmm_build/` (standalone EPA SWMM executable)
+
+### Workflow Rules
+
+Snakemake generates **separate rules per model type**:
+
+```python
+rule run_triton:          # TRITON-only simulation
+    threads: {cpus}
+    resources: gpus={gpus}
+
+rule run_tritonswmm:      # Coupled simulation
+    threads: {cpus}
+    resources: gpus={gpus}
+
+rule run_swmm:            # SWMM-only simulation
+    threads: 4            # CPU-only, limited threads
+```
+
+Processing rules similarly split: `process_triton`, `process_tritonswmm`, `process_swmm`
+
+### Status Tracking
+
+`analysis.df_status` includes `model_types_enabled` column showing which models are active:
+
+```python
+df_status["model_types_enabled"]  # e.g., "triton,tritonswmm,swmm"
+```
+
+For multi-model workflows, all enabled models run for each scenario, with outputs in separate directories.
+
 ## Configuration System
 
 Configuration flows: **YAML → Pydantic → Analysis/Scenario classes**

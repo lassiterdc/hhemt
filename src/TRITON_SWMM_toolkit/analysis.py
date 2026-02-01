@@ -1093,6 +1093,7 @@ class TRITONSWMM_analysis:
             - scen_runs_completed: bool - Whether simulation completed
             - scenario_directory: str - Path to scenario directory
             - backend_used: str - Backend used (from log)
+            - model_types_enabled: str - Comma-separated list of enabled model types
             - actual_nTasks: int - Actual MPI tasks used
             - actual_omp_threads: int - Actual OMP threads per task
             - actual_gpus: int - Actual GPUs per task
@@ -1139,11 +1140,22 @@ class TRITONSWMM_analysis:
             actual_build_type.append(log_data["build_type"])
             actual_wall_time_s.append(log_data["wall_time_s"])
 
+        # Determine which model types are enabled
+        enabled_models = []
+        if self._system.cfg_system.toggle_triton_model:
+            enabled_models.append("triton")
+        if self._system.cfg_system.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if self._system.cfg_system.toggle_swmm_model:
+            enabled_models.append("swmm")
+        models_str = ",".join(enabled_models) if enabled_models else "none"
+
         df_status = self.df_sims.copy()
         df_status["scenarios_setup"] = scenarios_setup
         df_status["scen_runs_completed"] = scen_runs_completed
         df_status["backend_used"] = backend_used
         df_status["scenario_directory"] = scenario_dirs
+        df_status["model_types_enabled"] = models_str  # Which models are enabled for this analysis
         df_status["actual_nTasks"] = actual_nTasks
         df_status["actual_omp_threads"] = actual_omp_threads
         df_status["actual_gpus"] = actual_gpus

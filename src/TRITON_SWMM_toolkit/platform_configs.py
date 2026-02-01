@@ -57,6 +57,9 @@ class PlatformConfig:
     example_data_dir: Optional[Path] = None
     hpc_gpus_per_node: Optional[int] = None
     hpc_cpus_per_node: Optional[int] = None
+    toggle_triton_model: Optional[bool] = None
+    toggle_tritonswmm_model: Optional[bool] = None
+    toggle_swmm_model: Optional[bool] = None
 
     def to_analysis_dict(self) -> Dict:
         """
@@ -85,4 +88,7 @@ class PlatformConfig:
         return {
             "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": self.additional_modules,
             "gpu_compilation_backend": self.gpu_compilation_backend,
+            "toggle_triton_model": self.toggle_triton_model,
+            "toggle_tritonswmm_model": self.toggle_tritonswmm_model,
+            "toggle_swmm_model": self.toggle_swmm_model,
         }

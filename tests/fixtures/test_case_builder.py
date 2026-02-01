@@ -157,6 +157,8 @@ class retrieve_TRITON_SWMM_test_case:
         )
         # update analysis
         self.analysis = TRITONSWMM_analysis(cfg_anlysys_yaml, self.system)
+        # Link analysis back to system
+        self.system._analysis = self.analysis
 
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name

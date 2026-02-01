@@ -213,7 +213,9 @@ class SnakemakeWorkflowBuilder:
             {config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM else ""}\\
+            {"--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""}\\
+            {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
+            {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -326,39 +328,85 @@ rule prepare_scenario:
         """
 '''
 
-        # Add simulation rule
+        # Add simulation rules (separate rules per model type)
         sim_input = (
             "_status/sims/scenario_{event_iloc}_prepared.flag"
             if prepare_scenarios
             else "_status/setup_complete.flag"
         )
-        snakefile_content += f'''
-rule run_simulation:
+
+        # Determine which model types are enabled
+        enabled_models = []
+        if self.system.cfg_system.toggle_triton_model:
+            enabled_models.append("triton")
+        if self.system.cfg_system.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if self.system.cfg_system.toggle_swmm_model:
+            enabled_models.append("swmm")
+
+        if not enabled_models:
+            raise ValueError("No model types enabled! Enable at least one of: toggle_triton_model, toggle_tritonswmm_model, toggle_swmm_model")
+
+        # Generate separate simulation rule for each enabled model type
+        for model_type in enabled_models:
+            # For SWMM, use fixed CPU-only resources (no GPU, limited threads)
+            if model_type == "swmm":
+                swmm_cpus = 4  # SWMM is multithreaded but not MPI/OpenMP, limit to reasonable value
+                swmm_resources = self._build_resource_block(
+                    partition=self.cfg_analysis.hpc_ensemble_partition,
+                    runtime_min=hpc_time_min,
+                    mem_mb=self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000,
+                    nodes=1,
+                    tasks=1,
+                    cpus_per_task=swmm_cpus,
+                    gpu=0,  # SWMM has no GPU support
+                )
+                model_resources = swmm_resources
+                model_threads = swmm_cpus
+            else:
+                # TRITON and TRITON-SWMM use configured resources
+                model_resources = sim_resources
+                model_threads = cpus_per_sim
+
+            snakefile_content += f'''
+rule run_{model_type}:
     input: "{sim_input}"
-    output: "_status/sims/simulation_{{event_iloc}}_complete.flag"
-    log: "logs/sims/simulation_{{event_iloc}}.log"
+    output: "_status/sims/{model_type}_{{event_iloc}}_complete.flag"
+    log: "logs/sims/{model_type}_{{event_iloc}}.log"
     conda: "{conda_env_path}"
-    threads: {cpus_per_sim}
+    threads: {model_threads}
     resources:
-{sim_resources}
+{model_resources}
     shell:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
             {config_args} \\
+            --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             > {{log}} 2>&1
         touch {{output}}
         """
 '''
 
-        # Add output processing rule if requested
+        # Add output processing rules (one per model type) if requested
         if process_timeseries:
-            snakefile_content += f'''
-rule process_outputs:
-    input: "_status/sims/simulation_{{event_iloc}}_complete.flag"
-    output: "_status/sims/outputs_{{event_iloc}}_processed.flag"
-    log: "logs/sims/process_{{event_iloc}}.log"
+            for model_type in enabled_models:
+                # Determine --which flag based on model type
+                if model_type == "triton":
+                    which_arg = "TRITON"
+                elif model_type == "tritonswmm":
+                    which_arg = which  # Use configured value (could be "both", "TRITON", or "SWMM")
+                elif model_type == "swmm":
+                    which_arg = "SWMM"
+                else:
+                    raise ValueError(f"Unknown model_type: {model_type}")
+
+                snakefile_content += f'''
+rule process_{model_type}:
+    input: "_status/sims/{model_type}_{{event_iloc}}_complete.flag"
+    output: "_status/sims/{model_type}_{{event_iloc}}_processed.flag"
+    log: "logs/sims/process_{model_type}_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     resources:
 {process_resources}
@@ -367,7 +415,7 @@ rule process_outputs:
         {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
             {config_args} \\
-            --which {which} \\
+            --which {which_arg} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
             --compression-level {compression_level} \\
@@ -376,15 +424,22 @@ rule process_outputs:
         """
 '''
 
-        # Consolidation rule depends on final output of each sim
-        final_sim_output = (
-            "outputs_{event_iloc}_processed.flag"
-            if process_timeseries
-            else "simulation_{event_iloc}_complete.flag"
-        )
+        # Consolidation rule depends on final output of each model type
+        # Build list of all output flags from all enabled models
+        consolidate_inputs = []
+        for model_type in enabled_models:
+            if process_timeseries:
+                flag_pattern = f"{model_type}_{{event_iloc}}_processed.flag"
+            else:
+                flag_pattern = f"{model_type}_{{event_iloc}}_complete.flag"
+            consolidate_inputs.append(f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)')
+
+        # Join all input patterns
+        consolidate_input_str = " + ".join(consolidate_inputs)
+
         snakefile_content += f'''
 rule consolidate:
-    input: expand("_status/sims/{final_sim_output}", event_iloc=SIM_IDS)
+    input: {consolidate_input_str}
     output: "_status/output_consolidation_complete.flag"
     log: "logs/consolidate.log"
     conda: "{conda_env_path}"
@@ -397,8 +452,8 @@ rule consolidate:
             --compression-level {compression_level} \\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
             --which {which} \\
-            > {{log}} 2>&1
-        touch {{output}}
+            > {{{{log}}}} 2>&1
+        touch {{{{output}}}}
         """
 '''
         return snakefile_content
@@ -1662,7 +1717,9 @@ rule setup:
             {master_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM else ""}\\
+            {"--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""}\\
+            {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
+            {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             > {{log}} 2>&1
         touch {{output}}

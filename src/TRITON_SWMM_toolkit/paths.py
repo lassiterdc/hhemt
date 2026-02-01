@@ -25,8 +25,14 @@ class SysPaths(MainDataClass):
     mannings_processed: Path
 
     # Split build directories by backend
+    TRITONSWMM_build_dir_cpu: Path  # Always present
+    TRITONSWMM_build_dir_gpu: Optional[Path]  # Only if GPU configured
+
+    # Split build directories by backend
     TRITON_build_dir_cpu: Path  # Always present
     TRITON_build_dir_gpu: Optional[Path]  # Only if GPU configured
+
+    SWMM_build_dir: Optional[Path]
 
     # Split compilation artifacts by backend
     compilation_script_cpu: Path
@@ -65,14 +71,36 @@ class ScenarioPaths(MainDataClass):
     extbc_loc: Path
     hyg_timeseries: Path
     hyg_locs: Path
-    triton_swmm_cfg: Path
-    sim_tritonswmm_executable: Path
-    tritonswmm_logfile_dir: Path
-    output_tritonswmm_performance_timeserie: Path
-    output_tritonswmm_performance_summary: Path
-    output_triton_timeseries: Path
-    output_swmm_link_time_series: Path
-    output_swmm_node_time_series: Path
-    output_triton_summary: Path
-    output_swmm_node_summary: Path
-    output_swmm_link_summary: Path
+
+    # Model-specific CFG files
+    triton_swmm_cfg: Path  # TRITON-SWMM coupled model CFG
+    triton_cfg: Optional[Path] = None  # TRITON-only CFG (no SWMM)
+
+    # Centralized logs directory
+    logs_dir: Optional[Path] = None
+
+    # Model-specific output directories
+    out_triton: Optional[Path] = None  # TRITON-only outputs
+    out_tritonswmm: Optional[Path] = None  # Coupled model outputs
+    out_swmm: Optional[Path] = None  # SWMM-only outputs
+
+    # Model-specific log files
+    log_run_triton: Optional[Path] = None
+    log_run_tritonswmm: Optional[Path] = None
+    log_run_swmm: Optional[Path] = None
+
+    # Executables
+    sim_tritonswmm_executable: Optional[Path] = None  # Coupled model executable
+    sim_triton_executable: Optional[Path] = None  # TRITON-only executable
+    sim_swmm_executable: Optional[Path] = None  # SWMM standalone executable
+
+    # Legacy paths (for TRITON-SWMM coupled model - backwards compatibility)
+    tritonswmm_logfile_dir: Optional[Path] = None
+    output_tritonswmm_performance_timeserie: Optional[Path] = None
+    output_tritonswmm_performance_summary: Optional[Path] = None
+    output_triton_timeseries: Optional[Path] = None
+    output_swmm_link_time_series: Optional[Path] = None
+    output_swmm_node_time_series: Optional[Path] = None
+    output_triton_summary: Optional[Path] = None
+    output_swmm_node_summary: Optional[Path] = None
+    output_swmm_link_summary: Optional[Path] = None

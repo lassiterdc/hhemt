@@ -1,16 +1,22 @@
 # %%
 """
-Standalone script for running a single TRITON-SWMM simulation in a subprocess.
+Standalone script for running a single simulation in a subprocess.
 
 This script is designed to be executed as a subprocess (with or without srun)
 to run a single simulation identified by event_iloc.
+
+Supports three model types:
+- triton: TRITON-only (2D hydrodynamic, no SWMM coupling)
+- tritonswmm: Coupled TRITON-SWMM model (default)
+- swmm: SWMM-only (standalone EPA SWMM)
 
 Usage:
     python -m TRITON_SWMM_toolkit.run_simulation_runner \
         --event-iloc 0 \
         --system-config /path/to/system.yaml \
         --analysis-config /path/to/analysis.yaml \
-        [--pickup-where-leftoff] \
+        [--model-type tritonswmm] \
+        [--pickup-where-leftoff]
 
 
 Exit codes:
@@ -37,7 +43,7 @@ logger = logging.getLogger(__name__)
 def main():
     """Main entry point for simulation execution subprocess."""
     parser = argparse.ArgumentParser(
-        description="Run a single TRITON-SWMM simulation in a subprocess"
+        description="Run a single simulation in a subprocess"
     )
     parser.add_argument(
         "--event-iloc",
@@ -56,6 +62,13 @@ def main():
         type=Path,
         required=True,
         help="Path to analysis configuration YAML file",
+    )
+    parser.add_argument(
+        "--model-type",
+        type=str,
+        choices=["triton", "tritonswmm", "swmm"],
+        default="tritonswmm",
+        help="Model type to run (default: tritonswmm)",
     )
     parser.add_argument(
         "--pickup-where-leftoff",
@@ -96,7 +109,8 @@ def main():
         )
 
         event_iloc = args.event_iloc
-        logger.info(f"Running simulation for event_iloc={event_iloc}")
+        model_type = args.model_type
+        logger.info(f"Running {model_type} simulation for event_iloc={event_iloc}")
 
         scenario = TRITONSWMM_scenario(event_iloc, analysis)
 
@@ -108,32 +122,48 @@ def main():
             )
             return 1
 
-        # Verify compilation
-        if not system.compilation_successful:
-            logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
-            return 1
+        # Verify model-specific compilation
+        if model_type == "triton":
+            if not hasattr(system, "compilation_triton_only_successful"):
+                logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
+                return 1
+            if not system.compilation_triton_only_successful:
+                logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
+                return 1
+        elif model_type == "tritonswmm":
+            if not system.compilation_successful:
+                logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
+                return 1
+        elif model_type == "swmm":
+            if not hasattr(system, "compilation_swmm_successful"):
+                logger.error(f"[{event_iloc}] SWMM compilation check not implemented")
+                return 1
+            if not system.compilation_swmm_successful:
+                logger.error(f"[{event_iloc}] SWMM has not been compiled")
+                return 1
 
         # Get the run object and prepare the simulation command
         run = scenario.run
-        logger.info(f"[{event_iloc}] Preparing simulation...")
+        logger.info(f"[{event_iloc}] Preparing {model_type} simulation...")
 
-        # Use prepare_simulation_command to get the actual TRITON executable command
+        # Use prepare_simulation_command to get the actual executable command
         # (NOT the recursive runner command)
         simprep_result = run.prepare_simulation_command(
             pickup_where_leftoff=args.pickup_where_leftoff,
             verbose=True,
+            model_type=model_type,
         )
 
         # Check if simulation already completed
         if simprep_result is None:
             logger.info(
-                f"[{event_iloc}] Simulation already completed, skipping execution"
+                f"[{event_iloc}] {model_type} simulation already completed, skipping execution"
             )
-            logger.info(f"Simulation completed successfully")
+            logger.info(f"{model_type} simulation completed successfully")
             return 0
 
         # Unpack simulation command and metadata
-        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
+        cmd, env, model_logfile, sim_start_reporting_tstep = simprep_result
 
         # Record simulation metadata in log
         run_mode = analysis.cfg_analysis.run_mode
@@ -148,28 +178,28 @@ def main():
         scenario.log.add_sim_entry(
             sim_datetime=sim_datetime,
             sim_start_reporting_tstep=sim_start_reporting_tstep,
-            tritonswmm_logfile=tritonswmm_logfile,
+            tritonswmm_logfile=model_logfile,  # Note: field name kept for backward compatibility
             time_elapsed_s=0,
             status="not started",
-            run_mode=run_mode,
+            run_mode=run_mode if model_type != "swmm" else "serial",  # SWMM is always serial
             cmd=" ".join(cmd),
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus,
+            n_gpus=n_gpus if model_type != "swmm" else 0,  # SWMM has no GPU support
             env=env,
         )
 
-        # Launch the TRITON-SWMM executable (not the runner!)
-        logger.info(f"[{event_iloc}] Running TRITON-SWMM simulation...")
+        # Launch the executable (not the runner!)
+        logger.info(f"[{event_iloc}] Running {model_type} simulation...")
         logger.info(f"[{event_iloc}] Command: {' '.join(cmd)}")
-        logger.info(f"[{event_iloc}] Log file: {tritonswmm_logfile}")
+        logger.info(f"[{event_iloc}] Log file: {model_logfile}")
 
         import time
         import subprocess
         import os
 
         start_time = time.time()
-        with open(tritonswmm_logfile, "w") as lf:
+        with open(model_logfile, "w") as lf:
             proc = subprocess.Popen(
                 cmd,
                 env={**os.environ, **env},

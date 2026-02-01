@@ -143,10 +143,62 @@ class TRITONSWMM_run:
         self,
         pickup_where_leftoff: bool,
         verbose: bool = True,
+        model_type: str = "tritonswmm",
     ):
+        """
+        Prepare simulation command for specified model type.
+
+        Parameters
+        ----------
+        pickup_where_leftoff : bool
+            Resume from last checkpoint if available
+        verbose : bool
+            Print progress messages
+        model_type : str
+            One of: "triton", "tritonswmm", "swmm"
+
+        Returns
+        -------
+        tuple or None
+            (cmd, env, logfile, sim_start_reporting_tstep) or None if already completed
+        """
+        valid_types = ("triton", "tritonswmm", "swmm")
+        if model_type not in valid_types:
+            raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
+
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
         # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
         using_srun = self._analysis.in_slurm
+
+        # ----------------------------
+        # Model-specific paths
+        # ----------------------------
+        # Select executable and CFG based on model type
+        if model_type == "triton":
+            exe = self._scenario.scen_paths.sim_triton_executable
+            cfg = self._scenario.scen_paths.triton_cfg
+            log_dir = self._scenario.scen_paths.logs_dir
+            model_logfile = log_dir / "run_triton.log" if log_dir else None
+        elif model_type == "tritonswmm":
+            exe = self._scenario.scen_paths.sim_tritonswmm_executable
+            cfg = self._scenario.scen_paths.triton_swmm_cfg
+            log_dir = self._scenario.scen_paths.logs_dir
+            model_logfile = log_dir / "run_tritonswmm.log" if log_dir else None
+        elif model_type == "swmm":
+            exe = self._scenario.scen_paths.sim_swmm_executable
+            cfg = None  # SWMM uses .inp file, not CFG
+            log_dir = self._scenario.scen_paths.logs_dir
+            model_logfile = log_dir / "run_swmm.log" if log_dir else None
+        else:
+            raise ValueError(f"Unknown model_type: {model_type}")
+
+        # Fall back to legacy path if logs_dir not set
+        if model_logfile is None:
+            tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
+            model_logfile = (
+                tritonswmm_logfile_dir
+                / f"{model_type}_{current_datetime_string(filepath_friendly=True)}.log"
+            )
 
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
@@ -154,9 +206,6 @@ class TRITONSWMM_run:
         n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
         n_gpus = self._analysis.cfg_analysis.n_gpus
         n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
-        tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
-        exe = self._scenario.scen_paths.sim_tritonswmm_executable
-        cfg = self._scenario.scen_paths.triton_swmm_cfg
 
         sim_start_reporting_tstep = 0
         if pickup_where_leftoff:
@@ -225,6 +274,43 @@ class TRITONSWMM_run:
                 print(f"loading modules {modules}")
             module_load_cmd = f"module load {modules}; "
 
+        # ----------------------------
+        # SWMM-specific command (no CFG, different structure)
+        # ----------------------------
+        if model_type == "swmm":
+            # SWMM command: swmm5 input.inp report.rpt output.out
+            inp_file = self._scenario.scen_paths.inp_full
+            rpt_file = self._scenario.scen_paths.out_swmm / "hydraulics.rpt" if self._scenario.scen_paths.out_swmm else self._scenario.scen_paths.sim_folder / "swmm_report.rpt"
+            out_file = self._scenario.scen_paths.out_swmm / "hydraulics.out" if self._scenario.scen_paths.out_swmm else self._scenario.scen_paths.sim_folder / "swmm_output.out"
+
+            # Create output directory if needed
+            if self._scenario.scen_paths.out_swmm:
+                self._scenario.scen_paths.out_swmm.mkdir(parents=True, exist_ok=True)
+
+            # SWMM is always CPU-only, no srun/mpirun needed
+            launch_cmd_str = f"{exe} {inp_file} {rpt_file} {out_file}"
+
+            # Build the full command
+            env_exports = []
+            for key, value in env.items():
+                escaped_value = value.replace('"', '\\"')
+                env_exports.append(f'export {key}="{escaped_value}"')
+            env_export_str = "; ".join(env_exports)
+
+            full_cmd = f"{env_export_str}; {module_load_cmd}{launch_cmd_str}"
+            cmd = [
+                "bash",
+                "-lc",
+                full_cmd,
+            ]
+
+            # SWMM doesn't have checkpoint support, so pickup_where_leftoff doesn't apply
+            # Return immediately with the command
+            return cmd, env, model_logfile, 0
+
+        # ----------------------------
+        # TRITON/TRITON-SWMM command building
+        # ----------------------------
         if run_mode != "gpu":
             if using_srun:
                 launch_cmd_str = (
@@ -325,19 +411,15 @@ class TRITONSWMM_run:
         if run_mode == "gpu" and n_gpus < 1:  # type: ignore
             raise ValueError("n_gpus must be >= 1")
         # ----------------------------
-        # Run
+        # Return command and metadata
         # ----------------------------
-        tritonswmm_logfile = (
-            tritonswmm_logfile_dir
-            / f"{current_datetime_string(filepath_friendly=True)}.log"
-        )  # individual sim log
         # self._write_repro_script(
-        #     script_path=self._scenario.scen_paths.sim_folder / "tritonswmm_run.sh",
+        #     script_path=self._scenario.scen_paths.sim_folder / f"{model_type}_run.sh",
         #     module_load_cmd=module_load_cmd,
         #     env=env,
         #     launch_cmd_str=launch_cmd_str,
         # )
-        return cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
+        return cmd, env, model_logfile, sim_start_reporting_tstep
 
     def _obsolete_retrieve_sim_launcher(
         self,
@@ -430,6 +512,7 @@ class TRITONSWMM_run:
         self,
         pickup_where_leftoff: bool = False,
         verbose: bool = False,
+        model_type: str = "tritonswmm",
     ):
         """
         Create a launcher function that runs simulation in a subprocess (non-blocking).
@@ -452,6 +535,8 @@ class TRITONSWMM_run:
             If True, resume simulation from last checkpoint if available
         verbose : bool
             If True, print progress messages
+        model_type : str
+            One of: "triton", "tritonswmm", "swmm" (default: "tritonswmm")
 
         Returns
         -------
@@ -477,6 +562,8 @@ class TRITONSWMM_run:
             str(self._analysis.analysis_config_yaml),
             "--system-config",
             str(self._scenario._system.system_config_yaml),
+            "--model-type",
+            model_type,
         ]
 
         # Add optional flags

@@ -99,11 +99,11 @@ def test_1job_normal_run_workflow_builder(norfolk_1job_analysis):
     )
 
     # Verify Snakefile has expected content
-    assert "rule all:" in snakefile_content
-    assert "rule setup:" in snakefile_content
-    assert "rule prepare_scenario:" in snakefile_content
-    assert "rule run_simulation:" in snakefile_content
-    assert "rule process_outputs:" in snakefile_content
+    import tests.utils_for_testing as tst_ut
+    tst_ut.assert_snakefile_has_rules(
+        snakefile_content,
+        ["all", "setup", "prepare_scenario", "run_simulation", "process_outputs"]
+    )
 
     # Generate Snakemake config for single_job mode
     config = analysis._workflow_builder.generate_snakemake_config(mode="single_job")
