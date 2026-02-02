@@ -46,6 +46,8 @@ class TRITONSWMM_run:
 
     @property
     def raw_swmm_output(self):
+        if self._scenario.scen_paths.out_swmm is not None:
+            return self._scenario.scen_paths.out_swmm / "hydraulics.rpt"
         return self._triton_swmm_raw_output_directory / "swmm" / "hydraulics.rpt"
 
     @property
@@ -164,7 +166,9 @@ class TRITONSWMM_run:
         """
         valid_types = ("triton", "tritonswmm", "swmm")
         if model_type not in valid_types:
-            raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
+            raise ValueError(
+                f"model_type must be one of {valid_types}, got {model_type}"
+            )
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
         # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
@@ -280,8 +284,16 @@ class TRITONSWMM_run:
         if model_type == "swmm":
             # SWMM command: swmm5 input.inp report.rpt output.out
             inp_file = self._scenario.scen_paths.inp_full
-            rpt_file = self._scenario.scen_paths.out_swmm / "hydraulics.rpt" if self._scenario.scen_paths.out_swmm else self._scenario.scen_paths.sim_folder / "swmm_report.rpt"
-            out_file = self._scenario.scen_paths.out_swmm / "hydraulics.out" if self._scenario.scen_paths.out_swmm else self._scenario.scen_paths.sim_folder / "swmm_output.out"
+            rpt_file = (
+                self._scenario.scen_paths.out_swmm / "hydraulics.rpt"
+                if self._scenario.scen_paths.out_swmm
+                else self._scenario.scen_paths.sim_folder / "swmm_report.rpt"
+            )
+            out_file = (
+                self._scenario.scen_paths.out_swmm / "hydraulics.out"
+                if self._scenario.scen_paths.out_swmm
+                else self._scenario.scen_paths.sim_folder / "swmm_output.out"
+            )
 
             # Create output directory if needed
             if self._scenario.scen_paths.out_swmm:

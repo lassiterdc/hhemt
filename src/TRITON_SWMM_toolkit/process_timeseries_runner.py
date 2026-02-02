@@ -128,9 +128,10 @@ def main():
 
         logger.info(f"Processing timeseries for scenario {args.event_iloc}")
         scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
+        scenario.log.refresh()
 
-        # Verify that the simulation has been run
-        if not scenario.sim_run_completed:
+        # Verify that the simulation has been run (skip strict check for SWMM-only)
+        if args.which != "SWMM" and not scenario.sim_run_completed:
             logger.error(
                 f"Simulation not completed for scenario {args.event_iloc}. "
                 f"Cannot process outputs. Log: {scenario.latest_simlog}"
@@ -149,17 +150,19 @@ def main():
             verbose=True,
             compression_level=args.compression_level,
         )
-        proc._export_TRITONSWMM_performance_tseries(
-            comp_level=args.compression_level, verbose=True
-        )
+        if args.which in ("TRITON", "both"):
+            proc._export_TRITONSWMM_performance_tseries(
+                comp_level=args.compression_level, verbose=True
+            )
 
         # Verify that processing was successful
         scenario.log.refresh()
-        if not proc.TRITONSWMM_performance_timeseries_written:
-            logger.error(
-                f"TRITONSWMM performance time series not processed for scenario {args.event_iloc}"
-            )
-            return 1
+        if args.which in ("TRITON", "both"):
+            if not proc.TRITONSWMM_performance_timeseries_written:
+                logger.error(
+                    f"TRITONSWMM performance time series not processed for scenario {args.event_iloc}"
+                )
+                return 1
         if args.which == "TRITON" or args.which == "both":
             if not proc.TRITON_outputs_processed:
                 logger.error(

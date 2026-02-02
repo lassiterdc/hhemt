@@ -1,7 +1,7 @@
 import xarray as xr
 from TRITON_SWMM_toolkit.utils import (
     write_zarr,
-    write_zarr_then_netcdf,
+    write_netcdf,
     current_datetime_string,
     get_file_size_MiB,
 )
@@ -40,6 +40,16 @@ class TRITONSWMM_analysis_post_processing:
                 summary_file = scen.scen_paths.output_swmm_node_summary
             elif mode.lower() == "swmm_link":
                 summary_file = scen.scen_paths.output_swmm_link_summary
+            else:
+                raise ValueError(f"Unknown mode: {mode}")
+
+            # Validate path is not None (fail-fast)
+            if summary_file is None:
+                raise ValueError(
+                    f"Summary file path is None for mode '{mode}' and event_iloc={event_iloc}. "
+                    f"This indicates a configuration error - check that the appropriate model types "
+                    f"are enabled in system config."
+                )
 
             # Check if summary file exists
             if not summary_file.exists():
@@ -50,12 +60,13 @@ class TRITONSWMM_analysis_post_processing:
                 )
 
             # Load summary (already has event_iloc coordinate and compute_time)
-            ds = xr.open_dataset(
-                summary_file,
-                chunks="auto",
-                engine=self._open_engine(),
-                consolidated=False,
-            )
+            open_kwargs = {
+                "chunks": "auto",
+                "engine": self._open_engine(),
+            }
+            if open_kwargs["engine"] == "zarr":
+                open_kwargs["consolidated"] = False
+            ds = xr.open_dataset(summary_file, **open_kwargs)
             lst_ds.append(ds)
 
         # Concatenate all summaries
@@ -298,9 +309,13 @@ class TRITONSWMM_analysis_post_processing:
 
     def _open(self, f):
         if f.exists():
-            return xr.open_dataset(
-                f, chunks="auto", engine=self._open_engine(), consolidated=False  # type: ignore
-            )
+            open_kwargs = {
+                "chunks": "auto",
+                "engine": self._open_engine(),
+            }
+            if open_kwargs["engine"] == "zarr":
+                open_kwargs["consolidated"] = False
+            return xr.open_dataset(f, **open_kwargs)  # type: ignore
         else:
             raise ValueError(
                 f"could not open file because it does not exist: {f}. Run analysis.consolidate_[SWMM/TRITON]_outputs()."
@@ -368,6 +383,14 @@ class TRITONSWMM_analysis_post_processing:
             proc = scen.run.proc
 
             summary_file = scen.scen_paths.output_tritonswmm_performance_summary
+
+            # Validate path is not None (fail-fast)
+            if summary_file is None:
+                raise ValueError(
+                    f"Performance summary file path is None for event_iloc={event_iloc}. "
+                    f"This indicates a configuration error - check that the appropriate model types "
+                    f"are enabled in system config."
+                )
 
             if not summary_file.exists():
                 raise FileNotFoundError(
@@ -493,7 +516,7 @@ Log:\n{self._analysis.log._as_json()}\n id(self._analysis.log) = {id(self._analy
         ds.attrs["output_creation_date"] = current_datetime_string()
 
         if processed_out_type == "nc":
-            write_zarr_then_netcdf(ds, fname_out, compression_level, chunks)
+            write_netcdf(ds, fname_out, compression_level, chunks)
         else:
             write_zarr(ds, fname_out, compression_level, chunks)
         if verbose:

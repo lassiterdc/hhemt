@@ -252,11 +252,20 @@ class TRITONSWMM_log(BaseModel):
     @classmethod
     def from_json(cls, path: Path | str):
         path = Path(path)
+        try:
+            with path.open() as f:
+                data = json.load(f)
+        except json.JSONDecodeError:
+            logging.getLogger(__name__).warning(
+                "Log file %s was empty or corrupted; rebuilding log from defaults.",
+                path,
+            )
+            data = None
 
-        with path.open() as f:
-            data = json.load(f)
-
-        log = cls.model_validate(data)
+        if data:
+            log = cls.model_validate(data)
+        else:
+            log = cls(logfile=path)
 
         # Ensure future writes go back to the same file
         log.logfile = path
@@ -265,9 +274,9 @@ class TRITONSWMM_log(BaseModel):
 
 
 class TRITONSWMM_scenario_log(TRITONSWMM_log):
-    event_iloc: int
-    event_idx: Dict
-    simulation_folder: Path
+    event_iloc: int = 0
+    event_idx: Dict = Field(default_factory=dict)
+    simulation_folder: Path = Path(".")
     logfile: Path
 
     # ----------------------------
@@ -296,10 +305,14 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         default_factory=LogField
     )
     triton_swmm_cfg_created: LogField[bool] = Field(default_factory=LogField)
-    triton_cfg_created: LogField[bool] = Field(default_factory=LogField)  # TRITON-only CFG
+    triton_cfg_created: LogField[bool] = Field(
+        default_factory=LogField
+    )  # TRITON-only CFG
     sim_tritonswmm_executable_copied: LogField[bool] = Field(default_factory=LogField)
     # Track which backend was used for this scenario
-    triton_backend_used: LogField[str] = Field(default_factory=LogField)  # "cpu" or "gpu"
+    triton_backend_used: LogField[str] = Field(
+        default_factory=LogField
+    )  # "cpu" or "gpu"
     # RUNNING SIMULATIONS
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
@@ -464,6 +477,62 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
             warnings=warnings,
         )
         self.processing_log.update(simlog)
+
+
+class TRITONSWMM_system_log(TRITONSWMM_log):
+    """System-level log tracking compilation and preprocessing status."""
+
+    # DEM and Manning's preprocessing
+    dem_processed: LogField[bool] = Field(default_factory=LogField)
+    dem_shape: LogField[tuple] = Field(default_factory=LogField)
+    mannings_processed: LogField[bool] = Field(default_factory=LogField)
+    mannings_shape: LogField[tuple] = Field(default_factory=LogField)
+
+    # TRITON-SWMM compilation
+    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(default_factory=LogField)
+    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(default_factory=LogField)
+
+    # TRITON-only compilation
+    compilation_triton_cpu_successful: LogField[bool] = Field(default_factory=LogField)
+    compilation_triton_gpu_successful: LogField[bool] = Field(default_factory=LogField)
+
+    # SWMM compilation
+    compilation_swmm_successful: LogField[bool] = Field(default_factory=LogField)
+
+    # ----------------------------
+    # Consolidated validators
+    # ----------------------------
+    _validate_bool_fields = field_validator(
+        "dem_processed",
+        "mannings_processed",
+        "compilation_tritonswmm_cpu_successful",
+        "compilation_tritonswmm_gpu_successful",
+        "compilation_triton_cpu_successful",
+        "compilation_triton_gpu_successful",
+        "compilation_swmm_successful",
+        mode="before",
+    )(_create_logfield_validator(bool))
+
+    _validate_tuple_fields = field_validator(
+        "dem_shape",
+        "mannings_shape",
+        mode="before",
+    )(_create_logfield_validator(tuple))
+
+    # ----------------------------
+    # Consolidated serializer
+    # ----------------------------
+    _serialize_logfields = field_serializer(
+        "dem_processed",
+        "dem_shape",
+        "mannings_processed",
+        "mannings_shape",
+        "compilation_tritonswmm_cpu_successful",
+        "compilation_tritonswmm_gpu_successful",
+        "compilation_triton_cpu_successful",
+        "compilation_triton_gpu_successful",
+        "compilation_swmm_successful",
+    )(_logfield_serializer)
 
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):

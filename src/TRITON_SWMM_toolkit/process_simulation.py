@@ -1,5 +1,6 @@
 import sys
 import time
+import json
 import xarray as xr
 import pandas as pd
 import numpy as np
@@ -9,7 +10,7 @@ import warnings
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
     write_zarr,
-    write_zarr_then_netcdf,
+    write_netcdf,
     paths_to_strings,
     get_file_size_MiB,
     convert_datetime_to_str,
@@ -30,6 +31,35 @@ class TRITONSWMM_sim_post_processing:
         self.scen_paths = self._scenario.scen_paths
         self._log_write_status()
 
+    def _validate_path(self, path: Path | None, path_name: str) -> Path:
+        """
+        Validate that a path is not None. Fail fast with clear error message.
+
+        Parameters
+        ----------
+        path : Path | None
+            The path to validate
+        path_name : str
+            Description of the path for error message
+
+        Returns
+        -------
+        Path
+            The validated path
+
+        Raises
+        ------
+        ValueError
+            If path is None
+        """
+        if path is None:
+            raise ValueError(
+                f"{path_name} is None. This indicates a configuration error - "
+                f"the required output path was not properly initialized. "
+                f"Check that the appropriate model types are enabled in system config."
+            )
+        return path
+
     def _open_engine(self):
         processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
         if processed_out_type == "zarr":
@@ -39,9 +69,13 @@ class TRITONSWMM_sim_post_processing:
 
     def _open(self, f):
         if f.exists():
-            return xr.open_dataset(
-                f, chunks="auto", engine=self._open_engine(), consolidated=False  # type: ignore
-            )
+            open_kwargs = {
+                "chunks": "auto",
+                "engine": self._open_engine(),
+            }
+            if open_kwargs["engine"] == "zarr":
+                open_kwargs["consolidated"] = False
+            return xr.open_dataset(f, **open_kwargs)  # type: ignore
         else:
             raise ValueError(
                 f"could not open file because it does not exist: {f}. Run method .write_timeseries_outputs() first."
@@ -75,11 +109,12 @@ class TRITONSWMM_sim_post_processing:
             )
         print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
 
-        self._export_TRITONSWMM_performance_tseries(
-            comp_level=compression_level,
-            verbose=verbose,
-            overwrite_if_exist=overwrite_if_exist,
-        )
+        if which in {"TRITON", "both"}:
+            self._export_TRITONSWMM_performance_tseries(
+                comp_level=compression_level,
+                verbose=verbose,
+                overwrite_if_exist=overwrite_if_exist,
+            )
 
         if (which == "both") or (which == "TRITON"):
             self._export_TRITON_outputs(
@@ -198,7 +233,10 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = True,
         overwrite_if_exist: bool = False,
     ):
-        fname_out = self.scen_paths.output_tritonswmm_performance_timeserie
+        fname_out = self._validate_path(
+            self.scen_paths.output_tritonswmm_performance_timeserie,
+            "output_tritonswmm_performance_timeserie"
+        )
         if self._already_written(fname_out) and not overwrite_if_exist:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
@@ -286,7 +324,10 @@ class TRITONSWMM_sim_post_processing:
     ):
         start_time = time.time()
         ds = self.TRITONSWMM_performance_tseries
-        fname_out = self.scen_paths.output_tritonswmm_performance_summary
+        fname_out = self._validate_path(
+            self.scen_paths.output_tritonswmm_performance_summary,
+            "output_tritonswmm_performance_summary"
+        )
         if self._already_written(fname_out) and not overwrite_if_exist:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
@@ -314,7 +355,10 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         comp_level: int = 5,
     ):
-        fname_out = self.scen_paths.output_triton_timeseries
+        fname_out = self._validate_path(
+            self.scen_paths.output_triton_timeseries,
+            "output_triton_timeseries"
+        )
         # dir_outputs = self._run._triton_swmm_raw_output_directory()
         fldr_out_triton = self._run.raw_triton_output_dir
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
@@ -365,8 +409,14 @@ class TRITONSWMM_sim_post_processing:
         comp_level: int = 5,
     ):
         start_time = time.time()
-        f_out_nodes = self.scen_paths.output_swmm_node_time_series
-        f_out_links = self.scen_paths.output_swmm_link_time_series
+        f_out_nodes = self._validate_path(
+            self.scen_paths.output_swmm_node_time_series,
+            "output_swmm_node_time_series"
+        )
+        f_out_links = self._validate_path(
+            self.scen_paths.output_swmm_link_time_series,
+            "output_swmm_link_time_series"
+        )
 
         f_inp = self.scen_paths.inp_hydraulics
         swmm_timeseries_result_file = self._run.raw_swmm_output
@@ -428,22 +478,28 @@ class TRITONSWMM_sim_post_processing:
         ds.attrs["output_creation_date"] = current_datetime_string()
 
         # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
-        ds.attrs["paths"] = paths_to_strings(
+        paths_attr = paths_to_strings(
             self._analysis.dict_of_all_sim_files(self._scenario.event_iloc)
         )
-        ds.attrs["configuration"] = paths_to_strings(
+        config_attr = paths_to_strings(
             {
                 "system": self._system.cfg_system.model_dump(),
                 "analysis": self._analysis.cfg_analysis.model_dump(),
             }
         )
 
+        paths_attr = convert_datetime_to_str(paths_attr)
+        config_attr = convert_datetime_to_str(config_attr)
+
+        ds.attrs["paths"] = json.dumps(paths_attr, default=str)
+        ds.attrs["configuration"] = json.dumps(config_attr, default=str)
+
         # Convert any datetime objects in attributes to ISO format strings
         # to ensure JSON serializability when writing to zarr
         ds.attrs = convert_datetime_to_str(ds.attrs)
 
         if processed_out_type == "nc":
-            write_zarr_then_netcdf(ds, f_out, compression_level)
+            write_netcdf(ds, f_out, compression_level)
         else:
             write_zarr(ds, f_out, compression_level)
         if verbose:
@@ -529,11 +585,10 @@ class TRITONSWMM_sim_post_processing:
         self._log_write_status()
         raw_swmm_dir = self._run.raw_swmm_output.parent
         if self.SWMM_outputs_processed and raw_swmm_dir.exists():
-            if (
-                not raw_swmm_dir.name == "swmm"
-            ):  # don't want to accidentally delete the wrong dir
+            if raw_swmm_dir.name not in {"swmm", "out_swmm"}:
                 raise ValueError(
-                    f"Error: tried deleting raw SWMM outputs but the passed directory name was different han expected.\n{raw_swmm_dir}"
+                    "Error: tried deleting raw SWMM outputs but the passed directory name "
+                    f"was different than expected.\n{raw_swmm_dir}"
                 )
             shutil.rmtree(raw_swmm_dir)
             self.log.raw_SWMM_outputs_cleared.set(True)
@@ -565,11 +620,13 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"Creating summaries for scenario {scen.event_iloc}", flush=True)
 
-        self._export_TRITONSWMM_performance_summary(
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
+        perf_tseries_path = self.scen_paths.output_tritonswmm_performance_timeserie
+        if perf_tseries_path is not None and perf_tseries_path.exists():
+            self._export_TRITONSWMM_performance_summary(
+                overwrite_if_exist=overwrite_if_exist,
+                verbose=verbose,
+                compression_level=compression_level,
+            )
 
         if (which == "both") or (which == "TRITON"):
             self._export_TRITON_summary(
@@ -602,7 +659,10 @@ class TRITONSWMM_sim_post_processing:
         comp_level: int = 5,
     ):
         """Create TRITON summary from full timeseries."""
-        fname_out = self.scen_paths.output_triton_summary
+        fname_out = self._validate_path(
+            self.scen_paths.output_triton_summary,
+            "output_triton_summary"
+        )
 
         if self._already_written(fname_out) and not overwrite_if_exist:
             if verbose:
@@ -647,8 +707,14 @@ class TRITONSWMM_sim_post_processing:
         """Create SWMM node and link summaries from full timeseries."""
         start_time = time.time()
 
-        f_out_nodes = self.scen_paths.output_swmm_node_summary
-        f_out_links = self.scen_paths.output_swmm_link_summary
+        f_out_nodes = self._validate_path(
+            self.scen_paths.output_swmm_node_summary,
+            "output_swmm_node_summary"
+        )
+        f_out_links = self._validate_path(
+            self.scen_paths.output_swmm_link_summary,
+            "output_swmm_link_summary"
+        )
 
         nodes_already_written = self._already_written(f_out_nodes)
         links_already_written = self._already_written(f_out_links)
@@ -731,15 +797,16 @@ class TRITONSWMM_sim_post_processing:
         """
         if (which == "both") or (which == "TRITON"):
             if self.log.TRITON_summary_written.get():
-                if self.scen_paths.output_triton_timeseries.exists():
+                triton_ts_path = self.scen_paths.output_triton_timeseries
+                if triton_ts_path is not None and triton_ts_path.exists():
                     if verbose:
                         print(
                             f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}"
                         )
-                    if self.scen_paths.output_triton_timeseries.is_dir():
-                        shutil.rmtree(self.scen_paths.output_triton_timeseries)
+                    if triton_ts_path.is_dir():
+                        shutil.rmtree(triton_ts_path)
                     else:
-                        self.scen_paths.output_triton_timeseries.unlink()
+                        triton_ts_path.unlink()
                     self.log.full_TRITON_timeseries_cleared.set(True)
             elif verbose:
                 print("TRITON summary not created yet, not clearing full timeseries")
@@ -750,26 +817,28 @@ class TRITONSWMM_sim_post_processing:
                 and self.log.SWMM_link_summary_written.get()
             ):
                 # Clear node timeseries
-                if self.scen_paths.output_swmm_node_time_series.exists():
+                node_ts_path = self.scen_paths.output_swmm_node_time_series
+                if node_ts_path is not None and node_ts_path.exists():
                     if verbose:
                         print(
                             f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}"
                         )
-                    if self.scen_paths.output_swmm_node_time_series.is_dir():
-                        shutil.rmtree(self.scen_paths.output_swmm_node_time_series)
+                    if node_ts_path.is_dir():
+                        shutil.rmtree(node_ts_path)
                     else:
-                        self.scen_paths.output_swmm_node_time_series.unlink()
+                        node_ts_path.unlink()
 
                 # Clear link timeseries
-                if self.scen_paths.output_swmm_link_time_series.exists():
+                link_ts_path = self.scen_paths.output_swmm_link_time_series
+                if link_ts_path is not None and link_ts_path.exists():
                     if verbose:
                         print(
                             f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}"
                         )
-                    if self.scen_paths.output_swmm_link_time_series.is_dir():
-                        shutil.rmtree(self.scen_paths.output_swmm_link_time_series)
+                    if link_ts_path.is_dir():
+                        shutil.rmtree(link_ts_path)
                     else:
-                        self.scen_paths.output_swmm_link_time_series.unlink()
+                        link_ts_path.unlink()
 
                 self.log.full_SWMM_timeseries_cleared.set(True)
             elif verbose:
@@ -813,7 +882,7 @@ def parse_performance_file(filepath):
           Index: performance metric names (str), Name: "Average"
     """
     # Read the file with flexible spacing around commas
-    df = pd.read_csv(filepath, sep=",\s*", engine="python")
+    df = pd.read_csv(filepath, sep=r",\s*", engine="python")
 
     # Clean up column names (remove leading % and whitespace)
     df.columns = df.columns.str.lstrip("%").str.strip()

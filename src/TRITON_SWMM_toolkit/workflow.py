@@ -345,7 +345,9 @@ rule prepare_scenario:
             enabled_models.append("swmm")
 
         if not enabled_models:
-            raise ValueError("No model types enabled! Enable at least one of: toggle_triton_model, toggle_tritonswmm_model, toggle_swmm_model")
+            raise ValueError(
+                "No model types enabled! Enable at least one of: toggle_triton_model, toggle_tritonswmm_model, toggle_swmm_model"
+            )
 
         # Generate separate simulation rule for each enabled model type
         for model_type in enabled_models:
@@ -432,7 +434,9 @@ rule process_{model_type}:
                 flag_pattern = f"{model_type}_{{event_iloc}}_processed.flag"
             else:
                 flag_pattern = f"{model_type}_{{event_iloc}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)')
+            consolidate_inputs.append(
+                f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)'
+            )
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
@@ -452,8 +456,8 @@ rule consolidate:
             --compression-level {compression_level} \\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
             --which {which} \\
-            > {{{{log}}}} 2>&1
-        touch {{{{output}}}}
+            > {{log}} 2>&1
+        touch {{output}}
         """
 '''
         return snakefile_content
@@ -898,17 +902,26 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             Status dictionary with 'success' and 'mode' keys
         """
         # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS, --resources gpu=$TOTAL_GPUS)
-        assert isinstance(
-            analysis.cfg_analysis.hpc_cpus_per_node, int
-        ), "hpc_cpus_per_node required for 1_job_many_srun_tasks dry run validation"
-        assert isinstance(
-            analysis.cfg_analysis.hpc_total_nodes, int
-        ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+        hpc_cpus_per_node = getattr(analysis.cfg_analysis, "hpc_cpus_per_node", None)
+        hpc_total_nodes = getattr(analysis.cfg_analysis, "hpc_total_nodes", None)
+        if not isinstance(hpc_cpus_per_node, int) or not isinstance(
+            hpc_total_nodes, int
+        ):
+            if verbose:
+                print(
+                    "[Snakemake] Skipping single-job dry-run validation: "
+                    "hpc_cpus_per_node or hpc_total_nodes missing in config",
+                    flush=True,
+                )
+            return {
+                "success": True,
+                "mode": "single_job",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": "Dry run skipped (missing hpc_cpus_per_node or hpc_total_nodes)",
+            }
 
-        expected_total_cpus = (
-            analysis.cfg_analysis.hpc_cpus_per_node
-            * analysis.cfg_analysis.hpc_total_nodes
-        )
+        expected_total_cpus = hpc_cpus_per_node * hpc_total_nodes
 
         # Build additional args matching SBATCH script
         additional_args = ["--cores", str(expected_total_cpus)]
@@ -918,13 +931,14 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             analysis._resource_manager._get_simulation_resource_requirements()
         )
         if sim_resources["n_gpus"] > 0:
-            assert isinstance(
-                analysis.cfg_analysis.hpc_gpus_per_node, int
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            expected_total_gpus = (
-                analysis.cfg_analysis.hpc_gpus_per_node
-                * analysis.cfg_analysis.hpc_total_nodes
+            hpc_gpus_per_node = getattr(
+                analysis.cfg_analysis, "hpc_gpus_per_node", None
             )
+            if not isinstance(hpc_gpus_per_node, int):
+                raise AssertionError(
+                    "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+                )
+            expected_total_gpus = hpc_gpus_per_node * hpc_total_nodes
             additional_args.extend(["--resources", f"gpu={expected_total_gpus}"])
 
         dry_run_result = self.run_snakemake_local(

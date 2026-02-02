@@ -560,6 +560,8 @@ def write_netcdf(
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
+    else:
+        chunk_dict = chunks
     ds = ds.chunk(chunk_dict)
     ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
     return

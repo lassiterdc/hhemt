@@ -125,7 +125,9 @@ def main():
         # Verify model-specific compilation
         if model_type == "triton":
             if not hasattr(system, "compilation_triton_only_successful"):
-                logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
+                logger.error(
+                    f"[{event_iloc}] TRITON-only compilation check not implemented"
+                )
                 return 1
             if not system.compilation_triton_only_successful:
                 logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
@@ -181,7 +183,9 @@ def main():
             tritonswmm_logfile=model_logfile,  # Note: field name kept for backward compatibility
             time_elapsed_s=0,
             status="not started",
-            run_mode=run_mode if model_type != "swmm" else "serial",  # SWMM is always serial
+            run_mode=(
+                run_mode if model_type != "swmm" else "serial"
+            ),  # SWMM is always serial
             cmd=" ".join(cmd),
             n_mpi_procs=n_mpi_procs,
             n_omp_threads=n_omp_threads,
@@ -213,7 +217,16 @@ def main():
         elapsed = end_time - start_time
 
         # Check simulation status
-        status, _last_cfg = run._check_simulation_run_status()
+        if model_type == "swmm":
+            # SWMM: Exit code check (future: parse .rpt file for success message)
+            status = (
+                "simulation completed"
+                if _rc == 0
+                else "simulation started but did not finish"
+            )
+        else:
+            # TRITON and TRITON-SWMM: Use log file checking
+            status, _last_cfg = run._check_simulation_run_status()
 
         # Update log entry
         log_dic = scenario.latest_simlog

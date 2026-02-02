@@ -25,9 +25,9 @@ landuse_plot_color_colname: 'plot_color'
 # TOGGLES
 toggle_use_swmm_for_hydrology: True
 toggle_use_constant_mannings: False
-toggle_triton_model: True
+toggle_triton_model: False
 toggle_tritonswmm_model: True
-toggle_swmm_model: True
+toggle_swmm_model: False
 # CONSTANTS
 dem_outside_watershed_height: 9999 # meters
 dem_building_height: 80 # meters

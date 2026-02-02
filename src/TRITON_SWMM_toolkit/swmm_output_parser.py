@@ -1044,6 +1044,8 @@ def convert_datavars_to_dtype(ds, lst_dtypes_to_try=[str], lst_vars_to_convert=N
     if lst_vars_to_convert is None:  # convert all variables
         lst_vars_to_convert = ds.data_vars
     for var in lst_vars_to_convert:
+        if ds[var].size == 0:
+            continue
         converted = False
         first_attempt = True
         for dtype in lst_dtypes_to_try:
@@ -1102,6 +1104,8 @@ def isel_first_and_slice_longest(ds, n=5):
     Select the first element for all dimensions, but slice the first `n` elements
     for the longest dimension.
     """
+    if any(ds.sizes[dim] == 0 for dim in ds.dims):
+        return ds
     # Find the longest dimension
     longest_dim = max(ds.dims, key=lambda d: ds.sizes[d])
     # Build the `isel` dictionary: first element for all dims, slice for the longest

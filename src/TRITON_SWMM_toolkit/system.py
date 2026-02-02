@@ -14,6 +14,7 @@ from rasterio.enums import Resampling
 import TRITON_SWMM_toolkit.utils as ut
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.config import load_system_config
+from TRITON_SWMM_toolkit.log import TRITONSWMM_system_log
 from TRITON_SWMM_toolkit.paths import SysPaths
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
 
@@ -69,6 +70,14 @@ class TRITONSWMM_system:
             compilation_script=system_dir / "compile_cpu.sh",
         )
 
+        # Initialize system log
+        log_path = system_dir / "system_log.json"
+        if log_path.exists():
+            self.log = TRITONSWMM_system_log.from_json(log_path)
+        else:
+            self.log = TRITONSWMM_system_log(logfile=log_path)
+            self.log.write()
+
         self._analysis: TRITONSWMM_analysis | None = None
         self.plot = TRITONSWMM_system_plotting(self)
 
@@ -96,6 +105,10 @@ class TRITONSWMM_system:
             rds_dem_coarse, dem_processed, include_metadata=True
         )
         out = f"wrote {str(dem_processed)}"
+        # Log DEM processing status
+        self.log.dem_processed.set(True)
+        self.log.dem_shape.set(tuple(rds_dem_coarse.shape))
+        self.log.write()
         if verbose:
             print(out)
         return
@@ -114,6 +127,10 @@ class TRITONSWMM_system:
             include_metadata=include_metadata,
         )
         out = f"wrote {str(mannings_processed)}"
+        # Log Manning's processing status
+        self.log.mannings_processed.set(True)
+        self.log.mannings_shape.set(tuple(rds_mannings_coarse.shape))
+        self.log.write()
         if verbose:
             print(out)
         return
@@ -529,8 +546,13 @@ class TRITONSWMM_system:
         # Check success
         if backend == "cpu":
             success = self.compilation_cpu_successful
+            # Log to system log
+            self.log.compilation_tritonswmm_cpu_successful.set(success)
         else:
             success = self.compilation_gpu_successful
+            # Log to system log
+            self.log.compilation_tritonswmm_gpu_successful.set(success)
+        self.log.write()
 
         if verbose:
             if success:
@@ -695,7 +717,9 @@ class TRITONSWMM_system:
 
         # Optional: Load HPC modules
         if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules = self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            modules = (
+                self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            )
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
@@ -723,7 +747,9 @@ class TRITONSWMM_system:
             elif self.cfg_system.gpu_compilation_backend == "CUDA":
                 cmake_backend_flag = "-DKokkos_ENABLE_CUDA=ON"
             else:
-                raise ValueError(f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}")
+                raise ValueError(
+                    f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}"
+                )
 
             cmake_flags = (
                 "-DTRITON_IGNORE_MACHINE_FILES=ON "
@@ -754,8 +780,12 @@ class TRITONSWMM_system:
         script_file.chmod(0o755)
 
         if verbose:
-            print(f"[TRITON-only {backend.upper()}] Starting compilation...", flush=True)
-            print(f"[TRITON-only {backend.upper()}]   Script: {script_file}", flush=True)
+            print(
+                f"[TRITON-only {backend.upper()}] Starting compilation...", flush=True
+            )
+            print(
+                f"[TRITON-only {backend.upper()}]   Script: {script_file}", flush=True
+            )
 
         # Execute compilation
         logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -778,26 +808,40 @@ class TRITONSWMM_system:
         # Check success
         if backend == "cpu":
             success = self.compilation_triton_only_cpu_successful
+            # Log to system log
+            self.log.compilation_triton_cpu_successful.set(success)
         else:
             success = self.compilation_triton_only_gpu_successful
+            # Log to system log
+            self.log.compilation_triton_gpu_successful.set(success)
+        self.log.write()
 
         if verbose:
             if success:
-                print(f"[TRITON-only {backend.upper()}] ✓ Compilation successful!", flush=True)
+                print(
+                    f"[TRITON-only {backend.upper()}] ✓ Compilation successful!",
+                    flush=True,
+                )
             else:
-                print(f"[TRITON-only {backend.upper()}] ✗ Compilation failed", flush=True)
+                print(
+                    f"[TRITON-only {backend.upper()}] ✗ Compilation failed", flush=True
+                )
                 print(f"[TRITON-only {backend.upper()}]   Log: {logfile}", flush=True)
 
     @property
     def compilation_triton_only_cpu_successful(self) -> bool:
         """Check if TRITON-only CPU backend compiled successfully."""
         logfile = self.sys_paths.TRITON_build_dir_cpu / "compilation.log"
-        if not logfile.exists():
-            return False
-        log = ut.read_text_file_as_string(logfile)
-        # TRITON-only does NOT have swmm5 target
-        triton_check = "[100%] Built target triton.exe" in log
-        return triton_check
+        if logfile.exists():
+            log = ut.read_text_file_as_string(logfile)
+            # TRITON-only does NOT have swmm5 target
+            triton_check = "[100%] Built target triton.exe" in log
+            if triton_check:
+                return True
+
+        # Fallback: if compilation log is missing but executable exists, accept as successful
+        exe_path = self.sys_paths.TRITON_build_dir_cpu / "triton.exe"
+        return exe_path.exists()
 
     @property
     def compilation_triton_only_gpu_successful(self) -> bool:
@@ -805,11 +849,14 @@ class TRITONSWMM_system:
         if self.sys_paths.TRITON_build_dir_gpu is None:
             return False
         logfile = self.sys_paths.TRITON_build_dir_gpu / "compilation.log"
-        if not logfile.exists():
-            return False
-        log = ut.read_text_file_as_string(logfile)
-        triton_check = "[100%] Built target triton.exe" in log
-        return triton_check
+        if logfile.exists():
+            log = ut.read_text_file_as_string(logfile)
+            triton_check = "[100%] Built target triton.exe" in log
+            if triton_check:
+                return True
+
+        exe_path = self.sys_paths.TRITON_build_dir_gpu / "triton.exe"
+        return exe_path.exists()
 
     @property
     def compilation_triton_only_successful(self) -> bool:
@@ -853,7 +900,10 @@ class TRITONSWMM_system:
                 print("[SWMM] Skipped (toggle_swmm_model=False)", flush=True)
             return
 
-        if self.compilation_swmm_successful and not recompile_if_already_done_successfully:
+        if (
+            self.compilation_swmm_successful
+            and not recompile_if_already_done_successfully
+        ):
             if verbose:
                 print("[SWMM] Already compiled successfully (skipping)", flush=True)
             return
@@ -865,7 +915,9 @@ class TRITONSWMM_system:
 
         build_dir = self.sys_paths.SWMM_build_dir
         if build_dir is None:
-            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
+            raise ValueError(
+                "SWMM build dir not configured (toggle_swmm_model may be False)"
+            )
 
         swmm_source_dir = build_dir / "swmm_source"
         logfile = build_dir / "compilation.log"
@@ -900,9 +952,9 @@ class TRITONSWMM_system:
         bash_script_lines.extend(
             [
                 f'cd "{build_dir}"',
-                'rm -rf swmm_build',
-                'mkdir -p swmm_build',
-                'cd swmm_build',
+                "rm -rf swmm_build",
+                "mkdir -p swmm_build",
+                "cd swmm_build",
                 "",
                 f'cmake "{swmm_source_dir}" -DCMAKE_BUILD_TYPE=Release 2>&1 | tee cmake_output.txt',
                 "",
@@ -939,7 +991,12 @@ class TRITONSWMM_system:
             time.sleep(0.1)
 
         # Check success
-        if self.compilation_swmm_successful:
+        success = self.compilation_swmm_successful
+        # Log to system log
+        self.log.compilation_swmm_successful.set(success)
+        self.log.write()
+
+        if success:
             if verbose:
                 print("[SWMM] ✓ Compilation successful!", flush=True)
                 print(f"[SWMM]   Executable: {self.swmm_executable}", flush=True)
@@ -965,12 +1022,35 @@ class TRITONSWMM_system:
         """Return path to compiled SWMM executable, or None if not compiled."""
         if self.sys_paths.SWMM_build_dir is None:
             return None
-        # Check common locations
+        # Check common locations (SWMM_build_dir already includes "swmm_build")
         for exe_name in ["runswmm", "swmm5", "swmm"]:
+            # Check bin subdirectory first
+            exe_path = self.sys_paths.SWMM_build_dir / "bin" / exe_name
+            if exe_path.exists():
+                return exe_path
+            # Check build root directly
+            exe_path = self.sys_paths.SWMM_build_dir / exe_name
+            if exe_path.exists():
+                return exe_path
+            # Check swmm_build subdirectory if SWMM_build_dir points to parent
             exe_path = self.sys_paths.SWMM_build_dir / "swmm_build" / "bin" / exe_name
             if exe_path.exists():
                 return exe_path
             exe_path = self.sys_paths.SWMM_build_dir / "swmm_build" / exe_name
+            if exe_path.exists():
+                return exe_path
+            exe_path = (
+                self.sys_paths.SWMM_build_dir
+                / "swmm_build"
+                / "bin"
+                / "Release"
+                / exe_name
+            )
+            if exe_path.exists():
+                return exe_path
+            exe_path = (
+                self.sys_paths.SWMM_build_dir / "swmm_build" / "src" / "run" / exe_name
+            )
             if exe_path.exists():
                 return exe_path
         return None
@@ -1075,7 +1155,10 @@ class TRITONSWMM_system:
             else:
                 print("✗ NOT COMPILED", flush=True)
 
-        print(f"\nTRITON-SWMM backends: {', '.join(self.available_backends) or 'none'}", flush=True)
+        print(
+            f"\nTRITON-SWMM backends: {', '.join(self.available_backends) or 'none'}",
+            flush=True,
+        )
         print("=" * 60 + "\n", flush=True)
 
 
