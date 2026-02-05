@@ -64,9 +64,12 @@ class ScenarioPaths(MainDataClass):
     sim_folder: Path
     weather_timeseries: Path
     dir_weather_datfiles: Path
-    inp_hydro: Path
-    inp_hydraulics: Path
-    inp_full: Path
+    swmm_hydro_inp: Path
+    swmm_hydraulics_inp: Path
+    swmm_hydraulics_rpt: Path
+    swmm_full_inp: Path
+    swmm_full_rpt_file: Path
+    swmm_full_out_file: Path
     extbc_tseries: Path
     extbc_loc: Path
     hyg_timeseries: Path
@@ -82,7 +85,6 @@ class ScenarioPaths(MainDataClass):
     # Model-specific output directories
     out_triton: Optional[Path] = None  # TRITON-only outputs
     out_tritonswmm: Optional[Path] = None  # Coupled model outputs
-    out_swmm: Optional[Path] = None  # SWMM-only outputs
 
     # Model-specific log files
     log_run_triton: Optional[Path] = None
@@ -94,13 +96,25 @@ class ScenarioPaths(MainDataClass):
     sim_triton_executable: Optional[Path] = None  # TRITON-only executable
     sim_swmm_executable: Optional[Path] = None  # SWMM standalone executable
 
-    # Legacy paths (for TRITON-SWMM coupled model - backwards compatibility)
+    # Outputs - TRITON-SWMM Coupled Model
     tritonswmm_logfile_dir: Optional[Path] = None
-    output_tritonswmm_performance_timeserie: Optional[Path] = None
+    output_tritonswmm_performance_timeseries: Optional[Path] = None
     output_tritonswmm_performance_summary: Optional[Path] = None
-    output_triton_timeseries: Optional[Path] = None
-    output_swmm_link_time_series: Optional[Path] = None
-    output_swmm_node_time_series: Optional[Path] = None
-    output_triton_summary: Optional[Path] = None
-    output_swmm_node_summary: Optional[Path] = None
-    output_swmm_link_summary: Optional[Path] = None
+    output_tritonswmm_triton_timeseries: Optional[Path] = None
+    output_tritonswmm_triton_summary: Optional[Path] = None
+    output_tritonswmm_link_time_series: Optional[Path] = None
+    output_tritonswmm_link_summary: Optional[Path] = None
+    output_tritonswmm_node_time_series: Optional[Path] = None
+    output_tritonswmm_node_summary: Optional[Path] = None
+
+    # Outputs - TRITON-only Model
+    output_triton_only_performance_timeseries: Optional[Path] = None
+    output_triton_only_performance_summary: Optional[Path] = None
+    output_triton_only_timeseries: Optional[Path] = None
+    output_triton_only_summary: Optional[Path] = None
+
+    # Outputs - SWMM-only Standalone Model
+    output_swmm_only_link_time_series: Optional[Path] = None
+    output_swmm_only_link_summary: Optional[Path] = None
+    output_swmm_only_node_time_series: Optional[Path] = None
+    output_swmm_only_node_summary: Optional[Path] = None
