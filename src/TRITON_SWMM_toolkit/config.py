@@ -229,6 +229,10 @@ class system_config(cfgBaseModel):
         None,
         description="Landuse raster used for creating manning's roughness input.",
     )
+    SWMM_software_directory: Optional[Path] = Field(
+        None,
+        description="Folder containing the SWMM model software.",
+    )
     TRITONSWMM_software_directory: Path = Field(
         ...,
         description="Folder containing the TRITONSWMM model software.",

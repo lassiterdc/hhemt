@@ -87,7 +87,9 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
         assert analysis._system.compilation_successful, "TRITON-SWMM compilation failed"
 
     if cfg_sys.toggle_triton_model:
-        assert analysis._system.compilation_triton_only_successful, "TRITON-only compilation failed"
+        assert (
+            analysis._system.compilation_triton_only_successful
+        ), "TRITON-only compilation failed"
 
     if cfg_sys.toggle_swmm_model:
         assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
@@ -259,8 +261,6 @@ def assert_triton_compiled(analysis: TRITONSWMM_analysis):
     This checks for the TRITON-only build which uses -DTRITON_ENABLE_SWMM=OFF.
     """
     system = analysis._system
-    if not hasattr(system, "compilation_triton_only_successful"):
-        pytest.skip("TRITON-only compilation check not implemented yet")
     if not system.compilation_triton_only_successful:
         pytest.fail("TRITON-only compilation failed")
 
@@ -272,8 +272,6 @@ def assert_swmm_compiled(analysis: TRITONSWMM_analysis):
     This checks for the standalone SWMM executable build.
     """
     system = analysis._system
-    if not hasattr(system, "compilation_swmm_successful"):
-        pytest.skip("SWMM compilation check not implemented yet")
     if not system.compilation_swmm_successful:
         pytest.fail("SWMM compilation failed")
 
@@ -328,7 +326,11 @@ def assert_model_simulation_run(
         pytest.fail(
             f"{len(failed)} {model_type} simulation(s) failed to complete:\n"
             + "\n".join(f"  - {d}" for d in failed_dirs[:5])
-            + (f"\n  ... and {len(failed_dirs) - 5} more" if len(failed_dirs) > 5 else "")
+            + (
+                f"\n  ... and {len(failed_dirs) - 5} more"
+                if len(failed_dirs) > 5
+                else ""
+            )
         )
 
 
