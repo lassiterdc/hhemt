@@ -136,7 +136,7 @@ class UVA_TestCases:
     @classmethod
     def retrieve_norfolk_UVA_multisim_1cpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         analysis_overrides = {
             "run_mode": "serial",
             "n_mpi_procs": 1,
@@ -160,7 +160,7 @@ class UVA_TestCases:
     @classmethod
     def retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """UVA HPC CPU sensitivity analysis with full ensemble configuration."""
         sensitivity_analysis = (
             all_examples.ex_Nrflk().test_case_directory / cls.sensitivity_UVA_cpu_full
@@ -188,7 +188,7 @@ class UVA_TestCases:
     @classmethod
     def retrieve_norfolk_UVA_sensitivity_CPU_minimal(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """UVA HPC CPU sensitivity analysis with minimal configuration."""
         sensitivity_analysis = (
             all_examples.ex_Nrflk().test_case_directory
@@ -225,7 +225,7 @@ class Frontier_TestCases:
     @classmethod
     def retrieve_norfolk_frontier_multisim_gpu_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Frontier HPC multi-simulation test with GPU acceleration."""
         analysis_overrides = {
             "run_mode": "gpu",
@@ -252,7 +252,7 @@ class Frontier_TestCases:
     @classmethod
     def retrieve_norfolk_frontier_multisim_cpu_serial_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Frontier HPC multi-simulation test with serial CPU execution."""
         analysis_overrides = {
             "run_mode": "serial",
@@ -279,7 +279,7 @@ class Frontier_TestCases:
     @classmethod
     def retrieve_norfolk_frontier_sensitivity_minimal(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Frontier HPC sensitivity analysis with minimal configuration."""
         analysis_name = "frontier_sensitivity_minimal"
         sensitivity = (
@@ -312,7 +312,7 @@ class Frontier_TestCases:
     @classmethod
     def retrieve_norfolk_frontier_sensitivity_suite(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Frontier HPC sensitivity analysis with minimal configuration."""
         analysis_name = "frontier_sensitivity_suite"
         sensitivity = (
@@ -350,7 +350,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_cpu_config_sensitivity_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity"
         sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
@@ -370,7 +370,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_single_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local single simulation test - fastest test case."""
         analysis_name = "single_sim"
         return GetTS_TestCases._retrieve_norfolk_case(
@@ -383,7 +383,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_multi_sim_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local multi-simulation test with 2 events."""
         analysis_name = "multi_sim"
 
@@ -399,7 +399,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_triton_only_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local TRITON-only test (no SWMM coupling)."""
         analysis_name = "triton_only"
         system_overrides = {
@@ -418,7 +418,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_swmm_only_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local SWMM-only test (EPA SWMM without TRITON coupling)."""
         analysis_name = "swmm_only"
         system_overrides = {
@@ -437,7 +437,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_all_models_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local test with all models enabled (TRITON, TRITON-SWMM, SWMM)."""
         analysis_name = "all_models"
         system_overrides = {
@@ -456,7 +456,7 @@ class Local_TestCases:
     @classmethod
     def retrieve_norfolk_triton_and_tritonswmm_test_case(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    ) -> retrieve_TRITON_SWMM_test_case:
         """Local test with TRITON and TRITON-SWMM (no standalone SWMM)."""
         analysis_name = "triton_and_tritonswmm"
         system_overrides = {
