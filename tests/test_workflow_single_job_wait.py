@@ -17,8 +17,15 @@ def mock_analysis():
     analysis = Mock()
     analysis.cfg_analysis = Mock()
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
+    analysis.cfg_analysis.hpc_cpus_per_node = 32
+    analysis.cfg_analysis.hpc_total_nodes = 1
+    analysis.cfg_analysis.mem_gb_per_cpu = 2
     analysis.analysis_paths = Mock()
     analysis.analysis_paths.analysis_dir = Path("/test/analysis")
+    analysis._resource_manager = Mock()
+    analysis._resource_manager._get_simulation_resource_requirements.return_value = {
+        "n_gpus": 0
+    }
     analysis._system = Mock()
     analysis._python_executable = "python"
     analysis._refresh_log = Mock()
@@ -168,12 +175,12 @@ class TestSubmitSingleJobWorkflow:
             stdout="Submitted batch job 12345\n",
         )
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -199,12 +206,12 @@ class TestSubmitSingleJobWorkflow:
             Mock(returncode=0, stdout="COMPLETED 0:0\n"),  # sacct
         ]
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -230,12 +237,12 @@ class TestSubmitSingleJobWorkflow:
             Mock(returncode=0, stdout="FAILED 1:0\n"),  # sacct
         ]
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -259,12 +266,12 @@ class TestSubmitSingleJobWorkflow:
             stderr="Error: invalid partition\n",
         )
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -287,12 +294,12 @@ class TestSubmitSingleJobWorkflow:
             stdout="Something went wrong\n",
         )
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -315,12 +322,12 @@ class TestSubmitSingleJobWorkflow:
             stdout="Something went wrong\n",
         )
 
-        with patch.object(
-            workflow_builder, "_generate_single_job_submission_script"
-        ) as mock_gen, patch.object(
-            workflow_builder, "generate_snakemake_config"
-        ) as mock_config, patch.object(
-            workflow_builder, "write_snakemake_config"
+        with (
+            patch.object(
+                workflow_builder, "_generate_single_job_submission_script"
+            ) as mock_gen,
+            patch.object(workflow_builder, "generate_snakemake_config") as mock_config,
+            patch.object(workflow_builder, "write_snakemake_config"),
         ):
             mock_gen.return_value = Path("/test/submit.sh")
             mock_config.return_value = {}
@@ -338,9 +345,7 @@ class TestSubmitSingleJobWorkflow:
 class TestSubmitWorkflowIntegration:
     """Integration tests for submit_workflow with 1_job_many_srun_tasks mode."""
 
-    @patch.object(
-        SnakemakeWorkflowBuilder, "_submit_single_job_workflow"
-    )
+    @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
     def test_submit_workflow_passes_wait_parameter(
         self, mock_submit_single, mock_analysis
     ):
@@ -354,10 +359,12 @@ class TestSubmitWorkflowIntegration:
 
         builder = SnakemakeWorkflowBuilder(mock_analysis)
 
-        with patch.object(
-            builder, "generate_snakefile_content"
-        ) as mock_gen, patch(
-            "pathlib.Path.write_text"
+        with (
+            patch.object(builder, "generate_snakefile_content") as mock_gen,
+            patch.object(
+                builder, "run_snakemake_local", return_value={"success": True}
+            ),
+            patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
@@ -372,12 +379,8 @@ class TestSubmitWorkflowIntegration:
             call_kwargs = mock_submit_single.call_args[1]
             assert call_kwargs["wait_for_completion"] is True
 
-    @patch.object(
-        SnakemakeWorkflowBuilder, "_submit_single_job_workflow"
-    )
-    def test_submit_workflow_default_no_wait(
-        self, mock_submit_single, mock_analysis
-    ):
+    @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
+    def test_submit_workflow_default_no_wait(self, mock_submit_single, mock_analysis):
         """Test that submit_workflow defaults to wait_for_completion=False."""
         mock_analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
         mock_submit_single.return_value = {
@@ -388,10 +391,12 @@ class TestSubmitWorkflowIntegration:
 
         builder = SnakemakeWorkflowBuilder(mock_analysis)
 
-        with patch.object(
-            builder, "generate_snakefile_content"
-        ) as mock_gen, patch(
-            "pathlib.Path.write_text"
+        with (
+            patch.object(builder, "generate_snakefile_content") as mock_gen,
+            patch.object(
+                builder, "run_snakemake_local", return_value={"success": True}
+            ),
+            patch("pathlib.Path.write_text"),
         ):
             mock_gen.return_value = "# Snakefile"
 
