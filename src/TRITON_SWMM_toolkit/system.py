@@ -26,6 +26,7 @@ class TRITONSWMM_system:
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
+        swmm_dir = self.cfg_system.SWMM_software_directory
 
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
@@ -47,9 +48,7 @@ class TRITONSWMM_system:
             ),
             # SWMM standalone build dir
             SWMM_build_dir=(
-                tritonswmm_dir / "swmm_build"
-                if self.cfg_system.toggle_swmm_model
-                else None
+                swmm_dir if (self.cfg_system.toggle_swmm_model and swmm_dir) else None
             ),
             # Compilation artifacts (shared across build types)
             compilation_script_cpu=system_dir / "compile_cpu.sh",
@@ -58,15 +57,19 @@ class TRITONSWMM_system:
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
-            compilation_logfile_cpu=system_dir / "compilation_cpu.log",
+            compilation_logfile_cpu=(
+                tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"
+            ),
             compilation_logfile_gpu=(
-                system_dir / "compilation_gpu.log"
+                tritonswmm_dir / "build_tritonswmm_gpu" / "compilation.log"
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
             # Backwards compatibility aliases (point to TRITON-SWMM CPU versions)
             TRITON_build_dir=tritonswmm_dir / "build_tritonswmm_cpu",
-            compilation_logfile=system_dir / "compilation_cpu.log",
+            compilation_logfile=tritonswmm_dir
+            / "build_tritonswmm_cpu"
+            / "compilation.log",
             compilation_script=system_dir / "compile_cpu.sh",
         )
 
@@ -503,8 +506,8 @@ class TRITONSWMM_system:
         bash_script_lines.extend(
             [
                 'cd "${TRITON_DIR}"',
-                'rm -rf "${BUILD_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
+                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
                 'cd "${BUILD_DIR}"',
                 "",
                 f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} .. 2>&1 | tee cmake_output.txt",
@@ -528,6 +531,7 @@ class TRITONSWMM_system:
             print(f"[{backend.upper()}]   Script: {compilation_script}", flush=True)
 
         # Execute compilation
+        build_dir.mkdir(parents=True, exist_ok=True)
         with open(compilation_logfile, "w") as logfile:
             subprocess.run(
                 ["/bin/bash", str(compilation_script)],
@@ -762,8 +766,8 @@ class TRITONSWMM_system:
         bash_script_lines.extend(
             [
                 'cd "${TRITON_DIR}"',
-                'rm -rf "${BUILD_DIR}"',
                 'mkdir -p "${BUILD_DIR}"',
+                'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
                 'cd "${BUILD_DIR}"',
                 "",
                 f"cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} .. 2>&1 | tee cmake_output.txt",
@@ -788,6 +792,7 @@ class TRITONSWMM_system:
             )
 
         # Execute compilation
+        build_dir.mkdir(parents=True, exist_ok=True)
         logfile.parent.mkdir(parents=True, exist_ok=True)
         with open(logfile, "w") as lf:
             subprocess.run(
@@ -1014,8 +1019,13 @@ class TRITONSWMM_system:
         if not logfile.exists():
             return False
         log = ut.read_text_file_as_string(logfile)
-        # SWMM builds "runswmm" executable
-        return "Built target runswmm" in log or "Built target swmm5" in log
+        success_markers = ("Built target runswmm", "Built target swmm5")
+        failure_markers = ("CMake Error", "error:", "FAILED")
+        if any(marker in log for marker in success_markers):
+            return True
+        if any(marker in log for marker in failure_markers):
+            return False
+        return False
 
     @property
     def swmm_executable(self) -> Path | None:

@@ -208,7 +208,8 @@ __marimo__/
 *_archive*
 *test_data/*/system*
 *test_data/*/tests/*
-*test_data/triton/*
+*test_data/*/triton/*
+*test_data/*/swmm/*
 profile_runner.py.lprof
 profiling/retrieve_profile.out
 

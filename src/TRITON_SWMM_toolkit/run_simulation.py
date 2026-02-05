@@ -227,16 +227,12 @@ class TRITONSWMM_run:
 
         og_env = os.environ.copy()
         env = dict()
-        swmm_path = (
-            self._analysis._system.cfg_system.TRITONSWMM_software_directory
-            / "external"
-            / "swmm"
-            / "build"
-            / "bin"
-        )
-        env["LD_LIBRARY_PATH"] = (
-            f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
-        )
+        swmm_dir = self._analysis._system.cfg_system.SWMM_software_directory
+        if swmm_dir:
+            swmm_path = swmm_dir / "swmm_build" / "bin"
+            env["LD_LIBRARY_PATH"] = (
+                f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
+            )
 
         # Preserve PATH from parent environment to ensure subprocess can find executables
         env["PATH"] = og_env.get("PATH", "")

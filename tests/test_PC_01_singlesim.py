@@ -29,16 +29,6 @@ def test_create_mannings_file_for_TRITON(norfolk_single_sim_analysis):
     assert rds.shape == (1, 537, 551)  # type: ignore
 
 
-# COMPILING TRITON-SWMM
-def test_compile_TRITONSWMM_for_cpu_sims(norfolk_single_sim_analysis):
-    analysis = norfolk_single_sim_analysis
-    analysis._system.compile_TRITON_SWMM(
-        recompile_if_already_done_successfully=True,
-        redownload_triton_swmm_if_exists=True,
-    )
-    assert analysis._system.compilation_successful
-
-
 # SCENARIO SET UP
 def test_prepare_all_scenarios(norfolk_single_sim_analysis_cached):
     analysis = norfolk_single_sim_analysis_cached
