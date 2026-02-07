@@ -19,17 +19,42 @@ from TRITON_SWMM_toolkit.utils import (
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 from TRITON_SWMM_toolkit.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
+from TRITON_SWMM_toolkit.log import TRITONSWMM_model_log
 
 
 class TRITONSWMM_sim_post_processing:
-    def __init__(self, run: TRITONSWMM_run) -> None:
+    def __init__(
+        self, run: TRITONSWMM_run, model_log: TRITONSWMM_model_log | None = None
+    ) -> None:
         self._run = run
         self._scenario = run._scenario
         self._analysis = run._scenario._analysis
         self._system = run._scenario._system
-        self.log = self._scenario.log
+        # Use provided model_log if given; otherwise activate a model-specific log on demand.
+        self._model_log_override = model_log
+        if model_log is not None:
+            self.log = model_log
+            # Infer model type from log file name (log_triton.json -> "triton")
+            log_name = model_log.logfile.stem  # "log_triton"
+            self._current_model_type: Literal["triton", "tritonswmm", "swmm"] = log_name.split("_")[1]  # type: ignore
+        else:
+            # Default to the first enabled model log; write methods will switch to the
+            # requested model_type explicitly.
+            default_model = self._run.model_types_enabled[0]
+            self.log = self._scenario.get_log(default_model)
+            self._current_model_type = default_model
         self.scen_paths = self._scenario.scen_paths
         self._log_write_status()
+
+    def _set_active_model_log(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> None:
+        """Set self.log to the appropriate model-specific log for this operation."""
+        self._current_model_type = model_type
+        if self._model_log_override is not None:
+            self.log = self._model_log_override
+        else:
+            self.log = self._scenario.get_log(model_type)
 
     def _validate_path(self, path: Path | None, path_name: str) -> Path:
         """
@@ -102,6 +127,13 @@ class TRITONSWMM_sim_post_processing:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        if model_type is None:
+            raise ValueError(
+                "model_type parameter is required. "
+                "Specify which model type to process: 'triton', 'tritonswmm', or 'swmm'"
+            )
+        self._set_active_model_log(model_type)
+
         scen = self._scenario
         enabled_models = self._run.model_types_enabled
 
@@ -147,11 +179,6 @@ class TRITONSWMM_sim_post_processing:
                     verbose=verbose,
                     overwrite_if_exist=overwrite_if_exist,
                 )
-            elif model_type is None:
-                raise ValueError(
-                    "model_type parameter is required. "
-                    "Specify which model type to process: 'triton', 'tritonswmm', or 'swmm'"
-                )
 
         # TRITON outputs processing: model_type determines which outputs to process
         if (which == "both") or (which == "TRITON"):
@@ -168,10 +195,6 @@ class TRITONSWMM_sim_post_processing:
                     clear_raw_outputs=clear_raw_outputs,
                     verbose=verbose,
                     comp_level=compression_level,
-                )
-            elif model_type is None:
-                raise ValueError(
-                    "model_type parameter is required for TRITON output processing"
                 )
 
             print(
@@ -204,10 +227,6 @@ class TRITONSWMM_sim_post_processing:
                     f"Processed SWMM-only outputs for scenario {scen.event_iloc}",
                     flush=True,
                 )  # type: ignore
-            elif model_type is None:
-                raise ValueError(
-                    "model_type parameter is required for SWMM output processing"
-                )
 
         return
 
@@ -314,14 +333,18 @@ class TRITONSWMM_sim_post_processing:
             "output_tritonswmm_performance_timeseries",
         )
         # Get performance directory for TRITON-SWMM coupled model
-        perf_dir = self.scen_paths.out_tritonswmm / "performance" if self.scen_paths.out_tritonswmm else None
+        perf_dir = (
+            self.scen_paths.out_tritonswmm / "performance"
+            if self.scen_paths.out_tritonswmm
+            else None
+        )
         self._export_performance_tseries(
             fname_out=fname_out,
             performance_dir=perf_dir,
             comp_level=comp_level,
             verbose=verbose,
             overwrite_if_exist=overwrite_if_exist,
-            log_field=self.log.TRITONSWMM_performance_timeseries_written,
+            log_field=self.log.performance_timeseries_written,
         )
         return
 
@@ -336,14 +359,18 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_performance_timeseries",
         )
         # Get performance directory for TRITON-only model
-        perf_dir = self.scen_paths.out_triton / "performance" if self.scen_paths.out_triton else None
+        perf_dir = (
+            self.scen_paths.out_triton / "performance"
+            if self.scen_paths.out_triton
+            else None
+        )
         self._export_performance_tseries(
             fname_out=fname_out,
             performance_dir=perf_dir,
             comp_level=comp_level,
             verbose=verbose,
             overwrite_if_exist=overwrite_if_exist,
-            log_field=self.log.TRITON_only_performance_timeseries_written,
+            log_field=self.log.performance_timeseries_written,
         )
         return
 
@@ -473,7 +500,7 @@ class TRITONSWMM_sim_post_processing:
             compression_level=compression_level,
             verbose=verbose,
             overwrite_if_exist=overwrite_if_exist,
-            log_field=self.log.TRITONSWMM_performance_summary_written,
+            log_field=self.log.performance_summary_written,
         )
         return
 
@@ -493,7 +520,7 @@ class TRITONSWMM_sim_post_processing:
             compression_level=compression_level,
             verbose=verbose,
             overwrite_if_exist=overwrite_if_exist,
-            log_field=self.log.TRITON_only_performance_summary_written,
+            log_field=self.log.performance_summary_written,
         )
         return
 
@@ -588,8 +615,11 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
+        # Mark timeseries as written
+        if self.log.TRITON_timeseries_written:
+            self.log.TRITON_timeseries_written.set(True)
         if clear_raw_outputs:
-            self._clear_raw_TRITON_outputs()
+            self._clear_raw_TRITON_outputs(model_type="tritonswmm")
         return
 
     def _export_TRITON_only_outputs(
@@ -609,7 +639,7 @@ class TRITONSWMM_sim_post_processing:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             if clear_raw_outputs:
-                self._clear_raw_TRITON_outputs()
+                self._clear_raw_TRITON_outputs(model_type="triton")
             return
 
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
@@ -629,12 +659,11 @@ class TRITONSWMM_sim_post_processing:
                         flush=True,
                     )
                 if clear_raw_outputs:
-                    self._clear_raw_TRITON_outputs()
+                    self._clear_raw_TRITON_outputs(model_type="triton")
                 return
             raise FileNotFoundError(
                 "No TRITON outputs found to process for TRITON-only model. "
-                "Expected files in: "
-                + ", ".join(str(c) for c in output_candidates if c is not None)
+                f"Expected files in: {fldr_out_triton} "
                 + f" (raw type: {raw_out_type}). "
                 "Ensure the TRITON-only simulation completed and wrote outputs."
             )
@@ -701,9 +730,12 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
+        # Mark timeseries as written
+        if self.log.TRITON_timeseries_written:
+            self.log.TRITON_timeseries_written.set(True)
 
         if clear_raw_outputs:
-            self._clear_raw_TRITON_outputs()
+            self._clear_raw_TRITON_outputs(model_type="triton")
         return
 
     def _export_TRITON_outputs(
@@ -821,6 +853,11 @@ class TRITONSWMM_sim_post_processing:
                 True,
                 notes="links are written after nodes so time elapsed reflecs writing both link AND node time series",
             )
+        # Mark timeseries as written (set both node and link flags)
+        if self.log.SWMM_node_timeseries_written:
+            self.log.SWMM_node_timeseries_written.set(True)
+        if self.log.SWMM_link_timeseries_written:
+            self.log.SWMM_link_timeseries_written.set(True)
         if clear_raw_outputs:
             self._clear_raw_SWMM_outputs(model)
         return
@@ -834,7 +871,9 @@ class TRITONSWMM_sim_post_processing:
     ):
         processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
 
-        ds.attrs["sim_date"] = self._scenario.latest_sim_date(astype="str")
+        ds.attrs["sim_date"] = self._scenario.latest_sim_date(
+            model_type=self._current_model_type, astype="str"
+        )
         ds.attrs["output_creation_date"] = current_datetime_string()
 
         # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
@@ -880,87 +919,38 @@ class TRITONSWMM_sim_post_processing:
 
     @property
     def TRITON_outputs_processed(self) -> bool:
-        """Check if TRITON outputs processed for all enabled model types."""
-        enabled_models = self._run.model_types_enabled
-        results = []
-
-        if "tritonswmm" in enabled_models:
-            tritonswmm_written = self._already_written(
-                self.scen_paths.output_tritonswmm_triton_timeseries
-            )
-            self.log.TRITON_timeseries_written.set(tritonswmm_written)
-            results.append(tritonswmm_written)
-
-        if "triton" in enabled_models:
-            triton_written = self._already_written(
-                self.scen_paths.output_triton_only_timeseries
-            )
-            self.log.TRITON_only_timeseries_written.set(triton_written)
-            if not bool(self.log.TRITON_timeseries_written.get()):
-                self.log.TRITON_timeseries_written.set(triton_written)
-            results.append(triton_written)
-
-        return all(results) if results else False
+        """Check if TRITON outputs processed for current model log."""
+        if self.log.TRITON_timeseries_written:
+            return bool(self.log.TRITON_timeseries_written.get())
+        return False
 
     @property
     def raw_TRITON_outputs_cleared(self) -> bool:
-        return bool(self.log.raw_TRITON_outputs_cleared.get())
+        if self.log.raw_TRITON_outputs_cleared:
+            return bool(self.log.raw_TRITON_outputs_cleared.get())
+        return False
 
     @property
     def raw_SWMM_outputs_cleared(self) -> bool:
-        return bool(self.log.raw_SWMM_outputs_cleared.get())
+        if self.log.raw_SWMM_outputs_cleared:
+            return bool(self.log.raw_SWMM_outputs_cleared.get())
+        return False
 
-    @property
-    def TRITONSWMM_performance_timeseries_written(self) -> bool:
-        written = self._already_written(
-            self.scen_paths.output_tritonswmm_performance_timeseries
-        )
-        self.log.TRITONSWMM_performance_timeseries_written.set(written)
-        return written
-
-    @property
-    def TRITONSWMM_performance_summary_written(self) -> bool:
-        written = self._already_written(
-            self.scen_paths.output_tritonswmm_performance_summary
-        )
-        self.log.TRITONSWMM_performance_summary_written.set(written)
-        return written
-
-    @property
-    def TRITON_only_performance_timeseries_written(self) -> bool:
-        written = self._already_written(
-            self.scen_paths.output_triton_only_performance_timeseries
-        )
-        self.log.TRITON_only_performance_timeseries_written.set(written)
-        return written
-
-    @property
-    def TRITON_only_performance_summary_written(self) -> bool:
-        written = self._already_written(
-            self.scen_paths.output_triton_only_performance_summary
-        )
-        self.log.TRITON_only_performance_summary_written.set(written)
-        return written
+    # Obsolete properties removed - with model-specific logs, these cross-model checks don't apply
+    # Properties like TRITONSWMM_performance_timeseries_written and TRITON_only_performance_timeseries_written
+    # tried to set fields that don't exist in the new TRITONSWMM_model_log structure.
+    # Each model log now uses standard field names (performance_timeseries_written, etc.)
 
     @property
     def SWMM_outputs_processed(self):
-        """Check if SWMM outputs processed for all enabled model types."""
-        enabled_models = self._run.model_types_enabled
-        results = []
-
-        if "tritonswmm" in enabled_models:
-            tritonswmm_ok = self._swmm_node_outputs_processed("tritonswmm") and (
-                self._swmm_link_outputs_processed("tritonswmm")
-            )
-            results.append(tritonswmm_ok)
-
-        if "swmm" in enabled_models:
-            swmm_ok = self._swmm_node_outputs_processed("swmm") and (
-                self._swmm_link_outputs_processed("swmm")
-            )
-            results.append(swmm_ok)
-
-        return all(results) if results else False
+        """Check if SWMM outputs processed for current model log."""
+        node_ok = self.log.SWMM_node_timeseries_written and bool(
+            self.log.SWMM_node_timeseries_written.get()
+        )
+        link_ok = self.log.SWMM_link_timeseries_written and bool(
+            self.log.SWMM_link_timeseries_written.get()
+        )
+        return node_ok and link_ok
 
     def _swmm_link_outputs_processed(
         self, model: Literal["swmm", "tritonswmm"]
@@ -969,14 +959,13 @@ class TRITONSWMM_sim_post_processing:
             swmm_links = self._already_written(
                 self.scen_paths.output_tritonswmm_link_time_series
             )
-            self.log.SWMM_link_timeseries_written.set(swmm_links)
         else:
             swmm_links = self._already_written(
                 self.scen_paths.output_swmm_only_link_time_series
             )
-            self.log.SWMM_only_link_timeseries_written.set(swmm_links)
-            if not bool(self.log.SWMM_link_timeseries_written.get()):
-                self.log.SWMM_link_timeseries_written.set(swmm_links)
+        # With model-specific logs, just set the single field
+        if self.log.SWMM_link_timeseries_written:
+            self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
     def _swmm_node_outputs_processed(
@@ -986,17 +975,24 @@ class TRITONSWMM_sim_post_processing:
             swmm_nodes = self._already_written(
                 self.scen_paths.output_tritonswmm_node_time_series
             )
-            self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         else:
             swmm_nodes = self._already_written(
                 self.scen_paths.output_swmm_only_node_time_series
             )
-            self.log.SWMM_only_node_timeseries_written.set(swmm_nodes)
-            if not bool(self.log.SWMM_node_timeseries_written.get()):
-                self.log.SWMM_node_timeseries_written.set(swmm_nodes)
+        # With model-specific logs, just set the single field
+        if self.log.SWMM_node_timeseries_written:
+            self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
 
     def _log_write_status(self):
+        # Skip status checking if using old scenario log (no model_log passed to __init__)
+        # This happens during initialization before model logs are available
+        from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log
+
+        if isinstance(self.log, TRITONSWMM_scenario_log):
+            return
+
+        # With model-specific logs, check status
         enabled_models = self._run.model_types_enabled
         triton = self.TRITON_outputs_processed
         if "tritonswmm" in enabled_models:
@@ -1004,34 +1000,23 @@ class TRITONSWMM_sim_post_processing:
         if "swmm" in enabled_models:
             self._swmm_link_outputs_processed("swmm")
 
-    def _clear_raw_TRITON_outputs(self):
-        """Clear raw TRITON outputs for enabled model types.
+    def _clear_raw_TRITON_outputs(self, model_type: Literal["triton", "tritonswmm"]):
+        """Clear raw TRITON outputs for the specified model type.
 
-        In multi-model workflows, triton-only and tritonswmm have separate output directories.
-        Clear each independently after confirming timeseries have been written.
+        Args:
+            model_type: Which model's TRITON outputs to clear ('triton' or 'tritonswmm')
         """
-        self._log_write_status()
-        enabled_models = self._run.model_types_enabled
+        triton_dir = self._run.raw_triton_output_dir(model_type=model_type)
+        if not triton_dir.exists():
+            return
 
-        # Clear TRITON-only outputs if enabled and processed
-        if "triton" in enabled_models:
-            triton_dir = self._run.raw_triton_output_dir(model_type="triton")
-            if triton_dir.exists():
-                triton_ok = bool(self.log.TRITON_only_timeseries_written.get())
-                if triton_ok:
-                    shutil.rmtree(triton_dir)
-                    self.log.raw_TRITON_only_outputs_cleared.set(True)
-
-        # Clear TRITON-SWMM outputs if enabled and processed
-        if "tritonswmm" in enabled_models:
-            tritonswmm_dir = self._run.raw_triton_output_dir(model_type="tritonswmm")
-            if tritonswmm_dir.exists():
-                tritonswmm_ok = self._already_written(
-                    self.scen_paths.output_tritonswmm_triton_timeseries
-                )
-                if tritonswmm_ok:
-                    shutil.rmtree(tritonswmm_dir)
-                    self.log.raw_TRITON_outputs_cleared.set(True)
+        # Check if timeseries have been written before clearing
+        if self.log.TRITON_timeseries_written and bool(
+            self.log.TRITON_timeseries_written.get()
+        ):
+            shutil.rmtree(triton_dir)
+            if self.log.raw_TRITON_outputs_cleared:
+                self.log.raw_TRITON_outputs_cleared.set(True)
 
         return
 
@@ -1042,8 +1027,6 @@ class TRITONSWMM_sim_post_processing:
         Args:
             model: Which model's SWMM outputs to clear ('swmm' for standalone, 'tritonswmm' for coupled)
         """
-        self._log_write_status()
-
         # Get the appropriate SWMM output file path based on model type
         if model == "swmm":
             swmm_out_file = self.scen_paths.swmm_full_out_file
@@ -1066,9 +1049,8 @@ class TRITONSWMM_sim_post_processing:
                 swmm_out_file.unlink()
             if swmm_rpt_file.exists():
                 swmm_rpt_file.unlink()
-            self.log.raw_SWMM_outputs_cleared.set(True)
-            if model == "swmm":
-                self.log.raw_SWMM_only_outputs_cleared.set(True)
+            if self.log.raw_SWMM_outputs_cleared:
+                self.log.raw_SWMM_outputs_cleared.set(True)
         return
 
     def write_summary_outputs(
@@ -1098,10 +1080,19 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"Creating summaries for scenario {scen.event_iloc}", flush=True)
 
+        if model_type is None:
+            raise ValueError(
+                "model_type parameter is required for summary generation. "
+                "Must be one of: 'triton', 'tritonswmm', 'swmm'."
+            )
+        self._set_active_model_log(model_type)
+
         # Performance summaries: use model_type to determine which to create
         if (which == "TRITON" or which == "both") and model_type is not None:
             if model_type == "tritonswmm":
-                perf_tseries_path = self.scen_paths.output_tritonswmm_performance_timeseries
+                perf_tseries_path = (
+                    self.scen_paths.output_tritonswmm_performance_timeseries
+                )
                 if perf_tseries_path is not None and perf_tseries_path.exists():
                     self._export_TRITONSWMM_performance_summary(
                         overwrite_if_exist=overwrite_if_exist,
@@ -1109,8 +1100,13 @@ class TRITONSWMM_sim_post_processing:
                         compression_level=compression_level,
                     )
             elif model_type == "triton":
-                triton_perf_tseries_path = self.scen_paths.output_triton_only_performance_timeseries
-                if triton_perf_tseries_path is not None and triton_perf_tseries_path.exists():
+                triton_perf_tseries_path = (
+                    self.scen_paths.output_triton_only_performance_timeseries
+                )
+                if (
+                    triton_perf_tseries_path is not None
+                    and triton_perf_tseries_path.exists()
+                ):
                     self._export_TRITON_only_performance_summary(
                         overwrite_if_exist=overwrite_if_exist,
                         verbose=verbose,
@@ -1248,9 +1244,9 @@ class TRITONSWMM_sim_post_processing:
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
-        self.log.TRITON_summary_written.set(True)
-        if model_type == "triton":
-            self.log.TRITON_only_summary_written.set(True)
+        # With model-specific logs, just set the single field
+        if self.log.TRITON_summary_written:
+            self.log.TRITON_summary_written.set(True)
         return
 
     def _export_SWMM_summaries(
@@ -1335,9 +1331,9 @@ class TRITONSWMM_sim_post_processing:
             self.log.add_sim_processing_entry(
                 f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
             )
-            self.log.SWMM_node_summary_written.set(True)
-            if model_type == "swmm":
-                self.log.SWMM_only_node_summary_written.set(True)
+            # With model-specific logs, just set the single field
+            if self.log.SWMM_node_summary_written:
+                self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
         if not links_already_written or overwrite_if_exist:
@@ -1363,9 +1359,9 @@ class TRITONSWMM_sim_post_processing:
                 True,
                 notes="links summary written after nodes summary",
             )
-            self.log.SWMM_link_summary_written.set(True)
-            if model_type == "swmm":
-                self.log.SWMM_only_link_summary_written.set(True)
+            # With model-specific logs, just set the single field
+            if self.log.SWMM_link_summary_written:
+                self.log.SWMM_link_summary_written.set(True)
 
         return
 
@@ -1385,7 +1381,10 @@ class TRITONSWMM_sim_post_processing:
             If True, print progress messages
         """
         if (which == "both") or (which == "TRITON"):
-            if self.log.TRITON_summary_written.get():
+            if (
+                self.log.TRITON_summary_written
+                and self.log.TRITON_summary_written.get()
+            ):
                 triton_ts_path = self.scen_paths.output_tritonswmm_triton_timeseries
                 if triton_ts_path is not None and triton_ts_path.exists():
                     if verbose:
@@ -1396,15 +1395,21 @@ class TRITONSWMM_sim_post_processing:
                         shutil.rmtree(triton_ts_path)
                     else:
                         triton_ts_path.unlink()
-                    self.log.full_TRITON_timeseries_cleared.set(True)
+                    if self.log.full_TRITON_timeseries_cleared:
+                        self.log.full_TRITON_timeseries_cleared.set(True)
             elif verbose:
                 print("TRITON summary not created yet, not clearing full timeseries")
 
         if (which == "both") or (which == "SWMM"):
-            if (
-                self.log.SWMM_node_summary_written.get()
+            node_summary_ok = (
+                self.log.SWMM_node_summary_written
+                and self.log.SWMM_node_summary_written.get()
+            )
+            link_summary_ok = (
+                self.log.SWMM_link_summary_written
                 and self.log.SWMM_link_summary_written.get()
-            ):
+            )
+            if node_summary_ok and link_summary_ok:
                 # Clear node timeseries
                 node_ts_path = self.scen_paths.output_tritonswmm_node_time_series
                 if node_ts_path is not None and node_ts_path.exists():
@@ -1429,7 +1434,8 @@ class TRITONSWMM_sim_post_processing:
                     else:
                         link_ts_path.unlink()
 
-                self.log.full_SWMM_timeseries_cleared.set(True)
+                if self.log.full_SWMM_timeseries_cleared:
+                    self.log.full_SWMM_timeseries_cleared.set(True)
             elif verbose:
                 print("SWMM summaries not created yet, not clearing full timeseries")
 
@@ -1437,25 +1443,21 @@ class TRITONSWMM_sim_post_processing:
 
     @property
     def TRITON_summary_processed(self) -> bool:
-        """Check if TRITON summary has been created."""
-        return bool(self.log.TRITON_summary_written.get())
+        """Check if TRITON summary has been created for current model log."""
+        if self.log.TRITON_summary_written:
+            return bool(self.log.TRITON_summary_written.get())
+        return False
 
     @property
     def SWMM_summary_processed(self) -> bool:
-        """Check if SWMM summaries have been created."""
-        enabled_models = self._run.model_types_enabled
-        results = []
-        if "tritonswmm" in enabled_models:
-            results.append(
-                bool(self.log.SWMM_node_summary_written.get())
-                and bool(self.log.SWMM_link_summary_written.get())
-            )
-        if "swmm" in enabled_models:
-            results.append(
-                bool(self.log.SWMM_only_node_summary_written.get())
-                and bool(self.log.SWMM_only_link_summary_written.get())
-            )
-        return all(results) if results else False
+        """Check if SWMM summaries have been created for current model log."""
+        node_ok = self.log.SWMM_node_summary_written and bool(
+            self.log.SWMM_node_summary_written.get()
+        )
+        link_ok = self.log.SWMM_link_summary_written and bool(
+            self.log.SWMM_link_summary_written.get()
+        )
+        return node_ok and link_ok
 
 
 def parse_performance_file(filepath):

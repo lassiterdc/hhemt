@@ -111,7 +111,7 @@ def main():
             rerun_swmm_hydro_if_outputs_exist=args.rerun_swmm_hydro,
         )
 
-        # Check if scenario was created successfully
+        # Verify preparation succeeded via scenario prep log
         scenario.log.refresh()
         if scenario.log.scenario_creation_complete.get():
             logger.info(f"Scenario {args.event_iloc} prepared successfully")

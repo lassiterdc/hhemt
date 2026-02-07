@@ -9,7 +9,11 @@ import swmmio
 import warnings
 import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
-from TRITON_SWMM_toolkit.log import TRITONSWMM_scenario_log, TRITONSWMM_model_log, LogField
+from TRITON_SWMM_toolkit.log import (
+    TRITONSWMM_scenario_log,
+    TRITONSWMM_model_log,
+    LogField,
+)
 from TRITON_SWMM_toolkit.paths import ScenarioPaths
 from typing import TYPE_CHECKING, Literal, Optional
 import threading
@@ -62,7 +66,7 @@ class TRITONSWMM_scenario:
 
         self.scen_paths = ScenarioPaths(
             sim_folder=sim_folder,
-            f_log=sim_folder / "log.json",
+            scenario_prep_log=sim_folder / "scenario_prep_log.json",
             weather_timeseries=sim_folder / "sim_weather.nc",
             # swmm time series
             dir_weather_datfiles=sim_folder / "dats",
@@ -197,14 +201,16 @@ class TRITONSWMM_scenario:
             ),
         )
         self._create_directories()
-        if self.scen_paths.f_log.exists():
-            self.log = TRITONSWMM_scenario_log.from_json(self.scen_paths.f_log)
+        if self.scen_paths.scenario_prep_log.exists():
+            self.log = TRITONSWMM_scenario_log.from_json(
+                self.scen_paths.scenario_prep_log
+            )
         else:
             self.log = TRITONSWMM_scenario_log(
                 event_iloc=self.event_iloc,
                 event_idx=self.weather_event_indexers,
                 simulation_folder=self.scen_paths.sim_folder,
-                logfile=self.scen_paths.f_log,
+                logfile=self.scen_paths.scenario_prep_log,
             )
         self.run = TRITONSWMM_run(self)
 
@@ -213,7 +219,9 @@ class TRITONSWMM_scenario:
         self._runoff_modeler = SWMMRunoffModeler(self)
         self._full_model_builder = SWMMFullModelBuilder(self)
 
-    def get_log(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> TRITONSWMM_model_log:
+    def get_log(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> TRITONSWMM_model_log:
         """
         Get the log for a specific model type.
 
@@ -228,36 +236,52 @@ class TRITONSWMM_scenario:
         """
         log_file = self.scen_paths.sim_folder / f"log_{model_type}.json"
 
-        # Load existing log if it exists
+        # Load existing log if it exists, otherwise create new one
         if log_file.exists():
-            return TRITONSWMM_model_log.from_json(log_file)
+            log = TRITONSWMM_model_log.from_json(log_file)
+        else:
+            log = TRITONSWMM_model_log(
+                event_iloc=self.event_iloc,
+                event_idx=self.weather_event_indexers,
+                simulation_folder=self.scen_paths.sim_folder,
+                logfile=log_file,
+            )
 
-        # Create new log with appropriate fields initialized based on model type
-        log = TRITONSWMM_model_log(
-            event_iloc=self.event_iloc,
-            event_idx=self.weather_event_indexers,
-            simulation_folder=self.scen_paths.sim_folder,
-            logfile=log_file,
-        )
-
-        # Initialize model-specific fields
+        # Initialize model-specific fields if they are None
+        # (Handles both new logs and existing logs that haven't been fully populated yet)
         if model_type in ("triton", "tritonswmm"):
             # TRITON models need performance and TRITON output fields
-            log.performance_timeseries_written = LogField()
-            log.performance_summary_written = LogField()
-            log.TRITON_timeseries_written = LogField()
-            log.TRITON_summary_written = LogField()
-            log.raw_TRITON_outputs_cleared = LogField()
-            log.full_TRITON_timeseries_cleared = LogField()
+            if log.performance_timeseries_written is None:
+                log.performance_timeseries_written = LogField()
+            if log.performance_summary_written is None:
+                log.performance_summary_written = LogField()
+            if log.TRITON_timeseries_written is None:
+                log.TRITON_timeseries_written = LogField()
+            if log.TRITON_summary_written is None:
+                log.TRITON_summary_written = LogField()
+            if log.raw_TRITON_outputs_cleared is None:
+                log.raw_TRITON_outputs_cleared = LogField()
+            if log.full_TRITON_timeseries_cleared is None:
+                log.full_TRITON_timeseries_cleared = LogField()
 
         if model_type in ("swmm", "tritonswmm"):
             # SWMM models need SWMM output fields
-            log.SWMM_node_timeseries_written = LogField()
-            log.SWMM_link_timeseries_written = LogField()
-            log.SWMM_node_summary_written = LogField()
-            log.SWMM_link_summary_written = LogField()
-            log.raw_SWMM_outputs_cleared = LogField()
-            log.full_SWMM_timeseries_cleared = LogField()
+            if log.SWMM_node_timeseries_written is None:
+                log.SWMM_node_timeseries_written = LogField()
+            if log.SWMM_link_timeseries_written is None:
+                log.SWMM_link_timeseries_written = LogField()
+            if log.SWMM_node_summary_written is None:
+                log.SWMM_node_summary_written = LogField()
+            if log.SWMM_link_summary_written is None:
+                log.SWMM_link_summary_written = LogField()
+            if log.raw_SWMM_outputs_cleared is None:
+                log.raw_SWMM_outputs_cleared = LogField()
+            if log.full_SWMM_timeseries_cleared is None:
+                log.full_SWMM_timeseries_cleared = LogField()
+
+        # Re-bind parent log reference after assigning optional LogField members
+        # (needed so LogField.set() can call parent .write()).
+        log.model_post_init(None)
 
         return log
 
@@ -278,18 +302,12 @@ class TRITONSWMM_scenario:
     def latest_simlog(self) -> dict:
         """Get latest simulation log entry.
 
-        NOTE: DEPRECATED - simlog tracking is deprecated. This method returns a
-        placeholder since simlog is no longer populated. Use model_run_completed()
-        for completion checking instead.
+        DEPRECATED - simlog tracking removed. Returns placeholder for error messages.
+        Use model_run_completed(model_type) for completion checking instead.
         """
-        dic_logs = self.log.sim_log.model_dump()["run_attempts"]
-        if not dic_logs:
-            return {"status": "no sim run attempts made"}
-        latest_key = max(
-            dic_logs.keys(),
-            key=lambda k: utils.string_to_datetime(k),
-        )
-        return dic_logs[latest_key]
+        return {
+            "status": "simlog deprecated - use model logs (log_triton.json, log_tritonswmm.json, log_swmm.json)"
+        }
 
     @property
     def sim_compute_time_min(self) -> float:
@@ -331,7 +349,9 @@ class TRITONSWMM_scenario:
         #     total_compute_time += sim_dict["time_elapsed_s"]
         # return total_compute_time * conversion
 
-    def model_run_completed(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> bool:
+    def model_run_completed(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> bool:
         """Check completion status for a specific model type.
 
         Parameters
@@ -360,22 +380,35 @@ class TRITONSWMM_scenario:
                     f"Check log file for model_type={model_type}"
                 )
 
-        # Set the legacy simulation_completed flag for tritonswmm (for backward compatibility)
-        if model_type == "tritonswmm":
-            self.log.simulation_completed.set(success)
-
         return success
 
     def _latest_sim_status(self) -> str:
         simlog = self.latest_simlog
         return simlog["status"]
 
-    def latest_sim_date(self, astype: Literal["dt", "str"] = "dt") -> datetime:
-        simlog = self.latest_simlog
-        if simlog["status"] == "no sim run attempts made":
-            return datetime.min
+    def latest_sim_date(
+        self,
+        model_type: Literal["triton", "tritonswmm", "swmm"],
+        astype: Literal["dt", "str"] = "dt",
+    ) -> datetime | str:
+        """Get the simulation datetime from the specified model's log.
+
+        Args:
+            model_type: Which model's log to check
+            astype: Return as datetime ("dt") or string ("str")
+
+        Returns:
+            Simulation datetime, or datetime.min if no simulation run
+        """
+        model_log = self.get_log(model_type)
+        simlog_dict = model_log.sim_log.model_dump()
+
+        if simlog_dict.get("status") == "no sim run attempts made":
+            return datetime.min if astype == "dt" else ""
         else:
-            dt_str = simlog["sim_datetime"]
+            dt_str = simlog_dict.get("sim_datetime", "")
+            if not dt_str:
+                return datetime.min if astype == "dt" else ""
             if astype == "dt":
                 return utils.string_to_datetime(dt_str)
             else:

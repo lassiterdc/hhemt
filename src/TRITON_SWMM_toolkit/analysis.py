@@ -308,8 +308,7 @@ class TRITONSWMM_analysis:
             # Check if all enabled models completed for this scenario
             enabled_models = scen.run.model_types_enabled
             all_models_completed = all(
-                scen.model_run_completed(model_type)
-                for model_type in enabled_models
+                scen.model_run_completed(model_type) for model_type in enabled_models
             )
             if not all_models_completed:
                 scens_not_run.append(str(scen.log.logfile.parent))
@@ -340,16 +339,29 @@ class TRITONSWMM_analysis:
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            if scen.log.TRITONSWMM_performance_timeseries_written.get() is not True:
-                scens_not_processed.append(str(scen.log.logfile.parent))
+            # Check model-specific logs (race-condition free!)
+            perf_ok = True
+            if self._system.cfg_system.toggle_tritonswmm_model:
+                log = scen.get_log("tritonswmm")
+                perf_ok = perf_ok and bool(
+                    log.performance_timeseries_written
+                    and log.performance_timeseries_written.get()
+                )
+            if self._system.cfg_system.toggle_triton_model:
+                log = scen.get_log("triton")
+                perf_ok = perf_ok and bool(
+                    log.performance_timeseries_written
+                    and log.performance_timeseries_written.get()
+                )
+            if not perf_ok:
+                scens_not_processed.append(str(scen.scen_paths.sim_folder))
         return scens_not_processed
 
     @property
     def all_SWMM_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_SWMM_timeseries_processed
-        # Use file-based check (not log field) to avoid race conditions in multi-model scenarios
-        # TODO: Replace with model-specific logs (see docs/planning/model_specific_logs_refactoring.md)
+        # Uses model-specific logs - race-condition free!
         return len(self.SWMM_time_series_not_processed) == 0
 
     @property
@@ -359,15 +371,20 @@ class TRITONSWMM_analysis:
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            # Check file existence directly (not log fields) to avoid race conditions
-            # in multi-model scenarios where concurrent processes may overwrite log updates
+            # Check model-specific logs (race-condition free!)
             triton_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
-                ts_file = scen.scen_paths.output_tritonswmm_triton_timeseries
-                triton_ok = triton_ok and (ts_file.exists() if ts_file else False)
+                log = scen.get_log("tritonswmm")
+                triton_ok = triton_ok and (
+                    log.TRITON_timeseries_written
+                    and bool(log.TRITON_timeseries_written.get())
+                )
             if self._system.cfg_system.toggle_triton_model:
-                ts_file = scen.scen_paths.output_triton_only_timeseries
-                triton_ok = triton_ok and (ts_file.exists() if ts_file else False)
+                log = scen.get_log("triton")
+                triton_ok = triton_ok and (
+                    log.TRITON_timeseries_written
+                    and bool(log.TRITON_timeseries_written.get())
+                )
             if not triton_ok:
                 scens_not_processed.append(str(scen.scen_paths.sim_folder))
         return scens_not_processed
@@ -379,23 +396,26 @@ class TRITONSWMM_analysis:
         scens_not_processed = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
-            # Check file existence directly (not log fields) to avoid race conditions
-            # in multi-model scenarios where concurrent processes may overwrite log updates
+            # Check model-specific logs (race-condition free!)
             swmm_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
-                node_file = scen.scen_paths.output_tritonswmm_node_time_series
-                link_file = scen.scen_paths.output_tritonswmm_link_time_series
-                swmm_ok = swmm_ok and (
-                    (node_file.exists() if node_file else False) and
-                    (link_file.exists() if link_file else False)
+                log = scen.get_log("tritonswmm")
+                node_ok = log.SWMM_node_timeseries_written and bool(
+                    log.SWMM_node_timeseries_written.get()
                 )
+                link_ok = log.SWMM_link_timeseries_written and bool(
+                    log.SWMM_link_timeseries_written.get()
+                )
+                swmm_ok = swmm_ok and (node_ok and link_ok)
             if self._system.cfg_system.toggle_swmm_model:
-                node_file = scen.scen_paths.output_swmm_only_node_time_series
-                link_file = scen.scen_paths.output_swmm_only_link_time_series
-                swmm_ok = swmm_ok and (
-                    (node_file.exists() if node_file else False) and
-                    (link_file.exists() if link_file else False)
+                log = scen.get_log("swmm")
+                node_ok = log.SWMM_node_timeseries_written and bool(
+                    log.SWMM_node_timeseries_written.get()
                 )
+                link_ok = log.SWMM_link_timeseries_written and bool(
+                    log.SWMM_link_timeseries_written.get()
+                )
+                swmm_ok = swmm_ok and (node_ok and link_ok)
             if not swmm_ok:
                 scens_not_processed.append(str(scen.scen_paths.sim_folder))
         return scens_not_processed
@@ -404,8 +424,7 @@ class TRITONSWMM_analysis:
     def all_TRITON_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_TRITON_timeseries_processed
-        # Use file-based check (not log field) to avoid race conditions
-        # TODO: Replace with model-specific logs (see docs/planning/model_specific_logs_refactoring.md)
+        # Uses model-specific logs - race-condition free!
         return len(self.TRITON_time_series_not_processed) == 0
 
     def _update_log(self):
@@ -432,8 +451,6 @@ class TRITONSWMM_analysis:
         else:
             for event_iloc in self.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, self)
-                scen.log.refresh()
-                # dict_all_logs[event_iloc] = scen.log.model_dump()
                 # sim run status - check if all enabled models completed
                 enabled_models = scen.run.model_types_enabled
                 scen_all_models_completed = all(
@@ -441,29 +458,64 @@ class TRITONSWMM_analysis:
                     for model_type in enabled_models
                 )
                 all_sims_run = all_sims_run and scen_all_models_completed
-                # sim creation status
+
+                # Scenario creation status comes exclusively from scenario prep log
+                scen.log.refresh()
                 scen_created = bool(scen.log.scenario_creation_complete.get())
                 all_scens_created = all_scens_created and scen_created
-                # sim output processing status
-                proc = self._retrieve_sim_run_processing_object(event_iloc)
-                all_TRITON_outputs_processed = (
-                    all_TRITON_outputs_processed and proc.TRITON_outputs_processed
-                )
-                all_SWMM_outputs_processed = (
-                    all_SWMM_outputs_processed and proc.SWMM_outputs_processed
-                )
-                # TRITONSWMM performance processing status
-                all_TRITONSWMM_performance_outputs_processed = (
-                    all_TRITONSWMM_performance_outputs_processed
-                    and proc.TRITONSWMM_performance_timeseries_written
-                )
-                # output clear status
-                all_raw_TRITON_outputs_cleared = (
-                    all_raw_TRITON_outputs_cleared and proc.raw_TRITON_outputs_cleared
-                )
-                all_raw_SWMM_outputs_cleared = (
-                    all_raw_SWMM_outputs_cleared and proc.raw_SWMM_outputs_cleared
-                )
+
+                # Check output processing status for each enabled model
+                for model_type in enabled_models:
+                    model_log = scen.get_log(model_type)
+
+                    # TRITON outputs (triton and tritonswmm models)
+                    if model_type in ("triton", "tritonswmm"):
+                        triton_ok = bool(
+                            model_log.TRITON_timeseries_written
+                            and model_log.TRITON_timeseries_written.get()
+                        )
+                        all_TRITON_outputs_processed = (
+                            all_TRITON_outputs_processed and triton_ok
+                        )
+
+                        perf_ok = bool(
+                            model_log.performance_timeseries_written
+                            and model_log.performance_timeseries_written.get()
+                        )
+                        all_TRITONSWMM_performance_outputs_processed = (
+                            all_TRITONSWMM_performance_outputs_processed and perf_ok
+                        )
+
+                        cleared = bool(
+                            model_log.raw_TRITON_outputs_cleared
+                            and model_log.raw_TRITON_outputs_cleared.get()
+                        )
+                        all_raw_TRITON_outputs_cleared = (
+                            all_raw_TRITON_outputs_cleared and cleared
+                        )
+
+                    # SWMM outputs (swmm and tritonswmm models)
+                    if model_type in ("swmm", "tritonswmm"):
+                        node_ok = bool(
+                            model_log.SWMM_node_timeseries_written
+                            and model_log.SWMM_node_timeseries_written.get()
+                        )
+                        link_ok = bool(
+                            model_log.SWMM_link_timeseries_written
+                            and model_log.SWMM_link_timeseries_written.get()
+                        )
+                        swmm_ok = node_ok and link_ok
+                        all_SWMM_outputs_processed = (
+                            all_SWMM_outputs_processed and swmm_ok
+                        )
+
+                        cleared = bool(
+                            model_log.raw_SWMM_outputs_cleared
+                            and model_log.raw_SWMM_outputs_cleared.get()
+                        )
+                        all_raw_SWMM_outputs_cleared = (
+                            all_raw_SWMM_outputs_cleared and cleared
+                        )
         self.log.all_scenarios_created.set(all_scens_created)
         self.log.all_sims_run.set(all_sims_run)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
@@ -819,7 +871,9 @@ class TRITONSWMM_analysis:
 
         self.sim_run_status(event_iloc)
         # self._update_log()  # updates analysis log
-        if process_outputs_after_sim_completion and run._scenario.model_run_completed(model_type):
+        if process_outputs_after_sim_completion and run._scenario.model_run_completed(
+            model_type
+        ):
             if model_type == "triton":
                 outputs_to_process = "TRITON"
             elif model_type == "swmm":
@@ -1296,8 +1350,7 @@ class TRITONSWMM_analysis:
             # Check if all enabled models completed
             enabled_models = scen.run.model_types_enabled
             all_models_completed = all(
-                scen.model_run_completed(model_type)
-                for model_type in enabled_models
+                scen.model_run_completed(model_type) for model_type in enabled_models
             )
             scen_runs_completed.append(all_models_completed)
 

@@ -114,13 +114,16 @@ def main():
 
         scenario = TRITONSWMM_scenario(event_iloc, analysis)
 
-        # Verify scenario is prepared
+        # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
         if not scenario.log.scenario_creation_complete.get():
             logger.error(
                 f"[{event_iloc}] Scenario not prepared. Cannot run simulation."
             )
             return 1
+
+        # Get model-specific log for this simulation
+        model_log = scenario.get_log(model_type)
 
         # Verify model-specific compilation
         if model_type == "triton":
@@ -166,6 +169,11 @@ def main():
 
         # Unpack simulation command and metadata
         cmd, env, model_logfile, sim_start_reporting_tstep = simprep_result
+        if model_logfile is None:
+            logger.error(
+                f"[{event_iloc}] Missing logfile path for model_type={model_type}"
+            )
+            return 1
 
         # Record simulation metadata in log
         run_mode = analysis.cfg_analysis.run_mode
@@ -206,10 +214,7 @@ def main():
         logger.info(f"[{event_iloc}] Simulation status: {status}")
         logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
 
-        # Refresh log (for processing steps that may read log fields)
-        scenario.log.refresh()
-
-        # Verify completion via log file check
+        # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
             return 1
