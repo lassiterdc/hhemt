@@ -68,6 +68,15 @@ class NewAPI:
 # Old API completely removed, all call sites updated
 ```
 
+### Completion Status: Log-Based Checks over File Existence
+
+**Prefer log-based checks over file existence checks for determining processing completion.**
+
+- `_already_written()` verifies a file was written *successfully*, not just that it exists
+- A file may exist but be corrupt, incomplete, or from a previous failed run
+- File existence checks are redundant when log checks are available and can mask errors
+- Exception: File existence is appropriate for verifying *input* files before reading them
+
 ## Architecture
 
 ### Three-Layer Hierarchy
@@ -393,6 +402,10 @@ Assertion helpers: `assert_scenarios_setup()`, `assert_scenarios_run()`, `assert
 3. **SLURM detection includes config check** - `in_slurm` is True when `multi_sim_run_method == "1_job_many_srun_tasks"` even without `SLURM_JOB_ID`
 
 4. **Runner scripts use argparse** - Each has specific CLI flags; check docstrings for usage
+
+5. **TRITON-SWMM SWMM output path bug** - TRITON-SWMM writes SWMM outputs to `sim_folder/output/swmm/` and `log.out` to `sim_folder/output/` regardless of CFG `output_folder`. Workarounds tagged `TODO(TRITON-OUTPUT-PATH-BUG)`. See `docs/implementation/triton_output_path_bug.md`.
+
+6. **`log.out` overwrite with multi-model** - Both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`. Last to finish overwrites the other. Resource-usage parsing may be incorrect for one model type.
 
 ## Specialized Agent Documentation
 

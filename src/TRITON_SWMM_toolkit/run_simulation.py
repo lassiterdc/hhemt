@@ -9,7 +9,7 @@ from TRITON_SWMM_toolkit.utils import (
     read_text_file_as_list_of_strings,
 )
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     pass
@@ -28,88 +28,236 @@ class TRITONSWMM_run:
 
     @property
     def _triton_swmm_raw_output_directory(self):
-        tritonswmm_output_dir = self._scenario.scen_paths.sim_folder / "output"
-        if not tritonswmm_output_dir.exists():
-            tritonswmm_output_dir = (
-                self._scenario.scen_paths.sim_folder / "build" / "output"
-            )
-            # if not tritonswmm_output_dir.exists():
-            #     sys.exit("TRITON-SWMM output folder not found")
-        return tritonswmm_output_dir
+        """Directory containing raw TRITON outputs from the TRITON-SWMM coupled model."""
+        raw_type = self._analysis.cfg_analysis.TRITON_raw_output_type
+        out_dir = self._scenario.scen_paths.out_tritonswmm
+        if out_dir is not None and out_dir.exists():
+            raw_dir = out_dir / raw_type
+            if raw_dir.exists() and any(raw_dir.iterdir()):
+                return out_dir
+        # Fallback for legacy directory structure
+        fallback = self._scenario.scen_paths.sim_folder / "output"
+        if fallback.exists():
+            raw_dir = fallback / raw_type
+            if raw_dir.exists() and any(raw_dir.iterdir()):
+                return fallback
+        return out_dir if out_dir is not None else fallback
 
-    @property
-    def raw_triton_output_dir(self):
-        return (
-            self._triton_swmm_raw_output_directory
-            / self._analysis.cfg_analysis.TRITON_raw_output_type
-        )
+    def raw_triton_output_dir(self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"):
+        """Directory containing raw TRITON binary output files (H, QX, QY, MH).
 
-    @property
-    def raw_swmm_output(self):
-        if self._scenario.scen_paths.out_swmm is not None:
-            return self._scenario.scen_paths.out_swmm / "hydraulics.rpt"
-        return self._triton_swmm_raw_output_directory / "swmm" / "hydraulics.rpt"
+        Parameters
+        ----------
+        model_type : Literal["triton", "tritonswmm"]
+            Which model's raw output directory to retrieve (default: "tritonswmm")
+
+        Returns
+        -------
+        Path
+            Directory containing raw TRITON outputs
+        """
+        raw_type = self._analysis.cfg_analysis.TRITON_raw_output_type
+
+        if model_type == "triton":
+            base = self._scenario.scen_paths.out_triton
+        else:
+            base = self._scenario.scen_paths.out_tritonswmm
+
+        if base is None:
+            # Fallback for legacy directory structure
+            base = self._scenario.scen_paths.sim_folder / "output"
+
+        raw_dir = base / raw_type
+        if raw_dir.exists() and any(raw_dir.iterdir()):
+            return raw_dir
+        return base
 
     @property
     def sim_run_completed(self):
-        status, __ = self._check_simulation_run_status()
-        return status == "simulation completed"
+        """Legacy completion check for the coupled TRITON-SWMM model."""
+        return self.model_run_completed("tritonswmm")
+
+    def model_run_completed(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> bool:
+        """Check if a simulation completed for a specific model type.
+
+        Uses log file markers as source of truth:
+        - TRITON/TRITON-SWMM: "Simulation ends" in run_{model}.log
+        - SWMM: "EPA SWMM completed" in run_swmm.log
+
+        Parameters
+        ----------
+        model_type : Literal["triton", "tritonswmm", "swmm"]
+            Which model to check completion for
+
+        Returns
+        -------
+        bool
+            True if the specified model completed successfully
+        """
+        log_dir = self._scenario.scen_paths.logs_dir
+        if not log_dir:
+            return False
+
+        if model_type == "triton":
+            log_file = log_dir / "run_triton.log"
+        elif model_type == "tritonswmm":
+            log_file = log_dir / "run_tritonswmm.log"
+        elif model_type == "swmm":
+            log_file = log_dir / "run_swmm.log"
+        else:
+            raise ValueError(
+                f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}"
+            )
+
+        if not log_file.exists():
+            return False
+
+        try:
+            log_content = log_file.read_text()
+
+            if model_type in ("triton", "tritonswmm"):
+                # TRITON completion marker (may have ANSI color codes)
+                return "Simulation ends" in log_content
+            else:  # swmm
+                # SWMM completion marker
+                return "EPA SWMM completed" in log_content
+
+        except Exception:
+            return False
 
     @property
     def performance_timeseries_dir(self):
         return self._triton_swmm_raw_output_directory / "performance"
 
-    @property
-    def performance_file(self):
-        tritonswmm_output_dir = self._triton_swmm_raw_output_directory
-        perf_txt = tritonswmm_output_dir / "performance.txt"
-        return perf_txt
+    def performance_file(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
+        """Get performance.txt file for a specific model type.
 
-    def _check_simulation_run_status(self):
-        tritonswmm_output_dir = self._triton_swmm_raw_output_directory
-        status = "simulation never started"
-        perf_txt = self.performance_file
-        tritonswmm_output_cfg_dir = tritonswmm_output_dir / "cfg"
-        cfgs = list(tritonswmm_output_cfg_dir.glob("*.cfg"))
-        f_last_cfg = self._scenario.scen_paths.triton_swmm_cfg
-        dic_cfgs = dict(step=[], f_cfg=[])
-        perf_txt_exists = perf_txt.exists()
-        if len(cfgs) > 0:
-            for f_cfg in cfgs:
-                step = return_the_reporting_step_from_a_cfg(f_cfg)
-                dic_cfgs["step"].append(step)
-                dic_cfgs["f_cfg"].append(f_cfg)
-            # create dataframe of cfgs indexed by reporting step
-            df_cfgs = pd.DataFrame(dic_cfgs).set_index("step").sort_index()
-            # find the latest full cfg file
-            df_cfgs["file_line_length"] = -1
-            for step, cfg in df_cfgs.iloc[::-1].iterrows():
-                file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
-                df_cfgs.loc[step, "file_line_length"] = len(file_as_list)  # type: ignore
-            typical_length = (
-                df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0]
-                .mode()
-                .iloc[0]
-            )
-            latest_step_w_full_cfg = df_cfgs[
-                df_cfgs["file_line_length"] == typical_length
-            ].index.max()
-            f_last_cfg = df_cfgs.loc[latest_step_w_full_cfg, "f_cfg"]
-            lines = read_text_file_as_list_of_strings(f_last_cfg)
-            for line in lines:
-                if "sim_start_time" in line:
-                    # start_line = line
-                    sim_start = int(round(float(line.split("=")[-1]), 0))
-                if "sim_duration" in line:
-                    # duration_line = line
-                    sim_duration = int(float(line.split("=")[-1]))
-                if "print_interval" in line:
-                    print_interval = int(float(line.split("=")[-1]))
-            if (sim_start >= (sim_duration - print_interval)) and perf_txt_exists:  # type: ignore
-                status = "simulation completed"
-            else:
-                status = "simulation started but did not finish"
-        return status, Path(f_last_cfg)  # type: ignore
+        Parameters
+        ----------
+        model_type : Literal["triton", "tritonswmm", "swmm"]
+            Which model's performance file to retrieve
+
+        Returns
+        -------
+        Path
+            Path to performance.txt (may not exist)
+        """
+        if model_type == "triton":
+            output_dir = self._scenario.scen_paths.out_triton
+        elif model_type == "tritonswmm":
+            output_dir = self._scenario.scen_paths.out_tritonswmm
+        elif model_type == "swmm":
+            # SWMM doesn't write performance.txt files
+            output_dir = self._scenario.scen_paths.out_swmm
+        else:
+            raise ValueError(f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}")
+
+        if output_dir is None:
+            # Fallback for legacy structure
+            output_dir = self._scenario.scen_paths.sim_folder / "output"
+
+        return output_dir / "performance.txt"
+
+    @property
+    def model_types_enabled(self):
+        """Return list of enabled model types for this scenario.
+
+        Returns:
+            List of strings: ['triton', 'tritonswmm', 'swmm']
+        """
+        sys_cfg = self._scenario._system.cfg_system
+        enabled = []
+        if sys_cfg.toggle_triton_model:
+            enabled.append("triton")
+        if sys_cfg.toggle_tritonswmm_model:
+            enabled.append("tritonswmm")
+        if sys_cfg.toggle_swmm_model:
+            enabled.append("swmm")
+        return enabled
+
+    @property
+    def coupled_swmm_output_file(self) -> Path | None:
+        """Locate the SWMM output file from a TRITON-SWMM coupled run.
+
+        TODO(TRITON-OUTPUT-PATH-BUG): TRITON-SWMM writes SWMM outputs to
+        output/swmm/ regardless of the CFG output_folder directive.
+        See docs/implementation/triton_output_path_bug.md
+
+        Returns:
+            Path to the SWMM output file (.out or .rpt), or None if not found.
+        """
+        # Check bug-location first (most common case)
+        alt_swmm_dir = self._scenario.scen_paths.sim_folder / "output" / "swmm"
+        alt_out = alt_swmm_dir / "hydraulics.out"
+        alt_rpt = alt_swmm_dir / "hydraulics.rpt"
+        if alt_out.exists():
+            return alt_out
+        if alt_rpt.exists():
+            return alt_rpt
+        # Fall back to configured location
+        configured = self._scenario.scen_paths.swmm_hydraulics_rpt
+        if configured is not None and configured.exists():
+            return configured
+        return None
+
+    def _retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
+        self, model_type: Literal["triton", "tritonswmm"]
+    ) -> Path | None:
+        """Find latest hotstart CFG file for resuming incomplete TRITON/TRITON-SWMM simulation.
+
+        Returns None if no hotstart files found (simulation never started or CFGs cleared).
+
+        Parameters
+        ----------
+        model_type : Literal["triton", "tritonswmm"]
+            Which model's hotstart file to retrieve
+
+        Returns
+        -------
+        Path | None
+            Path to latest complete CFG checkpoint, or None if not available
+        """
+        if model_type == "triton":
+            output_dir = self._scenario.scen_paths.out_triton
+            default_cfg = self._scenario.scen_paths.triton_cfg
+        else:
+            output_dir = self._scenario.scen_paths.out_tritonswmm
+            default_cfg = self._scenario.scen_paths.triton_swmm_cfg
+
+        if output_dir is None:
+            return None
+
+        cfg_dir = output_dir / "cfg"
+        if not cfg_dir.exists():
+            return None
+
+        cfgs = list(cfg_dir.glob("*.cfg"))
+        if len(cfgs) == 0:
+            return None
+
+        # Find latest complete CFG checkpoint
+        dic_cfgs = {"step": [], "f_cfg": []}
+        for f_cfg in cfgs:
+            step = return_the_reporting_step_from_a_cfg(f_cfg)
+            dic_cfgs["step"].append(step)
+            dic_cfgs["f_cfg"].append(f_cfg)
+
+        df_cfgs = pd.DataFrame(dic_cfgs).set_index("step").sort_index()
+        df_cfgs["file_line_length"] = -1
+        for step, cfg in df_cfgs.iloc[::-1].iterrows():
+            file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
+            df_cfgs.loc[step, "file_line_length"] = len(file_as_list)  # type: ignore
+
+        typical_length = (
+            df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
+        )
+        latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]
+        if latest_complete.empty:
+            return None
+
+        return Path(latest_complete.iloc[-1]["f_cfg"])
 
     def _write_repro_script(
         self,
@@ -196,14 +344,6 @@ class TRITONSWMM_run:
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
 
-        # Fall back to legacy path if logs_dir not set
-        if model_logfile is None:
-            tritonswmm_logfile_dir = self._scenario.scen_paths.tritonswmm_logfile_dir
-            model_logfile = (
-                tritonswmm_logfile_dir
-                / f"{model_type}_{current_datetime_string(filepath_friendly=True)}.log"
-            )
-
         # compute config
         run_mode = self._analysis.cfg_analysis.run_mode
         n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
@@ -211,19 +351,23 @@ class TRITONSWMM_run:
         n_gpus = self._analysis.cfg_analysis.n_gpus
         n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
 
+        # Check if already completed
+        if self._scenario.model_run_completed(model_type):
+            if verbose:
+                print(f"{model_type} simulation already completed", flush=True)
+            return None
+
+        # Try to resume from hotstart if requested
         sim_start_reporting_tstep = 0
-        if pickup_where_leftoff:
-            status, f_last_cfg = self._check_simulation_run_status()
-            if status == "simulation completed":
-                return
-            if status == "simulation started but did not finish":
-                cfg = f_last_cfg
-                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(
-                    f_last_cfg
-                )
+        if pickup_where_leftoff and model_type != "swmm":
+            hotstart_cfg = self._retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
+                model_type=model_type
+            )
+            if hotstart_cfg is not None:
+                cfg = hotstart_cfg
+                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(hotstart_cfg)
                 if verbose:
-                    print(f"{status}. Picking up where left off...", flush=True)
-                    print(f"cfg: {cfg}", flush=True)
+                    print(f"Resuming {model_type} from hotstart: {hotstart_cfg}", flush=True)
 
         og_env = os.environ.copy()
         env = dict()
@@ -279,21 +423,9 @@ class TRITONSWMM_run:
         # ----------------------------
         if model_type == "swmm":
             # SWMM command: swmm5 input.inp report.rpt output.out
-            inp_file = self._scenario.scen_paths.inp_full
-            rpt_file = (
-                self._scenario.scen_paths.out_swmm / "hydraulics.rpt"
-                if self._scenario.scen_paths.out_swmm
-                else self._scenario.scen_paths.sim_folder / "swmm_report.rpt"
-            )
-            out_file = (
-                self._scenario.scen_paths.out_swmm / "hydraulics.out"
-                if self._scenario.scen_paths.out_swmm
-                else self._scenario.scen_paths.sim_folder / "swmm_output.out"
-            )
-
-            # Create output directory if needed
-            if self._scenario.scen_paths.out_swmm:
-                self._scenario.scen_paths.out_swmm.mkdir(parents=True, exist_ok=True)
+            inp_file = self._scenario.scen_paths.swmm_full_inp
+            rpt_file = self._scenario.scen_paths.swmm_full_rpt_file
+            out_file = self._scenario.scen_paths.swmm_full_out_file
 
             # SWMM is always CPU-only, no srun/mpirun needed
             launch_cmd_str = f"{exe} {inp_file} {rpt_file} {out_file}"
@@ -461,20 +593,22 @@ class TRITONSWMM_run:
 
         og_env = os.environ.copy()
 
-        self._scenario.log.add_sim_entry(
-            sim_datetime=sim_datetime,
-            sim_start_reporting_tstep=sim_start_reporting_tstep,
-            tritonswmm_logfile=tritonswmm_logfile,
-            time_elapsed_s=0,
-            status="not started",
-            run_mode=run_mode,
-            cmd=" ".join(cmd),  # type: ignore
-            n_mpi_procs=n_mpi_procs,
-            n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus,
-            env=env,  # type: ignore
-        )
-        log_dic = self._scenario.latest_simlog
+        # DEPRECATED: No longer tracking via simlog
+        # Completion now tracked via log files (run_*.log)
+        # self._scenario.log.add_sim_entry(
+        #     sim_datetime=sim_datetime,
+        #     sim_start_reporting_tstep=sim_start_reporting_tstep,
+        #     tritonswmm_logfile=tritonswmm_logfile,
+        #     time_elapsed_s=0,
+        #     status="not started",
+        #     run_mode=run_mode,
+        #     cmd=" ".join(cmd),
+        #     n_mpi_procs=n_mpi_procs,
+        #     n_omp_threads=n_omp_threads,
+        #     n_gpus=n_gpus,
+        #     env=env,
+        # )
+        # log_dic = self._scenario.latest_simlog
         # if verbose:
         #     print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
         #     print("bash command to view progress:")
@@ -507,14 +641,16 @@ class TRITONSWMM_run:
         end_time = time.time()
         elapsed = end_time - start
 
-        status, __ = self._check_simulation_run_status()
-
-        log_dic["time_elapsed_s"] = elapsed
-        log_dic["status"] = status
-
-        self._scenario.log.add_sim_entry(**log_dic)
-
-        self._scenario.sim_run_completed
+        # Check completion via log file
+        # DEPRECATED: No longer tracking via simlog
+        # status = (
+        #     "simulation completed"
+        #     if self.model_run_completed("tritonswmm")
+        #     else "simulation started but did not finish"
+        # )
+        # log_dic["time_elapsed_s"] = elapsed
+        # log_dic["status"] = status
+        # self._scenario.log.add_sim_entry(**log_dic)
 
     def _create_subprocess_sim_run_launcher(
         self,
@@ -600,27 +736,26 @@ class TRITONSWMM_run:
 
             start_time = time.time()
 
-            sim_datetime = current_datetime_string()
-
-            # record sim log
-            n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
-            n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
-            n_gpus = self._analysis.cfg_analysis.n_gpus
-            run_mode = self._analysis.cfg_analysis.run_mode
-
-            self._scenario.log.add_sim_entry(
-                sim_datetime=sim_datetime,
-                sim_start_reporting_tstep=0,
-                tritonswmm_logfile=sim_logfile,
-                time_elapsed_s=0,
-                status="not started",
-                run_mode=run_mode,
-                cmd=" ".join(cmd),  # type: ignore
-                n_mpi_procs=n_mpi_procs,
-                n_omp_threads=n_omp_threads,
-                n_gpus=n_gpus,
-                env=dict(),  # type: ignore
-            )
+            # DEPRECATED: No longer tracking via simlog
+            # Completion now tracked via log files (run_*.log)
+            # sim_datetime = current_datetime_string()
+            # n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
+            # n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
+            # n_gpus = self._analysis.cfg_analysis.n_gpus
+            # run_mode = self._analysis.cfg_analysis.run_mode
+            # self._scenario.log.add_sim_entry(
+            #     sim_datetime=sim_datetime,
+            #     sim_start_reporting_tstep=0,
+            #     tritonswmm_logfile=sim_logfile,
+            #     time_elapsed_s=0,
+            #     status="not started",
+            #     run_mode=run_mode,
+            #     cmd=" ".join(cmd),
+            #     n_mpi_procs=n_mpi_procs,
+            #     n_omp_threads=n_omp_threads,
+            #     n_gpus=n_gpus,
+            #     env=dict(),
+            # )
 
             # Open log file for subprocess output
             lf = open(sim_logfile, "w")
@@ -680,20 +815,23 @@ class TRITONSWMM_run:
             end_time = time.time()
             elapsed = end_time - start_time
 
-            # Check simulation status
-            status, __ = self._check_simulation_run_status()
+            # Check simulation status via log file
+            status = (
+                "simulation completed"
+                if self.model_run_completed(model_type)
+                else "simulation started but did not finish"
+            )
 
-            # Get the latest log entry and update it with completion info
-            log_dic = self._scenario.latest_simlog
-            log_dic["time_elapsed_s"] = elapsed
-            log_dic["status"] = status
-
-            # Update the simlog with final status
-            self._scenario.log.add_sim_entry(**log_dic)
+            # DEPRECATED: No longer tracking via simlog
+            # Completion now tracked via log files (run_*.log)
+            # log_dic = self._scenario.latest_simlog
+            # log_dic["time_elapsed_s"] = elapsed
+            # log_dic["status"] = status
+            # self._scenario.log.add_sim_entry(**log_dic)
 
             if verbose:
                 print(
-                    f"[Scenario {event_iloc}] Simlog updated: status={status}, elapsed={elapsed:.1f}s",
+                    f"[Scenario {event_iloc}] Simulation status: {status}, elapsed={elapsed:.1f}s",
                     flush=True,
                 )
 

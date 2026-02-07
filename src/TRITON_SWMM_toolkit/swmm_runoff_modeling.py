@@ -200,7 +200,7 @@ class SWMMRunoffModeler:
         sim_complete = self.scenario.log.hydro_swmm_sim_completed.get() is True
         if (not sim_complete) or rerun_if_exists:
             self.scenario.log.hydro_swmm_sim_completed.set(False)
-            with Simulation(str(self.scenario.scen_paths.inp_hydro)) as sim:
+            with Simulation(str(self.scenario.scen_paths.swmm_hydro_inp)) as sim:
                 sim.execute()
             self.scenario.log.hydro_swmm_sim_completed.set(True)
         else:
@@ -225,10 +225,10 @@ class SWMMRunoffModeler:
         dem_processed = self.system.sys_paths.dem_processed
 
         sim_id_str = self.scenario.sim_id_str
-        hydro_outfile = str(self.scenario.scen_paths.inp_hydro).replace(".inp", ".out")
+        hydro_outfile = str(self.scenario.scen_paths.swmm_hydro_inp).replace(".inp", ".out")
         rds_dem = rxr.open_rasterio(dem_processed)
         df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            self.scenario.scen_paths.inp_hydro, dem_processed
+            self.scenario.scen_paths.swmm_hydro_inp, dem_processed
         )
 
         d_time_series = dict()

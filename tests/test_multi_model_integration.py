@@ -57,7 +57,6 @@ class TestTRITONOnlyIntegration:
 
         # Verify TRITON-SWMM and SWMM paths are None or not used
         # (triton_swmm_cfg exists for backward compat but shouldn't be used)
-        assert scenario.scen_paths.out_swmm is None
         assert scenario.scen_paths.sim_swmm_executable is None
 
     def test_triton_only_cfg_generation(self, triton_only_case):
@@ -118,8 +117,7 @@ class TestSWMMOnlyIntegration:
         scenario = TRITONSWMM_scenario(event_iloc=0, analysis=analysis)
 
         # Verify SWMM paths are set
-        assert scenario.scen_paths.inp_full is not None
-        assert scenario.scen_paths.out_swmm is not None
+        assert scenario.scen_paths.swmm_full_inp is not None
 
         # Verify TRITON paths are None
         assert scenario.scen_paths.triton_cfg is None
@@ -156,11 +154,10 @@ class TestAllModelsIntegration:
         # Verify all model paths exist
         assert scenario.scen_paths.triton_cfg is not None
         assert scenario.scen_paths.triton_swmm_cfg is not None
-        assert scenario.scen_paths.inp_full is not None
+        assert scenario.scen_paths.swmm_full_inp is not None
 
         assert scenario.scen_paths.out_triton is not None
         assert scenario.scen_paths.out_tritonswmm is not None
-        assert scenario.scen_paths.out_swmm is not None
 
         # Verify executable paths only if models were compiled
         # (toggles can be ON without compilation for testing config logic)
@@ -172,6 +169,31 @@ class TestAllModelsIntegration:
 
         if system.log.compilation_swmm_successful.get():
             assert scenario.scen_paths.sim_swmm_executable is not None
+
+    def test_all_models_cfg_output_folders(self, all_models_case):
+        """Test that CFG files have correct output_folder directives."""
+        system = all_models_case.system
+        analysis = system.analysis
+
+        # Skip if SWMM wasn't compiled (compilation is slow and optional for path testing)
+        if system.cfg_system.toggle_swmm_model and not system.log.compilation_swmm_successful.get():
+            pytest.skip("SWMM compilation required but not performed - skipping prepare_scenario test")
+
+        # Prepare scenario
+        scenario = TRITONSWMM_scenario(event_iloc=0, analysis=analysis)
+        scenario.prepare_scenario()
+
+        # Verify TRITON.cfg has output_folder="out_triton"
+        if scenario.scen_paths.triton_cfg and scenario.scen_paths.triton_cfg.exists():
+            triton_cfg_content = scenario.scen_paths.triton_cfg.read_text()
+            assert "output_folder" in triton_cfg_content
+            assert 'output_folder="out_triton"' in triton_cfg_content
+
+        # Verify TRITONSWMM.cfg has output_folder="out_tritonswmm"
+        if scenario.scen_paths.triton_swmm_cfg and scenario.scen_paths.triton_swmm_cfg.exists():
+            tritonswmm_cfg_content = scenario.scen_paths.triton_swmm_cfg.read_text()
+            assert "output_folder" in tritonswmm_cfg_content
+            assert 'output_folder="out_tritonswmm"' in tritonswmm_cfg_content
 
     def test_all_models_logs_directory(self, all_models_case):
         """Test that centralized logs/ directory is created."""

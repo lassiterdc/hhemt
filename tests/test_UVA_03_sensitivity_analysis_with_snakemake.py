@@ -232,4 +232,4 @@ def test_snakemake_sensitivity_workflow_execution(
     # We would need to poll for completion or check logs
     # For now, we just verify successful submission
 
-    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)

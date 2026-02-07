@@ -15,7 +15,7 @@ def norfolk_single_sim_analysis():
 
 @pytest.fixture
 def norfolk_single_sim_analysis_cached():
-    case = cases.Local_TestCases.retrieve_norfolk_single_sim_test_case(
+    case = cases.Local_TestCases.retrieve_norfolk_all_models_test_case(
         start_from_scratch=False
     )
     return case.analysis

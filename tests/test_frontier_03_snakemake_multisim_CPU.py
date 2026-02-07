@@ -214,4 +214,4 @@ def test_snakemake_workflow_execution(norfolk_frontier_multisim_analysis):
         "single_job",
     ], f"Expected slurm or single_job mode, got {result['mode']}"
 
-    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)

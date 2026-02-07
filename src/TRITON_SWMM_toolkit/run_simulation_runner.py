@@ -173,26 +173,6 @@ def main():
         n_omp_threads = analysis.cfg_analysis.n_omp_threads or 1
         n_gpus = analysis.cfg_analysis.n_gpus if run_mode == "gpu" else 0
 
-        import TRITON_SWMM_toolkit.utils as ut
-
-        sim_datetime = ut.current_datetime_string()
-
-        scenario.log.add_sim_entry(
-            sim_datetime=sim_datetime,
-            sim_start_reporting_tstep=sim_start_reporting_tstep,
-            tritonswmm_logfile=model_logfile,  # Note: field name kept for backward compatibility
-            time_elapsed_s=0,
-            status="not started",
-            run_mode=(
-                run_mode if model_type != "swmm" else "serial"
-            ),  # SWMM is always serial
-            cmd=" ".join(cmd),
-            n_mpi_procs=n_mpi_procs,
-            n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus if model_type != "swmm" else 0,  # SWMM has no GPU support
-            env=env,
-        )
-
         # Launch the executable (not the runner!)
         logger.info(f"[{event_iloc}] Running {model_type} simulation...")
         logger.info(f"[{event_iloc}] Command: {' '.join(cmd)}")
@@ -216,32 +196,25 @@ def main():
         end_time = time.time()
         elapsed = end_time - start_time
 
-        # Check simulation status
-        if model_type == "swmm":
-            # SWMM: Exit code check (future: parse .rpt file for success message)
-            status = (
-                "simulation completed"
-                if _rc == 0
-                else "simulation started but did not finish"
-            )
-        else:
-            # TRITON and TRITON-SWMM: Use log file checking
-            status, _last_cfg = run._check_simulation_run_status()
+        # Check simulation status via log file
+        status = (
+            "simulation completed"
+            if run.model_run_completed(model_type)
+            else "simulation started but did not finish"
+        )
 
-        # Update log entry
-        log_dic = scenario.latest_simlog
-        log_dic["time_elapsed_s"] = elapsed
-        log_dic["status"] = status
-        scenario.log.add_sim_entry(**log_dic)
+        logger.info(f"[{event_iloc}] Simulation status: {status}")
+        logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
 
-        # Check if simulation completed successfully
+        # Refresh log (for processing steps that may read log fields)
         scenario.log.refresh()
-        if not scenario.sim_run_completed:
+
+        # Verify completion via log file check
+        if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
-            logger.error(f"[{event_iloc}] Latest sim log: {scenario.latest_simlog}")
             return 1
 
-        logger.info(f"Simulation completed successfully")
+        logger.info(f"[{event_iloc}] Simulation completed successfully")
         return 0
 
     except Exception as e:

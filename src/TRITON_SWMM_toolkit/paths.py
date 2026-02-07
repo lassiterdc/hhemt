@@ -51,10 +51,21 @@ class AnalysisPaths(MainDataClass):
     f_log: Path
     analysis_dir: Path
     simulation_directory: Path
-    output_triton_summary: Path
-    output_swmm_links_summary: Path
-    output_swmm_node_summary: Path
-    output_tritonswmm_performance_summary: Path
+
+    # TRITON-SWMM Coupled Model consolidated outputs
+    output_tritonswmm_triton_summary: Optional[Path] = None
+    output_tritonswmm_node_summary: Optional[Path] = None
+    output_tritonswmm_link_summary: Optional[Path] = None
+    output_tritonswmm_performance_summary: Optional[Path] = None
+
+    # TRITON-only consolidated outputs
+    output_triton_only_summary: Optional[Path] = None
+    output_triton_only_performance_summary: Optional[Path] = None
+
+    # SWMM-only consolidated outputs
+    output_swmm_only_node_summary: Optional[Path] = None
+    output_swmm_only_link_summary: Optional[Path] = None
+
     bash_script_path: Optional[Path] = None
 
 

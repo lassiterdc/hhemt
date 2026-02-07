@@ -398,7 +398,7 @@ rule run_{model_type}:
                 if model_type == "triton":
                     which_arg = "TRITON"
                 elif model_type == "tritonswmm":
-                    which_arg = which  # Use configured value (could be "both", "TRITON", or "SWMM")
+                    which_arg = "both"
                 elif model_type == "swmm":
                     which_arg = "SWMM"
                 else:
@@ -417,6 +417,7 @@ rule process_{model_type}:
         {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
             {config_args} \\
+            --model-type {model_type} \\
             --which {which_arg} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
@@ -769,7 +770,6 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         snakefile_path: Path,
         verbose: bool = True,
         dry_run: bool = False,
-        additional_args: list[str] | None = None,
     ) -> dict:
         """
         Run Snakemake workflow on local machine.
@@ -782,8 +782,6 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             If True, print progress messages
         dry_run : bool
             If True, perform a Snakemake dry run only
-        additional_args : list[str] | None
-            Additional command-line arguments to pass to snakemake (e.g., ["--cores", "64", "--resources", "gpu=16"])
 
         Returns
         -------
@@ -819,9 +817,14 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 str(snakefile_path),
             ]
 
-            # Add additional args if provided (CLI args override config)
-            if additional_args:
-                cmd_args.extend(additional_args)
+            # Explicitly pass --cores for multicore local runs
+            # (ensures CLI-level cores setting when profile behavior varies)
+            local_cores = self.cfg_analysis.local_cpu_cores_for_workflow
+            assert isinstance(
+                local_cores, int
+            ), "local_cpu_cores_for_workflow must be specified for local runs"
+            if local_cores > 1:
+                cmd_args.extend(["--cores", str(local_cores)])
 
             # Add dry-run flag last
             if dry_run:
@@ -923,30 +926,19 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
 
         expected_total_cpus = hpc_cpus_per_node * hpc_total_nodes
 
-        # Build additional args matching SBATCH script
-        additional_args = ["--cores", str(expected_total_cpus)]
-
-        # Add GPU resources if configured (matches SBATCH script logic)
-        sim_resources = (
-            analysis._resource_manager._get_simulation_resource_requirements()
-        )
-        if sim_resources["n_gpus"] > 0:
-            hpc_gpus_per_node = getattr(
-                analysis.cfg_analysis, "hpc_gpus_per_node", None
+        # Temporarily align local dry-run cores with expected SLURM allocation.
+        # This keeps run_snakemake_local config-driven while validating the DAG
+        # under expected single-job CPU availability.
+        original_local_cores = analysis.cfg_analysis.local_cpu_cores_for_workflow
+        analysis.cfg_analysis.local_cpu_cores_for_workflow = expected_total_cpus
+        try:
+            dry_run_result = self.run_snakemake_local(
+                snakefile_path=snakefile_path,
+                verbose=verbose,
+                dry_run=True,
             )
-            if not isinstance(hpc_gpus_per_node, int):
-                raise AssertionError(
-                    "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-                )
-            expected_total_gpus = hpc_gpus_per_node * hpc_total_nodes
-            additional_args.extend(["--resources", f"gpu={expected_total_gpus}"])
-
-        dry_run_result = self.run_snakemake_local(
-            snakefile_path=snakefile_path,
-            verbose=verbose,
-            dry_run=True,
-            additional_args=additional_args,
-        )
+        finally:
+            analysis.cfg_analysis.local_cpu_cores_for_workflow = original_local_cores
 
         if not dry_run_result.get("success"):
             raise RuntimeError("Dry run failed; workflow submission aborted.")
@@ -1675,6 +1667,26 @@ class SensitivityAnalysisWorkflowBuilder:
             analysis_config_yaml=self.master_analysis.analysis_config_yaml
         )
 
+        # Determine the single enabled model type for sensitivity analysis
+        # Sensitivity analysis doesn't support multi-model (would explode parameter space)
+        enabled_models = []
+        if self.system.cfg_system.toggle_triton_model:
+            enabled_models.append("triton")
+        if self.system.cfg_system.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if self.system.cfg_system.toggle_swmm_model:
+            enabled_models.append("swmm")
+
+        if len(enabled_models) == 0:
+            raise ValueError("No model types enabled in system configuration")
+        if len(enabled_models) > 1:
+            raise ValueError(
+                f"Sensitivity analysis does not support multi-model execution. "
+                f"Enabled models: {enabled_models}. Please enable only one model type."
+            )
+
+        model_type = enabled_models[0]
+
         # Start building the Snakefile
         snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
 # Each sub-analysis simulation phase gets its own rule with appropriate resources
@@ -1837,6 +1849,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
+            --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -1862,6 +1875,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
+            --model-type {model_type} \\
             --which {which} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
             {"--overwrite-if-exist " if overwrite_if_exist else ""}\\

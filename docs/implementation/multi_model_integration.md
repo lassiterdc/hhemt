@@ -81,6 +81,12 @@ All models run in the **same scenario directory** with model-specific output sub
 ├── TRITONSWMM.cfg                 # Coupled model CFG
 ├── swmm_full.inp                  # SWMM-only input
 └── ...
+
+> **Note:** The coupled TRITON-SWMM executable still writes its SWMM artifacts
+> (e.g., `hydraulics.out`, `hydraulics.rpt`, node/link outputs) under the
+> legacy `output/swmm/` folder. The `output_folder` setting in `TRITONSWMM.cfg`
+> redirects TRITON outputs (bin/cfg/performance) to `out_tritonswmm/` but does
+> not relocate SWMM artifacts produced by the coupled binary.
 ```
 
 ### Output Format and Dimensions

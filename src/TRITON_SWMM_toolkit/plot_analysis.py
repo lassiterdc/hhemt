@@ -16,15 +16,15 @@ class TRITONSWMM_analysis_plotting:
 
     @property
     def triton_ds(self):
-        return self._analysis.TRITON_summary
+        return self._analysis.tritonswmm_TRITON_summary
 
     @property
     def swmm_node_ds(self):
-        return self._analysis.SWMM_node_summary
+        return self._analysis.tritonswmm_SWMM_node_summary
 
     @property
     def swmm_link_ds(self):
-        return self._analysis.SWMM_link_summary
+        return self._analysis.tritonswmm_SWMM_link_summary
 
     def max_wlevel(self, event_iloc):
         da = self.triton_ds["max_wlevel_m"].isel(event_iloc=event_iloc)

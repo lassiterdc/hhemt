@@ -7,6 +7,21 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+# SYSTEM TESTS
+def test_create_dem_for_TRITON(norfolk_single_sim_analysis):
+    analysis = norfolk_single_sim_analysis
+    analysis._system.create_dem_for_TRITON()
+    rds = analysis._system.processed_dem_rds
+    assert rds.shape == (1, 537, 551)  # type: ignore
+
+
+def test_create_mannings_file_for_TRITON(norfolk_single_sim_analysis):
+    analysis = norfolk_single_sim_analysis
+    analysis._system.create_mannings_file_for_TRITON()
+    rds = analysis._system.mannings_rds
+    assert rds.shape == (1, 537, 551)  # type: ignore
+
+
 def test_compile_swmm(norfolk_single_sim_analysis):
     analysis = norfolk_single_sim_analysis
     analysis._system.compile_SWMM(

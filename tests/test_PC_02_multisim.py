@@ -27,14 +27,51 @@ def test_run_multisim_concurrently(norfolk_multi_sim_analysis):
 
 def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cached):
     analysis = norfolk_multi_sim_analysis_cached
-    scenario_timeseries_processing_launchers = (
-        analysis.retrieve_scenario_timeseries_processing_launchers(
-            clear_raw_outputs=False
-        )
-    )
-    analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
+    enabled_models = tst_ut.get_enabled_model_types(analysis)
+
+    # Process timeseries and summaries for ALL enabled model types
+    for event_iloc in analysis.df_sims.index:
+        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+
+        for model_type in enabled_models:
+            if model_type == "tritonswmm":
+                proc.write_timeseries_outputs(
+                    which="both", model_type=model_type, clear_raw_outputs=False
+                )
+            elif model_type == "triton":
+                proc.write_timeseries_outputs(
+                    which="TRITON", model_type=model_type, clear_raw_outputs=False
+                )
+            elif model_type == "swmm":
+                proc.write_timeseries_outputs(
+                    which="SWMM", model_type=model_type, clear_raw_outputs=False
+                )
+
+        for model_type in enabled_models:
+            if model_type == "tritonswmm":
+                proc.write_summary_outputs(
+                    which="both", model_type=model_type, overwrite_if_exist=True
+                )
+            elif model_type == "triton":
+                proc.write_summary_outputs(
+                    which="TRITON", model_type=model_type, overwrite_if_exist=True
+                )
+            elif model_type == "swmm":
+                proc.write_summary_outputs(
+                    which="SWMM", model_type=model_type, overwrite_if_exist=True
+                )
+
+    analysis._update_log()
+
+    # Validate per-scenario outputs for each model type
+    tst_ut.assert_timeseries_processed(analysis)
+    for model_type in enabled_models:
+        tst_ut.assert_model_outputs_processed(analysis, model_type)
+
+    # Consolidate into analysis-level summaries
     analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
         overwrite_if_exist=True,
     )
-    tst_ut.assert_timeseries_processed(analysis)
+
+    # Validate analysis-level consolidated outputs
     tst_ut.assert_analysis_summaries_created(analysis)

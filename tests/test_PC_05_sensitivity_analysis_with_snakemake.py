@@ -222,4 +222,4 @@ def test_snakemake_sensitivity_workflow_execution(norfolk_sensitivity_analysis):
 
     assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
 
-    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)

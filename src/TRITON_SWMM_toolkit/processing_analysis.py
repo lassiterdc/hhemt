@@ -16,50 +16,91 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_analysis_post_processing:
+    # Maps consolidation mode to: (scenario_path_attr, analysis_path_attr, log_field, spatial_coords)
+    _MODE_CONFIG = {
+        "tritonswmm_triton": (
+            "output_tritonswmm_triton_summary",
+            "output_tritonswmm_triton_summary",
+            "tritonswmm_triton_analysis_summary_created",
+            ["x", "y"],
+        ),
+        "tritonswmm_swmm_node": (
+            "output_tritonswmm_node_summary",
+            "output_tritonswmm_node_summary",
+            "tritonswmm_node_analysis_summary_created",
+            "node_id",
+        ),
+        "tritonswmm_swmm_link": (
+            "output_tritonswmm_link_summary",
+            "output_tritonswmm_link_summary",
+            "tritonswmm_link_analysis_summary_created",
+            "link_id",
+        ),
+        "triton_only": (
+            "output_triton_only_summary",
+            "output_triton_only_summary",
+            "triton_only_analysis_summary_created",
+            ["x", "y"],
+        ),
+        "triton_only_performance": (
+            "output_triton_only_performance_summary",
+            "output_triton_only_performance_summary",
+            "triton_only_performance_analysis_summary_created",
+            None,
+        ),
+        "swmm_only_node": (
+            "output_swmm_only_node_summary",
+            "output_swmm_only_node_summary",
+            "swmm_only_node_analysis_summary_created",
+            "node_id",
+        ),
+        "swmm_only_link": (
+            "output_swmm_only_link_summary",
+            "output_swmm_only_link_summary",
+            "swmm_only_link_analysis_summary_created",
+            "link_id",
+        ),
+    }
+
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
 
-    def _retrieve_combined_output(
-        self, mode: Literal["TRITON", "SWMM_node", "SWMM_link"]
-    ) -> xr.Dataset:  # type: ignore
+    def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
         Load pre-created summary files for each scenario and concatenate them.
 
-        Note: Summaries are now created during individual scenario processing
-        by process_timeseries_runner.py, not during analysis consolidation.
-        This significantly reduces memory usage for large ensembles.
+        Parameters
+        ----------
+        mode : str
+            One of the keys in _MODE_CONFIG:
+            "tritonswmm_triton", "tritonswmm_swmm_node", "tritonswmm_swmm_link",
+            "triton_only", "swmm_only_node", "swmm_only_link"
         """
+        if mode not in self._MODE_CONFIG:
+            raise ValueError(
+                f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}"
+            )
+
+        scen_path_attr = self._MODE_CONFIG[mode][0]
+
         lst_ds = []
         for event_iloc in self._analysis.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self._analysis)
 
-            # Load pre-created summary files (not full timeseries)
-            if mode.lower() == "triton":
-                summary_file = scen.scen_paths.output_triton_summary
-            elif mode.lower() == "swmm_node":
-                summary_file = scen.scen_paths.output_swmm_node_summary
-            elif mode.lower() == "swmm_link":
-                summary_file = scen.scen_paths.output_swmm_link_summary
-            else:
-                raise ValueError(f"Unknown mode: {mode}")
+            summary_file = getattr(scen.scen_paths, scen_path_attr)
 
-            # Validate path is not None (fail-fast)
             if summary_file is None:
                 raise ValueError(
                     f"Summary file path is None for mode '{mode}' and event_iloc={event_iloc}. "
-                    f"This indicates a configuration error - check that the appropriate model types "
-                    f"are enabled in system config."
+                    f"Check that the appropriate model types are enabled in system config."
                 )
 
-            # Check if summary file exists
             if not summary_file.exists():
                 raise FileNotFoundError(
                     f"Summary file not found: {summary_file}. "
-                    f"Make sure to run timeseries processing with summary creation "
-                    f"before consolidating analysis outputs."
+                    f"Run timeseries processing with summary creation before consolidating."
                 )
 
-            # Load summary (already has event_iloc coordinate and compute_time)
             open_kwargs = {
                 "chunks": "auto",
                 "engine": self._open_engine(),
@@ -69,7 +110,6 @@ class TRITONSWMM_analysis_post_processing:
             ds = xr.open_dataset(summary_file, **open_kwargs)
             lst_ds.append(ds)
 
-        # Concatenate all summaries
         ds_combined_outputs = xr.concat(
             lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
         )
@@ -260,40 +300,27 @@ class TRITONSWMM_analysis_post_processing:
 
         return chunks
 
-    def consolidate_TRITON_outputs_for_analysis(
+    def consolidate_outputs_for_mode(
         self,
+        mode: str,
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        ds_combined_outputs = self._retrieve_combined_output("TRITON")
-        self._consolidate_outputs(
-            ds_combined_outputs,
-            mode="TRITON",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        return
+        """
+        Consolidate scenario-level summaries into a single analysis-level file.
 
-    def consolidate_SWMM_outputs_for_analysis(
-        self,
-        overwrite_if_exist: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        ds_combined_outputs = self._retrieve_combined_output("SWMM_node")
+        Parameters
+        ----------
+        mode : str
+            One of the keys in _MODE_CONFIG:
+            "tritonswmm_triton", "tritonswmm_swmm_node", "tritonswmm_swmm_link",
+            "triton_only", "swmm_only_node", "swmm_only_link"
+        """
+        ds_combined_outputs = self._retrieve_combined_output(mode)
         self._consolidate_outputs(
             ds_combined_outputs,
-            mode="SWMM_node",
-            overwrite_if_exist=overwrite_if_exist,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        ds_combined_outputs = self._retrieve_combined_output("SWMM_link")
-        self._consolidate_outputs(
-            ds_combined_outputs,
-            mode="SWMM_link",
+            mode=mode,
             overwrite_if_exist=overwrite_if_exist,
             verbose=verbose,
             compression_level=compression_level,
@@ -321,23 +348,40 @@ class TRITONSWMM_analysis_post_processing:
                 f"could not open file because it does not exist: {f}. Run analysis.consolidate_[SWMM/TRITON]_outputs()."
             )
 
+    # TRITON-SWMM coupled model accessors
     @property
-    def SWMM_node_summary(self):
-        return self._open(self._analysis.analysis_paths.output_swmm_node_summary)
+    def tritonswmm_TRITON_summary(self):
+        return self._open(
+            self._analysis.analysis_paths.output_tritonswmm_triton_summary
+        )
 
     @property
-    def SWMM_link_summary(self):
-        return self._open(self._analysis.analysis_paths.output_swmm_links_summary)
+    def tritonswmm_SWMM_node_summary(self):
+        return self._open(self._analysis.analysis_paths.output_tritonswmm_node_summary)
 
     @property
-    def TRITON_summary(self):
-        return self._open(self._analysis.analysis_paths.output_triton_summary)
+    def tritonswmm_SWMM_link_summary(self):
+        return self._open(self._analysis.analysis_paths.output_tritonswmm_link_summary)
 
     @property
-    def TRITONSWMM_performance_summary(self):
+    def tritonswmm_performance_summary(self):
         return self._open(
             self._analysis.analysis_paths.output_tritonswmm_performance_summary
         )
+
+    # TRITON-only model accessors
+    @property
+    def triton_only_summary(self):
+        return self._open(self._analysis.analysis_paths.output_triton_only_summary)
+
+    # SWMM-only model accessors
+    @property
+    def swmm_only_node_summary(self):
+        return self._open(self._analysis.analysis_paths.output_swmm_only_node_summary)
+
+    @property
+    def swmm_only_link_summary(self):
+        return self._open(self._analysis.analysis_paths.output_swmm_only_link_summary)
 
     def consolidate_TRITONSWMM_performance_summaries(
         self,
@@ -418,7 +462,7 @@ class TRITONSWMM_analysis_post_processing:
         )
 
         # Logging
-        self._analysis.log.TRITONSWMM_performance_analysis_summary_created.set(True)
+        self._analysis.log.tritonswmm_performance_analysis_summary_created.set(True)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
@@ -443,40 +487,39 @@ class TRITONSWMM_analysis_post_processing:
     def _consolidate_outputs(
         self,
         ds_combined_outputs: xr.Dataset | xr.DataArray,
-        mode: Literal["TRITON", "SWMM_node", "SWMM_link"],
+        mode: str,
         overwrite_if_exist: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        """
+        Consolidate combined scenario summaries into an analysis-level output file.
+
+        Parameters
+        ----------
+        mode : str
+            One of the keys in _MODE_CONFIG.
+        """
+        if mode not in self._MODE_CONFIG:
+            raise ValueError(
+                f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}"
+            )
+
+        scen_path_attr, analysis_path_attr, log_field_name, spatial_coords = (
+            self._MODE_CONFIG[mode]
+        )
+
         start_time = time.time()
         self._analysis._refresh_log()
-        if mode.lower() == "triton":
-            proc_log = self._analysis.log.TRITON_analysis_summary_created
-            fname_out = self._analysis.analysis_paths.output_triton_summary
-            spatial_coords = ["x", "y"]
 
-        if mode.lower() == "swmm_node":
-            proc_log = self._analysis.log.SWMM_node_analysis_summary_created
-            fname_out = self._analysis.analysis_paths.output_swmm_node_summary
-            spatial_coords = "node_id"
+        proc_log = getattr(self._analysis.log, log_field_name)
+        fname_out = getattr(self._analysis.analysis_paths, analysis_path_attr)
 
-        if mode.lower() == "swmm_link":
-            proc_log = self._analysis.log.SWMM_link_analysis_summary_created
-            fname_out = self._analysis.analysis_paths.output_swmm_links_summary
-            spatial_coords = "link_id"
-
-        if mode.lower() == "triton":
-            if not self._analysis.log.all_TRITON_timeseries_processed.get():
-                raise RuntimeError(
-                    f"TRITON time series have not been processed.\n\
-self._analysis.log.all_TRITON_timeseries_processed.get() = {self._analysis.log.all_TRITON_timeseries_processed.get()}\n\
-Log:\n{self._analysis.log._as_json()}\n id(self._analysis.log) = {id(self._analysis.log)}\n id(self._analysis) = {id(self._analysis)}"
-                )
-        else:
-            if not self._analysis.log.all_SWMM_timeseries_processed.get():
-                raise RuntimeError(
-                    f"SWMM time series have not been processed. Log:\n{self._analysis.log._as_json()}"
-                )
+        if fname_out is None:
+            raise ValueError(
+                f"Analysis path '{analysis_path_attr}' is None for mode '{mode}'. "
+                f"Check that the appropriate model type is enabled in system config."
+            )
 
         if (
             self._already_written(fname_out)
@@ -485,17 +528,16 @@ Log:\n{self._analysis.log._as_json()}\n id(self._analysis.log) = {id(self._analy
         ):
             if verbose:
                 print(
-                    f"File already written and overwrite_if_exists is set to False. Not overwriting:\n{fname_out}"
+                    f"File already written and overwrite_if_exists is set to False. "
+                    f"Not overwriting:\n{fname_out}"
                 )
             return
 
-        # ds_combined_outputs = self._retrieve_combined_output(mode)
         chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)  # type: ignore
 
         self._write_output(
             ds_combined_outputs, fname_out, compression_level, chunks, verbose  # type: ignore
         )
-        # logging
         proc_log.set(True)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(

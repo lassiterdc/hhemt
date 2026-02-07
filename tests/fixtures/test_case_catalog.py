@@ -386,12 +386,18 @@ class Local_TestCases:
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local multi-simulation test with 2 events."""
         analysis_name = "multi_sim"
+        system_overrides = {
+            "toggle_triton_model": True,
+            "toggle_tritonswmm_model": True,
+            "toggle_swmm_model": True,
+        }
 
         return GetTS_TestCases._retrieve_norfolk_case(
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=2,
+            system_overrides=system_overrides
         )
 
     # ========== Multi-Model Test Cases ==========

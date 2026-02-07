@@ -133,19 +133,57 @@ def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "bot
         pytest.fail("SWMM timeseries processing failed")
 
 
-def assert_analysis_summaries_created(
-    analysis: TRITONSWMM_analysis, which: str = "both"
-):
-    """Assert that output summaries were created for requested modes."""
-    if not analysis.TRITONSWMM_performance_analysis_summary_created:
-        pytest.fail("TRITONSWMM analysis performance summary missing")
-    if which in ("both", "TRITON") and not analysis.TRITON_analysis_summary_created:
-        pytest.fail("TRITON analysis summary missing")
-    if which in ("both", "SWMM"):
-        if not analysis.SWMM_node_analysis_summary_created:
-            pytest.fail("SWMM node analysis summary missing")
-        if not analysis.SWMM_link_analysis_summary_created:
-            pytest.fail("SWMM link analysis summary missing")
+def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
+    """
+    Assert that analysis-level consolidated summaries were created for all enabled model types.
+
+    Checks actual file existence on disk, not just log flags, for robust validation.
+    """
+    enabled = get_enabled_model_types(analysis)
+    missing = []
+
+    paths = analysis.analysis_paths
+
+    if "tritonswmm" in enabled:
+        for desc, path in [
+            ("TRITONSWMM TRITON summary", paths.output_tritonswmm_triton_summary),
+            ("TRITONSWMM SWMM node summary", paths.output_tritonswmm_node_summary),
+            ("TRITONSWMM SWMM link summary", paths.output_tritonswmm_link_summary),
+            (
+                "TRITONSWMM performance summary",
+                paths.output_tritonswmm_performance_summary,
+            ),
+        ]:
+            if path is None or not path.exists():
+                missing.append(desc)
+
+    if "triton" in enabled:
+        path = paths.output_triton_only_summary
+        if path is None or not path.exists():
+            missing.append("TRITON-only summary")
+
+        for desc, path in [
+            (
+                "TRITON-only performance summary",
+                paths.output_triton_only_performance_summary,
+            ),
+        ]:
+            if path is None or not path.exists():
+                missing.append(desc)
+
+    if "swmm" in enabled:
+        for desc, path in [
+            ("SWMM-only node summary", paths.output_swmm_only_node_summary),
+            ("SWMM-only link summary", paths.output_swmm_only_link_summary),
+        ]:
+            if path is None or not path.exists():
+                missing.append(desc)
+
+    if missing:
+        pytest.fail(
+            f"Missing analysis-level consolidated summaries:\n"
+            + "\n".join(f"  - {m}" for m in missing)
+        )
 
 
 def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
@@ -239,14 +277,14 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
 
 
 def assert_analysis_workflow_completed_successfully(
-    analysis: TRITONSWMM_analysis, which: str = "both"
+    analysis: TRITONSWMM_analysis,
 ):
     """Assert that an end-to-end workflow completed successfully."""
     assert_system_setup(analysis)
     assert_scenarios_setup(analysis)
     assert_scenarios_run(analysis)
-    assert_timeseries_processed(analysis, which=which)
-    assert_analysis_summaries_created(analysis, which=which)
+    assert_timeseries_processed(analysis)
+    assert_analysis_summaries_created(analysis)
     assert_scenario_status_csv_created(analysis)
     assert_resource_usage_matches_config(analysis)
 
@@ -339,7 +377,7 @@ def assert_model_outputs_processed(
     model_type: str,
 ):
     """
-    Assert that outputs were processed for a specific model type.
+    Assert that outputs were processed for a specific model type by checking actual output files.
 
     Parameters
     ----------
@@ -357,48 +395,84 @@ def assert_model_outputs_processed(
     if model_type not in valid_types:
         pytest.fail(f"model_type must be one of {valid_types}, got '{model_type}'")
 
-    # Check for model-specific output files based on type
-    if model_type == "triton":
-        # Check TRITON-only output processing
-        # Output path pattern: out_triton/triton_surface_tseries.nc
-        if not analysis.all_TRITON_timeseries_processed:
-            not_processed = getattr(
-                analysis, "TRITON_time_series_not_processed", ["(unknown)"]
-            )
-            pytest.fail(
-                "TRITON-only timeseries processing failed for:\n"
-                + "\n".join(f"  - {s}" for s in not_processed[:5])
-            )
+    # Check for model-specific output files by inspecting actual file paths
+    missing_outputs = []
 
-    elif model_type == "tritonswmm":
-        # Check coupled TRITON-SWMM output processing
-        if not analysis.all_TRITON_timeseries_processed:
-            not_processed = getattr(
-                analysis, "TRITON_time_series_not_processed", ["(unknown)"]
-            )
-            pytest.fail(
-                "TRITON-SWMM TRITON timeseries processing failed for:\n"
-                + "\n".join(f"  - {s}" for s in not_processed[:5])
-            )
-        if not analysis.all_SWMM_timeseries_processed:
-            not_processed = getattr(
-                analysis, "SWMM_time_series_not_processed", ["(unknown)"]
-            )
-            pytest.fail(
-                "TRITON-SWMM SWMM timeseries processing failed for:\n"
-                + "\n".join(f"  - {s}" for s in not_processed[:5])
-            )
+    for event_iloc in analysis.df_sims.index:
+        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+        paths = proc.scen_paths
 
-    elif model_type == "swmm":
-        # Check standalone SWMM output processing
-        if not analysis.all_SWMM_timeseries_processed:
-            not_processed = getattr(
-                analysis, "SWMM_time_series_not_processed", ["(unknown)"]
+        if model_type == "triton":
+            # Check TRITON-only output files
+            required_paths = [
+                ("TRITON-only timeseries", paths.output_triton_only_timeseries),
+                ("TRITON-only summary", paths.output_triton_only_summary),
+                (
+                    "TRITON-only performance timeseries",
+                    paths.output_triton_only_performance_timeseries,
+                ),
+                (
+                    "TRITON-only performance summary",
+                    paths.output_triton_only_performance_summary,
+                ),
+            ]
+
+        elif model_type == "tritonswmm":
+            # Check coupled TRITON-SWMM output files
+            required_paths = [
+                (
+                    "TRITONSWMM TRITON timeseries",
+                    paths.output_tritonswmm_triton_timeseries,
+                ),
+                ("TRITONSWMM TRITON summary", paths.output_tritonswmm_triton_summary),
+                (
+                    "TRITONSWMM SWMM node timeseries",
+                    paths.output_tritonswmm_node_time_series,
+                ),
+                (
+                    "TRITONSWMM SWMM link timeseries",
+                    paths.output_tritonswmm_link_time_series,
+                ),
+                ("TRITONSWMM SWMM node summary", paths.output_tritonswmm_node_summary),
+                ("TRITONSWMM SWMM link summary", paths.output_tritonswmm_link_summary),
+                (
+                    "TRITONSWMM performance timeseries",
+                    paths.output_tritonswmm_performance_timeseries,
+                ),
+                (
+                    "TRITONSWMM performance summary",
+                    paths.output_tritonswmm_performance_summary,
+                ),
+            ]
+
+        elif model_type == "swmm":
+            # Check standalone SWMM output files
+            required_paths = [
+                ("SWMM-only node timeseries", paths.output_swmm_only_node_time_series),
+                ("SWMM-only link timeseries", paths.output_swmm_only_link_time_series),
+                ("SWMM-only node summary", paths.output_swmm_only_node_summary),
+                ("SWMM-only link summary", paths.output_swmm_only_link_summary),
+            ]
+
+        # Check each required path exists
+        for desc, path in required_paths:
+            if path is None:
+                missing_outputs.append(
+                    f"{desc} (path not configured) - scenario {event_iloc}"
+                )
+            elif not path.exists():
+                missing_outputs.append(f"{desc} ({path.name}) - scenario {event_iloc}")
+
+    if missing_outputs:
+        pytest.fail(
+            f"{model_type} output processing incomplete:\n"
+            + "\n".join(f"  - {m}" for m in missing_outputs[:10])
+            + (
+                f"\n  ... and {len(missing_outputs) - 10} more"
+                if len(missing_outputs) > 10
+                else ""
             )
-            pytest.fail(
-                "SWMM-only timeseries processing failed for:\n"
-                + "\n".join(f"  - {s}" for s in not_processed[:5])
-            )
+        )
 
 
 def assert_enabled_models_match_config(analysis: TRITONSWMM_analysis):
@@ -451,3 +525,25 @@ def get_enabled_model_types(analysis: TRITONSWMM_analysis) -> list[str]:
     if cfg_sys.toggle_swmm_model:
         models.append("swmm")
     return models
+
+
+def normalize_swmm_link_vars(link_vars: set[str]) -> set[str]:
+    """Normalize SWMM link variable names for cross-parser comparison.
+
+    The .out binary parser (pyswmm) reports 'capacity' while the .rpt text parser
+    reports 'capacity_setting'. Both represent the same physical quantity: the
+    fraction of conduit filled (0-1 range). This normalizes to 'capacity_setting'.
+
+    Parameters
+    ----------
+    link_vars : set[str]
+        Set of variable names from SWMM output parsing
+
+    Returns
+    -------
+    set[str]
+        Normalized set with 'capacity' replaced by 'capacity_setting' if present
+    """
+    if "capacity" in link_vars:
+        return (link_vars - {"capacity"}) | {"capacity_setting"}
+    return link_vars

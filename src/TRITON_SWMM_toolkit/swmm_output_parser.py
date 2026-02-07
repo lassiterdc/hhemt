@@ -54,6 +54,10 @@ def return_swmm_outputs(
     lst_col_headers_node_flow_summary,
     lst_col_headers_link_flow_summary,
 ):
+    dict_system_results = {}
+    lst_node_fld_summary = []
+    lst_node_flow_summary = []
+    lst_link_flow_summary = []
     if swmm_timeseries_result_file.name.split(".")[-1] == "rpt":
         use_rpt_for_tseries = True
     elif swmm_timeseries_result_file.name.split(".")[-1] == "out":
@@ -99,6 +103,26 @@ def return_swmm_outputs(
         ds_node_tseries, ds_link_tseries = return_node_time_series_results_from_outfile(  # type: ignore
             swmm_timeseries_result_file
         )
+        rpt_file = swmm_timeseries_result_file.with_suffix(".rpt")
+        if rpt_file.exists():
+            try:
+                with open(rpt_file, "r", encoding="latin-1") as file:
+                    rpt_lines = file.readlines()
+                lst_node_fld_summary = return_lines_for_section_of_rpt(
+                    "Node Flooding Summary", lines=rpt_lines
+                )
+                lst_node_flow_summary = return_lines_for_section_of_rpt(
+                    "Node Inflow Summary", lines=rpt_lines
+                )
+                lst_link_flow_summary = return_lines_for_section_of_rpt(
+                    "Link Flow Summary", lines=rpt_lines
+                )
+                dict_system_results = return_swmm_system_outputs(rpt_lines)
+            except Exception as exc:
+                warnings.warn(
+                    f"Failed to parse SWMM RPT summaries from {rpt_file}: {exc}",
+                    UserWarning,
+                )
     #
     if use_rpt_for_tseries:
         lst_node_fld_summary = dict_section_lines.get("Node Flooding Summary", [])
@@ -611,7 +635,7 @@ def return_node_time_series_results_from_rpt(
 def return_node_time_series_results_from_outfile(f_outfile):
     from pyswmm import Output, NodeSeries, LinkSeries
 
-    with Output(f_outfile) as out:
+    with Output(str(f_outfile)) as out:
         d_links = out.links
         d_nodes = out.nodes
         units = out.units

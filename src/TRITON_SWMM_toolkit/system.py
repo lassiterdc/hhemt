@@ -385,10 +385,6 @@ class TRITONSWMM_system:
             else:
                 raise ValueError(f"Unknown backend: {backend}")
 
-        # Print summary
-        if verbose:
-            self.print_compilation_status()
-
     def _download_tritonswmm_source(self, verbose: bool = True):
         """Download TRITON-SWMM source code from git repository."""
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
@@ -620,6 +616,7 @@ class TRITONSWMM_system:
         self,
         backends: list[str] | None = None,
         recompile_if_already_done_successfully: bool = False,
+        redownload_triton_swmm_if_exists: bool = False,
         verbose: bool = True,
     ):
         """
@@ -652,7 +649,11 @@ class TRITONSWMM_system:
 
         # Download TRITON source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
-        if not TRITONSWMM_software_directory.exists():
+
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+        ):
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -939,18 +940,18 @@ class TRITONSWMM_system:
         ]
 
         # Download SWMM source if needed
+        # template: git clone --branch v5.2.4 --depth 1 https://github.com/USEPA/Stormwater-Management-Model.git
         if redownload_swmm_if_exists or not swmm_source_dir.exists():
+            tag_line = ""
+            if self.cfg_system.SWMM_tag_key:
+                tag_line = f"--branch {self.cfg_system.SWMM_tag_key} --depth 1 "
             bash_script_lines.extend(
                 [
                     "# Clone SWMM source",
                     f'rm -rf "{swmm_source_dir}"',
-                    f'git clone {self.cfg_system.SWMM_git_URL} "{swmm_source_dir}"',
+                    f'git clone {tag_line}{self.cfg_system.SWMM_git_URL} "{swmm_source_dir}"',
                 ]
             )
-            if self.cfg_system.SWMM_tag_key:
-                bash_script_lines.append(
-                    f'cd "{swmm_source_dir}" && git checkout {self.cfg_system.SWMM_tag_key}'
-                )
             bash_script_lines.append("")
 
         # Build SWMM
