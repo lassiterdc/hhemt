@@ -103,8 +103,13 @@ class LogFieldDict(Generic[T]):
 
 
 # ----------------------------
-# Simulation log entries
+# Simulation log entries (DEPRECATED - kept for backward compatibility)
 # ----------------------------
+# NOTE: These classes are deprecated. Simulation completion is now tracked via log files
+# (run_triton.log, run_tritonswmm.log, run_swmm.log) instead of simlog entries.
+# These are kept only to prevent errors when loading existing log files.
+
+
 class SimEntry(BaseModel):
     sim_datetime: str
     sim_start_reporting_tstep: int | float
@@ -120,15 +125,17 @@ class SimEntry(BaseModel):
 
 
 class SimLog(BaseModel):
-    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
+    _log: "TRITONSWMM_log" = PrivateAttr()
     run_attempts: Dict[str, SimEntry] = Field(default_factory=dict)
 
-    def set_log(self, log: "TRITONSWMM_scenario_log"):
+    def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
     def update(self, entry: SimEntry):
+        # DEPRECATED: No longer persists to log file
+        # Completion tracking moved to log files (run_*.log)
         self.run_attempts[entry.sim_datetime] = entry
-        self._log.write()
+        # self._log.write()  # Commented out - no longer persist
 
 
 # ----------------------------
@@ -144,10 +151,10 @@ class ProcessingEntry(BaseModel):
 
 
 class Processing(BaseModel):
-    _log: "TRITONSWMM_scenario_log" = PrivateAttr()
+    _log: "TRITONSWMM_log" = PrivateAttr()
     outputs: Dict[str, ProcessingEntry] = Field(default_factory=dict)
 
-    def set_log(self, log: "TRITONSWMM_scenario_log"):
+    def set_log(self, log: "TRITONSWMM_log"):
         self._log = log
 
     def update(self, entry: ProcessingEntry):
@@ -314,6 +321,8 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         default_factory=LogField
     )  # "cpu" or "gpu"
     # RUNNING SIMULATIONS
+    # DEPRECATED: Completion status now tracked via log files (run_triton.log, run_tritonswmm.log, run_swmm.log)
+    # These fields kept for backward compatibility with existing log files
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_log: SimLog = Field(default_factory=SimLog)
     # POST PROCESSING
@@ -323,15 +332,29 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
     TRITONSWMM_performance_summary_written: LogField[bool] = Field(
         default_factory=LogField
     )
+    TRITON_only_performance_timeseries_written: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    TRITON_only_performance_summary_written: LogField[bool] = Field(
+        default_factory=LogField
+    )
     TRITON_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    TRITON_only_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_node_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_only_node_timeseries_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_only_link_timeseries_written: LogField[bool] = Field(default_factory=LogField)
     raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    raw_TRITON_only_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
+    raw_SWMM_only_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     # SUMMARY PROCESSING
     TRITON_summary_written: LogField[bool] = Field(default_factory=LogField)
+    TRITON_only_summary_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_node_summary_written: LogField[bool] = Field(default_factory=LogField)
     SWMM_link_summary_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_only_node_summary_written: LogField[bool] = Field(default_factory=LogField)
+    SWMM_only_link_summary_written: LogField[bool] = Field(default_factory=LogField)
     # FULL TIMESERIES CLEANUP
     full_TRITON_timeseries_cleared: LogField[bool] = Field(default_factory=LogField)
     full_SWMM_timeseries_cleared: LogField[bool] = Field(default_factory=LogField)
@@ -355,17 +378,27 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_swmm_cfg_created",
         "triton_cfg_created",  # TRITON-only CFG
         "sim_tritonswmm_executable_copied",
-        "simulation_completed",
+        "simulation_completed",  # DEPRECATED but kept for backward compatibility
         "TRITON_timeseries_written",
+        "TRITON_only_timeseries_written",
         "TRITONSWMM_performance_timeseries_written",
         "TRITONSWMM_performance_summary_written",
+        "TRITON_only_performance_timeseries_written",
+        "TRITON_only_performance_summary_written",
         "SWMM_node_timeseries_written",
         "SWMM_link_timeseries_written",
+        "SWMM_only_node_timeseries_written",
+        "SWMM_only_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        "raw_TRITON_only_outputs_cleared",
+        "raw_SWMM_only_outputs_cleared",
         "TRITON_summary_written",
+        "TRITON_only_summary_written",
         "SWMM_node_summary_written",
         "SWMM_link_summary_written",
+        "SWMM_only_node_summary_written",
+        "SWMM_only_link_summary_written",
         "full_TRITON_timeseries_cleared",
         "full_SWMM_timeseries_cleared",
         mode="before",
@@ -409,52 +442,30 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         "triton_cfg_created",  # TRITON-only CFG
         "sim_tritonswmm_executable_copied",
         "triton_backend_used",
-        "simulation_completed",
+        "simulation_completed",  # DEPRECATED but kept for backward compatibility
         "TRITON_timeseries_written",
+        "TRITON_only_timeseries_written",
         "TRITONSWMM_performance_timeseries_written",
         "TRITONSWMM_performance_summary_written",
+        "TRITON_only_performance_timeseries_written",
+        "TRITON_only_performance_summary_written",
         "SWMM_node_timeseries_written",
         "SWMM_link_timeseries_written",
+        "SWMM_only_node_timeseries_written",
+        "SWMM_only_link_timeseries_written",
         "raw_TRITON_outputs_cleared",
         "raw_SWMM_outputs_cleared",
+        "raw_TRITON_only_outputs_cleared",
+        "raw_SWMM_only_outputs_cleared",
         "TRITON_summary_written",
+        "TRITON_only_summary_written",
         "SWMM_node_summary_written",
         "SWMM_link_summary_written",
+        "SWMM_only_node_summary_written",
+        "SWMM_only_link_summary_written",
         "full_TRITON_timeseries_cleared",
         "full_SWMM_timeseries_cleared",
     )(_logfield_serializer)
-
-    # ----------------------------
-    # Simulation entries
-    # ----------------------------
-    def add_sim_entry(
-        self,
-        sim_datetime: str,
-        sim_start_reporting_tstep: int | float,
-        tritonswmm_logfile: Path,
-        time_elapsed_s: float,
-        status: str,
-        run_mode: str,
-        cmd: str,
-        n_mpi_procs: int | float | None,
-        n_omp_threads: int | float | None,
-        n_gpus: int | float | None,
-        env: dict,
-    ):
-        simlog = SimEntry(
-            sim_datetime=sim_datetime,
-            sim_start_reporting_tstep=sim_start_reporting_tstep,
-            tritonswmm_logfile=tritonswmm_logfile,
-            time_elapsed_s=time_elapsed_s,
-            status=status,
-            run_mode=run_mode,
-            cmd=cmd,
-            n_mpi_procs=n_mpi_procs,
-            n_omp_threads=n_omp_threads,
-            n_gpus=n_gpus,
-            env=env,
-        )
-        self.sim_log.update(simlog)
 
     # ----------------------------
     # Processing entries
@@ -479,6 +490,123 @@ class TRITONSWMM_scenario_log(TRITONSWMM_log):
         self.processing_log.update(simlog)
 
 
+class TRITONSWMM_model_log(TRITONSWMM_log):
+    """
+    Processing log for a single model type (triton, tritonswmm, or swmm).
+
+    Fields are Optional and only populated for relevant model types.
+    This eliminates race conditions by giving each model its own log file.
+
+    Field population by model type:
+    - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log, sim_log
+    - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
+    - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
+    - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared
+    """
+
+    event_iloc: int = 0
+    event_idx: Dict = Field(default_factory=dict)
+    simulation_folder: Path = Path(".")
+    logfile: Path
+
+    # Common fields (all model types)
+    simulation_completed: LogField[bool] = Field(default_factory=LogField)
+    sim_run_time_minutes: LogField[float] = Field(default_factory=LogField)
+    sim_log: SimLog = Field(default_factory=SimLog)
+    processing_log: Processing = Field(default_factory=Processing)
+
+    # Performance timeseries (triton and tritonswmm only)
+    performance_timeseries_written: Optional[LogField[bool]] = None
+    performance_summary_written: Optional[LogField[bool]] = None
+
+    # TRITON outputs (triton and tritonswmm only)
+    TRITON_timeseries_written: Optional[LogField[bool]] = None
+    TRITON_summary_written: Optional[LogField[bool]] = None
+    raw_TRITON_outputs_cleared: Optional[LogField[bool]] = None
+    full_TRITON_timeseries_cleared: Optional[LogField[bool]] = None
+
+    # SWMM outputs (swmm and tritonswmm only)
+    SWMM_node_timeseries_written: Optional[LogField[bool]] = None
+    SWMM_link_timeseries_written: Optional[LogField[bool]] = None
+    SWMM_node_summary_written: Optional[LogField[bool]] = None
+    SWMM_link_summary_written: Optional[LogField[bool]] = None
+    raw_SWMM_outputs_cleared: Optional[LogField[bool]] = None
+    full_SWMM_timeseries_cleared: Optional[LogField[bool]] = None
+
+    # Validators for LogField types
+    _validate_bool_fields = field_validator(
+        "simulation_completed",
+        "performance_timeseries_written",
+        "performance_summary_written",
+        "TRITON_timeseries_written",
+        "TRITON_summary_written",
+        "raw_TRITON_outputs_cleared",
+        "full_TRITON_timeseries_cleared",
+        "SWMM_node_timeseries_written",
+        "SWMM_link_timeseries_written",
+        "SWMM_node_summary_written",
+        "SWMM_link_summary_written",
+        "raw_SWMM_outputs_cleared",
+        "full_SWMM_timeseries_cleared",
+        mode="before",
+    )(_create_logfield_validator(bool))
+
+    _validate_float_fields = field_validator(
+        "sim_run_time_minutes",
+        mode="before",
+    )(_create_logfield_validator(float))
+
+    # Serializers
+    _serialize_bool_fields = field_serializer(
+        "simulation_completed",
+        "performance_timeseries_written",
+        "performance_summary_written",
+        "TRITON_timeseries_written",
+        "TRITON_summary_written",
+        "raw_TRITON_outputs_cleared",
+        "full_TRITON_timeseries_cleared",
+        "SWMM_node_timeseries_written",
+        "SWMM_link_timeseries_written",
+        "SWMM_node_summary_written",
+        "SWMM_link_summary_written",
+        "raw_SWMM_outputs_cleared",
+        "full_SWMM_timeseries_cleared",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    _serialize_float_fields = field_serializer(
+        "sim_run_time_minutes",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    def model_post_init(self, __context):
+        """Set parent log reference for nested objects after initialization."""
+        if hasattr(self, "sim_log"):
+            self.sim_log.set_log(self)
+        if hasattr(self, "processing_log"):
+            self.processing_log.set_log(self)
+
+    def add_sim_processing_entry(
+        self,
+        filepath: Path,
+        size_MiB: float,
+        time_elapsed_s: float,
+        success: bool,
+        notes: str = "",
+        warnings: str = "",
+    ):
+        """Add a processing entry to the processing log."""
+        simlog = ProcessingEntry(
+            filepath=filepath,
+            size_MiB=size_MiB,
+            time_elapsed_s=time_elapsed_s,
+            success=success,
+            notes=notes,
+            warnings=warnings,
+        )
+        self.processing_log.update(simlog)
+
+
 class TRITONSWMM_system_log(TRITONSWMM_log):
     """System-level log tracking compilation and preprocessing status."""
 
@@ -489,8 +617,12 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     mannings_shape: LogField[tuple] = Field(default_factory=LogField)
 
     # TRITON-SWMM compilation
-    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(default_factory=LogField)
-    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(default_factory=LogField)
+    compilation_tritonswmm_cpu_successful: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    compilation_tritonswmm_gpu_successful: LogField[bool] = Field(
+        default_factory=LogField
+    )
 
     # TRITON-only compilation
     compilation_triton_cpu_successful: LogField[bool] = Field(default_factory=LogField)
@@ -545,10 +677,31 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     )
     all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
-    TRITON_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
-    SWMM_node_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
-    SWMM_link_analysis_summary_created: LogField[bool] = Field(default_factory=LogField)
-    TRITONSWMM_performance_analysis_summary_created: LogField[bool] = Field(
+    # TRITON-SWMM coupled model consolidated summaries
+    tritonswmm_triton_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    tritonswmm_node_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    tritonswmm_link_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    tritonswmm_performance_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    # TRITON-only consolidated summaries
+    triton_only_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    triton_only_performance_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    # SWMM-only consolidated summaries
+    swmm_only_node_analysis_summary_created: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    swmm_only_link_analysis_summary_created: LogField[bool] = Field(
         default_factory=LogField
     )
     # Track which backends are available at analysis creation time
@@ -567,10 +720,14 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
-        "TRITON_analysis_summary_created",
-        "SWMM_node_analysis_summary_created",
-        "SWMM_link_analysis_summary_created",
-        "TRITONSWMM_performance_analysis_summary_created",
+        "tritonswmm_triton_analysis_summary_created",
+        "tritonswmm_node_analysis_summary_created",
+        "tritonswmm_link_analysis_summary_created",
+        "tritonswmm_performance_analysis_summary_created",
+        "triton_only_analysis_summary_created",
+        "triton_only_performance_analysis_summary_created",
+        "swmm_only_node_analysis_summary_created",
+        "swmm_only_link_analysis_summary_created",
         "cpu_backend_available",
         "gpu_backend_available",
         mode="before",
@@ -587,10 +744,14 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
-        "TRITON_analysis_summary_created",
-        "SWMM_node_analysis_summary_created",
-        "SWMM_link_analysis_summary_created",
-        "TRITONSWMM_performance_analysis_summary_created",
+        "tritonswmm_triton_analysis_summary_created",
+        "tritonswmm_node_analysis_summary_created",
+        "tritonswmm_link_analysis_summary_created",
+        "tritonswmm_performance_analysis_summary_created",
+        "triton_only_analysis_summary_created",
+        "triton_only_performance_analysis_summary_created",
+        "swmm_only_node_analysis_summary_created",
+        "swmm_only_link_analysis_summary_created",
         "cpu_backend_available",
         "gpu_backend_available",
     )(_logfield_serializer)
