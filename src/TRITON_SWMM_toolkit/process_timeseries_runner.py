@@ -61,6 +61,13 @@ def main():
         help="Path to system configuration YAML file",
     )
     parser.add_argument(
+        "--model-type",
+        type=str,
+        required=True,
+        choices=["triton", "tritonswmm", "swmm"],
+        help="Model type to process (triton=TRITON-only, tritonswmm=coupled, swmm=SWMM-only)",
+    )
+    parser.add_argument(
         "--which",
         type=str,
         default="both",
@@ -130,11 +137,21 @@ def main():
         scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
         scenario.log.refresh()
 
-        # Verify that the simulation has been run (skip strict check for SWMM-only)
-        if args.which != "SWMM" and not scenario.sim_run_completed:
+        model_types_enabled = scenario.run.model_types_enabled
+
+        # Verify the specified model type is enabled
+        if args.model_type not in model_types_enabled:
             logger.error(
-                f"Simulation not completed for scenario {args.event_iloc}. "
-                f"Cannot process outputs. Log: {scenario.latest_simlog}"
+                f"Model type '{args.model_type}' requested but not enabled "
+                f"for scenario {args.event_iloc}. Enabled models: {model_types_enabled}"
+            )
+            return 1
+
+        # Verify the specified model type has completed
+        if not scenario.model_run_completed(args.model_type):
+            logger.error(
+                f"Model type '{args.model_type}' simulation not completed "
+                f"for scenario {args.event_iloc}. Log: {scenario.latest_simlog}"
             )
             return 1
 
@@ -145,34 +162,74 @@ def main():
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
             which=args.which,  # type: ignore
+            model_type=args.model_type,  # type: ignore
             clear_raw_outputs=args.clear_raw_outputs,
             overwrite_if_exist=args.overwrite_if_exist,
             verbose=True,
             compression_level=args.compression_level,
         )
-        if args.which in ("TRITON", "both"):
-            proc._export_TRITONSWMM_performance_tseries(
-                comp_level=args.compression_level, verbose=True
-            )
+        # Write log to disk (processing methods update in-memory log via add_sim_processing_entry)
+        scenario.log.write()
 
-        # Verify that processing was successful
-        scenario.log.refresh()
-        if args.which in ("TRITON", "both"):
-            if not proc.TRITONSWMM_performance_timeseries_written:
-                logger.error(
-                    f"TRITONSWMM performance time series not processed for scenario {args.event_iloc}"
-                )
-                return 1
+        # Verify that processing was successful using file-based checks
+        # (More reliable than log fields in multi-model scenarios where concurrent processes
+        #  may overwrite each other's log updates)
+
+        # Performance time series verification
         if args.which == "TRITON" or args.which == "both":
-            if not proc.TRITON_outputs_processed:
+            perf_ok = False
+            perf_path = None
+            if args.model_type == "tritonswmm":
+                perf_path = proc.scen_paths.output_tritonswmm_performance_timeseries
+                perf_ok = perf_path.exists() if perf_path else False
+            elif args.model_type == "triton":
+                perf_path = proc.scen_paths.output_triton_only_performance_timeseries
+                perf_ok = perf_path.exists() if perf_path else False
+            if not perf_ok:
                 logger.error(
-                    f"TRITON outputs not processed for scenario {args.event_iloc}"
+                    f"Performance timeseries not created for scenario {args.event_iloc}. "
+                    f"Expected file: {perf_path}"
                 )
                 return 1
-        if args.which == "SWMM" or args.which == "both":
-            if not proc.SWMM_outputs_processed:
+        # TRITON outputs verification
+        if args.which == "TRITON" or args.which == "both":
+            triton_ok = False
+            triton_path = None
+            if args.model_type == "triton":
+                triton_path = proc.scen_paths.output_triton_only_timeseries
+                triton_ok = triton_path.exists() if triton_path else False
+            elif args.model_type == "tritonswmm":
+                triton_path = proc.scen_paths.output_tritonswmm_triton_timeseries
+                triton_ok = triton_path.exists() if triton_path else False
+            if not triton_ok:
                 logger.error(
-                    f"SWMM outputs not processed for scenario {args.event_iloc}"
+                    f"TRITON timeseries not created for scenario {args.event_iloc}. "
+                    f"Expected file: {triton_path}"
+                )
+                return 1
+        # SWMM outputs verification
+        if args.which == "SWMM" or args.which == "both":
+            swmm_ok = False
+            node_path = None
+            link_path = None
+            if args.model_type == "swmm":
+                node_path = proc.scen_paths.output_swmm_only_node_time_series
+                link_path = proc.scen_paths.output_swmm_only_link_time_series
+                swmm_ok = (
+                    (node_path.exists() if node_path else False) and
+                    (link_path.exists() if link_path else False)
+                )
+            elif args.model_type == "tritonswmm":
+                node_path = proc.scen_paths.output_tritonswmm_node_time_series
+                link_path = proc.scen_paths.output_tritonswmm_link_time_series
+                swmm_ok = (
+                    (node_path.exists() if node_path else False) and
+                    (link_path.exists() if link_path else False)
+                )
+            if not swmm_ok:
+                logger.error(
+                    f"SWMM timeseries not created for scenario {args.event_iloc}. "
+                    f"Expected files: {node_path}, {link_path}"
                 )
                 return 1
 
@@ -182,23 +239,51 @@ def main():
         logger.info(f"Creating summaries for scenario {args.event_iloc}")
         proc.write_summary_outputs(
             which=args.which,  # type: ignore
+            model_type=args.model_type,  # type: ignore
             overwrite_if_exist=args.overwrite_if_exist,
             verbose=True,
             compression_level=args.compression_level,
         )
 
-        # Verify summary creation
-        scenario.log.refresh()
+        # Verify summary creation using file-based checks
+        # (More reliable than log fields which can have stale reference issues)
         if args.which == "TRITON" or args.which == "both":
-            if not proc.TRITON_summary_processed:
+            triton_summary_ok = False
+            summary_path = None
+            if args.model_type == "triton":
+                summary_path = proc.scen_paths.output_triton_only_summary
+                triton_summary_ok = proc._already_written(summary_path)
+            elif args.model_type == "tritonswmm":
+                summary_path = proc.scen_paths.output_tritonswmm_triton_summary
+                triton_summary_ok = proc._already_written(summary_path)
+            if not triton_summary_ok:
                 logger.error(
-                    f"TRITON summary not created for scenario {args.event_iloc}"
+                    f"TRITON summary not created for scenario {args.event_iloc}. "
+                    f"Expected file: {summary_path}"
                 )
                 return 1
         if args.which == "SWMM" or args.which == "both":
-            if not proc.SWMM_summary_processed:
+            swmm_summary_ok = False
+            node_path = None
+            link_path = None
+            if args.model_type == "swmm":
+                node_path = proc.scen_paths.output_swmm_only_node_summary
+                link_path = proc.scen_paths.output_swmm_only_link_summary
+                swmm_summary_ok = (
+                    proc._already_written(node_path) and
+                    proc._already_written(link_path)
+                )
+            elif args.model_type == "tritonswmm":
+                node_path = proc.scen_paths.output_tritonswmm_node_summary
+                link_path = proc.scen_paths.output_tritonswmm_link_summary
+                swmm_summary_ok = (
+                    proc._already_written(node_path) and
+                    proc._already_written(link_path)
+                )
+            if not swmm_summary_ok:
                 logger.error(
-                    f"SWMM summaries not created for scenario {args.event_iloc}"
+                    f"SWMM summaries not created for scenario {args.event_iloc}. "
+                    f"Expected files: {node_path}, {link_path}"
                 )
                 return 1
 
