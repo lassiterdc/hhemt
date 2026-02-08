@@ -30,11 +30,12 @@ Incremental improvements that reduce maintenance burden. Can be done independent
   - Deleted commented-out simlog code
   - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `cruft_cleanup_tracker.md` Phase 2
 
-- [ ] **Logging & error normalization** (`cruft_cleanup_plan.md` Phase 4)
-  - Replace ad-hoc `print(...)` in library paths with structured logging
-  - Standardize exception boundaries and message format
-  - Remove silent returns for failure states
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`
+- [x] **Logging & error normalization** (`cruft_cleanup_plan.md` Phase 4, Phases 4a-4c)
+  - ✅ Custom exception hierarchy (TRITONSWMMError, CompilationError, ConfigurationError, etc.)
+  - ✅ System/compilation layer error handling with full context (logfile, return_code, model_type, backend)
+  - ✅ Scenario/run layer error handling (no silent failures found)
+  - ⏸️ Deferred: print→logger conversions in output processing, workflow orchestration, config validation (Phases 4d-4f) — non-critical cosmetic improvements
+  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `cruft_cleanup_tracker.md` Phase 4
 
 - [ ] **Workaround containment** (`cruft_cleanup_plan.md` Phase 5)
   - Centralize `TODO(TRITON-OUTPUT-PATH-BUG)` logic behind minimal interfaces
