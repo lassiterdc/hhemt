@@ -57,6 +57,25 @@ Baseline interpretation:
 - Test status:
   - `tests/test_config_validation.py` → **PASS** (3 passed)
 
-### Phase 2+
+### Phase 2 — Remove Legacy/Obsolete Runtime Paths
+
+- Status: **Complete**
+- Touched files:
+  - `src/TRITON_SWMM_toolkit/run_simulation.py`
+  - `src/TRITON_SWMM_toolkit/scenario.py`
+  - `src/TRITON_SWMM_toolkit/analysis.py`
+  - `src/TRITON_SWMM_toolkit/log.py`
+  - `src/TRITON_SWMM_toolkit/process_simulation.py`
+  - `src/TRITON_SWMM_toolkit/process_timeseries_runner.py`
+- Removed:
+  - `_obsolete_retrieve_sim_launcher()` and `_obsolete_run_sim()` methods
+  - `SimEntry` and `SimLog` Pydantic classes (simlog tracking fully retired)
+  - `sim_log` field from `TRITONSWMM_model_log` (was always empty `{"run_attempts": {}}`)
+  - `latest_simlog` property, `_latest_sim_status()`, `sim_run_status()`, `_simulation_run_statuses`
+  - Commented-out srun/mpirun/gpu command alternatives and simlog tracking blocks
+- Net: 305 lines deleted, 13 inserted
+- All smoke tests pass (PC_01 through PC_05)
+
+### Phase 3+
 
 - Status: Not started
