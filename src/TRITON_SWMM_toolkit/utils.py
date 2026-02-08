@@ -1,4 +1,5 @@
 import json
+import os
 import warnings
 from pathlib import Path
 import importlib.util
@@ -236,8 +237,13 @@ def load_json(file: Path):
 
 def write_json(data: dict, file: Path):
     file.parent.mkdir(exist_ok=True, parents=True)
-    with open(file, "w") as f:
+    pid = os.getpid()
+    tmp_path = file.with_suffix(file.suffix + f".{pid}.tmp")
+    with open(tmp_path, "w") as f:
         json.dump(data, f, indent=2, default=str)
+        f.flush()
+        os.fsync(f.fileno())
+    tmp_path.replace(file)
 
 
 def replace_substring_in_file(file_path, old_substring, new_substring, verbose=False):
@@ -560,7 +566,12 @@ def write_netcdf(
     encoding = return_dic_netcdf_encodings(ds, compression_level)
     if chunks == "auto":
         chunk_dict = return_dic_autochunk(ds)
-    ds = ds.chunk(chunk_dict)
+    else:
+        chunk_dict = chunks
+    try:
+        ds = ds.chunk(chunk_dict)
+    except NotImplementedError:
+        ds = ds.copy(deep=False)
     ds.to_netcdf(fname_out, encoding=encoding, engine="h5netcdf")
     return
 

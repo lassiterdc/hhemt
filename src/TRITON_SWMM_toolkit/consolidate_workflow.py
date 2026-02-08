@@ -314,7 +314,6 @@ def main() -> int:
                     overwrite_if_exist=args.overwrite_if_exist,
                     verbose=True,
                     compression_level=args.compression_level,
-                    which=args.which,
                 )
                 logger.info("Consolidation completed successfully")
             except Exception as e:

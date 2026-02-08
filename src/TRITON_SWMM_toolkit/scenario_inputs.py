@@ -102,7 +102,7 @@ class ScenarioInputGenerator:
         dem_processed = self.system.sys_paths.dem_processed
 
         df_node_locs, lst_outfalls = return_df_of_nodes_grouped_by_DEM_gridcell(
-            self.scenario.scen_paths.inp_hydraulics, dem_processed, verbose=verbose
+            self.scenario.scen_paths.swmm_hydraulics_inp, dem_processed, verbose=verbose
         )
         lst_grps_more_than_1_node = []
         count = -1
@@ -119,7 +119,7 @@ class ScenarioInputGenerator:
                 )
             )
         df_overlapping_nodes = pd.concat(lst_grps_more_than_1_node)
-        model = swmmio.Model(str(self.scenario.scen_paths.inp_hydraulics))
+        model = swmmio.Model(str(self.scenario.scen_paths.swmm_hydraulics_inp))
         links = model.links.dataframe
         nodes = model.nodes.dataframe
         inflows = model.inp.inflows
@@ -206,7 +206,7 @@ class ScenarioInputGenerator:
         if verbose:
             print("Removing {} inflow nodes.".format(len(all_upstream_nodes_to_drop)))
         # write new swmm model, removing outflow that won't be used by TRITON-SWMM
-        with open(self.scenario.scen_paths.inp_hydraulics, "r") as fp:
+        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "r") as fp:
             lines = fp.readlines()
         for idx_line, line in enumerate(lines):
             if "[INFLOWS]" in line:
@@ -224,7 +224,7 @@ class ScenarioInputGenerator:
                 line_nums_to_remove.append(inflow_line)
                 lines_to_remove.append(line)
         # overwrite hydaulics model
-        with open(self.scenario.scen_paths.inp_hydraulics, "w") as fp:
+        with open(self.scenario.scen_paths.swmm_hydraulics_inp, "w") as fp:
             for number, line in enumerate(lines):
                 if number not in line_nums_to_remove:
                     fp.write(line)

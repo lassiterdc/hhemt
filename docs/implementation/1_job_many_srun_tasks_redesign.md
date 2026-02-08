@@ -1,7 +1,8 @@
 # 1_job_many_srun_tasks Mode Redesign: Dynamic Concurrency
 
 **Date**: 2026-01-29
-**Status**: In Progress
+**Status**: ✅ Complete (all 4 phases implemented, tests passing)
+**Last Updated**: 2026-02-07
 **Goal**: Eliminate `hpc_max_simultaneous_sims` dependency for `1_job_many_srun_tasks` mode and enable dynamic concurrency based on SLURM allocation
 
 ## Problem Statement
@@ -155,6 +156,6 @@ additional_analysis_configs=dict(
 
 ## References
 
-- Original plan: `~/.claude/plans/peaceful-sparking-trinket.md`
 - SLURM --gres documentation: `man sbatch` (--gres=gpu:X is per-node)
 - Existing --overlap usage: `src/TRITON_SWMM_toolkit/run_simulation.py:237,276`
+- Tests: `tests/test_workflow_1job_sbatch_generation.py`, `tests/test_workflow_1job_profile_generation.py`, `tests/test_resource_management_1job_mode.py`

@@ -278,7 +278,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.TRITON_summary
+            ds = sub_analysis.tritonswmm_TRITON_summary
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -297,7 +297,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.SWMM_node_summary
+            ds = sub_analysis.tritonswmm_SWMM_node_summary
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -317,7 +317,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.SWMM_link_summary
+            ds = sub_analysis.tritonswmm_SWMM_link_summary
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -344,7 +344,7 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
             # Access the performance summary from the sub-analysis
-            ds = sub_analysis.process.TRITONSWMM_performance_summary
+            ds = sub_analysis.process.tritonswmm_performance_summary
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
 
@@ -369,7 +369,6 @@ class TRITONSWMM_sensitivity_analysis:
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis.consolidate_analysis_outputs(
-                which=which,
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
@@ -381,7 +380,9 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITON_subanalyses_outputs_consolidated(self):
         success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            success = success and sub_analysis.TRITON_analysis_summary_created
+            success = (
+                success and sub_analysis.tritonswmm_triton_analysis_summary_created
+            )
         return success
 
     @property
@@ -390,10 +391,10 @@ class TRITONSWMM_sensitivity_analysis:
         link_success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             node_success = (
-                node_success and sub_analysis.SWMM_node_analysis_summary_created
+                node_success and sub_analysis.tritonswmm_node_analysis_summary_created
             )
             link_success = (
-                link_success and sub_analysis.SWMM_link_analysis_summary_created
+                link_success and sub_analysis.tritonswmm_link_analysis_summary_created
             )
         return node_success and link_success
 
@@ -429,7 +430,7 @@ class TRITONSWMM_sensitivity_analysis:
             ds_combined_outputs = self._combine_TRITON_outputs_per_subanalysis()
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="TRITON",
+                mode="tritonswmm_triton",
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
@@ -438,7 +439,7 @@ class TRITONSWMM_sensitivity_analysis:
             ds_combined_outputs = self._combine_SWMM_node_outputs_per_subanalysis()
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="SWMM_node",
+                mode="tritonswmm_swmm_node",
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
@@ -448,7 +449,7 @@ class TRITONSWMM_sensitivity_analysis:
             )
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="SWMM_link",
+                mode="tritonswmm_swmm_link",
                 overwrite_if_exist=overwrite_if_exist,
                 verbose=verbose,
                 compression_level=compression_level,
@@ -458,7 +459,7 @@ class TRITONSWMM_sensitivity_analysis:
         start_time = time.time()
         ds_performance = self._combine_TRITONSWMM_performance_per_subanalysis()
         proc_log = (
-            self.master_analysis.log.TRITONSWMM_performance_analysis_summary_created
+            self.master_analysis.log.tritonswmm_performance_analysis_summary_created
         )
         fname_out = (
             self.master_analysis.analysis_paths.output_tritonswmm_performance_summary
@@ -503,16 +504,16 @@ class TRITONSWMM_sensitivity_analysis:
         return
 
     @property
-    def SWMM_node_summary(self):
-        return self.master_analysis.SWMM_node_summary
+    def tritonswmm_SWMM_node_summary(self):
+        return self.master_analysis.tritonswmm_SWMM_node_summary
 
     @property
-    def SWMM_link_summary(self):
-        return self.master_analysis.SWMM_link_summary
+    def tritonswmm_SWMM_link_summary(self):
+        return self.master_analysis.tritonswmm_SWMM_link_summary
 
     @property
-    def TRITON_summary(self):
-        return self.master_analysis.TRITON_summary
+    def tritonswmm_TRITON_summary(self):
+        return self.master_analysis.tritonswmm_TRITON_summary
 
     @property
     def TRITONSWMM_runtimes(self):
@@ -602,7 +603,13 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
-                if scen.sim_run_completed is not True:
+                # Check if all enabled models completed
+                enabled_models = scen.run.model_types_enabled
+                all_models_completed = all(
+                    scen.model_run_completed(model_type)
+                    for model_type in enabled_models
+                )
+                if not all_models_completed:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
@@ -650,11 +657,20 @@ class TRITONSWMM_sensitivity_analysis:
                 scenarios_setup.append(
                     scen.log.scenario_creation_complete.get() is True
                 )
-                scen_runs_completed.append(scen.sim_run_completed)
+                # Check if all enabled models completed
+                enabled_models = scen.run.model_types_enabled
+                all_models_completed = all(
+                    scen.model_run_completed(model_type)
+                    for model_type in enabled_models
+                )
+                scen_runs_completed.append(all_models_completed)
                 scenario_dirs.append(str(scen.log.logfile.parent))
                 subanalysis_definition_row = self.df_setup.iloc[sub_analysis_iloc, :]
                 df_setup_rows.append(subanalysis_definition_row)
 
+                # TODO(TRITON-OUTPUT-PATH-BUG): log.out is hardcoded to output/ by TRITON.
+                # When both TRITON-only and TRITON-SWMM run, last to finish overwrites
+                # the other's log.out. See docs/implementation/triton_output_path_bug.md
                 # Parse log.out file for actual resource usage
                 # log.out is written to the output directory (same location as performance.txt)
                 log_out_path = scen.scen_paths.sim_folder / "output" / "log.out"

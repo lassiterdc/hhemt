@@ -68,6 +68,15 @@ class NewAPI:
 # Old API completely removed, all call sites updated
 ```
 
+### Completion Status: Log-Based Checks over File Existence
+
+**Prefer log-based checks over file existence checks for determining processing completion.**
+
+- `_already_written()` verifies a file was written *successfully*, not just that it exists
+- A file may exist but be corrupt, incomplete, or from a previous failed run
+- File existence checks are redundant when log checks are available and can mask errors
+- Exception: File existence is appropriate for verifying *input* files before reading them
+
 ## Architecture
 
 ### Three-Layer Hierarchy
@@ -136,6 +145,96 @@ launcher, finalize = run._create_subprocess_sim_run_launcher(...)  # Spawns anot
 - `prepare_simulation_command()`: Use in runner scripts to get TRITON executable command
 - `_create_subprocess_sim_run_launcher()`: Use in analysis/executor classes for concurrent execution (spawns runner subprocess)
 
+## Multi-Model Integration
+
+The toolkit supports **concurrent execution** of three model types within a single analysis:
+
+### Model Types
+
+| Model Type | Description | Use Case |
+|------------|-------------|----------|
+| **TRITON-only** | 2D hydrodynamic (no SWMM coupling) | Pure surface water modeling, coastal flooding |
+| **TRITON-SWMM** | Coupled 2D surface + 1D drainage | Urban flooding with stormwater infrastructure |
+| **SWMM-only** | Standalone EPA SWMM | Stormwater network analysis without surface routing |
+
+### Configuration Toggles
+
+Enable model types via `system_config.yaml`:
+
+```yaml
+toggle_triton_model: true      # Enable TRITON-only
+toggle_tritonswmm_model: true  # Enable TRITON-SWMM coupled
+toggle_swmm_model: true        # Enable standalone SWMM
+```
+
+**Key behaviors:**
+- Models run **concurrently** via separate Snakemake rules
+- Each model has its own compilation, executable, and output directories
+- Resource allocation: SWMM limited to 4 CPUs (no GPU), TRITON/TRITON-SWMM use configured resources
+
+### Directory Structure (Per Scenario)
+
+```
+{scenario_dir}/
+├── logs/                      # Centralized logs
+│   ├── run_triton.log
+│   ├── run_tritonswmm.log
+│   └── run_swmm.log
+├── out_triton/                # TRITON-only outputs
+├── out_tritonswmm/            # Coupled model outputs
+├── out_swmm/                  # SWMM-only outputs
+├── TRITON.cfg                 # TRITON-only config (inp_filename commented)
+├── TRITONSWMM.cfg             # Coupled model config
+└── swmm_full.inp              # SWMM input
+```
+
+### Compilation
+
+Setup workflow compiles enabled models:
+
+```bash
+python -m TRITON_SWMM_toolkit.setup_workflow \
+    --system-config system.yaml \
+    --analysis-config analysis.yaml \
+    --compile-tritonswmm \    # Compile coupled model
+    --compile-triton-only \   # Compile TRITON-only
+    --compile-swmm            # Compile standalone SWMM
+```
+
+**Build directories:**
+- TRITON-SWMM: `build_tritonswmm_cpu/`, `build_tritonswmm_gpu/`
+- TRITON-only: `build_triton_cpu/`, `build_triton_gpu/` (CMake flag: `-DTRITON_ENABLE_SWMM=OFF`)
+- SWMM: `swmm_build/` (standalone EPA SWMM executable)
+
+### Workflow Rules
+
+Snakemake generates **separate rules per model type**:
+
+```python
+rule run_triton:          # TRITON-only simulation
+    threads: {cpus}
+    resources: gpus={gpus}
+
+rule run_tritonswmm:      # Coupled simulation
+    threads: {cpus}
+    resources: gpus={gpus}
+
+rule run_swmm:            # SWMM-only simulation
+    threads: 4            # CPU-only, limited threads
+```
+
+Processing rules similarly split: `process_triton`, `process_tritonswmm`, `process_swmm`
+
+### Status Tracking
+
+`analysis.df_status` includes `model_types_enabled` column showing which models are active:
+
+```python
+df_status["model_types_enabled"]  # e.g., "triton,tritonswmm,swmm"
+```
+
+For multi-model workflows, all enabled models run for each scenario, with outputs in separate directories.
+
 ## Configuration System
 
 Configuration flows: **YAML → Pydantic → Analysis/Scenario classes**
@@ -185,13 +284,14 @@ When `in_slurm=True`, simulations launch via `srun` (not direct execution).
 - `SLURM_ARRAY_TASK_ID` - Maps to event_iloc in array jobs
 - Module loading via `additional_modules_needed_to_run_TRITON_SWMM_on_hpc`
 
-### 1-Job-Many-srun-Tasks Mode (Current Focus)
+### 1-Job-Many-srun-Tasks Mode
 
 Single SLURM allocation runs all simulations:
-- Snakemake `cores` = total CPUs in allocation (not max_concurrent)
+- Snakemake `cores` = total CPUs in allocation (dynamically calculated from SLURM env vars)
 - Each simulation launches via `srun` inside the allocation
 - GPU resources specified via Snakemake resource limits
-- See `docs/one_job_many_srun_tasks_plan.md` for implementation details
+- Uses `--exclusive` + `hpc_total_nodes` (no `hpc_max_simultaneous_sims` needed)
+- See `docs/implementation/1_job_many_srun_tasks_redesign.md` for design details
 
 ## Workflow Phases
 
@@ -304,6 +404,10 @@ Assertion helpers: `assert_scenarios_setup()`, `assert_scenarios_run()`, `assert
 
 4. **Runner scripts use argparse** - Each has specific CLI flags; check docstrings for usage
 
+5. **TRITON-SWMM SWMM output path bug** - TRITON-SWMM writes SWMM outputs to `sim_folder/output/swmm/` and `log.out` to `sim_folder/output/` regardless of CFG `output_folder`. Workarounds tagged `TODO(TRITON-OUTPUT-PATH-BUG)`. See `docs/implementation/triton_output_path_bug.md`.
+
+6. **`log.out` overwrite with multi-model** - Both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`. Last to finish overwrites the other. Resource-usage parsing may be incorrect for one model type.
+
 ## Specialized Agent Documentation
 
 The `.claude/agents/` directory contains detailed guidance for specific subsystems:
@@ -337,6 +441,12 @@ Update `.claude/agents/*.md` when:
 - Modifying SWMM model generation patterns → update `swmm-model-generation.md`
 - Adding new test utilities or platform detection helpers → update `triton-test-suite.md`
 
+### Development Priorities
+
+See `docs/planning/priorities.md` for the current prioritized checklist of planned
+work, organized into tiers with dependency information. Update that file as work
+progresses or priorities shift.
+
 ### Documentation Update Checklist
 
 When making significant code changes:
@@ -345,3 +455,4 @@ When making significant code changes:
 - [ ] Are there new "gotchas" or non-obvious behaviors to document?
 - [ ] Do build/test commands still work as documented?
 - [ ] Are there new critical configuration fields to highlight?
+- [ ] Should `docs/planning/priorities.md` be updated?

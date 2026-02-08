@@ -216,4 +216,4 @@ def test_snakemake_sensitivity_workflow_execution(
         "single_job",
     ], f"Expected slurm or single_job mode, got {result['mode']}"
 
-    tst_ut.assert_analysis_workflow_completed_successfully(analysis, which=which)
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)

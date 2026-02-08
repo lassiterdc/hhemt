@@ -208,7 +208,8 @@ __marimo__/
 *_archive*
 *test_data/*/system*
 *test_data/*/tests/*
-*test_data/triton/*
+*test_data/*/triton/*
+*test_data/*/swmm/*
 profile_runner.py.lprof
 profiling/retrieve_profile.out
 
@@ -216,7 +217,7 @@ profiling/retrieve_profile.out
 external/
 
 # Large test/model artifacts (keep only what you intend to version)
-test_data/norfolk_coastal_flooding/triton/
+test_data/norfolk_coastal_flooding/triton/*
 
 # Common workflow outputs
 build/

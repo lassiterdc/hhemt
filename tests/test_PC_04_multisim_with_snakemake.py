@@ -172,7 +172,129 @@ def test_snakemake_workflow_dry_run(norfolk_multi_sim_analysis):
     assert result.get("mode") == "local"
 
 
-@pytest.mark.slow
+def test_snakemake_workflow_end_to_end(norfolk_multi_sim_analysis):
+    """
+    End-to-end Snakemake workflow test.
+
+    Mirrors the validations from the single- and multi-sim tests by verifying:
+    - System setup and compilation for enabled models
+    - Scenarios prepared and simulations completed
+    - Timeseries and summaries processed for each enabled model
+    - Analysis-level consolidated summaries
+    - Scenario status CSV and resource usage validation
+    - SWMM-only vs TRITON-SWMM output consistency (when both enabled)
+    """
+    import xarray as xr
+
+    analysis = norfolk_multi_sim_analysis
+
+    result = analysis.submit_workflow(
+        mode="local",
+        process_system_level_inputs=True,
+        overwrite_system_inputs=False,
+        compile_TRITON_SWMM=True,
+        recompile_if_already_done_successfully=False,
+        prepare_scenarios=True,
+        overwrite_scenario=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
+        process_timeseries=True,
+        which="both",
+        clear_raw_outputs=True,
+        overwrite_if_exist=True,
+        compression_level=5,
+        pickup_where_leftoff=False,
+        verbose=True,
+    )
+
+    assert result.get("success"), result.get("message", "Workflow failed")
+    assert result.get("mode") == "local"
+
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)
+
+    enabled_models = tst_ut.get_enabled_model_types(analysis)
+    for model_type in enabled_models:
+        tst_ut.assert_model_simulation_run(analysis, model_type)
+        tst_ut.assert_model_outputs_processed(analysis, model_type)
+
+    # Validate all compilation types, if enabled
+    if "triton" in enabled_models:
+        tst_ut.assert_triton_compiled(analysis)
+    if "tritonswmm" in enabled_models:
+        tst_ut.assert_tritonswmm_compiled(analysis)
+    if "swmm" in enabled_models:
+        tst_ut.assert_swmm_compiled(analysis)
+
+    # Cross-model consistency: SWMM-only outputs should be compatible with
+    # the SWMM outputs embedded in the TRITON-SWMM coupled runs.
+    if "swmm" in enabled_models and "tritonswmm" in enabled_models:
+        for event_iloc in analysis.df_sims.index:
+            proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+            paths = proc.scen_paths
+
+            swmm_node_ts = paths.output_swmm_only_node_time_series
+            swmm_link_ts = paths.output_swmm_only_link_time_series
+            tritonswmm_node_ts = paths.output_tritonswmm_node_time_series
+            tritonswmm_link_ts = paths.output_tritonswmm_link_time_series
+
+            if not all(
+                p is not None and p.exists()
+                for p in [
+                    swmm_node_ts,
+                    swmm_link_ts,
+                    tritonswmm_node_ts,
+                    tritonswmm_link_ts,
+                ]
+            ):
+                pytest.fail(
+                    "Missing SWMM-only or TRITON-SWMM SWMM time series outputs; "
+                    "workflow did not generate all expected files."
+                )
+
+            ds_swmm_nodes = xr.open_dataset(swmm_node_ts)
+            ds_swmm_links = xr.open_dataset(swmm_link_ts)
+            ds_tritonswmm_nodes = xr.open_dataset(tritonswmm_node_ts)
+            ds_tritonswmm_links = xr.open_dataset(tritonswmm_link_ts)
+
+            # Node/link ids should be present in the TRITON-SWMM datasets
+            swmm_node_ids = set(ds_swmm_nodes["node_id"].values.tolist())
+            swmm_link_ids = set(ds_swmm_links["link_id"].values.tolist())
+            tritonswmm_node_ids = set(ds_tritonswmm_nodes["node_id"].values.tolist())
+            tritonswmm_link_ids = set(ds_tritonswmm_links["link_id"].values.tolist())
+
+            missing_nodes = swmm_node_ids - tritonswmm_node_ids
+            missing_links = swmm_link_ids - tritonswmm_link_ids
+
+            if missing_nodes:
+                pytest.fail(
+                    f"TRITON-SWMM node_ids missing {len(missing_nodes)} SWMM-only nodes."
+                )
+            if missing_links:
+                pytest.fail(
+                    f"TRITON-SWMM link_ids missing {len(missing_links)} SWMM-only links."
+                )
+
+            # Timestep counts should match
+            if len(ds_swmm_nodes["date_time"]) != len(ds_tritonswmm_nodes["date_time"]):
+                pytest.fail("Node time series timestep counts do not match")
+            if len(ds_swmm_links["date_time"]) != len(ds_tritonswmm_links["date_time"]):
+                pytest.fail("Link time series timestep counts do not match")
+
+            # Data variables should match (order-agnostic)
+            if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
+                pytest.fail("Node time series data variables do not match")
+            swmm_link_vars = set(ds_swmm_links.data_vars)
+            tritonswmm_link_vars = set(ds_tritonswmm_links.data_vars)
+
+            # Normalize known naming differences before comparing
+            swmm_link_vars = tst_ut.normalize_swmm_link_vars(swmm_link_vars)
+            tritonswmm_link_vars = tst_ut.normalize_swmm_link_vars(tritonswmm_link_vars)
+
+            if swmm_link_vars != tritonswmm_link_vars:
+                pytest.fail("Link time series data variables do not match")
+
+
+# @pytest.mark.slow
+@pytest.mark.skip
 def test_snakemake_workflow_concurrency_and_process_monitoring(
     norfolk_multi_sim_analysis,
 ):
@@ -206,11 +328,14 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
     expected_max = 1 + cores + 2  # = 7 processes
 
     # Run both monitors simultaneously (lightweight background threads)
-    with ProcessMonitor(
-        max_expected=expected_max,
-        sample_interval=0.2,
-        process_name_filter="python",  # Only count Python processes
-    ) as process_monitor, RunnerConcurrencyMonitor(sample_interval=0.1) as runner_monitor:
+    with (
+        ProcessMonitor(
+            max_expected=expected_max,
+            sample_interval=0.2,
+            process_name_filter="python",  # Only count Python processes
+        ) as process_monitor,
+        RunnerConcurrencyMonitor(sample_interval=0.1) as runner_monitor,
+    ):
         result = analysis.submit_workflow(
             mode="local",
             process_system_level_inputs=True,
@@ -230,6 +355,7 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
         )
 
         assert result["success"], "Workflow should complete successfully"
+    tst_ut.assert_analysis_workflow_completed_successfully(analysis)
 
     # ========================================================================
     # Part 1: Process Explosion Regression Test

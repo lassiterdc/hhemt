@@ -58,6 +58,9 @@ FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     gpu_compilation_backend="HIP",
     hpc_gpus_per_node=8,
     hpc_cpus_per_node=64,
+    toggle_triton_model=False,
+    toggle_tritonswmm_model=True,
+    toggle_swmm_model=False,
 )
 
 UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
@@ -71,4 +74,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     example_data_dir=Path("/scratch")
     / os.getenv("USER", "unknown")
     / "triton_swmm_toolkit_data",
+    toggle_triton_model=False,
+    toggle_tritonswmm_model=True,
+    toggle_swmm_model=False,
 )

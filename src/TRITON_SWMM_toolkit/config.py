@@ -229,6 +229,10 @@ class system_config(cfgBaseModel):
         None,
         description="Landuse raster used for creating manning's roughness input.",
     )
+    SWMM_software_directory: Optional[Path] = Field(
+        None,
+        description="Folder containing the SWMM model software.",
+    )
     TRITONSWMM_software_directory: Path = Field(
         ...,
         description="Folder containing the TRITONSWMM model software.",
@@ -240,6 +244,14 @@ class system_config(cfgBaseModel):
     TRITONSWMM_branch_key: Optional[str] = Field(
         None,
         description="TRITONSWMM branch to checkout. Known working branches: 02438b60613a7d913d884e7b836f9f5ff421fe7d",
+    )
+    SWMM_git_URL: str = Field(
+        "https://github.com/USEPA/Stormwater-Management-Model.git",
+        description="Git repository with SWMM",
+    )
+    SWMM_tag_key: Optional[str] = Field(
+        "v5.2.4",
+        description="SWMM tag to checkout.",
     )
     gpu_compilation_backend: Optional[Literal["HIP", "CUDA"]] = Field(
         None,
@@ -300,9 +312,17 @@ class system_config(cfgBaseModel):
         ...,
         description="Determines whether or not to use a constant manning's coefficient.",
     )
-    toggle_full_swmm_model: bool = Field(
+    toggle_triton_model: bool = Field(
         ...,
-        description="Determines whether or not a basic SWMM model will be run",
+        description="Determines whether or not a TRITON-only model will be compiled and run",
+    )
+    toggle_tritonswmm_model: bool = Field(
+        ...,
+        description="Determines whether or not a TRITON-SWMM coupled model will be compiled and run",
+    )
+    toggle_swmm_model: bool = Field(
+        ...,
+        description="Determines whether or not a standalone SWMM model will be compiled and run",
     )
     # PARAMETERS
     target_dem_resolution: float = Field(
@@ -341,13 +361,13 @@ class system_config(cfgBaseModel):
             lst_rqrd_if_false=[""],
         )
         cls.toggle_tests.append(swmm_hydro_test)
-        ### toggle_full_swmm_model
-        full_swmm_model_test = dict(
-            toggle_varname="toggle_full_swmm_model",
+        ### toggle_swmm_model (standalone SWMM execution)
+        swmm_model_test = dict(
+            toggle_varname="toggle_swmm_model",
             lst_rqrd_if_true=["SWMM_full"],
-            lst_rqrd_if_false=[""],
+            lst_rqrd_if_false=[],
         )
-        cls.toggle_tests.append(full_swmm_model_test)
+        cls.toggle_tests.append(swmm_model_test)
         return
 
 
@@ -418,6 +438,10 @@ class analysis_config(cfgBaseModel):
     local_cpu_cores_for_workflow: Optional[int] = Field(
         None,
         description="This is passed to Snakemake to let it know how many CPU cores its allowed to use on your computer",
+    )
+    local_gpus_for_workflow: Optional[int] = Field(
+        None,
+        description="This is passed to Snakemake to let it know how many GPUS its allowed to use on your computer",
     )
     # HPC JOB ARRAY PARAMETERS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
