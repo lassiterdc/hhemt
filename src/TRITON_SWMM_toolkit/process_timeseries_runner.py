@@ -151,7 +151,7 @@ def main():
         if not scenario.model_run_completed(args.model_type):
             logger.error(
                 f"Model type '{args.model_type}' simulation not completed "
-                f"for scenario {args.event_iloc}. Log: {scenario.latest_simlog}"
+                f"for scenario {args.event_iloc}. Check model log files in {scenario.scen_paths.logs_dir}"
             )
             return 1
 

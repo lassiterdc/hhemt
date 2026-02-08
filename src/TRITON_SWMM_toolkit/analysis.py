@@ -113,7 +113,6 @@ class TRITONSWMM_analysis:
         ]
         self._sim_run_objects: dict = {}
         self._sim_run_processing_objects: dict = {}
-        self._simulation_run_statuses: dict = {}
         self.backend = "gpu" if self.cfg_analysis.run_mode == "gpu" else "cpu"
 
         # self._system.compilation_successful = False
@@ -867,7 +866,6 @@ class TRITONSWMM_analysis:
         # Wait for simulation to complete and update simlog
         finalize_sim(proc, start_time, sim_logfile, lf)
 
-        self.sim_run_status(event_iloc)
         # self._update_log()  # updates analysis log
         if process_outputs_after_sim_completion and run._scenario.model_run_completed(
             model_type
@@ -965,12 +963,6 @@ class TRITONSWMM_analysis:
             compression_level=compression_level,
         )
         return
-
-    def sim_run_status(self, event_iloc):
-        run = self._retrieve_sim_runs(event_iloc)
-        status = run._scenario.latest_simlog
-        self._simulation_run_statuses[event_iloc] = status
-        return status
 
     def _retrieve_sim_runs(self, event_iloc):
         scen = TRITONSWMM_scenario(event_iloc, self)

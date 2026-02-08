@@ -147,7 +147,7 @@ class TRITONSWMM_sim_post_processing:
             )
             if not triton_done:
                 raise RuntimeError(
-                    f"TRITON simulation not completed. Log: {self._scenario.latest_simlog}"
+                    f"TRITON simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
         if which in {"SWMM", "both"}:
             swmm_done = (
@@ -158,7 +158,7 @@ class TRITONSWMM_sim_post_processing:
             )
             if not swmm_done:
                 raise RuntimeError(
-                    f"SWMM simulation not completed. Log: {self._scenario.latest_simlog}"
+                    f"SWMM simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
         print(f"Processing run results for scenario {scen.event_iloc}", flush=True)  # type: ignore
 
@@ -875,8 +875,6 @@ class TRITONSWMM_sim_post_processing:
             model_type=self._current_model_type, astype="str"
         )
         ds.attrs["output_creation_date"] = current_datetime_string()
-
-        # ds.attrs["sim_log"] = paths_to_strings(self.log.as_dict())
         paths_attr = paths_to_strings(
             self._analysis.dict_of_all_sim_files(self._scenario.event_iloc)
         )

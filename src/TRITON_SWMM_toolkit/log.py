@@ -102,41 +102,6 @@ class LogFieldDict(Generic[T]):
         return f"LogFieldDict({self.value!r})"
 
 
-# ----------------------------
-# Simulation log entries (DEPRECATED - kept for backward compatibility)
-# ----------------------------
-# NOTE: These classes are deprecated. Simulation completion is now tracked via log files
-# (run_triton.log, run_tritonswmm.log, run_swmm.log) instead of simlog entries.
-# These are kept only to prevent errors when loading existing log files.
-
-
-class SimEntry(BaseModel):
-    sim_datetime: str
-    sim_start_reporting_tstep: int | float
-    tritonswmm_logfile: Path
-    time_elapsed_s: float
-    status: str
-    run_mode: str
-    cmd: str
-    n_mpi_procs: int | float | None
-    n_omp_threads: int | float | None
-    n_gpus: int | float | None
-    env: dict
-
-
-class SimLog(BaseModel):
-    _log: "TRITONSWMM_log" = PrivateAttr()
-    run_attempts: Dict[str, SimEntry] = Field(default_factory=dict)
-
-    def set_log(self, log: "TRITONSWMM_log"):
-        self._log = log
-
-    def update(self, entry: SimEntry):
-        # DEPRECATED: No longer persists to log file
-        # Completion tracking moved to log files (run_*.log)
-        self.run_attempts[entry.sim_datetime] = entry
-        # self._log.write()  # Commented out - no longer persist
-
 
 # ----------------------------
 # Simulation Processing
@@ -392,7 +357,7 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     This eliminates race conditions by giving each model its own log file.
 
     Field population by model type:
-    - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log, sim_log
+    - Common fields (all): simulation_completed, sim_run_time_minutes, processing_log
     - Performance fields (triton, tritonswmm): performance_timeseries_written, performance_summary_written
     - TRITON fields (triton, tritonswmm): TRITON_timeseries_written, TRITON_summary_written, raw_TRITON_outputs_cleared, full_TRITON_timeseries_cleared
     - SWMM fields (swmm, tritonswmm): SWMM_node/link_timeseries_written, SWMM_node/link_summary_written, raw_SWMM_outputs_cleared, full_SWMM_timeseries_cleared
@@ -407,7 +372,6 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # Simulation execution
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_run_time_minutes: LogField[float] = Field(default_factory=LogField)
-    sim_log: SimLog = Field(default_factory=SimLog)
     processing_log: Processing = Field(default_factory=Processing)
 
     # Performance timeseries (triton and tritonswmm only)

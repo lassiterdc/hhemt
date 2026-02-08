@@ -299,55 +299,13 @@ class TRITONSWMM_scenario:
         return enabled
 
     @property
-    def latest_simlog(self) -> dict:
-        """Get latest simulation log entry.
-
-        DEPRECATED - simlog tracking removed. Returns placeholder for error messages.
-        Use model_run_completed(model_type) for completion checking instead.
-        """
-        return {
-            "status": "simlog deprecated - use model logs (log_triton.json, log_tritonswmm.json, log_swmm.json)"
-        }
-
-    @property
     def sim_compute_time_min(self) -> float:
-        """
-        Docstring for sim_compute_time
+        """Simulation compute time in minutes.
 
-        :param self: Adds up total compute time even if the simulatoin required restarting
-          one or more times from a hotstart file.
-        :return:
-        :rtype: float
-
-        NOTE: DEPRECATED - simlog tracking is deprecated. This method now returns 0.0
-        since runtime tracking has been moved to log files.
+        Returns 0.0 — runtime tracking via simlog was removed. Derive from
+        log file timestamps or performance.txt if needed in the future.
         """
-        # DEPRECATED: simlog tracking disabled, return placeholder
-        # Runtime could be calculated from performance.txt files or log timestamps if needed
         return 0.0
-
-        # Legacy code (commented out since simlog no longer populated):
-        # conversion = 1 / 60
-        # dic_full_sim = dict()
-        # dic_logs = self.log.sim_log.model_dump()["run_attempts"].copy()
-        # if not dic_logs:
-        #     return 0.0
-        # gathering_current_simlogs = True
-        # while gathering_current_simlogs:
-        #     latest_key = max(
-        #         dic_logs.keys(),
-        #         key=lambda k: utils.string_to_datetime(k),
-        #     )
-        #     dic_full_sim[latest_key] = dic_logs[latest_key]
-        #     del dic_logs[latest_key]
-        #     if dic_full_sim[latest_key]["sim_start_reporting_tstep"] == 0:
-        #         gathering_current_simlogs = False
-        #         break
-        # # add up compute time
-        # total_compute_time = 0
-        # for sim_datetime, sim_dict in dic_full_sim.items():
-        #     total_compute_time += sim_dict["time_elapsed_s"]
-        # return total_compute_time * conversion
 
     def model_run_completed(
         self, model_type: Literal["triton", "tritonswmm", "swmm"]
@@ -382,10 +340,6 @@ class TRITONSWMM_scenario:
 
         return success
 
-    def _latest_sim_status(self) -> str:
-        simlog = self.latest_simlog
-        return simlog["status"]
-
     def latest_sim_date(
         self,
         model_type: Literal["triton", "tritonswmm", "swmm"],
@@ -393,26 +347,9 @@ class TRITONSWMM_scenario:
     ) -> datetime | str:
         """Get the simulation datetime from the specified model's log.
 
-        Args:
-            model_type: Which model's log to check
-            astype: Return as datetime ("dt") or string ("str")
-
-        Returns:
-            Simulation datetime, or datetime.min if no simulation run
+        Returns datetime.min / "" — run timestamp is not currently persisted in the log.
         """
-        model_log = self.get_log(model_type)
-        simlog_dict = model_log.sim_log.model_dump()
-
-        if simlog_dict.get("status") == "no sim run attempts made":
-            return datetime.min if astype == "dt" else ""
-        else:
-            dt_str = simlog_dict.get("sim_datetime", "")
-            if not dt_str:
-                return datetime.min if astype == "dt" else ""
-            if astype == "dt":
-                return utils.string_to_datetime(dt_str)
-            else:
-                return dt_str
+        return datetime.min if astype == "dt" else ""
 
     def _create_directories(self):
         """Create all required directories for the scenario."""

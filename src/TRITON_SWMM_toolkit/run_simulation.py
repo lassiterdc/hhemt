@@ -4,10 +4,7 @@ import subprocess
 import time
 import pandas as pd
 from pathlib import Path
-from TRITON_SWMM_toolkit.utils import (
-    current_datetime_string,
-    read_text_file_as_list_of_strings,
-)
+from TRITON_SWMM_toolkit.utils import read_text_file_as_list_of_strings
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from typing import TYPE_CHECKING, Literal
 
@@ -288,7 +285,6 @@ class TRITONSWMM_run:
         script_path.write_text("\n".join(lines))
         script_path.chmod(0o755)
 
-    # cmd, env, tritonswmm_logfile, sim_start_reporting_tstep
     def prepare_simulation_command(
         self,
         pickup_where_leftoff: bool,
@@ -463,32 +459,10 @@ class TRITONSWMM_run:
                     "--overlap "
                     f"{exe} {cfg}"
                 )
-                # cmd = [
-                #     "bash",
-                #     "-lc",
-                #     (
-                #         f"{module_load_cmd}"
-                #         f"srun "
-                #         f"-N {n_nodes_per_sim} "
-                #         f"--ntasks={n_mpi_procs} "
-                #         f"--cpus-per-task={n_omp_threads} "
-                #         "--exclusive "
-                #         "--cpu-bind=none "
-                #         f"{exe} {cfg}"
-                #     ),
-                # ]
             elif run_mode in ("serial", "openmp"):
-                # cmd = [str(exe), str(cfg)]
                 launch_cmd_str = f"{exe} {cfg}"
             elif run_mode in ("mpi", "hybrid"):
                 launch_cmd_str = "mpirun " f"-np {str(n_mpi_procs)} " f"{exe} {cfg}"
-                # cmd = [
-                #     "mpirun",
-                #     "-np",
-                #     str(n_mpi_procs),
-                #     str(exe),
-                #     str(cfg),
-                # ]
         elif run_mode == "gpu":
             if using_srun:
                 launch_cmd_str = (
@@ -502,23 +476,7 @@ class TRITONSWMM_run:
                     "--overlap "
                     f"{exe} {cfg}"
                 )
-                # cmd = [
-                #     "bash",
-                #     "-lc",
-                #     (
-                #         f"{module_load_cmd}"
-                #         f"srun "
-                #         f"-N {n_nodes_per_sim} "
-                #         f"--ntasks={n_gpus} "
-                #         f"--cpus-per-task={n_omp_threads} "
-                #         "--gpus-per-task=1 "  # one GPU per task
-                #         "--exclusive "
-                #         "--cpu-bind=none "
-                #         f"{exe} {cfg}"
-                #     ),
-                # ]
             else:
-                # cmd = [str(exe), str(cfg)]
                 launch_cmd_str = f"{exe} {cfg}"
         else:
             raise ValueError(f"Unknown run_mode: {run_mode}")
@@ -550,107 +508,7 @@ class TRITONSWMM_run:
 
         if run_mode == "gpu" and n_gpus < 1:  # type: ignore
             raise ValueError("n_gpus must be >= 1")
-        # ----------------------------
-        # Return command and metadata
-        # ----------------------------
-        # self._write_repro_script(
-        #     script_path=self._scenario.scen_paths.sim_folder / f"{model_type}_run.sh",
-        #     module_load_cmd=module_load_cmd,
-        #     env=env,
-        #     launch_cmd_str=launch_cmd_str,
-        # )
         return cmd, env, model_logfile, sim_start_reporting_tstep
-
-    def _obsolete_retrieve_sim_launcher(
-        self,
-        pickup_where_leftoff: bool,
-        verbose: bool = True,
-    ):
-        n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
-        n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
-        n_gpus = self._analysis.cfg_analysis.n_gpus
-        run_mode = self._analysis.cfg_analysis.run_mode
-
-        simprep_result = self.prepare_simulation_command(
-            pickup_where_leftoff=pickup_where_leftoff,
-            verbose=verbose,
-        )
-        if simprep_result is None:
-            if verbose:
-                print("simulation already run")
-            return None
-
-        cmd, env, tritonswmm_logfile, sim_start_reporting_tstep = simprep_result
-
-        sim_id_str = self._scenario._retrieve_sim_id_str()
-
-        # print("OMP_NUM_THREADS:", env["OMP_NUM_THREADS"])
-
-        sim_datetime = current_datetime_string()
-
-        if run_mode != "gpu":
-            n_gpus = 0
-
-        og_env = os.environ.copy()
-
-        # DEPRECATED: No longer tracking via simlog
-        # Completion now tracked via log files (run_*.log)
-        # self._scenario.log.add_sim_entry(
-        #     sim_datetime=sim_datetime,
-        #     sim_start_reporting_tstep=sim_start_reporting_tstep,
-        #     tritonswmm_logfile=tritonswmm_logfile,
-        #     time_elapsed_s=0,
-        #     status="not started",
-        #     run_mode=run_mode,
-        #     cmd=" ".join(cmd),
-        #     n_mpi_procs=n_mpi_procs,
-        #     n_omp_threads=n_omp_threads,
-        #     n_gpus=n_gpus,
-        #     env=env,
-        # )
-        # log_dic = self._scenario.latest_simlog
-        # if verbose:
-        #     print(f"running TRITON-SWMM simulatoin for event {sim_id_str}")
-        #     print("bash command to view progress:")
-        #     print(f"tail -f {tritonswmm_logfile}")
-
-        def launch_sim():
-            start_time = time.time()
-            lf = open(tritonswmm_logfile, "w")
-            proc = subprocess.Popen(  # type: ignore
-                cmd,  # type: ignore
-                env={**os.environ, **env},  # type: ignore
-                stdout=lf,
-                stderr=subprocess.STDOUT,
-            )
-            return proc, lf, start_time, log_dic, self
-
-        return launch_sim
-
-    def _obsolete_run_sim(self, pickup_where_leftoff: bool, verbose: bool):
-        launch = self._obsolete_retrieve_sim_launcher(
-            pickup_where_leftoff=pickup_where_leftoff,
-            verbose=verbose,
-        )
-        if launch is None:
-            return
-        proc, lf, start, log_dic, run = launch()
-        rc = proc.wait()
-        lf.close()
-
-        end_time = time.time()
-        elapsed = end_time - start
-
-        # Check completion via log file
-        # DEPRECATED: No longer tracking via simlog
-        # status = (
-        #     "simulation completed"
-        #     if self.model_run_completed("tritonswmm")
-        #     else "simulation started but did not finish"
-        # )
-        # log_dic["time_elapsed_s"] = elapsed
-        # log_dic["status"] = status
-        # self._scenario.log.add_sim_entry(**log_dic)
 
     def _create_subprocess_sim_run_launcher(
         self,
@@ -714,11 +572,6 @@ class TRITONSWMM_run:
         if pickup_where_leftoff:
             cmd.append("--pickup-where-leftoff")
 
-        # Prepare simulation metadata for initial log entry
-        run_mode = self._analysis.cfg_analysis.run_mode
-
-        # og_env = os.environ.copy()
-
         def launcher():
             """
             Execute simulation in a subprocess (non-blocking).
@@ -735,29 +588,6 @@ class TRITONSWMM_run:
                 )
 
             start_time = time.time()
-
-            # DEPRECATED: No longer tracking via simlog
-            # Completion now tracked via log files (run_*.log)
-            # sim_datetime = current_datetime_string()
-            # n_mpi_procs = self._analysis.cfg_analysis.n_mpi_procs
-            # n_omp_threads = self._analysis.cfg_analysis.n_omp_threads
-            # n_gpus = self._analysis.cfg_analysis.n_gpus
-            # run_mode = self._analysis.cfg_analysis.run_mode
-            # self._scenario.log.add_sim_entry(
-            #     sim_datetime=sim_datetime,
-            #     sim_start_reporting_tstep=0,
-            #     tritonswmm_logfile=sim_logfile,
-            #     time_elapsed_s=0,
-            #     status="not started",
-            #     run_mode=run_mode,
-            #     cmd=" ".join(cmd),
-            #     n_mpi_procs=n_mpi_procs,
-            #     n_omp_threads=n_omp_threads,
-            #     n_gpus=n_gpus,
-            #     env=dict(),
-            # )
-
-            # Open log file for subprocess output
             lf = open(sim_logfile, "w")
             proc = subprocess.Popen(
                 cmd,
@@ -811,27 +641,14 @@ class TRITONSWMM_run:
                             flush=True,
                         )
 
-            # Update simlog after subprocess completion
             end_time = time.time()
             elapsed = end_time - start_time
 
-            # Check simulation status via log file
-            status = (
-                "simulation completed"
-                if self.model_run_completed(model_type)
-                else "simulation started but did not finish"
-            )
-
-            # DEPRECATED: No longer tracking via simlog
-            # Completion now tracked via log files (run_*.log)
-            # log_dic = self._scenario.latest_simlog
-            # log_dic["time_elapsed_s"] = elapsed
-            # log_dic["status"] = status
-            # self._scenario.log.add_sim_entry(**log_dic)
-
             if verbose:
+                completed = self.model_run_completed(model_type)
+                status = "completed" if completed else "did not finish"
                 print(
-                    f"[Scenario {event_iloc}] Simulation status: {status}, elapsed={elapsed:.1f}s",
+                    f"[Scenario {event_iloc}] Simulation {status}, elapsed={elapsed:.1f}s",
                     flush=True,
                 )
 
