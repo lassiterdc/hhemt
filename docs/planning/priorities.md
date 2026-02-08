@@ -57,13 +57,13 @@ Foundation for CLI/API work. Should be done before Tier 3.
 
 - [ ] **Split `config.py` into focused modules** (`config_py_refactor_plan.md` Phase 1)
   - Create `config/` package: base, system, analysis, validation, loaders, display
-  - Keep compatibility shim during migration
+  - Update all import sites immediately (no compatibility shims)
   - _Ref:_ `docs/planning/refactors/config_py_refactor_plan.md`
 
-- [ ] **Strict validation + validator cleanup** (`config_py_refactor_plan.md` Phase 2)
-  - Enable `extra="forbid"` for user-facing config models
-  - Replace dynamic `toggle_tests` registry with explicit `@model_validator` rules
-  - _Ref:_ `docs/planning/refactors/config_py_refactor_plan.md`
+- [x] **Strict validation + validator cleanup** (`config_py_refactor_plan.md` Phase 2)
+  - `extra="forbid"` enforced on `cfgBaseModel`
+  - Dynamic `toggle_tests` registry replaced with explicit `@model_validator` rules
+  - Dead legacy fields and commented-out code removed from `config.py` and `analysis.py`
 
 - [ ] **Front-end validation checklist** (implement preflight checks)
   - Command/profile selection, config integrity, toggle dependencies, run-mode consistency

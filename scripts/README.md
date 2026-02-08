@@ -17,7 +17,7 @@ python scripts/check_doc_freshness.py
 
 **How it works:**
 - Maps source files to their corresponding agent documentation
-- Detects staged changes in git
+- Detects staged changes in git (Python files plus CLAUDE.md trigger files like `pyproject.toml`)
 - Prints reminders (non-blocking) when docs might be stale
 
 **File Mapping:**

@@ -15,15 +15,23 @@ This plan explicitly aligns with `CLAUDE.md` development philosophy.
 ## Governing Philosophy (from `CLAUDE.md`)
 
 1. **Backward compatibility is generally not a priority**
+   - Treat API backward-compatibility shims/aliases as **new cruft** unless explicitly justified.
    - Remove obsolete code instead of preserving legacy paths.
    - Do not add deprecation shims/aliases unless there is a compelling reason.
    - Update all call sites when introducing cleaner structures.
 
-2. **Configuration formats are the exception**
+2. **Backward compatibility for code APIs is currently undesirable**
+   - Compatibility-preserving patterns in runtime/library code increase branching, ambiguity,
+     and maintenance burden.
+   - Prefer clean replacement and immediate call-site migration.
+   - During cleanup, PRs that add compatibility layers should be treated as regressions unless
+     explicitly approved.
+
+3. **Configuration formats are the exception**
    - Keep config format compatibility where practical.
    - Prefer explicit migration paths if stricter validation is introduced.
 
-3. **Prefer log-based completion checks over file-existence checks**
+4. **Prefer log-based completion checks over file-existence checks**
    - Keep and strengthen `_already_written()`-style status semantics.
    - Avoid regressions to weak existence-only completion logic.
 
@@ -77,7 +85,8 @@ This plan explicitly aligns with `CLAUDE.md` development philosophy.
 
 ### C1. Plan/summary drift and stale implementation docs (high priority)
 - `docs/implementation/` contains both active references and one-off “completed” snapshots that may now be stale.
-- Some docs reference external plan files outside repo (`~/.claude/plans/...`) and outdated status narratives.
+- Several implementation docs contain contradictory status narratives (e.g., "complete" at top but
+  "not started" in phase sections), creating contributor confusion.
 
 ### C2. Prompt-oriented internal workflow docs mixed with user docs (medium-high priority)
 - `docs/prompts/` includes internal phase prompts/checklists that may not belong in long-term user-facing docs.
@@ -98,6 +107,12 @@ Tasks:
 - Define a focused “cleanup regression suite” (fast subset of core tests).
 - Add a simple inventory tracker for touched modules/files per phase.
 - Establish rule: no net-new legacy aliases unless explicitly approved.
+
+Required smoke-test sequence (run in this exact order):
+1. `tests/test_PC_01_singlesim.py`
+2. `tests/test_PC_02_multisim.py`
+3. `tests/test_PC_04_multisim_with_snakemake.py`
+4. `tests/test_PC_05_sensitivity_analysis_with_snakemake.py`
 
 Exit criteria:
 - Baseline tests green before and after each phase.
@@ -128,10 +143,12 @@ Tasks:
 - Remove `_obsolete_*` methods and dead launch paths.
 - Remove legacy API aliases in code paths where not needed.
 - Collapse fallback branches that only exist for retired structures.
+- Reject/avoid new compatibility shims that preserve retired APIs.
 
 Exit criteria:
 - No `_obsolete` code remains in runtime modules.
 - Fewer ambiguous execution branches.
+- No net-new compatibility alias/shim paths introduced.
 
 ---
 
@@ -219,10 +236,15 @@ Exit criteria:
 
 ## Documentation Triage Backlog (Initial Candidates)
 
+## Candidate: immediate refresh (high confidence drift)
+- `docs/implementation/multi_model_integration.md` (top-level complete status conflicts with
+  phase-by-phase "not started" markers).
+- `docs/implementation/multi_model_output_processing_plan.md` (top-level complete status conflicts
+  with unfinished "Known Issues / Next Steps / Debugging Plan" sections).
+
 ## Candidate: likely archive or consolidate
 - `docs/implementation/*_summary.md` files with completed one-off status narratives.
 - `docs/prompts/refactor_prompt.md`, `docs/prompts/test_refactor_plan.md` (if no longer active workflow).
-- Any file referencing non-repo plan paths (`~/.claude/plans/...`) without current relevance.
 
 ## Candidate: keep as authoritative implementation notes
 - `docs/implementation/triton_output_path_bug.md` (until upstream fix lands).
@@ -272,8 +294,8 @@ priority ordering.
 
 **Related completed work:**
 - Model-specific logs (commit d0e7b7a) addressed items in A2 (legacy residue)
-  and A3 (logging style) by eliminating shared `log.json` and introducing
-  clean per-model logging.
+  and A3 (logging style) **partially** by eliminating shared `log.json` and introducing
+  clean per-model logging. Deprecated simlog structures/usages still remain for follow-up cleanup.
 - Examples refactor (Phases 1-3) addressed B1 (duplication) partially.
 
 ## Immediate Next Actions

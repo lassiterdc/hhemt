@@ -45,7 +45,7 @@ CLAUDE_MD_TRIGGERS = {
 
 
 def get_staged_files():
-    """Get list of staged Python files."""
+    """Get list of staged files relevant to documentation freshness checks."""
     try:
         result = subprocess.run(
             ["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
@@ -53,7 +53,12 @@ def get_staged_files():
             text=True,
             check=True,
         )
-        return [f.strip() for f in result.stdout.splitlines() if f.endswith(".py")]
+        staged = [f.strip() for f in result.stdout.splitlines() if f.strip()]
+
+        # Include Python files for agent mappings and explicit trigger files
+        # (e.g., pyproject.toml) for CLAUDE.md checks.
+        trigger_files = set(CLAUDE_MD_TRIGGERS)
+        return [f for f in staged if f.endswith(".py") or Path(f).name in trigger_files]
     except subprocess.CalledProcessError:
         return []
 
@@ -63,7 +68,7 @@ def check_documentation_freshness():
     staged_files = get_staged_files()
 
     if not staged_files:
-        return 0  # No Python files staged, nothing to check
+        return 0  # No relevant files staged, nothing to check
 
     # Track which docs might need updates
     docs_to_check = set()
@@ -100,7 +105,9 @@ def check_documentation_freshness():
                 print(f"   - {doc}")
             print("\n   Please review if these agents need pattern updates.")
 
-        print("\n💡 See CLAUDE.md 'Maintaining This Documentation' section for guidance.")
+        print(
+            "\n💡 See CLAUDE.md 'Maintaining This Documentation' section for guidance."
+        )
         print("=" * 70 + "\n")
 
     return 0  # Always succeed (non-blocking)
