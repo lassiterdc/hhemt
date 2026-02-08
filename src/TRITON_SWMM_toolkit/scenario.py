@@ -9,6 +9,8 @@ import swmmio
 import warnings
 import TRITON_SWMM_toolkit.utils as utils
 from datetime import datetime
+from pathlib import Path
+from TRITON_SWMM_toolkit.exceptions import CompilationError, ConfigurationError
 from TRITON_SWMM_toolkit.log import (
     TRITONSWMM_scenario_log,
     TRITONSWMM_model_log,
@@ -589,13 +591,18 @@ class TRITONSWMM_scenario:
             src_build_fpath = self._system.sys_paths.TRITONSWMM_build_dir_cpu
         elif self.backend == "gpu":
             if self._system.sys_paths.TRITONSWMM_build_dir_gpu is None:
-                raise ValueError(
-                    f"GPU backend requested but gpu_compilation_backend not set in system config. "
-                    f"Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML."
+                raise ConfigurationError(
+                    field="gpu_compilation_backend",
+                    message="GPU backend requested but gpu_compilation_backend not set.\n"
+                    "  Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML.",
+                    config_path=self._system.system_config_yaml,
                 )
             src_build_fpath = self._system.sys_paths.TRITONSWMM_build_dir_gpu
         else:
-            raise ValueError(f"Unknown backend: {self.backend}")
+            raise ConfigurationError(
+                field="backend",
+                message=f"Unknown backend '{self.backend}'. Must be 'cpu' or 'gpu'.",
+            )
 
         # Verify source exists and compilation successful
         if not src_build_fpath.exists():
@@ -604,15 +611,18 @@ class TRITONSWMM_scenario:
             )
 
         if self.backend == "cpu" and not self._system.compilation_cpu_successful:
-            raise ValueError(
-                f"CPU backend build directory exists but compilation not successful.\n"
-                f"Check log: {self._system.sys_paths.compilation_logfile_cpu}"
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend="cpu",
+                logfile=self._system.sys_paths.compilation_logfile_cpu,
+                return_code=1,
             )
         elif self.backend == "gpu" and not self._system.compilation_gpu_successful:
-            raise ValueError(
-                f"GPU backend build directory exists but compilation not successful.\n"
-                f"Available backends: {self._system.available_backends}\n\n"
-                f"GPU compilation log:\n{self._system.retrieve_compilation_log('gpu')}"
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend="gpu",
+                logfile=self._system.sys_paths.compilation_logfile_gpu,  # type: ignore
+                return_code=1,
             )
 
         # Link into scenario (strict symlink; no fallback copy)
@@ -641,13 +651,18 @@ class TRITONSWMM_scenario:
             compiled_ok = self._system.compilation_triton_only_cpu_successful
         elif self.backend == "gpu":
             if self._system.sys_paths.TRITON_build_dir_gpu is None:
-                raise ValueError(
-                    "GPU backend requested but gpu_compilation_backend not set in system config."
+                raise ConfigurationError(
+                    field="gpu_compilation_backend",
+                    message="GPU backend requested but gpu_compilation_backend not set in system config.",
+                    config_path=self._system.system_config_yaml,
                 )
             src_build_fpath = self._system.sys_paths.TRITON_build_dir_gpu
             compiled_ok = self._system.compilation_triton_only_gpu_successful
         else:
-            raise ValueError(f"Unknown backend: {self.backend}")
+            raise ConfigurationError(
+                field="backend",
+                message=f"Unknown backend '{self.backend}'. Must be 'cpu' or 'gpu'.",
+            )
 
         if not src_build_fpath.exists():
             raise FileNotFoundError(
@@ -655,8 +670,11 @@ class TRITONSWMM_scenario:
             )
 
         if not compiled_ok:
-            raise ValueError(
-                f"TRITON-only {self.backend.upper()} backend not compiled."
+            raise CompilationError(
+                model_type="triton",
+                backend=self.backend,
+                logfile=src_build_fpath / "compilation.log",
+                return_code=1,
             )
 
         target_build_fpath = self.scen_paths.sim_triton_executable.parent
@@ -763,20 +781,20 @@ class TRITONSWMM_scenario:
 
         # Validate backend is available
         if self.backend == "gpu" and not self._system.compilation_gpu_successful:
-            raise ValueError(
-                f"GPU backend requested (run_mode={self._analysis.cfg_analysis.run_mode}) "
-                f"but GPU build not available.\n\n"
-                f"Available backends: {self._system.available_backends}\n\n"
-                f"RECOMMENDATION:\n"
-                f"  1. Compile GPU backend: system.compile_TRITON_SWMM(self.backends=['gpu'])\n"
-                f"  2. OR change run_mode to: 'openmp', 'serial', 'mpi', or 'hybrid'\n\n"
-                f"GPU compilation log:\n{self._system.retrieve_compilation_log('gpu')}"
+            logfile = self._system.sys_paths.compilation_logfile_gpu
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend="gpu",
+                logfile=logfile if logfile else Path("missing"),
+                return_code=1,
             )
 
         if self.backend == "cpu" and not self._system.compilation_cpu_successful:
-            raise ValueError(
-                f"CPU backend not compiled.\n\n"
-                f"CPU compilation log:\n{self._system.retrieve_compilation_log('cpu')}"
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend="cpu",
+                logfile=self._system.sys_paths.compilation_logfile_cpu,
+                return_code=1,
             )
 
         print(

@@ -88,6 +88,32 @@ Baseline interpretation:
 - Net: 305 lines deleted, 13 inserted
 - All smoke tests pass (PC_01 through PC_05)
 
-### Phase 3+
+### Phase 3 — Orchestration Deduplication
+
+- Status: Not started
+- Deferred: awaiting Phase 4 completion
+
+### Phase 4 — Logging & Error Contract Normalization
+
+- Status: **Partially Complete** (Phases 4a-4c done, 4d-4f deferred)
+- Touched files:
+  - `src/TRITON_SWMM_toolkit/exceptions.py` (NEW; custom exception hierarchy)
+  - `src/TRITON_SWMM_toolkit/__init__.py` (export exceptions)
+  - `src/TRITON_SWMM_toolkit/system.py` (compilation error handling)
+  - `src/TRITON_SWMM_toolkit/scenario.py` (scenario preparation error handling)
+- Implemented:
+  - **Phase 4a**: Custom exception hierarchy (`TRITONSWMMError`, `CompilationError`, `ConfigurationError`, `SimulationError`, `ProcessingError`, `WorkflowError`, `SLURMError`, `ResourceAllocationError`)
+  - **Phase 4b**: System/compilation layer updated — `CompilationError` with full context (logfile, return_code, model_type, backend); `ConfigurationError` for invalid backend configs; user-facing progress prints preserved
+  - **Phase 4c**: Scenario/run layer updated — `CompilationError` for failed builds, `ConfigurationError` for invalid backends; no silent failures found (return False pattern not present)
+- Test status:
+  - `tests/test_PC_01_singlesim.py` → **PASS** (5 passed, 163s)
+  - `tests/test_PC_02_multisim.py` → **PASS** (2 passed, 183s)
+- Deferred (non-critical):
+  - **Phase 4d**: Output processing logging (process_simulation.py, swmm_output_parser.py)
+  - **Phase 4e**: Workflow orchestration logging (workflow.py, analysis.py, execution.py)
+  - **Phase 4f**: Config validation error standardization (config/system.py, config/analysis.py)
+  - Rationale: These phases involve extensive print→logger conversions without critical functionality impact. Current exception handling provides actionable error context for all critical paths.
+
+### Phase 5+
 
 - Status: Not started

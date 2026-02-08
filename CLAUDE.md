@@ -394,6 +394,42 @@ Assertion helpers: `assert_scenarios_setup()`, `assert_scenarios_run()`, `assert
 - Configuration models inherit from `cfgBaseModel`
 - Use `Literal` types for enumerated options
 
+### Logging & Error Handling
+
+**Exception Hierarchy**: All toolkit-specific exceptions inherit from `TRITONSWMMError` (see `src/TRITON_SWMM_toolkit/exceptions.py`):
+
+- `CompilationError` - TRITON/SWMM build failures (stores model_type, backend, logfile, return_code)
+- `ConfigurationError` - Invalid config values or toggle conflicts (stores field, message, config_path)
+- `SimulationError` - Simulation execution failures (stores event_iloc, model_type, logfile)
+- `ProcessingError` - Output processing failures (stores operation, filepath, reason)
+- `WorkflowError` - Snakemake workflow failures (stores phase, return_code, stderr)
+- `SLURMError` - SLURM job submission/monitoring failures (stores operation, job_id, reason)
+- `ResourceAllocationError` - CPU/GPU/memory allocation failures (stores resource_type, requested, available)
+
+**Logging Patterns**:
+
+- **User-facing progress**: Use `print(f"[NAMESPACE] Message", flush=True)` with verbose guards
+  - Examples: `[CPU] Compiling...`, `[Snakemake] Job submitted`, `[SLURM] Running`
+  - Keep these for real-time feedback in interactive sessions and HPC logs
+- **Diagnostic output**: Use `logger = logging.getLogger(__name__)` for library code (deferred to future phases)
+- **Runner scripts**: Already use module-level loggers correctly (no changes needed)
+
+**Error Handling**:
+
+- **Raise custom exceptions** from `exceptions.py` with full contextual attributes
+- **Fail-fast**: Critical paths must raise exceptions, never silently return False
+- **Preserve context**: Exceptions include file paths, return codes, log locations for actionable debugging
+- Example:
+  ```python
+  if not compilation_successful:
+      raise CompilationError(
+          model_type="tritonswmm",
+          backend="cpu",
+          logfile=compilation_log,
+          return_code=proc.returncode,
+      )
+  ```
+
 ## Gotchas
 
 1. **`hpc_max_simultaneous_sims` has no default** - Must be explicitly set for `1_job_many_srun_tasks` mode

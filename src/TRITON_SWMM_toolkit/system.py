@@ -14,6 +14,7 @@ from rasterio.enums import Resampling
 import TRITON_SWMM_toolkit.utils as ut
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.config.loaders import load_system_config
+from TRITON_SWMM_toolkit.exceptions import CompilationError, ConfigurationError
 from TRITON_SWMM_toolkit.log import TRITONSWMM_system_log
 from TRITON_SWMM_toolkit.paths import SysPaths
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
@@ -357,9 +358,11 @@ class TRITONSWMM_system:
                 )
             elif backend == "gpu":
                 if self.cfg_system.gpu_compilation_backend is None:
-                    raise ValueError(
-                        "GPU backend requested but gpu_compilation_backend not set in config. "
-                        "Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML."
+                    raise ConfigurationError(
+                        field="gpu_compilation_backend",
+                        message="GPU backend requested but gpu_compilation_backend not set.\n"
+                        "  Set gpu_compilation_backend='HIP' or 'CUDA' in system config YAML.",
+                        config_path=self.system_config_yaml,
                     )
 
                 # Determine Kokkos flag based on config
@@ -368,9 +371,11 @@ class TRITONSWMM_system:
                 elif self.cfg_system.gpu_compilation_backend == "CUDA":
                     cmake_backend_flag = "-DKokkos_ENABLE_CUDA=ON"
                 else:
-                    raise ValueError(
-                        f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}. "
-                        "Must be 'HIP' or 'CUDA'."
+                    raise ConfigurationError(
+                        field="gpu_compilation_backend",
+                        message=f"Invalid value '{self.cfg_system.gpu_compilation_backend}'.\n"
+                        "  Must be 'HIP' or 'CUDA'.",
+                        config_path=self.system_config_yaml,
                     )
 
                 self._compile_backend(
@@ -383,7 +388,10 @@ class TRITONSWMM_system:
                     verbose=verbose,
                 )
             else:
-                raise ValueError(f"Unknown backend: {backend}")
+                raise ConfigurationError(
+                    field="backends",
+                    message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
+                )
 
     def _download_tritonswmm_source(self, verbose: bool = True):
         """Download TRITON-SWMM source code from git repository."""
@@ -561,6 +569,15 @@ class TRITONSWMM_system:
                 print(f"[{backend.upper()}] ✗ Compilation failed", flush=True)
                 print(f"[{backend.upper()}]   Log: {compilation_logfile}", flush=True)
 
+        # Raise exception if compilation failed
+        if not success:
+            raise CompilationError(
+                model_type="tritonswmm",
+                backend=backend,
+                logfile=compilation_logfile,
+                return_code=1,  # Subprocess didn't fail, but build markers missing
+            )
+
     def retrieve_compilation_log(self, backend: str) -> str:
         """
         Retrieve compilation log for specified backend.
@@ -682,7 +699,10 @@ class TRITONSWMM_system:
                     verbose=verbose,
                 )
             else:
-                raise ValueError(f"Unknown backend: {backend}")
+                raise ConfigurationError(
+                    field="backends",
+                    message=f"Unknown backend '{backend}'. Must be 'cpu' or 'gpu'.",
+                )
 
     def _compile_triton_only_backend(
         self,
@@ -833,6 +853,15 @@ class TRITONSWMM_system:
                     f"[TRITON-only {backend.upper()}] ✗ Compilation failed", flush=True
                 )
                 print(f"[TRITON-only {backend.upper()}]   Log: {logfile}", flush=True)
+
+        # Raise exception if compilation failed
+        if not success:
+            raise CompilationError(
+                model_type="triton",
+                backend=backend,
+                logfile=logfile,
+                return_code=1,  # Subprocess didn't fail, but build markers missing
+            )
 
     @property
     def compilation_triton_only_cpu_successful(self) -> bool:
