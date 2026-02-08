@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-07
+**Last Updated:** 2026-02-08
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -24,12 +24,11 @@ For reference, these major efforts are done and tested:
 
 Incremental improvements that reduce maintenance burden. Can be done independently.
 
-- [ ] **Remove legacy/obsolete runtime paths** (`cruft_cleanup_plan.md` Phase 2)
-  - Remove `_obsolete_*` methods and dead launch paths in `run_simulation.py`
-  - Collapse fallback branches for retired structures
-  - Remove deprecated `SimLog` / `SimEntry` classes from `log.py`
-  - Delete commented-out simlog code
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`
+- [x] **Remove legacy/obsolete runtime paths** (`cruft_cleanup_plan.md` Phase 2)
+  - Removed `_obsolete_*` methods and dead launch paths in `run_simulation.py`
+  - Removed deprecated `SimLog` / `SimEntry` classes from `log.py`
+  - Deleted commented-out simlog code
+  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `cruft_cleanup_tracker.md` Phase 2
 
 - [ ] **Logging & error normalization** (`cruft_cleanup_plan.md` Phase 4)
   - Replace ad-hoc `print(...)` in library paths with structured logging
@@ -55,15 +54,16 @@ Incremental improvements that reduce maintenance burden. Can be done independent
 
 Foundation for CLI/API work. Should be done before Tier 3.
 
-- [ ] **Split `config.py` into focused modules** (`config_py_refactor_plan.md` Phase 1)
-  - Create `config/` package: base, system, analysis, validation, loaders, display
-  - Update all import sites immediately (no compatibility shims)
-  - _Ref:_ `docs/planning/refactors/config_py_refactor_plan.md`
+- [x] **Split `config.py` into focused modules** (`config_py_refactor_plan.md` Phase 1)
+  - Created `config/` package: base, system, analysis, loaders (validation/display deferred)
+  - Updated all import sites immediately (no compatibility shims)
+  - Removed dead `gui.py` code (broken SimulationConfig/ConfigGUI)
+  - _Ref:_ `docs/planning/refactors/config_py_refactor_plan.md`, `cruft_cleanup_tracker.md` Phase 1
 
 - [x] **Strict validation + validator cleanup** (`config_py_refactor_plan.md` Phase 2)
   - `extra="forbid"` enforced on `cfgBaseModel`
   - Dynamic `toggle_tests` registry replaced with explicit `@model_validator` rules
-  - Dead legacy fields and commented-out code removed from `config.py` and `analysis.py`
+  - Dead legacy fields and commented-out code removed
 
 - [ ] **Front-end validation checklist** (implement preflight checks)
   - Command/profile selection, config integrity, toggle dependencies, run-mode consistency
