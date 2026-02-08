@@ -1,11 +1,11 @@
 from pydantic import (
     BaseModel,
+    ConfigDict,
     Field,
     field_validator,
-    ValidationError,
     model_validator,
 )
-from typing import ClassVar, List, Dict
+from typing import List, Dict
 from pathlib import Path
 import yaml
 from typing import Literal, Annotated, Any, Optional, Tuple
@@ -16,32 +16,7 @@ from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 
 
 class cfgBaseModel(BaseModel):
-    toggle_tests: ClassVar[List[Dict]]
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        cls.toggle_tests = []  # fresh list for each subclass
-
-    def __init__(self, **data):
-        try:
-            super().__init__(**data)
-            get_tests = getattr(self, "get_toggle_tests", None)
-            if callable(get_tests):
-                get_tests()
-        except ValidationError as e:
-            # Extract field errors and messages
-            messages = []
-            for err in e.errors():
-                loc = ".".join(str(l) for l in err["loc"])
-                msg = err["msg"]
-                messages.append(f"{loc}: {msg}")
-            # Print clean message
-            print("\n=== Validation Error ===")
-            for m in messages:
-                print(f"- {m}")
-            print("========================\n")
-            # Prevent full traceback
-            raise
+    model_config = ConfigDict(extra="forbid")
 
     @staticmethod
     def _get_field_descriptions(model_cls):
@@ -141,42 +116,6 @@ class cfgBaseModel(BaseModel):
                     errors.append(f"{var} path does not exist: {p}")
                     failing_vars.append(var)
         return failing_vars, errors
-
-    @classmethod
-    def append_errors_and_failing_vars(
-        cls,
-        values,
-        failing_vars,
-        errors,
-        toggle_varname,
-        lst_rqrd_if_true,
-        lst_rqrd_if_false,
-    ):
-        additional_failing_vars, additional_errors = cls.validate_from_toggle(
-            values, toggle_varname, lst_rqrd_if_true, lst_rqrd_if_false
-        )
-        failing_vars.extend(additional_failing_vars)
-        errors.extend(additional_errors)
-        return failing_vars, errors
-
-    @model_validator(mode="before")
-    def validate_toggle_dependencies(cls, values):
-        """
-        Validates that all fields whose dependency is determiend by toggles.
-        """
-        toggle_tests = cls.toggle_tests
-        # print(f"validating using toggle tests: {toggle_tests}")
-        errors = []
-        failing_vars = []
-        for test in toggle_tests:
-            failing_vars, errors = cls.append_errors_and_failing_vars(
-                values, failing_vars, errors, **test
-            )
-        ############
-        if len(errors) > 0:
-            # print(errors)
-            raise ValueError("; ".join(errors))
-        return values
 
     @field_validator("*", mode="before")
     @classmethod
@@ -334,11 +273,13 @@ class system_config(cfgBaseModel):
         description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
     )
 
-    # VALIDATING DEPENDENCIES BASED ON TOGGLES
+    @model_validator(mode="before")
     @classmethod
-    def get_toggle_tests(cls):
-        ### toggle_use_constant_mannings
-        mannings_test = dict(
+    def validate_toggle_dependencies(cls, values):
+        errors = []
+
+        _, additional_errors = cls.validate_from_toggle(
+            values,
             toggle_varname="toggle_use_constant_mannings",
             lst_rqrd_if_true=["constant_mannings"],
             lst_rqrd_if_false=[
@@ -349,26 +290,31 @@ class system_config(cfgBaseModel):
                 "landuse_lookup_mannings_colname",
             ],
         )
-        cls.toggle_tests.append(mannings_test)
-        ### toggle_use_swmm_for_hydrology
-        swmm_hydro_test = dict(
+        errors.extend(additional_errors)
+
+        _, additional_errors = cls.validate_from_toggle(
+            values,
             toggle_varname="toggle_use_swmm_for_hydrology",
             lst_rqrd_if_true=[
                 "SWMM_hydrology",
                 "subcatchment_raingage_mapping",
                 "subcatchment_raingage_mapping_gage_id_colname",
             ],
-            lst_rqrd_if_false=[""],
+            lst_rqrd_if_false=[],
         )
-        cls.toggle_tests.append(swmm_hydro_test)
-        ### toggle_swmm_model (standalone SWMM execution)
-        swmm_model_test = dict(
+        errors.extend(additional_errors)
+
+        _, additional_errors = cls.validate_from_toggle(
+            values,
             toggle_varname="toggle_swmm_model",
             lst_rqrd_if_true=["SWMM_full"],
             lst_rqrd_if_false=[],
         )
-        cls.toggle_tests.append(swmm_model_test)
-        return
+        errors.extend(additional_errors)
+
+        if errors:
+            raise ValueError("; ".join(errors))
+        return values
 
 
 class analysis_config(cfgBaseModel):
@@ -477,11 +423,6 @@ class analysis_config(cfgBaseModel):
         description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when multi_sim_run_method = 1_job_many_srun_tasks.",
     )
     # TOGGLES
-    # TODO - create validatoin checks for bash script toggle
-    # toggle_run_ensemble_with_bash_script: bool = Field(
-    #     ...,
-    #     description="If true, a bash script will be generated using a template and submitted the the HPC to run the ensemble.",
-    # )
     toggle_sensitivity_analysis: bool = Field(
         ...,
         description="Whether or not this is a sensitivity study. If so, a .csv file is required for input sensitivity_analysis defining the analysisal setup.",
@@ -490,23 +431,6 @@ class analysis_config(cfgBaseModel):
         ...,
         description="If True, a boundary condition representing storm tide will be applied to the model.",
     )
-    # OPTIONAL OR DEPENDENT
-    # hpc_bash_script_ensemble_template: Optional[Path] = Field(
-    #     None,
-    #     description="Bash script template filled with other user defined variables in the analysis configuration yaml.",
-    # )
-    # hpc_n_nodes: Optional[int] = Field(
-    #     None, description="Number of HPC nodes to request."
-    # )
-    # hpc_cpus_per_task: Optional[int] = Field(
-    #     None, description="CPUs per task (threads per MPI rank)."
-    # )
-    # hpc_ntasks_per_node: Optional[int] = Field(
-    #     None, description="Number of tasks per node (MPI ranks per node)"
-    # )
-    # hpc_gpus_requested: Optional[int] = Field(
-    #     None, description="Number of GPUs requested."
-    # )
 
     storm_tide_boundary_line_gis: Optional[Path] = Field(
         None,
@@ -582,27 +506,34 @@ class analysis_config(cfgBaseModel):
             )
         return v
 
-    # VALIDATING DEPENDENCIES BASED ON TOGGLES
+    @model_validator(mode="before")
     @classmethod
-    def get_toggle_tests(cls):
-        ### toggle_sensitivity_analysis
-        bm_test = dict(
+    def validate_toggle_dependencies(cls, values):
+        errors = []
+
+        _, additional_errors = cls.validate_from_toggle(
+            values,
             toggle_varname="toggle_sensitivity_analysis",
             lst_rqrd_if_true=["sensitivity_analysis"],
             lst_rqrd_if_false=[],
         )
-        cls.toggle_tests.append(bm_test)
-        ### toggle_storm_tide_boundary
-        storm_tide_boundary_test = dict(
+        errors.extend(additional_errors)
+
+        _, additional_errors = cls.validate_from_toggle(
+            values,
             toggle_varname="toggle_storm_tide_boundary",
             lst_rqrd_if_true=[
                 "storm_tide_boundary_line_gis",
                 "weather_time_series_storm_tide_datavar",
                 "storm_tide_units",
             ],
-            lst_rqrd_if_false=[""],
+            lst_rqrd_if_false=[],
         )
-        cls.toggle_tests.append(storm_tide_boundary_test)
+        errors.extend(additional_errors)
+
+        if errors:
+            raise ValueError("; ".join(errors))
+        return values
 
     @model_validator(mode="before")
     @classmethod
@@ -708,8 +639,3 @@ def load_analysis_config(cfg_yaml: Path):
     cfg = yaml.safe_load(cfg_yaml.read_text())
     cfg = analysis_config.model_validate(cfg)
     return cfg
-
-
-# def load_sensitivity_analysis_config_config(cfg):
-#     cfg = sensitivity_analysis_config.model_validate(cfg)
-#     return cfg

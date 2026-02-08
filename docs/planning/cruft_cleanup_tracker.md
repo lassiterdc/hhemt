@@ -27,27 +27,15 @@ This tracker is the phase-by-phase inventory for the cleanup work defined in
 
 Environment used: `triton_swmm_toolkit` conda env
 
-1. `tests/test_PC_01_singlesim.py` → **FAIL** (exit 1)
-   - 4 failed, 1 passed
-   - Representative failures:
-     - missing expected SWMM/TRITON-SWMM time series outputs
-     - upstream run/process failures cascading into assertions
-2. `tests/test_PC_02_multisim.py` → **FAIL** (exit 1)
-   - 2 failed
-   - Representative failure:
-     - `RuntimeError: TRITON simulation not completed` during post-processing
-3. `tests/test_PC_04_multisim_with_snakemake.py` → **FAIL** (exit 1)
-   - 2 failed, 4 passed, 1 skipped
-   - Representative failure:
-     - Snakemake dry-run abort because `snakemake` executable is not present in env
-4. `tests/test_PC_05_sensitivity_analysis_with_snakemake.py` → **INCONCLUSIVE / TIMEBOXED**
-   - repeatedly long-running in this environment
-   - explicit timeboxed run (`timeout 120 ...`) ended with exit `124`
+1. `tests/test_PC_01_singlesim.py` → **PASS** (5 passed)
+2. `tests/test_PC_02_multisim.py` → **PASS** (2 passed)
+3. `tests/test_PC_04_multisim_with_snakemake.py` → **PASS** (6 passed, 1 skipped)
+4. `tests/test_PC_05_sensitivity_analysis_with_snakemake.py` → **PASS** (5 passed, ~12.5 min)
+   - Note: this suite is legitimately slow — the fixture runs `process_system_level_inputs`
+     (DEM coarsening) once per test function (~54s each). No artificial timeout should be applied.
 
 Baseline interpretation:
-- Phase-0 gate is not currently green prior to cleanup changes.
-- Existing environment/runtime dependencies and workflow issues must be accounted for
-  when evaluating cleanup PR regressions.
+- All smoke tests are green. Phase-0 gate is met.
 
 ### Phase 1 — Configuration Layer Refactor
 

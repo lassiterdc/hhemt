@@ -7,7 +7,6 @@ weather_timeseries: '${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_covera
 storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
 weather_events_to_simulate: '${DATA_DIR}/hurricane_irene_event_index.csv'
 analysis_description: 'Single Simulation of Hurricane Irene 8-27-2011'
-TRITON_SWMM_make_command: 'hpc_swmm_omp'
 run_mode: "serial"
 multi_sim_run_method: "local"
 local_cpu_cores_for_workflow: 4
@@ -15,7 +14,6 @@ local_cpu_cores_for_workflow: 4
 rainfall_units: 'mm/hr'
 storm_tide_units: 'm'
 # TOGGLES
-toggle_run_ensemble_with_bash_script: False
 toggle_sensitivity_analysis: False
 toggle_storm_tide_boundary: True
 # PARAMETERS

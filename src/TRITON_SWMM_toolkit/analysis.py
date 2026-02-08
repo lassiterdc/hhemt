@@ -108,8 +108,6 @@ class TRITONSWMM_analysis:
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
-        # if self.cfg_analysis.toggle_run_ensemble_with_bash_script is True:
-        #     self.analysis_paths.bash_script_path = analysis_dir / "run_ensemble.sh"
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
         ]
