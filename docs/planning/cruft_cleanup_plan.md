@@ -263,8 +263,20 @@ Each PR should include:
 
 ---
 
+## Progress Notes (2026-02-07)
+
+**Phase 7 (Documentation Cleanup):** Partial progress. Completed doc audit and
+archival pass — 12 documents moved to `docs/archived/`, stale statuses updated
+in remaining implementation docs. See `docs/planning/priorities.md` for current
+priority ordering.
+
+**Related completed work:**
+- Model-specific logs (commit d0e7b7a) addressed items in A2 (legacy residue)
+  and A3 (logging style) by eliminating shared `log.json` and introducing
+  clean per-model logging.
+- Examples refactor (Phases 1-3) addressed B1 (duplication) partially.
+
 ## Immediate Next Actions
 
 1. Start Phase 1 (`config.py` split + strict validator redesign) using `docs/planning/refactors/config_py_refactor_plan.md` as seed input.
-2. In parallel, run doc triage for `docs/implementation/` and `docs/prompts/` using the rubric above.
-3. Open first cleanup PR with an explicit “removed cruft” changelog section.
+2. Open first cleanup PR with an explicit "removed cruft" changelog section.

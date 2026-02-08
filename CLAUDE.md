@@ -284,13 +284,14 @@ When `in_slurm=True`, simulations launch via `srun` (not direct execution).
 - `SLURM_ARRAY_TASK_ID` - Maps to event_iloc in array jobs
 - Module loading via `additional_modules_needed_to_run_TRITON_SWMM_on_hpc`
 
-### 1-Job-Many-srun-Tasks Mode (Current Focus)
+### 1-Job-Many-srun-Tasks Mode
 
 Single SLURM allocation runs all simulations:
-- Snakemake `cores` = total CPUs in allocation (not max_concurrent)
+- Snakemake `cores` = total CPUs in allocation (dynamically calculated from SLURM env vars)
 - Each simulation launches via `srun` inside the allocation
 - GPU resources specified via Snakemake resource limits
-- See `docs/one_job_many_srun_tasks_plan.md` for implementation details
+- Uses `--exclusive` + `hpc_total_nodes` (no `hpc_max_simultaneous_sims` needed)
+- See `docs/implementation/1_job_many_srun_tasks_redesign.md` for design details
 
 ## Workflow Phases
 
@@ -440,6 +441,12 @@ Update `.claude/agents/*.md` when:
 - Modifying SWMM model generation patterns → update `swmm-model-generation.md`
 - Adding new test utilities or platform detection helpers → update `triton-test-suite.md`
 
+### Development Priorities
+
+See `docs/planning/priorities.md` for the current prioritized checklist of planned
+work, organized into tiers with dependency information. Update that file as work
+progresses or priorities shift.
+
 ### Documentation Update Checklist
 
 When making significant code changes:
@@ -448,3 +455,4 @@ When making significant code changes:
 - [ ] Are there new "gotchas" or non-obvious behaviors to document?
 - [ ] Do build/test commands still work as documented?
 - [ ] Are there new critical configuration fields to highlight?
+- [ ] Should `docs/planning/priorities.md` be updated?

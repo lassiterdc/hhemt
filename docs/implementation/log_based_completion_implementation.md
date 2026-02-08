@@ -1,7 +1,7 @@
 # Implementation: Log-File-Based Completion Checking
 
 **Date:** 2026-02-07
-**Status:** ✅ Core Implementation Complete, 🟡 Test Validation Pending Bugfix
+**Status:** ✅ Complete
 
 ## Summary
 
@@ -226,23 +226,13 @@ All planned tasks completed:
 5. ✅ Delete obsolete simlog tracking code (deprecated, not deleted)
 6. ✅ Update runner script to remove simlog calls
 
-### 🟡 Test Validation Pending
+### ✅ Test Validation Complete
 
-**Test:** `test_PC_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end`
+All tests pass, including `test_PC_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end`.
 
-**Current Status:** Test fails, but NOT due to our completion checking implementation.
-
-**Failure Point:** Processing verification (summary creation check)
-
-**Error:** `"TRITON summary not created for scenario X"` even though summary file was successfully written.
-
-**Root Cause:** Different issue - log field verification in `process_timeseries_runner.py` has stale reference problem. See `docs/planning/bugfixes/log_field_stale_reference_fix.md` for detailed analysis and fix plan.
-
-**Our Implementation Works:** The log-file-based completion checking successfully:
-- ✅ Detects simulation completion after `clear_raw_outputs=True`
-- ✅ Handles all three model types (triton, tritonswmm, swmm)
-- ✅ Survives CFG file deletion
-- ✅ Prevents "scenarios not run" errors
+The stale log reference bug that previously blocked test validation was resolved by the
+model-specific logs implementation (commit d0e7b7a), which eliminated the shared `log.json`
+race condition entirely. See `docs/archived/model_specific_logs_refactoring.md` for design.
 
 ## Benefits Achieved
 
@@ -266,22 +256,11 @@ All planned tasks completed:
    - Follows established `_already_written()` pattern (checks log field AND file)
    - Extends principle to completion checking
 
-## Next Steps
+## Remaining Cleanup (Optional)
 
-1. **Implement bugfix** from `docs/planning/bugfixes/log_field_stale_reference_fix.md`
-   - Replace log field checks with file-based verification in `process_timeseries_runner.py`
-   - Use `_already_written()` for summary verification
-
-2. **Verify end-to-end test** passes after bugfix
-
-3. **Consider extending pattern** to other verification points
-   - Apply log-file-based checking to other status verifications
-   - Audit codebase for similar CFG-existence checks
-
-4. **Clean up deprecated code** (optional, when safe)
-   - Remove `SimLog`, `SimEntry` classes entirely
-   - Delete commented-out simlog code in run_simulation.py
-   - Update documentation to reflect new patterns
+- Remove `SimLog`, `SimEntry` classes entirely (currently marked DEPRECATED)
+- Delete commented-out simlog code in run_simulation.py
+- Audit codebase for any remaining CFG-existence completion checks
 
 ## Lessons Learned
 
