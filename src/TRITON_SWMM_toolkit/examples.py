@@ -83,7 +83,7 @@ with warnings.catch_warnings():
     except ImportError:
         HydroShare = None
 
-from TRITON_SWMM_toolkit.config import (
+from TRITON_SWMM_toolkit.config.loaders import (
     load_system_config,
     load_system_config_from_dict,
 )

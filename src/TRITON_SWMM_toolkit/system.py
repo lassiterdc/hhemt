@@ -13,7 +13,7 @@ from rasterio.enums import Resampling
 
 import TRITON_SWMM_toolkit.utils as ut
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.config import load_system_config
+from TRITON_SWMM_toolkit.config.loaders import load_system_config
 from TRITON_SWMM_toolkit.log import TRITONSWMM_system_log
 from TRITON_SWMM_toolkit.paths import SysPaths
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting

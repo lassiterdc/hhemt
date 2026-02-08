@@ -1,7 +1,7 @@
 # %%
 
 from pathlib import Path
-from TRITON_SWMM_toolkit.config import load_analysis_config
+from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
 import pandas as pd
 from typing import Literal, Callable, List, Optional, TYPE_CHECKING
 from TRITON_SWMM_toolkit.paths import AnalysisPaths

@@ -30,10 +30,8 @@ from typing import Optional, TYPE_CHECKING
 import TRITON_SWMM_toolkit.constants as cnst
 
 # Import from production package
-from TRITON_SWMM_toolkit.config import (
-    load_analysis_config,
-    analysis_config,
-)
+from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+from TRITON_SWMM_toolkit.config.analysis import analysis_config
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 

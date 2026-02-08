@@ -6,7 +6,7 @@ import yaml
 
 import TRITON_SWMM_toolkit.constants as cnst
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.config import analysis_config
+from TRITON_SWMM_toolkit.config.analysis import analysis_config
 from TRITON_SWMM_toolkit.examples import NorfolkIreneExample, TRITON_SWMM_example
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 

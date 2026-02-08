@@ -39,11 +39,22 @@ Baseline interpretation:
 
 ### Phase 1 — Configuration Layer Refactor
 
-- Status: **Complete (validator/strictness subset; structural split deferred)**
+- Status: **Complete**
 - Touched files:
-  - `src/TRITON_SWMM_toolkit/config.py`
-  - `src/TRITON_SWMM_toolkit/analysis.py`
-  - `tests/test_config_validation.py`
+  - `src/TRITON_SWMM_toolkit/config.py` → deleted; replaced by `config/` package
+  - `src/TRITON_SWMM_toolkit/config/__init__.py` (new; docstring only, no re-exports)
+  - `src/TRITON_SWMM_toolkit/config/base.py` (new; cfgBaseModel)
+  - `src/TRITON_SWMM_toolkit/config/system.py` (new; system_config)
+  - `src/TRITON_SWMM_toolkit/config/analysis.py` (new; analysis_config)
+  - `src/TRITON_SWMM_toolkit/config/loaders.py` (new; load_* functions)
+  - `src/TRITON_SWMM_toolkit/analysis.py` (import updated)
+  - `src/TRITON_SWMM_toolkit/system.py` (import updated)
+  - `src/TRITON_SWMM_toolkit/examples.py` (import updated)
+  - `src/TRITON_SWMM_toolkit/case_study_catalog.py` (import updated)
+  - `src/TRITON_SWMM_toolkit/gui.py` (removed dead SimulationConfig/ConfigGUI code)
+  - `tests/test_config_validation.py` (imports updated)
+  - `tests/fixtures/test_case_builder.py` (imports updated)
+  - `scripts/check_doc_freshness.py` (`"config.py"` → `"config/"` in filename keys)
   - `test_data/norfolk_coastal_flooding/**/*.yaml` (9 files: removed dead legacy keys)
 - Implemented:
   - enforced strict unknown-key behavior via `extra="forbid"` on config base model
@@ -51,11 +62,12 @@ Baseline interpretation:
     in `system_config` and `analysis_config`
   - removed dead legacy fields (`TRITON_SWMM_make_command`, `toggle_run_ensemble_with_bash_script`)
     from both config model and all test YAML files
-  - removed commented-out dead code blocks from `config.py` and `analysis.py`
-- Deferred:
-  - Structural split into `config/` package → separate future PR
+  - removed commented-out dead code blocks
+  - split `config.py` (642 lines, mixed concerns) into single-responsibility submodules
+  - no compatibility shims — all import sites updated immediately
 - Test status:
   - `tests/test_config_validation.py` → **PASS** (3 passed)
+  - All 4 smoke tests → **PASS** (PC_01 through PC_05)
 
 ### Phase 2 — Remove Legacy/Obsolete Runtime Paths
 

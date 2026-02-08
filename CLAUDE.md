@@ -103,7 +103,7 @@ TRITONSWMM_scenario (scenario.py)
 
 | Module | Purpose |
 |--------|---------|
-| `config.py` | Pydantic-based configuration (system_config, analysis_config) |
+| `config/` | Pydantic-based configuration package (base, system, analysis, loaders) |
 | `workflow.py` | Dynamic Snakefile generation for parallel execution |
 | `execution.py` | Execution strategies: SerialExecutor, LocalConcurrentExecutor, SlurmExecutor |
 | `resource_management.py` | CPU/GPU/memory allocation for HPC |

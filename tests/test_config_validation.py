@@ -3,11 +3,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from TRITON_SWMM_toolkit.config import (
-    analysis_config,
-    load_system_config_from_dict,
-    system_config,
-)
+from TRITON_SWMM_toolkit.config.analysis import analysis_config
+from TRITON_SWMM_toolkit.config.loaders import load_system_config_from_dict
+from TRITON_SWMM_toolkit.config.system import system_config
 
 
 def _touch(path: Path) -> Path:

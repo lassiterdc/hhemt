@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Map source files to their corresponding agent documentation
 AGENT_MAPPING = {
-    "config.py": ".claude/agents/pydantic-config-specialist.md",
+    "config/": ".claude/agents/pydantic-config-specialist.md",
     "workflow.py": ".claude/agents/snakemake-workflow.md",
     "execution.py": ".claude/agents/hpc-slurm-integration.md",
     "resource_management.py": ".claude/agents/hpc-slurm-integration.md",
@@ -38,7 +38,7 @@ AGENT_MAPPING = {
 CLAUDE_MD_TRIGGERS = {
     "pyproject.toml",  # Build/test commands
     "setup.py",
-    "config.py",  # Critical configuration fields
+    "config/",  # Critical configuration fields
     "workflow.py",  # Architecture changes
     "execution.py",  # Execution modes
 }
