@@ -375,60 +375,37 @@ def run_command(
         # Stage 8: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
-        # Translate CLI flags to workflow builder parameters
-        # Check if system inputs need processing (DEM and Manning's)
-        system_log = system.log
-        process_system_inputs = not (
-            system_log.dem_processed.get()
-            and (system.cfg_system.toggle_use_constant_mannings or system_log.mannings_processed.get())
-        )
-
-        compile_triton_swmm = True  # Always compile unless already done
-        recompile = (from_scratch or overwrite)
-        prepare_scenarios = True
-        overwrite_scenario = (from_scratch or overwrite)
-        process_timeseries = True
-        overwrite_outputs = (from_scratch or overwrite)
-        pickup_where_leftoff = resume and not from_scratch
-
-        # Determine execution mode
-        if analysis.in_slurm or analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
-            mode = "slurm"
+        # Determine execution mode from CLI flags
+        # Map CLI flags to orchestration layer modes
+        if from_scratch:
+            run_mode = "fresh"
+        elif overwrite:
+            run_mode = "overwrite"
         else:
-            mode = "local"
+            run_mode = "resume"
+
+        # Determine execution context (local vs SLURM)
+        if analysis.in_slurm or analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+            execution_mode = "slurm"
+        else:
+            execution_mode = "local"
 
         if not quiet:
-            console.print(f"\n[cyan]Submitting workflow in {mode} mode...[/cyan]")
+            console.print(f"\n[cyan]Submitting workflow in {execution_mode} mode ({run_mode})...[/cyan]")
 
-        # Submit workflow via Snakemake
-        # Cast which to Literal type for type checker
-        from typing import Literal, cast
-        which_typed = cast(Literal["TRITON", "SWMM", "both"], which)
-
-        result = analysis._workflow_builder.submit_workflow(
-            mode=mode,
-            process_system_level_inputs=process_system_inputs,
-            overwrite_system_inputs=(from_scratch or overwrite),
-            compile_TRITON_SWMM=compile_triton_swmm,
-            recompile_if_already_done_successfully=recompile,
-            prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
-            rerun_swmm_hydro_if_outputs_exist=overwrite,
-            process_timeseries=process_timeseries,
-            which=which_typed,
-            clear_raw_outputs=True,  # Default: clear raw outputs after processing
-            overwrite_if_exist=overwrite_outputs,
-            compression_level=5,  # Default compression level
-            pickup_where_leftoff=pickup_where_leftoff,
-            wait_for_completion=(mode == "slurm"),  # Wait for SLURM jobs
+        # Execute workflow via high-level orchestration API
+        result = analysis.run(
+            mode=run_mode,
+            phases=None,  # Run all phases
+            events=None,  # Process all events
+            execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
         )
 
         # Check workflow result
-        if not result.get("success"):
-            error_msg = result.get("message", "Workflow submission failed")
-            console_err.print(f"[bold red]Workflow Error:[/bold red] {error_msg}")
+        if not result.success:
+            console_err.print(f"[bold red]Workflow Error:[/bold red] {result.message}")
             raise typer.Exit(3)
 
         if dry_run:
@@ -436,8 +413,10 @@ def run_command(
             console.print("[dim]No simulations were executed.[/dim]")
         else:
             console.print("[bold green]✓ Workflow complete![/bold green]")
-            if mode == "slurm" and result.get("job_id"):
-                console.print(f"[dim]SLURM Job ID: {result['job_id']}[/dim]")
+            if execution_mode == "slurm" and result.job_id:
+                console.print(f"[dim]SLURM Job ID: {result.job_id}[/dim]")
+            if result.execution_time:
+                console.print(f"[dim]Execution time: {result.execution_time:.1f}s[/dim]")
 
         raise typer.Exit(0)
 
