@@ -420,3 +420,65 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
 
     print("\n   ✅ All concurrency limits respected")
     print("=" * 70 + "\n")
+
+
+# ========== Phase 6b.2.1: Unified Fixture Pilot Validation ==========
+
+
+def test_snakemake_workflow_generation_UNIFIED_PILOT(norfolk_multi_sim_unified):
+    """
+    PILOT TEST: Validate unified fixture API pattern.
+
+    This is a duplicate of test_snakemake_local_workflow_generation_and_write
+    but uses the new norfolk_multi_sim_unified fixture to validate the
+    parametrized fixture pattern works correctly.
+
+    Once validated:
+    - Original test can be converted to use unified fixture
+    - Pattern can be expanded to UVA/Frontier platforms
+    - This pilot test can be removed
+
+    Verifies:
+    1. Unified fixture provides equivalent analysis object
+    2. Workflow generation works identically
+    3. All assertions pass with unified fixture
+    """
+    analysis = norfolk_multi_sim_unified
+
+    snakefile_content = analysis._workflow_builder.generate_snakefile_content(
+        process_system_level_inputs=True,
+        compile_TRITON_SWMM=True,
+        prepare_scenarios=True,
+        process_timeseries=True,
+    )
+
+    snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
+
+    tst_ut.assert_file_exists(snakefile_path, "Snakefile")
+    assert len(snakefile_path.read_text()) > 100
+
+    content = snakefile_path.read_text()
+    tst_ut.assert_snakefile_has_rules(
+        content,
+        [
+            "all",
+            "setup",
+            "prepare_scenario",
+            "run_simulation",
+            "process_outputs",
+            "consolidate",
+        ],
+    )
+    tst_ut.assert_snakefile_has_flags(
+        content,
+        [
+            "/workflow/envs/triton_swmm.yaml",
+            "setup_workflow",
+            "--process-system-inputs",
+            "--compile-triton-swmm",
+            "prepare_scenario_runner",
+            "run_simulation_runner",
+            "process_timeseries_runner",
+            "consolidate_workflow",
+        ],
+    )
