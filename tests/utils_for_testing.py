@@ -1,5 +1,6 @@
 import os
 import socket
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -605,3 +606,278 @@ def normalize_swmm_link_vars(link_vars: set[str]) -> set[str]:
     if "capacity" in link_vars:
         return (link_vars - {"capacity"}) | {"capacity_setting"}
     return link_vars
+
+# ========== Phase 6d.2: New Assertion Helpers (2026-02-09) ==========
+
+
+def assert_model_outputs_exist(
+    analysis: TRITONSWMM_analysis,
+    model_types: list[str] | None = None,
+    check_timeseries: bool = True,
+    check_summaries: bool = True,
+    verbose: bool = False,
+) -> None:
+    """Assert expected outputs exist for all enabled model types.
+
+    This helper consolidates the common pattern of checking outputs across
+    multiple model types (TRITON, TRITON-SWMM coupled, SWMM standalone).
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    model_types : list[str], optional
+        Model types to check. If None, auto-detects from enabled models.
+        Valid values: ["triton", "tritonswmm", "swmm"]
+    check_timeseries : bool, default True
+        Check if timeseries outputs exist
+    check_summaries : bool, default True
+        Check if analysis-level summary files exist
+    verbose : bool, default False
+        Print detailed list of missing outputs (use pytest -v to enable)
+
+    Raises
+    ------
+    AssertionError
+        If any expected outputs are missing
+
+    Examples
+    --------
+    Check all enabled models have outputs:
+        >>> assert_model_outputs_exist(analysis)
+
+    Check only timeseries, skip summaries:
+        >>> assert_model_outputs_exist(analysis, check_summaries=False)
+
+    Check specific model types:
+        >>> assert_model_outputs_exist(analysis, model_types=["tritonswmm"])
+
+    Notes
+    -----
+    Uses existing helper functions (assert_timeseries_processed,
+    assert_analysis_summaries_created) internally for consistent behavior.
+    """
+    if model_types is None:
+        model_types = get_enabled_model_types(analysis)
+
+    missing_outputs = []
+
+    # Check timeseries if requested
+    if check_timeseries:
+        try:
+            assert_timeseries_processed(analysis, which="both", verbose=verbose)
+        except AssertionError as e:
+            missing_outputs.append(f"Timeseries: {str(e)}")
+
+    # Check summaries if requested
+    if check_summaries:
+        try:
+            assert_analysis_summaries_created(analysis)
+        except AssertionError as e:
+            missing_outputs.append(f"Summaries: {str(e)}")
+
+    if missing_outputs:
+        error_msg = f"Model output validation failed for {len(missing_outputs)} check(s):\n"
+        error_msg += "\n".join(f"  - {msg}" for msg in missing_outputs)
+        if not verbose:
+            error_msg += "\nRun with pytest -v for detailed output lists."
+        pytest.fail(error_msg)
+
+
+def assert_file_exists(path: Path, description: str | None = None) -> None:
+    """Assert file exists with clear error message.
+
+    Standardized file existence check that always includes the path
+    in the error message for easy debugging.
+
+    Parameters
+    ----------
+    path : Path
+        Path to check
+    description : str, optional
+        Description of what this file is (e.g., "Snakefile", "SWMM input")
+        If provided, included in error message for context
+
+    Raises
+    ------
+    AssertionError
+        If file does not exist, with message showing path and description
+
+    Examples
+    --------
+    Basic usage:
+        >>> assert_file_exists(snakefile_path)
+
+    With description for context:
+        >>> assert_file_exists(snakefile_path, "Snakefile")
+        >>> assert_file_exists(swmm_inp, "SWMM input file")
+
+    Notes
+    -----
+    Replaces inconsistent patterns:
+        assert path.exists()  # Bad: no context in failure
+        assert path.exists(), f"Missing {path}"  # Better but inconsistent
+
+    Standard pattern provides:
+        - Always includes path in message
+        - Optional description for context
+        - Consistent error format across test suite
+    """
+    if not path.exists():
+        desc = f" ({description})" if description else ""
+        pytest.fail(f"Expected file{desc} not found: {path}")
+
+
+def assert_phases_complete(
+    analysis: TRITONSWMM_analysis,
+    phases: list[str] | None = None,
+    verbose: bool = False,
+) -> None:
+    """Assert specified workflow phases completed for all scenarios.
+
+    Uses WorkflowStatus to check completion state of workflow phases.
+    Useful for verifying prerequisites before testing later phases.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    phases : list[str], optional
+        Phases to check. Valid values: ["setup", "preparation", "simulation",
+        "processing", "consolidation"]. If None, checks all phases.
+    verbose : bool, default False
+        Print detailed status for each phase (use pytest -v to enable)
+
+    Raises
+    ------
+    AssertionError
+        If any specified phase is incomplete, with details of which phases failed
+
+    Examples
+    --------
+    Check setup and preparation before testing execution:
+        >>> assert_phases_complete(analysis, phases=["setup", "preparation"])
+
+    Check all phases:
+        >>> assert_phases_complete(analysis)
+
+    With verbose output:
+        >>> assert_phases_complete(analysis, phases=["simulation"], verbose=True)
+
+    Notes
+    -----
+    Leverages the WorkflowStatus infrastructure added in Tier 3 Phase 2.
+    Phase names match those returned by analysis.get_workflow_status().
+    """
+    if phases is None:
+        phases = ["setup", "preparation", "simulation", "processing", "consolidation"]
+
+    status = analysis.get_workflow_status()
+
+    incomplete = []
+    phase_status_map = {
+        "setup": status.setup,
+        "preparation": status.preparation,
+        "simulation": status.simulation,
+        "processing": status.processing,
+        "consolidation": status.consolidation,
+    }
+
+    for phase_name in phases:
+        if phase_name not in phase_status_map:
+            pytest.fail(
+                f"Invalid phase name: '{phase_name}'. "
+                f"Valid phases: {list(phase_status_map.keys())}"
+            )
+
+        phase_obj = phase_status_map[phase_name]
+        if not phase_obj.complete:
+            if verbose:
+                print(f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete")
+                if phase_obj.failed_items:
+                    print(f"    Failed items: {phase_obj.failed_items}")
+            incomplete.append(f"{phase_name} ({phase_obj.progress:.0%})")
+
+    if incomplete:
+        error_msg = f"Phase completion check failed for {len(incomplete)} phase(s):\n"
+        error_msg += "\n".join(f"  - {phase}" for phase in incomplete)
+        error_msg += f"\n\nTotal progress: {status.simulations_completed}/{status.total_simulations} simulations"
+        if not verbose:
+            error_msg += "\nRun with pytest -v for phase details."
+        pytest.fail(error_msg)
+
+
+def assert_model_simulations_complete(
+    analysis: TRITONSWMM_analysis,
+    model_type: str,
+    verbose: bool = False,
+) -> None:
+    """Assert all simulations completed for specific model type.
+
+    Checks model-specific completion status. Useful when testing individual
+    model outputs in multi-model analyses.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    model_type : {"triton", "tritonswmm", "swmm"}
+        Model type to check
+    verbose : bool, default False
+        Print list of incomplete simulations (use pytest -v to enable)
+
+    Raises
+    ------
+    AssertionError
+        If any simulations incomplete for this model type
+    ValueError
+        If model_type is invalid or model not enabled
+
+    Examples
+    --------
+    Check TRITON-SWMM coupled simulations:
+        >>> assert_model_simulations_complete(analysis, "tritonswmm")
+
+    Check TRITON-only simulations:
+        >>> assert_model_simulations_complete(analysis, "triton")
+
+    With verbose output showing which scenarios failed:
+        >>> assert_model_simulations_complete(analysis, "swmm", verbose=True)
+
+    Notes
+    -----
+    Model type must be enabled in system config or this will raise ValueError.
+    Uses scenario-level model_run_completed() checks for each event.
+    """
+    valid_types = ["triton", "tritonswmm", "swmm"]
+    if model_type not in valid_types:
+        raise ValueError(
+            f"Invalid model_type: '{model_type}'. Valid types: {valid_types}"
+        )
+
+    enabled_models = get_enabled_model_types(analysis)
+    if model_type not in enabled_models:
+        raise ValueError(
+            f"Model type '{model_type}' not enabled. "
+            f"Enabled models: {enabled_models}"
+        )
+
+    incomplete_scenarios = []
+
+    for event_iloc in analysis.df_sims.index:
+        run = analysis._retrieve_sim_runs(event_iloc)
+        scenario = run._scenario
+
+        if not scenario.model_run_completed(model_type):
+            incomplete_scenarios.append(event_iloc)
+
+    if incomplete_scenarios:
+        if verbose:
+            print(f"\n  Incomplete {model_type} simulations (event_iloc):")
+            print("    - " + "\n    - ".join(map(str, incomplete_scenarios)))
+
+        pytest.fail(
+            f"{model_type.upper()} simulations incomplete for "
+            f"{len(incomplete_scenarios)} of {len(analysis.df_sims)} scenarios. "
+            "Run with pytest -v for scenario list."
+        )
