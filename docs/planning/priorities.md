@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 3 Phase 1 CLI contract 80% complete)
+**Last Updated:** 2026-02-09 (Tier 3 Phase 1 CLI contract 80% complete, PC_05 issue identified)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -176,3 +176,23 @@ These are driven by specific HPC usage needs rather than architectural improveme
 ### Archived (completed, historical context only)
 
 See `docs/archived/README.md` for index of 12 archived documents.
+
+## Known Test Issues
+
+### PC_05 Sensitivity Analysis Test Failure
+
+**Status:** Under investigation (identified 2026-02-09)
+
+**Symptom:** `test_snakemake_sensitivity_workflow_execution` fails with consolidation errors
+
+**Root Cause:** Missing log JSON files (`log_tritonswmm.json`) for sensitivity analysis sub-scenarios. Simulations run successfully (TRITON output in `run_tritonswmm.log`) but log files not created, causing consolidation script to fail with "Not all simulations completed successfully"
+
+**Impact:** PC_05 shows 4/5 passed (was 5/5 in baseline)
+
+**Not Related To:** CLI orchestration work or `analysis.scenarios` bug fix
+
+**Next Steps:** Investigate log file creation in sensitivity analysis context - may be related to multi-model log structure changes
+
+**Workaround:** PC_01, PC_02, PC_04 all pass and validate core functionality
+
+---

@@ -214,6 +214,11 @@ def main():
         logger.info(f"[{event_iloc}] Simulation status: {status}")
         logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
 
+        # Update model log with completion status and runtime
+        model_log.simulation_completed.set(True)
+        model_log.sim_run_time_minutes.set(elapsed / 60.0)
+        model_log.write()
+
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
