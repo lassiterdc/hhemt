@@ -20,6 +20,7 @@ from TRITON_SWMM_toolkit.execution import (
 )
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 from TRITON_SWMM_toolkit.utils import parse_triton_log_file
+from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -143,6 +144,45 @@ class TRITONSWMM_analysis:
 
             self._update_log()
         self._resource_manager = ResourceManager(self)
+
+    def validate(self) -> ValidationResult:
+        """Run preflight validation on system and analysis configurations.
+
+        This method performs comprehensive validation of both system and analysis
+        configurations before launching expensive simulation work. It checks:
+
+        - System config: paths, toggle dependencies, model selection
+        - Analysis config: weather data, run-mode consistency, HPC settings
+        - Data consistency: event alignment, storm tide data, units
+
+        Returns
+        -------
+        ValidationResult
+            Validation result with any errors and warnings. Use result.is_valid
+            to check if validation passed, or result.raise_if_invalid() to raise
+            ConfigurationError if any errors exist.
+
+        Examples
+        --------
+        >>> analysis = system.analysis
+        >>> result = analysis.validate()
+        >>> if not result.is_valid:
+        >>>     print(result)  # Show all errors and warnings
+        >>>     result.raise_if_invalid()  # Raise ConfigurationError
+
+        >>> # Or validate and raise in one step:
+        >>> analysis.validate().raise_if_invalid()
+
+        Notes
+        -----
+        Validation is NOT automatically called in __init__ to avoid breaking
+        existing workflows. Users should explicitly call validate() before
+        launching simulations, or CLI/API entry points can call it automatically.
+        """
+        return preflight_validate(
+            cfg_system=self._system.cfg_system,
+            cfg_analysis=self.cfg_analysis,
+        )
 
     def _refresh_log(self):
         if self.analysis_paths.f_log.exists():

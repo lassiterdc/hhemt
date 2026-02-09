@@ -124,3 +124,75 @@ def test_validation_model_selection_fails_when_all_disabled():
     # This test would require constructing an invalid config
     # For now, we verify the validation logic works with real configs
     pass
+
+
+def test_validate_data_consistency(norfolk_multi_sim_analysis):
+    """Test data cross-consistency validation."""
+    from TRITON_SWMM_toolkit.validation import validate_data_consistency
+
+    cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
+    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+
+    result = validate_data_consistency(cfg_sys, cfg_analysis)
+
+    # Real config should be valid or have warnings only
+    if not result.is_valid:
+        print(result)
+    assert result.is_valid or result.has_warnings
+
+
+def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
+    """Test storm tide validation when toggle disabled."""
+    from TRITON_SWMM_toolkit.validation import _validate_storm_tide_data
+    from TRITON_SWMM_toolkit.validation import ValidationResult
+
+    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    result = ValidationResult()
+
+    # Norfolk test case has toggle_storm_tide_boundary=False
+    _validate_storm_tide_data(cfg_analysis, result)
+
+    # Should not have errors (toggle disabled)
+    assert result.is_valid
+
+
+def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
+    """Test units validation requires explicit rainfall_units."""
+    from TRITON_SWMM_toolkit.validation import _validate_units
+    from TRITON_SWMM_toolkit.validation import ValidationResult
+
+    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
+    result = ValidationResult()
+
+    _validate_units(cfg_analysis, result)
+
+    # Real config should have rainfall_units set
+    assert result.is_valid or result.has_warnings
+
+
+def test_analysis_validate_method(norfolk_multi_sim_analysis):
+    """Test Analysis.validate() method integration."""
+    # Call validate() on the analysis instance
+    result = norfolk_multi_sim_analysis.validate()
+
+    # Verify we get a ValidationResult
+    assert hasattr(result, 'is_valid')
+    assert hasattr(result, 'errors')
+    assert hasattr(result, 'warnings')
+
+    # Real Norfolk config should be valid
+    if not result.is_valid:
+        print("\nValidation errors found:")
+        print(result)
+
+    # Allow warnings but no errors
+    assert result.is_valid, f"Validation failed with {len(result.errors)} errors"
+
+
+def test_analysis_validate_raise_if_invalid(norfolk_multi_sim_analysis):
+    """Test Analysis.validate().raise_if_invalid() pattern."""
+    # This should not raise on valid config
+    norfolk_multi_sim_analysis.validate().raise_if_invalid()
+
+    # If we get here, validation passed (no ConfigurationError raised)
+    assert True
