@@ -81,14 +81,18 @@ Foundation for CLI/API work. Should be done before Tier 3.
 
 Depends on Tier 2 (config refactor). Major user-facing changes.
 
-- [ ] **Finalize CLI contract** (Phase 1 of implementation roadmap) — **In Progress**
+- [ ] **Finalize CLI contract** (Phase 1 of implementation roadmap) — **In Progress (~70%)**
   - ✅ Define error classes and exit code mapping (CLIValidationError, WorkflowPlanningError)
   - ✅ Finalize argument contract and validation matrix (cli.py with all v1 arguments)
-  - ✅ Finalize profile model: production, testcase, case-study (profile_catalog.py)
+  - ✅ Finalize profile model: production, testcase, case-study (profile_catalog.py + 10 tests)
   - ✅ Implement list actions (--list-testcases, --list-case-studies)
+  - ✅ **Complete CLI unit test suite (01-03):** 45 tests passing
+    - test_cli_01_validation.py: 22 tests (argument validation)
+    - test_cli_02_exit_codes.py: 9 tests (exit code mapping)
+    - test_cli_03_actions.py: 14 tests (list actions)
   - ⏸️ Implement profile resolution with 6-tier precedence (TODO in cli.py)
   - ⏸️ Wire CLI to Analysis orchestration (TODO in cli.py)
-  - ⏸️ Complete CLI test suite (01-05, including PC_04/PC_05 parity tests)
+  - ⏸️ Complete CLI integration tests (04-05, requires orchestration wiring)
   - _Ref:_ `docs/planning/cli_implementation_design.md`, `docs/planning/cli_command_spec.md`
 
 - [ ] **Shared orchestration core** (Phase 2 of implementation roadmap)
