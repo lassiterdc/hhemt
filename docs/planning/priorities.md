@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 1 Phase 6b.1 complete: Test fixture audit)
+**Last Updated:** 2026-02-09 (Tier 1 Phase 6d.1 complete: Assertion pattern audit)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -46,12 +46,12 @@ Incremental improvements that reduce maintenance burden. Can be done independent
   - _Blocked by:_ Upstream TRITON-SWMM fix for `output_folder` directive
 
 - [ ] **Test suite cleanup** (`cruft_cleanup_plan.md` Phase 6) — **In Progress**
-  - [ ] **Phase 6a**: Parametrize repeated platform test patterns (next: 6a.1 pilot)
+  - [ ] **Phase 6a**: Parametrize repeated platform test patterns (6a.1 pilot ✅ complete, next: 6a.2 expand)
   - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅ complete)
   - [x] **Phase 6c**: Reduce unconditional diagnostic prints (✅ complete)
-  - [ ] **Phase 6d**: Standardize assertions around completion semantics
-  - _Status:_ Phase 6b.1 (fixture audit) complete, proceeding with 6a.1 (parametrization pilot)
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`
+  - [ ] **Phase 6d**: Standardize assertions (6d.1 audit ✅ complete, next: 6d.2 implement helpers)
+  - _Status:_ Audits complete (6b.1, 6d.1), pilot complete (6a.1), ready for Phase 6d.2
+  - _Ref:_ `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`, `test_assertion_audit_phase6d1.md`
 
 ---
 
