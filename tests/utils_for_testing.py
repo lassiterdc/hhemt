@@ -101,36 +101,94 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
     assert manning.shape == (1, 537, 551), "Problems with Mannings creation"  # type: ignore
 
 
-def assert_scenarios_setup(analysis: TRITONSWMM_analysis):
-    """Assert that all scenarios were created."""
+def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False):
+    """Assert that all scenarios were created.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    verbose : bool, optional
+        If True, print list of failed scenarios (default: False, use pytest -v to enable)
+    """
     if not analysis.all_scenarios_created:
-        print("\n    - ".join(analysis.scenarios_not_created))
-        pytest.fail("One or more scenario setups failed")
+        if verbose:
+            print("\n  Failed scenarios:\n    - " + "\n    - ".join(analysis.scenarios_not_created))
+        pytest.fail(
+            f"Scenario setup failed for {len(analysis.scenarios_not_created)} "
+            f"of {len(analysis.scenarios)} scenarios. Run with pytest -v for details."
+        )
 
 
-def assert_scenarios_run(analysis: TRITONSWMM_analysis):
-    """Assert that all simulations completed successfully."""
+def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
+    """Assert that all simulations completed successfully.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    verbose : bool, optional
+        If True, print list of failed simulations (default: False, use pytest -v to enable)
+    """
     if not analysis.all_sims_run:
-        print("\n    - ".join(analysis.scenarios_not_run))
-        pytest.fail("One or more simulations failed to run")
+        if verbose:
+            print("\n  Failed simulations:\n    - " + "\n    - ".join(analysis.scenarios_not_run))
+        pytest.fail(
+            f"Simulation failed for {len(analysis.scenarios_not_run)} "
+            f"of {len(analysis.scenarios)} scenarios. Run with pytest -v for details."
+        )
 
 
-def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "both"):
-    """Assert that requested timeseries outputs were processed."""
+def assert_timeseries_processed(
+    analysis: TRITONSWMM_analysis, which: str = "both", verbose: bool = False
+):
+    """Assert that requested timeseries outputs were processed.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis to check
+    which : str, optional
+        Which timeseries to check: "both", "TRITON", or "SWMM" (default: "both")
+    verbose : bool, optional
+        If True, print list of failed processing (default: False, use pytest -v to enable)
+    """
     # performance tseries
     if not analysis.all_TRITONSWMM_performance_timeseries_processed:
-        print(
-            "\n    - ".join(analysis.TRITONSWMM_performance_time_series_not_processed)
+        if verbose:
+            print(
+                "\n  Failed TRITONSWMM performance:\n    - "
+                + "\n    - ".join(analysis.TRITONSWMM_performance_time_series_not_processed)
+            )
+        pytest.fail(
+            f"TRITONSWMM performance timeseries processing failed for "
+            f"{len(analysis.TRITONSWMM_performance_time_series_not_processed)} scenarios. "
+            "Run with pytest -v for details."
         )
-        pytest.fail("TRITONSWMM performance timeseries processing failed")
     # TRITON time series
     if which in ("both", "TRITON") and not analysis.all_TRITON_timeseries_processed:
-        print("\n    - ".join(analysis.TRITON_time_series_not_processed))
-        pytest.fail("TRITON timeseries processing failed")
+        if verbose:
+            print(
+                "\n  Failed TRITON timeseries:\n    - "
+                + "\n    - ".join(analysis.TRITON_time_series_not_processed)
+            )
+        pytest.fail(
+            f"TRITON timeseries processing failed for "
+            f"{len(analysis.TRITON_time_series_not_processed)} scenarios. "
+            "Run with pytest -v for details."
+        )
     # SWMM time series
     if which in ("both", "SWMM") and not analysis.all_SWMM_timeseries_processed:
-        print("\n    - ".join(analysis.SWMM_time_series_not_processed))
-        pytest.fail("SWMM timeseries processing failed")
+        if verbose:
+            print(
+                "\n  Failed SWMM timeseries:\n    - "
+                + "\n    - ".join(analysis.SWMM_time_series_not_processed)
+            )
+        pytest.fail(
+            f"SWMM timeseries processing failed for "
+            f"{len(analysis.SWMM_time_series_not_processed)} scenarios. "
+            "Run with pytest -v for details."
+        )
 
 
 def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
