@@ -235,3 +235,48 @@ class ResourceAllocationError(TRITONSWMMError):
             lines.append(f"  Available: {available}")
 
         super().__init__("\n".join(lines))
+
+
+class CLIValidationError(TRITONSWMMError):
+    """CLI argument validation failure (exit code 2).
+
+    Raised when command-line arguments fail business logic validation,
+    such as mutually exclusive flags, conditional requirements, or
+    invalid argument combinations.
+
+    Attributes:
+        argument: The argument(s) that failed validation
+        fix_hint: Optional hint for how to fix the issue
+    """
+    def __init__(
+        self,
+        argument: str,
+        message: str,
+        fix_hint: str = ""
+    ):
+        self.argument = argument
+        self.fix_hint = fix_hint
+
+        lines = [f"Invalid argument: {argument}", f"  {message}"]
+        if fix_hint:
+            lines.append(f"  Fix: {fix_hint}")
+
+        super().__init__("\n".join(lines))
+
+
+class WorkflowPlanningError(TRITONSWMMError):
+    """Workflow planning/build failure (exit code 3).
+
+    Raised when Snakemake workflow generation or DAG planning fails,
+    typically due to invalid target specifications or missing dependencies.
+
+    Attributes:
+        phase: The planning phase that failed
+    """
+    def __init__(self, phase: str, reason: str):
+        self.phase = phase
+
+        super().__init__(
+            f"Workflow planning failed during {phase}\n"
+            f"  Reason: {reason}"
+        )

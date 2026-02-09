@@ -13,6 +13,8 @@ from .exceptions import (
     WorkflowError,
     SLURMError,
     ResourceAllocationError,
+    CLIValidationError,
+    WorkflowPlanningError,
 )
 
 __all__ = [
@@ -24,6 +26,8 @@ __all__ = [
     "WorkflowError",
     "SLURMError",
     "ResourceAllocationError",
+    "CLIValidationError",
+    "WorkflowPlanningError",
 ]
 
 # from .TRITON_SWMM_toolkit import run_model
