@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-08
+**Last Updated:** 2026-02-08 (Tier 3 Phase 1 CLI contract in progress)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -81,11 +81,15 @@ Foundation for CLI/API work. Should be done before Tier 3.
 
 Depends on Tier 2 (config refactor). Major user-facing changes.
 
-- [ ] **Finalize CLI contract** (Phase 1 of implementation roadmap)
-  - Finalize argument contract and validation matrix
-  - Define error classes and exit code mapping
-  - Finalize profile model: production, testcase, case-study
-  - _Ref:_ `docs/planning/cli_command_spec.md`, `docs/planning/cli_vision.md`
+- [ ] **Finalize CLI contract** (Phase 1 of implementation roadmap) — **In Progress**
+  - ✅ Define error classes and exit code mapping (CLIValidationError, WorkflowPlanningError)
+  - ✅ Finalize argument contract and validation matrix (cli.py with all v1 arguments)
+  - ✅ Finalize profile model: production, testcase, case-study (profile_catalog.py)
+  - ✅ Implement list actions (--list-testcases, --list-case-studies)
+  - ⏸️ Implement profile resolution with 6-tier precedence (TODO in cli.py)
+  - ⏸️ Wire CLI to Analysis orchestration (TODO in cli.py)
+  - ⏸️ Complete CLI test suite (01-05, including PC_04/PC_05 parity tests)
+  - _Ref:_ `docs/planning/cli_implementation_design.md`, `docs/planning/cli_command_spec.md`
 
 - [ ] **Shared orchestration core** (Phase 2 of implementation roadmap)
   - Consolidate run/setup/processing flow behind one orchestration layer
