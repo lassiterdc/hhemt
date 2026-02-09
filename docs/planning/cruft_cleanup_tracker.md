@@ -114,6 +114,31 @@ Baseline interpretation:
   - **Phase 4f**: Config validation error standardization (config/system.py, config/analysis.py)
   - Rationale: These phases involve extensive print→logger conversions without critical functionality impact. Current exception handling provides actionable error context for all critical paths.
 
-### Phase 5+
+### Phase 5 — Workaround Containment
+
+- Status: Not started
+- _Blocked by:_ Upstream TRITON-SWMM fix for `output_folder` directive
+- See: `docs/implementation/triton_output_path_bug.md`
+
+### Phase 6 — Test Suite Cleanup
+
+- Status: **Partially Complete** (Phase 6c done, 6a-6b-6d remaining)
+- Touched files:
+  - `tests/utils_for_testing.py` (diagnostic print cleanup)
+- Implemented:
+  - **Phase 6c**: Made test diagnostic prints opt-in via `verbose` parameter
+    - `assert_scenarios_setup()` — verbose parameter added (default: False)
+    - `assert_scenarios_run()` — verbose parameter added
+    - `assert_timeseries_processed()` — verbose parameter added
+    - Improved failure messages with count and hint to run with pytest -v
+    - Backward compatible (existing tests work unchanged)
+- Test status:
+  - All smoke tests pass (PC_01 through PC_05)
+- Remaining (deferred):
+  - **Phase 6a**: Parametrize repeated platform test patterns
+  - **Phase 6b**: Consolidate fixture factories
+  - **Phase 6d**: Standardize assertions around completion semantics
+
+### Phase 7+
 
 - Status: Not started
