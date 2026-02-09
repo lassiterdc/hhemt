@@ -122,7 +122,7 @@ Baseline interpretation:
 
 ### Phase 6 — Test Suite Cleanup
 
-- Status: **In Progress** (6c complete, 6a.1/6b.1/6d.1/6d.2 complete, next: 6d.3)
+- Status: **In Progress** (6c complete, 6a.1/6b.1/6d.1/6d.2 complete, 6d.3 in progress)
 - Touched files:
   - `tests/utils_for_testing.py` (diagnostic print cleanup + new assertion helpers)
   - `tests/test_PILOT_platform_parametrized_workflow.py` (NEW; parametrization pilot)
@@ -147,6 +147,12 @@ Baseline interpretation:
     - `assert_file_exists()` — standardizes 18 path existence checks
     - `assert_phases_complete()` — leverages WorkflowStatus for phase validation
     - `assert_model_simulations_complete()` — model-specific completion checking
+  - **Phase 6d.3** (In Progress): Migrate existing assertions to use new helpers
+    - Completed: 6 of ~37 patterns migrated (PC tests)
+    - test_PC_01_singlesim.py: 2 migrations (simulation dir, cross-model file checks)
+    - test_PC_04_multisim_with_snakemake.py: 1 migration (Snakefile path)
+    - test_PC_05_sensitivity_analysis_with_snakemake.py: 3 migrations (Snakefiles)
+    - Remaining: ~31 patterns in platform-specific tests (UVA, Frontier)
 - Test status:
   - All smoke tests pass (PC_01 through PC_05)
   - Pilot parametrized tests pass (2 local, 4 skipped for unavailable platforms)
