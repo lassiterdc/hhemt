@@ -5,28 +5,24 @@ workflows with support for production, testcase, and case-study profiles.
 """
 
 from pathlib import Path
-from typing import List, Optional
-import sys
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from .cli_utils import map_exception_to_exit_code
-from .profile_catalog import (
-    load_profile_catalog,
-    get_profile_entry,
-    list_testcases,
-    list_case_studies,
-)
 from .exceptions import (
     CLIValidationError,
-    ConfigurationError,
     CompilationError,
-    SimulationError,
+    ConfigurationError,
     ProcessingError,
+    SimulationError,
     WorkflowError,
     WorkflowPlanningError,
+)
+from .profile_catalog import (
+    list_case_studies,
+    list_testcases,
+    load_profile_catalog,
 )
 
 app = typer.Typer(
@@ -43,12 +39,12 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # Required Arguments (unless using list actions)
     # ═══════════════════════════════════════════════════════════════
-    profile: Optional[str] = typer.Option(
+    profile: str | None = typer.Option(
         None,
         "--profile",
         help="Execution profile: production, testcase, or case-study",
     ),
-    system_config: Optional[Path] = typer.Option(
+    system_config: Path | None = typer.Option(
         None,
         "--system-config",
         help="Path to system configuration YAML file",
@@ -57,7 +53,7 @@ def run_command(
         dir_okay=False,
         readable=True,
     ),
-    analysis_config: Optional[Path] = typer.Option(
+    analysis_config: Path | None = typer.Option(
         None,
         "--analysis-config",
         help="Path to analysis configuration YAML file",
@@ -105,12 +101,12 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # Scenario/Event Selection
     # ═══════════════════════════════════════════════════════════════
-    event_ilocs: Optional[str] = typer.Option(
+    event_ilocs: str | None = typer.Option(
         None,
         "--event-ilocs",
         help="Comma-separated event indices (e.g., '0,1,2,10')",
     ),
-    event_range: Optional[str] = typer.Option(
+    event_range: str | None = typer.Option(
         None,
         "--event-range",
         help="Event range START:END (e.g., '0:100', inclusive start, exclusive end)",
@@ -118,17 +114,17 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # Profile-Specific Options
     # ═══════════════════════════════════════════════════════════════
-    testcase: Optional[str] = typer.Option(
+    testcase: str | None = typer.Option(
         None,
         "--testcase",
         help="Testcase name (required when --profile testcase)",
     ),
-    case_study: Optional[str] = typer.Option(
+    case_study: str | None = typer.Option(
         None,
         "--case-study",
         help="Case study name (required when --profile case-study)",
     ),
-    tests_case_config: Optional[Path] = typer.Option(
+    tests_case_config: Path | None = typer.Option(
         None,
         "--tests-case-config",
         help="Path to tests_and_case_studies.yaml profile catalog",
@@ -150,49 +146,49 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # HPC Override Options
     # ═══════════════════════════════════════════════════════════════
-    platform_config: Optional[str] = typer.Option(
+    platform_config: str | None = typer.Option(
         None, "--platform-config", help="Platform configuration name"
     ),
-    partition: Optional[str] = typer.Option(
+    partition: str | None = typer.Option(
         None, "--partition", help="SLURM partition override"
     ),
-    account: Optional[str] = typer.Option(
+    account: str | None = typer.Option(
         None, "--account", help="SLURM account override"
     ),
-    qos: Optional[str] = typer.Option(
+    qos: str | None = typer.Option(
         None, "--qos", help="SLURM QoS override"
     ),
-    nodes: Optional[int] = typer.Option(
+    nodes: int | None = typer.Option(
         None, "--nodes", help="Number of nodes", min=1
     ),
-    ntasks_per_node: Optional[int] = typer.Option(
+    ntasks_per_node: int | None = typer.Option(
         None, "--ntasks-per-node", help="Tasks per node", min=1
     ),
-    cpus_per_task: Optional[int] = typer.Option(
+    cpus_per_task: int | None = typer.Option(
         None, "--cpus-per-task", help="CPUs per task", min=1
     ),
-    gpus_per_node: Optional[int] = typer.Option(
+    gpus_per_node: int | None = typer.Option(
         None, "--gpus-per-node", help="GPUs per node", min=0
     ),
-    walltime: Optional[str] = typer.Option(
+    walltime: str | None = typer.Option(
         None, "--walltime", help="Walltime limit (HH:MM:SS format)"
     ),
     # ═══════════════════════════════════════════════════════════════
     # Workflow Engine Options
     # ═══════════════════════════════════════════════════════════════
-    jobs: Optional[int] = typer.Option(
+    jobs: int | None = typer.Option(
         None,
         "--jobs",
         "-j",
         help="Parallel jobs for workflow execution",
         min=1,
     ),
-    workflow_target: Optional[str] = typer.Option(
+    workflow_target: str | None = typer.Option(
         None,
         "--workflow-target",
         help="Explicit Snakemake target/rule group (advanced)",
     ),
-    snakemake_args: Optional[List[str]] = typer.Option(
+    snakemake_args: list[str] | None = typer.Option(
         None,
         "--snakemake-arg",
         help="Pass-through Snakemake flag (repeatable)",
@@ -303,33 +299,133 @@ def run_command(
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 3: Profile Resolution (if applicable)
+        # Stage 4: Profile Resolution (if applicable)
         # ═══════════════════════════════════════════════════════════════
-        # TODO: Implement profile resolution and config merging
+        # Note: Profile resolution for testcase/case-study profiles is
+        # deferred to future phases. For now, production profiles use
+        # config files directly without merging profile catalog entries.
+
+        if profile in ["testcase", "case-study"]:
+            # Future: Load catalog, resolve profile entry, merge with configs
+            raise CLIValidationError(
+                argument="--profile",
+                message=f"Profile type '{profile}' not yet implemented",
+                fix_hint="Use --profile production for now",
+            )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 4: Config Loading
+        # Stage 5: Config Loading & System/Analysis Instantiation
         # ═══════════════════════════════════════════════════════════════
-        # TODO: Load system and analysis configs
+        if not quiet:
+            console.print("[cyan]Loading configurations...[/cyan]")
+
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis  # Link back
+
+        if not quiet:
+            console.print("[green]✓[/green] Configurations loaded")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 5: Preflight Validation
+        # Stage 6: Preflight Validation
         # ═══════════════════════════════════════════════════════════════
-        # TODO: Run preflight validation
+        if not quiet:
+            console.print("[cyan]Running preflight validation...[/cyan]")
+
+        validation_result = analysis.validate()
+
+        if validation_result.has_warnings:
+            for warning in validation_result.warnings:
+                console.print(f"[yellow]Warning:[/yellow] {warning.message}")
+
+        if not validation_result.is_valid:
+            console_err.print("[bold red]Validation failed:[/bold red]")
+            for error in validation_result.errors:
+                console_err.print(f"  • {error.message}")
+            raise typer.Exit(2)
+
+        if not quiet:
+            console.print("[green]✓[/green] Validation passed")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 6: Dry-Run Output (if requested)
+        # Stage 7: Dry-Run Output (if requested)
         # ═══════════════════════════════════════════════════════════════
         if dry_run:
             _print_dry_run_summary(locals())
-            raise typer.Exit(0)
+            console.print("\n[yellow]Dry-run mode: Snakemake DAG will be validated but not executed[/yellow]")
+            # Continue to Stage 8 with dry_run=True
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7: Orchestration
+        # Stage 8: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
-        # TODO: Wire to Analysis class and execute workflow
 
-        console.print("[bold green]✓ Workflow complete![/bold green]")
+        # Translate CLI flags to workflow builder parameters
+        # Check if system inputs need processing (DEM and Manning's)
+        system_log = system.log
+        process_system_inputs = not (
+            system_log.dem_processed.get()
+            and (system.cfg_system.toggle_use_constant_mannings or system_log.mannings_processed.get())
+        )
+
+        compile_triton_swmm = True  # Always compile unless already done
+        recompile = (from_scratch or overwrite)
+        prepare_scenarios = True
+        overwrite_scenario = (from_scratch or overwrite)
+        process_timeseries = True
+        overwrite_outputs = (from_scratch or overwrite)
+        pickup_where_leftoff = resume and not from_scratch
+
+        # Determine execution mode
+        if analysis.in_slurm or analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+            mode = "slurm"
+        else:
+            mode = "local"
+
+        if not quiet:
+            console.print(f"\n[cyan]Submitting workflow in {mode} mode...[/cyan]")
+
+        # Submit workflow via Snakemake
+        # Cast which to Literal type for type checker
+        from typing import Literal, cast
+        which_typed = cast(Literal["TRITON", "SWMM", "both"], which)
+
+        result = analysis._workflow_builder.submit_workflow(
+            mode=mode,
+            process_system_level_inputs=process_system_inputs,
+            overwrite_system_inputs=(from_scratch or overwrite),
+            compile_TRITON_SWMM=compile_triton_swmm,
+            recompile_if_already_done_successfully=recompile,
+            prepare_scenarios=prepare_scenarios,
+            overwrite_scenario=overwrite_scenario,
+            rerun_swmm_hydro_if_outputs_exist=overwrite,
+            process_timeseries=process_timeseries,
+            which=which_typed,
+            clear_raw_outputs=True,  # Default: clear raw outputs after processing
+            overwrite_if_exist=overwrite_outputs,
+            compression_level=5,  # Default compression level
+            pickup_where_leftoff=pickup_where_leftoff,
+            wait_for_completion=(mode == "slurm"),  # Wait for SLURM jobs
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
+        # Check workflow result
+        if not result.get("success"):
+            error_msg = result.get("message", "Workflow submission failed")
+            console_err.print(f"[bold red]Workflow Error:[/bold red] {error_msg}")
+            raise typer.Exit(3)
+
+        if dry_run:
+            console.print("\n[bold green]✓ Dry-run validation complete![/bold green]")
+            console.print("[dim]No simulations were executed.[/dim]")
+        else:
+            console.print("[bold green]✓ Workflow complete![/bold green]")
+            if mode == "slurm" and result.get("job_id"):
+                console.print(f"[dim]SLURM Job ID: {result['job_id']}[/dim]")
+
         raise typer.Exit(0)
 
     except typer.Exit:
@@ -369,7 +465,7 @@ def run_command(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _handle_list_testcases(catalog_path: Optional[Path]) -> None:
+def _handle_list_testcases(catalog_path: Path | None) -> None:
     """Print available testcases and exit."""
     try:
         catalog = load_profile_catalog(catalog_path)
@@ -393,7 +489,7 @@ def _handle_list_testcases(catalog_path: Optional[Path]) -> None:
         raise typer.Exit(2)
 
 
-def _handle_list_case_studies(catalog_path: Optional[Path]) -> None:
+def _handle_list_case_studies(catalog_path: Path | None) -> None:
     """Print available case studies and exit."""
     try:
         catalog = load_profile_catalog(catalog_path)
@@ -530,12 +626,12 @@ def _print_dry_run_summary(args: dict) -> None:
         console.print(f"[bold]Case Study:[/bold] {args['case_study']}")
 
     # Configuration files
-    console.print(f"\n[bold]Configuration Files:[/bold]")
+    console.print("\n[bold]Configuration Files:[/bold]")
     console.print(f"  System:   {args['system_config']}")
     console.print(f"  Analysis: {args['analysis_config']}")
 
     # Execution mode
-    console.print(f"\n[bold]Execution Mode:[/bold]")
+    console.print("\n[bold]Execution Mode:[/bold]")
     console.print(f"  Model:  {args['model']}")
     console.print(f"  Which:  {args['which']}")
     console.print(f"  Resume: {args['resume']}")
@@ -543,7 +639,7 @@ def _print_dry_run_summary(args: dict) -> None:
 
     # Event selection
     if args['event_ilocs'] or args['event_range']:
-        console.print(f"\n[bold]Event Selection:[/bold]")
+        console.print("\n[bold]Event Selection:[/bold]")
         if args['event_ilocs']:
             console.print(f"  Indices: {args['event_ilocs']}")
         if args['event_range']:
@@ -556,7 +652,7 @@ def _print_dry_run_summary(args: dict) -> None:
         and v is not None
     }
     if hpc_overrides:
-        console.print(f"\n[bold]HPC Overrides:[/bold]")
+        console.print("\n[bold]HPC Overrides:[/bold]")
         for key, value in hpc_overrides.items():
             console.print(f"  {key}: {value}")
 
