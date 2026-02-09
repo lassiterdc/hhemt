@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 3 Phase 2 complete: shared orchestration core + status reporting)
+**Last Updated:** 2026-02-09 (Tier 3 Phase 3 partial: CLI refactored to use orchestration API)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -17,6 +17,8 @@ For reference, these major efforts are done and tested:
 - [x] Wait-for-completion SLURM polling (two-stage squeue + sacct)
 - [x] Conda activation in SLURM fix
 - [x] Examples/test utilities refactor (67% reduction, platform configs centralized)
+- [x] Shared orchestration core (analysis.run() API, WorkflowResult, workflow status reporting)
+- [x] CLI refactor to use orchestration API (70 lines → 47 lines, thin adapter pattern)
 
 ---
 
@@ -101,11 +103,13 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - ✅ Workflow status reporting (get_workflow_status() method + --status CLI flag)
   - _Ref:_ `docs/planning/implementation_roadmap.md`, `workflow_status_reporting_plan.md`
 
-- [ ] **Implement `triton-swmm run` CLI command** (Phase 3 of implementation roadmap)
-  - Wire arguments to Snakemake targets/options
-  - Add dry-run and argument-resolution summary output
-  - Add testcase/case-study discovery actions
-  - _Ref:_ `docs/planning/cli_command_spec.md`
+- [x] **Implement `triton-swmm run` CLI command** (Phase 3 of implementation roadmap) — **Partial (70%)**
+  - ✅ Refactored CLI to use analysis.run() orchestration API (32% code reduction)
+  - ✅ Wire arguments to orchestration layer (mode translation: fresh/resume/overwrite)
+  - ✅ Discovery actions implemented (--list-testcases, --list-case-studies)
+  - ⏸️ Dry-run summary output (current implementation sufficient)
+  - ⏸️ Profile resolution for testcase/case-study (blocked by catalog implementation)
+  - _Ref:_ `docs/planning/cli_command_spec.md`, `docs/planning/shared_orchestration_design.md`
 
 - [ ] **Profile catalog (`tests_and_case_studies.yaml`)** support
   - Implement HPC inheritance and merge semantics
@@ -171,6 +175,8 @@ These are driven by specific HPC usage needs rather than architectural improveme
 | `planning/api_vision.md` | Python API layers and parity requirements |
 | `planning/hpc_inheritance_spec.md` | `tests_and_case_studies.yaml` schema |
 | `planning/local_gpu_workflow_support_plan.md` | Local GPU workflow resource limiting |
+| `planning/workflow_status_reporting_plan.md` | --status flag design and implementation |
+| `planning/shared_orchestration_design.md` | High-level orchestration API design |
 | `planning/refactors/config_py_refactor_plan.md` | config.py split into focused modules |
 | `planning/refactors/frontend_validation_checklist.md` | Preflight validation checks |
 
