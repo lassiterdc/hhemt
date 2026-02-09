@@ -1173,10 +1173,10 @@ class TRITONSWMM_analysis:
     def run(
         self,
         mode: Literal["fresh", "resume", "overwrite"] = "resume",
+        dry_run: bool = False,
         phases: Optional[List[str]] = None,
         events: Optional[List[int]] = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
-        dry_run: bool = False,
         verbose: bool = True,
     ) -> "WorkflowResult":
         """
@@ -1417,10 +1417,19 @@ class TRITONSWMM_analysis:
             details=setup_details,
         )
 
+        sensitivity_scenario = 1
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            sens = self.sensitivity
+            sensitivity_scenario = len(sens.df_setup)
+
         # Check scenario preparation
         all_prepared = self.all_scenarios_created
         not_prepared = self.scenarios_not_created
-        n_total = len(self.df_sims)
+        n_total = (
+            len(self.df_sims)
+            * len(self._get_enabled_model_types())
+            * sensitivity_scenario
+        )
         n_prepared = n_total - len(not_prepared)
 
         prep_phase = PhaseStatus(
@@ -1699,7 +1708,7 @@ class TRITONSWMM_analysis:
     @property
     def df_status(self):
         #  TODO - this currently only retrieves TRITON-SWMM simulation stats
-        # it needs to be updated to retrieve stats for all models that are 
+        # it needs to be updated to retrieve stats for all models that are
         # run and return their concatenated form.
         """
         Get status DataFrame for all scenarios in the analysis.
