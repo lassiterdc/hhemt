@@ -975,16 +975,18 @@ Phase 1 deliverables:
 - [x] Add custom argument validators (mutually exclusive flags, conditional requirements)
 - [x] Add list-actions output formatters (testcases, case-studies)
 - [x] Create tests/test_profile_catalog.py (10 tests, all passing)
+- [x] **Create tests/test_cli_01_validation.py (22 tests, all passing)**
+- [x] **Create tests/test_cli_02_exit_codes.py (9 tests, all passing)**
+- [x] **Create tests/test_cli_03_actions.py (14 tests, all passing)**
 - [ ] Implement profile resolution with 6-tier precedence (TODO in cli.py)
 - [ ] Wire CLI to Analysis orchestration (prepare, run, process) (TODO in cli.py)
 - [ ] Add dry-run output formatter (skeleton exists)
-- [ ] Create tests/test_cli_01_validation.py (argument validation)
-- [ ] Create tests/test_cli_02_exit_codes.py (exit code mapping)
-- [ ] Create tests/test_cli_03_actions.py (list actions)
-- [ ] Create tests/test_cli_04_multisim_workflow.py (mirrors PC_04)
-- [ ] Create tests/test_cli_05_sensitivity_workflow.py (mirrors PC_05)
+- [ ] Create tests/test_cli_04_multisim_workflow.py (mirrors PC_04 - blocked by orchestration)
+- [ ] Create tests/test_cli_05_sensitivity_workflow.py (mirrors PC_05 - blocked by orchestration)
 - [ ] Update CLAUDE.md with CLI usage patterns
 - [ ] Update priorities.md to mark "Finalize CLI contract" complete
+
+**Progress: 9/15 items complete (60%)**
 
 ---
 
