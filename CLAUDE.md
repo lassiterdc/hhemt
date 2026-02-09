@@ -426,7 +426,59 @@ on_frontier()     # True if hostname contains "frontier"
 on_UVA_HPC()      # True if hostname contains "virginia"
 ```
 
-Assertion helpers: `assert_scenarios_setup()`, `assert_scenarios_run()`, `assert_timeseries_processed()`
+### Test Assertion Patterns
+
+Use standardized assertion helpers for consistent error messages and better debugging:
+
+**Workflow Phase Completion:**
+```python
+tst_ut.assert_scenarios_setup(analysis)          # All scenarios created
+tst_ut.assert_scenarios_run(analysis)            # All simulations complete
+tst_ut.assert_timeseries_processed(analysis)     # All outputs processed
+tst_ut.assert_phases_complete(analysis, phases=["setup", "preparation"])
+```
+
+**Model-Specific Validation:**
+```python
+tst_ut.assert_model_simulation_run(analysis, model_type)      # Simulation completed
+tst_ut.assert_model_outputs_processed(analysis, model_type)   # Outputs exist
+tst_ut.assert_model_simulations_complete(analysis, model_type)  # All scenarios done
+```
+
+**Multi-Model Output Validation:**
+```python
+tst_ut.assert_model_outputs_exist(analysis)  # All enabled models have outputs
+tst_ut.assert_model_outputs_exist(
+    analysis,
+    model_types=["triton", "tritonswmm"],  # Explicit subset
+    check_timeseries=True,
+    check_summaries=True
+)
+```
+
+**File Existence:**
+```python
+tst_ut.assert_file_exists(path, description="Snakefile")  # Always include description
+```
+
+**Snakefile Validation:**
+```python
+tst_ut.assert_snakefile_has_rules(content, ["setup", "run_simulation", ...])
+tst_ut.assert_snakefile_has_flags(content, ["--compression-level 5", ...])
+```
+
+**Compilation Validation:**
+```python
+tst_ut.assert_triton_compiled(analysis)
+tst_ut.assert_tritonswmm_compiled(analysis)
+tst_ut.assert_swmm_compiled(analysis)
+```
+
+**Key principles:**
+- All helpers support `verbose=True` mode (or use `pytest -v`) for detailed output
+- Helpers provide clear failure messages with counts and actionable information
+- Use helpers instead of direct property checks (`assert analysis.all_scenarios_created` gives poor errors)
+- File paths should always include descriptive context in error messages
 
 ## Code Style
 
