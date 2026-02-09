@@ -35,6 +35,7 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+console_err = Console(stderr=True)
 
 
 @app.command(name="run")
@@ -336,30 +337,30 @@ def run_command(
         raise
 
     except CLIValidationError as e:
-        console.print(f"[bold red]Argument Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Argument Error:[/bold red] {e}")
         raise typer.Exit(2)
 
     except ConfigurationError as e:
-        console.print(f"[bold red]Configuration Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
         raise typer.Exit(2)
 
     except (CompilationError, WorkflowError, WorkflowPlanningError) as e:
-        console.print(f"[bold red]Workflow Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
         raise typer.Exit(3)
 
     except SimulationError as e:
-        console.print(f"[bold red]Simulation Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Simulation Error:[/bold red] {e}")
         raise typer.Exit(4)
 
     except ProcessingError as e:
-        console.print(f"[bold red]Processing Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Processing Error:[/bold red] {e}")
         raise typer.Exit(5)
 
     except Exception as e:
-        console.print(f"[bold red]Unexpected Error:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
         if verbose:
             import traceback
-            console.print(traceback.format_exc(), err=True)
+            console_err.print(traceback.format_exc())
         raise typer.Exit(10)
 
 
@@ -388,7 +389,7 @@ def _handle_list_testcases(catalog_path: Optional[Path]) -> None:
         console.print(table)
 
     except ConfigurationError as e:
-        console.print(f"[bold red]Error loading catalog:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
         raise typer.Exit(2)
 
 
@@ -412,7 +413,7 @@ def _handle_list_case_studies(catalog_path: Optional[Path]) -> None:
         console.print(table)
 
     except ConfigurationError as e:
-        console.print(f"[bold red]Error loading catalog:[/bold red] {e}", err=True)
+        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
         raise typer.Exit(2)
 
 
