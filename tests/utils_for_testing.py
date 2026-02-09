@@ -116,7 +116,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
             print("\n  Failed scenarios:\n    - " + "\n    - ".join(analysis.scenarios_not_created))
         pytest.fail(
             f"Scenario setup failed for {len(analysis.scenarios_not_created)} "
-            f"of {len(analysis.scenarios)} scenarios. Run with pytest -v for details."
+            f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
         )
 
 
@@ -135,7 +135,7 @@ def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
             print("\n  Failed simulations:\n    - " + "\n    - ".join(analysis.scenarios_not_run))
         pytest.fail(
             f"Simulation failed for {len(analysis.scenarios_not_run)} "
-            f"of {len(analysis.scenarios)} scenarios. Run with pytest -v for details."
+            f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
         )
 
 
