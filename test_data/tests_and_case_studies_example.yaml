@@ -1,0 +1,50 @@
+# Example tests_and_case_studies.yaml profile catalog
+#
+# This file demonstrates the schema for testcase and case-study profile definitions.
+# Users can create their own catalog with custom entries.
+
+version: 1
+
+defaults:
+  hpc:
+    platform_config: null
+    scheduler: slurm
+    partition: null
+    account: null
+    qos: null
+    nodes: 1
+    ntasks_per_node: 1
+    cpus_per_task: 1
+    gpus_per_node: 0
+    walltime: "01:00:00"
+  workflow:
+    jobs: 1
+    which: both
+    model: auto
+
+testcases:
+  norfolk_smoke:
+    description: "Fast install/runtime verification (minimal test)"
+    case_root: norfolk_coastal_flooding/tests/smoke
+    system_config: norfolk_coastal_flooding/template_system_config.yaml
+    analysis_config: norfolk_coastal_flooding/template_analysis_config.yaml
+    hpc:
+      partition: debug
+      walltime: "00:20:00"
+    workflow:
+      jobs: 1
+    event_ilocs: [0]
+
+case_studies:
+  norfolk_coastal_flooding:
+    description: "Reference case-study workflow for coastal flooding analysis"
+    case_root: norfolk_coastal_flooding
+    system_config: norfolk_coastal_flooding/template_system_config.yaml
+    analysis_config: norfolk_coastal_flooding/template_analysis_config.yaml
+    hpc:
+      nodes: 2
+      ntasks_per_node: 4
+      cpus_per_task: 2
+      walltime: "02:00:00"
+    workflow:
+      jobs: 8
