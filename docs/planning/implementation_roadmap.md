@@ -5,7 +5,7 @@
 Implement a Snakemake-first single-command CLI while preserving a direct Python
 API that uses the same orchestration semantics.
 
-## Phase 0 — Planning Baseline (current)
+## Phase 0 — Planning Baseline ✅ COMPLETE
 
 Deliverables:
 - `cli_vision.md`
@@ -19,7 +19,7 @@ Exit criteria:
 
 ---
 
-## Phase 1 — Interface Contracts
+## Phase 1 — Interface Contracts ✅ COMPLETE (80%)
 
 Scope:
 - finalize CLI argument contract and validation matrix
@@ -33,12 +33,21 @@ Implementation notes:
 - document any intentional behavior changes
 
 Exit criteria:
-- contract docs approved
-- acceptance tests drafted (CLI + API parity)
+- contract docs approved ✅
+- acceptance tests drafted (CLI + API parity) ✅ (45 tests passing)
+- ⏸️ Deferred: testcase/case-study profile resolution (blocked)
+
+Completed:
+- CLI argument contract with validation matrix
+- Error classes and exit code mapping
+- Profile model with production/testcase/case-study support
+- List actions (--list-testcases, --list-case-studies)
+- CLI unit test suite (test_cli_01-03)
+- Wired CLI to Analysis orchestration
 
 ---
 
-## Phase 2 — Shared Orchestration Core
+## Phase 2 — Shared Orchestration Core ✅ COMPLETE
 
 Scope:
 - consolidate run/setup/processing flow behind one orchestration layer
@@ -46,23 +55,38 @@ Scope:
 - ensure API methods call the same orchestration path
 
 Exit criteria:
-- single source of truth for routing and validation
-- reduced duplicated control-flow logic
+- single source of truth for routing and validation ✅
+- reduced duplicated control-flow logic ✅
+
+Completed:
+- `orchestration.py` module with WorkflowResult dataclass
+- `analysis.run()` high-level API with mode translation (fresh/resume/overwrite)
+- `translate_mode()` and `translate_phases()` functions
+- `WorkflowStatus` and `PhaseStatus` dataclasses
+- `analysis.get_workflow_status()` method for status reporting
+- `--status` CLI flag integration
+- 4 test suite for status reporting (all passing)
 
 ---
 
-## Phase 3 — Snakemake-First CLI Implementation
+## Phase 3 — Snakemake-First CLI Implementation (CURRENT)
 
 Scope:
 - implement `run` entrypoint with agreed flags
 - wire arguments to Snakemake targets/options
 - add dry-run and argument-resolution summary output
-- add discovery actions for curated profiles (`--list-testcases`, `--list-case-studies`)
+- add discovery actions for curated profiles (`--list-testcases`, `--list-case-studies`) ✅
 - resolve testcase/case-study profile entries into runtime configs
 
 Exit criteria:
 - end-to-end run works from command line
 - clear non-zero exit codes for failure modes
+
+Next Steps:
+- Refactor CLI to use `analysis.run()` API (simplify from 60+ lines to ~30)
+- Complete argument wiring to workflow parameters
+- Implement dry-run summary output
+- Add integration tests for end-to-end CLI execution
 
 ---
 

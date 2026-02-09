@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 3 Phase 1 CLI contract 80% complete, all smoke tests passing)
+**Last Updated:** 2026-02-09 (Tier 3 Phase 2 complete: shared orchestration core + status reporting)
 **Status:** Active — update this document as work progresses.
 
 ---
