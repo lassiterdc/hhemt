@@ -236,19 +236,11 @@ def test_snakemake_workflow_end_to_end(norfolk_multi_sim_analysis):
             tritonswmm_node_ts = paths.output_tritonswmm_node_time_series
             tritonswmm_link_ts = paths.output_tritonswmm_link_time_series
 
-            if not all(
-                p is not None and p.exists()
-                for p in [
-                    swmm_node_ts,
-                    swmm_link_ts,
-                    tritonswmm_node_ts,
-                    tritonswmm_link_ts,
-                ]
-            ):
-                pytest.fail(
-                    "Missing SWMM-only or TRITON-SWMM SWMM time series outputs; "
-                    "workflow did not generate all expected files."
-                )
+            # Verify all required output files exist
+            tst_ut.assert_file_exists(swmm_node_ts, "SWMM-only node timeseries")
+            tst_ut.assert_file_exists(swmm_link_ts, "SWMM-only link timeseries")
+            tst_ut.assert_file_exists(tritonswmm_node_ts, "TRITON-SWMM node timeseries")
+            tst_ut.assert_file_exists(tritonswmm_link_ts, "TRITON-SWMM link timeseries")
 
             ds_swmm_nodes = xr.open_dataset(swmm_node_ts)
             ds_swmm_links = xr.open_dataset(swmm_link_ts)
