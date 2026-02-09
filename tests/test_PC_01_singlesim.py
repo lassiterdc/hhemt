@@ -1,6 +1,5 @@
 # tests/test_TRITON_SWMM_toolkit.py
 import pytest
-from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 import xarray as xr
 
 import tests.utils_for_testing as tst_ut
@@ -98,7 +97,7 @@ def test_process_sim(norfolk_all_models_analysis_cached):
     )
     if not success_clearing:
         analysis.print_logfile_for_scenario(0)
-        pytest.fail(f"Clearing raw outputs failed.")
+        pytest.fail("Clearing raw outputs failed.")
 
 
 def test_swmm_cross_model_consistency(norfolk_all_models_analysis_cached):
@@ -156,8 +155,8 @@ def test_swmm_cross_model_consistency(norfolk_all_models_analysis_cached):
         # Data variables should match (order-agnostic)
         if set(ds_swmm_nodes.data_vars) != set(ds_tritonswmm_nodes.data_vars):
             pytest.fail("Node time series data variables do not match")
-        swmm_link_vars = set(ds_swmm_links.data_vars)
-        tritonswmm_link_vars = set(ds_tritonswmm_links.data_vars)
+        swmm_link_vars = {str(v) for v in ds_swmm_links.data_vars}
+        tritonswmm_link_vars = {str(v) for v in ds_tritonswmm_links.data_vars}
 
         # Normalize known naming differences before comparing
         swmm_link_vars = tst_ut.normalize_swmm_link_vars(swmm_link_vars)
