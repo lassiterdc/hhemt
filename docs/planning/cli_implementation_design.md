@@ -727,9 +727,33 @@ def run_command(
 
 ## Testing Strategy
 
-### 1. Argument Validation Tests (`tests/test_cli_validation.py`)
+### Test Organization
+
+CLI tests should mirror the existing PC (Python API) test structure for **CLI/API parity verification**:
+
+| Test File | Purpose | Mirrors |
+|-----------|---------|---------|
+| `test_cli_01_validation.py` | Argument validation, mutually exclusive flags | N/A (CLI-specific) |
+| `test_cli_02_exit_codes.py` | Exception-to-exit-code mapping | N/A (CLI-specific) |
+| `test_cli_03_actions.py` | List actions (--list-testcases, --list-case-studies) | N/A (CLI-specific) |
+| `test_cli_04_multisim_workflow.py` | Multi-sim Snakemake workflow via CLI | `test_PC_04_multisim_with_snakemake.py` |
+| `test_cli_05_sensitivity_workflow.py` | Sensitivity analysis via CLI | `test_PC_05_sensitivity_analysis_with_snakemake.py` |
+| `test_profile_catalog.py` | Profile catalog loading/resolution | N/A (already exists) |
+
+**Key principle:** CLI tests for workflows (04, 05) should produce **equivalent outcomes** to their Python API counterparts, ensuring consistent behavior across interfaces.
+
+---
+
+### 1. Argument Validation Tests (`tests/test_cli_01_validation.py`)
 
 ```python
+"""CLI argument validation tests."""
+
+from typer.testing import CliRunner
+from TRITON_SWMM_toolkit.cli import app
+
+runner = CliRunner()
+
 def test_mutually_exclusive_from_scratch_resume():
     """Test --from-scratch and --resume are mutually exclusive."""
     result = runner.invoke(app, [
@@ -753,65 +777,190 @@ def test_testcase_requires_name():
     ])
     assert result.exit_code == 2
     assert "--testcase NAME required" in result.output
-```
 
-### 2. Exit Code Tests (`tests/test_cli_exit_codes.py`)
-
-```python
-def test_exit_code_cli_validation_error():
-    """Test CLIValidationError maps to exit code 2."""
-    # Trigger CLIValidationError
-    result = runner.invoke(app, ["run", "--from-scratch", "--resume", ...])
-    assert result.exit_code == 2
-
-def test_exit_code_configuration_error():
-    """Test ConfigurationError maps to exit code 2."""
-    # Trigger ConfigurationError (invalid config file)
-    assert result.exit_code == 2
-
-def test_exit_code_compilation_error():
-    """Test CompilationError maps to exit code 3."""
-    # Mock compilation failure
-    assert result.exit_code == 3
-```
-
-### 3. Profile Catalog Tests (`tests/test_profile_catalog.py`)
-
-```python
-def test_load_valid_catalog():
-    """Test loading valid tests_and_case_studies.yaml."""
-    catalog = load_profile_catalog(valid_catalog_path)
-    assert catalog.version == 1
-    assert "norfolk_smoke" in catalog.testcases
-
-def test_resolve_testcase_precedence():
-    """Test 6-tier precedence resolution for testcase."""
-    # CLI overrides should take highest precedence
-    resolved = resolve_profile_config(...)
-    assert resolved["partition"] == cli_overrides["partition"]
-```
-
-### 4. Integration Tests (`tests/test_cli_integration.py`)
-
-```python
-def test_dry_run_production_profile():
-    """Test --dry-run shows intended workflow without execution."""
+def test_event_ilocs_and_range_mutually_exclusive():
+    """Test --event-ilocs and --event-range are mutually exclusive."""
     result = runner.invoke(app, [
         "run",
         "--profile", "production",
         "--system-config", "system.yaml",
         "--analysis-config", "analysis.yaml",
+        "--event-ilocs", "0,1,2",
+        "--event-range", "0:10",
+    ])
+    assert result.exit_code == 2
+    assert "mutually exclusive" in result.output.lower()
+```
+
+### 2. Exit Code Tests (`tests/test_cli_02_exit_codes.py`)
+
+```python
+"""CLI exit code mapping tests."""
+
+from typer.testing import CliRunner
+from TRITON_SWMM_toolkit.cli import app
+
+runner = CliRunner()
+
+def test_exit_code_cli_validation_error():
+    """Test CLIValidationError maps to exit code 2."""
+    # Trigger CLIValidationError (mutually exclusive flags)
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", "system.yaml",
+        "--analysis-config", "analysis.yaml",
+        "--from-scratch",
+        "--resume",
+    ])
+    assert result.exit_code == 2
+
+def test_exit_code_missing_config():
+    """Test missing config file maps to exit code 2."""
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", "/nonexistent/system.yaml",
+        "--analysis-config", "/nonexistent/analysis.yaml",
+    ])
+    assert result.exit_code == 2
+
+def test_exit_code_success():
+    """Test successful dry-run maps to exit code 0."""
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", "test_data/norfolk/system.yaml",
+        "--analysis-config", "test_data/norfolk/analysis.yaml",
         "--dry-run",
     ])
     assert result.exit_code == 0
-    assert "Dry-run summary" in result.output
-    # Verify no actual execution occurred
+```
+
+### 3. Action Tests (`tests/test_cli_03_actions.py`)
+
+```python
+"""CLI action flag tests (--list-testcases, --list-case-studies)."""
+
+from typer.testing import CliRunner
+from TRITON_SWMM_toolkit.cli import app
+
+runner = CliRunner()
 
 def test_list_testcases():
     """Test --list-testcases prints available testcases."""
-    result = runner.invoke(app, ["run", "--list-testcases"])
+    result = runner.invoke(app, [
+        "run",
+        "--list-testcases",
+        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
+    ])
     assert result.exit_code == 0
     assert "norfolk_smoke" in result.output
+    assert "Available Testcases" in result.output
+
+def test_list_case_studies():
+    """Test --list-case-studies prints available case studies."""
+    result = runner.invoke(app, [
+        "run",
+        "--list-case-studies",
+        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
+    ])
+    assert result.exit_code == 0
+    assert "norfolk_coastal_flooding" in result.output
+    assert "Available Case Studies" in result.output
+```
+
+### 4. Multi-Sim Workflow Tests (`tests/test_cli_04_multisim_workflow.py`)
+
+**Purpose:** Ensure CLI can execute multi-simulation Snakemake workflows equivalent to `test_PC_04_multisim_with_snakemake.py`.
+
+```python
+"""CLI multi-simulation workflow tests (mirrors test_PC_04)."""
+
+import pytest
+from typer.testing import CliRunner
+from pathlib import Path
+
+from TRITON_SWMM_toolkit.cli import app
+import tests.utils_for_testing as tst_ut
+
+runner = CliRunner()
+
+pytestmark = pytest.mark.skipif(
+    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+)
+
+def test_cli_multisim_workflow_production_profile(tmp_path):
+    """Test CLI can run multi-sim workflow with production profile."""
+    # Setup config files
+    system_config = tmp_path / "system.yaml"
+    analysis_config = tmp_path / "analysis.yaml"
+    # ... write configs ...
+
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", str(system_config),
+        "--analysis-config", str(analysis_config),
+        "--event-ilocs", "0,1",
+    ])
+
+    assert result.exit_code == 0
+    # Verify output directories exist
+    # Verify scenarios were created, run, and processed
+
+def test_cli_multisim_with_event_range(tmp_path):
+    """Test CLI can handle --event-range selection."""
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", str(system_config),
+        "--analysis-config", str(analysis_config),
+        "--event-range", "0:3",  # Events 0, 1, 2
+    ])
+
+    assert result.exit_code == 0
+    # Verify 3 scenarios were processed
+```
+
+### 5. Sensitivity Analysis Workflow Tests (`tests/test_cli_05_sensitivity_workflow.py`)
+
+**Purpose:** Ensure CLI can execute sensitivity analysis workflows equivalent to `test_PC_05_sensitivity_analysis_with_snakemake.py`.
+
+```python
+"""CLI sensitivity analysis workflow tests (mirrors test_PC_05)."""
+
+import pytest
+from typer.testing import CliRunner
+from pathlib import Path
+
+from TRITON_SWMM_toolkit.cli import app
+import tests.utils_for_testing as tst_ut
+
+runner = CliRunner()
+
+pytestmark = pytest.mark.skipif(
+    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+)
+
+def test_cli_sensitivity_workflow(tmp_path):
+    """Test CLI can run sensitivity analysis workflow."""
+    # Setup config with sensitivity toggles enabled
+    system_config = tmp_path / "system.yaml"
+    analysis_config = tmp_path / "analysis.yaml"
+    # ... write configs with toggle_sensitivity_analysis=True ...
+
+    result = runner.invoke(app, [
+        "run",
+        "--profile", "production",
+        "--system-config", str(system_config),
+        "--analysis-config", str(analysis_config),
+    ])
+
+    assert result.exit_code == 0
+    # Verify sub-analyses were created
+    # Verify master workflow was generated
+    # Verify results consolidated correctly
 ```
 
 ---
@@ -820,18 +969,20 @@ def test_list_testcases():
 
 Phase 1 deliverables:
 
-- [ ] Extend exceptions.py with CLIValidationError, WorkflowPlanningError
-- [ ] Create profile_catalog.py module (schema models, loader, resolver)
-- [ ] Rewrite cli.py with full `run` command implementation
-- [ ] Add custom argument validators (mutually exclusive flags, conditional requirements)
-- [ ] Implement profile resolution with 6-tier precedence
-- [ ] Wire CLI to Analysis orchestration (prepare, run, process)
-- [ ] Add dry-run output formatter
-- [ ] Add list-actions output formatters (testcases, case-studies)
-- [ ] Create tests/test_cli_validation.py
-- [ ] Create tests/test_cli_exit_codes.py
-- [ ] Create tests/test_profile_catalog.py
-- [ ] Create tests/test_cli_integration.py
+- [x] Extend exceptions.py with CLIValidationError, WorkflowPlanningError
+- [x] Create profile_catalog.py module (schema models, loader, resolver)
+- [x] Rewrite cli.py with full `run` command implementation
+- [x] Add custom argument validators (mutually exclusive flags, conditional requirements)
+- [x] Add list-actions output formatters (testcases, case-studies)
+- [x] Create tests/test_profile_catalog.py (10 tests, all passing)
+- [ ] Implement profile resolution with 6-tier precedence (TODO in cli.py)
+- [ ] Wire CLI to Analysis orchestration (prepare, run, process) (TODO in cli.py)
+- [ ] Add dry-run output formatter (skeleton exists)
+- [ ] Create tests/test_cli_01_validation.py (argument validation)
+- [ ] Create tests/test_cli_02_exit_codes.py (exit code mapping)
+- [ ] Create tests/test_cli_03_actions.py (list actions)
+- [ ] Create tests/test_cli_04_multisim_workflow.py (mirrors PC_04)
+- [ ] Create tests/test_cli_05_sensitivity_workflow.py (mirrors PC_05)
 - [ ] Update CLAUDE.md with CLI usage patterns
 - [ ] Update priorities.md to mark "Finalize CLI contract" complete
 
