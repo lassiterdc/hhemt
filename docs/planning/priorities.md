@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 3 Phase 4 complete: Toolkit API facade with example notebook)
+**Last Updated:** 2026-02-09 (Tier 1 Phase 6b.1 complete: Test fixture audit)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -45,12 +45,13 @@ Incremental improvements that reduce maintenance burden. Can be done independent
   - Currently in 4 source files — see `docs/implementation/triton_output_path_bug.md`
   - _Blocked by:_ Upstream TRITON-SWMM fix for `output_folder` directive
 
-- [ ] **Test suite cleanup** (`cruft_cleanup_plan.md` Phase 6)
-  - Parametrize repeated platform test patterns
-  - Consolidate fixture factories
-  - Reduce unconditional diagnostic prints
-  - Standardize assertions around completion semantics
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`
+- [ ] **Test suite cleanup** (`cruft_cleanup_plan.md` Phase 6) — **In Progress**
+  - [ ] **Phase 6a**: Parametrize repeated platform test patterns (next: 6a.1 pilot)
+  - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅ complete)
+  - [x] **Phase 6c**: Reduce unconditional diagnostic prints (✅ complete)
+  - [ ] **Phase 6d**: Standardize assertions around completion semantics
+  - _Status:_ Phase 6b.1 (fixture audit) complete, proceeding with 6a.1 (parametrization pilot)
+  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`
 
 ---
 
