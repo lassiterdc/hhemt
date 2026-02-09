@@ -653,6 +653,7 @@ class TRITONSWMM_system:
         verbose : bool
             If True, print progress messages
         """
+        # TODO - if TRITON-SWMM is enabled, re-downloading should only be allowed to occur once. Otherwise, previous compilations could be overwritten.
         if not self.cfg_system.toggle_triton_model:
             if verbose:
                 print("[TRITON-only] Skipped (toggle_triton_model=False)", flush=True)
