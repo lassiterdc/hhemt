@@ -80,7 +80,7 @@ def test_workflow_generation_parametrized(platform_analysis):
     snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
 
     # Validate Snakefile was created
-    assert snakefile_path.exists(), f"Snakefile not created at {snakefile_path}"
+    tst_ut.assert_file_exists(snakefile_path, "Snakefile")
     assert len(snakefile_path.read_text()) > 100, "Snakefile is too short"
 
     # Validate required rules present

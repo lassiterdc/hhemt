@@ -29,7 +29,9 @@ pytestmark = pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UV
 
 def test_load_system_and_analysis(norfolk_uva_multisim_analysis):
     analysis = norfolk_uva_multisim_analysis
-    assert analysis.analysis_paths.simulation_directory.exists()
+    tst_ut.assert_file_exists(
+        analysis.analysis_paths.simulation_directory, "simulation directory"
+    )
 
 
 def test_create_dem_for_TRITON(norfolk_uva_multisim_analysis_cached):

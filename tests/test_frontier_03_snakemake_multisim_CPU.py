@@ -32,7 +32,7 @@ def test_snakemake_slurm_workflow_generation_and_write(
 
     snakefile_path = tst_ut.write_snakefile(analysis, snakefile_content)
 
-    assert snakefile_path.exists()
+    tst_ut.assert_file_exists(snakefile_path, "Snakefile")
     assert len(snakefile_path.read_text()) > 100
 
     content = snakefile_path.read_text()

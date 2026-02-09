@@ -60,7 +60,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         )
 
         sub_snakefile_path = tst_ut.write_snakefile(sub_analysis, snakefile_content)
-        assert sub_snakefile_path.exists()
+        tst_ut.assert_file_exists(sub_snakefile_path, "Sub-analysis Snakefile")
         assert len(sub_snakefile_path.read_text()) > 100
 
     master_snakefile_content = (
@@ -87,7 +87,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         assert f"rule consolidate_sa_{sa_id}:" in master_snakefile_content
 
     master_snakefile_path = tst_ut.write_snakefile(analysis, master_snakefile_content)
-    assert master_snakefile_path.exists()
+    tst_ut.assert_file_exists(master_snakefile_path, "Master Snakefile")
     assert len(master_snakefile_path.read_text()) > 100
 
 
