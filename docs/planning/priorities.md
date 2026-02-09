@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 1 Phase 6b.2.1 complete: Unified fixture pilot implemented ✅)
+**Last Updated:** 2026-02-09 (Tier 1 Phase 6b.2.1 complete: Unified fixture pilot validated ✅)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -47,10 +47,10 @@ Incremental improvements that reduce maintenance burden. Can be done independent
 
 - [ ] **Test suite cleanup** (`cruft_cleanup_plan.md` Phase 6) — **In Progress**
   - [ ] **Phase 6a**: Parametrize repeated platform test patterns (6a.1 pilot ✅ complete, next: 6a.2 expand)
-  - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅, 6b.2 design ✅, 6b.2.1 pilot ✅, next: test conversion)
+  - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅, 6b.2 design ✅, 6b.2.1 pilot ✅ validated, next: 6b.2.2 expand)
   - [x] **Phase 6c**: Reduce unconditional diagnostic prints (✅ complete)
   - [x] **Phase 6d**: Standardize assertions (✅ complete: audit, helpers, migration, documentation)
-  - _Status:_ Phase 6b.2.1 pilot complete (3 unified fixtures added), ready for test conversion validation
+  - _Status:_ Phase 6b.2.1 validated (pilot test passes), ready for Phase 6b.2.2 (expand to UVA/Frontier)
   - _Ref:_ `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`, `test_fixture_consolidation_phase6b2_design.md`
 
 ---
