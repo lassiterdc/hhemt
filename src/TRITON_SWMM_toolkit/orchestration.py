@@ -6,13 +6,184 @@ both CLI and programmatic usage.
 
 Key components:
 - WorkflowResult: Structured result object from workflow execution
+- WorkflowStatus: Status report for workflow completion state
+- PhaseStatus: Status of individual workflow phases
 - Mode translation: User-friendly modes → low-level workflow parameters
 - State detection: Infer what needs to run based on log files
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
+
+
+@dataclass
+class PhaseStatus:
+    """Status of a single workflow phase.
+
+    Attributes
+    ----------
+    name : str
+        Phase name: "setup", "preparation", "simulation", "processing", "consolidation"
+    complete : bool
+        Whether this phase is fully complete
+    progress : float
+        Completion progress from 0.0 to 1.0
+    details : Dict[str, str]
+        Phase-specific status details (key: detail_name, value: formatted string)
+    failed_items : List[str]
+        Items that failed in this phase (e.g., event ilocs, file paths)
+
+    Examples
+    --------
+    >>> phase = PhaseStatus(name="simulation", complete=False, progress=0.9)
+    >>> phase.symbol()
+    '⚠'
+    """
+
+    name: str
+    complete: bool
+    progress: float = 0.0
+    details: Dict[str, str] = field(default_factory=dict)
+    failed_items: List[str] = field(default_factory=list)
+
+    def symbol(self) -> str:
+        """Return status symbol for display.
+
+        Returns
+        -------
+        str
+            '✓' if complete, '⚠' if in progress, '✗' if not started
+        """
+        if self.complete:
+            return "✓"
+        elif self.progress > 0:
+            return "⚠"
+        else:
+            return "✗"
+
+
+@dataclass
+class WorkflowStatus:
+    """Complete workflow status report.
+
+    Provides comprehensive view of workflow completion state across all phases,
+    with recommendations for which execution mode to use.
+
+    Attributes
+    ----------
+    analysis_id : str
+        Unique identifier for this analysis
+    analysis_dir : Path
+        Root directory for analysis outputs
+    setup : PhaseStatus
+        Status of setup phase (system inputs, compilation)
+    preparation : PhaseStatus
+        Status of scenario preparation phase
+    simulation : PhaseStatus
+        Status of simulation execution phase
+    processing : PhaseStatus
+        Status of output processing phase
+    consolidation : PhaseStatus
+        Status of analysis-level consolidation phase
+    total_simulations : int
+        Total number of simulations configured
+    simulations_completed : int
+        Number of simulations successfully completed
+    simulations_failed : int
+        Number of simulations that failed
+    simulations_pending : int
+        Number of simulations not yet attempted
+    current_phase : str
+        Which phase is currently incomplete
+    recommended_mode : str
+        Recommended execution mode: "fresh", "resume", or "overwrite"
+    recommendation : str
+        Human-readable explanation of recommendation
+
+    Examples
+    --------
+    >>> status = analysis.get_workflow_status()
+    >>> print(status)
+    >>> if not status.simulation.complete:
+    ...     print(f"Retry {len(status.simulation.failed_items)} failed sims")
+    """
+
+    analysis_id: str
+    analysis_dir: Path
+
+    setup: PhaseStatus
+    preparation: PhaseStatus
+    simulation: PhaseStatus
+    processing: PhaseStatus
+    consolidation: PhaseStatus
+
+    total_simulations: int
+    simulations_completed: int
+    simulations_failed: int = 0
+    simulations_pending: int = 0
+
+    current_phase: str = ""
+    recommended_mode: str = "resume"
+    recommendation: str = ""
+
+    def __str__(self) -> str:
+        """Generate formatted status report.
+
+        Returns
+        -------
+        str
+            Multi-line formatted status report with phase details and recommendations
+        """
+        lines = [
+            "",
+            "Workflow Status Report",
+            "═" * 66,
+            f"Analysis: {self.analysis_id}",
+            f"Directory: {self.analysis_dir}",
+            "",
+            "Phase Status:",
+        ]
+
+        for phase in [
+            self.setup,
+            self.preparation,
+            self.simulation,
+            self.processing,
+            self.consolidation,
+        ]:
+            symbol = phase.symbol()
+            progress = (
+                f" ({phase.progress*100:.0f}% complete)"
+                if 0 < phase.progress < 1
+                else ""
+            )
+            lines.append(f"  {symbol} {phase.name.title()}{progress}")
+
+            for value in phase.details.values():
+                lines.append(f"    {value}")
+
+            if phase.failed_items:
+                n_show = min(3, len(phase.failed_items))
+                lines.append(f"    ✗ {len(phase.failed_items)} failed:")
+                for item in phase.failed_items[:n_show]:
+                    lines.append(f"      - {item}")
+                if len(phase.failed_items) > n_show:
+                    lines.append(
+                        f"      ... and {len(phase.failed_items) - n_show} more"
+                    )
+
+        lines.extend(
+            [
+                "",
+                "Recommendation:",
+                f"  {self.recommendation}",
+                "═" * 66,
+                "",
+            ]
+        )
+
+        return "\n".join(lines)
 
 
 @dataclass

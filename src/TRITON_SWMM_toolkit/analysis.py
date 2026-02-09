@@ -28,7 +28,7 @@ import threading
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
-    from .orchestration import WorkflowResult
+    from .orchestration import WorkflowResult, WorkflowStatus
 
 
 class TRITONSWMM_analysis:
@@ -1339,6 +1339,183 @@ class TRITONSWMM_analysis:
             snakefile_path=result_dict.get("snakefile_path"),
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
+        )
+
+    def get_workflow_status(self) -> "WorkflowStatus":
+        """Generate workflow status report.
+
+        Inspects logs and outputs to determine completion state of each phase,
+        providing actionable recommendations for which execution mode to use.
+
+        Returns
+        -------
+        WorkflowStatus
+            Structured status report with phase details and recommendations
+
+        Examples
+        --------
+        Check status before running:
+
+        >>> status = analysis.get_workflow_status()
+        >>> print(status)
+        >>> if not status.simulation.complete:
+        ...     print(f"Retry {len(status.simulation.failed_items)} failed sims")
+
+        Use recommended mode:
+
+        >>> status = analysis.get_workflow_status()
+        >>> result = analysis.run(mode=status.recommended_mode)
+
+        Notes
+        -----
+        This method is read-only and does not modify any state. It provides
+        transparency into workflow progress to help users make informed
+        decisions about execution modes.
+
+        See Also
+        --------
+        run : High-level workflow execution method
+        """
+        from .orchestration import WorkflowStatus, PhaseStatus
+
+        # Check setup phase
+        system_log = self._system.log
+        dem_done = system_log.dem_processed.get()
+        mannings_done = (
+            self._system.cfg_system.toggle_use_constant_mannings
+            or system_log.mannings_processed.get()
+        )
+        compiled = system_log.compilation_tritonswmm_cpu_successful.get()
+
+        setup_complete = dem_done and mannings_done and compiled
+        setup_progress = (
+            1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
+        )
+        setup_details = {
+            "dem": f"{'✓' if dem_done else '✗'} DEM processed",
+            "mannings": f"{'✓' if mannings_done else '✗'} Manning's processed",
+            "compiled": f"{'✓' if compiled else '✗'} TRITON-SWMM compiled",
+        }
+
+        setup_phase = PhaseStatus(
+            name="setup",
+            complete=setup_complete,
+            progress=setup_progress,
+            details=setup_details,
+        )
+
+        # Check scenario preparation
+        all_prepared = self.all_scenarios_created
+        not_prepared = self.scenarios_not_created
+        n_total = len(self.df_sims)
+        n_prepared = n_total - len(not_prepared)
+
+        prep_phase = PhaseStatus(
+            name="preparation",
+            complete=all_prepared,
+            progress=n_prepared / n_total if n_total > 0 else 0.0,
+            details={
+                "scenarios": f"{'✓' if all_prepared else '⚠'} {n_prepared}/{n_total} scenarios created"
+            },
+            failed_items=[str(p) for p in not_prepared],
+        )
+
+        # Check simulations
+        all_run = self.all_sims_run
+        not_run = self.scenarios_not_run
+        n_run = n_total - len(not_run)
+
+        sim_phase = PhaseStatus(
+            name="simulation",
+            complete=all_run,
+            progress=n_run / n_total if n_total > 0 else 0.0,
+            details={
+                "sims": f"{'✓' if all_run else '⚠'} {n_run}/{n_total} simulations completed"
+            },
+            failed_items=[str(p) for p in not_run],
+        )
+
+        # Check processing
+        triton_proc = self.log.all_TRITON_timeseries_processed.get()
+        swmm_proc = self.log.all_SWMM_timeseries_processed.get()
+        proc_complete = triton_proc and swmm_proc
+        proc_progress = (
+            1.0 if proc_complete else 0.5 if (triton_proc or swmm_proc) else 0.0
+        )
+
+        proc_phase = PhaseStatus(
+            name="processing",
+            complete=proc_complete,
+            progress=proc_progress,
+            details={
+                "triton": f"{'✓' if triton_proc else '✗'} TRITON outputs processed",
+                "swmm": f"{'✓' if swmm_proc else '✗'} SWMM outputs processed",
+            },
+        )
+
+        # Check consolidation
+        # Check if analysis-level summary files exist
+        summaries_exist = (
+            self.analysis_paths.output_tritonswmm_triton_summary
+            and self.analysis_paths.output_tritonswmm_triton_summary.exists()
+        )
+
+        consol_phase = PhaseStatus(
+            name="consolidation",
+            complete=summaries_exist,
+            progress=1.0 if summaries_exist else 0.0,
+            details={
+                "summaries": f"{'✓' if summaries_exist else '✗'} Analysis summaries created"
+            },
+        )
+
+        # Determine current phase and recommendation
+        if not setup_complete:
+            current = "setup"
+            rec_mode = "fresh"
+            rec_text = (
+                "Setup incomplete. Use 'fresh' mode to process system inputs."
+            )
+        elif not all_prepared:
+            current = "preparation"
+            rec_mode = "resume"
+            rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
+        elif not all_run:
+            current = "simulation"
+            rec_mode = "resume"
+            rec_text = (
+                f"Use 'resume' to run {len(not_run)} pending/failed simulations."
+            )
+        elif not proc_complete:
+            current = "processing"
+            rec_mode = "resume"
+            rec_text = "Use 'resume' to process simulation outputs."
+        elif not summaries_exist:
+            current = "consolidation"
+            rec_mode = "resume"
+            rec_text = "Use 'resume' to consolidate analysis summaries."
+        else:
+            current = "complete"
+            rec_mode = "overwrite"
+            rec_text = (
+                "All phases complete. Use 'overwrite' to regenerate outputs if needed."
+            )
+
+        return WorkflowStatus(
+            analysis_id=self.cfg_analysis.analysis_id,
+            analysis_dir=self.analysis_paths.analysis_dir,
+            setup=setup_phase,
+            preparation=prep_phase,
+            simulation=sim_phase,
+            processing=proc_phase,
+            consolidation=consol_phase,
+            total_simulations=n_total,
+            simulations_completed=n_run,
+            simulations_failed=len(not_run),
+            simulations_pending=0,  # Would need more logic to distinguish failed vs pending
+            current_phase=current,
+            recommended_mode=rec_mode,
+            recommendation=rec_text,
         )
 
     def submit_workflow(
