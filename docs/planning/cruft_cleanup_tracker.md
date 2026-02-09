@@ -122,7 +122,7 @@ Baseline interpretation:
 
 ### Phase 6 — Test Suite Cleanup
 
-- Status: **In Progress** (6c complete, 6a.1/6b.1 complete, 6d complete, next: 6a.2 or 6b.2)
+- Status: **In Progress** (6c/6d complete, 6a.1/6b.1/6b.2 complete, next: 6b.2.1 pilot implementation)
 - Touched files:
   - `tests/utils_for_testing.py` (diagnostic print cleanup + new assertion helpers)
   - `tests/test_PILOT_platform_parametrized_workflow.py` (NEW; parametrization pilot)
@@ -139,6 +139,11 @@ Baseline interpretation:
   - **Phase 6b.1** (Complete): Fixture usage audit
     - Analyzed 24 fixtures across test suite, identified 67% consolidation opportunity
     - Documented fixture usage patterns and duplication
+  - **Phase 6b.2** (Complete): Unified fixture API design
+    - Created comprehensive design document (test_fixture_consolidation_phase6b2_design.md)
+    - Proposed parametrized fixtures with platform selection
+    - Defined incremental migration strategy: local pilot → full platforms → sensitivity
+    - Target: 24 → 8-10 fixtures (44-67% reduction)
   - **Phase 6d.1** (Complete): Assertion pattern audit
     - Identified 37 assertion patterns for standardization (19 multi-model, 18 path checks)
     - Designed 4 new helper functions
