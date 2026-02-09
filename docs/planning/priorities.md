@@ -96,9 +96,10 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - _Ref:_ `docs/planning/cli_implementation_design.md`, `docs/planning/cli_command_spec.md`
 
 - [ ] **Shared orchestration core** (Phase 2 of implementation roadmap)
-  - Consolidate run/setup/processing flow behind one orchestration layer
-  - Make CLI a thin adapter, API calls same path
-  - _Ref:_ `docs/planning/implementation_roadmap.md`
+  - High-level analysis.run() API with mode translation
+  - WorkflowResult structured return type
+  - Workflow status reporting (--status flag)
+  - _Ref:_ `docs/planning/implementation_roadmap.md`, `workflow_status_reporting_plan.md`
 
 - [ ] **Implement `triton-swmm run` CLI command** (Phase 3 of implementation roadmap)
   - Wire arguments to Snakemake targets/options

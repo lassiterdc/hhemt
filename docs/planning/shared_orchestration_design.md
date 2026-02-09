@@ -56,7 +56,7 @@ User/CLI → High-Level Orchestration → Workflow Submission → Snakemake
 def run(
     self,
     # Execution intent (simplified)
-    mode: Literal["auto", "fresh", "resume", "overwrite"] = "resume",
+    mode: Literal["fresh", "resume", "overwrite"] = "resume",
 
     # Scope control (what to run)
     phases: Optional[List[str]] = None,  # ["setup", "prepare", "simulate", "process", "consolidate"]
@@ -75,11 +75,16 @@ def run(
     This method replaces direct calls to submit_workflow() with a simpler,
     intent-based API.
 
+    To determine which mode to use, check workflow status first:
+
+        >>> status = analysis.get_workflow_status()
+        >>> print(status.recommendation)
+        >>> result = analysis.run(mode=status.recommended_mode)
+
     Parameters
     ----------
-    mode : Literal["auto", "fresh", "resume", "overwrite"]
+    mode : Literal["fresh", "resume", "overwrite"]
         Execution mode:
-        - "auto": Smart resume (skip completed steps, rerun failures)
         - "fresh": Start from scratch, delete all artifacts
         - "resume": Continue from last checkpoint (default)
         - "overwrite": Recreate outputs even if logs show completion
@@ -122,7 +127,7 @@ The `run()` method would internally:
    - `"fresh"` → `from_scratch=True`, all overwrite flags
    - `"resume"` → `pickup_where_leftoff=True`, no overwrites
    - `"overwrite"` → All overwrite flags True, no from_scratch
-   - `"auto"` → Smart logic based on log state and failure detection
+   - For smart mode selection, see `workflow_status_reporting_plan.md` for --status flag
 3. **Map phases to workflow flags**:
    - `"setup"` → `process_system_level_inputs=True`, `compile_TRITON_SWMM=True`
    - `"prepare"` → `prepare_scenarios=True`

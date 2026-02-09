@@ -28,6 +28,7 @@ import threading
 
 if TYPE_CHECKING:
     from .system import TRITONSWMM_system
+    from .orchestration import WorkflowResult
 
 
 class TRITONSWMM_analysis:
@@ -1168,6 +1169,177 @@ class TRITONSWMM_analysis:
                     model_type=model_type,  # type: ignore
                 )
         self._update_log()
+
+    def run(
+        self,
+        mode: Literal["fresh", "resume", "overwrite"] = "resume",
+        phases: Optional[List[str]] = None,
+        events: Optional[List[int]] = None,
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        dry_run: bool = False,
+        verbose: bool = True,
+    ) -> "WorkflowResult":
+        """
+        High-level orchestration method for running TRITON-SWMM workflows.
+
+        This method provides a simplified, intent-based API that replaces direct
+        calls to submit_workflow(). It handles parameter translation, state detection,
+        and mode inference internally.
+
+        To determine which mode to use, check workflow status first:
+
+            >>> status = analysis.get_workflow_status()
+            >>> print(status.recommendation)
+            >>> result = analysis.run(mode=status.recommended_mode)
+
+        Parameters
+        ----------
+        mode : Literal["fresh", "resume", "overwrite"]
+            Execution mode:
+            - "fresh": Start from scratch, delete all artifacts
+            - "resume": Continue from last checkpoint (default)
+            - "overwrite": Recreate outputs even if logs show completion
+        phases : Optional[List[str]]
+            Which workflow phases to run. If None, runs all phases.
+            Valid phases: ["setup", "prepare", "simulate", "process", "consolidate"]
+        events : Optional[List[int]]
+            Subset of event_ilocs to process. If None, processes all events.
+            [Note: Event filtering not yet implemented, parameter reserved for future use]
+        execution_mode : Literal["auto", "local", "slurm"]
+            Where to execute: auto-detect (default), force local, or force SLURM
+        dry_run : bool
+            If True, validate workflow but don't execute
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        WorkflowResult
+            Structured result object with success status, execution details,
+            and phases completed. Supports truthiness check: if result: ...
+
+        Examples
+        --------
+        Simple resume (default behavior):
+
+        >>> result = analysis.run()
+        >>> if result.success:
+        ...     print(f"Completed {len(result.events_processed)} events")
+
+        Fresh start:
+
+        >>> result = analysis.run(mode="fresh")
+
+        Run specific phases only:
+
+        >>> result = analysis.run(phases=["setup", "prepare"])
+
+        Dry-run validation:
+
+        >>> result = analysis.run(dry_run=True, verbose=True)
+        >>> print(result.phases_completed)
+
+        Notes
+        -----
+        This method consolidates parameter translation logic that was previously
+        duplicated across CLI and API usage. It provides a single source of truth
+        for orchestration.
+
+        For advanced users who need fine-grained control over 15+ parameters,
+        the lower-level submit_workflow() method is still available, though its
+        use is discouraged in favor of this higher-level API.
+
+        See Also
+        --------
+        submit_workflow : Lower-level workflow submission (15+ parameters)
+        WorkflowResult : Structured result object returned by this method
+        """
+        import time
+        from .orchestration import translate_mode, translate_phases, WorkflowResult
+
+        start_time = time.time()
+
+        # Event filtering not yet implemented - validate parameter
+        if events is not None:
+            raise NotImplementedError(
+                "Event filtering via events parameter not yet implemented. "
+                "For now, all events in analysis will be processed."
+            )
+
+        # Translate user-friendly parameters to workflow parameters
+        mode_params = translate_mode(mode)
+        phase_params = translate_phases(phases)
+
+        # Detect system input processing needs
+        system_log = self._system.log
+        needs_system_inputs = not (
+            system_log.dem_processed.get()
+            and (
+                self._system.cfg_system.toggle_use_constant_mannings
+                or system_log.mannings_processed.get()
+            )
+        )
+
+        # Override if user explicitly requested setup phase
+        if phases and "setup" in phases:
+            needs_system_inputs = True
+
+        # Determine execution mode
+        if execution_mode == "auto":
+            if self.in_slurm or self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+                exec_mode = "slurm"
+            else:
+                exec_mode = "local"
+        else:
+            exec_mode = execution_mode
+
+        # Build complete parameter dict for submit_workflow
+        workflow_params = {
+            **mode_params,
+            **phase_params,
+            "mode": exec_mode,
+            "process_system_level_inputs": needs_system_inputs or phase_params["process_system_level_inputs"],
+            "which": "both",  # Always process both TRITON and SWMM outputs
+            "clear_raw_outputs": True,
+            "compression_level": 5,
+            "wait_for_completion": (exec_mode == "slurm"),
+            "dry_run": dry_run,
+            "verbose": verbose,
+        }
+
+        # Call underlying submit_workflow
+        result_dict = self.submit_workflow(**workflow_params)
+
+        # Calculate execution time
+        elapsed = time.time() - start_time
+
+        # Determine which phases were completed based on parameters
+        phases_completed = []
+        if workflow_params["process_system_level_inputs"] or workflow_params["compile_TRITON_SWMM"]:
+            phases_completed.append("setup")
+        if workflow_params["prepare_scenarios"]:
+            phases_completed.append("prepare")
+        if workflow_params["prepare_scenarios"]:  # Simulate always runs if scenarios prepared
+            phases_completed.append("simulate")
+        if workflow_params["process_timeseries"]:
+            phases_completed.append("process")
+        if workflow_params["process_timeseries"]:  # Consolidate happens after processing
+            phases_completed.append("consolidate")
+
+        # Get event list (all events in analysis)
+        events_processed = list(self.df_sims.index)
+
+        # Build WorkflowResult
+        return WorkflowResult(
+            success=result_dict.get("success", False),
+            mode=result_dict.get("mode", exec_mode),
+            execution_time=elapsed if result_dict.get("success") and exec_mode == "local" else None,
+            phases_completed=phases_completed if result_dict.get("success") else [],
+            events_processed=events_processed if result_dict.get("success") else [],
+            snakefile_path=result_dict.get("snakefile_path"),
+            job_id=result_dict.get("job_id"),
+            message=result_dict.get("message", ""),
+        )
 
     def submit_workflow(
         self,
