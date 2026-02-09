@@ -147,12 +147,12 @@ Baseline interpretation:
     - `assert_file_exists()` — standardizes 18 path existence checks
     - `assert_phases_complete()` — leverages WorkflowStatus for phase validation
     - `assert_model_simulations_complete()` — model-specific completion checking
-  - **Phase 6d.3** (In Progress): Migrate existing assertions to use new helpers
-    - Completed: 6 of ~37 patterns migrated (PC tests)
-    - test_PC_01_singlesim.py: 2 migrations (simulation dir, cross-model file checks)
-    - test_PC_04_multisim_with_snakemake.py: 1 migration (Snakefile path)
-    - test_PC_05_sensitivity_analysis_with_snakemake.py: 3 migrations (Snakefiles)
-    - Remaining: ~31 patterns in platform-specific tests (UVA, Frontier)
+  - **Phase 6d.3** (In Progress): Migrate existing assertions to use new helpers (41% complete)
+    - Completed: 15 of ~37 patterns migrated (all path existence checks)
+    - PC tests: 6 migrations (test_PC_01, test_PC_04, test_PC_05)
+    - Platform tests: 9 migrations (test_PILOT, test_UVA_*, test_frontier_*)
+    - Path existence checks: ✅ Complete (18/18 identified patterns migrated)
+    - Remaining: ~22 multi-model patterns (scattered across test files)
 - Test status:
   - All smoke tests pass (PC_01 through PC_05)
   - Pilot parametrized tests pass (2 local, 4 skipped for unavailable platforms)

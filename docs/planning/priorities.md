@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 1 Phase 6d.3 in progress: Assertion migration, 6 of ~37 patterns migrated)
+**Last Updated:** 2026-02-09 (Tier 1 Phase 6d.3 in progress: Assertion migration, 15 of ~37 patterns migrated, 41% complete)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -49,8 +49,8 @@ Incremental improvements that reduce maintenance burden. Can be done independent
   - [ ] **Phase 6a**: Parametrize repeated platform test patterns (6a.1 pilot ✅ complete, next: 6a.2 expand)
   - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅ complete)
   - [x] **Phase 6c**: Reduce unconditional diagnostic prints (✅ complete)
-  - [ ] **Phase 6d**: Standardize assertions (6d.1 audit ✅, 6d.2 helpers ✅, 6d.3 migration 🔄 in progress)
-  - _Status:_ 4 helpers implemented, 6 of ~37 patterns migrated (PC tests), ~31 remaining (platform tests)
+  - [ ] **Phase 6d**: Standardize assertions (6d.1 audit ✅, 6d.2 helpers ✅, 6d.3 migration 🔄 in progress, 41% complete)
+  - _Status:_ 4 helpers implemented, 15 of ~37 path existence patterns migrated, ~22 remaining (multi-model patterns)
   - _Ref:_ `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`, `test_assertion_audit_phase6d1.md`
 
 ---
