@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-08 (Tier 3 Phase 1 CLI contract in progress)
+**Last Updated:** 2026-02-09 (Tier 3 Phase 1 CLI contract 80% complete)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -81,7 +81,7 @@ Foundation for CLI/API work. Should be done before Tier 3.
 
 Depends on Tier 2 (config refactor). Major user-facing changes.
 
-- [x] **Finalize CLI contract** (Phase 1 of implementation roadmap) — **Complete (~90%)**
+- [x] **Finalize CLI contract** (Phase 1 of implementation roadmap) — **Complete (80%)**
   - ✅ Define error classes and exit code mapping (CLIValidationError, WorkflowPlanningError)
   - ✅ Finalize argument contract and validation matrix (cli.py with all v1 arguments)
   - ✅ Finalize profile model: production, testcase, case-study (profile_catalog.py + 10 tests)
