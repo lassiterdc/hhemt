@@ -251,6 +251,48 @@ constant_mannings: Optional[float]    # Required if toggle=True
 landuse_lookup_file: Optional[Path]   # Required if toggle=False
 ```
 
+### Preflight Validation
+
+**Module**: `src/TRITON_SWMM_toolkit/validation.py`
+
+The toolkit provides comprehensive preflight validation to catch configuration errors before launching expensive simulation work:
+
+```python
+from TRITON_SWMM_toolkit.validation import preflight_validate
+
+# Validate configs directly
+result = preflight_validate(cfg_system, cfg_analysis)
+if not result.is_valid:
+    print(result)  # Show all errors and warnings
+    result.raise_if_invalid()  # Raise ConfigurationError
+
+# Or use Analysis.validate() method
+analysis = system.analysis
+analysis.validate().raise_if_invalid()
+```
+
+**What's validated:**
+
+- **System config**: Path existence, toggle dependencies (manning's, hydrology, SWMM), model selection (at least one model enabled)
+- **Analysis config**: Weather data files, run-mode consistency (MPI/OMP/GPU allocation), HPC sanity checks
+- **Data consistency**: Event alignment, storm tide variables/units, rainfall units
+
+**ValidationResult API:**
+- `is_valid` — True if no errors (warnings allowed)
+- `has_warnings` — True if any warnings present
+- `errors` — List of ERROR-level issues (must be fixed)
+- `warnings` — List of WARNING-level issues (review recommended)
+- `raise_if_invalid()` — Raise ConfigurationError if validation failed
+
+**Error messages** include field, problem description, current value, and actionable fix hints.
+
+**When to validate:**
+- Before launching simulations (call `analysis.validate()`)
+- In CLI entry points (automatic validation)
+- After loading configs from YAML (preflight checks)
+
+See `docs/planning/refactors/frontend_validation_checklist.md` for complete validation coverage.
+
 ### Critical Configuration Fields
 
 | Field | Impact |

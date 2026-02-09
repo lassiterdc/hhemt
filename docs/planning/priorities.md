@@ -66,10 +66,14 @@ Foundation for CLI/API work. Should be done before Tier 3.
   - Dynamic `toggle_tests` registry replaced with explicit `@model_validator` rules
   - Dead legacy fields and commented-out code removed
 
-- [ ] **Front-end validation checklist** (implement preflight checks)
-  - Command/profile selection, config integrity, toggle dependencies, run-mode consistency
-  - HPC sanity checks, data cross-consistency, environment checks
-  - _Ref:_ `docs/planning/refactors/frontend_validation_checklist.md`
+- [x] **Front-end validation checklist** (implement preflight checks)
+  - ✅ Validation architecture (ValidationResult, ValidationIssue, preflight_validate)
+  - ✅ System config validation (paths, toggle dependencies, model selection)
+  - ✅ Analysis config validation (weather data, run-mode consistency, HPC sanity)
+  - ✅ Data cross-consistency (event alignment, storm tide, units)
+  - ✅ Analysis.validate() method integration
+  - ⏸️ Deferred: Command/profile selection (CLI layer), testcase inheritance, environment checks
+  - _Ref:_ `docs/planning/refactors/frontend_validation_checklist.md`, `src/TRITON_SWMM_toolkit/validation.py`
 
 ---
 
