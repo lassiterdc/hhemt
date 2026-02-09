@@ -24,6 +24,7 @@ class HPCSettings(BaseModel):
     Supports SLURM-based cluster execution with resource allocation
     parameters. None values indicate unspecified (use lower-precedence defaults).
     """
+
     platform_config: Optional[str] = None
     scheduler: Optional[str] = "slurm"
     partition: Optional[str] = None
@@ -35,7 +36,7 @@ class HPCSettings(BaseModel):
     gpus_per_node: Optional[int] = Field(None, ge=0)
     walltime: Optional[str] = None
 
-    @field_validator('walltime')
+    @field_validator("walltime")
     @classmethod
     def validate_walltime_format(cls, v: Optional[str]) -> Optional[str]:
         """Validate walltime is in HH:MM:SS format."""
@@ -43,7 +44,8 @@ class HPCSettings(BaseModel):
             return v
 
         import re
-        if not re.match(r'^\d{2}:\d{2}:\d{2}$', v):
+
+        if not re.match(r"^\d{2}:\d{2}:\d{2}$", v):
             raise ValueError(
                 f"Invalid walltime format: {v}. Must be HH:MM:SS (e.g., 01:30:00)"
             )
@@ -56,13 +58,20 @@ class WorkflowSettings(BaseModel):
     Controls Snakemake workflow behavior and model/processing scope.
     None values indicate unspecified (use lower-precedence defaults).
     """
+
     jobs: Optional[int] = Field(None, ge=1)
-    which: Optional[str] = Field(None, pattern=r'^(TRITON|SWMM|both)$')
-    model: Optional[str] = Field(None, pattern=r'^(auto|triton|swmm|tritonswmm)$')
+    which: Optional[str] = Field(
+        None, pattern=r"^(TRITON|SWMM|both)$"
+    )  # TODO - which always (to the best of my memory) always refers to which model outputs to process. We should change the name of this parameter to which_outputs everywhere in the code base for clarity.
+    model: Optional[str] = Field(
+        None, pattern=r"^(auto|triton|swmm|tritonswmm)$"
+    )  # TODO: model and model_type are being used interchangeably. We should change them all to which_model or model_type
 
 
 class ProfileDefaults(BaseModel):
+    # TODO - generally default values can hide users from choices they should be making intentionaly; I'd like to remove the use of deafults where possible.
     """Top-level defaults section of catalog."""
+
     hpc: HPCSettings = Field(default_factory=HPCSettings)
     workflow: WorkflowSettings = Field(default_factory=WorkflowSettings)
 
@@ -73,6 +82,7 @@ class ProfileEntry(BaseModel):
     Each profile entry specifies configuration file paths and optional
     HPC/workflow overrides that merge with catalog defaults.
     """
+
     description: str
     case_root: Optional[Path] = None
     system_config: Path
@@ -81,7 +91,7 @@ class ProfileEntry(BaseModel):
     workflow: Optional[WorkflowSettings] = None
     event_ilocs: Optional[List[int]] = None
 
-    @field_validator('system_config', 'analysis_config', mode='before')
+    @field_validator("system_config", "analysis_config", mode="before")
     @classmethod
     def resolve_relative_paths(cls, v: Any) -> Path:
         """Resolve paths relative to catalog file location."""
@@ -99,14 +109,17 @@ class ProfileCatalog(BaseModel):
         testcases: Dictionary of testcase profiles by name
         case_studies: Dictionary of case-study profiles by name
     """
+
     version: int = Field(..., ge=1, le=1)
     defaults: ProfileDefaults = Field(default_factory=ProfileDefaults)
     testcases: Dict[str, ProfileEntry] = Field(default_factory=dict)
     case_studies: Dict[str, ProfileEntry] = Field(default_factory=dict)
 
-    @field_validator('testcases', 'case_studies', mode='after')
+    @field_validator("testcases", "case_studies", mode="after")
     @classmethod
-    def validate_profile_entries(cls, v: Dict[str, ProfileEntry]) -> Dict[str, ProfileEntry]:
+    def validate_profile_entries(
+        cls, v: Dict[str, ProfileEntry]
+    ) -> Dict[str, ProfileEntry]:
         """Validate profile entry names are non-empty."""
         if any(not name.strip() for name in v.keys()):
             raise ValueError("Profile entry names cannot be empty or whitespace-only")
@@ -132,7 +145,11 @@ def load_profile_catalog(catalog_path: Optional[Path] = None) -> ProfileCatalog:
     """
     if catalog_path is None:
         # Default location: test_data/tests_and_case_studies.yaml
-        default_location = Path(__file__).parent.parent.parent / "test_data" / "tests_and_case_studies.yaml"
+        default_location = (
+            Path(__file__).parent.parent.parent
+            / "test_data"
+            / "tests_and_case_studies.yaml"
+        )
         catalog_path = default_location
 
     catalog_path = Path(catalog_path).resolve()
@@ -141,37 +158,37 @@ def load_profile_catalog(catalog_path: Optional[Path] = None) -> ProfileCatalog:
         raise ConfigurationError(
             field="tests_case_config",
             message=f"Profile catalog not found: {catalog_path}",
-            config_path=catalog_path
+            config_path=catalog_path,
         )
 
     if not catalog_path.is_file():
         raise ConfigurationError(
             field="tests_case_config",
             message=f"Profile catalog path is not a file: {catalog_path}",
-            config_path=catalog_path
+            config_path=catalog_path,
         )
 
     try:
-        with open(catalog_path, 'r') as f:
+        with open(catalog_path, "r") as f:
             data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise ConfigurationError(
             field="tests_case_config",
             message=f"Failed to parse YAML: {e}",
-            config_path=catalog_path
+            config_path=catalog_path,
         ) from e
     except Exception as e:
         raise ConfigurationError(
             field="tests_case_config",
             message=f"Failed to read catalog file: {e}",
-            config_path=catalog_path
+            config_path=catalog_path,
         ) from e
 
     if data is None:
         raise ConfigurationError(
             field="tests_case_config",
             message="Catalog file is empty",
-            config_path=catalog_path
+            config_path=catalog_path,
         )
 
     try:
@@ -180,7 +197,7 @@ def load_profile_catalog(catalog_path: Optional[Path] = None) -> ProfileCatalog:
         raise ConfigurationError(
             field="tests_case_config",
             message=f"Invalid catalog schema: {e}",
-            config_path=catalog_path
+            config_path=catalog_path,
         ) from e
 
     # Resolve relative paths in profile entries relative to catalog location
@@ -198,9 +215,7 @@ def load_profile_catalog(catalog_path: Optional[Path] = None) -> ProfileCatalog:
 
 
 def get_profile_entry(
-    catalog: ProfileCatalog,
-    profile_type: str,
-    profile_name: str
+    catalog: ProfileCatalog, profile_type: str, profile_name: str
 ) -> ProfileEntry:
     """Get a specific profile entry from catalog.
 
@@ -217,26 +232,34 @@ def get_profile_entry(
     """
     if profile_type == "testcase":
         if profile_name not in catalog.testcases:
-            available = ", ".join(catalog.testcases.keys()) if catalog.testcases else "(none)"
+            available = (
+                ", ".join(catalog.testcases.keys()) if catalog.testcases else "(none)"
+            )
             raise CLIValidationError(
                 argument="--testcase",
                 message=f"Testcase '{profile_name}' not found in catalog",
-                fix_hint=f"Available testcases: {available}"
+                fix_hint=f"Available testcases: {available}",
             )
         return catalog.testcases[profile_name]
 
     elif profile_type == "case-study":
         if profile_name not in catalog.case_studies:
-            available = ", ".join(catalog.case_studies.keys()) if catalog.case_studies else "(none)"
+            available = (
+                ", ".join(catalog.case_studies.keys())
+                if catalog.case_studies
+                else "(none)"
+            )
             raise CLIValidationError(
                 argument="--case-study",
                 message=f"Case study '{profile_name}' not found in catalog",
-                fix_hint=f"Available case studies: {available}"
+                fix_hint=f"Available case studies: {available}",
             )
         return catalog.case_studies[profile_name]
 
     else:
-        raise ValueError(f"Invalid profile_type: {profile_type}. Must be 'testcase' or 'case-study'")
+        raise ValueError(
+            f"Invalid profile_type: {profile_type}. Must be 'testcase' or 'case-study'"
+        )
 
 
 def list_testcases(catalog: ProfileCatalog) -> List[tuple[str, str]]:
@@ -276,8 +299,7 @@ def list_case_studies(catalog: ProfileCatalog) -> List[tuple[str, str]]:
 
 
 def merge_hpc_settings(
-    *sources: Optional[HPCSettings],
-    cli_overrides: Optional[Dict[str, Any]] = None
+    *sources: Optional[HPCSettings], cli_overrides: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Merge HPC settings from multiple sources with None-aware semantics.
 
@@ -319,8 +341,7 @@ def merge_hpc_settings(
 
 
 def merge_workflow_settings(
-    *sources: Optional[WorkflowSettings],
-    cli_overrides: Optional[Dict[str, Any]] = None
+    *sources: Optional[WorkflowSettings], cli_overrides: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Merge workflow settings from multiple sources with None-aware semantics.
 

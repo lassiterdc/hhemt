@@ -330,19 +330,6 @@ class TRITONSWMM_scenario:
         # Use log-file-based completion checking
         success = self.run.model_run_completed(model_type)
 
-        # Sanity check for TRITON/TRITON-SWMM: performance.txt should only exist if completed
-        if model_type in ("triton", "tritonswmm"):
-            perf_file = self.run.performance_file(model_type=model_type)
-            if perf_file.exists() and not success:
-                raise RuntimeError(
-                    f"{model_type} simulation has ambiguous completion status:\n"
-                    f"  - performance.txt exists: {perf_file}\n"
-                    f"  - Log-based check says: NOT completed\n"
-                    f"Performance files should only be written if simulation completes.\n"
-                    f"This error indicates completion detection needs strengthening.\n"
-                    f"Check log file for model_type={model_type}"
-                )
-
         return success
 
     def latest_sim_date(

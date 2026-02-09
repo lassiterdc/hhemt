@@ -113,18 +113,28 @@ class TRITONSWMM_run:
         if not log_file.exists():
             return False
 
-        try:
-            log_content = log_file.read_text()
+        log_content = log_file.read_text()
 
-            if model_type in ("triton", "tritonswmm"):
-                # TRITON completion marker (may have ANSI color codes)
-                return "Simulation ends" in log_content
-            else:  # swmm
-                # SWMM completion marker
-                return "EPA SWMM completed" in log_content
+        if model_type in ("triton", "tritonswmm"):
+            # TRITON completion marker (may have ANSI color codes)
+            success = "Simulation ends" in log_content
+        else:  # swmm
+            # SWMM completion marker
+            success = "EPA SWMM completed" in log_content
 
-        except Exception:
-            return False
+        # Sanity check for TRITON/TRITON-SWMM: performance.txt should only exist if completed
+        if model_type in ("triton", "tritonswmm"):
+            perf_file = self.performance_file(model_type=model_type)
+            if perf_file.exists() != success:
+                raise RuntimeError(
+                    f"{model_type} simulation has ambiguous completion status:\n"
+                    f"  - performance.txt exists = {perf_file.exists()} suggesting completion = {perf_file.exists()}\n"
+                    f"  - Log-based check says: success = {success}\n"
+                    f"Performance files should only be written if simulation completes.\n"
+                    f"This error indicates completion detection needs strengthening.\n"
+                    f"Check log file for model_type={model_type}"
+                )
+        return success
 
     @property
     def performance_timeseries_dir(self):
