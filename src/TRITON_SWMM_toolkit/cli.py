@@ -143,6 +143,11 @@ def run_command(
         "--list-case-studies",
         help="Print available case studies and exit",
     ),
+    status_flag: bool = typer.Option(
+        False,
+        "--status",
+        help="Show workflow status report and exit (no execution)",
+    ),
     # ═══════════════════════════════════════════════════════════════
     # HPC Override Options
     # ═══════════════════════════════════════════════════════════════
@@ -351,7 +356,15 @@ def run_command(
             console.print("[green]✓[/green] Validation passed")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7: Dry-Run Output (if requested)
+        # Stage 7a: Status Report (if requested)
+        # ═══════════════════════════════════════════════════════════════
+        if status_flag:
+            status = analysis.get_workflow_status()
+            console.print(status)
+            raise typer.Exit(0)
+
+        # ═══════════════════════════════════════════════════════════════
+        # Stage 7b: Dry-Run Output (if requested)
         # ═══════════════════════════════════════════════════════════════
         if dry_run:
             _print_dry_run_summary(locals())
