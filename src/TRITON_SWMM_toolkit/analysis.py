@@ -1286,7 +1286,10 @@ class TRITONSWMM_analysis:
 
         # Determine execution mode
         if execution_mode == "auto":
-            if self.in_slurm or self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+            if (
+                self.in_slurm
+                or self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
+            ):
                 exec_mode = "slurm"
             else:
                 exec_mode = "local"
@@ -1298,7 +1301,8 @@ class TRITONSWMM_analysis:
             **mode_params,
             **phase_params,
             "mode": exec_mode,
-            "process_system_level_inputs": needs_system_inputs or phase_params["process_system_level_inputs"],
+            "process_system_level_inputs": needs_system_inputs
+            or phase_params["process_system_level_inputs"],
             "which": "both",  # Always process both TRITON and SWMM outputs
             "clear_raw_outputs": True,
             "compression_level": 5,
@@ -1315,15 +1319,22 @@ class TRITONSWMM_analysis:
 
         # Determine which phases were completed based on parameters
         phases_completed = []
-        if workflow_params["process_system_level_inputs"] or workflow_params["compile_TRITON_SWMM"]:
+        if (
+            workflow_params["process_system_level_inputs"]
+            or workflow_params["compile_TRITON_SWMM"]
+        ):
             phases_completed.append("setup")
         if workflow_params["prepare_scenarios"]:
             phases_completed.append("prepare")
-        if workflow_params["prepare_scenarios"]:  # Simulate always runs if scenarios prepared
+        if workflow_params[
+            "prepare_scenarios"
+        ]:  # Simulate always runs if scenarios prepared
             phases_completed.append("simulate")
         if workflow_params["process_timeseries"]:
             phases_completed.append("process")
-        if workflow_params["process_timeseries"]:  # Consolidate happens after processing
+        if workflow_params[
+            "process_timeseries"
+        ]:  # Consolidate happens after processing
             phases_completed.append("consolidate")
 
         # Get event list (all events in analysis)
@@ -1333,7 +1344,9 @@ class TRITONSWMM_analysis:
         return WorkflowResult(
             success=result_dict.get("success", False),
             mode=result_dict.get("mode", exec_mode),
-            execution_time=elapsed if result_dict.get("success") and exec_mode == "local" else None,
+            execution_time=(
+                elapsed if result_dict.get("success") and exec_mode == "local" else None
+            ),
             phases_completed=phases_completed if result_dict.get("success") else [],
             events_processed=events_processed if result_dict.get("success") else [],
             snakefile_path=result_dict.get("snakefile_path"),
@@ -1473,19 +1486,17 @@ class TRITONSWMM_analysis:
         if not setup_complete:
             current = "setup"
             rec_mode = "fresh"
-            rec_text = (
-                "Setup incomplete. Use 'fresh' mode to process system inputs."
-            )
+            rec_text = "Setup incomplete. Use 'fresh' mode to process system inputs."
         elif not all_prepared:
             current = "preparation"
             rec_mode = "resume"
-            rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
+            rec_text = (
+                f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
+            )
         elif not all_run:
             current = "simulation"
             rec_mode = "resume"
-            rec_text = (
-                f"Use 'resume' to run {len(not_run)} pending/failed simulations."
-            )
+            rec_text = f"Use 'resume' to run {len(not_run)} pending/failed simulations."
         elif not proc_complete:
             current = "processing"
             rec_mode = "resume"
@@ -1687,6 +1698,9 @@ class TRITONSWMM_analysis:
 
     @property
     def df_status(self):
+        #  TODO - this currently only retrieves TRITON-SWMM simulation stats
+        # it needs to be updated to retrieve stats for all models that are 
+        # run and return their concatenated form.
         """
         Get status DataFrame for all scenarios in the analysis.
 
@@ -1739,12 +1753,7 @@ class TRITONSWMM_analysis:
 
             scenario_dirs.append(str(scen.log.logfile.parent))
 
-            # TODO(TRITON-OUTPUT-PATH-BUG): log.out is hardcoded to output/ by TRITON.
-            # When both TRITON-only and TRITON-SWMM run, last to finish overwrites
-            # the other's log.out. See docs/implementation/triton_output_path_bug.md
-            # Parse log.out file for actual resource usage
-            # log.out is written to the output directory (same location as performance.txt)
-            log_out_path = scen.scen_paths.sim_folder / "output" / "log.out"
+            log_out_path = scen.scen_paths.out_tritonswmm / "log.out"
             log_data = parse_triton_log_file(log_out_path)
             actual_nTasks.append(log_data["nTasks"])
             actual_omp_threads.append(log_data["omp_threads_per_task"])

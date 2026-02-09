@@ -790,14 +790,11 @@ class TRITONSWMM_sim_post_processing:
             )
 
             f_inp = self.scen_paths.swmm_hydraulics_inp
-            # TODO(TRITON-OUTPUT-PATH-BUG): TRITON-SWMM writes SWMM outputs to output/swmm/
-            # regardless of config. See docs/implementation/triton_output_path_bug.md
-            swmm_timeseries_result_file = self._run.coupled_swmm_output_file
+            swmm_timeseries_result_file = self.scen_paths.swmm_hydraulics_rpt
             if swmm_timeseries_result_file is None:
                 raise FileNotFoundError(
-                    "Cannot find SWMM output file from TRITON-SWMM coupled run. "
-                    f"Checked: output/swmm/hydraulics.out, output/swmm/hydraulics.rpt, "
-                    f"and configured path {self.scen_paths.swmm_hydraulics_rpt}. "
+                    "Cannot find SWMM output file from TRITON-SWMM coupled run in "
+                    f"{self.scen_paths.swmm_hydraulics_rpt}. "
                     "Ensure the TRITON-SWMM simulation completed successfully."
                 )
         else:  # model == "swmm" (standalone SWMM)
@@ -1031,9 +1028,7 @@ class TRITONSWMM_sim_post_processing:
             if swmm_out_file is None:
                 return  # No standalone SWMM outputs to clear
         else:  # model == "tritonswmm"
-            # TODO(TRITON-OUTPUT-PATH-BUG): TRITON-SWMM writes SWMM outputs to output/swmm/
-            # regardless of config. See docs/implementation/triton_output_path_bug.md
-            swmm_out_file = self._run.coupled_swmm_output_file
+            swmm_out_file = self.scen_paths.swmm_hydraulics_rpt
             if swmm_out_file is None:
                 return  # No coupled SWMM outputs to clear
 

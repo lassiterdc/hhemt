@@ -534,7 +534,7 @@ tst_ut.assert_swmm_compiled(analysis)
 
 4. **Runner scripts use argparse** - Each has specific CLI flags; check docstrings for usage
 
-5. **TRITON-SWMM SWMM output path bug** - TRITON-SWMM writes SWMM outputs to `sim_folder/output/swmm/` and `log.out` to `sim_folder/output/` regardless of CFG `output_folder`. Workarounds tagged `TODO(TRITON-OUTPUT-PATH-BUG)`. See `docs/implementation/triton_output_path_bug.md`.
+5. **TRITON-SWMM SWMM output path bug** - TRITON-SWMM writes SWMM outputs to `sim_folder/output/swmm/` and `log.out` to `sim_folder/output/` regardless of CFG `output_folder`. Workarounds tagged `TODO(TRITON-OUTPUT-PATH-BUG)`. See `docs/implementation/triton_output_path_bug.md`. (note this was resolved manually on 2/9/2026)
 
 6. **`log.out` overwrite with multi-model** - Both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`. Last to finish overwrites the other. Resource-usage parsing may be incorrect for one model type.
 

@@ -40,7 +40,9 @@ class TRITONSWMM_run:
                 return fallback
         return out_dir if out_dir is not None else fallback
 
-    def raw_triton_output_dir(self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"):
+    def raw_triton_output_dir(
+        self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"
+    ):
         """Directory containing raw TRITON binary output files (H, QX, QY, MH).
 
         Parameters
@@ -128,7 +130,9 @@ class TRITONSWMM_run:
     def performance_timeseries_dir(self):
         return self._triton_swmm_raw_output_directory / "performance"
 
-    def performance_file(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
+    def performance_file(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> Path:
         """Get performance.txt file for a specific model type.
 
         Parameters
@@ -149,7 +153,9 @@ class TRITONSWMM_run:
             # SWMM doesn't write performance.txt files
             output_dir = self._scenario.scen_paths.out_swmm
         else:
-            raise ValueError(f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}")
+            raise ValueError(
+                f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}"
+            )
 
         if output_dir is None:
             # Fallback for legacy structure
@@ -173,31 +179,6 @@ class TRITONSWMM_run:
         if sys_cfg.toggle_swmm_model:
             enabled.append("swmm")
         return enabled
-
-    @property
-    def coupled_swmm_output_file(self) -> Path | None:
-        """Locate the SWMM output file from a TRITON-SWMM coupled run.
-
-        TODO(TRITON-OUTPUT-PATH-BUG): TRITON-SWMM writes SWMM outputs to
-        output/swmm/ regardless of the CFG output_folder directive.
-        See docs/implementation/triton_output_path_bug.md
-
-        Returns:
-            Path to the SWMM output file (.out or .rpt), or None if not found.
-        """
-        # Check bug-location first (most common case)
-        alt_swmm_dir = self._scenario.scen_paths.sim_folder / "output" / "swmm"
-        alt_out = alt_swmm_dir / "hydraulics.out"
-        alt_rpt = alt_swmm_dir / "hydraulics.rpt"
-        if alt_out.exists():
-            return alt_out
-        if alt_rpt.exists():
-            return alt_rpt
-        # Fall back to configured location
-        configured = self._scenario.scen_paths.swmm_hydraulics_rpt
-        if configured is not None and configured.exists():
-            return configured
-        return None
 
     def _retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation(
         self, model_type: Literal["triton", "tritonswmm"]
@@ -361,9 +342,14 @@ class TRITONSWMM_run:
             )
             if hotstart_cfg is not None:
                 cfg = hotstart_cfg
-                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(hotstart_cfg)
+                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(
+                    hotstart_cfg
+                )
                 if verbose:
-                    print(f"Resuming {model_type} from hotstart: {hotstart_cfg}", flush=True)
+                    print(
+                        f"Resuming {model_type} from hotstart: {hotstart_cfg}",
+                        flush=True,
+                    )
 
         og_env = os.environ.copy()
         env = dict()

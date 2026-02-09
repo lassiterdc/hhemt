@@ -36,6 +36,7 @@ def test_compile_tritonswmm(norfolk_single_sim_analysis):
     analysis._system.compile_TRITON_SWMM(
         recompile_if_already_done_successfully=True,
         redownload_triton_swmm_if_exists=True,
+        verbose=True,
     )
     tst_ut.assert_tritonswmm_compiled(analysis)
 
@@ -43,6 +44,6 @@ def test_compile_tritonswmm(norfolk_single_sim_analysis):
 def test_compile_triton_only(norfolk_single_sim_analysis):
     analysis = norfolk_single_sim_analysis
     analysis._system.compile_TRITON_only(
-        recompile_if_already_done_successfully=True,
+        recompile_if_already_done_successfully=True, verbose=True
     )
     tst_ut.assert_triton_compiled(analysis)

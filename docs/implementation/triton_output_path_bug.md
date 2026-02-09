@@ -1,3 +1,5 @@
+# NOTE: this was resolved manually on 2/9/2026 but qaqc would be helpful.
+
 # TRITON Output Path Bug
 
 ## Bug Description

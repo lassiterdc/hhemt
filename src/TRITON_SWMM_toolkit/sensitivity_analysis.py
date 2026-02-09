@@ -668,12 +668,7 @@ class TRITONSWMM_sensitivity_analysis:
                 subanalysis_definition_row = self.df_setup.iloc[sub_analysis_iloc, :]
                 df_setup_rows.append(subanalysis_definition_row)
 
-                # TODO(TRITON-OUTPUT-PATH-BUG): log.out is hardcoded to output/ by TRITON.
-                # When both TRITON-only and TRITON-SWMM run, last to finish overwrites
-                # the other's log.out. See docs/implementation/triton_output_path_bug.md
-                # Parse log.out file for actual resource usage
-                # log.out is written to the output directory (same location as performance.txt)
-                log_out_path = scen.scen_paths.sim_folder / "output" / "log.out"
+                log_out_path = scen.scen_paths.out_tritonswmm / "log.out"  # type: ignore
                 log_data = ut.parse_triton_log_file(log_out_path)
                 actual_nTasks.append(log_data["nTasks"])
                 actual_omp_threads.append(log_data["omp_threads_per_task"])
