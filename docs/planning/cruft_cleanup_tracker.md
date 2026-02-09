@@ -122,22 +122,38 @@ Baseline interpretation:
 
 ### Phase 6 — Test Suite Cleanup
 
-- Status: **Partially Complete** (Phase 6c done, 6a-6b-6d remaining)
+- Status: **In Progress** (6c complete, 6a.1/6b.1/6d.1/6d.2 complete, next: 6d.3)
 - Touched files:
-  - `tests/utils_for_testing.py` (diagnostic print cleanup)
+  - `tests/utils_for_testing.py` (diagnostic print cleanup + new assertion helpers)
+  - `tests/test_PILOT_platform_parametrized_workflow.py` (NEW; parametrization pilot)
+  - `docs/planning/test_suite_cleanup_phase6_plan.md` (NEW; comprehensive Phase 6 plan)
+  - `docs/planning/test_fixture_audit_phase6b1.md` (NEW; fixture usage audit)
+  - `docs/planning/test_assertion_audit_phase6d1.md` (NEW; assertion pattern audit)
 - Implemented:
-  - **Phase 6c**: Made test diagnostic prints opt-in via `verbose` parameter
-    - `assert_scenarios_setup()` — verbose parameter added (default: False)
-    - `assert_scenarios_run()` — verbose parameter added
-    - `assert_timeseries_processed()` — verbose parameter added
+  - **Phase 6c** (Complete): Made test diagnostic prints opt-in via `verbose` parameter
+    - `assert_scenarios_setup()`, `assert_scenarios_run()`, `assert_timeseries_processed()` — verbose parameter added
     - Improved failure messages with count and hint to run with pytest -v
-    - Backward compatible (existing tests work unchanged)
+  - **Phase 6a.1** (Complete): Platform parametrization pilot
+    - Created `test_PILOT_platform_parametrized_workflow.py` with 2 tests × 3 platforms
+    - Proved parametrization concept with automatic platform skipping
+  - **Phase 6b.1** (Complete): Fixture usage audit
+    - Analyzed 24 fixtures across test suite, identified 67% consolidation opportunity
+    - Documented fixture usage patterns and duplication
+  - **Phase 6d.1** (Complete): Assertion pattern audit
+    - Identified 37 assertion patterns for standardization (19 multi-model, 18 path checks)
+    - Designed 4 new helper functions
+  - **Phase 6d.2** (Complete): Implemented assertion helpers in `tests/utils_for_testing.py`
+    - `assert_model_outputs_exist()` — consolidates 19 multi-model check patterns
+    - `assert_file_exists()` — standardizes 18 path existence checks
+    - `assert_phases_complete()` — leverages WorkflowStatus for phase validation
+    - `assert_model_simulations_complete()` — model-specific completion checking
 - Test status:
   - All smoke tests pass (PC_01 through PC_05)
-- Remaining (deferred):
-  - **Phase 6a**: Parametrize repeated platform test patterns
-  - **Phase 6b**: Consolidate fixture factories
-  - **Phase 6d**: Standardize assertions around completion semantics
+  - Pilot parametrized tests pass (2 local, 4 skipped for unavailable platforms)
+- Next steps:
+  - **Phase 6d.3**: Migrate existing assertions to use new helpers (~37 instances)
+  - **Phase 6a.2**: Expand parametrization to more test files (validate on UVA/Frontier)
+  - **Phase 6b.2-4**: Implement unified fixture API and consolidation
 
 ### Phase 7+
 
