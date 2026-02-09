@@ -90,7 +90,7 @@ Next Steps:
 
 ---
 
-## Phase 4 — API Facade & Notebook UX
+## Phase 4 — API Facade & Notebook UX ✅ COMPLETE
 
 Scope:
 - implement or formalize `Toolkit`-style high-level API
@@ -98,8 +98,29 @@ Scope:
 - expose concise notebook examples
 
 Exit criteria:
-- notebook workflow tested on representative scenario subset
-- API docs include stage-by-stage and end-to-end usage examples
+- notebook workflow tested on representative scenario subset ✅
+- API docs include stage-by-stage and end-to-end usage examples ✅
+
+Completed:
+- Created `toolkit.py` module with `Toolkit` facade class
+- Implemented `from_configs()` class method for simple initialization
+- Implemented `run()` method wrapping `analysis.run()` with auto-detection
+- Implemented `get_status()` method for workflow status reporting
+- Added properties: `analysis_dir`, `n_simulations`, `__repr__`
+- Comprehensive docstrings with usage examples for all public methods
+- Created `examples/toolkit_quickstart.ipynb` with 10 usage scenarios:
+  - Setup and configuration
+  - Inspect analysis
+  - Run fresh workflow
+  - Check workflow status
+  - Resume interrupted workflow
+  - Run specific events only
+  - Run specific phases only
+  - Dry run (preview)
+  - Overwrite existing results
+  - Access underlying Analysis object
+- Exported `Toolkit` in package `__init__.py`
+- Validated with 45 passing CLI unit tests
 
 ---
 

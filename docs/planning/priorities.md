@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 3 Phase 3 partial: CLI refactored to use orchestration API)
+**Last Updated:** 2026-02-09 (Tier 3 Phase 4 complete: Toolkit API facade with example notebook)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -19,6 +19,7 @@ For reference, these major efforts are done and tested:
 - [x] Examples/test utilities refactor (67% reduction, platform configs centralized)
 - [x] Shared orchestration core (analysis.run() API, WorkflowResult, workflow status reporting)
 - [x] CLI refactor to use orchestration API (70 lines → 47 lines, thin adapter pattern)
+- [x] Toolkit API facade (high-level notebook-friendly interface, comprehensive docstrings, example notebook)
 
 ---
 
@@ -115,10 +116,14 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - Implement HPC inheritance and merge semantics
   - _Ref:_ `docs/planning/hpc_inheritance_spec.md`
 
-- [ ] **API facade & notebook UX** (Phase 4 of implementation roadmap)
-  - Implement `Toolkit`-style high-level API
-  - Return structured result objects
-  - _Ref:_ `docs/planning/api_vision.md`
+- [x] **API facade & notebook UX** (Phase 4 of implementation roadmap) — **Complete**
+  - ✅ Implemented `Toolkit` high-level API with from_configs() and run() methods
+  - ✅ Comprehensive docstrings with usage examples for all public methods
+  - ✅ Created example notebook (examples/toolkit_quickstart.ipynb) with 10 usage scenarios
+  - ✅ Exported Toolkit in package __init__.py for convenient import
+  - ✅ Properties for analysis_dir and n_simulations access
+  - ✅ Validated with 45 passing CLI unit tests
+  - _Ref:_ `docs/planning/api_vision.md`, `src/TRITON_SWMM_toolkit/toolkit.py`
 
 ---
 
