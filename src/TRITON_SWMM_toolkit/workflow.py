@@ -11,6 +11,7 @@ Key Components:
 """
 
 import subprocess
+import sys
 import yaml  # type: ignore
 import psutil
 from pathlib import Path
@@ -50,12 +51,27 @@ class SnakemakeWorkflowBuilder:
         self.cfg_analysis = analysis.cfg_analysis
         self.system = analysis._system
         self.analysis_paths = analysis.analysis_paths
-        self.python_executable = analysis._python_executable
+        # Prefer an explicit interpreter path for generated shell commands.
+        # If analysis stores a generic command ("python"/"python3"), use
+        # the current interpreter running this process to avoid PATH issues.
+        configured_python = str(analysis._python_executable)
+        if configured_python in {"python", "python3"}:
+            self.python_executable = sys.executable
+        else:
+            self.python_executable = configured_python
 
     def _get_conda_env_path(self) -> Path:
         """Get absolute path to conda environment file."""
         triton_toolkit_root = Path(__file__).parent.parent.parent
         return triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
+
+    def _get_snakemake_base_cmd(self) -> list[str]:
+        """Return command prefix for invoking Snakemake.
+
+        Prefer `python -m snakemake` so execution works even when the
+        `snakemake` console script is not on PATH.
+        """
+        return [sys.executable, "-m", "snakemake"]
 
     def _get_config_args(self, analysis_config_yaml: Path | None = None) -> str:
         """
@@ -353,7 +369,7 @@ rule prepare_scenario:
         for model_type in enabled_models:
             # For SWMM, use fixed CPU-only resources (no GPU, limited threads)
             if model_type == "swmm":
-                swmm_cpus = 4  # SWMM is multithreaded but not MPI/OpenMP, limit to reasonable value
+                swmm_cpus = self.cfg_analysis.n_threads_swmm or 1
                 swmm_resources = self._build_resource_block(
                     partition=self.cfg_analysis.hpc_ensemble_partition,
                     runtime_min=hpc_time_min,
@@ -757,7 +773,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
+python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -824,8 +840,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     flush=True,
                 )
 
-            cmd_args = [
-                "snakemake",
+            cmd_args = self._get_snakemake_base_cmd() + [
                 "--profile",
                 str(config_dir),
                 "--snakefile",
@@ -967,7 +982,8 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         dry_run_result["mode"] = "single_job"
         return dry_run_result
 
-    def run_snakemake_slurm(
+    # TODO - since we are unlikely to run models as detached processes, this and all calls to it can probably be deleted
+    def _run_snakemake_slurm_detached(
         self,
         snakefile_path: Path,
         verbose: bool = True,
@@ -1037,10 +1053,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     flush=True,
                 )
 
-            # Submit workflow as detached background process, capturing output
-            # Don't pass --executor; let Snakemake read the config (either 'executor' or 'cluster' mode)
-            cmd_args = [
-                "snakemake",
+            cmd_args = self._get_snakemake_base_cmd() + [
                 "--profile",
                 str(config_dir),
                 "--snakefile",
@@ -1055,17 +1068,15 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             if verbose:
                 cmd_args.append("--verbose")
 
-            # Open log file for writing Snakemake output
             with open(snakemake_logfile, "w") as log_f:
                 proc = subprocess.Popen(
                     cmd_args,
                     cwd=str(self.analysis_paths.analysis_dir),
                     stdout=log_f,
-                    stderr=subprocess.STDOUT,  # Merge stderr into stdout
-                    start_new_session=True,  # Detach from parent process
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
                 )
 
-            # Return immediately (non-blocking)
             if not wait_for_completion:
                 if verbose:
                     print(
@@ -1089,36 +1100,34 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     "snakemake_logfile": snakemake_logfile,
                 }
 
-            # Wait for completion (blocking)
-            else:
-                if verbose:
-                    print("[Snakemake] Waiting for workflow completion...", flush=True)
-                proc.wait()
-                success = proc.returncode == 0
-                completion_status = "success" if success else "failed"
+            if verbose:
+                print("[Snakemake] Waiting for workflow completion...", flush=True)
+            proc.wait()
+            success = proc.returncode == 0
+            completion_status = "success" if success else "failed"
 
-                if verbose:
-                    print(
-                        f"[Snakemake] Workflow completed with status: {completion_status}",
-                        flush=True,
-                    )
-                    print(
-                        f"[Snakemake] Full output available in: {snakemake_logfile}",
-                        flush=True,
-                    )
+            if verbose:
+                print(
+                    f"[Snakemake] Workflow completed with status: {completion_status}",
+                    flush=True,
+                )
+                print(
+                    f"[Snakemake] Full output available in: {snakemake_logfile}",
+                    flush=True,
+                )
 
-                return {
-                    "success": success,
-                    "mode": "slurm",
-                    "snakefile_path": snakefile_path,
-                    "job_id": None,
-                    "message": f"Workflow completed with status: {completion_status}",
-                    "process": proc,
-                    "wait_for_completion": True,
-                    "completed": True,
-                    "completion_status": completion_status,
-                    "snakemake_logfile": snakemake_logfile,
-                }
+            return {
+                "success": success,
+                "mode": "slurm",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": f"Workflow completed with status: {completion_status}",
+                "process": proc,
+                "wait_for_completion": True,
+                "completed": True,
+                "completion_status": completion_status,
+                "snakemake_logfile": snakemake_logfile,
+            }
 
         except Exception as e:
             error_msg = f"Failed to submit workflow: {str(e)}"
@@ -1134,6 +1143,110 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "wait_for_completion": wait_for_completion,
                 "completed": False,
                 "completion_status": None,
+                "snakemake_logfile": None,
+            }
+
+    def _validate_batch_job_dry_run(
+        self,
+        snakefile_path: Path,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Perform a dry-run validation for batch_job mode using the SLURM profile.
+
+        This validates the Snakemake DAG/resources before submitting the
+        orchestration SBATCH job.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile
+        verbose : bool
+            If True, print progress messages
+
+        Returns
+        -------
+        dict
+            Dry-run status dictionary
+        """
+        try:
+            if verbose:
+                print(
+                    "[Snakemake] Running batch_job dry-run validation",
+                    flush=True,
+                )
+
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+
+            logs_dir = self.analysis_paths.analysis_dir / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            snakemake_logfile = logs_dir / "snakemake_master_dry_run.log"
+
+            cmd_args = self._get_snakemake_base_cmd() + [
+                "--profile",
+                str(config_dir),
+                "--snakefile",
+                str(snakefile_path),
+                "--executor",
+                "slurm",
+                "--default-resources",
+                "--slurm-efficiency-report",
+                "--dry-run",
+            ]
+            if verbose:
+                cmd_args.append("--verbose")
+
+            with open(snakemake_logfile, "w") as log_f:
+                result = subprocess.run(
+                    cmd_args,
+                    cwd=str(self.analysis_paths.analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+
+            if result.returncode != 0:
+                error_msg = (
+                    "Snakemake batch_job dry run failed. "
+                    f"See logs for {snakefile_path.parent}"
+                )
+                if verbose:
+                    print(f"[Snakemake] ERROR: {error_msg}", flush=True)
+                return {
+                    "success": False,
+                    "mode": "batch_job",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": error_msg,
+                    "snakemake_logfile": snakemake_logfile,
+                }
+
+            if verbose:
+                print(
+                    "[Snakemake] Batch-job dry run completed successfully", flush=True
+                )
+
+            return {
+                "success": True,
+                "mode": "batch_job",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": "Batch-job dry run completed successfully",
+                "snakemake_logfile": snakemake_logfile,
+            }
+
+        except Exception as e:
+            error_msg = f"Failed to run batch-job dry run: {str(e)}"
+            if verbose:
+                print(f"[Snakemake] EXCEPTION: {error_msg}", flush=True)
+            return {
+                "success": False,
+                "mode": "batch_job",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": error_msg,
                 "snakemake_logfile": None,
             }
 
@@ -1386,6 +1499,230 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "message": error_msg,
             }
 
+    def _submit_batch_job_workflow(
+        self,
+        snakefile_path: Path,
+        wait_for_completion: bool = False,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Submit Snakemake workflow as a long-duration single-core SLURM orchestration job.
+
+        This is intended for multi_sim_run_method == "batch_job" where Snakemake
+        should run detached from an interactive Python terminal.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the generated Snakefile
+        wait_for_completion : bool, default=False
+            If True, block until orchestration job completes
+        verbose : bool, default=True
+            Print progress messages
+
+        Returns
+        -------
+        dict
+            Status dictionary with keys:
+            - success: bool
+            - mode: str ("batch_job")
+            - job_id: str | None
+            - script_path: Path | None
+            - message: str
+            - completed/state/exit_code when wait_for_completion=True
+        """
+        try:
+            if verbose:
+                print(
+                    "[Snakemake] Preparing batch_job orchestration submission",
+                    flush=True,
+                )
+
+            # Build and write slurm profile used by the orchestration job
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+
+            # Long-duration walltime for orchestration job
+            job_time = self.cfg_analysis.hpc_total_job_duration_min
+            assert isinstance(
+                job_time, int
+            ), "hpc_total_job_duration_min required for multi_sim_run_method='batch_job'"
+
+            hours = job_time // 60
+            minutes = job_time % 60
+            estimated_time = f"{hours:02d}:{minutes:02d}:00"
+
+            # Lightweight orchestration resources (single-core process)
+            mem_mb = self.cfg_analysis.mem_gb_per_cpu * 1000
+            orchestration_partition = (
+                self.cfg_analysis.hpc_setup_and_analysis_processing_partition
+                or self.cfg_analysis.hpc_ensemble_partition
+            )
+
+            if orchestration_partition is None:
+                raise ValueError(
+                    "Either hpc_setup_and_analysis_processing_partition or "
+                    "hpc_ensemble_partition must be set for batch_job orchestration"
+                )
+
+            # Logs for sbatch script stdout/stderr
+            import TRITON_SWMM_toolkit.utils as ut
+
+            batch_log_path = (
+                self.analysis.analysis_paths.analysis_dir / "logs" / "_slurm_logs"
+            )
+            batch_log_path.mkdir(exist_ok=True, parents=True)
+
+            additional_sbatch_args = ""
+            if self.cfg_analysis.additional_SBATCH_params:
+                additional_sbatch_args = "#SBATCH "
+                additional_sbatch_args += "\n#SBATCH ".join(
+                    self.cfg_analysis.additional_SBATCH_params
+                )
+
+            modules = (
+                self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            )
+            module_load_cmd = ""
+            if modules:
+                module_load_cmd = f"module load {modules}"
+
+            # Conda initialization for non-interactive SLURM shell
+            conda_init_cmd = """
+# Initialize conda for non-interactive shell
+if [ -n "${CONDA_EXE}" ]; then
+    eval "$(${CONDA_EXE} shell.bash hook)"
+elif [ -n "${CONDA_PREFIX}" ] && [ -f "${CONDA_PREFIX}/../etc/profile.d/conda.sh" ]; then
+    source "${CONDA_PREFIX}/../etc/profile.d/conda.sh"
+else
+    echo "ERROR: Cannot find conda initialization. CONDA_EXE and CONDA_PREFIX are both unset."
+    exit 1
+fi
+
+conda activate triton_swmm_toolkit
+
+# Ensure conda libs are discoverable (important on some HPC systems)
+if [ -n "${CONDA_PREFIX}" ]; then
+    export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
+fi
+"""
+
+            account_directive = ""
+            if self.cfg_analysis.hpc_account:
+                account_directive = (
+                    f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
+                )
+
+            # The orchestration job runs snakemake; snakemake then submits worker jobs via executor=slurm
+            script_content = f"""#!/bin/bash
+#SBATCH --job-name=triton_snakemake_orchestrator
+#SBATCH --partition={orchestration_partition}
+{account_directive}#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=1
+#SBATCH --mem={mem_mb}
+#SBATCH --time={estimated_time}
+#SBATCH --output={str(batch_log_path)}/workflow_batch_{ut.current_datetime_string(filepath_friendly=True)}_%j.out
+#SBATCH --error={str(batch_log_path)}/workflow_batch_{ut.current_datetime_string(filepath_friendly=True)}_%j.out
+{additional_sbatch_args}
+
+module purge
+{module_load_cmd}
+
+{conda_init_cmd}
+
+python -m snakemake \\
+    --profile {config_dir} \\
+    --snakefile {snakefile_path} \\
+    --executor slurm \\
+    --default-resources \\
+    --slurm-efficiency-report
+"""
+
+            script_path = self.analysis_paths.analysis_dir / "run_workflow_batch_job.sh"
+            script_path.write_text(script_content)
+            script_path.chmod(0o755)
+
+            if verbose:
+                print(
+                    f"[Snakemake] Generated batch orchestration script: {script_path}",
+                    flush=True,
+                )
+                print(f"[Snakemake] Submitting with sbatch: {script_path}", flush=True)
+
+            submit_result = subprocess.run(
+                ["sbatch", str(script_path)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.analysis_paths.analysis_dir),
+            )
+
+            # Parse job id from: "Submitted batch job 12345"
+            job_id = None
+            if submit_result.returncode == 0 and submit_result.stdout:
+                parts = submit_result.stdout.strip().split()
+                if len(parts) >= 4 and parts[0] == "Submitted":
+                    job_id = parts[-1]
+
+            if submit_result.returncode != 0:
+                error_msg = f"sbatch submission failed: {submit_result.stderr}"
+                if verbose:
+                    print(f"[Snakemake] ERROR: {error_msg}", flush=True)
+                return {
+                    "success": False,
+                    "mode": "batch_job",
+                    "job_id": None,
+                    "script_path": script_path,
+                    "message": error_msg,
+                }
+
+            if verbose:
+                print(
+                    f"[Snakemake] Batch orchestration job submitted successfully (Job ID: {job_id})",
+                    flush=True,
+                )
+
+            result_dict = {
+                "success": True,
+                "mode": "batch_job",
+                "job_id": job_id,
+                "script_path": script_path,
+                "message": f"Batch orchestration workflow submitted (Job ID: {job_id})",
+            }
+
+            if wait_for_completion:
+                if job_id:
+                    completion_info = self._wait_for_slurm_job_completion(
+                        job_id=job_id,
+                        timeout=None,
+                        verbose=verbose,
+                    )
+                    result_dict.update(completion_info)
+                    result_dict["success"] = completion_info["completed"]
+                else:
+                    if verbose:
+                        print(
+                            "[Snakemake] ERROR: Failed to parse job ID for wait",
+                            flush=True,
+                        )
+                    result_dict["success"] = False
+                    result_dict["completed"] = False
+                    result_dict["message"] = "Failed to parse job ID"
+
+            return result_dict
+
+        except Exception as e:
+            error_msg = f"Failed to submit batch-job workflow: {str(e)}"
+            if verbose:
+                print(f"[Snakemake] EXCEPTION: {error_msg}", flush=True)
+            return {
+                "success": False,
+                "mode": "batch_job",
+                "job_id": None,
+                "script_path": None,
+                "message": error_msg,
+            }
+
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -1512,8 +1849,57 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             self.analysis._refresh_log()
             return result
 
+        if multi_sim_method == "batch_job":
+            if verbose:
+                print(
+                    "[Snakemake] Using batch_job orchestration mode",
+                    flush=True,
+                )
+
+            snakefile_content = self.generate_snakefile_content(
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+            )
+
+            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            snakefile_path.write_text(snakefile_content)
+
+            if verbose:
+                print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
+
+            dry_run_result = self._validate_batch_job_dry_run(
+                snakefile_path=snakefile_path,
+                verbose=verbose,
+            )
+
+            if not dry_run_result.get("success"):
+                raise RuntimeError("Dry run failed; workflow submission aborted.")
+
+            if dry_run:
+                self.analysis._refresh_log()
+                return dry_run_result
+
+            result = self._submit_batch_job_workflow(
+                snakefile_path=snakefile_path,
+                wait_for_completion=wait_for_completion,
+                verbose=verbose,
+            )
+
+            self.analysis._refresh_log()
+            return result
+
         # Standard workflow submission (existing logic)
-        # Detect execution mode
         if mode == "auto":
             mode = "slurm" if self.analysis.in_slurm else "local"
 
@@ -1552,7 +1938,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 dry_run=True,
             )
         else:  # slurm
-            dry_run_result = self.run_snakemake_slurm(
+            dry_run_result = self._run_snakemake_slurm_detached(
                 snakefile_path=snakefile_path,
                 wait_for_completion=True,
                 verbose=verbose,
@@ -1573,7 +1959,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 verbose=verbose,
             )
         else:  # slurm
-            result = self.run_snakemake_slurm(
+            result = self._run_snakemake_slurm_detached(
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
@@ -2117,6 +2503,65 @@ rule setup:
             self.sensitivity_analysis._update_master_analysis_log()
             return result
 
+        if multi_sim_method == "batch_job":
+            if verbose:
+                print(
+                    "[Snakemake] Using batch_job orchestration mode for sensitivity analysis",
+                    flush=True,
+                )
+
+            master_snakefile_content = self.generate_master_snakefile_content(
+                which=which,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                compression_level=compression_level,
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                clear_raw_outputs=clear_raw_outputs,
+                pickup_where_leftoff=pickup_where_leftoff,
+            )
+
+            master_snakefile_path = (
+                self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
+            )
+            master_snakefile_path.write_text(master_snakefile_content)
+
+            if verbose:
+                print(
+                    f"[Snakemake] Generated master Snakefile: {master_snakefile_path}",
+                    flush=True,
+                )
+
+            analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+            (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
+            (analysis_dir / "logs" / "sims").mkdir(parents=True, exist_ok=True)
+
+            dry_run_result = self._base_builder._validate_batch_job_dry_run(
+                snakefile_path=master_snakefile_path,
+                verbose=verbose,
+            )
+
+            if not dry_run_result.get("success"):
+                raise RuntimeError("Dry run failed; workflow submission aborted.")
+
+            if dry_run:
+                self.sensitivity_analysis._update_master_analysis_log()
+                return dry_run_result
+
+            result = self._base_builder._submit_batch_job_workflow(
+                snakefile_path=master_snakefile_path,
+                verbose=verbose,
+                wait_for_completion=wait_for_completion,
+            )
+
+            self.sensitivity_analysis._update_master_analysis_log()
+            return result
+
         # Standard workflow submission (existing logic)
         # Detect execution mode
         if mode == "auto":
@@ -2177,7 +2622,7 @@ rule setup:
                 dry_run=True,
             )
         else:  # slurm
-            dry_run_result = self._base_builder.run_snakemake_slurm(
+            dry_run_result = self._base_builder._run_snakemake_slurm_detached(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=True,
@@ -2199,7 +2644,7 @@ rule setup:
                 dry_run=False,
             )
         else:  # slurm
-            result = self._base_builder.run_snakemake_slurm(
+            result = self._base_builder._run_snakemake_slurm_detached(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,

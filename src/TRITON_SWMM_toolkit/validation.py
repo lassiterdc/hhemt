@@ -560,6 +560,39 @@ def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
                 fix_hint="Set hpc_total_job_duration_min (e.g., 120 for 2 hours)",
             )
 
+    if method == "batch_job":
+        if cfg.hpc_total_job_duration_min is None or cfg.hpc_total_job_duration_min < 1:
+            result.add_error(
+                field="analysis.hpc_total_job_duration_min",
+                message="Required for multi_sim_run_method='batch_job'",
+                current_value=cfg.hpc_total_job_duration_min,
+                fix_hint="Set hpc_total_job_duration_min (e.g., 720 for 12 hours)",
+            )
+
+        if cfg.hpc_max_simultaneous_sims is None or cfg.hpc_max_simultaneous_sims < 1:
+            result.add_error(
+                field="analysis.hpc_max_simultaneous_sims",
+                message="Required for multi_sim_run_method='batch_job'",
+                current_value=cfg.hpc_max_simultaneous_sims,
+                fix_hint="Set hpc_max_simultaneous_sims (e.g., 32)",
+            )
+
+        if not cfg.hpc_ensemble_partition:
+            result.add_error(
+                field="analysis.hpc_ensemble_partition",
+                message="Required for multi_sim_run_method='batch_job'",
+                current_value=cfg.hpc_ensemble_partition,
+                fix_hint="Set hpc_ensemble_partition",
+            )
+
+        if not cfg.hpc_account:
+            result.add_error(
+                field="analysis.hpc_account",
+                message="Required for multi_sim_run_method='batch_job'",
+                current_value=cfg.hpc_account,
+                fix_hint="Set hpc_account",
+            )
+
 
 # ============================================================================
 # Data Cross-Consistency Validators
