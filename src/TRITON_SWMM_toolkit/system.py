@@ -92,17 +92,19 @@ class TRITONSWMM_system:
         return self._analysis
 
     def process_system_level_inputs(
-        self, overwrite_if_exists: bool = False, verbose: bool = False
+        self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False
     ):
-        self.create_dem_for_TRITON(overwrite_if_exists, verbose)
+        self.create_dem_for_TRITON(overwrite_outputs_if_already_created, verbose)
         if not self.cfg_system.toggle_use_constant_mannings:
-            self.create_mannings_file_for_TRITON(overwrite_if_exists, verbose)
+            self.create_mannings_file_for_TRITON(
+                overwrite_outputs_if_already_created, verbose
+            )
 
     def create_dem_for_TRITON(
-        self, overwrite_if_exists: bool = False, verbose: bool = False
+        self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False
     ):
         dem_processed = self.sys_paths.dem_processed
-        if dem_processed.exists() and not overwrite_if_exists:
+        if dem_processed.exists() and not overwrite_outputs_if_already_created:
             out = "DEM file already exists. Not rewriting."
         rds_dem_coarse = self._coarsen_dem()
         self._write_raster_formatted_for_TRITON(
@@ -118,10 +120,10 @@ class TRITONSWMM_system:
         return
 
     def create_mannings_file_for_TRITON(
-        self, overwrite_if_exists: bool = False, verbose: bool = False
+        self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False
     ):
         mannings_processed = self.sys_paths.mannings_processed
-        if mannings_processed.exists() and not overwrite_if_exists:
+        if mannings_processed.exists() and not overwrite_outputs_if_already_created:
             out = "Mannings file already exists. Not rewriting."
         include_metadata = False
         rds_mannings_coarse = self._create_mannings_raster_matching_dem()

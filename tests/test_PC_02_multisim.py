@@ -12,7 +12,7 @@ def test_run_multisim_concurrently(norfolk_multi_sim_analysis):
     analysis = norfolk_multi_sim_analysis
     analysis._system.compile_TRITON_SWMM(recompile_if_already_done_successfully=False)
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
-        overwrite_scenario=True, verbose=True
+        overwrite_scenario_if_already_set_up=True, verbose=True
     )
     analysis.run_python_functions_concurrently(prepare_scenario_launchers)
     launch_functions = analysis._create_launchable_sims(
@@ -50,15 +50,21 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
         for model_type in enabled_models:
             if model_type == "tritonswmm":
                 proc.write_summary_outputs(
-                    which="both", model_type=model_type, overwrite_if_exist=True
+                    which="both",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "triton":
                 proc.write_summary_outputs(
-                    which="TRITON", model_type=model_type, overwrite_if_exist=True
+                    which="TRITON",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "swmm":
                 proc.write_summary_outputs(
-                    which="SWMM", model_type=model_type, overwrite_if_exist=True
+                    which="SWMM",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=True,
                 )
 
     analysis._update_log()
@@ -70,7 +76,7 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
 
     # Consolidate into analysis-level summaries
     analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-        overwrite_if_exist=True,
+        overwrite_outputs_if_already_created=True,
     )
 
     # Validate analysis-level consolidated outputs

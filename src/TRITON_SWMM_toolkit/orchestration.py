@@ -260,43 +260,12 @@ class WorkflowResult:
         return "\n".join(parts)
 
 
-# Mode translation mapping: user-friendly mode → workflow parameters
-MODE_TRANSLATION = {
-    "fresh": {
-        "from_scratch": True,
-        "overwrite_system_inputs": True,
-        "recompile_if_already_done_successfully": True,
-        "overwrite_scenario": True,
-        "overwrite_if_exist": True,
-        "pickup_where_leftoff": False,
-    },
-    "resume": {
-        "from_scratch": False,
-        "overwrite_system_inputs": False,
-        "recompile_if_already_done_successfully": False,
-        "overwrite_scenario": False,
-        "overwrite_if_exist": False,
-        "pickup_where_leftoff": True,
-    },
-    "overwrite": {
-        "from_scratch": False,
-        "overwrite_system_inputs": True,
-        "recompile_if_already_done_successfully": True,
-        "overwrite_scenario": True,
-        "overwrite_if_exist": True,
-        "pickup_where_leftoff": False,
-    },
-}
-
-
-def translate_mode(
-    mode: Literal["fresh", "resume", "overwrite"]
-) -> dict:
+def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
     """Translate user-friendly mode to workflow parameters.
 
     Parameters
     ----------
-    mode : Literal["fresh", "resume", "overwrite"]
+    mode : Literal["fresh", "resume"]
         User-specified execution mode
 
     Returns
@@ -312,6 +281,26 @@ def translate_mode(
     >>> params["pickup_where_leftoff"]
     False
     """
+    MODE_TRANSLATION = {
+        "fresh": {
+            # "from_scratch": True,
+            "overwrite_system_inputs": True,
+            "recompile_if_already_done_successfully": True,
+            "overwrite_scenario_if_already_set_up": True,
+            "rerun_swmm_hydro_if_outputs_exist": True,
+            "overwrite_outputs_if_already_created": True,
+            "pickup_where_leftoff": False,
+        },
+        "resume": {
+            # "from_scratch": False,
+            "overwrite_system_inputs": False,
+            "recompile_if_already_done_successfully": False,
+            "overwrite_scenario_if_already_set_up": False,
+            "rerun_swmm_hydro_if_outputs_exist": False,
+            "overwrite_outputs_if_already_created": False,
+            "pickup_where_leftoff": True,
+        },
+    }
     return MODE_TRANSLATION[mode].copy()
 
 
@@ -347,6 +336,10 @@ def translate_phases(
             "prepare_scenarios": True,
             "process_timeseries": True,
         }
+    valid_phases = ["setup", "prepare", "process"]
+    for phase in phases:
+        if phase not in valid_phases:
+            raise ValueError(f"Invalid phase specified. Must be one of: {valid_phases}")
 
     # Translate phase names to flags
     params = {

@@ -107,7 +107,7 @@ def main():
 
         # Call the prepare_scenario method
         scenario.prepare_scenario(
-            overwrite_scenario=args.overwrite_scenario,
+            overwrite_scenario_if_already_set_up=args.overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=args.rerun_swmm_hydro,
         )
 

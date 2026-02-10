@@ -303,7 +303,7 @@ class TRITONSWMM_analysis_post_processing:
     def consolidate_outputs_for_mode(
         self,
         mode: str,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -321,7 +321,7 @@ class TRITONSWMM_analysis_post_processing:
         self._consolidate_outputs(
             ds_combined_outputs,
             mode=mode,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -385,7 +385,7 @@ class TRITONSWMM_analysis_post_processing:
 
     def consolidate_TRITONSWMM_performance_summaries(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -397,7 +397,7 @@ class TRITONSWMM_analysis_post_processing:
 
         Parameters
         ----------
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing consolidated outputs
         verbose : bool
             If True, print progress messages
@@ -411,12 +411,12 @@ class TRITONSWMM_analysis_post_processing:
 
         if (
             self._already_written(fname_out)
-            and (not overwrite_if_exist)
+            and (not overwrite_outputs_if_already_created)
             and fname_out.exists()
         ):
             if verbose:
                 print(
-                    f"File already written and overwrite_if_exists is set to False. Not overwriting:\n{fname_out}"
+                    f"File already written and overwrite_outputs_if_already_created is set to False. Not overwriting:\n{fname_out}"
                 )
             return
 
@@ -488,7 +488,7 @@ class TRITONSWMM_analysis_post_processing:
         self,
         ds_combined_outputs: xr.Dataset | xr.DataArray,
         mode: str,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -523,12 +523,12 @@ class TRITONSWMM_analysis_post_processing:
 
         if (
             self._already_written(fname_out)
-            and (not overwrite_if_exist)
+            and (not overwrite_outputs_if_already_created)
             and fname_out.exists()
         ):
             if verbose:
                 print(
-                    f"File already written and overwrite_if_exists is set to False. "
+                    f"File already written and overwrite_outputs_if_already_created is set to False. "
                     f"Not overwriting:\n{fname_out}"
                 )
             return

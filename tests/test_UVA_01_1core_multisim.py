@@ -61,7 +61,7 @@ def test_compile_TRITONSWMM_for_cpu_sims(norfolk_uva_multisim_analysis_cached):
 def test_prepare_scenarios(norfolk_uva_multisim_analysis_cached):
     analysis = norfolk_uva_multisim_analysis_cached
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
-        overwrite_scenario=True, verbose=True
+        overwrite_scenario_if_already_set_up=True, verbose=True
     )
     analysis.run_python_functions_concurrently(
         prepare_scenario_launchers,

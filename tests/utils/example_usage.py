@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from tests.utils.process_monitor import RunnerConcurrencyMonitor
 import tests.utils_for_testing as tst
 
+
 def main():
     """Run a test workflow with detailed concurrency monitoring."""
 
@@ -23,22 +24,22 @@ def main():
     case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.system.analysis
 
-    print("="*70)
+    print("=" * 70)
     print("CONCURRENCY MONITORING EXAMPLE")
-    print("="*70)
+    print("=" * 70)
     print(f"Analysis: {analysis.analysis_name}")
     print(f"Configured cores: {analysis.cfg_analysis.local_cpu_cores_for_workflow}")
     print(f"Number of simulations: {len(analysis.df_sims)}")
-    print("="*70 + "\n")
+    print("=" * 70 + "\n")
 
     # Monitor with detailed breakdown
     with RunnerConcurrencyMonitor(sample_interval=0.1) as monitor:
         result = analysis.submit_workflow(
             mode="local",
             process_system_level_inputs=False,  # Skip if already done
-            compile_TRITON_SWMM=False,          # Skip if already done
+            compile_TRITON_SWMM=False,  # Skip if already done
             prepare_scenarios=True,
-            overwrite_scenario=True,
+            overwrite_scenario_if_already_set_up=True,
             process_timeseries=True,
             which="both",
             verbose=True,
@@ -55,20 +56,22 @@ def main():
     monitor.print_summary()
 
     # Export timeline
-    timeline_path = analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
+    timeline_path = (
+        analysis.analysis_paths.analysis_dir / "runner_concurrency_timeline.csv"
+    )
     monitor.export_timeline(str(timeline_path))
     print(f"\n📊 Timeline exported to: {timeline_path}")
     print("   Open in Excel or Python/pandas for visualization\n")
 
     # Answer specific questions
-    print("="*70)
+    print("=" * 70)
     print("DETERMINISTIC ANSWERS TO CONCURRENCY QUESTIONS")
-    print("="*70)
+    print("=" * 70)
 
     cores = analysis.cfg_analysis.local_cpu_cores_for_workflow
 
     print(f"\n1. Maximum concurrent prepare_scenario_runner processes:")
-    max_prepare = report['max_concurrent'].get('prepare_scenario_runner', 0)
+    max_prepare = report["max_concurrent"].get("prepare_scenario_runner", 0)
     print(f"   {max_prepare} (configured cores: {cores})")
     if max_prepare <= cores:
         print("   ✅ Respects core limit")
@@ -76,7 +79,7 @@ def main():
         print(f"   ⚠️  Briefly exceeded cores (normal during phase transitions)")
 
     print(f"\n2. Maximum concurrent run_simulation_runner processes:")
-    max_run = report['max_concurrent'].get('run_simulation_runner', 0)
+    max_run = report["max_concurrent"].get("run_simulation_runner", 0)
     print(f"   {max_run} (configured cores: {cores})")
     if max_run <= cores:
         print("   ✅ Respects core limit")
@@ -84,7 +87,7 @@ def main():
         print(f"   ⚠️  Briefly exceeded cores (normal during phase transitions)")
 
     print(f"\n3. Maximum concurrent process_timeseries_runner processes:")
-    max_process = report['max_concurrent'].get('process_timeseries_runner', 0)
+    max_process = report["max_concurrent"].get("process_timeseries_runner", 0)
     print(f"   {max_process} (configured cores: {cores})")
     if max_process <= cores:
         print("   ✅ Respects core limit")
@@ -93,16 +96,16 @@ def main():
 
     print(f"\n4. Maximum TOTAL concurrent runners:")
     print(f"   {report['max_total_runners']}")
-    if report['max_total_runners'] > cores * 2:
+    if report["max_total_runners"] > cores * 2:
         print(f"   ⚠️  Exceeded 2x cores - may indicate a problem")
-    elif report['max_total_runners'] > cores:
+    elif report["max_total_runners"] > cores:
         print(f"   ℹ️  Briefly exceeded cores (normal during phase transitions)")
     else:
         print("   ✅ Well within limits")
 
     print(f"\n5. Average concurrent runners over time:")
     print(f"   {report['avg_total_runners']:.1f}")
-    if report['avg_total_runners'] <= cores:
+    if report["avg_total_runners"] <= cores:
         print(f"   ✅ Average respects core limit (expected for steady-state)")
     else:
         print(f"   ⚠️  Average exceeds cores - unusual pattern")
@@ -112,10 +115,11 @@ def main():
     print(f"   Samples: {report['samples']}")
     print(f"   Sample rate: {report['samples']/report['duration_seconds']:.1f} Hz")
 
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("INTERPRETATION")
-    print("="*70)
-    print("""
+    print("=" * 70)
+    print(
+        """
 Brief spikes above the configured core count are EXPECTED during phase
 transitions when:
   - Some runners are finishing (e.g., prepare_scenario)
@@ -133,8 +137,9 @@ They're BUGS if:
   ✗ Exponential increase (10x+ cores)
   ✗ Memory exhaustion
   ✗ Recursive patterns in cmdlines
-""")
-    print("="*70 + "\n")
+"""
+    )
+    print("=" * 70 + "\n")
 
     return 0
 

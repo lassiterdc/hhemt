@@ -167,7 +167,7 @@ def main():
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
             clear_raw_outputs=args.clear_raw_outputs,
-            overwrite_if_exist=args.overwrite_if_exist,
+            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -181,7 +181,10 @@ def main():
         # Performance time series verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if not model_log.performance_timeseries_written or not model_log.performance_timeseries_written.get():
+                if (
+                    not model_log.performance_timeseries_written
+                    or not model_log.performance_timeseries_written.get()
+                ):
                     logger.error(
                         f"Performance timeseries not created for scenario {args.event_iloc}"
                     )
@@ -189,7 +192,10 @@ def main():
         # TRITON outputs verification (TRITON models only)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if not model_log.TRITON_timeseries_written or not model_log.TRITON_timeseries_written.get():
+                if (
+                    not model_log.TRITON_timeseries_written
+                    or not model_log.TRITON_timeseries_written.get()
+                ):
                     logger.error(
                         f"TRITON timeseries not created for scenario {args.event_iloc}"
                     )
@@ -198,8 +204,14 @@ def main():
         # SWMM outputs verification (SWMM models only)
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
-                link_ok = model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
+                node_ok = (
+                    model_log.SWMM_node_timeseries_written
+                    and model_log.SWMM_node_timeseries_written.get()
+                )
+                link_ok = (
+                    model_log.SWMM_link_timeseries_written
+                    and model_log.SWMM_link_timeseries_written.get()
+                )
                 if not (node_ok and link_ok):
                     logger.error(
                         f"SWMM timeseries not created for scenario {args.event_iloc}"
@@ -213,7 +225,7 @@ def main():
         proc.write_summary_outputs(
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
-            overwrite_if_exist=args.overwrite_if_exist,
+            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -222,15 +234,24 @@ def main():
         # (Now safe because each model has its own log - no race conditions!)
         if args.which == "TRITON" or args.which == "both":
             if args.model_type in ("triton", "tritonswmm"):
-                if not model_log.TRITON_summary_written or not model_log.TRITON_summary_written.get():
+                if (
+                    not model_log.TRITON_summary_written
+                    or not model_log.TRITON_summary_written.get()
+                ):
                     logger.error(
                         f"TRITON summary not created for scenario {args.event_iloc}"
                     )
                     return 1
         if args.which == "SWMM" or args.which == "both":
             if args.model_type in ("swmm", "tritonswmm"):
-                node_ok = model_log.SWMM_node_summary_written and model_log.SWMM_node_summary_written.get()
-                link_ok = model_log.SWMM_link_summary_written and model_log.SWMM_link_summary_written.get()
+                node_ok = (
+                    model_log.SWMM_node_summary_written
+                    and model_log.SWMM_node_summary_written.get()
+                )
+                link_ok = (
+                    model_log.SWMM_link_summary_written
+                    and model_log.SWMM_link_summary_written.get()
+                )
                 if not (node_ok and link_ok):
                     logger.error(
                         f"SWMM summaries not created for scenario {args.event_iloc}"

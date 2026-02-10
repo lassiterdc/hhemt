@@ -125,7 +125,9 @@ def main() -> int:
             system=system,
             skip_log_update=False,
         )
-        any_compile = args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
+        any_compile = (
+            args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
+        )
         if (not any_compile) and not (args.process_system_inputs):
             logger.info(
                 "No compilation or processing flags were passed. Doing nothing."
@@ -137,7 +139,7 @@ def main() -> int:
             logger.info("Processing system-level inputs...")
             try:
                 system.process_system_level_inputs(
-                    overwrite_if_exists=args.overwrite_system_inputs,
+                    overwrite_outputs_if_already_created=args.overwrite_system_inputs,
                     verbose=True,
                 )
                 logger.info("System-level inputs processed successfully")
@@ -180,7 +182,10 @@ def main() -> int:
                 "Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)"
             )
             # Verify compilation if model is enabled
-            if system.cfg_system.toggle_tritonswmm_model and not system.compilation_successful:
+            if (
+                system.cfg_system.toggle_tritonswmm_model
+                and not system.compilation_successful
+            ):
                 logger.error(
                     "TRITON-SWMM is enabled but not compiled and --compile-triton-swmm not specified"
                 )
@@ -206,7 +211,10 @@ def main() -> int:
                 if not system.compilation_triton_only_cpu_successful:
                     logger.error("TRITON-only CPU compilation failed")
                     return 1
-                if system.cfg_system.gpu_compilation_backend and not system.compilation_triton_only_gpu_successful:
+                if (
+                    system.cfg_system.gpu_compilation_backend
+                    and not system.compilation_triton_only_gpu_successful
+                ):
                     logger.error("TRITON-only GPU compilation failed")
                     return 1
                 logger.info("TRITON-only compiled successfully")
@@ -219,7 +227,10 @@ def main() -> int:
                 "Skipping TRITON-only compilation (--compile-triton-only not specified)"
             )
             # Verify compilation if model is enabled
-            if system.cfg_system.toggle_triton_model and not system.compilation_triton_only_successful:
+            if (
+                system.cfg_system.toggle_triton_model
+                and not system.compilation_triton_only_successful
+            ):
                 logger.error(
                     "TRITON-only is enabled but not compiled and --compile-triton-only not specified"
                 )
@@ -244,11 +255,12 @@ def main() -> int:
                 logger.error(traceback.format_exc())
                 return 1
         else:
-            logger.info(
-                "Skipping SWMM compilation (--compile-swmm not specified)"
-            )
+            logger.info("Skipping SWMM compilation (--compile-swmm not specified)")
             # Verify compilation if model is enabled
-            if system.cfg_system.toggle_swmm_model and not system.compilation_swmm_successful:
+            if (
+                system.cfg_system.toggle_swmm_model
+                and not system.compilation_swmm_successful
+            ):
                 logger.error(
                     "SWMM is enabled but not compiled and --compile-swmm not specified"
                 )

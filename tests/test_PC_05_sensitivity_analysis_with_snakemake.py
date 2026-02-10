@@ -54,7 +54,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     master_snakefile_content = (
         sensitivity._workflow_builder.generate_master_snakefile_content(
             which="both",
-            overwrite_if_exist=False,
+            overwrite_outputs_if_already_created=False,
             compression_level=5,
         )
     )
@@ -95,7 +95,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         (
             {
                 "which": "TRITON",
-                "overwrite_if_exist": True,
+                "overwrite_outputs_if_already_created": True,
                 "compression_level": 7,
             },
             [
@@ -108,7 +108,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         (
             {
                 "which": "both",
-                "overwrite_if_exist": False,
+                "overwrite_outputs_if_already_created": False,
                 "compression_level": 5,
             },
             [
@@ -167,12 +167,12 @@ def test_snakemake_sensitivity_workflow_dry_run(
         compile_TRITON_SWMM=True,
         recompile_if_already_done_successfully=True,
         prepare_scenarios=True,
-        overwrite_scenario=True,
+        overwrite_scenario_if_already_set_up=True,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which="both",
         clear_raw_outputs=True,
-        overwrite_if_exist=True,
+        overwrite_outputs_if_already_created=True,
         compression_level=5,
         pickup_where_leftoff=False,
         dry_run=True,
@@ -209,12 +209,12 @@ def test_snakemake_sensitivity_workflow_execution(norfolk_sensitivity_analysis):
         compile_TRITON_SWMM=True,
         recompile_if_already_done_successfully=True,
         prepare_scenarios=True,
-        overwrite_scenario=True,
+        overwrite_scenario_if_already_set_up=True,
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which=which,
         clear_raw_outputs=True,
-        overwrite_if_exist=True,
+        overwrite_outputs_if_already_created=True,
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,

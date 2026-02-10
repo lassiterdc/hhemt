@@ -20,7 +20,8 @@ def test_load_system_and_analysis(norfolk_all_models_analysis):
 def test_prepare_all_scenarios(norfolk_all_models_analysis_cached):
     analysis = norfolk_all_models_analysis_cached
     analysis.run_prepare_scenarios_serially(
-        overwrite_scenarios=True, rerun_swmm_hydro_if_outputs_exist=True
+        overwrite_scenario_if_already_set_up=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
     )
     tst_ut.assert_scenarios_setup(analysis)
     # tst_ut.assert_enabled_models_match_config(analysis)
@@ -67,15 +68,21 @@ def test_process_sim(norfolk_all_models_analysis_cached):
         for model_type in enabled_models:
             if model_type == "tritonswmm":
                 proc.write_summary_outputs(
-                    which="both", model_type=model_type, overwrite_if_exist=False
+                    which="both",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=False,
                 )
             elif model_type == "triton":
                 proc.write_summary_outputs(
-                    which="TRITON", model_type=model_type, overwrite_if_exist=False
+                    which="TRITON",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=False,
                 )
             elif model_type == "swmm":
                 proc.write_summary_outputs(
-                    which="SWMM", model_type=model_type, overwrite_if_exist=False
+                    which="SWMM",
+                    model_type=model_type,
+                    overwrite_outputs_if_already_created=False,
                 )
 
     analysis._update_log()

@@ -81,7 +81,7 @@ class TRITONSWMM_sensitivity_analysis:
 
     def prepare_scenarios_in_each_subanalysis(
         self,
-        overwrite_scenarios: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         concurrent: bool = True,
         verbose: bool = False,
@@ -93,7 +93,7 @@ class TRITONSWMM_sensitivity_analysis:
             prepare_scenario_launchers = []
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
-                    overwrite_scenario=overwrite_scenarios,
+                    overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     verbose=verbose,
                 )
@@ -126,12 +126,12 @@ class TRITONSWMM_sensitivity_analysis:
         recompile_if_already_done_successfully: bool = False,
         # ensemble run stuff
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -158,7 +158,7 @@ class TRITONSWMM_sensitivity_analysis:
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, prepare scenarios before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -168,7 +168,7 @@ class TRITONSWMM_sensitivity_analysis:
             Which outputs to process
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -195,12 +195,12 @@ class TRITONSWMM_sensitivity_analysis:
             compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
+            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
             clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             wait_for_completion=wait_for_completion,
@@ -215,7 +215,7 @@ class TRITONSWMM_sensitivity_analysis:
         process_outputs_after_sim_completion: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         verbose=False,
     ):
@@ -242,7 +242,7 @@ class TRITONSWMM_sensitivity_analysis:
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
                     clear_raw_outputs=clear_raw_outputs,
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     compression_level=compression_level,
                     verbose=verbose,
                 )
@@ -253,7 +253,7 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -262,7 +262,7 @@ class TRITONSWMM_sensitivity_analysis:
             launchers = sub_analysis.retrieve_scenario_timeseries_processing_launchers(
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -363,13 +363,13 @@ class TRITONSWMM_sensitivity_analysis:
     def _consolidate_outputs_in_each_subanalysis(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis.consolidate_analysis_outputs(
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -401,19 +401,19 @@ class TRITONSWMM_sensitivity_analysis:
     def consolidate_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = True,
         compression_level: int = 5,
     ):
         self.create_subanalysis_summaries(
             which=which,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
         self.consolidate_subanalysis_outputs(
             which=which,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -422,7 +422,7 @@ class TRITONSWMM_sensitivity_analysis:
     def consolidate_subanalysis_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -431,7 +431,7 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
                 mode="tritonswmm_triton",
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -440,7 +440,7 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
                 mode="tritonswmm_swmm_node",
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -450,7 +450,7 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
                 mode="tritonswmm_swmm_link",
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -483,21 +483,21 @@ class TRITONSWMM_sensitivity_analysis:
     def create_subanalysis_summaries(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         if which in ["TRITON", "both"]:
             self._consolidate_outputs_in_each_subanalysis(
                 which="TRITON",
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         if which in ["SWMM", "both"]:
             self._consolidate_outputs_in_each_subanalysis(
                 which="SWMM",
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )

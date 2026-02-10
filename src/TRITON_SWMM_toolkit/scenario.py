@@ -745,7 +745,7 @@ class TRITONSWMM_scenario:
 
     def prepare_scenario(
         self,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
     ):
         """
@@ -753,7 +753,7 @@ class TRITONSWMM_scenario:
 
         Parameters
         ----------
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenario
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -761,10 +761,13 @@ class TRITONSWMM_scenario:
             Force specific backend ("cpu" or "gpu"). If None, auto-selects based on run_mode.
         """
         # Halt if scenario already complete
-        if self.log.scenario_creation_complete.get() and not overwrite_scenario:
+        if (
+            self.log.scenario_creation_complete.get()
+            and not overwrite_scenario_if_already_set_up
+        ):
             print(  # type: ignore
                 "Simulation already successfully created. "
-                "If you wish to overwrite it, re-run with overwrite_scenario=True.",
+                "If you wish to overwrite it, re-run with overwrite_scenario_if_already_set_up=True.",
                 flush=True,
             )
             return
@@ -881,7 +884,7 @@ class TRITONSWMM_scenario:
 
     def _create_subprocess_prepare_scenario_launcher(
         self,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
@@ -895,7 +898,7 @@ class TRITONSWMM_scenario:
         ----------
         event_iloc : int
             Integer index of the scenario to prepare
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenario
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -925,7 +928,7 @@ class TRITONSWMM_scenario:
         ]
 
         # Add optional flags
-        if overwrite_scenario:
+        if overwrite_scenario_if_already_set_up:
             cmd.append("--overwrite-scenario")
         if rerun_swmm_hydro_if_outputs_exist:
             cmd.append("--rerun-swmm-hydro")

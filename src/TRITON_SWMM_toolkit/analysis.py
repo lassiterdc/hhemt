@@ -211,7 +211,7 @@ class TRITONSWMM_analysis:
 
     def consolidate_TRITON_and_SWMM_simulation_summaries(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = True,
         compression_level: int = 5,
     ):
@@ -228,7 +228,7 @@ class TRITONSWMM_analysis:
         def _consolidate(mode: str):
             self.process.consolidate_outputs_for_mode(
                 mode,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -241,7 +241,7 @@ class TRITONSWMM_analysis:
             _consolidate("tritonswmm_swmm_node")
             _consolidate("tritonswmm_swmm_link")
             self.process.consolidate_TRITONSWMM_performance_summaries(
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -567,7 +567,7 @@ class TRITONSWMM_analysis:
 
     def retrieve_prepare_scenario_launchers(
         self,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
@@ -579,7 +579,7 @@ class TRITONSWMM_analysis:
 
         Parameters
         ----------
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -597,7 +597,7 @@ class TRITONSWMM_analysis:
 
             # Create a subprocess-based launcher
             launcher = scen._create_subprocess_prepare_scenario_launcher(
-                overwrite_scenario=overwrite_scenario,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 verbose=verbose,
             )
@@ -609,7 +609,7 @@ class TRITONSWMM_analysis:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -625,7 +625,7 @@ class TRITONSWMM_analysis:
             Which outputs to process: TRITON, SWMM, or both
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         verbose : bool
             If True, print progress messages
@@ -645,7 +645,7 @@ class TRITONSWMM_analysis:
             launcher = proc._create_subprocess_timeseries_processing_launcher(
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -768,7 +768,7 @@ class TRITONSWMM_analysis:
 
     def run_prepare_scenarios_serially(
         self,
-        overwrite_scenarios: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         verbose: bool = False,
     ):
@@ -780,7 +780,7 @@ class TRITONSWMM_analysis:
 
         Parameters
         ----------
-        overwrite_scenarios : bool, optional
+        overwrite_scenario_if_already_set_up : bool, optional
             If True, overwrite existing scenarios (default: False)
         rerun_swmm_hydro_if_outputs_exist : bool, optional
             If True, rerun SWMM hydrology model even if outputs exist (default: False)
@@ -788,7 +788,7 @@ class TRITONSWMM_analysis:
             If True, print progress messages (default: False)
         """
         prepare_scenario_launchers = self.retrieve_prepare_scenario_launchers(
-            overwrite_scenario=overwrite_scenarios,
+            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             verbose=verbose,
         )
@@ -828,7 +828,7 @@ class TRITONSWMM_analysis:
         process_outputs_after_sim_completion: bool,
         which: Literal["TRITON", "SWMM", "both"],
         clear_raw_outputs: bool,
-        overwrite_if_exist: bool,
+        overwrite_outputs_if_already_created: bool,
         compression_level: int,
         verbose=False,
         model_type: Literal["triton", "tritonswmm", "swmm"] = "tritonswmm",
@@ -851,7 +851,7 @@ class TRITONSWMM_analysis:
             Which outputs to process (only used if process_outputs_after_sim_completion=True)
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files, 0-9
@@ -921,7 +921,7 @@ class TRITONSWMM_analysis:
                 event_iloc,
                 outputs_to_process,
                 clear_raw_outputs,
-                overwrite_if_exist,
+                overwrite_outputs_if_already_created,
                 verbose,
                 compression_level,
             )
@@ -932,7 +932,7 @@ class TRITONSWMM_analysis:
         event_iloc,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -950,7 +950,7 @@ class TRITONSWMM_analysis:
             Which outputs to process (default: "both")
         clear_raw_outputs : bool, optional
             If True, clear raw outputs after processing (default: True)
-        overwrite_if_exist : bool, optional
+        overwrite_outputs_if_already_created : bool, optional
             If True, overwrite existing processed outputs (default: False)
         verbose : bool, optional
             If True, print progress messages (default: False)
@@ -961,13 +961,13 @@ class TRITONSWMM_analysis:
         proc.write_timeseries_outputs(
             which=which,
             clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
         proc.write_summary_outputs(
             which=which,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -976,7 +976,7 @@ class TRITONSWMM_analysis:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -985,7 +985,7 @@ class TRITONSWMM_analysis:
                 event_iloc=event_iloc,
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -994,12 +994,12 @@ class TRITONSWMM_analysis:
 
     def consolidate_analysis_outputs(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         self.consolidate_TRITON_and_SWMM_simulation_summaries(
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -1132,7 +1132,7 @@ class TRITONSWMM_analysis:
         process_outputs_after_sim_completion: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         verbose=False,
     ):
@@ -1143,7 +1143,7 @@ class TRITONSWMM_analysis:
         Arguments passed to processing process_sim_timeseriess (and only needed if process_outputs_after_sim_completion=True):
             - which: Literal["TRITON", "SWMM", "both"]
             - clear_raw_outputs: bool
-            - overwrite_if_exist: bool
+            - overwrite_outputs_if_already_created: bool
             - compression_level: int
         """
         if verbose:
@@ -1164,7 +1164,7 @@ class TRITONSWMM_analysis:
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
                     clear_raw_outputs=clear_raw_outputs,
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     compression_level=compression_level,
                     model_type=model_type,  # type: ignore
                 )
@@ -1172,12 +1172,13 @@ class TRITONSWMM_analysis:
 
     def run(
         self,
-        mode: Literal["fresh", "resume", "overwrite"] = "resume",
+        mode: Literal["fresh", "resume"] = "resume",
         dry_run: bool = False,
         phases: Optional[List[str]] = None,
         events: Optional[List[int]] = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
+        clear_raw_outputs: bool = True,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1194,11 +1195,10 @@ class TRITONSWMM_analysis:
 
         Parameters
         ----------
-        mode : Literal["fresh", "resume", "overwrite"]
+        mode : Literal["fresh", "resume"]
             Execution mode:
             - "fresh": Start from scratch, delete all artifacts
             - "resume": Continue from last checkpoint (default)
-            - "overwrite": Recreate outputs even if logs show completion
         phases : Optional[List[str]]
             Which workflow phases to run. If None, runs all phases.
             Valid phases: ["setup", "prepare", "simulate", "process", "consolidate"]
@@ -1211,6 +1211,9 @@ class TRITONSWMM_analysis:
             If True, validate workflow but don't execute
         verbose : bool
             If True, print progress messages
+        clear_raw_outputs : bool
+            Determines whether TRITON-SWMM raw outputs are cleared after time series
+            are successfully processed. Only set to False if debugging.
 
         Returns
         -------
@@ -1284,6 +1287,20 @@ class TRITONSWMM_analysis:
         if phases and "setup" in phases:
             needs_system_inputs = True
 
+        swmm_used = False
+        triton_used = False
+        for model_used in self._get_enabled_model_types():
+            if "swmm" in model_used.lower():
+                swmm_used = True
+            if "triton" in model_used.lower():
+                triton_used = True
+        if swmm_used and triton_used:
+            which = "both"
+        elif swmm_used and not triton_used:
+            which = "SWMM"
+        else:
+            which = "TRITON"
+
         # Determine execution mode
         if execution_mode == "auto":
             if (
@@ -1303,13 +1320,17 @@ class TRITONSWMM_analysis:
             "mode": exec_mode,
             "process_system_level_inputs": needs_system_inputs
             or phase_params["process_system_level_inputs"],
-            "which": "both",  # Always process both TRITON and SWMM outputs
-            "clear_raw_outputs": True,
+            "which": which,
+            "clear_raw_outputs": clear_raw_outputs,
             "compression_level": 5,
-            "wait_for_completion": (exec_mode == "slurm"),
+            "wait_for_completion": (exec_mode != "slurm"),
             "dry_run": dry_run,
             "verbose": verbose,
         }
+
+        if verbose:
+            print(f"Submitting workflow with args:")
+            print(workflow_params)
 
         # Call underlying submit_workflow
         result_dict = self.submit_workflow(**workflow_params)
@@ -1516,9 +1537,9 @@ class TRITONSWMM_analysis:
             rec_text = "Use 'resume' to consolidate analysis summaries."
         else:
             current = "complete"
-            rec_mode = "overwrite"
+            rec_mode = "n/a"
             rec_text = (
-                "All phases complete. Use 'overwrite' to regenerate outputs if needed."
+                "All phases complete. Use 'fresh' if you want to redo the analysis."
             )
 
         return WorkflowStatus(
@@ -1546,12 +1567,12 @@ class TRITONSWMM_analysis:
         compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -1579,7 +1600,7 @@ class TRITONSWMM_analysis:
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -1589,7 +1610,7 @@ class TRITONSWMM_analysis:
             Which outputs to process (only used if process_timeseries=True)
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -1620,12 +1641,12 @@ class TRITONSWMM_analysis:
                 compile_TRITON_SWMM=compile_TRITON_SWMM,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
-                overwrite_scenario=overwrite_scenario,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
@@ -1640,12 +1661,12 @@ class TRITONSWMM_analysis:
             compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
+            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
             clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             wait_for_completion=wait_for_completion,

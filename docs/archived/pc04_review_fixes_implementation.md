@@ -212,13 +212,13 @@ def coupled_swmm_output_file(self) -> Path | None:
 
 Current code (lines 506-515):
 ```python
-if not overwrite_if_exist and fname_out.exists():  # <-- REMOVE this block
+if not overwrite_outputs_if_already_created and fname_out.exists():  # <-- REMOVE this block
     if verbose:
         print(f"{fname_out.name} already exists. Skipping reprocessing.")
     if clear_raw_outputs:
         self._clear_raw_TRITON_outputs()
     return
-if self._already_written(fname_out) and not overwrite_if_exist:  # <-- KEEP this
+if self._already_written(fname_out) and not overwrite_outputs_if_already_created:  # <-- KEEP this
     if verbose:
         print(f"{fname_out.name} already written. Not overwriting.")
     return

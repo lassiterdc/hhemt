@@ -298,7 +298,7 @@ def main() -> int:
             try:
                 analysis.sensitivity.consolidate_subanalysis_outputs(
                     which=args.which,
-                    overwrite_if_exist=args.overwrite_if_exist,
+                    overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )
@@ -311,7 +311,7 @@ def main() -> int:
             logger.info("Consolidating TRITON and SWMM simulation summaries...")
             try:
                 analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-                    overwrite_if_exist=args.overwrite_if_exist,
+                    overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )

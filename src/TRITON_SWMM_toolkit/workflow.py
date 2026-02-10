@@ -127,12 +127,12 @@ class SnakemakeWorkflowBuilder:
         compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: str = "TRITON",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
     ) -> str:
@@ -158,7 +158,7 @@ class SnakemakeWorkflowBuilder:
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -168,7 +168,7 @@ class SnakemakeWorkflowBuilder:
             Which outputs to process: "TRITON", "SWMM", or "both"
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -321,7 +321,7 @@ rule prepare_scenario:
         {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
             {config_args} \\
-            {"--overwrite-scenario " if overwrite_scenario else ""}\\
+            {"--overwrite-scenario " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -420,7 +420,7 @@ rule process_{model_type}:
             --model-type {model_type} \\
             --which {which_arg} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -455,7 +455,7 @@ rule consolidate:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {config_args} \\
             --compression-level {compression_level} \\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
             --which {which} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1371,12 +1371,12 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
         compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,
@@ -1404,7 +1404,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, each simulation will prepare its scenario before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -1414,7 +1414,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             Which outputs to process (only used if process_timeseries=True)
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -1450,12 +1450,12 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 compile_TRITON_SWMM=compile_TRITON_SWMM,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
-                overwrite_scenario=overwrite_scenario,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
                 clear_raw_outputs=clear_raw_outputs,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
             )
@@ -1504,12 +1504,12 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
+            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
             clear_raw_outputs=clear_raw_outputs,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
         )
@@ -1602,14 +1602,14 @@ class SensitivityAnalysisWorkflowBuilder:
     def generate_master_snakefile_content(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
         compile_TRITON_SWMM: bool = True,
         recompile_if_already_done_successfully: bool = False,
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         clear_raw_outputs: bool = True,
@@ -1631,7 +1631,7 @@ class SensitivityAnalysisWorkflowBuilder:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing consolidated outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -1645,7 +1645,7 @@ class SensitivityAnalysisWorkflowBuilder:
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, prepare scenarios before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -1818,7 +1818,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
-            {"--overwrite-scenario " if overwrite_scenario else ""}\\
+            {"--overwrite-scenario " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -1878,7 +1878,7 @@ rule setup:
             --model-type {model_type} \\
             --which {which} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1916,7 +1916,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1946,7 +1946,7 @@ rule setup:
             {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
-            {"--overwrite-if-exist " if overwrite_if_exist else ""}\\
+            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1964,12 +1964,12 @@ rule setup:
         recompile_if_already_done_successfully: bool = False,
         # ensemble run stuff
         prepare_scenarios: bool = True,
-        overwrite_scenario: bool = False,
+        overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -1998,7 +1998,7 @@ rule setup:
             If True, recompile even if already compiled successfully
         prepare_scenarios : bool
             If True, prepare scenarios before running
-        overwrite_scenario : bool
+        overwrite_scenario_if_already_set_up : bool
             If True, overwrite existing scenarios
         rerun_swmm_hydro_if_outputs_exist : bool
             If True, rerun SWMM hydrology model even if outputs exist
@@ -2008,7 +2008,7 @@ rule setup:
             Which outputs to process
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files (0-9)
@@ -2042,14 +2042,14 @@ rule setup:
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
                 compile_TRITON_SWMM=compile_TRITON_SWMM,
                 recompile_if_already_done_successfully=recompile_if_already_done_successfully,
                 prepare_scenarios=prepare_scenarios,
-                overwrite_scenario=overwrite_scenario,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
@@ -2109,14 +2109,14 @@ rule setup:
         # (no nested Snakemake calls - all rules in one file)
         master_snakefile_content = self.generate_master_snakefile_content(
             which=which,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
             compile_TRITON_SWMM=compile_TRITON_SWMM,
             recompile_if_already_done_successfully=recompile_if_already_done_successfully,
             prepare_scenarios=prepare_scenarios,
-            overwrite_scenario=overwrite_scenario,
+            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             clear_raw_outputs=clear_raw_outputs,

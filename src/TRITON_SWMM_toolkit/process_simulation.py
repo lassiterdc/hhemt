@@ -123,7 +123,7 @@ class TRITONSWMM_sim_post_processing:
         which: Literal["TRITON", "SWMM", "both"] = "both",
         model_type: Literal["triton", "tritonswmm", "swmm"] | None = None,
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -170,28 +170,28 @@ class TRITONSWMM_sim_post_processing:
                 self._export_TRITONSWMM_performance_tseries(
                     comp_level=compression_level,
                     verbose=verbose,
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 )
             elif model_type == "triton":
                 # Processing TRITON-only performance
                 self._export_TRITON_only_performance_tseries(
                     comp_level=compression_level,
                     verbose=verbose,
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 )
 
         # TRITON outputs processing: model_type determines which outputs to process
         if (which == "both") or (which == "TRITON"):
             if model_type == "triton":
                 self._export_TRITON_only_outputs(
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     clear_raw_outputs=clear_raw_outputs,
                     verbose=verbose,
                     comp_level=compression_level,
                 )
             elif model_type == "tritonswmm":
                 self._export_TRITONSWMM_TRITON_outputs(
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     clear_raw_outputs=clear_raw_outputs,
                     verbose=verbose,
                     comp_level=compression_level,
@@ -206,7 +206,7 @@ class TRITONSWMM_sim_post_processing:
             if model_type == "tritonswmm":
                 self._export_SWMM_outputs(
                     model="tritonswmm",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     clear_raw_outputs=clear_raw_outputs,
                     verbose=verbose,
                     comp_level=compression_level,
@@ -218,7 +218,7 @@ class TRITONSWMM_sim_post_processing:
             elif model_type == "swmm":
                 self._export_SWMM_outputs(
                     model="swmm",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     clear_raw_outputs=clear_raw_outputs,
                     verbose=verbose,
                     comp_level=compression_level,
@@ -234,7 +234,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         clear_raw_outputs: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -250,7 +250,7 @@ class TRITONSWMM_sim_post_processing:
             Which outputs to process
         clear_raw_outputs : bool
             If True, clear raw outputs after processing
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing processed outputs
         verbose : bool
             If True, print progress messages
@@ -287,7 +287,7 @@ class TRITONSWMM_sim_post_processing:
         # Add optional flags
         if clear_raw_outputs:
             cmd.append("--clear-raw-outputs")
-        if overwrite_if_exist:
+        if overwrite_outputs_if_already_created:
             cmd.append("--overwrite-if-exist")
 
         def launcher():
@@ -326,7 +326,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         comp_level: int = 5,
         verbose: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
     ):
         fname_out = self._validate_path(
             self.scen_paths.output_tritonswmm_performance_timeseries,
@@ -343,7 +343,7 @@ class TRITONSWMM_sim_post_processing:
             performance_dir=perf_dir,
             comp_level=comp_level,
             verbose=verbose,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             log_field=self.log.performance_timeseries_written,
         )
         return
@@ -352,7 +352,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         comp_level: int = 5,
         verbose: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
     ):
         fname_out = self._validate_path(
             self.scen_paths.output_triton_only_performance_timeseries,
@@ -369,7 +369,7 @@ class TRITONSWMM_sim_post_processing:
             performance_dir=perf_dir,
             comp_level=comp_level,
             verbose=verbose,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             log_field=self.log.performance_timeseries_written,
         )
         return
@@ -380,10 +380,13 @@ class TRITONSWMM_sim_post_processing:
         performance_dir: Path | None,
         comp_level: int,
         verbose: bool,
-        overwrite_if_exist: bool,
+        overwrite_outputs_if_already_created: bool,
         log_field,
     ):
-        if self._already_written(fname_out) and not overwrite_if_exist:
+        if (
+            self._already_written(fname_out)
+            and not overwrite_outputs_if_already_created
+        ):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -488,7 +491,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         compression_level: int = 5,
         verbose: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
     ):
         fname_out = self._validate_path(
             self.scen_paths.output_tritonswmm_performance_summary,
@@ -499,7 +502,7 @@ class TRITONSWMM_sim_post_processing:
             fname_out=fname_out,
             compression_level=compression_level,
             verbose=verbose,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             log_field=self.log.performance_summary_written,
         )
         return
@@ -508,7 +511,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         compression_level: int = 5,
         verbose: bool = True,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
     ):
         fname_out = self._validate_path(
             self.scen_paths.output_triton_only_performance_summary,
@@ -519,7 +522,7 @@ class TRITONSWMM_sim_post_processing:
             fname_out=fname_out,
             compression_level=compression_level,
             verbose=verbose,
-            overwrite_if_exist=overwrite_if_exist,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             log_field=self.log.performance_summary_written,
         )
         return
@@ -530,11 +533,14 @@ class TRITONSWMM_sim_post_processing:
         fname_out: Path,
         compression_level: int,
         verbose: bool,
-        overwrite_if_exist: bool,
+        overwrite_outputs_if_already_created: bool,
         log_field,
     ):
         start_time = time.time()
-        if self._already_written(fname_out) and not overwrite_if_exist:
+        if (
+            self._already_written(fname_out)
+            and not overwrite_outputs_if_already_created
+        ):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -556,7 +562,7 @@ class TRITONSWMM_sim_post_processing:
 
     def _export_TRITONSWMM_TRITON_outputs(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         clear_raw_outputs: bool = True,
         verbose: bool = False,
         comp_level: int = 5,
@@ -566,7 +572,10 @@ class TRITONSWMM_sim_post_processing:
             self.scen_paths.output_tritonswmm_triton_timeseries,
             "output_tritonswmm_triton_timeseries",
         )
-        if self._already_written(fname_out) and not overwrite_if_exist:
+        if (
+            self._already_written(fname_out)
+            and not overwrite_outputs_if_already_created
+        ):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -624,7 +633,7 @@ class TRITONSWMM_sim_post_processing:
 
     def _export_TRITON_only_outputs(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         clear_raw_outputs: bool = True,
         verbose: bool = False,
         comp_level: int = 5,
@@ -635,7 +644,10 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_timeseries",
         )
 
-        if self._already_written(fname_out) and not overwrite_if_exist:
+        if (
+            self._already_written(fname_out)
+            and not overwrite_outputs_if_already_created
+        ):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             if clear_raw_outputs:
@@ -740,7 +752,7 @@ class TRITONSWMM_sim_post_processing:
 
     def _export_TRITON_outputs(
         self,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         clear_raw_outputs: bool = True,
         verbose: bool = False,
         comp_level: int = 5,
@@ -755,7 +767,7 @@ class TRITONSWMM_sim_post_processing:
         # Process TRITON-only model outputs
         if "triton" in enabled_models:
             self._export_TRITON_only_outputs(
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 clear_raw_outputs=clear_raw_outputs,
                 verbose=verbose,
                 comp_level=comp_level,
@@ -764,7 +776,7 @@ class TRITONSWMM_sim_post_processing:
         # Process TRITON-SWMM coupled model TRITON outputs
         if "tritonswmm" in enabled_models:
             self._export_TRITONSWMM_TRITON_outputs(
-                overwrite_if_exist=overwrite_if_exist,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 clear_raw_outputs=clear_raw_outputs,
                 verbose=verbose,
                 comp_level=comp_level,
@@ -773,7 +785,7 @@ class TRITONSWMM_sim_post_processing:
     def _export_SWMM_outputs(
         self,
         model: Literal["swmm", "tritonswmm"],
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         clear_raw_outputs: bool = True,
         verbose: bool = False,
         comp_level: int = 5,
@@ -813,7 +825,9 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._swmm_node_outputs_processed(model)
         links_already_written = self._swmm_link_outputs_processed(model)
 
-        if (nodes_already_written and links_already_written) and not overwrite_if_exist:
+        if (
+            nodes_already_written and links_already_written
+        ) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(
                     f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
@@ -827,7 +841,7 @@ class TRITONSWMM_sim_post_processing:
             swmm_timeseries_result_file,
         )
         # WRITE NODES
-        if nodes_already_written and not overwrite_if_exist:
+        if nodes_already_written and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{f_out_nodes.name} already written. Not overwriting.")
         else:
@@ -837,7 +851,7 @@ class TRITONSWMM_sim_post_processing:
                 f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
             )
         # WRITE LINKS
-        if links_already_written and not overwrite_if_exist:
+        if links_already_written and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{f_out_links.name} already written. Not overwriting.")
         else:
@@ -1050,7 +1064,7 @@ class TRITONSWMM_sim_post_processing:
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         model_type: Literal["triton", "tritonswmm", "swmm"] | None = None,
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -1061,7 +1075,7 @@ class TRITONSWMM_sim_post_processing:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which summaries to create
-        overwrite_if_exist : bool
+        overwrite_outputs_if_already_created : bool
             If True, overwrite existing summaries
         verbose : bool
             If True, print progress messages
@@ -1088,7 +1102,7 @@ class TRITONSWMM_sim_post_processing:
                 )
                 if perf_tseries_path is not None and perf_tseries_path.exists():
                     self._export_TRITONSWMM_performance_summary(
-                        overwrite_if_exist=overwrite_if_exist,
+                        overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                         verbose=verbose,
                         compression_level=compression_level,
                     )
@@ -1101,7 +1115,7 @@ class TRITONSWMM_sim_post_processing:
                     and triton_perf_tseries_path.exists()
                 ):
                     self._export_TRITON_only_performance_summary(
-                        overwrite_if_exist=overwrite_if_exist,
+                        overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                         verbose=verbose,
                         compression_level=compression_level,
                     )
@@ -1111,7 +1125,7 @@ class TRITONSWMM_sim_post_processing:
             if model_type == "triton":
                 self._export_TRITON_summary(
                     model_type="triton",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     verbose=verbose,
                     comp_level=compression_level,
                 )
@@ -1123,7 +1137,7 @@ class TRITONSWMM_sim_post_processing:
             elif model_type == "tritonswmm":
                 self._export_TRITON_summary(
                     model_type="tritonswmm",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     verbose=verbose,
                     comp_level=compression_level,
                 )
@@ -1143,7 +1157,7 @@ class TRITONSWMM_sim_post_processing:
             if model_type == "tritonswmm":
                 self._export_SWMM_summaries(
                     model_type="tritonswmm",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     verbose=verbose,
                     comp_level=compression_level,
                 )
@@ -1155,7 +1169,7 @@ class TRITONSWMM_sim_post_processing:
             elif model_type == "swmm":
                 self._export_SWMM_summaries(
                     model_type="swmm",
-                    overwrite_if_exist=overwrite_if_exist,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                     verbose=verbose,
                     comp_level=compression_level,
                 )
@@ -1175,7 +1189,7 @@ class TRITONSWMM_sim_post_processing:
     def _export_TRITON_summary(
         self,
         model_type: Literal["triton", "tritonswmm"] = "tritonswmm",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         comp_level: int = 5,
     ):
@@ -1206,7 +1220,10 @@ class TRITONSWMM_sim_post_processing:
 
         fname_out = self._validate_path(summary_path, path_name)
 
-        if self._already_written(fname_out) and not overwrite_if_exist:
+        if (
+            self._already_written(fname_out)
+            and not overwrite_outputs_if_already_created
+        ):
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -1245,7 +1262,7 @@ class TRITONSWMM_sim_post_processing:
     def _export_SWMM_summaries(
         self,
         model_type: Literal["swmm", "tritonswmm"] = "tritonswmm",
-        overwrite_if_exist: bool = False,
+        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         comp_level: int = 5,
     ):
@@ -1293,7 +1310,9 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._already_written(f_out_nodes)
         links_already_written = self._already_written(f_out_links)
 
-        if (nodes_already_written and links_already_written) and not overwrite_if_exist:
+        if (
+            nodes_already_written and links_already_written
+        ) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(
                     f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
@@ -1305,7 +1324,7 @@ class TRITONSWMM_sim_post_processing:
         ds_links_full = self._open(link_timeseries_path)
 
         # Summarize nodes
-        if not nodes_already_written or overwrite_if_exist:
+        if not nodes_already_written or overwrite_outputs_if_already_created:
             ds_nodes_summary = summarize_swmm_simulation_results(
                 ds_nodes_full, self._scenario.event_iloc
             )
@@ -1329,7 +1348,7 @@ class TRITONSWMM_sim_post_processing:
                 self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
-        if not links_already_written or overwrite_if_exist:
+        if not links_already_written or overwrite_outputs_if_already_created:
             ds_links_summary = summarize_swmm_simulation_results(
                 ds_links_full, self._scenario.event_iloc
             )
