@@ -325,7 +325,9 @@ def _validate_toggle_exclusions_system(cfg: system_config, result: ValidationRes
 
 def _validate_model_selection(cfg: system_config, result: ValidationResult):
     """Validate at least one model is enabled."""
-    if not (cfg.toggle_triton_model or cfg.toggle_tritonswmm_model or cfg.toggle_swmm_model):
+    if not (
+        cfg.toggle_triton_model or cfg.toggle_tritonswmm_model or cfg.toggle_swmm_model
+    ):
         result.add_error(
             field="system.model_toggles",
             message="At least one model must be enabled",
@@ -510,7 +512,9 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
             )
 
 
-def _validate_toggle_dependencies_analysis(cfg: analysis_config, result: ValidationResult):
+def _validate_toggle_dependencies_analysis(
+    cfg: analysis_config, result: ValidationResult
+):
     """Validate analysis toggle dependencies."""
     # Sensitivity analysis requires sensitivity file
     if cfg.toggle_sensitivity_analysis:
@@ -674,7 +678,14 @@ def _validate_units(cfg: analysis_config, result: ValidationResult):
         )
     else:
         # Validate against known units
-        valid_rainfall_units = ["inches", "in", "mm", "millimeters", "cm", "centimeters"]
+        valid_rainfall_units = [
+            "inches",
+            "in",
+            "mm",
+            "millimeters",
+            "cm",
+            "centimeters",
+        ]
         if cfg.rainfall_units.lower() not in valid_rainfall_units:
             result.add_warning(
                 field="analysis.rainfall_units",

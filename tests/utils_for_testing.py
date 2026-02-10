@@ -291,7 +291,7 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
     - CSV file exists in analysis directory
     - CSV can be read successfully
     - All expected resource usage columns are present
-    - Basic data integrity (matching number of scenarios)
+    - Basic data integrity (matching number of model runs)
     """
     csv_path = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
 
@@ -307,8 +307,8 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
 
     # Check for required resource usage columns
     required_columns = [
-        "scenarios_setup",
-        "scen_runs_completed",
+        "scenario_setup",
+        "run_completed",
         "scenario_directory",
         "actual_nTasks",
         "actual_omp_threads",
@@ -326,20 +326,13 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
             f"Available columns: {list(df.columns)}"
         )
 
-    # Verify row count matches number of scenarios
-    if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        # For sensitivity analysis, count scenarios across all sub-analyses
-        expected_rows = sum(
-            len(sub_analysis.df_sims)
-            for sub_analysis in analysis.sensitivity.sub_analyses.values()
-        )
-    else:
-        expected_rows = len(analysis.df_sims)
+    # Verify row count matches number of model runs (long-format df_status)
+    expected_rows = analysis.n_sims
 
     if len(df) != expected_rows:
         pytest.fail(
             f"scenario_status.csv has {len(df)} rows, expected {expected_rows} "
-            f"(one per scenario)"
+            f"(one per model run row in df_status)"
         )
 
 
@@ -421,10 +414,10 @@ def assert_model_simulation_run(
         model_rows = df_status[df_status["model_type"] == model_type]
         if model_rows.empty:
             pytest.skip(f"No simulations of type '{model_type}' in this analysis")
-        failed = model_rows[~model_rows["scen_runs_completed"]]
+        failed = model_rows[~model_rows["run_completed"]]
     else:
         # Legacy mode: check all simulations (assumes single model type)
-        failed = df_status[~df_status["scen_runs_completed"]]
+        failed = df_status[~df_status["run_completed"]]
 
     if not failed.empty:
         failed_dirs = failed["scenario_directory"].tolist()

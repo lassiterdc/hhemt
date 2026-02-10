@@ -84,7 +84,7 @@ def validate_resource_usage(analysis, logger=None):
     mismatches = []
 
     for idx, row in df_status.iterrows():
-        if not row["scen_runs_completed"]:
+        if not row["run_completed"]:
             continue  # Skip scenarios that didn't complete
 
         scenario_dir = row["scenario_directory"]

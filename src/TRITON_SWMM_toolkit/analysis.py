@@ -23,6 +23,12 @@ from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
 )
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 from TRITON_SWMM_toolkit.utils import parse_triton_log_file
+from TRITON_SWMM_toolkit.swmm_output_parser import (
+    retrieve_swmm_performance_stats_from_rpt,
+)
+from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
+    parse_regular_workflow_model_allocations,
+)
 from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
 import os
 import time
@@ -823,6 +829,27 @@ class TRITONSWMM_analysis:
         if cfg_sys.toggle_swmm_model:
             models.append("swmm")
         return models
+
+    def _retrieve_snakemake_allocations_regular(
+        self,
+    ) -> tuple[dict[str, dict[str, int]], str | None]:
+        """Retrieve parsed per-model Snakemake allocations.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the workflow Snakefile does not exist.
+        SnakefileParsingError
+            If allocations cannot be parsed from the Snakefile.
+        """
+        enabled_models = self._get_enabled_model_types()
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+        allocations = parse_regular_workflow_model_allocations(
+            snakefile_path=snakefile_path,
+            enabled_model_types=enabled_models,
+        )
+
+        return allocations, None
 
     def run_sim(
         self,
@@ -1775,98 +1802,113 @@ class TRITONSWMM_analysis:
 
     @property
     def df_status(self):
-        #  TODO - this currently only retrieves TRITON-SWMM simulation stats
-        # it needs to be updated to retrieve stats for all models that are
-        # run and return their concatenated form.
         """
         Get status DataFrame for all scenarios in the analysis.
 
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns:
-            - All columns from df_sims (weather event indices)
-            - scenarios_setup: bool - Whether scenario preparation succeeded
-            - scen_runs_completed: bool - Whether simulation completed
-            - scenario_directory: str - Path to scenario directory
-            - backend_used: str - Backend used (from log)
-            - model_types_enabled: str - Comma-separated list of enabled model types
-            - actual_nTasks: int - Actual MPI tasks used
-            - actual_omp_threads: int - Actual OMP threads per task
-            - actual_gpus: int - Actual GPUs per task
-            - actual_total_gpus: int - Actual total GPUs used
-            - actual_gpu_backend: str - Actual GPU backend (HIP/CUDA/none)
-            - actual_build_type: str - Actual build type
-            - actual_wall_time_s: float - Actual TRITON wall time
+            Long-format status table with one row per (event_iloc, model_type),
+            including scenario setup status, model run completion status,
+            parsed Snakemake allocated resources, and actual runtime details
+            (where available from model logs / reports).
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.df_status
-        scenarios_setup = []
-        scen_runs_completed = []
-        backend_used = []
-        scenario_dirs = []
-        actual_nTasks = []
-        actual_omp_threads = []
-        actual_gpus = []
-        actual_total_gpus = []
-        actual_gpu_backend = []
-        actual_build_type = []
-        actual_wall_time_s = []
 
+        enabled_models_untyped = self._get_enabled_model_types()
+        enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
+            m for m in ("triton", "tritonswmm", "swmm") if m in enabled_models_untyped
+        ]
+        model_allocations, parse_error = self._retrieve_snakemake_allocations_regular()
+
+        rows: list[dict] = []
         for event_iloc in self.df_sims.index:
             scen = TRITONSWMM_scenario(event_iloc, self)
             scen.log.refresh()
-            scenarios_setup.append(scen.log.scenario_creation_complete.get() is True)
-            # Check if all enabled models completed
-            enabled_models = scen.run.model_types_enabled
-            all_models_completed = all(
-                scen.model_run_completed(model_type) for model_type in enabled_models
-            )
-            scen_runs_completed.append(all_models_completed)
+            scenario_setup = scen.log.scenario_creation_complete.get() is True
+            scenario_dir = str(scen.log.logfile.parent)
 
-            # Get backend, infer from run_mode if not set
-            backend = scen.log.triton_backend_used.get()
-            backend_used.append(backend)
+            weather_row = self.df_sims.loc[event_iloc].to_dict()
 
-            scenario_dirs.append(str(scen.log.logfile.parent))
+            for model_type in enabled_models:
+                row = dict(weather_row)
+                row["event_iloc"] = event_iloc
+                row["model_type"] = model_type
+                row["scenario_setup"] = scenario_setup
+                row["run_completed"] = scen.model_run_completed(model_type)
+                row["scenario_directory"] = scenario_dir
+                row["snakemake_allocation_parse_error"] = parse_error
 
-            log_out_path = scen.scen_paths.out_tritonswmm / "log.out"
-            log_data = parse_triton_log_file(log_out_path)
-            actual_nTasks.append(log_data["nTasks"])
-            actual_omp_threads.append(log_data["omp_threads_per_task"])
-            actual_gpus.append(log_data["gpus_per_task"])
-            actual_total_gpus.append(log_data["total_gpus"])
-            actual_gpu_backend.append(log_data["gpu_backend"])
-            actual_build_type.append(log_data["build_type"])
-            actual_wall_time_s.append(log_data["wall_time_s"])
+                if model_type not in model_allocations:
+                    raise ValueError(
+                        "Parsed Snakemake allocations are missing model_type "
+                        f"'{model_type}'. Available keys: {list(model_allocations.keys())}"
+                    )
 
-        # Determine which model types are enabled
-        enabled_models = []
-        if self._system.cfg_system.toggle_triton_model:
-            enabled_models.append("triton")
-        if self._system.cfg_system.toggle_tritonswmm_model:
-            enabled_models.append("tritonswmm")
-        if self._system.cfg_system.toggle_swmm_model:
-            enabled_models.append("swmm")
-        models_str = ",".join(enabled_models) if enabled_models else "none"
+                alloc = model_allocations[model_type]
+                row.update(alloc)
 
-        df_status = self.df_sims.copy()
-        df_status["scenarios_setup"] = scenarios_setup
-        df_status["scen_runs_completed"] = scen_runs_completed
-        df_status["backend_used"] = backend_used
-        df_status["scenario_directory"] = scenario_dirs
-        df_status["model_types_enabled"] = (
-            models_str  # Which models are enabled for this analysis
-        )
-        df_status["actual_nTasks"] = actual_nTasks
-        df_status["actual_omp_threads"] = actual_omp_threads
-        df_status["actual_gpus"] = actual_gpus
-        df_status["actual_total_gpus"] = actual_total_gpus
-        df_status["actual_gpu_backend"] = actual_gpu_backend
-        df_status["actual_build_type"] = actual_build_type
-        df_status["actual_wall_time_s"] = actual_wall_time_s
+                # Provide model-specific expected resources to downstream validators.
+                if model_type == "swmm":
+                    row["run_mode"] = ""  # serial or OpenMP
+                    row["n_mpi_procs"] = 1
+                    row["n_omp_threads"] = self.cfg_analysis.n_threads_swmm or 1
+                    row["n_gpus"] = 0
+                    row["backend_used"] = "cpu"
+                else:
+                    row["run_mode"] = self.cfg_analysis.run_mode
+                    row["n_mpi_procs"] = self.cfg_analysis.n_mpi_procs or 1
+                    row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
+                    row["n_gpus"] = (
+                        self.cfg_analysis.n_gpus or 0
+                        if self.cfg_analysis.run_mode == "gpu"
+                        else 0
+                    )
+                    row["backend_used"] = scen.log.triton_backend_used.get()
 
-        return df_status
+                # Actual resources and wall time (model-dependent availability)
+                if model_type == "tritonswmm":
+                    log_out_path = (
+                        scen.scen_paths.out_tritonswmm or scen.scen_paths.sim_folder
+                    ) / "log.out"
+                    log_data = parse_triton_log_file(log_out_path)
+                    row["actual_nTasks"] = log_data["nTasks"]
+                    row["actual_omp_threads"] = log_data["omp_threads_per_task"]
+                    row["actual_gpus"] = log_data["gpus_per_task"]
+                    row["actual_total_gpus"] = log_data["total_gpus"]
+                    row["actual_gpu_backend"] = log_data["gpu_backend"]
+                    row["actual_build_type"] = log_data["build_type"]
+                    row["actual_wall_time_s"] = log_data["wall_time_s"]
+                elif model_type == "triton":
+                    log_out_path = (
+                        scen.scen_paths.out_triton or scen.scen_paths.sim_folder
+                    ) / "log.out"
+                    log_data = parse_triton_log_file(log_out_path)
+                    row["actual_nTasks"] = log_data["nTasks"]
+                    row["actual_omp_threads"] = log_data["omp_threads_per_task"]
+                    row["actual_gpus"] = log_data["gpus_per_task"]
+                    row["actual_total_gpus"] = log_data["total_gpus"]
+                    row["actual_gpu_backend"] = log_data["gpu_backend"]
+                    row["actual_build_type"] = log_data["build_type"]
+                    row["actual_wall_time_s"] = log_data["wall_time_s"]
+                else:  # swmm
+                    swmm_report_data = retrieve_swmm_performance_stats_from_rpt(
+                        scen.scen_paths.swmm_full_rpt_file
+                    )
+                    row["actual_nTasks"] = None
+                    row["actual_omp_threads"] = swmm_report_data.get(
+                        "actual_omp_threads"
+                    )
+                    row["actual_gpus"] = None
+                    row["actual_total_gpus"] = None
+                    row["actual_gpu_backend"] = "none"
+                    row["actual_build_type"] = "SWMM"
+                    row["actual_wall_time_s"] = swmm_report_data.get("wall_time_s")
+
+                rows.append(row)
+
+        return pd.DataFrame(rows)
 
     @property
     def tritonswmm_TRITON_summary(self):

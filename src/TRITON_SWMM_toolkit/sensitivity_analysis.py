@@ -621,78 +621,32 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         pd.DataFrame
-            DataFrame with columns from df_setup plus:
-            - sub_analysis_ilocs: int - Sub-analysis index
-            - event_ilocs: int - Event index within sub-analysis
-            - scenarios_setup: bool - Whether scenario preparation succeeded
-            - scen_runs_completed: bool - Whether simulation completed
-            - scenario_directory: str - Path to scenario directory
-            - actual_nTasks: int - Actual MPI tasks used
-            - actual_omp_threads: int - Actual OMP threads per task
-            - actual_gpus: int - Actual GPUs per task
-            - actual_total_gpus: int - Actual total GPUs used
-            - actual_gpu_backend: str - Actual GPU backend (HIP/CUDA/none)
-            - actual_build_type: str - Actual build type
-            - actual_wall_time_s: float - Actual TRITON wall time
+            Concatenated status table from all sub-analyses. This includes
+            sub-analysis-specific setup columns plus the canonical status
+            schema from ``TRITONSWMM_analysis.df_status`` (e.g. ``scenario_setup``
+            and ``run_completed``), as well as:
+
+            - sub_analysis_iloc: int - Sub-analysis index
         """
-        scenarios_setup = []
-        scen_runs_completed = []
-        scenario_dirs = []
-        sub_analysis_ilocs = []
-        event_ilocs = []
-        df_setup_rows = []
-        actual_nTasks = []
-        actual_omp_threads = []
-        actual_gpus = []
-        actual_total_gpus = []
-        actual_gpu_backend = []
-        actual_build_type = []
-        actual_wall_time_s = []
+        status_frames = []
 
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            for event_iloc in sub_analysis.df_sims.index:
-                scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
-                sub_analysis_ilocs.append(sub_analysis_iloc)
-                event_ilocs.append(event_iloc)
-                scenarios_setup.append(
-                    scen.log.scenario_creation_complete.get() is True
-                )
-                # Check if all enabled models completed
-                enabled_models = scen.run.model_types_enabled
-                all_models_completed = all(
-                    scen.model_run_completed(model_type)
-                    for model_type in enabled_models
-                )
-                scen_runs_completed.append(all_models_completed)
-                scenario_dirs.append(str(scen.log.logfile.parent))
-                subanalysis_definition_row = self.df_setup.iloc[sub_analysis_iloc, :]
-                df_setup_rows.append(subanalysis_definition_row)
+            sub_df_status = sub_analysis.df_status.copy()
 
-                log_out_path = scen.scen_paths.out_tritonswmm / "log.out"  # type: ignore
-                log_data = ut.parse_triton_log_file(log_out_path)
-                actual_nTasks.append(log_data["nTasks"])
-                actual_omp_threads.append(log_data["omp_threads_per_task"])
-                actual_gpus.append(log_data["gpus_per_task"])
-                actual_total_gpus.append(log_data["total_gpus"])
-                actual_gpu_backend.append(log_data["gpu_backend"])
-                actual_build_type.append(log_data["build_type"])
-                actual_wall_time_s.append(log_data["wall_time_s"])
+            # Add sensitivity parameter columns for this sub-analysis row
+            setup_row = self.df_setup.iloc[sub_analysis_iloc, :]
+            for key, val in setup_row.items():
+                sub_df_status[key] = val
 
-        df_status = self.df_setup.iloc[sub_analysis_ilocs, :].reset_index(drop=True)
-        # df_status = pd.concat(df_setup_rows)
-        df_status["sub_analysis_ilocs"] = sub_analysis_ilocs
-        df_status["event_ilocs"] = event_ilocs
-        df_status["scenarios_setup"] = scenarios_setup
-        df_status["scen_runs_completed"] = scen_runs_completed
-        df_status["scenario_directory"] = scenario_dirs
-        df_status["actual_nTasks"] = actual_nTasks
-        df_status["actual_omp_threads"] = actual_omp_threads
-        df_status["actual_gpus"] = actual_gpus
-        df_status["actual_total_gpus"] = actual_total_gpus
-        df_status["actual_gpu_backend"] = actual_gpu_backend
-        df_status["actual_build_type"] = actual_build_type
-        df_status["actual_wall_time_s"] = actual_wall_time_s
-        return df_status
+            # Preserve existing naming convention while adding a singular alias
+            sub_df_status["sub_analysis_iloc"] = sub_analysis_iloc
+
+            status_frames.append(sub_df_status)
+
+        if len(status_frames) == 0:
+            return pd.DataFrame()
+
+        return pd.concat(status_frames, ignore_index=True)
 
     @property
     def all_scenarios_created(self):

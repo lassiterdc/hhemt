@@ -3,7 +3,7 @@ import re
 import warnings
 from collections import Counter
 from functools import lru_cache
-from typing import cast
+from typing import Any, cast
 from datetime import datetime
 from pathlib import Path
 import numpy as np
@@ -28,6 +28,77 @@ from TRITON_SWMM_toolkit.constants import (
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
+
+
+def retrieve_swmm_performance_stats_from_rpt(
+    report_file_path: Path | None,
+) -> dict[str, Any]:
+    """Extract performance/resource metadata from a SWMM ``.rpt`` file.
+
+    Parameters
+    ----------
+    report_file_path : Path | None
+        Path to SWMM report file.
+
+    Returns
+    -------
+    dict[str, Any]
+        Dictionary containing:
+        - wall_time_s: float | None
+        - actual_omp_threads: int | None
+    """
+    result: dict[str, Any] = {
+        "wall_time_s": None,
+        "actual_omp_threads": None,
+    }
+
+    if report_file_path is None or not report_file_path.exists():
+        raise ValueError("rpt could not be found")
+
+    decode_errors: list[str] = []
+    content: str | None = None
+    attempted_encodings = ("utf-8", "cp1252")
+
+    for encoding in attempted_encodings:
+        try:
+            with open(report_file_path, "r", encoding=encoding) as f:
+                content = f.read()
+            break
+        except UnicodeDecodeError as e:
+            decode_errors.append(f"{encoding}: {e}")
+
+    if content is None:
+        attempted = ", ".join(attempted_encodings)
+        details = " | ".join(decode_errors)
+        raise UnicodeError(
+            f"Failed to decode SWMM report file {report_file_path} using encodings "
+            f"[{attempted}]. Errors: {details}"
+        )
+
+    match_hms = re.search(r"Total elapsed time:\s*(\d{1,2}):(\d{2}):(\d{2})", content)
+    match_lt_1s = re.search(r"Total elapsed time:\s*<\s*1\s*sec", content)
+    if match_hms is not None:
+        hours = int(match_hms.group(1))
+        minutes = int(match_hms.group(2))
+        seconds = int(match_hms.group(3))
+        result["wall_time_s"] = float(hours * 3600 + minutes * 60 + seconds)
+    elif match_lt_1s is not None:
+        result["wall_time_s"] = 1.0
+    else:
+        raise ValueError(
+            f"Could not find supported elapsed-time format in SWMM report file "
+            f"{report_file_path}"
+        )
+
+    thread_match = re.search(
+        r"Number of Threads\s*\.{2,}\s*(\d+)",
+        content,
+        flags=re.IGNORECASE,
+    )
+    if thread_match is not None:
+        result["actual_omp_threads"] = int(thread_match.group(1))
+
+    return result
 
 
 def retrieve_SWMM_outputs_as_datasets(
