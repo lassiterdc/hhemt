@@ -134,7 +134,7 @@ class UVACaseStudies:
             "n_omp_threads": 2,
             "n_nodes": 1,
             "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 50,
+            "hpc_max_simultaneous_sims": 1000,
         }
         system_overrides = {
             "toggle_triton_model": True,
