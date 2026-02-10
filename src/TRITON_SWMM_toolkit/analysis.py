@@ -1315,6 +1315,7 @@ class TRITONSWMM_analysis:
             if (
                 self.in_slurm
                 or self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
+                or self.cfg_analysis.multi_sim_run_method == "batch_job"
             ):
                 exec_mode = "slurm"
             else:
