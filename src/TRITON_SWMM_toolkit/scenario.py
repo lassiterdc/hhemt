@@ -76,9 +76,9 @@ class TRITONSWMM_scenario:
             swmm_hydro_inp=swmm_folder / "hydro.inp",  # runoff input generation
             swmm_hydraulics_inp=swmm_folder
             / "hydraulics.inp",  # TRITON-SWMM .inp for modeling hydraulics
-            swmm_hydraulics_rpt=out_tritonswmm
-            / "swmm"
-            / "hydraulics.rpt",  # runoff generation output
+            swmm_hydraulics_rpt=(
+                out_tritonswmm / "swmm" / "hydraulics.rpt" if out_tritonswmm else None
+            ),  # runoff generation output
             swmm_full_inp=swmm_folder / "full.inp",  # full SWMM model
             swmm_full_rpt_file=swmm_folder / "full.rpt",  # full swmm RPT
             swmm_full_out_file=swmm_folder / "full.out",  # full swmm binary output file

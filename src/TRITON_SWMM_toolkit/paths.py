@@ -77,7 +77,7 @@ class ScenarioPaths(MainDataClass):
     dir_weather_datfiles: Path
     swmm_hydro_inp: Path
     swmm_hydraulics_inp: Path
-    swmm_hydraulics_rpt: Path
+    swmm_hydraulics_rpt: Optional[Path]
     swmm_full_inp: Path
     swmm_full_rpt_file: Path
     swmm_full_out_file: Path
