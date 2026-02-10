@@ -79,8 +79,8 @@ class ScenarioPaths(MainDataClass):
     swmm_hydraulics_inp: Path
     swmm_hydraulics_rpt: Optional[Path]
     swmm_full_inp: Path
-    swmm_full_rpt_file: Path
-    swmm_full_out_file: Path
+    swmm_full_rpt_file: Optional[Path]
+    swmm_full_out_file: Optional[Path]
     extbc_tseries: Path
     extbc_loc: Path
     hyg_timeseries: Path

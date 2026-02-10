@@ -65,6 +65,9 @@ class TRITONSWMM_scenario:
         out_tritonswmm = (
             sim_folder / "out_tritonswmm" if cfg_sys.toggle_tritonswmm_model else None
         )
+        out_swmm = sim_folder / "out_swmm" if cfg_sys.toggle_swmm_model else None
+        if out_swmm:
+            out_swmm.mkdir(parents=True, exist_ok=True)
 
         self.scen_paths = ScenarioPaths(
             sim_folder=sim_folder,
@@ -80,8 +83,12 @@ class TRITONSWMM_scenario:
                 out_tritonswmm / "swmm" / "hydraulics.rpt" if out_tritonswmm else None
             ),  # runoff generation output
             swmm_full_inp=swmm_folder / "full.inp",  # full SWMM model
-            swmm_full_rpt_file=swmm_folder / "full.rpt",  # full swmm RPT
-            swmm_full_out_file=swmm_folder / "full.out",  # full swmm binary output file
+            swmm_full_rpt_file=(
+                out_swmm / "full.rpt" if out_swmm else None
+            ),  # full swmm RPT
+            swmm_full_out_file=(
+                out_swmm / "full.out" if out_swmm else None
+            ),  # full swmm binary output file
             # external boundary conditions
             extbc_tseries=sim_folder / "extbc" / f"tseries.txt",
             extbc_loc=sim_folder / "extbc" / f"loc.extbc",
