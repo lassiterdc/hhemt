@@ -161,7 +161,9 @@ class retrieve_TRITON_SWMM_test_case:
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
-        self.system.process_system_level_inputs(overwrite_if_exists=start_from_scratch)
+        self.system.process_system_level_inputs(
+            overwrite_outputs_if_already_created=start_from_scratch
+        )
 
     # create weather time series dataset
     def create_short_intense_weather_timeseries(
