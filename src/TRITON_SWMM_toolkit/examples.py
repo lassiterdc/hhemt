@@ -127,6 +127,8 @@ class TRITON_SWMM_example:
         system_config_template: str,
         analysis_config_template: str,
         case_config_filename: str,
+        weather_events_to_simulate: str,
+        analysis_description: str,
         download_if_exists: bool = False,
         example_data_dir: Optional[Path] = None,
     ):
@@ -171,6 +173,8 @@ class TRITON_SWMM_example:
             case_name=case_name,
             analysis_config_template=analysis_config_template,
             cfg_system_yaml=cfg_system_yaml,
+            weather_events_to_simulate=weather_events_to_simulate,
+            analysis_description=analysis_description,
             example_data_dir=example_data_dir,
         )
 
@@ -182,6 +186,8 @@ class TRITON_SWMM_example:
         case_name: str,
         analysis_config_template: str,
         cfg_system_yaml: Path,
+        weather_events_to_simulate: str,
+        analysis_description: str,
         example_data_dir: Optional[Path] = None,
     ):
         """
@@ -202,6 +208,10 @@ class TRITON_SWMM_example:
             analysis_config_template=analysis_config_template,
             example_data_dir=example_data_dir,
         )
+        placeholder_weather_path = Path(filled_yaml_data["weather_events_to_simulate"])
+        weatherpath = placeholder_weather_path.parent / weather_events_to_simulate
+        filled_yaml_data["weather_events_to_simulate"] = str(weatherpath)
+        filled_yaml_data["analysis_description"] = analysis_description
         cfg_system = load_system_config(cfg_system_yaml)
         analysis_id = filled_yaml_data["analysis_id"]
         cfg_yaml = (
@@ -445,11 +455,70 @@ class NorfolkIreneExample:
             TRITON_SWMM_example instance with Norfolk system loaded
         """
 
+        weather_events_to_simulate = "hurricane_irene_event_index.csv"
+        analysis_description = "Single Simulation of Hurricane Irene 8-27-2011"
+
         return TRITON_SWMM_example.from_case_study(
             case_name=cnst.NORFOLK_EX,
             system_config_template=cnst.NORFOLK_SYSTEM_CONFIG,
             analysis_config_template=cnst.NORFOLK_ANALYSIS_CONFIG,
             case_config_filename=cnst.NORFOLK_CASE_CONFIG,
+            weather_events_to_simulate=weather_events_to_simulate,
+            analysis_description=analysis_description,
+            download_if_exists=download_if_exists,
+            example_data_dir=example_data_dir,
+        )
+
+
+class NorfolkObservedExample:
+    """
+    Convenience wrapper for observed event ensemble simulation.
+
+    This is a thin wrapper around TRITON_SWMM_example that provides
+    Norfolk-specific defaults. Makes it easy to load the Norfolk example
+    without remembering all the constant names.
+
+    Example:
+        from TRITON_SWMM_toolkit.examples import NorfolkObservedExample
+
+        # Load Norfolk example with Hurricane Irene data
+        norfolk = NorfolkObservedExample.load()
+        system = norfolk.system
+
+        # Or just load the analysis template
+    """
+
+    @classmethod
+    def load(
+        cls,
+        download_if_exists: bool = False,
+        example_data_dir: Optional[Path] = None,
+    ) -> TRITON_SWMM_example:
+        """
+        Load Norfolk coastal flooding example.
+
+        Args:
+            download_if_exists: If True, re-download HydroShare data
+            example_data_dir: Optional override for data directory
+
+        Returns:
+            TRITON_SWMM_example instance with Norfolk system loaded
+        """
+
+        # this method just changes the weather_events_to_simulate
+        # for analysis config
+
+        weather_events_to_simulate = (
+            "obs_event_summaries_from_yrs_with_complete_coverage.csv"
+        )
+        analysis_description = "Observed event ensemble"
+        return TRITON_SWMM_example.from_case_study(
+            case_name=cnst.NORFOLK_EX,
+            system_config_template=cnst.NORFOLK_SYSTEM_CONFIG,
+            analysis_config_template=cnst.NORFOLK_ANALYSIS_CONFIG,
+            case_config_filename=cnst.NORFOLK_CASE_CONFIG,
+            weather_events_to_simulate=weather_events_to_simulate,
+            analysis_description=analysis_description,
             download_if_exists=download_if_exists,
             example_data_dir=example_data_dir,
         )

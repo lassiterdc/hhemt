@@ -5,8 +5,8 @@ weather_time_series_timestep_dimension_name: 'timestep'
 weather_timeseries: '${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_coverage.nc'
 # weather_event_summary_csv: '${DATA_DIR}/obs_event_summaries_from_yrs_with_complete_coverage.csv'
 storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'
-weather_events_to_simulate: '${DATA_DIR}/hurricane_irene_event_index.csv'
-analysis_description: 'Single Simulation of Hurricane Irene 8-27-2011'
+weather_events_to_simulate: '${DATA_DIR}/PLACEHOLDER.csv'
+analysis_description:
 run_mode: "serial"
 multi_sim_run_method: "local"
 local_cpu_cores_for_workflow: 4

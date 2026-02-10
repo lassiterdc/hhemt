@@ -1261,6 +1261,11 @@ class TRITONSWMM_analysis:
         submit_workflow : Lower-level workflow submission (15+ parameters)
         WorkflowResult : Structured result object returned by this method
         """
+        # TODO - if mode = "fresh", user should be prompted for manual input to
+        # type something like 'y' 'yes' or 'proceed' if the status of the
+        # analysis shows that some steps have been completed. This should be
+        # accompanied by a print statement of the current status.
+
         import time
         from .orchestration import translate_mode, translate_phases, WorkflowResult
 

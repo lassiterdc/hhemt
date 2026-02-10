@@ -397,7 +397,7 @@ class Local_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=2,
-            system_overrides=system_overrides
+            system_overrides=system_overrides,
         )
 
     # ========== Multi-Model Test Cases ==========
