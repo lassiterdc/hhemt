@@ -810,6 +810,20 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
                 )
 
+            # Create log directory and file for Snakemake output
+            logs_dir = self.analysis_paths.analysis_dir / "logs"
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            logfile_name = (
+                "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
+            )
+            snakemake_logfile = logs_dir / logfile_name
+
+            if verbose:
+                print(
+                    f"[Snakemake] Snakemake output will be logged to: {snakemake_logfile}",
+                    flush=True,
+                )
+
             cmd_args = [
                 "snakemake",
                 "--profile",
@@ -831,13 +845,15 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             if dry_run:
                 cmd_args.append("--dry-run")
 
-            result = subprocess.run(
-                cmd_args,
-                cwd=str(self.analysis_paths.analysis_dir),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            with open(snakemake_logfile, "w") as log_f:
+                result = subprocess.run(
+                    cmd_args,
+                    cwd=str(self.analysis_paths.analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
             if verbose:
                 cmd = " ".join(cmd_args)
                 print(f"[Snakemake] command: \n     {cmd}")
@@ -854,6 +870,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                     "snakefile_path": snakefile_path,
                     "job_id": None,
                     "message": error_msg,
+                    "snakemake_logfile": snakemake_logfile,
                 }
 
             if verbose:
@@ -865,6 +882,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "snakefile_path": snakefile_path,
                 "job_id": None,
                 "message": "Workflow completed successfully",
+                "snakemake_logfile": snakemake_logfile,
             }
 
         except Exception as e:
@@ -877,6 +895,7 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
                 "snakefile_path": snakefile_path,
                 "job_id": None,
                 "message": error_msg,
+                "snakemake_logfile": snakemake_logfile,
             }
 
     def _validate_single_job_dry_run(
@@ -1007,7 +1026,10 @@ snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPU
             # Create log directory and file for Snakemake output
             logs_dir = self.analysis_paths.analysis_dir / "logs"
             logs_dir.mkdir(parents=True, exist_ok=True)
-            snakemake_logfile = logs_dir / "snakemake_master.log"
+            logfile_name = (
+                "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
+            )
+            snakemake_logfile = logs_dir / logfile_name
 
             if verbose:
                 print(

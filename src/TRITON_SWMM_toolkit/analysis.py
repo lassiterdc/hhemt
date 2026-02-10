@@ -18,6 +18,7 @@ from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
     SlurmExecutor,
 )
+from TRITON_SWMM_toolkit.dry_run_report import generate_dry_run_report_markdown
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 from TRITON_SWMM_toolkit.utils import parse_triton_log_file
 from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
@@ -1666,7 +1667,7 @@ class TRITONSWMM_analysis:
             - message: str - Status message
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            return self.sensitivity.submit_workflow(
+            result = self.sensitivity.submit_workflow(
                 mode=mode,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -1685,8 +1686,8 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
             )
-
-        return self._workflow_builder.submit_workflow(
+        else:
+            result = self._workflow_builder.submit_workflow(
             mode=mode,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
@@ -1705,6 +1706,18 @@ class TRITONSWMM_analysis:
             dry_run=dry_run,
             verbose=verbose,
         )
+
+        if dry_run and result.get("success"):
+            snakemake_logfile = result.get("snakemake_logfile")
+            if snakemake_logfile is not None:
+                report_path = generate_dry_run_report_markdown(
+                    snakemake_logfile=Path(snakemake_logfile),
+                    analysis_dir=self.analysis_paths.analysis_dir,
+                    verbose=verbose,
+                )
+                result["dry_run_report_markdown"] = report_path
+
+        return result
 
     @property
     def TRITONSWMM_runtimes(self):
