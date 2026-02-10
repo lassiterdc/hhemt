@@ -1382,6 +1382,30 @@ class TRITONSWMM_analysis:
             message=result_dict.get("message", ""),
         )
 
+    @property
+    def n_scenarios(self):
+        sensitivity_scenario = 1
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            sens = self.sensitivity
+            sensitivity_scenario = len(sens.df_setup)
+
+        n_total = len(self.df_sims) * sensitivity_scenario
+        return n_total
+
+    @property
+    def n_sims(self):
+        sensitivity_scenario = 1
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            sens = self.sensitivity
+            sensitivity_scenario = len(sens.df_setup)
+
+        n_total = (
+            len(self.df_sims)
+            * len(self._get_enabled_model_types())
+            * sensitivity_scenario
+        )
+        return n_total
+
     def get_workflow_status(self) -> "WorkflowStatus":
         """Generate workflow status report.
 
@@ -1445,19 +1469,12 @@ class TRITONSWMM_analysis:
             details=setup_details,
         )
 
-        sensitivity_scenario = 1
-        if self.cfg_analysis.toggle_sensitivity_analysis:
-            sens = self.sensitivity
-            sensitivity_scenario = len(sens.df_setup)
-
         # Check scenario preparation
         all_prepared = self.all_scenarios_created
         not_prepared = self.scenarios_not_created
-        n_total = (
-            len(self.df_sims)
-            * len(self._get_enabled_model_types())
-            * sensitivity_scenario
-        )
+
+        n_total = self.n_sims
+
         n_prepared = n_total - len(not_prepared)
 
         prep_phase = PhaseStatus(

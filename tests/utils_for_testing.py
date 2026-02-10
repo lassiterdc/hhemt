@@ -114,10 +114,13 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
     """
     if not analysis.all_scenarios_created:
         if verbose:
-            print("\n  Failed scenarios:\n    - " + "\n    - ".join(analysis.scenarios_not_created))
+            print(
+                "\n  Failed scenarios:\n    - "
+                + "\n    - ".join(analysis.scenarios_not_created)
+            )
         pytest.fail(
             f"Scenario setup failed for {len(analysis.scenarios_not_created)} "
-            f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
+            f"of {analysis.n_scenarios} scenarios. Run with pytest -v for details."
         )
 
 
@@ -133,7 +136,10 @@ def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
     """
     if not analysis.all_sims_run:
         if verbose:
-            print("\n  Failed simulations:\n    - " + "\n    - ".join(analysis.scenarios_not_run))
+            print(
+                "\n  Failed simulations:\n    - "
+                + "\n    - ".join(analysis.scenarios_not_run)
+            )
         pytest.fail(
             f"Simulation failed for {len(analysis.scenarios_not_run)} "
             f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
@@ -159,7 +165,9 @@ def assert_timeseries_processed(
         if verbose:
             print(
                 "\n  Failed TRITONSWMM performance:\n    - "
-                + "\n    - ".join(analysis.TRITONSWMM_performance_time_series_not_processed)
+                + "\n    - ".join(
+                    analysis.TRITONSWMM_performance_time_series_not_processed
+                )
             )
         pytest.fail(
             f"TRITONSWMM performance timeseries processing failed for "
@@ -607,6 +615,7 @@ def normalize_swmm_link_vars(link_vars: set[str]) -> set[str]:
         return (link_vars - {"capacity"}) | {"capacity_setting"}
     return link_vars
 
+
 # ========== Phase 6d.2: New Assertion Helpers (2026-02-09) ==========
 
 
@@ -677,7 +686,9 @@ def assert_model_outputs_exist(
             missing_outputs.append(f"Summaries: {str(e)}")
 
     if missing_outputs:
-        error_msg = f"Model output validation failed for {len(missing_outputs)} check(s):\n"
+        error_msg = (
+            f"Model output validation failed for {len(missing_outputs)} check(s):\n"
+        )
         error_msg += "\n".join(f"  - {msg}" for msg in missing_outputs)
         if not verbose:
             error_msg += "\nRun with pytest -v for detailed output lists."
@@ -793,7 +804,9 @@ def assert_phases_complete(
         phase_obj = phase_status_map[phase_name]
         if not phase_obj.complete:
             if verbose:
-                print(f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete")
+                print(
+                    f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete"
+                )
                 if phase_obj.failed_items:
                     print(f"    Failed items: {phase_obj.failed_items}")
             incomplete.append(f"{phase_name} ({phase_obj.progress:.0%})")
