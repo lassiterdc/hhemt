@@ -139,6 +139,7 @@ class UVACaseStudies:
             "toggle_triton_model": True,
             "toggle_tritonswmm_model": False,
             "toggle_swmm_model": False,
+            "gpu_compilation_backend": None,
         }
 
         return CaseStudyBuilder(
