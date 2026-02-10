@@ -1178,6 +1178,7 @@ class TRITONSWMM_analysis:
         events: Optional[List[int]] = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
+        wait_for_job_completion: Optional[bool] = None,
         clear_raw_outputs: bool = True,
     ) -> "WorkflowResult":
         """
@@ -1214,6 +1215,9 @@ class TRITONSWMM_analysis:
         clear_raw_outputs : bool
             Determines whether TRITON-SWMM raw outputs are cleared after time series
             are successfully processed. Only set to False if debugging.
+        wait_for_job_completion: bool
+            The python process will wait for the job to finish before proceeding.
+            Mainly used for test cases and debugging.
 
         Returns
         -------
@@ -1313,6 +1317,9 @@ class TRITONSWMM_analysis:
         else:
             exec_mode = execution_mode
 
+        if wait_for_job_completion is None:
+            wait_for_job_completion = exec_mode != "slurm"
+
         # Build complete parameter dict for submit_workflow
         workflow_params = {
             **mode_params,
@@ -1323,7 +1330,7 @@ class TRITONSWMM_analysis:
             "which": which,
             "clear_raw_outputs": clear_raw_outputs,
             "compression_level": 5,
-            "wait_for_completion": (exec_mode != "slurm"),
+            "wait_for_completion": wait_for_job_completion,
             "dry_run": dry_run,
             "verbose": verbose,
         }
