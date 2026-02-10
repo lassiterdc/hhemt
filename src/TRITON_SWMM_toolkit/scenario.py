@@ -929,7 +929,7 @@ class TRITONSWMM_scenario:
 
         # Add optional flags
         if overwrite_scenario_if_already_set_up:
-            cmd.append("--overwrite-scenario")
+            cmd.append("--overwrite-scenario-if-already-set-up")
         if rerun_swmm_hydro_if_outputs_exist:
             cmd.append("--rerun-swmm-hydro")
 

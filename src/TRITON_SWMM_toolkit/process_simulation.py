@@ -288,7 +288,7 @@ class TRITONSWMM_sim_post_processing:
         if clear_raw_outputs:
             cmd.append("--clear-raw-outputs")
         if overwrite_outputs_if_already_created:
-            cmd.append("--overwrite-if-exist")
+            cmd.append("--overwrite-outputs-if-already-created")
 
         def launcher():
             """Execute timeseries processing in a subprocess."""

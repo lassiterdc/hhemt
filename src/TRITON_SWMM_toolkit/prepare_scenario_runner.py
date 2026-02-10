@@ -10,7 +10,7 @@ Usage:
         --event-iloc 0 \
         --analysis-config /path/to/analysis.yaml \
         --system-config /path/to/system.yaml \
-        [--overwrite-scenario] \
+        [--overwrite-scenario-if-already-set-up] \
         [--rerun-swmm-hydro]
 
 Exit codes:
@@ -58,7 +58,7 @@ def main():
         help="Path to system configuration YAML file",
     )
     parser.add_argument(
-        "--overwrite-scenario",
+        "--overwrite-scenario-if-already-set-up",
         action="store_true",
         default=False,
         help="Overwrite scenario if it already exists",

@@ -12,7 +12,7 @@ Usage:
         --system-config /path/to/system.yaml \
         --which both \
         --clear-raw-outputs \
-        --overwrite-if-exist \
+        --overwrite-outputs-if-already-created \
         --compression-level 5 \
 
 
@@ -81,7 +81,7 @@ def main():
         help="Clear raw outputs after processing",
     )
     parser.add_argument(
-        "--overwrite-if-exist",
+        "--overwrite-outputs-if-already-created",
         action="store_true",
         default=False,
         help="Overwrite processed outputs if they already exist",

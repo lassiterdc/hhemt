@@ -14,7 +14,7 @@ Usage:
         --system-config /path/to/system.yaml \
         --analysis-config /path/to/analysis.yaml \
         [--consolidate-outputs] \
-        [--overwrite-if-exist] \
+        [--overwrite-outputs-if-already-created] \
         [--compression-level 5]
 
 Exit codes:
@@ -212,7 +212,7 @@ def main() -> int:
         help="Which outputs to process: TRITON, SWMM, or both (only used if --process-timeseries)",
     )
     parser.add_argument(
-        "--overwrite-if-exist",
+        "--overwrite-outputs-if-already-created",
         action="store_true",
         default=False,
         help="Overwrite existing consolidated outputs",

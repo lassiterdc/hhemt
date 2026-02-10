@@ -321,7 +321,7 @@ rule prepare_scenario:
         {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
             --event-iloc {{wildcards.event_iloc}} \\
             {config_args} \\
-            {"--overwrite-scenario " if overwrite_scenario_if_already_set_up else ""}\\
+            {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -420,7 +420,7 @@ rule process_{model_type}:
             --model-type {model_type} \\
             --which {which_arg} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -455,7 +455,7 @@ rule consolidate:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {config_args} \\
             --compression-level {compression_level} \\
-            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --which {which} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1818,7 +1818,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
-            {"--overwrite-scenario " if overwrite_scenario_if_already_set_up else ""}\\
+            {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -1878,7 +1878,7 @@ rule setup:
             --model-type {model_type} \\
             --which {which} \\
             {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1916,7 +1916,7 @@ rule setup:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1946,7 +1946,7 @@ rule setup:
             {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
-            {"--overwrite-if-exist " if overwrite_outputs_if_already_created else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
