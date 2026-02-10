@@ -18,7 +18,9 @@ from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
     SlurmExecutor,
 )
-from TRITON_SWMM_toolkit.dry_run_report import generate_dry_run_report_markdown
+from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
+    generate_dry_run_report_markdown,
+)
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 from TRITON_SWMM_toolkit.utils import parse_triton_log_file
 from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
@@ -1688,24 +1690,24 @@ class TRITONSWMM_analysis:
             )
         else:
             result = self._workflow_builder.submit_workflow(
-            mode=mode,
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            prepare_scenarios=prepare_scenarios,
-            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
-            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-            process_timeseries=process_timeseries,
-            which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-            compression_level=compression_level,
-            pickup_where_leftoff=pickup_where_leftoff,
-            wait_for_completion=wait_for_completion,
-            dry_run=dry_run,
-            verbose=verbose,
-        )
+                mode=mode,
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                clear_raw_outputs=clear_raw_outputs,
+                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+                wait_for_completion=wait_for_completion,
+                dry_run=dry_run,
+                verbose=verbose,
+            )
 
         if dry_run and result.get("success"):
             snakemake_logfile = result.get("snakemake_logfile")
