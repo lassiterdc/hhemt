@@ -282,15 +282,15 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
     False
     """
     MODE_TRANSLATION = {
-        "fresh": {
-            # "from_scratch": True,
-            "overwrite_system_inputs": True,
-            "recompile_if_already_done_successfully": True,
-            "overwrite_scenario_if_already_set_up": True,
-            "rerun_swmm_hydro_if_outputs_exist": True,
-            "overwrite_outputs_if_already_created": True,
-            "pickup_where_leftoff": False,
-        },
+        # "fresh": {
+        #     # "from_scratch": True,
+        #     "overwrite_system_inputs": True,
+        #     "recompile_if_already_done_successfully": False,
+        #     "overwrite_scenario_if_already_set_up": True,
+        #     "rerun_swmm_hydro_if_outputs_exist": True,
+        #     "overwrite_outputs_if_already_created": True,
+        #     "pickup_where_leftoff": False,
+        # },
         "resume": {
             # "from_scratch": False,
             "overwrite_system_inputs": False,

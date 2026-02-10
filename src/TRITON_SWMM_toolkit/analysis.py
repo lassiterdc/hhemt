@@ -1172,15 +1172,24 @@ class TRITONSWMM_analysis:
 
     def run(
         self,
-        mode: Literal["fresh", "resume"] = "resume",
+        # mode: Literal["fresh", "resume"] = "resume",
+        from_scratch: bool = False,
         dry_run: bool = False,
-        phases: Optional[List[str]] = None,
+        # phases: Optional[List[str]] = None,
         events: Optional[List[int]] = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
         wait_for_job_completion: Optional[bool] = None,
         clear_raw_outputs: bool = True,
     ) -> "WorkflowResult":
+        # TODO - Snakemake will consider outputs as stale
+        # if any rules change. Change mode or phases
+        # causes rules to change, which makes the entire
+        # workflow stale. As a workaround, I am getting
+        # rid of these arguments and using a 'from_scratch'
+        # argument instead that basically deletes all setup
+        # stuff (dem, mannings, compilation build folders)
+        # and deletes the analysis folder.
         """
         High-level orchestration method for running TRITON-SWMM workflows.
 
@@ -1261,7 +1270,7 @@ class TRITONSWMM_analysis:
         submit_workflow : Lower-level workflow submission (15+ parameters)
         WorkflowResult : Structured result object returned by this method
         """
-        # TODO - if mode = "fresh", user should be prompted for manual input to
+        # TODO - if from_scratch = True, user should be prompted for manual input to
         # type something like 'y' 'yes' or 'proceed' if the status of the
         # analysis shows that some steps have been completed. This should be
         # accompanied by a print statement of the current status.
@@ -1277,24 +1286,19 @@ class TRITONSWMM_analysis:
                 "Event filtering via events parameter not yet implemented. "
                 "For now, all events in analysis will be processed."
             )
+        system_log = self._system.log
+
+        if from_scratch:
+            # remove analysis folder
+            import shutil
+
+            shutil.rmtree(str(self.cfg_analysis.analysis_dir))
 
         # Translate user-friendly parameters to workflow parameters
-        mode_params = translate_mode(mode)
-        phase_params = translate_phases(phases)
+        mode_params = translate_mode("resume")  # TODO - hardcoded while troubleshooting
+        phase_params = translate_phases(None)  # TODO - hardcoded while troubleshooting
 
         # Detect system input processing needs
-        system_log = self._system.log
-        needs_system_inputs = not (
-            system_log.dem_processed.get()
-            and (
-                self._system.cfg_system.toggle_use_constant_mannings
-                or system_log.mannings_processed.get()
-            )
-        )
-
-        # Override if user explicitly requested setup phase
-        if phases and "setup" in phases:
-            needs_system_inputs = True
 
         swmm_used = False
         triton_used = False
@@ -1331,8 +1335,6 @@ class TRITONSWMM_analysis:
             **mode_params,
             **phase_params,
             "mode": exec_mode,
-            "process_system_level_inputs": needs_system_inputs
-            or phase_params["process_system_level_inputs"],
             "which": which,
             "clear_raw_outputs": clear_raw_outputs,
             "compression_level": 5,

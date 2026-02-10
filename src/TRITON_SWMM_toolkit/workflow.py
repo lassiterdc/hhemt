@@ -491,6 +491,7 @@ rule consolidate:
             "conda-frontend": "mamba",
             "printshellcmds": True,
             "rerun-incomplete": True,
+            "keep-going": True,
         }
         assert isinstance(
             self.cfg_analysis.local_cpu_cores_for_workflow, int
@@ -513,7 +514,7 @@ rule consolidate:
             )
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
-            slurm_partition = self.cfg_analysis.hpc_ensemble_partition or "standard"
+            slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
             assert isinstance(
                 max_concurrent, int
@@ -523,7 +524,7 @@ rule consolidate:
                 {
                     "executor": "slurm",
                     "jobs": max_concurrent,
-                    "latency-wait": 60,
+                    "latency-wait": 30,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
                     "default-resources": [
