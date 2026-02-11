@@ -184,6 +184,66 @@ def generate_recommendation(status: WorkflowStatus) -> tuple[str, str]:
 
 ---
 
+## Processing Progress (Exact Percentages)
+
+### Rationale
+
+The original implementation used a coarse 0/50/100 heuristic based on whether
+TRITON and SWMM outputs were fully processed. For partially processed workflows
+(e.g., 59/71 TRITON processed), users see misleading 50% progress. Instead, we
+compute exact progress using model-specific missing-output lists.
+
+### Production-Ready Code Chunk (analysis.get_workflow_status)
+
+```python
+# Determine enabled models once for processing counts
+enabled_models = self._get_enabled_model_types()
+triton_enabled = "triton" in enabled_models or "tritonswmm" in enabled_models
+swmm_enabled = "swmm" in enabled_models or "tritonswmm" in enabled_models
+
+# Use model-specific, race-condition-safe log checks
+triton_missing = len(self.TRITON_time_series_not_processed) if triton_enabled else 0
+swmm_missing = len(self.SWMM_time_series_not_processed) if swmm_enabled else 0
+
+# Total scenarios per model
+triton_total = n_total if triton_enabled else 0
+swmm_total = n_total if swmm_enabled else 0
+
+# Processed counts per model (guard against negatives)
+triton_processed = max(triton_total - triton_missing, 0)
+swmm_processed = max(swmm_total - swmm_missing, 0)
+
+processed_total = triton_processed + swmm_processed
+total_needed = triton_total + swmm_total
+proc_progress = processed_total / total_needed if total_needed else 0.0
+
+triton_proc_complete = triton_missing == 0 if triton_enabled else True
+swmm_proc_complete = swmm_missing == 0 if swmm_enabled else True
+proc_complete = triton_proc_complete and swmm_proc_complete
+
+proc_phase = PhaseStatus(
+    name="processing",
+    complete=proc_complete,
+    progress=proc_progress,
+    details={
+        "triton": (
+            f"{'✓' if triton_proc_complete else '✗'} TRITON outputs processed: "
+            f"{triton_processed}/{triton_total}"
+            if triton_enabled
+            else "✓ TRITON outputs processed: n/a"
+        ),
+        "swmm": (
+            f"{'✓' if swmm_proc_complete else '✗'} SWMM outputs processed: "
+            f"{swmm_processed}/{swmm_total}"
+            if swmm_enabled
+            else "✓ SWMM outputs processed: n/a"
+        ),
+    },
+)
+```
+
+---
+
 ## Implementation
 
 ### Step 1: Add `WorkflowStatus` dataclass to `orchestration.py`
