@@ -557,6 +557,7 @@ class TRITONSWMM_sensitivity_analysis:
             )
             sub_analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
+            cfg_snstvty_analysis.is_subanalysis = True
 
             cfg_anlysys_yaml = sub_analysis_directory / f"{sa_id}.yaml"
 
@@ -572,6 +573,8 @@ class TRITONSWMM_sensitivity_analysis:
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=self._system,
             )
+            # Mark sub-analysis instances with parent sensitivity context so
+            # status/allocation parsing can route to the master Snakefile.
             dic_sensitivity_analyses[idx] = anlsys
         return dic_sensitivity_analyses
 
@@ -631,6 +634,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            assert (
+                sub_analysis.cfg_analysis.is_subanalysis
+            ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
             sub_df_status = sub_analysis.df_status.copy()
 
             # Add sensitivity parameter columns for this sub-analysis row

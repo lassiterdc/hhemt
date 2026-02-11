@@ -28,6 +28,7 @@ from TRITON_SWMM_toolkit.swmm_output_parser import (
 )
 from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
     parse_regular_workflow_model_allocations,
+    parse_sensitivity_analysis_workflow_model_allocations,
 )
 from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
 import os
@@ -830,10 +831,15 @@ class TRITONSWMM_analysis:
             models.append("swmm")
         return models
 
-    def _retrieve_snakemake_allocations_regular(
+    def _retrieve_snakemake_allocations(
         self,
     ) -> tuple[dict[str, dict[str, int]], str | None]:
         """Retrieve parsed per-model Snakemake allocations.
+
+        Routing is strict and context-aware:
+        - regular analysis: parse `run_<model>` rules from this analysis Snakefile
+        - sensitivity sub-analysis: parse `simulation_sa*_evt*` rules from the
+          parent/master sensitivity Snakefile and select this sub-analysis id
 
         Raises
         ------
@@ -843,11 +849,25 @@ class TRITONSWMM_analysis:
             If allocations cannot be parsed from the Snakefile.
         """
         enabled_models = self._get_enabled_model_types()
-        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
-        allocations = parse_regular_workflow_model_allocations(
-            snakefile_path=snakefile_path,
-            enabled_model_types=enabled_models,
-        )
+
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
+            sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
+                snakefile_path=snakefile_path,
+                expected_subanalysis_ids=expected_sa_ids,
+            )
+            allocations = {
+                model_type: alloc.copy()
+                for model_type in enabled_models
+                for alloc in sa_allocations.values()
+            }
+        else:
+            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            allocations = parse_regular_workflow_model_allocations(
+                snakefile_path=snakefile_path,
+                enabled_model_types=enabled_models,
+            )
 
         return allocations, None
 
@@ -1793,12 +1813,67 @@ class TRITONSWMM_analysis:
         return self.process.tritonswmm_SWMM_link_summary
 
     @property
-    def swmm_only_node_summary(self):
-        return self.process.swmm_only_node_summary
+    def df_snakemake_allocations(self) -> pd.DataFrame:
+        enabled_models_untyped = self._get_enabled_model_types()
+        enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
+            m for m in ("triton", "tritonswmm", "swmm") if m in enabled_models_untyped
+        ]
 
-    @property
-    def swmm_only_link_summary(self):
-        return self.process.swmm_only_link_summary
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            expected_sa_ids = sorted(self.sensitivity.sub_analyses.keys())
+            sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
+                snakefile_path=snakefile_path,
+                expected_subanalysis_ids=expected_sa_ids,
+            )
+            rows: list[dict] = []
+            for sa_id, sub_analysis in self.sensitivity.sub_analyses.items():
+                if sa_id not in sa_allocations:
+                    raise ValueError(
+                        "Parsed sensitivity allocations missing subanalysis id: "
+                        f"sa_{sa_id}. Available ids: {sorted(sa_allocations.keys())}"
+                    )
+                alloc = sa_allocations[sa_id]
+                for event_iloc in sub_analysis.df_sims.index:
+                    scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                    scen.log.refresh()
+                    scenario_dir = str(scen.log.logfile.parent)
+                    for model_type in enabled_models:
+                        row = {
+                            "event_iloc": event_iloc,
+                            "model_type": model_type,
+                            "scenario_directory": scenario_dir,
+                            "snakemake_allocation_parse_error": None,
+                        }
+                        row.update(alloc)
+                        rows.append(row)
+            return pd.DataFrame(rows)
+
+        model_allocations, parse_error = self._retrieve_snakemake_allocations()
+        rows = []
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            scen.log.refresh()
+            scenario_dir = str(scen.log.logfile.parent)
+
+            for model_type in enabled_models:
+                row = {
+                    "event_iloc": event_iloc,
+                    "model_type": model_type,
+                    "scenario_directory": scenario_dir,
+                    "snakemake_allocation_parse_error": parse_error,
+                }
+
+                if model_type not in model_allocations:
+                    raise ValueError(
+                        "Parsed Snakemake allocations are missing model_type "
+                        f"'{model_type}'. Available keys: {list(model_allocations.keys())}"
+                    )
+
+                alloc = model_allocations[model_type]
+                row.update(alloc)
+                rows.append(row)
+        return pd.DataFrame(rows)
 
     @property
     def df_status(self):
@@ -1814,13 +1889,36 @@ class TRITONSWMM_analysis:
             (where available from model logs / reports).
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            return self.sensitivity.df_status
+            df_status = self.sensitivity.df_status
+            df_status_joined = df_status.merge(
+                self.df_snakemake_allocations,
+                on=["model_type", "scenario_directory"],
+                how="left",
+            )
+            allocation_columns = [
+                col
+                for col in df_status_joined.columns
+                if col.startswith("snakemake_")
+                and col != "snakemake_allocation_parse_error"
+            ]
+            if (
+                allocation_columns
+                and df_status_joined[allocation_columns].isna().any().any()
+            ):
+                missing = df_status_joined.loc[
+                    df_status_joined[allocation_columns].isna().any(axis=1),
+                    ["model_type", "scenario_directory"],
+                ]
+                raise ValueError(
+                    "Missing Snakemake allocations after join for sensitivity status rows. "
+                    f"First missing rows: {missing.head().to_dict(orient='records')}"
+                )
+            return df_status_joined
 
         enabled_models_untyped = self._get_enabled_model_types()
         enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
             m for m in ("triton", "tritonswmm", "swmm") if m in enabled_models_untyped
         ]
-        model_allocations, parse_error = self._retrieve_snakemake_allocations_regular()
 
         rows: list[dict] = []
         for event_iloc in self.df_sims.index:
@@ -1838,20 +1936,12 @@ class TRITONSWMM_analysis:
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
                 row["scenario_directory"] = scenario_dir
-                row["snakemake_allocation_parse_error"] = parse_error
-
-                if model_type not in model_allocations:
-                    raise ValueError(
-                        "Parsed Snakemake allocations are missing model_type "
-                        f"'{model_type}'. Available keys: {list(model_allocations.keys())}"
-                    )
-
-                alloc = model_allocations[model_type]
-                row.update(alloc)
 
                 # Provide model-specific expected resources to downstream validators.
                 if model_type == "swmm":
-                    row["run_mode"] = ""  # serial or OpenMP
+                    row["run_mode"] = (
+                        "serial" if self.cfg_analysis.n_threads_swmm == 1 else "openmp"
+                    )
                     row["n_mpi_procs"] = 1
                     row["n_omp_threads"] = self.cfg_analysis.n_threads_swmm or 1
                     row["n_gpus"] = 0
@@ -1896,7 +1986,7 @@ class TRITONSWMM_analysis:
                     swmm_report_data = retrieve_swmm_performance_stats_from_rpt(
                         scen.scen_paths.swmm_full_rpt_file
                     )
-                    row["actual_nTasks"] = None
+                    row["actual_nTasks"] = 1
                     row["actual_omp_threads"] = swmm_report_data.get(
                         "actual_omp_threads"
                     )
@@ -1908,7 +1998,34 @@ class TRITONSWMM_analysis:
 
                 rows.append(row)
 
-        return pd.DataFrame(rows)
+        df_status = pd.DataFrame(rows)
+        if self.cfg_analysis.is_subanalysis:
+            return df_status
+        else:
+            df_status_joined = df_status.merge(
+                self.df_snakemake_allocations,
+                on=["model_type", "scenario_directory"],
+                how="left",
+            )
+            allocation_columns = [
+                col
+                for col in df_status_joined.columns
+                if col.startswith("snakemake_")
+                and col != "snakemake_allocation_parse_error"
+            ]
+            if (
+                allocation_columns
+                and df_status_joined[allocation_columns].isna().any().any()
+            ):
+                missing = df_status_joined.loc[
+                    df_status_joined[allocation_columns].isna().any(axis=1),
+                    ["model_type", "scenario_directory"],
+                ]
+                raise ValueError(
+                    "Missing Snakemake allocations after join for status rows. "
+                    f"First missing rows: {missing.head().to_dict(orient='records')}"
+                )
+            return df_status_joined
 
     @property
     def tritonswmm_TRITON_summary(self):

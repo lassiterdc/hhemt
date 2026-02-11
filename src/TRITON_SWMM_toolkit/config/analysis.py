@@ -188,6 +188,10 @@ class analysis_config(cfgBaseModel):
         None,
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
     )
+    is_subanalysis: Optional[bool] = Field(
+        False,
+        description="This is used in the backend to help route subanalyses to appropriate processes.",
+    )
 
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("analysis_id")

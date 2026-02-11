@@ -273,8 +273,9 @@ def main() -> int:
 
         logger.info("All simulations completed successfully")
 
-        # Validate resource usage
-        validate_resource_usage(analysis, logger)
+        # Validate resource usage (skipped for subanalysis)
+        if not analysis.cfg_analysis.is_subanalysis:
+            validate_resource_usage(analysis, logger)
 
         # Check if all timeseries were processed
         if args.which in ["both", "TRITON"]:

@@ -171,6 +171,14 @@ def test_snakemake_workflow_dry_run(norfolk_multi_sim_analysis):
     ), f"Snakemake dry-run failed: {result.get('message', '')}"
     assert result.get("mode") == "local"
 
+    # Force Snakemake allocation parsing in dry-run tests so parser issues
+    # fail fast before slow execution tests.
+    df_status = analysis.df_status
+    assert not df_status.empty
+    assert "snakemake_allocated_nTasks" in df_status.columns
+    assert "snakemake_allocated_omp_threads" in df_status.columns
+    assert "snakemake_allocated_total_cpus" in df_status.columns
+
 
 # ========== Phase 6b.2.1: Unified Fixture Pilot Validation ==========
 

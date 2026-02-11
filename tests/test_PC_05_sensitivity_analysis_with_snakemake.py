@@ -184,6 +184,14 @@ def test_snakemake_sensitivity_workflow_dry_run(
     ), f"Snakemake dry-run failed: {result.get('message', '')}"
     assert result.get("mode") == "local"
 
+    # Force Snakemake allocation parsing in dry-run tests so parser issues
+    # fail fast before slow execution tests.
+    df_status = analysis.df_status
+    assert not df_status.empty
+    assert "snakemake_allocated_nTasks" in df_status.columns
+    assert "snakemake_allocated_omp_threads" in df_status.columns
+    assert "snakemake_allocated_total_cpus" in df_status.columns
+
 
 @pytest.mark.slow
 def test_snakemake_sensitivity_workflow_execution(norfolk_sensitivity_analysis):

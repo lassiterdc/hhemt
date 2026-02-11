@@ -109,3 +109,54 @@ def parse_regular_workflow_model_allocations(
         )
 
     return allocations
+
+
+def parse_sensitivity_analysis_workflow_model_allocations(
+    snakefile_path: Path,
+    expected_subanalysis_ids: list[int] | None = None,
+) -> dict[int, dict[str, int]]:
+    """Parse per-subanalysis allocations from flattened sensitivity Snakefile.
+
+    The flattened sensitivity Snakefile contains rules named like:
+    ``simulation_sa{sa_id}_evt{event_id}``.
+
+    This parser extracts Snakemake resources from those simulation rules and
+    returns one allocation per subanalysis. If multiple event rules for the
+    same subanalysis disagree on resources, it raises ``SnakefileParsingError``.
+    """
+    snakefile_text = _read_snakefile_text(snakefile_path)
+    rule_blocks = _extract_rule_blocks(snakefile_text)
+
+    allocations_by_sa: dict[int, dict[str, int]] = {}
+
+    for rule_name, rule_block in rule_blocks.items():
+        match = _SA_SIM_RE.match(rule_name)
+        if match is None:
+            continue
+
+        sa_id = int(match.group(1))
+        parsed_alloc = _parse_rule_resources(rule_name=rule_name, rule_block=rule_block)
+
+        if sa_id in allocations_by_sa and allocations_by_sa[sa_id] != parsed_alloc:
+            raise SnakefileParsingError(
+                "Inconsistent Snakemake resources found across sensitivity simulation "
+                f"rules for subanalysis sa_{sa_id}."
+            )
+
+        allocations_by_sa[sa_id] = parsed_alloc
+
+    if not allocations_by_sa:
+        raise SnakefileParsingError(
+            "No sensitivity simulation rules found. Expected rules matching "
+            "'simulation_sa{sa_id}_evt{event_id}'."
+        )
+
+    if expected_subanalysis_ids is not None:
+        missing = sorted(set(expected_subanalysis_ids) - set(allocations_by_sa.keys()))
+        if missing:
+            raise SnakefileParsingError(
+                "Missing expected sensitivity simulation allocations for subanalysis ids: "
+                f"{missing}"
+            )
+
+    return allocations_by_sa

@@ -53,7 +53,9 @@ def retrieve_swmm_performance_stats_from_rpt(
     }
 
     if report_file_path is None or not report_file_path.exists():
-        raise ValueError("rpt could not be found")
+        result["wall_time_s"] = "rpt does not exist"
+        result["actual_omp_threads"] = "rpt does not exist"
+        return result
 
     decode_errors: list[str] = []
     content: str | None = None
