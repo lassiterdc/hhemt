@@ -773,7 +773,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
+{self.python_executable} -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -1605,6 +1605,17 @@ conda activate triton_swmm_toolkit
 if [ -n "${CONDA_PREFIX}" ]; then
     export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"
 fi
+
+# Diagnostics: confirm activation and Snakemake availability
+echo "=========================================="
+echo "DIAGNOSTICS: Conda activation + Snakemake"
+echo "=========================================="
+echo "CONDA_PREFIX: ${CONDA_PREFIX:-<not set>}"
+echo "CONDA_DEFAULT_ENV: ${CONDA_DEFAULT_ENV:-<not set>}"
+echo "Python (PATH): $(which python)"
+echo "PATH (head):"
+echo "${PATH}" | tr ':' '\n' | head -n 10 | sed 's/^/  /'
+echo "=========================================="
 """
 
             account_directive = ""
@@ -1626,12 +1637,17 @@ fi
 #SBATCH --error={str(batch_log_path)}/workflow_batch_{ut.current_datetime_string(filepath_friendly=True)}_%j.out
 {additional_sbatch_args}
 
+
 module purge
 {module_load_cmd}
 
 {conda_init_cmd}
 
-python -m snakemake \\
+
+{self.python_executable} -V
+{self.python_executable} -m snakemake --version
+
+{self.python_executable} -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
