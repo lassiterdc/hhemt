@@ -1832,14 +1832,6 @@ class TRITONSWMM_analysis:
         return bool(self.log.swmm_only_link_analysis_summary_created.get())
 
     @property
-    def tritonswmm_SWMM_node_summary(self):
-        return self.process.tritonswmm_SWMM_node_summary
-
-    @property
-    def tritonswmm_SWMM_link_summary(self):
-        return self.process.tritonswmm_SWMM_link_summary
-
-    @property
     def df_snakemake_allocations(self) -> pd.DataFrame:
         enabled_models_untyped = self._get_enabled_model_types()
         enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
@@ -1919,7 +1911,7 @@ class TRITONSWMM_analysis:
             df_status = self.sensitivity.df_status
             df_status_joined = df_status.merge(
                 self.df_snakemake_allocations,
-                on=["model_type", "scenario_directory"],
+                on=["model_type", "scenario_directory", "event_iloc"],
                 how="left",
             )
             allocation_columns = [
@@ -1934,7 +1926,7 @@ class TRITONSWMM_analysis:
             ):
                 missing = df_status_joined.loc[
                     df_status_joined[allocation_columns].isna().any(axis=1),
-                    ["model_type", "scenario_directory"],
+                    ["model_type", "scenario_directory", "event_iloc"],
                 ]
                 raise ValueError(
                     "Missing Snakemake allocations after join for sensitivity status rows. "
@@ -2031,7 +2023,7 @@ class TRITONSWMM_analysis:
         else:
             df_status_joined = df_status.merge(
                 self.df_snakemake_allocations,
-                on=["model_type", "scenario_directory"],
+                on=["model_type", "scenario_directory", "event_iloc"],
                 how="left",
             )
             allocation_columns = [
@@ -2046,7 +2038,7 @@ class TRITONSWMM_analysis:
             ):
                 missing = df_status_joined.loc[
                     df_status_joined[allocation_columns].isna().any(axis=1),
-                    ["model_type", "scenario_directory"],
+                    ["model_type", "scenario_directory", "event_iloc"],
                 ]
                 raise ValueError(
                     "Missing Snakemake allocations after join for status rows. "
