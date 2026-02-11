@@ -773,7 +773,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-{self.python_executable} -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
+${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -1643,11 +1643,9 @@ module purge
 
 {conda_init_cmd}
 
-
-{self.python_executable} -V
-{self.python_executable} -m snakemake --version
-
-{self.python_executable} -m snakemake \\
+${{CONDA_PREFIX}}/bin/python -V
+${{CONDA_PREFIX}}/bin/python -m snakemake --version
+${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
