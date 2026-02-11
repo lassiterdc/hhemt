@@ -67,6 +67,14 @@ class analysis_config(cfgBaseModel):
         "multi_sim_run_method = 1_job_many_srun_tasks. "
         "Used with --gres=gpu:{hpc_gpus_per_node} directive. ",
     )
+    gpu_hardware: Optional[str] = Field(
+        None,
+        description=(
+            "Optional GPU hardware selector (e.g., 'a100', 'h200', 'rtx3090'). "
+            "If provided, SLURM GPU requests will qualify the GPU type using "
+            "--gpus (batch_job) or --gres (1_job_many_srun_tasks)."
+        ),
+    )
     hpc_cpus_per_node: Optional[int] = Field(
         None,
         description="CPUs per node on the HPC cluster. Required for dry runs using "
@@ -239,6 +247,9 @@ class analysis_config(cfgBaseModel):
         omp = values.get("n_omp_threads")
         gpus = values.get("n_gpus")
         nodes = values.get("n_nodes")
+        multi_sim_method = values.get("multi_sim_run_method")
+        hpc_gpus_per_node = values.get("hpc_gpus_per_node")
+        gpu_hardware = values.get("gpu_hardware")
 
         # -------------------------------
         # Validation rules per mode
@@ -314,7 +325,14 @@ class analysis_config(cfgBaseModel):
                     f"Each node requires at least one MPI rank to run on it."
                 )
 
-        else:
-            raise ValueError(f"Unknown run_mode: {mode}")
+            if multi_sim_method == "1_job_many_srun_tasks" and not hpc_gpus_per_node:
+                raise ValueError(
+                    "hpc_gpus_per_node is required for 1_job_many_srun_tasks when using GPUs"
+                )
+
+        if gpus in (None, 0) and gpu_hardware:
+            raise ValueError(
+                "gpu_hardware is set but n_gpus is 0. Remove gpu_hardware or request GPUs."
+            )
 
         return values

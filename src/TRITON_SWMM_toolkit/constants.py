@@ -69,7 +69,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     hpc_setup_and_analysis_processing_partition="standard",
     hpc_account="***REMOVED***",
     multi_sim_run_method="batch_job",
-    additional_modules="gompi/14.2.0_5.0.7 miniforge",
+    additional_modules="gompi/14.2.0_5.0.7 miniforge nvhpc cuda",
     gpu_compilation_backend="CUDA",
     example_data_dir=Path("/scratch")
     / os.getenv("USER", "unknown")

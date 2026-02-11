@@ -272,7 +272,7 @@ class SnakemakeWorkflowBuilder:
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
             runtime_min=120,
-            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 2 * 1000,  # 2 CPUs worth
+            mem_mb=32000,
             nodes=1,
             tasks=1,
             cpus_per_task=2,  # Parallel compression
@@ -563,6 +563,11 @@ rule consolidate:
                 }
             )
 
+            if self.cfg_analysis.gpu_hardware:
+                config["slurm"]["sbatch"][
+                    "gpus"
+                ] = f"{self.cfg_analysis.gpu_hardware}:{{resources.gpu}}"
+
             # Add account if specified
             if self.cfg_analysis.hpc_account:
                 config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account  # type: ignore
@@ -742,7 +747,11 @@ echo ""
                 gpus_per_node, int
             ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres is per-node, SLURM will multiply by --nodes automatically
-            gpu_directive = f"#SBATCH --gres=gpu:{gpus_per_node}\n"
+            gpu_hardware = self.cfg_analysis.gpu_hardware
+            if gpu_hardware:
+                gpu_directive = f"#SBATCH --gres=gpu:{gpu_hardware}:{gpus_per_node}\n"
+            else:
+                gpu_directive = f"#SBATCH --gres=gpu:{gpus_per_node}\n"
             # Calculate total GPUs dynamically in bash script
             gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"
             gpu_cli_arg = " --resources gpu=$TOTAL_GPUS"
@@ -2214,7 +2223,7 @@ rule setup:
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=120,
-                mem_mb=mem_per_cpu * 2 * 1000,
+                mem_mb=32000,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=2,

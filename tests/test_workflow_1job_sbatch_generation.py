@@ -46,6 +46,7 @@ def norfolk_1job_with_gpus():
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
     analysis.cfg_analysis.hpc_gpus_per_node = 8  # Frontier-like
+    analysis.cfg_analysis.gpu_hardware = "a100"
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
@@ -152,8 +153,8 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
 
     # Verify GPU directive is present in SBATCH
     assert (
-        "--gres=gpu:8" in script_content
-    ), "Should request 8 GPUs per node with --gres"
+        "--gres=gpu:a100:8" in script_content
+    ), "Should request 8 a100 GPUs per node with --gres"
 
     # Verify GPU calculation in bash script
     assert (

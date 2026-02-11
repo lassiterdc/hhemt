@@ -57,6 +57,7 @@ class PlatformConfig:
     example_data_dir: Optional[Path] = None
     hpc_gpus_per_node: Optional[int] = None
     hpc_cpus_per_node: Optional[int] = None
+    gpu_hardware: Optional[str] = None
     toggle_triton_model: Optional[bool] = None
     toggle_tritonswmm_model: Optional[bool] = None
     toggle_swmm_model: Optional[bool] = None
@@ -76,6 +77,7 @@ class PlatformConfig:
             "python_path": self.python_path,
             "hpc_gpus_per_node": self.hpc_gpus_per_node,
             "hpc_cpus_per_node": self.hpc_cpus_per_node,
+            "gpu_hardware": self.gpu_hardware,
         }
 
     def to_system_dict(self) -> Dict:
