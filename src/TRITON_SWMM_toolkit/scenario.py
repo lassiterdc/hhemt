@@ -310,15 +310,6 @@ class TRITONSWMM_scenario:
             enabled.append("swmm")
         return enabled
 
-    @property
-    def sim_compute_time_min(self) -> float:
-        """Simulation compute time in minutes.
-
-        Returns 0.0 — runtime tracking via simlog was removed. Derive from
-        log file timestamps or performance.txt if needed in the future.
-        """
-        return 0.0
-
     def model_run_completed(
         self, model_type: Literal["triton", "tritonswmm", "swmm"]
     ) -> bool:

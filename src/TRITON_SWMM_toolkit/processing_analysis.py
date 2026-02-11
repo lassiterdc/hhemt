@@ -374,6 +374,12 @@ class TRITONSWMM_analysis_post_processing:
     def triton_only_summary(self):
         return self._open(self._analysis.analysis_paths.output_triton_only_summary)
 
+    @property
+    def triton_only_performance_summary(self):
+        return self._open(
+            self._analysis.analysis_paths.output_triton_only_performance_summary
+        )
+
     # SWMM-only model accessors
     @property
     def swmm_only_node_summary(self):

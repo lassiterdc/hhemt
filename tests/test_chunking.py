@@ -125,7 +125,7 @@ def create_sensitivity_dataset(
         "time_of_max_wlevel_min",
         "velocity_y_mps_at_time_of_max_velocity",
     ]
-    nonspatial_vars = ["compute_time_min", "final_surface_flood_volume_cm"]
+    nonspatial_vars = ["final_surface_flood_volume_cm"]
 
     data_vars = {
         name: (

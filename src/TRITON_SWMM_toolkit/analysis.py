@@ -1561,20 +1561,46 @@ class TRITONSWMM_analysis:
         )
 
         # Check processing
-        triton_proc = self.log.all_TRITON_timeseries_processed.get()
-        swmm_proc = self.log.all_SWMM_timeseries_processed.get()
-        proc_complete = triton_proc and swmm_proc
-        proc_progress = (
-            1.0 if proc_complete else 0.5 if (triton_proc or swmm_proc) else 0.0
+        enabled_models = self._get_enabled_model_types()
+        triton_enabled = "triton" in enabled_models or "tritonswmm" in enabled_models
+        swmm_enabled = "swmm" in enabled_models or "tritonswmm" in enabled_models
+
+        triton_missing = (
+            len(self.TRITON_time_series_not_processed) if triton_enabled else 0
         )
+        swmm_missing = len(self.SWMM_time_series_not_processed) if swmm_enabled else 0
+
+        triton_total = n_total if triton_enabled else 0
+        swmm_total = n_total if swmm_enabled else 0
+
+        triton_processed = max(triton_total - triton_missing, 0)
+        swmm_processed = max(swmm_total - swmm_missing, 0)
+
+        processed_total = triton_processed + swmm_processed
+        total_needed = triton_total + swmm_total
+        proc_progress = processed_total / total_needed if total_needed else 0.0
+
+        triton_proc_complete = triton_missing == 0 if triton_enabled else True
+        swmm_proc_complete = swmm_missing == 0 if swmm_enabled else True
+        proc_complete = triton_proc_complete and swmm_proc_complete
 
         proc_phase = PhaseStatus(
             name="processing",
             complete=proc_complete,
             progress=proc_progress,
             details={
-                "triton": f"{'✓' if triton_proc else '✗'} TRITON outputs processed",
-                "swmm": f"{'✓' if swmm_proc else '✗'} SWMM outputs processed",
+                "triton": (
+                    f"{'✓' if triton_proc_complete else '✗'} TRITON outputs processed: "
+                    f"{triton_processed}/{triton_total}"
+                    if triton_enabled
+                    else "✓ TRITON outputs processed: n/a"
+                ),
+                "swmm": (
+                    f"{'✓' if swmm_proc_complete else '✗'} SWMM outputs processed: "
+                    f"{swmm_processed}/{swmm_total}"
+                    if swmm_enabled
+                    else "✓ SWMM outputs processed: n/a"
+                ),
             },
         )
 
@@ -1768,13 +1794,14 @@ class TRITONSWMM_analysis:
 
         return result
 
-    @property
-    def TRITONSWMM_runtimes(self):
-        return (
-            self.tritonswmm_TRITON_summary["compute_time_min"]
-            .to_dataframe()
-            .dropna()["compute_time_min"]
-        )
+    # TODO - fix or delete
+    # @property
+    # def TRITONSWMM_runtimes(self):
+    #     return (
+    #         self.tritonswmm_TRITON_summary["compute_time_min"]
+    #         .to_dataframe()
+    #         .dropna()["compute_time_min"]
+    #     )
 
     @property
     def tritonswmm_performance_analysis_summary_created(self):
@@ -2027,15 +2054,40 @@ class TRITONSWMM_analysis:
                 )
             return df_status_joined
 
+    # TRITON-SWMM model accessors
     @property
     def tritonswmm_TRITON_summary(self):
-        """Get consolidated TRITON-SWMM coupled model TRITON output summary."""
         return self.process.tritonswmm_TRITON_summary
 
     @property
+    def tritonswmm_performance_summary(self):
+        return self.process.tritonswmm_performance_summary
+
+    @property
+    def tritonswmm_SWMM_node_summary(self):
+        return self.process.tritonswmm_SWMM_node_summary
+
+    @property
+    def tritonswmm_SWMM_link_summary(self):
+        return self.process.tritonswmm_SWMM_link_summary
+
+    # TRITON-only model accessors
+    @property
     def triton_only_summary(self):
-        """Get consolidated TRITON-only model output summary."""
         return self.process.triton_only_summary
+
+    @property
+    def triton_only_performance_summary(self):
+        return self.process.triton_only_performance_summary
+
+    # SWMM-only model accessors
+    @property
+    def swmm_only_node_summary(self):
+        return self.process.swmm_only_node_summary
+
+    @property
+    def swmm_only_link_summary(self):
+        return self.process.swmm_only_link_summary
 
 
 # %%

@@ -1239,15 +1239,6 @@ class TRITONSWMM_sim_post_processing:
             ds_full, self._scenario.event_iloc, target_dem_res
         )
 
-        # Add compute time
-        df = pd.DataFrame(
-            index=[self._scenario.event_iloc],
-            data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
-        )
-        df.index.name = "event_iloc"
-        da_compute_time = df.to_xarray()["compute_time_min"]
-        ds_summary["compute_time_min"] = da_compute_time
-
         # Write
         self._write_output(ds_summary, fname_out, comp_level, verbose)
         elapsed_s = time.time() - start_time
@@ -1329,15 +1320,6 @@ class TRITONSWMM_sim_post_processing:
                 ds_nodes_full, self._scenario.event_iloc
             )
 
-            # Add compute time
-            df = pd.DataFrame(
-                index=[self._scenario.event_iloc],
-                data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
-            )
-            df.index.name = "event_iloc"
-            da_compute_time = df.to_xarray()["compute_time_min"]
-            ds_nodes_summary["compute_time_min"] = da_compute_time
-
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose)
             self.log.add_sim_processing_entry(
@@ -1352,15 +1334,6 @@ class TRITONSWMM_sim_post_processing:
             ds_links_summary = summarize_swmm_simulation_results(
                 ds_links_full, self._scenario.event_iloc
             )
-
-            # Add compute time
-            df = pd.DataFrame(
-                index=[self._scenario.event_iloc],
-                data=dict(compute_time_min=[self._scenario.sim_compute_time_min]),
-            )
-            df.index.name = "event_iloc"
-            da_compute_time = df.to_xarray()["compute_time_min"]
-            ds_links_summary["compute_time_min"] = da_compute_time
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_links_summary, f_out_links, comp_level, verbose)
