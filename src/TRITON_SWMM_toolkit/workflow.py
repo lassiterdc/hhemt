@@ -271,7 +271,7 @@ class SnakemakeWorkflowBuilder:
         # Output processing: I/O bound (1-2 CPUs for compression)
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-            runtime_min=30,
+            runtime_min=120,
             mem_mb=self.cfg_analysis.mem_gb_per_cpu * 2 * 1000,  # 2 CPUs worth
             nodes=1,
             tasks=1,
@@ -2213,7 +2213,7 @@ rule setup:
 
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=30,
+                runtime_min=120,
                 mem_mb=mem_per_cpu * 2 * 1000,
                 nodes=1,
                 tasks=1,
