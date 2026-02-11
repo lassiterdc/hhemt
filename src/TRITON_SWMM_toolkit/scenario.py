@@ -4,7 +4,6 @@ import rioxarray as rxr
 import numpy as np
 import xarray as xr
 import sys
-import shutil
 import swmmio
 import warnings
 import TRITON_SWMM_toolkit.utils as utils
@@ -688,7 +687,7 @@ class TRITONSWMM_scenario:
             if target_link.is_symlink() or target_link.is_file():
                 target_link.unlink()
             elif target_link.is_dir():
-                shutil.rmtree(target_link)
+                utils.fast_rmtree(target_link)
             else:
                 target_link.unlink()
 

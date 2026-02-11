@@ -4,7 +4,6 @@ import json
 import xarray as xr
 import pandas as pd
 import numpy as np
-import shutil
 from typing import Literal
 import warnings
 from pathlib import Path
@@ -15,6 +14,7 @@ from TRITON_SWMM_toolkit.utils import (
     get_file_size_MiB,
     convert_datetime_to_str,
     current_datetime_string,
+    fast_rmtree,
 )
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
@@ -1023,7 +1023,7 @@ class TRITONSWMM_sim_post_processing:
         if self.log.TRITON_timeseries_written and bool(
             self.log.TRITON_timeseries_written.get()
         ):
-            shutil.rmtree(triton_dir)
+            fast_rmtree(triton_dir)
             if self.log.raw_TRITON_outputs_cleared:
                 self.log.raw_TRITON_outputs_cleared.set(True)
 
@@ -1377,7 +1377,7 @@ class TRITONSWMM_sim_post_processing:
                             f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}"
                         )
                     if triton_ts_path.is_dir():
-                        shutil.rmtree(triton_ts_path)
+                        fast_rmtree(triton_ts_path)
                     else:
                         triton_ts_path.unlink()
                     if self.log.full_TRITON_timeseries_cleared:
@@ -1403,7 +1403,7 @@ class TRITONSWMM_sim_post_processing:
                             f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}"
                         )
                     if node_ts_path.is_dir():
-                        shutil.rmtree(node_ts_path)
+                        fast_rmtree(node_ts_path)
                     else:
                         node_ts_path.unlink()
 
@@ -1415,7 +1415,7 @@ class TRITONSWMM_sim_post_processing:
                             f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}"
                         )
                     if link_ts_path.is_dir():
-                        shutil.rmtree(link_ts_path)
+                        fast_rmtree(link_ts_path)
                     else:
                         link_ts_path.unlink()
 

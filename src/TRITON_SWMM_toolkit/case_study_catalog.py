@@ -1,4 +1,3 @@
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Literal
 
@@ -12,6 +11,7 @@ from TRITON_SWMM_toolkit.examples import (
     TRITON_SWMM_example,
     NorfolkObservedExample,
 )
+from TRITON_SWMM_toolkit.utils import fast_rmtree
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 if TYPE_CHECKING:
@@ -78,7 +78,7 @@ class CaseStudyBuilder:
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
-            shutil.rmtree(anlysys_dir)
+            fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
         new_system_config_yaml = (

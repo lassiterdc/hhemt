@@ -22,7 +22,7 @@ from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
     generate_dry_run_report_markdown,
 )
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
-from TRITON_SWMM_toolkit.utils import parse_triton_log_file
+from TRITON_SWMM_toolkit.utils import parse_triton_log_file, fast_rmtree
 from TRITON_SWMM_toolkit.swmm_output_parser import (
     retrieve_swmm_performance_stats_from_rpt,
 )
@@ -1340,9 +1340,7 @@ class TRITONSWMM_analysis:
 
         if from_scratch:
             # remove analysis folder
-            import shutil
-
-            shutil.rmtree(str(self.cfg_analysis.analysis_dir))
+            fast_rmtree(self.cfg_analysis.analysis_dir)
 
         # Translate user-friendly parameters to workflow parameters
         mode_params = translate_mode("resume")  # TODO - hardcoded while troubleshooting

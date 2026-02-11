@@ -417,9 +417,7 @@ class TRITONSWMM_system:
 
         # Remove existing directory
         if TRITONSWMM_software_directory.exists():
-            import shutil
-
-            shutil.rmtree(TRITONSWMM_software_directory)
+            ut.fast_rmtree(TRITONSWMM_software_directory)
 
         # Clone and checkout
         subprocess.run(
@@ -942,6 +940,7 @@ class TRITONSWMM_system:
             self.compilation_swmm_successful
             and not recompile_if_already_done_successfully
         ):
+
             if verbose:
                 print("[SWMM] Already compiled successfully (skipping)", flush=True)
             return

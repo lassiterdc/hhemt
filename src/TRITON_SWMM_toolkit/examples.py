@@ -54,6 +54,7 @@ from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 import TRITON_SWMM_toolkit.constants as cnst
 
 from TRITON_SWMM_toolkit.utils import (
+    fast_rmtree,
     get_package_root,
     get_package_data_root,
     fill_template,
@@ -63,7 +64,6 @@ from TRITON_SWMM_toolkit.utils import (
 import sys
 import yaml
 import bagit
-import shutil
 from zipfile import ZipFile
 
 from pathlib import Path
@@ -364,7 +364,7 @@ class TRITON_SWMM_example:
         validate=False,
     ):
         if target.exists() and download_if_exists:
-            shutil.rmtree(target)
+            fast_rmtree(target)
         if target.exists() and not download_if_exists:
             return
         target.parent.mkdir(parents=True, exist_ok=True)

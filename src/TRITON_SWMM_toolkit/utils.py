@@ -12,7 +12,7 @@ import xarray as xr
 import shutil
 from typing import Any
 import subprocess
-from typing import Optional, Literal
+from typing import Optional, Literal, Callable
 
 
 class BatchJobSubmissionError(Exception):
@@ -65,6 +65,56 @@ class BatchJobSubmissionError(Exception):
     def _indent_text(text: str, indent: str = "    ") -> str:
         """Indent each line of text for better readability."""
         return "\n".join(indent + line for line in text.split("\n"))
+
+
+def fast_rmtree(
+    path: str | Path,
+    *,
+    missing_ok: bool = True,
+    onerror: Optional[Callable] = None,
+) -> None:
+    """Fast, cross-platform directory delete.
+
+    Uses OS-native delete commands for speed; falls back to shutil.rmtree.
+
+    Parameters
+    ----------
+    path : str | Path
+        Directory path to delete.
+    missing_ok : bool
+        If True, silently return when path does not exist.
+    onerror : callable, optional
+        Error handler passed to shutil.rmtree (fallback only).
+    """
+    path = Path(path)
+
+    if not path.exists():
+        if missing_ok:
+            return
+        raise FileNotFoundError(path)
+
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+        return
+
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["cmd", "/c", "rmdir", "/s", "/q", str(path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            subprocess.run(
+                ["rm", "-rf", str(path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        return
+    except Exception:
+        shutil.rmtree(path, onerror=onerror)
 
 
 def fix_line_endings(file_path, target_ending="\n"):
@@ -545,7 +595,7 @@ def write_zarr_then_netcdf(
     write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr
     try:
-        shutil.rmtree(f"{fname_out}.zarr")
+        fast_rmtree(f"{fname_out}.zarr")
     except Exception as e:
         print(f"Could not remove zarr folder {fname_out}.zarr due to error {e}")
     return
