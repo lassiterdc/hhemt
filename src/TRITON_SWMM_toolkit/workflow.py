@@ -65,14 +65,6 @@ class SnakemakeWorkflowBuilder:
         triton_toolkit_root = Path(__file__).parent.parent.parent
         return triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
 
-    def _get_snakemake_base_cmd(self) -> list[str]:
-        """Return command prefix for invoking Snakemake.
-
-        Prefer `python -m snakemake` so execution works even when the
-        `snakemake` console script is not on PATH.
-        """
-        return [sys.executable, "-m", "snakemake"]
-
     def _get_config_args(self, analysis_config_yaml: Path | None = None) -> str:
         """
         Generate common config path arguments.
@@ -773,7 +765,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
+snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -840,7 +832,8 @@ python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores 
                     flush=True,
                 )
 
-            cmd_args = self._get_snakemake_base_cmd() + [
+            cmd_args = [
+                "snakemake",
                 "--profile",
                 str(config_dir),
                 "--snakefile",
@@ -1053,7 +1046,8 @@ python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores 
                     flush=True,
                 )
 
-            cmd_args = self._get_snakemake_base_cmd() + [
+            cmd_args = [
+                "snakemake",
                 "--profile",
                 str(config_dir),
                 "--snakefile",
@@ -1183,7 +1177,8 @@ python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores 
             logs_dir.mkdir(parents=True, exist_ok=True)
             snakemake_logfile = logs_dir / "snakemake_master_dry_run.log"
 
-            cmd_args = self._get_snakemake_base_cmd() + [
+            cmd_args = [
+                "snakemake",
                 "--profile",
                 str(config_dir),
                 "--snakefile",
@@ -1631,7 +1626,7 @@ module purge
 
 {conda_init_cmd}
 
-python -m snakemake \\
+snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
