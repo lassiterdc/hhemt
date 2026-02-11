@@ -43,6 +43,45 @@ def _parse_reason_components(lines: list[str]) -> Counter[str]:
     return counter
 
 
+def _summarize_reason_categories(lines: list[str]) -> dict[str, Counter[str]]:
+    """Summarize Snakemake reason lines by rule and reason category.
+
+    Categories:
+        - missing_output
+        - input_updated
+        - other
+    """
+    summary: dict[str, Counter[str]] = defaultdict(Counter)
+    current_rule: str | None = None
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("rule ") and stripped.endswith(":"):
+            current_rule = stripped.split()[1].rstrip(":")
+            continue
+        if not stripped.startswith("reason:") or current_rule is None:
+            continue
+        reason_text = stripped.split("reason:", 1)[1].strip()
+        for part in reason_text.split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            if part.startswith("Missing output files"):
+                summary[current_rule]["missing_output"] += 1
+            elif part.startswith("Input files updated by another job"):
+                summary[current_rule]["input_updated"] += 1
+            else:
+                summary[current_rule]["other"] += 1
+    return summary
+
+
+def _format_missing_ids(ids: list[int], max_ids: int = 10) -> str:
+    if not ids:
+        return ""
+    if len(ids) <= max_ids:
+        return ", ".join(str(i) for i in ids)
+    return ", ".join(str(i) for i in ids[:max_ids]) + f" (+{len(ids) - max_ids} more)"
+
+
 def _parse_footer_reason_map(lines: list[str]) -> dict[str, list[str]]:
     reason_map: dict[str, list[str]] = defaultdict(list)
     in_reasons = False
@@ -121,6 +160,7 @@ def generate_dry_run_report_markdown(
 
     job_stats = _parse_job_stats(lines)
     reason_components = _parse_reason_components(lines)
+    reason_summary = _summarize_reason_categories(lines)
     footer_reason_map = _parse_footer_reason_map(lines)
     missing_flags = _parse_missing_status_flags(lines)
     metadata = _extract_metadata(lines)
@@ -153,20 +193,27 @@ def generate_dry_run_report_markdown(
     else:
         md_lines.append("No job stats table found in logfile.")
 
-    md_lines.extend(["", "## Reason Components (from rule `reason:` lines)", ""])
-    if reason_components:
+    md_lines.extend(["", "## Job Status Summary", ""])
+    if reason_summary:
         md_lines.extend(
             [
-                "| reason component | count |",
-                "|---|---:|",
-                *[
-                    f"| {reason} | {count} |"
-                    for reason, count in reason_components.most_common()
-                ],
+                "| rule | missing outputs | inputs updated | other |",
+                "|---|---:|---:|---:|",
             ]
         )
-    else:
+        for rule, counts in sorted(reason_summary.items()):
+            md_lines.append(
+                "| {rule} | {missing} | {updated} | {other} |".format(
+                    rule=rule,
+                    missing=counts.get("missing_output", 0),
+                    updated=counts.get("input_updated", 0),
+                    other=counts.get("other", 0),
+                )
+            )
+    elif reason_components:
         md_lines.append("No per-rule reason lines found.")
+    else:
+        md_lines.append("No reason summary available.")
 
     md_lines.extend(["", "## Reasons Footer (from Snakemake summary)", ""])
     if footer_reason_map:
@@ -183,7 +230,7 @@ def generate_dry_run_report_markdown(
         ids = missing_flags.get(key, [])
         md_lines.append(f"- `{key}` missing count: **{len(ids)}**")
         if ids:
-            md_lines.append(f"  - IDs: {', '.join(str(i) for i in ids)}")
+            md_lines.append(f"  - IDs: {_format_missing_ids(ids)}")
 
     md_content = "\n".join(md_lines) + "\n"
     report_path.write_text(md_content)
