@@ -157,64 +157,6 @@ class UVA_TestCases:
             analysis_overrides=analysis_overrides,
         )
 
-    # @classmethod
-    # def retrieve_norfolk_UVA_sensitivity_CPU_full_ensemble_short_sims(
-    #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    # ) -> retrieve_TRITON_SWMM_test_case:
-    #     """UVA HPC CPU sensitivity analysis with full ensemble configuration."""
-    #     sensitivity_analysis = (
-    #         all_examples.ex_Nrflk().test_case_directory / cls.sensitivity_UVA_cpu_full
-    #     )
-    #     analysis_overrides = {
-    #         "toggle_sensitivity_analysis": True,
-    #         "sensitivity_analysis": sensitivity_analysis,
-    #         "hpc_time_min_per_sim": 10,
-    #         "run_mode": "serial",
-    #         "n_mpi_procs": 1,
-    #         "n_omp_threads": 1,
-    #         "n_gpus": 0,
-    #         "n_nodes": 1,
-    #     }
-    #     analysis_name = "UVA_sensitivity_CPU_full_ensemble_short_sims"
-    #     return GetTS_TestCases._retrieve_norfolk_case(
-    #         analysis_name=analysis_name,
-    #         start_from_scratch=start_from_scratch,
-    #         download_if_exists=download_if_exists,
-    #         n_events=1,
-    #         platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
-    #         analysis_overrides=analysis_overrides,
-    #     )
-
-    # @classmethod
-    # def retrieve_norfolk_UVA_sensitivity_CPU_minimal(
-    #     cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    # ) -> retrieve_TRITON_SWMM_test_case:
-    #     """UVA HPC CPU sensitivity analysis with minimal configuration."""
-    #     sensitivity_analysis = (
-    #         all_examples.ex_Nrflk().test_case_directory
-    #         / cls.sensitivity_UVA_cpu_minimal
-    #     )
-
-    #     analysis_overrides = {
-    #         "toggle_sensitivity_analysis": True,
-    #         "sensitivity_analysis": sensitivity_analysis,
-    #         "hpc_time_min_per_sim": 2,
-    #         "run_mode": "serial",
-    #         "n_mpi_procs": 1,
-    #         "n_omp_threads": 1,
-    #         "n_gpus": 0,
-    #         "n_nodes": 1,
-    #     }
-    #     analysis_name = "UVA_sensitivity_CPU"
-    #     return GetTS_TestCases._retrieve_norfolk_case(
-    #         analysis_name=analysis_name,
-    #         start_from_scratch=start_from_scratch,
-    #         download_if_exists=download_if_exists,
-    #         n_events=1,
-    #         platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
-    #         analysis_overrides=analysis_overrides,
-    #     )
-
     @classmethod
     def retrieve_norfolk_UVA_sensitivity_minimal(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
@@ -229,10 +171,10 @@ class UVA_TestCases:
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity_analysis,
             "hpc_time_min_per_sim": 2,
-            "run_mode": "serial",
+            "run_mode": "gpu",
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
-            "n_gpus": 0,
+            "n_gpus": 1,
             "n_nodes": 1,
         }
         analysis_name = "UVA_sensitivity_minimal"
