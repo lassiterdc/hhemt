@@ -71,6 +71,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     multi_sim_run_method="batch_job",
     additional_modules="gompi/14.2.0_5.0.7 miniforge nvhpc cuda",
     gpu_compilation_backend="CUDA",
+    gpu_hardware="a100",
     example_data_dir=Path("/scratch")
     / os.getenv("USER", "unknown")
     / "triton_swmm_toolkit_data",
