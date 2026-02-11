@@ -249,7 +249,6 @@ class analysis_config(cfgBaseModel):
         nodes = values.get("n_nodes")
         multi_sim_method = values.get("multi_sim_run_method")
         hpc_gpus_per_node = values.get("hpc_gpus_per_node")
-        gpu_hardware = values.get("gpu_hardware")
 
         # -------------------------------
         # Validation rules per mode
@@ -329,10 +328,5 @@ class analysis_config(cfgBaseModel):
                 raise ValueError(
                     "hpc_gpus_per_node is required for 1_job_many_srun_tasks when using GPUs"
                 )
-
-        if gpus in (None, 0) and gpu_hardware:
-            raise ValueError(
-                "gpu_hardware is set but n_gpus is 0. Remove gpu_hardware or request GPUs."
-            )
 
         return values
