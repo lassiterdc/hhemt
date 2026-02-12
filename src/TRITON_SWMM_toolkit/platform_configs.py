@@ -58,6 +58,7 @@ class PlatformConfig:
     hpc_gpus_per_node: Optional[int] = None
     hpc_cpus_per_node: Optional[int] = None
     hpc_max_simultaneous_sims: Optional[int] = None
+    hpc_total_job_duration_min: Optional[int] = None
     gpu_hardware: Optional[str] = None
     toggle_triton_model: Optional[bool] = None
     toggle_tritonswmm_model: Optional[bool] = None
@@ -79,6 +80,7 @@ class PlatformConfig:
             "hpc_gpus_per_node": self.hpc_gpus_per_node,
             "hpc_cpus_per_node": self.hpc_cpus_per_node,
             "hpc_max_simultaneous_sims": self.hpc_max_simultaneous_sims,
+            "hpc_total_job_duration_min": self.hpc_total_job_duration_min,
         }
 
     def to_system_dict(self) -> Dict:

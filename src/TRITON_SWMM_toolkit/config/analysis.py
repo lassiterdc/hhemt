@@ -248,6 +248,7 @@ class analysis_config(cfgBaseModel):
         multi_sim_method = values.get("multi_sim_run_method")
         hpc_gpus_per_node = values.get("hpc_gpus_per_node")
         hpc_max_simultaneous_sims = values.get("hpc_max_simultaneous_sims")
+        hpc_total_job_duration_min = values.get("hpc_total_job_duration_min")
 
         # -------------------------------
         # Validation rules per mode
@@ -336,6 +337,13 @@ class analysis_config(cfgBaseModel):
         ):
             raise ValueError(
                 "hpc_max_simultaneous_sims is required and must be > 0 for multi_sim_run_method=batch_job"
+            )
+
+        if multi_sim_method == "batch_job" and (
+            hpc_total_job_duration_min is None or hpc_total_job_duration_min < 1
+        ):
+            raise ValueError(
+                "hpc_total_job_duration_min is required and must be > 0 for multi_sim_run_method=batch_job"
             )
 
         return values
