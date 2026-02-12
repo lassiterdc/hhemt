@@ -61,11 +61,17 @@ class analysis_config(cfgBaseModel):
         None,
         description="This is the job duration when multi_sim_run_method = 1_job_many_srun_tasks",
     )
+    # TODO - hpc_gpus_per_node should be used in the 1 big job approach and in the batch job approach
+    # TODO - hpc_cpus_per_node should be used in a similar way. With both these arguments,
+    # specifying n_nodes should no longer be necessary.
     hpc_gpus_per_node: Optional[int] = Field(
         None,
-        description="GPUs per node on the HPC cluster. Required when using GPUs with "
-        "multi_sim_run_method = 1_job_many_srun_tasks. "
-        "Used with --gres=gpu:{hpc_gpus_per_node} directive. ",
+        description=(
+            "GPUs per node on the HPC cluster. Required when using GPUs with "
+            "multi_sim_run_method = 1_job_many_srun_tasks or batch_job. "
+            "Used to populate resources.gpus_per_node for Snakemake and to "
+            "generate --gres=gpu:{gpus_per_node} directives."
+        ),
     )
     gpu_hardware: Optional[str] = Field(
         None,
@@ -324,9 +330,12 @@ class analysis_config(cfgBaseModel):
                     f"Each node requires at least one MPI rank to run on it."
                 )
 
-            if multi_sim_method == "1_job_many_srun_tasks" and not hpc_gpus_per_node:
+            if (
+                multi_sim_method in {"1_job_many_srun_tasks", "batch_job"}
+                and not hpc_gpus_per_node
+            ):
                 raise ValueError(
-                    "hpc_gpus_per_node is required for 1_job_many_srun_tasks when using GPUs"
+                    "hpc_gpus_per_node is required when using GPUs with batch_job or 1_job_many_srun_tasks"
                 )
 
         return values
