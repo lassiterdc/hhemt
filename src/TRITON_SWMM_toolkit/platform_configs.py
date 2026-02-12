@@ -77,7 +77,6 @@ class PlatformConfig:
             "python_path": self.python_path,
             "hpc_gpus_per_node": self.hpc_gpus_per_node,
             "hpc_cpus_per_node": self.hpc_cpus_per_node,
-            "gpu_hardware": self.gpu_hardware,
         }
 
     def to_system_dict(self) -> Dict:
@@ -90,6 +89,7 @@ class PlatformConfig:
         return {
             "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": self.additional_modules,
             "gpu_compilation_backend": self.gpu_compilation_backend,
+            "gpu_hardware": self.gpu_hardware,
             "toggle_triton_model": self.toggle_triton_model,
             "toggle_tritonswmm_model": self.toggle_tritonswmm_model,
             "toggle_swmm_model": self.toggle_swmm_model,

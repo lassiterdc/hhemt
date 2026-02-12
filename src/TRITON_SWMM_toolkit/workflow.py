@@ -592,7 +592,7 @@ rule consolidate:
             n_gpus_per_sim = sim_resources["n_gpus"]
 
             if n_gpus_per_sim > 0:
-                gpu_hardware = self.cfg_analysis.gpu_hardware
+                gpu_hardware = self.system.cfg_system.gpu_hardware
                 if gpu_hardware:
                     config["slurm"]["sbatch"][
                         "gres"
@@ -779,7 +779,7 @@ echo ""
                 gpus_per_node, int
             ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres is per-node, SLURM will multiply by --nodes automatically
-            gpu_hardware = self.cfg_analysis.gpu_hardware
+            gpu_hardware = self.system.cfg_system.gpu_hardware
             if gpu_hardware:
                 gpu_directive = f"#SBATCH --gres=gpu:{gpu_hardware}:{gpus_per_node}\n"
             else:

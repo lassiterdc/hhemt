@@ -68,6 +68,14 @@ class system_config(cfgBaseModel):
             "When set, both CPU and GPU backends are compiled into separate build directories."
         ),
     )
+    gpu_hardware: Optional[str] = Field(
+        None,
+        description=(
+            "GPU hardware identifier used to select compilation flags "
+            "(e.g., 'a6000', 'rtx3090', 'a100', 'h100'). Required for CUDA "
+            "single-arch GPU builds."
+        ),
+    )
     additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
         None,
         description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",

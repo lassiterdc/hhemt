@@ -29,6 +29,11 @@ class TRITONSWMM_system:
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
         swmm_dir = self.cfg_system.SWMM_software_directory
 
+        gpu_suffix = (
+            f"_{self.cfg_system.gpu_hardware}"
+            if self.cfg_system.gpu_compilation_backend and self.cfg_system.gpu_hardware
+            else ""
+        )
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
             dem_processed=system_dir / "elevation.dem",
@@ -36,14 +41,14 @@ class TRITONSWMM_system:
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
-                tritonswmm_dir / "build_tritonswmm_gpu"
+                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}"
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
             TRITON_build_dir_gpu=(
-                tritonswmm_dir / "build_triton_gpu"
+                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}"
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
@@ -54,7 +59,7 @@ class TRITONSWMM_system:
             # Compilation artifacts (shared across build types)
             compilation_script_cpu=system_dir / "compile_cpu.sh",
             compilation_script_gpu=(
-                system_dir / "compile_gpu.sh"
+                system_dir / f"compile_gpu{gpu_suffix}.sh"
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
@@ -62,7 +67,7 @@ class TRITONSWMM_system:
                 tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"
             ),
             compilation_logfile_gpu=(
-                tritonswmm_dir / "build_tritonswmm_gpu" / "compilation.log"
+                tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" / "compilation.log"
                 if self.cfg_system.gpu_compilation_backend
                 else None
             ),
@@ -473,7 +478,18 @@ class TRITONSWMM_system:
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
+                    "module purge",
                     f"module load {modules}",
+                    "",
+                ]
+            )
+
+        if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
+            bash_script_lines.extend(
+                [
+                    "MPICXX=$(which mpic++)",
+                    "MPICC=$(which mpicc)",
+                    "NVCC=$(which nvcc)",
                     "",
                 ]
             )
@@ -496,15 +512,34 @@ class TRITONSWMM_system:
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
             # Still need -fopenmp for SWMM which unconditionally finds OpenMP
-            cmake_flags = (
-                "-DTRITON_IGNORE_MACHINE_FILES=ON "
-                f"{cmake_backend_flag} "
-                "-DKokkos_ENABLE_OPENMP=OFF "
-                "-DCMAKE_CXX_FLAGS='-O3' "
-                "-DCMAKE_C_FLAGS='-fopenmp' "
-                "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
-            )
+            if self.cfg_system.gpu_compilation_backend == "CUDA":
+                triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
+                cmake_flags = (
+                    "-DTRITON_IGNORE_MACHINE_FILES=ON "
+                    "-DTRITON_BACKEND=CUDA "
+                    f"-DTRITON_ARCH={triton_arch} "
+                    "-DTRITON_COMPILER_FLAGS='-DACTIVE_GPU=1' "
+                    "-DKokkos_ENABLE_CUDA=ON "
+                    f"-D{kokkos_arch_flag}=ON "
+                    "-DKokkos_ENABLE_OPENMP=OFF "
+                    '-DCMAKE_CUDA_COMPILER="$NVCC" '
+                    '-DCMAKE_CXX_COMPILER="$MPICXX" '
+                    '-DCMAKE_C_COMPILER="$MPICC" '
+                    "-DCMAKE_CXX_FLAGS='-O3' "
+                    "-DCMAKE_C_FLAGS='-fopenmp' "
+                    "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                )
+            else:
+                cmake_flags = (
+                    "-DTRITON_IGNORE_MACHINE_FILES=ON "
+                    f"{cmake_backend_flag} "
+                    "-DKokkos_ENABLE_OPENMP=OFF "
+                    "-DCMAKE_CXX_FLAGS='-O3' "
+                    "-DCMAKE_C_FLAGS='-fopenmp' "
+                    "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                )
 
         # Build commands
         bash_script_lines.extend(
@@ -514,14 +549,14 @@ class TRITONSWMM_system:
                 'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
                 'cd "${BUILD_DIR}"',
                 "",
-                f"cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} .. 2>&1 | tee cmake_output.txt",
+                f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
                 "echo '=== CMAKE CONFIGURATION ==='",
                 "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
                 "",
                 "make -j4",
                 "",
-                "echo 'script finished'",
+                "echo 'Build finished'",
             ]
         )
 
@@ -547,7 +582,7 @@ class TRITONSWMM_system:
         start_time = time.time()
         while time.time() - start_time < 10:
             compilation_log = ut.read_text_file_as_string(compilation_logfile)
-            if "script finished" in compilation_log:
+            if "Build finished" in compilation_log:
                 break
             time.sleep(0.1)
 
@@ -604,6 +639,41 @@ class TRITONSWMM_system:
         if logfile.exists():
             return ut.read_text_file_as_string(logfile)
         return f"No compilation log found for {backend} backend at {logfile}"
+
+    def _resolve_cuda_arch_flags(self) -> tuple[str, str]:
+        """Resolve TRITON_ARCH and Kokkos arch flag based on gpu_hardware."""
+        gpu_hardware = (self.cfg_system.gpu_hardware or "").lower()
+        if not gpu_hardware:
+            raise ConfigurationError(
+                field="gpu_hardware",
+                message=(
+                    "gpu_hardware must be set for CUDA compilation so the correct "
+                    "TRITON_ARCH and Kokkos arch flag can be selected."
+                ),
+                config_path=self.system_config_yaml,
+            )
+
+        mapping = {
+            "rtx3090": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+            "a6000": ("AMPERE80", "Kokkos_ARCH_AMPERE86"),
+            "a100": ("AMPERE80", "Kokkos_ARCH_AMPERE80"),
+            "h100": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+            "h200": ("HOPPER90", "Kokkos_ARCH_HOPPER90"),
+            "v100": ("VOLTA70", "Kokkos_ARCH_VOLTA70"),
+            "rtx2080": ("TURING75", "Kokkos_ARCH_TURING75"),
+        }
+
+        if gpu_hardware not in mapping:
+            raise ConfigurationError(
+                field="gpu_hardware",
+                message=(
+                    f"Unknown gpu_hardware '{gpu_hardware}'. Supported values: "
+                    f"{', '.join(sorted(mapping.keys()))}."
+                ),
+                config_path=self.system_config_yaml,
+            )
+
+        return mapping[gpu_hardware]
 
     def print_compilation_log(self, backend: str):
         """
@@ -749,7 +819,18 @@ class TRITONSWMM_system:
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
+                    "module purge",
                     f"module load {modules}",
+                    "",
+                ]
+            )
+
+        if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
+            bash_script_lines.extend(
+                [
+                    "MPICXX=$(which mpic++)",
+                    "MPICC=$(which mpicc)",
+                    "NVCC=$(which nvcc)",
                     "",
                 ]
             )
@@ -770,19 +851,31 @@ class TRITONSWMM_system:
             # GPU backend
             if self.cfg_system.gpu_compilation_backend == "HIP":
                 cmake_backend_flag = "-DKokkos_ENABLE_HIP=ON"
+                cmake_flags = (
+                    "-DTRITON_IGNORE_MACHINE_FILES=ON "
+                    f"{cmake_backend_flag} "
+                    "-DKokkos_ENABLE_OPENMP=OFF "
+                    "-DCMAKE_CXX_FLAGS='-O3'"
+                )
             elif self.cfg_system.gpu_compilation_backend == "CUDA":
-                cmake_backend_flag = "-DKokkos_ENABLE_CUDA=ON"
+                triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
+                cmake_flags = (
+                    "-DTRITON_IGNORE_MACHINE_FILES=ON "
+                    "-DTRITON_BACKEND=CUDA "
+                    f"-DTRITON_ARCH={triton_arch} "
+                    "-DTRITON_COMPILER_FLAGS='-DACTIVE_GPU=1' "
+                    "-DKokkos_ENABLE_CUDA=ON "
+                    f"-D{kokkos_arch_flag}=ON "
+                    "-DKokkos_ENABLE_OPENMP=OFF "
+                    '-DCMAKE_CUDA_COMPILER="$NVCC" '
+                    '-DCMAKE_CXX_COMPILER="$MPICXX" '
+                    '-DCMAKE_C_COMPILER="$MPICC" '
+                    "-DCMAKE_CXX_FLAGS='-O3'"
+                )
             else:
                 raise ValueError(
                     f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}"
                 )
-
-            cmake_flags = (
-                "-DTRITON_IGNORE_MACHINE_FILES=ON "
-                f"{cmake_backend_flag} "
-                "-DKokkos_ENABLE_OPENMP=OFF "
-                "-DCMAKE_CXX_FLAGS='-O3'"
-            )
 
         # Build commands - KEY DIFFERENCE: -DTRITON_ENABLE_SWMM=OFF
         bash_script_lines.extend(
@@ -792,11 +885,11 @@ class TRITONSWMM_system:
                 'rm -rf "${BUILD_DIR}/CMakeFiles" "${BUILD_DIR}/CMakeCache.txt" "${BUILD_DIR}/Makefile" "${BUILD_DIR}/cmake_install.cmake"',
                 'cd "${BUILD_DIR}"',
                 "",
-                f"cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} .. 2>&1 | tee cmake_output.txt",
+                f'cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
                 "make -j4",
                 "",
-                "echo 'script finished'",
+                "echo 'Build finished'",
             ]
         )
 
@@ -828,7 +921,7 @@ class TRITONSWMM_system:
         while time.time() - start_time < 10:
             if logfile.exists():
                 log = ut.read_text_file_as_string(logfile)
-                if "script finished" in log:
+                if "Build finished" in log:
                     break
             time.sleep(0.1)
 

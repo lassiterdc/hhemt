@@ -73,14 +73,6 @@ class analysis_config(cfgBaseModel):
             "generate --gres=gpu:{gpus_per_node} directives."
         ),
     )
-    gpu_hardware: Optional[str] = Field(
-        None,
-        description=(
-            "Optional GPU hardware selector (e.g., 'a100', 'h200', 'rtx3090'). "
-            "If provided, SLURM GPU requests will qualify the GPU type using "
-            "--gpus (batch_job) or --gres (1_job_many_srun_tasks)."
-        ),
-    )
     hpc_cpus_per_node: Optional[int] = Field(
         None,
         description="CPUs per node on the HPC cluster. Required for dry runs using "
