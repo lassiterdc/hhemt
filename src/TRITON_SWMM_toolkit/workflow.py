@@ -596,7 +596,6 @@ rule consolidate:
                         f"nodes=1",
                         f"mem_mb=2000",
                         f"runtime=30",
-                        "gpu=0",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
                     ],
