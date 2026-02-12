@@ -46,7 +46,7 @@ def norfolk_1job_with_gpus():
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
     analysis.cfg_analysis.hpc_gpus_per_node = 8  # Frontier-like
-    analysis.cfg_analysis.gpu_hardware = "a100"
+    analysis._system.cfg_system.gpu_hardware = "a100"
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
