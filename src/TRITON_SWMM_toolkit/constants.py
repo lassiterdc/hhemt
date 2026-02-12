@@ -79,4 +79,5 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     toggle_triton_model=False,
     toggle_tritonswmm_model=True,
     toggle_swmm_model=False,
+    hpc_max_simultaneous_sims=1000,
 )
