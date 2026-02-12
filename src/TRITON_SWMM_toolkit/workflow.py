@@ -129,7 +129,9 @@ class SnakemakeWorkflowBuilder:
         str
             Formatted resources block
         """
-        partition_name = partition or "standard"
+        if partition is None:
+            raise ValueError("Partition must be set.")
+        partition_name = partition
         block = f"""        slurm_partition="{partition_name}",
         runtime={runtime_min},
         tasks={tasks},
@@ -2227,6 +2229,7 @@ rule setup:
             n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
+            gpus_per_node_config = sub_analysis.cfg_analysis.hpc_gpus_per_node or 0
 
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml
@@ -2242,15 +2245,25 @@ rule setup:
                 cpus_per_task=1,
             )
 
+            if n_gpus > 0 and gpus_per_node_config < 1:
+                raise ValueError(
+                    "hpc_gpus_per_node must be set when requesting GPUs for sensitivity analysis"
+                )
+            nodes_from_gpu = self._base_builder._calculate_nodes_for_gpus(
+                n_gpus, gpus_per_node_config
+            )
+            sim_nodes = max(n_nodes, nodes_from_gpu)
+            gpus_per_node = math.ceil(n_gpus / sim_nodes) if n_gpus > 0 else 0
+
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
                 mem_mb=int(mem_per_cpu * n_mpi * n_omp * 1000),
-                nodes=n_nodes,
+                nodes=sim_nodes,
                 tasks=n_mpi,
                 cpus_per_task=n_omp,
                 gpus_total=n_gpus,
-                gpus_per_node=sub_analysis.cfg_analysis.hpc_gpus_per_node or 0,
+                gpus_per_node=gpus_per_node,
             )
 
             process_resources_sa = self._base_builder._build_resource_block(
