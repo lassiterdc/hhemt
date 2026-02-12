@@ -72,6 +72,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     additional_modules="miniforge gcc/11.4.0 openmpi/4.1.4 cuda/12.2.2",
     gpu_compilation_backend="CUDA",
     gpu_hardware="a6000",  # a100
+    hpc_gpus_per_node=8,
     example_data_dir=Path("/scratch")
     / os.getenv("USER", "unknown")
     / "triton_swmm_toolkit_data",
