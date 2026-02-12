@@ -100,7 +100,9 @@ class SnakemakeWorkflowBuilder:
         tasks: int,
         cpus_per_task: int,
         gpus_total: int = 0,
-        gpus_per_node: int = 0,
+        gpus_per_node_config: int = 0,
+        gpu_hardware: str | None = None,
+        gpu_alloc_mode: Literal["gres", "gpus"] = "gres",
     ) -> str:
         """
         Build a Snakemake resources block.
@@ -121,8 +123,12 @@ class SnakemakeWorkflowBuilder:
             CPUs per task (OpenMP threads)
         gpus_total : int
             Total GPUs per job (0 if no GPUs)
-        gpus_per_node : int
-            GPUs per node (0 if no GPUs)
+        gpus_per_node_config : int
+            GPUs per node configured for the cluster (0 if no GPUs)
+        gpu_hardware : str | None
+            GPU model name for SLURM gres/gpus specification
+        gpu_alloc_mode : Literal["gres", "gpus"]
+            Which SLURM GPU directive to emit in resources
 
         Returns
         -------
@@ -130,18 +136,35 @@ class SnakemakeWorkflowBuilder:
             Formatted resources block
         """
         if partition is None:
-            raise ValueError("Partition must be set.")
+            raise ValueError(
+                "hpc partition must be set when generating SLURM resources"
+            )
         partition_name = partition
-        block = f"""        slurm_partition="{partition_name}",
+        if gpus_total > 0 and gpus_per_node_config < 1:
+            raise ValueError("hpc_gpus_per_node must be set when requesting GPUs")
+
+        nodes_from_gpu = self._calculate_nodes_for_gpus(
+            gpus_total, gpus_per_node_config
+        )
+        sim_nodes = max(nodes, nodes_from_gpu)
+        gpus_per_node = math.ceil(gpus_total / sim_nodes) if gpus_total > 0 else 0
+
+        block = f"""        slurm_partition=\"{partition_name}\",
         runtime={runtime_min},
         tasks={tasks},
         cpus_per_task={cpus_per_task},
         mem_mb={mem_mb},
-        nodes={nodes}"""
+        nodes={sim_nodes}"""
         if gpus_total > 0:
-            block += f",\n        gpus_total={gpus_total}"
-        if gpus_per_node > 0:
-            block += f",\n        gpus_per_node={gpus_per_node}"
+            if gpu_alloc_mode == "gpus":
+                block += f',\n        gpu="{gpus_total}"'
+                if gpu_hardware:
+                    block += f',\n        gpu_model="{gpu_hardware}"'
+            else:
+                if gpu_hardware:
+                    block += f',\n        gres="gpu:{gpu_hardware}:{gpus_per_node}"'
+                else:
+                    block += f',\n        gres="gpu:{gpus_per_node}"'
         return block
 
     @staticmethod
@@ -222,6 +245,9 @@ class SnakemakeWorkflowBuilder:
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
         gpus_per_node_config = self.cfg_analysis.hpc_gpus_per_node or 0
+        gpu_alloc_mode = (
+            self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+        )
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
@@ -273,23 +299,17 @@ class SnakemakeWorkflowBuilder:
         )
 
         # Simulation: resource-intensive (multi-CPU, GPUs, high memory)
-        if n_gpus > 0 and gpus_per_node_config < 1:
-            raise ValueError("hpc_gpus_per_node must be set when requesting GPUs")
-        nodes_from_gpu = self._calculate_nodes_for_gpus(n_gpus, gpus_per_node_config)
-        sim_nodes = max(n_nodes, nodes_from_gpu)
-        gpus_per_node = (
-            math.ceil(n_gpus / sim_nodes) if n_gpus > 0 else 0
-        )  # amount actually needed
-        gpus_total = n_gpus
         sim_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_ensemble_partition,
             runtime_min=hpc_time_min,
             mem_mb=mem_mb_per_sim,
-            nodes=sim_nodes,
+            nodes=n_nodes,
             tasks=mpi_ranks,
             cpus_per_task=omp_threads,
-            gpus_total=gpus_total,
-            gpus_per_node=gpus_per_node,
+            gpus_total=n_gpus,
+            gpus_per_node_config=gpus_per_node_config,
+            gpu_hardware=self.system.cfg_system.gpu_hardware,
+            gpu_alloc_mode=gpu_alloc_mode,
         )
 
         # Output processing: I/O bound (1-2 CPUs for compression)
@@ -402,7 +422,7 @@ rule prepare_scenario:
                     tasks=1,
                     cpus_per_task=swmm_cpus,
                     gpus_total=0,  # SWMM has no GPU support
-                    gpus_per_node=0,
+                    gpus_per_node_config=0,
                 )
                 model_resources = swmm_resources
                 model_threads = swmm_cpus
@@ -557,6 +577,10 @@ rule consolidate:
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
+            gpu_alloc_mode = (
+                self.system.cfg_system.preferred_slurm_option_for_allocating_gpus
+                or "gpus"
+            )
             assert isinstance(
                 max_concurrent, int
             ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
@@ -572,7 +596,7 @@ rule consolidate:
                         f"nodes=1",
                         f"mem_mb=2000",
                         f"runtime=30",
-                        "gpus_per_node=0",
+                        "gpu=0",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
                     ],
@@ -597,12 +621,15 @@ rule consolidate:
 
             if n_gpus_per_sim > 0:
                 gpu_hardware = self.system.cfg_system.gpu_hardware
-                if gpu_hardware:
-                    config["slurm"]["sbatch"][
-                        "gres"
-                    ] = f"gpu:{gpu_hardware}:{{resources.gpus_per_node}}"
+                if gpu_alloc_mode == "gpus":
+                    if gpu_hardware:
+                        config["slurm"]["sbatch"][
+                            "gpus"
+                        ] = f"{gpu_hardware}:{{resources.gpu}}"
+                    else:
+                        config["slurm"]["sbatch"]["gpus"] = "{resources.gpu}"
                 else:
-                    config["slurm"]["sbatch"]["gres"] = "gpu:{resources.gpus_per_node}"
+                    config["slurm"]["sbatch"]["gres"] = "{resources.gres}"
 
         return config
 
@@ -766,7 +793,7 @@ echo "=========================================="
 echo ""
 """
 
-        # Build GPU directive if needed (use --gres for per-node specification)
+        # Build GPU directive if needed
         # Check if any simulation uses GPUs (handles sensitivity analysis)
         n_gpus_per_sim = sim_resources["n_gpus"]
         gpu_directive = ""
@@ -778,7 +805,7 @@ echo ""
             assert isinstance(
                 gpus_per_node, int
             ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            # --gres is per-node, SLURM will multiply by --nodes automatically
+            # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self.system.cfg_system.gpu_hardware
             if gpu_hardware:
                 gpu_directive = f"#SBATCH --gres=gpu:{gpu_hardware}:{gpus_per_node}\n"
@@ -786,7 +813,7 @@ echo ""
                 gpu_directive = f"#SBATCH --gres=gpu:{gpus_per_node}\n"
             # Calculate total GPUs dynamically in bash script
             gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"
-            gpu_cli_arg = " --resources gpus_total=$TOTAL_GPUS"
+            gpu_cli_arg = " --resources gpu=$TOTAL_GPUS"
 
         script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_workflow
@@ -980,7 +1007,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         dict
             Status dictionary with 'success' and 'mode' keys
         """
-        # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS, --resources gpus_total=$TOTAL_GPUS)
+        # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS)
         hpc_cpus_per_node = getattr(analysis.cfg_analysis, "hpc_cpus_per_node", None)
         hpc_total_nodes = getattr(analysis.cfg_analysis, "hpc_total_nodes", None)
         if not isinstance(hpc_cpus_per_node, int) or not isinstance(
@@ -2233,6 +2260,11 @@ rule setup:
                 analysis_config_yaml=sub_analysis.analysis_config_yaml
             )
 
+            gpu_alloc_mode = (
+                self.system.cfg_system.preferred_slurm_option_for_allocating_gpus
+                or "gpus"
+            )
+
             # Build resource blocks for this sub-analysis
             prep_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
@@ -2243,25 +2275,17 @@ rule setup:
                 cpus_per_task=1,
             )
 
-            if n_gpus > 0 and gpus_per_node_config < 1:
-                raise ValueError(
-                    "hpc_gpus_per_node must be set when requesting GPUs for sensitivity analysis"
-                )
-            nodes_from_gpu = self._base_builder._calculate_nodes_for_gpus(
-                n_gpus, gpus_per_node_config
-            )
-            sim_nodes = max(n_nodes, nodes_from_gpu)
-            gpus_per_node = math.ceil(n_gpus / sim_nodes) if n_gpus > 0 else 0
-
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
                 mem_mb=int(mem_per_cpu * n_mpi * n_omp * 1000),
-                nodes=sim_nodes,
+                nodes=n_nodes,
                 tasks=n_mpi,
                 cpus_per_task=n_omp,
                 gpus_total=n_gpus,
-                gpus_per_node=gpus_per_node,
+                gpus_per_node_config=gpus_per_node_config,
+                gpu_hardware=self.system.cfg_system.gpu_hardware,
+                gpu_alloc_mode=gpu_alloc_mode,
             )
 
             process_resources_sa = self._base_builder._build_resource_block(

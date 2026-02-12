@@ -76,6 +76,16 @@ class system_config(cfgBaseModel):
             "single-arch GPU builds."
         ),
     )
+    preferred_slurm_option_for_allocating_gpus: Optional[Literal["gres", "gpus"]] = (
+        Field(
+            "gpus",
+            description=(
+                "Preferred SLURM GPU allocation directive. "
+                "Set to 'gres' to emit --gres=gpu:..., or 'gpus' to emit "
+                "--gpus/--gpus-per-node when supported by the cluster."
+            ),
+        )
+    )
     additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
         None,
         description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",

@@ -69,8 +69,8 @@ class analysis_config(cfgBaseModel):
         description=(
             "GPUs per node on the HPC cluster. Required when using GPUs with "
             "multi_sim_run_method = 1_job_many_srun_tasks or batch_job. "
-            "Used to populate resources.gpus_per_node for Snakemake and to "
-            "generate --gres=gpu:{gpus_per_node} directives."
+            "Used to populate per-node GPU allocation for Snakemake and to "
+            "generate --gres or --gpus-per-node directives."
         ),
     )
     hpc_cpus_per_node: Optional[int] = Field(
