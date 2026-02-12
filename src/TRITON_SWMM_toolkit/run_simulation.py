@@ -460,13 +460,17 @@ class TRITONSWMM_run:
             elif run_mode in ("mpi", "hybrid"):
                 launch_cmd_str = "mpirun " f"-np {str(n_mpi_procs)} " f"{exe} {cfg}"
         elif run_mode == "gpu":
+            if "SLURM_NTASKS_PER_GPU" in os.environ:
+                gpu_to_task_bind = "--ntasks-per-gpu=1 "
+            else:
+                gpu_to_task_bind = "--gpus-per-task=1  "
             if using_srun:
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
                     f"--ntasks={n_gpus} "
                     f"--cpus-per-task={n_omp_threads} "
-                    "--gpus-per-task=1 "
+                    f"{gpu_to_task_bind}"
                     # "--exclusive "
                     "--cpu-bind=none "
                     "--overlap "
