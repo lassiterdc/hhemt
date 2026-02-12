@@ -840,7 +840,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg}
+${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg} --rerun-triggers mtime
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -912,6 +912,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 str(config_dir),
                 "--snakefile",
                 str(snakefile_path),
+                "--rerun-triggers mtime",
             ]
 
             # Explicitly pass --cores for multicore local runs
@@ -1129,6 +1130,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "slurm",
                 "--printshellcmds",
                 "--slurm-efficiency-report",
+                "--rerun-triggers mtime",
             ]
             if dry_run:
                 cmd_args.append("--dry-run")
@@ -1260,6 +1262,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "--printshellcmds",
                 "--slurm-efficiency-report",
                 "--dry-run",
+                "--rerun-triggers mtime",
             ]
             if verbose:
                 cmd_args.append("--verbose")
@@ -1718,6 +1721,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --executor slurm \\
     --printshellcmds \\
     --slurm-efficiency-report
+    --rerun-triggers mtime
 """
 
             script_path = self.analysis_paths.analysis_dir / "run_workflow_batch_job.sh"
