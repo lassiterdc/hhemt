@@ -26,7 +26,7 @@
   },
 
   "search.exclude": {
-    "**/test_data/**": true,
+    "**/test_data/**triton/**": true,
     "**/external/**": true,
     "**/.snakemake/**": true,
     "**/_status/**": true,
