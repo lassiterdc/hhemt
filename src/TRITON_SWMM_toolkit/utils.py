@@ -582,12 +582,12 @@ def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
 def write_zarr_then_netcdf(
     ds, fname_out, compression_level: int = 5, chunks: str | dict = "auto"
 ):
-    encoding = return_dic_zarr_encodings(ds, compression_level)
+    # encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
-        chunk_dict = return_dic_autochunk(ds)
-    ds = ds.chunk(chunk_dict)
+        chunks = return_dic_autochunk(ds)
+    ds = ds.chunk(chunks)
     # first write to zarr, then write to netcdf
-    write_zarr(ds, fname_out, compression_level, chunks)
+    write_zarr(ds, f"{fname_out}.zarr", compression_level, chunks)
     # open and write
     ds = xr.open_dataset(
         f"{fname_out}.zarr", engine="zarr", chunks="auto", consolidated=False
