@@ -170,7 +170,7 @@ class UVA_TestCases:
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity_analysis,
-            "hpc_time_min_per_sim": 2,
+            "hpc_time_min_per_sim": 20,
             "run_mode": "gpu",
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
