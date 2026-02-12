@@ -553,6 +553,7 @@ rule consolidate:
             "printshellcmds": True,
             "rerun-incomplete": True,
             "keep-going": True,
+            "rerun-triggers": ["mtime", "input"],
         }
         assert isinstance(
             self.cfg_analysis.local_cpu_cores_for_workflow, int
@@ -840,7 +841,7 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg} --rerun-triggers mtime,input
+${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg} 
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -912,8 +913,6 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 str(config_dir),
                 "--snakefile",
                 str(snakefile_path),
-                "--rerun-triggers",
-                "mtime,input",
             ]
 
             # Explicitly pass --cores for multicore local runs
@@ -1131,8 +1130,6 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "slurm",
                 "--printshellcmds",
                 "--slurm-efficiency-report",
-                "--rerun-triggers",
-                "mtime,input",
             ]
             if dry_run:
                 cmd_args.append("--dry-run")
@@ -1264,8 +1261,6 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "--printshellcmds",
                 "--slurm-efficiency-report",
                 "--dry-run",
-                "--rerun-triggers",
-                "mtime,input",
             ]
             if verbose:
                 cmd_args.append("--verbose")
@@ -1723,8 +1718,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
     --printshellcmds \\
-    --slurm-efficiency-report \\
-    --rerun-triggers mtime,input
+    --slurm-efficiency-report
 """
 
             script_path = self.analysis_paths.analysis_dir / "run_workflow_batch_job.sh"
