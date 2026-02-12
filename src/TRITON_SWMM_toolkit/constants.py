@@ -61,6 +61,8 @@ FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     toggle_triton_model=False,
     toggle_tritonswmm_model=True,
     toggle_swmm_model=False,
+    target_processed_output_type="zarr",  # nc
+    preferred_slurm_option_for_allocating_gpus="gpus",  # gres
 )
 
 UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
