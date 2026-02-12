@@ -912,7 +912,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 str(config_dir),
                 "--snakefile",
                 str(snakefile_path),
-                "--rerun-triggers mtime",
+                "--rerun-triggers",
+                "mtime",
             ]
 
             # Explicitly pass --cores for multicore local runs
@@ -1130,7 +1131,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "slurm",
                 "--printshellcmds",
                 "--slurm-efficiency-report",
-                "--rerun-triggers mtime",
+                "--rerun-triggers",
+                "mtime",
             ]
             if dry_run:
                 cmd_args.append("--dry-run")
@@ -1262,7 +1264,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "--printshellcmds",
                 "--slurm-efficiency-report",
                 "--dry-run",
-                "--rerun-triggers mtime",
+                "--rerun-triggers",
+                "mtime",
             ]
             if verbose:
                 cmd_args.append("--verbose")
@@ -1720,7 +1723,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
     --printshellcmds \\
-    --slurm-efficiency-report
+    --slurm-efficiency-report \\
     --rerun-triggers mtime
 """
 
