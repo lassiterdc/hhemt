@@ -574,6 +574,7 @@ rule consolidate:
                         f"runtime=30",
                         "gpus_per_node=0",
                         f"slurm_partition={slurm_partition}",
+                        f"slurm_account={self.cfg_analysis.hpc_account}",
                     ],
                     "slurm": {
                         "sbatch": {
@@ -583,6 +584,7 @@ rule consolidate:
                             "nodes": "{resources.nodes}",
                             "ntasks": "{resources.tasks}",
                             "cpus-per-task": "{resources.cpus_per_task}",
+                            "account": "{resources.slurm_account}",
                         }
                     },
                 }
@@ -601,10 +603,6 @@ rule consolidate:
                     ] = f"gpu:{gpu_hardware}:{{resources.gpus_per_node}}"
                 else:
                     config["slurm"]["sbatch"]["gres"] = "gpu:{resources.gpus_per_node}"
-
-            # Add account if specified
-            if self.cfg_analysis.hpc_account:
-                config["slurm"]["sbatch"]["account"] = self.cfg_analysis.hpc_account  # type: ignore
 
         return config
 
@@ -1103,7 +1101,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 str(snakefile_path),
                 "--executor",
                 "slurm",
-                "--default-resources",
+                "--printshellcmds",
                 "--slurm-efficiency-report",
             ]
             if dry_run:
@@ -1233,7 +1231,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 str(snakefile_path),
                 "--executor",
                 "slurm",
-                "--default-resources",
+                "--printshellcmds",
                 "--slurm-efficiency-report",
                 "--dry-run",
             ]
@@ -1692,7 +1690,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
-    --default-resources \\
+    --printshellcmds \\
     --slurm-efficiency-report
 """
 
