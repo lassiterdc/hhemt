@@ -82,5 +82,5 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     hpc_max_simultaneous_sims=1000,
     hpc_total_job_duration_min=60 * 8,
     preferred_slurm_option_for_allocating_gpus="gpus",  # gres
-    target_processed_output_type="zarr",
+    target_processed_output_type="nc",
 )
