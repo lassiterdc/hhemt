@@ -59,6 +59,7 @@ class PlatformConfig:
     hpc_cpus_per_node: Optional[int] = None
     hpc_max_simultaneous_sims: Optional[int] = None
     hpc_total_job_duration_min: Optional[int] = None
+    preferred_slurm_option_for_allocating_gpus: Optional[str] = None
     gpu_hardware: Optional[str] = None
     toggle_triton_model: Optional[bool] = None
     toggle_tritonswmm_model: Optional[bool] = None
@@ -97,4 +98,5 @@ class PlatformConfig:
             "toggle_triton_model": self.toggle_triton_model,
             "toggle_tritonswmm_model": self.toggle_tritonswmm_model,
             "toggle_swmm_model": self.toggle_swmm_model,
+            "preferred_slurm_option_for_allocating_gpus": self.preferred_slurm_option_for_allocating_gpus,
         }
