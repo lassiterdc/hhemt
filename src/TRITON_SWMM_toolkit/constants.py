@@ -81,5 +81,5 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     toggle_swmm_model=False,
     hpc_max_simultaneous_sims=1000,
     hpc_total_job_duration_min=60 * 8,
-    preferred_slurm_option_for_allocating_gpus="gres",
+    preferred_slurm_option_for_allocating_gpus="gpus",  # gres
 )
