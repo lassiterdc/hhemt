@@ -76,7 +76,7 @@ class TRITONSWMM_analysis:
                 self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
             )
 
-        ext = self.cfg_analysis.TRITON_processed_output_type
+        ext = self.cfg_analysis.target_processed_output_type
         cfg_sys = self._system.cfg_system
 
         analysis_paths_kwargs = dict(

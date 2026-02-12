@@ -64,6 +64,7 @@ class PlatformConfig:
     toggle_triton_model: Optional[bool] = None
     toggle_tritonswmm_model: Optional[bool] = None
     toggle_swmm_model: Optional[bool] = None
+    target_processed_output_type: Optional[str] = None
 
     def to_analysis_dict(self) -> Dict:
         """
@@ -82,6 +83,7 @@ class PlatformConfig:
             "hpc_cpus_per_node": self.hpc_cpus_per_node,
             "hpc_max_simultaneous_sims": self.hpc_max_simultaneous_sims,
             "hpc_total_job_duration_min": self.hpc_total_job_duration_min,
+            "target_processed_output_type": self.target_processed_output_type,
         }
 
     def to_system_dict(self) -> Dict:

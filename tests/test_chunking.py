@@ -26,7 +26,7 @@ def create_mock_analysis():
     """Create a minimal mock analysis object for testing."""
 
     class MockConfig:
-        TRITON_processed_output_type = "zarr"
+        target_processed_output_type = "zarr"
 
     class MockAnalysis:
         cfg_analysis = MockConfig()

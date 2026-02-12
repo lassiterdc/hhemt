@@ -86,7 +86,7 @@ class TRITONSWMM_sim_post_processing:
         return path
 
     def _open_engine(self):
-        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
         if processed_out_type == "zarr":
             return "zarr"
         elif processed_out_type == "nc":
@@ -880,7 +880,7 @@ class TRITONSWMM_sim_post_processing:
         compression_level: int,
         verbose: bool,
     ):
-        processed_out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
+        processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(
             model_type=self._current_model_type, astype="str"

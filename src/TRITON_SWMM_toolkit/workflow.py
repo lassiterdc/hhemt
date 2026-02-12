@@ -316,7 +316,7 @@ class SnakemakeWorkflowBuilder:
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
             runtime_min=120,
-            mem_mb=32000,
+            mem_mb=32000, # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
             nodes=1,
             tasks=1,
             cpus_per_task=2,  # Parallel compression
@@ -326,7 +326,7 @@ class SnakemakeWorkflowBuilder:
         consolidate_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
             runtime_min=30,
-            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 1000 * 2,
+            mem_mb=32000, # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
             nodes=1,
             tasks=1,
             cpus_per_task=2,
@@ -2297,7 +2297,7 @@ rule setup:
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=120,
-                mem_mb=32000,
+                mem_mb=32000, # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
                 nodes=1,
                 tasks=1,
                 cpus_per_task=2,
@@ -2411,7 +2411,7 @@ rule setup:
 {self._base_builder._build_resource_block(
     partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
     runtime_min=30,
-    mem_mb=sub_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+    mem_mb=8000, # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
     nodes=1,
     tasks=1,
     cpus_per_task=1,
@@ -2440,7 +2440,7 @@ rule setup:
 {self._base_builder._build_resource_block(
     partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
     runtime_min=30,
-    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+    mem_mb=32000, # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
     nodes=1,
     tasks=1,
     cpus_per_task=1,

@@ -54,7 +54,7 @@ class TRITONSWMM_scenario:
 
         # Model toggles from system config
         cfg_sys = self._system.cfg_system
-        out_type = self._analysis.cfg_analysis.TRITON_processed_output_type
+        out_type = self._analysis.cfg_analysis.target_processed_output_type
 
         # Centralized logs directory
         logs_dir = sim_folder / "logs"

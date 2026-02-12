@@ -160,7 +160,7 @@ class analysis_config(cfgBaseModel):
     )
 
     # TRITON-SWMM PARAMETERS
-    TRITON_processed_output_type: Literal["zarr", "nc"] = Field(
+    target_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
         description="TRITON processed output type, zarr or nc.",
     )
