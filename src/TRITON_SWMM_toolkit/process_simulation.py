@@ -9,7 +9,7 @@ import warnings
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import (
     write_zarr,
-    write_netcdf,
+    write_zarr_then_netcdf,
     paths_to_strings,
     get_file_size_MiB,
     convert_datetime_to_str,
@@ -907,7 +907,7 @@ class TRITONSWMM_sim_post_processing:
         ds.attrs = convert_datetime_to_str(ds.attrs)
 
         if processed_out_type == "nc":
-            write_netcdf(ds, f_out, compression_level)
+            write_zarr_then_netcdf(ds, f_out, compression_level)
         else:
             write_zarr(ds, f_out, compression_level)
         if verbose:
