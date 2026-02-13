@@ -125,10 +125,8 @@ class TRITONSWMM_analysis_post_processing:
         """
         Compute optimal chunk sizes for writing xarray datasets to disk.
 
-        This function determines chunk sizes that:
-        1. Keep memory usage under max_mem_usage_MiB
-        2. Use efficient spatial chunks (~256x256 for x,y)
-        3. Handle sparse multi-dimensional coordinates (sensitivity analysis)
+        This is a wrapper around utils.compute_optimal_chunks() that provides
+        the memory budget from analysis configuration.
 
         Parameters
         ----------
@@ -138,169 +136,27 @@ class TRITONSWMM_analysis_post_processing:
             Spatial coordinate names (e.g., ['x', 'y'] or 'node_id')
         spatial_coord_size : int
             Target total cells per spatial chunk (default 65536 = 256^2)
-        max_mem_usage_MiB : float
-            Maximum memory per chunk in MiB
-        strict_validation : bool
-            If True, raise errors on validation failures; if False, warn only
+        verbose : bool
+            Print chunk information if True
 
         Returns
         -------
         dict or "auto"
             Chunk specification for each dimension
         """
+        from TRITON_SWMM_toolkit.utils import compute_optimal_chunks
+
         max_mem_usage_MiB = (
             self._analysis.cfg_analysis.process_output_target_chunksize_mb
         )
-        # Handle non-spatial data (e.g., performance summaries)
-        if spatial_coords is None:
-            if verbose:
-                print("spatial_coords are None. Returning chunks = 'auto'", flush=True)
-            return "auto"
 
-        if isinstance(spatial_coords, str):
-            spatial_coords = [spatial_coords]
-
-        # Validation: Check that all spatial coords exist in dataset
-        missing_coords = [
-            c for c in spatial_coords if c not in ds_combined_outputs.coords
-        ]
-        if missing_coords:
-            error_msg = (
-                f"Spatial coordinates {missing_coords} not found in dataset. "
-                f"Available coordinates: {list(ds_combined_outputs.coords.keys())}"
-            )
-            raise ValueError(error_msg)
-
-        size_per_spatial_coord = spatial_coord_size ** (1 / len(spatial_coords))
-
-        if len(spatial_coords) not in [1, 2]:
-            raise ValueError("Spatial dimension can only be 1 or 2 dimensional")
-
-        lst_non_spatial_coords = []
-        for coord in ds_combined_outputs.coords:
-            if coord not in spatial_coords:
-                lst_non_spatial_coords.append(coord)
-
-        # Categorize variables by whether they have spatial dimensions
-        spatial_vars = []
-        nonspatial_vars = []  # system-wide vars
-        for var in ds_combined_outputs.data_vars:
-            var_dims = set(ds_combined_outputs[var].dims)
-            if any(coord in var_dims for coord in spatial_coords):
-                spatial_vars.append(var)
-            else:
-                nonspatial_vars.append(var)
-
-        # Get average bytes per element (for float64/float32 estimation)
-        # Use first spatial variable if available, otherwise use a default
-        if spatial_vars:
-            sample_var = ds_combined_outputs[spatial_vars[0]]
-            bytes_per_element = sample_var.dtype.itemsize
-        else:
-            bytes_per_element = 8  # default to float64
-
-        # Calculate spatial chunk size first (fixed target)
-        chunks = dict()
-        spatial_chunk_points = 1
-        for coord in spatial_coords:
-            coord_len = len(ds_combined_outputs[coord])
-            chunk_size = int(min(size_per_spatial_coord, coord_len))
-            chunks[coord] = chunk_size
-            spatial_chunk_points *= chunk_size
-
-        # Calculate non-spatial budget accounting for heterogeneous variable shapes
-        # Chunk memory = (n_spatial_vars * spatial_points * nonspatial_points +
-        #                 n_nonspatial_vars * nonspatial_points) * bytes_per_element
-        # Solving for nonspatial_points:
-        # nonspatial_points = max_mem_bytes /
-        #                     (bytes_per_element * (n_spatial_vars * spatial_points + n_nonspatial_vars))
-
-        bytes_available = max_mem_usage_MiB * 1024**2
-
-        # Calculate the "weight" of one nonspatial point in the chunk
-        # Each nonspatial point contributes:
-        # - spatial_chunk_points elements for each spatial variable
-        # - 1 element for each non-spatial variable
-        elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(
-            nonspatial_vars
+        return compute_optimal_chunks(
+            ds=ds_combined_outputs,
+            spatial_coords=spatial_coords,
+            max_mem_usage_MiB=max_mem_usage_MiB,
+            spatial_coord_size=spatial_coord_size,
+            verbose=verbose,
         )
-
-        if elements_per_nonspatial_point > 0:
-            target_nonspatial_points = bytes_available / (
-                bytes_per_element * elements_per_nonspatial_point
-            )
-            target_nonspatial_points = max(1, int(target_nonspatial_points))
-        else:
-            # Edge case: no variables (shouldn't happen in practice)
-            target_nonspatial_points = 1
-
-        # Use power-of-2 for better compression
-        target_nonspatial_chunk = prev_power_of_two(target_nonspatial_points)
-
-        # Sort non-spatial coords by size (largest first) for better chunking
-        sorted_nonspatial = sorted(
-            lst_non_spatial_coords,
-            key=lambda c: len(ds_combined_outputs[c]),
-            reverse=True,
-        )
-
-        nonspatial_chunk_product = 1
-        for coord in sorted_nonspatial:
-            coord_len = len(ds_combined_outputs[coord])
-
-            # Determine chunk size for this dimension
-            if nonspatial_chunk_product >= target_nonspatial_chunk:
-                # Already reached target, chunk remaining dims minimally
-                chunk_size = 1
-            elif coord_len == 1:
-                # Singleton dimension
-                chunk_size = 1
-            else:
-                # Calculate how much "budget" remains for chunking
-                remaining_budget = target_nonspatial_chunk // nonspatial_chunk_product
-                chunk_size = min(coord_len, prev_power_of_two(remaining_budget))
-                # Ensure at least some chunking for large dimensions
-                if chunk_size < 1:
-                    chunk_size = 1
-
-            chunks[coord] = chunk_size
-            nonspatial_chunk_product *= chunk_size
-
-        # Build test slice to verify memory usage
-        test_slice = {}
-        for coord, chunk_size in chunks.items():
-            test_slice[coord] = slice(
-                0, min(chunk_size, len(ds_combined_outputs[coord]))
-            )
-
-        # Estimate test chunk memory without forcing rechunking (avoid dask overhead)
-        test_ds = ds_combined_outputs.isel(test_slice)
-        test_size_MiB = ds_memory_req_MiB(test_ds)  # type: ignore
-
-        # Validation: Check chunk efficiency
-        if test_size_MiB < 1:
-            msg = (
-                f"Warning: chunks are less than 1 MiB ({test_size_MiB:.3f} MiB), "
-                "which could lead to inefficient reading and writing. "
-                f"Consider increasing max_mem_usage_MiB or spatial_coord_size."
-            )
-            print(msg, flush=True)
-
-        if test_size_MiB > max_mem_usage_MiB * 1.2:
-            msg = (
-                f"Chunk size ({test_size_MiB:.1f} MiB) exceeds "
-                f"max_mem_usage_MiB ({max_mem_usage_MiB} MiB). "
-                f"Chunks: {chunks}"
-            )
-            raise ValueError(msg)
-
-        if verbose:
-            print(
-                f"Memory per chunk: {test_size_MiB:.3f} MiB\nChunks: {chunks}",
-                flush=True,
-            )
-
-        return chunks
 
     def consolidate_outputs_for_mode(
         self,

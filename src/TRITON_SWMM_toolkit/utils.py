@@ -553,6 +553,330 @@ def return_dic_autochunk(ds):
     return chunk_dict
 
 
+def estimate_timesteps_per_chunk(
+    rds_dem: xr.DataArray,
+    n_variables: int,
+    memory_budget_MiB: float,
+    dtype: Any = None,
+) -> int:
+    """
+    Estimate how many timesteps can fit in memory budget.
+
+    Uses simple memory arithmetic to calculate how many timesteps can be
+    loaded simultaneously for all variables within the specified memory budget.
+    This is used for chunked processing of TRITON binary outputs.
+
+    Parameters
+    ----------
+    rds_dem : xr.DataArray
+        DEM raster with x and y coordinates (used to get grid dimensions)
+    n_variables : int
+        Number of variables per timestep (e.g., 4 for H, QX, QY, MH)
+    memory_budget_MiB : float
+        Target memory budget in MiB
+    dtype : np.dtype or None
+        Data type (default: np.float64). If None, uses float64.
+
+    Returns
+    -------
+    int
+        Number of timesteps per chunk (minimum 1)
+
+    Examples
+    --------
+    >>> # For a 513x526 grid with 4 variables and 200 MiB budget
+    >>> chunk_size = estimate_timesteps_per_chunk(
+    ...     rds_dem=dem,
+    ...     n_variables=4,
+    ...     memory_budget_MiB=200.0
+    ... )
+    >>> # Returns number of timesteps that fit in 200 MiB
+
+    Notes
+    -----
+    Memory calculation:
+        memory_per_timestep = n_variables × n_y × n_x × bytes_per_element
+        timesteps_per_chunk = memory_budget / memory_per_timestep
+
+    This simple approach is appropriate for timeseries processing where we need
+    to determine how much data to load BEFORE creating the dataset. For chunking
+    existing datasets for zarr writes, use compute_optimal_chunks() instead.
+    """
+    import numpy as np
+
+    if dtype is None:
+        dtype = np.float64
+
+    n_y = len(rds_dem.y)
+    n_x = len(rds_dem.x)
+    bytes_per_element = np.dtype(dtype).itemsize
+
+    # Memory for ONE timestep across ALL variables
+    memory_per_timestep_bytes = n_variables * n_y * n_x * bytes_per_element
+    memory_per_timestep_MiB = memory_per_timestep_bytes / (1024**2)
+
+    # How many timesteps fit in budget?
+    timesteps_per_chunk = int(memory_budget_MiB / memory_per_timestep_MiB)
+
+    # Ensure at least 1 timestep per chunk
+    return max(1, timesteps_per_chunk)
+
+
+def prev_power_of_two(n: int | float) -> int:
+    """
+    Return the largest power of 2 less than or equal to n.
+
+    Parameters
+    ----------
+    n : int or float
+        Input number (must be positive)
+
+    Returns
+    -------
+    int
+        Largest power of 2 <= n
+
+    Examples
+    --------
+    >>> prev_power_of_two(100)
+    64
+    >>> prev_power_of_two(256)
+    256
+    """
+    n = int(n)
+    if n < 1:
+        return 1
+    if n <= 0:
+        raise ValueError("n must be positive")
+    return 1 << (n.bit_length() - 1)
+
+
+def ds_memory_req_MiB(ds: xr.Dataset) -> float:
+    """
+    Calculate memory requirement of xarray Dataset in MiB.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset to measure
+
+    Returns
+    -------
+    float
+        Memory requirement in MiB
+    """
+    return ds.nbytes / 1024**2
+
+
+def compute_optimal_chunks(
+    ds: xr.Dataset,
+    spatial_coords: list[str] | str | None,
+    max_mem_usage_MiB: float,
+    spatial_coord_size: int = 65536,  # 256x256 for x,y coords
+    verbose: bool = True,
+) -> dict | str:
+    """
+    Compute optimal chunk sizes for writing xarray datasets to disk.
+
+    This function determines chunk sizes that:
+    1. Keep memory usage under max_mem_usage_MiB
+    2. Use efficient spatial chunks (~256x256 for x,y)
+    3. Handle sparse multi-dimensional coordinates (sensitivity analysis)
+
+    Extracted from processing_analysis.py to make it reusable for both
+    per-simulation processing and analysis-level consolidation.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        Dataset to compute chunks for
+    spatial_coords : List[str] | str | None
+        Spatial coordinate names (e.g., ['x', 'y'] or 'node_id').
+        If None, returns 'auto'.
+    max_mem_usage_MiB : float
+        Maximum memory per chunk in MiB
+    spatial_coord_size : int
+        Target total cells per spatial chunk (default 65536 = 256^2)
+    verbose : bool
+        Print chunk information if True
+
+    Returns
+    -------
+    dict or "auto"
+        Chunk specification for each dimension
+
+    Examples
+    --------
+    >>> # For TRITON spatial outputs
+    >>> chunks = compute_optimal_chunks(
+    ...     ds=ds_triton,
+    ...     spatial_coords=["x", "y"],
+    ...     max_mem_usage_MiB=200.0
+    ... )
+
+    >>> # For SWMM node outputs
+    >>> chunks = compute_optimal_chunks(
+    ...     ds=ds_swmm_nodes,
+    ...     spatial_coords="node_id",
+    ...     max_mem_usage_MiB=200.0
+    ... )
+
+    Notes
+    -----
+    This function is used for chunking EXISTING datasets for zarr writes.
+    For determining how many timesteps to load during processing, use
+    estimate_timesteps_per_chunk() instead.
+    """
+    from typing import List
+
+    # Handle non-spatial data (e.g., performance summaries)
+    if spatial_coords is None:
+        if verbose:
+            print("spatial_coords are None. Returning chunks = 'auto'", flush=True)
+        return "auto"
+
+    if isinstance(spatial_coords, str):
+        spatial_coords = [spatial_coords]
+
+    # Validation: Check that all spatial coords exist in dataset
+    missing_coords = [c for c in spatial_coords if c not in ds.coords]
+    if missing_coords:
+        error_msg = (
+            f"Spatial coordinates {missing_coords} not found in dataset. "
+            f"Available coordinates: {list(ds.coords.keys())}"
+        )
+        raise ValueError(error_msg)
+
+    size_per_spatial_coord = spatial_coord_size ** (1 / len(spatial_coords))
+
+    if len(spatial_coords) not in [1, 2]:
+        raise ValueError("Spatial dimension can only be 1 or 2 dimensional")
+
+    lst_non_spatial_coords = []
+    for coord in ds.coords:
+        if coord not in spatial_coords:
+            lst_non_spatial_coords.append(coord)
+
+    # Categorize variables by whether they have spatial dimensions
+    spatial_vars = []
+    nonspatial_vars = []  # system-wide vars
+    for var in ds.data_vars:
+        var_dims = set(ds[var].dims)
+        if any(coord in var_dims for coord in spatial_coords):
+            spatial_vars.append(var)
+        else:
+            nonspatial_vars.append(var)
+
+    # Get average bytes per element (for float64/float32 estimation)
+    # Use first spatial variable if available, otherwise use a default
+    if spatial_vars:
+        sample_var = ds[spatial_vars[0]]
+        bytes_per_element = sample_var.dtype.itemsize
+    else:
+        bytes_per_element = 8  # default to float64
+
+    # Calculate spatial chunk size first (fixed target)
+    chunks: dict = {}
+    spatial_chunk_points = 1
+    for coord in spatial_coords:
+        coord_len = len(ds[coord])
+        chunk_size = int(min(size_per_spatial_coord, coord_len))
+        chunks[coord] = chunk_size
+        spatial_chunk_points *= chunk_size
+
+    # Calculate non-spatial budget accounting for heterogeneous variable shapes
+    # Chunk memory = (n_spatial_vars * spatial_points * nonspatial_points +
+    #                 n_nonspatial_vars * nonspatial_points) * bytes_per_element
+    # Solving for nonspatial_points:
+    # nonspatial_points = max_mem_bytes /
+    #                     (bytes_per_element * (n_spatial_vars * spatial_points + n_nonspatial_vars))
+
+    bytes_available = max_mem_usage_MiB * 1024**2
+
+    # Calculate the "weight" of one nonspatial point in the chunk
+    # Each nonspatial point contributes:
+    # - spatial_chunk_points elements for each spatial variable
+    # - 1 element for each non-spatial variable
+    elements_per_nonspatial_point = len(spatial_vars) * spatial_chunk_points + len(
+        nonspatial_vars
+    )
+
+    if elements_per_nonspatial_point > 0:
+        target_nonspatial_points = bytes_available / (
+            bytes_per_element * elements_per_nonspatial_point
+        )
+        target_nonspatial_points = max(1, int(target_nonspatial_points))
+    else:
+        # Edge case: no variables (shouldn't happen in practice)
+        target_nonspatial_points = 1
+
+    # Use power-of-2 for better compression
+    target_nonspatial_chunk = prev_power_of_two(target_nonspatial_points)
+
+    # Sort non-spatial coords by size (largest first) for better chunking
+    sorted_nonspatial = sorted(
+        lst_non_spatial_coords,
+        key=lambda c: len(ds[c]),
+        reverse=True,
+    )
+
+    nonspatial_chunk_product = 1
+    for coord in sorted_nonspatial:
+        coord_len = len(ds[coord])
+
+        # Determine chunk size for this dimension
+        if nonspatial_chunk_product >= target_nonspatial_chunk:
+            # Already reached target, chunk remaining dims minimally
+            chunk_size = 1
+        elif coord_len == 1:
+            # Singleton dimension
+            chunk_size = 1
+        else:
+            # Calculate how much "budget" remains for chunking
+            remaining_budget = target_nonspatial_chunk // nonspatial_chunk_product
+            chunk_size = min(coord_len, prev_power_of_two(remaining_budget))
+            # Ensure at least some chunking for large dimensions
+            if chunk_size < 1:
+                chunk_size = 1
+
+        chunks[coord] = chunk_size
+        nonspatial_chunk_product *= chunk_size
+
+    # Build test slice to verify memory usage
+    test_slice = {}
+    for coord, chunk_size in chunks.items():
+        test_slice[coord] = slice(0, min(chunk_size, len(ds[coord])))
+
+    # Estimate test chunk memory without forcing rechunking (avoid dask overhead)
+    test_ds = ds.isel(test_slice)
+    test_size_MiB = ds_memory_req_MiB(test_ds)
+
+    # Validation: Check chunk efficiency
+    if test_size_MiB < 1:
+        msg = (
+            f"Warning: chunks are less than 1 MiB ({test_size_MiB:.3f} MiB), "
+            "which could lead to inefficient reading and writing. "
+            f"Consider increasing max_mem_usage_MiB or spatial_coord_size."
+        )
+        print(msg, flush=True)
+
+    if test_size_MiB > max_mem_usage_MiB * 1.2:
+        msg = (
+            f"Chunk size ({test_size_MiB:.1f} MiB) exceeds "
+            f"max_mem_usage_MiB ({max_mem_usage_MiB} MiB). "
+            f"Chunks: {chunks}"
+        )
+        raise ValueError(msg)
+
+    if verbose:
+        print(
+            f"Memory per chunk: {test_size_MiB:.3f} MiB\nChunks: {chunks}",
+            flush=True,
+        )
+
+    return chunks
+
+
 def get_file_size_MiB(f: Path):
     if f.name.split(".")[-1] == "zarr":
         size_bytes = zarr_size_bytes(f)

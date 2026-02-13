@@ -16,6 +16,7 @@ from TRITON_SWMM_toolkit.utils import (
     convert_datetime_to_str,
     current_datetime_string,
     fast_rmtree,
+    return_dic_zarr_encodings,
 )
 from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
@@ -595,43 +596,145 @@ class TRITONSWMM_sim_post_processing:
 
         start_time = time.time()
 
-        # load the dem in order to extract the spatial coordinates and assign them to the triton outputs
-        bm_time = time.time()
-        # out_type = "bin"
+        # Get output files
         df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
         if df_outputs.empty:
             raise FileNotFoundError(
                 f"No TRITON output files (H, QX, QY, MH) found in {fldr_out_triton}. "
                 "Ensure the TRITON-SWMM coupled simulation completed successfully."
             )
-        lst_ds_vars = []
-        for varname, files in df_outputs.items():
-            lst_ds = []
-            for tstep_min, f in files.items():
-                ds_triton_output = load_triton_output_w_xarray(
-                    rds_dem, f, varname, raw_out_type
-                )
-                lst_ds.append(ds_triton_output)
-            ds_var = xr.concat(lst_ds, dim=df_outputs.index)
-            lst_ds_vars.append(ds_var)
+
+        # Phase 1.2: Chunked processing - calculate optimal chunk size
+        from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
+
+        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        n_variables = len(df_outputs.columns)  # H, QX, QY, MH
+
+        chunk_size = estimate_timesteps_per_chunk(
+            rds_dem=rds_dem,
+            n_variables=n_variables,
+            memory_budget_MiB=memory_budget_MiB,
+        )
+
+        timestep_list = sorted(df_outputs.index.tolist())
+        total_timesteps = len(timestep_list)
+        n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
+
         if verbose:
-            print(
-                f"Time to load {raw_out_type} triton outputs (min) {(time.time()-bm_time)/60:.2f}"
-            )
-        # write performance over time
-        ds_combined = xr.merge(lst_ds_vars)
-        self._write_output(ds_combined, fname_out, comp_level, verbose)  # type: ignore
+            print(f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB", flush=True)
+            print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
+            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
+            print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
+
+        # Process in chunks
+        first_chunk = True
+
+        for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
+            chunk_end = min(chunk_start + chunk_size, total_timesteps)
+            chunk_timesteps = timestep_list[chunk_start:chunk_end]
+
+            if verbose:
+                print(
+                    f"[Chunked Processing] Processing chunk {chunk_idx + 1}/{n_chunks}: "
+                    f"timesteps {chunk_start}-{chunk_end - 1} ({len(chunk_timesteps)} timesteps)",
+                    flush=True,
+                )
+
+            # Load all variables for this chunk's timesteps
+            lst_ds_vars_chunk = []
+            for varname in df_outputs.columns:
+                files = df_outputs[varname]
+                lst_ds_timesteps = []
+
+                for tstep_min in chunk_timesteps:
+                    if tstep_min not in files.index:
+                        continue
+                    f = files[tstep_min]
+                    if not f.exists():
+                        if verbose:
+                            print(
+                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
+                                flush=True,
+                            )
+                        continue
+
+                    ds_triton_output = load_triton_output_w_xarray(
+                        rds_dem, f, varname, raw_out_type
+                    )
+                    lst_ds_timesteps.append(ds_triton_output)
+
+                if not lst_ds_timesteps:
+                    if verbose:
+                        print(
+                            f"[Chunked Processing] No valid files for {varname} in this chunk",
+                            flush=True,
+                        )
+                    continue
+
+                # Determine valid timesteps (those we actually loaded)
+                valid_timesteps = []
+                for tstep_min in chunk_timesteps:
+                    if tstep_min in files.index:
+                        f_path = files[tstep_min]
+                        if isinstance(f_path, Path) and f_path.exists():
+                            valid_timesteps.append(tstep_min)
+
+                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                lst_ds_vars_chunk.append(ds_var_chunk)
+
+                # Clear per-variable temporaries
+                del lst_ds_timesteps
+                gc.collect()
+
+            if not lst_ds_vars_chunk:
+                if verbose:
+                    print(
+                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
+                        flush=True,
+                    )
+                continue
+
+            ds_chunk = xr.merge(lst_ds_vars_chunk)
+
+            # Write incrementally
+            if first_chunk:
+                if verbose:
+                    print(f"[Chunked Processing] Creating new zarr store: {fname_out.name}", flush=True)
+                encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
+                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
+                    model_type="tritonswmm", astype="str"
+                )
+                ds_chunk.attrs["output_creation_date"] = current_datetime_string()
+                ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
+                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                first_chunk = False
+            else:
+                if verbose:
+                    print(f"[Chunked Processing] Appending to zarr store", flush=True)
+                ds_chunk.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+
+            # Explicit cleanup
+            del ds_chunk, lst_ds_vars_chunk
+            gc.collect()
+
+        # Consolidate metadata
+        if verbose:
+            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
+        import zarr
+        zarr.consolidate_metadata(fname_out)
+
+        if verbose:
+            print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
+
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
+
         # Mark timeseries as written
         if self.log.TRITON_timeseries_written:
             self.log.TRITON_timeseries_written.set(True)
-
-        # Phase 1.3: Explicit garbage collection after large dataset operations
-        del ds_combined, lst_ds_vars
-        gc.collect()
 
         if clear_raw_outputs:
             self._clear_raw_TRITON_outputs(model_type="tritonswmm")
@@ -690,7 +793,7 @@ class TRITONSWMM_sim_post_processing:
 
         start_time = time.time()
 
-        # Load TRITON outputs (same logic as coupled model)
+        # Get output files
         df_outputs = return_fpath_wlevels(fldr_out_triton, reporting_interval_s)
         if df_outputs.empty:
             raise FileNotFoundError(
@@ -698,63 +801,138 @@ class TRITONSWMM_sim_post_processing:
                 f"Expected files in: {fldr_out_triton}. "
                 "Ensure the TRITON-only simulation completed and wrote outputs."
             )
-        lst_ds_vars = []
-        expected_timesteps = df_outputs.index
-        for varname, files in df_outputs.items():
-            lst_ds = []
-            lst_tsteps = []
-            for tstep_min, f in files.items():
-                if not f.exists():
+
+        # Phase 1.2: Chunked processing - calculate optimal chunk size
+        from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
+
+        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        n_variables = len(df_outputs.columns)
+
+        chunk_size = estimate_timesteps_per_chunk(
+            rds_dem=rds_dem,
+            n_variables=n_variables,
+            memory_budget_MiB=memory_budget_MiB,
+        )
+
+        timestep_list = sorted(df_outputs.index.tolist())
+        total_timesteps = len(timestep_list)
+        n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
+
+        if verbose:
+            print(f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB", flush=True)
+            print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
+            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
+            print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
+
+        # Process in chunks
+        first_chunk = True
+
+        for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
+            chunk_end = min(chunk_start + chunk_size, total_timesteps)
+            chunk_timesteps = timestep_list[chunk_start:chunk_end]
+
+            if verbose:
+                print(
+                    f"[Chunked Processing] Processing chunk {chunk_idx + 1}/{n_chunks}: "
+                    f"timesteps {chunk_start}-{chunk_end - 1} ({len(chunk_timesteps)} timesteps)",
+                    flush=True,
+                )
+
+            # Load all variables for this chunk's timesteps
+            lst_ds_vars_chunk = []
+            for varname in df_outputs.columns:
+                files = df_outputs[varname]
+                lst_ds_timesteps = []
+
+                for tstep_min in chunk_timesteps:
+                    if tstep_min not in files.index:
+                        continue
+                    f = files[tstep_min]
+                    if not f.exists():
+                        if verbose:
+                            print(
+                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
+                                flush=True,
+                            )
+                        continue
+
+                    ds_triton_output = load_triton_output_w_xarray(
+                        rds_dem, f, varname, raw_out_type
+                    )
+                    lst_ds_timesteps.append(ds_triton_output)
+
+                if not lst_ds_timesteps:
                     if verbose:
                         print(
-                            f"Missing TRITON-only output file: {f}. Skipping this timestep.",
+                            f"[Chunked Processing] No valid files for {varname} in this chunk",
                             flush=True,
                         )
                     continue
-                ds_triton_output = load_triton_output_w_xarray(
-                    rds_dem, f, varname, raw_out_type
-                )
-                lst_ds.append(ds_triton_output)
-                lst_tsteps.append(tstep_min)
-            if not lst_ds:
+
+                # Determine valid timesteps
+                valid_timesteps = []
+                for tstep_min in chunk_timesteps:
+                    if tstep_min in files.index:
+                        f_path = files[tstep_min]
+                        if isinstance(f_path, Path) and f_path.exists():
+                            valid_timesteps.append(tstep_min)
+
+                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                lst_ds_vars_chunk.append(ds_var_chunk)
+
+                # Clear per-variable temporaries
+                del lst_ds_timesteps
+                gc.collect()
+
+            if not lst_ds_vars_chunk:
                 if verbose:
                     print(
-                        f"No valid TRITON-only outputs found for {varname}; skipping variable.",
+                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
                         flush=True,
                     )
                 continue
-            ds_var = xr.concat(lst_ds, dim="timestep_min")
-            ds_var = ds_var.assign_coords(timestep_min=lst_tsteps)
-            ds_var = ds_var.reindex(timestep_min=expected_timesteps)
-            lst_ds_vars.append(ds_var)
+
+            ds_chunk = xr.merge(lst_ds_vars_chunk)
+
+            # Write incrementally
+            if first_chunk:
+                if verbose:
+                    print(f"[Chunked Processing] Creating new zarr store: {fname_out.name}", flush=True)
+                encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
+                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
+                    model_type="triton", astype="str"
+                )
+                ds_chunk.attrs["output_creation_date"] = current_datetime_string()
+                ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
+                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                first_chunk = False
+            else:
+                if verbose:
+                    print(f"[Chunked Processing] Appending to zarr store", flush=True)
+                ds_chunk.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+
+            # Explicit cleanup
+            del ds_chunk, lst_ds_vars_chunk
+            gc.collect()
+
+        # Consolidate metadata
+        if verbose:
+            print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
+        import zarr
+        zarr.consolidate_metadata(fname_out)
 
         if verbose:
-            print(
-                f"Time to load {raw_out_type} TRITON-only outputs (min) {(time.time()-start_time)/60:.2f}"
-            )
+            print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
 
-        if not lst_ds_vars:
-            if verbose:
-                print(
-                    "No TRITON-only outputs were successfully loaded. Skipping output write.",
-                    flush=True,
-                )
-            return
-
-        # Write combined output
-        ds_combined = xr.merge(lst_ds_vars)
-        self._write_output(ds_combined, fname_out, comp_level, verbose)
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
+
         # Mark timeseries as written
         if self.log.TRITON_timeseries_written:
             self.log.TRITON_timeseries_written.set(True)
-
-        # Phase 1.3: Explicit garbage collection after large dataset operations
-        del ds_combined, lst_ds_vars
-        gc.collect()
 
         if clear_raw_outputs:
             self._clear_raw_TRITON_outputs(model_type="triton")
@@ -1254,7 +1432,7 @@ class TRITONSWMM_sim_post_processing:
         # Summarize
         target_dem_res = self._system.cfg_system.target_dem_resolution
         ds_summary = summarize_triton_simulation_results(
-            ds_full, self._scenario.event_iloc, target_dem_res
+            ds_full, self._scenario.event_iloc, target_dem_res, verbose=verbose
         )
 
         # Write
@@ -1673,92 +1851,120 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
 
 
 def summarize_triton_simulation_results(
-    ds, event_iloc, target_dem_resolution, tstep_dimname="timestep_min"
+    ds, event_iloc, target_dem_resolution, tstep_dimname="timestep_min", verbose=False
 ):
     """
     Summarize TRITON simulation results by computing max velocity, time of max velocity,
     water level statistics, and final flood volume.
 
+    Phase 1.2: Uses lazy dask operations to minimize memory usage. All computations
+    remain lazy until the final dataset is returned, at which point only the small
+    summary results are materialized (not the full timeseries).
+
     Parameters
     ----------
     ds : xr.Dataset
-        TRITON timeseries dataset
+        TRITON timeseries dataset (should be opened with chunks="auto" for lazy loading)
     event_iloc : int
         Event index for coordinate assignment
     target_dem_resolution : float
         Target DEM resolution for grid validation (meters)
     tstep_dimname : str, optional
         Name of timestep dimension (default: "timestep_min")
+    verbose : bool, optional
+        Print progress messages (default: False)
 
     Returns
     -------
     xr.Dataset
-        Summarized dataset with event_iloc coordinate and expanded dimensions
+        Summarized dataset with event_iloc coordinate and expanded dimensions.
+        This is a small dataset (no timestep dimension) that gets materialized
+        from lazy operations.
     """
+    if verbose:
+        print(f"[Summary] Computing summary statistics (lazy operations)", flush=True)
+
+    # Get timestep coordinate values (small operation, can materialize)
     tsteps = ds[tstep_dimname].to_series()
 
-    # compute max velocity, time of max velocity, and the x and y components of the max velocity
-    ds["velocity_mps"] = (ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
+    # Phase 1.2: All operations below remain lazy (dask arrays) until explicitly computed
+    # This allows xarray/dask to optimize the computation graph
 
-    ## compute max velocity
-    ds["max_velocity_mps"] = ds["velocity_mps"].max(dim=tstep_dimname, skipna=True)
+    # Compute max velocity, time of max velocity, and velocity components at max
+    # Note: These operations build a dask computation graph, not actual results yet
+    velocity_mps = (ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
 
-    ## compute time of max velocity
-    ds["time_of_max_velocity_min"] = ds["velocity_mps"].idxmax(
+    # Create summary dataset with lazy operations
+    ds_summary = xr.Dataset()
+
+    # Max velocity (lazy)
+    ds_summary["max_velocity_mps"] = velocity_mps.max(dim=tstep_dimname, skipna=True)
+
+    # Time of max velocity (lazy)
+    time_of_max_velocity = velocity_mps.idxmax(dim=tstep_dimname, skipna=True)
+    ds_summary["time_of_max_velocity_min"] = time_of_max_velocity
+
+    # Velocity components at time of max (lazy)
+    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
+        timestep_min=time_of_max_velocity
+    ).reset_coords(drop=True)
+    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
+        timestep_min=time_of_max_velocity
+    ).reset_coords(drop=True)
+
+    # Max water level and time of max (lazy)
+    # Handle MH variable if it exists with timestep dimension
+    if "max_wlevel_m" in ds.data_vars and tstep_dimname in ds.max_wlevel_m.dims:
+        # MH file has max across all computational timesteps at each reporting timestep
+        # Take the last reporting timestep which has the overall maximum
+        ds_summary["max_wlevel_m"] = ds.max_wlevel_m.sel(
+            timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
+        ).reset_coords(drop=True)
+    elif "max_wlevel_m" in ds.data_vars:
+        # Already a summary variable, just copy
+        ds_summary["max_wlevel_m"] = ds["max_wlevel_m"]
+    else:
+        # Compute from wlevel_m timeseries
+        ds_summary["max_wlevel_m"] = ds["wlevel_m"].max(dim=tstep_dimname, skipna=True)
+
+    ds_summary["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(
         dim=tstep_dimname, skipna=True
     )
 
-    ## return x and y velocities at time of max velocity
-    ds["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
-        timestep_min=ds["time_of_max_velocity_min"]
-    )
-    ds["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
-        timestep_min=ds["time_of_max_velocity_min"]
-    )
-
-    ## drop velocity_mps
-    ds = ds.drop_vars("velocity_mps")
-
-    ############################################
-    # compute max water level and time of max water level
-    if tstep_dimname in ds.max_wlevel_m.dims:
-        ds["max_wlevel_m"] = ds.max_wlevel_m.sel(
-            timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
-        ).reset_coords(drop=True)
-
-    ds["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(dim=tstep_dimname, skipna=True)
-
-    ## get water levels in last reported time step for mass balance
-    ds["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max())
-    ds["wlevel_m_last_tstep"].attrs[
+    # Water level in last timestep (lazy)
+    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    ds_summary["wlevel_m_last_tstep"].attrs[
         "notes"
     ] = "this is the water level in the last reported time step for computing mass balance"
 
-    # drop vars with timestep as a coordinate
-    for var in ds.data_vars:
-        if tstep_dimname in ds[var].coords:
-            ds = ds.drop_vars(var)
-
-    ds = ds.drop_dims(tstep_dimname)
-
-    # compute final stored volume after confirming grid specs
+    # Compute final stored volume (lazy)
+    # Grid validation (small operation, can materialize)
     x_dim = ds.x.to_series().diff().mode().iloc[0]
     y_dim = ds.y.to_series().diff().mode().iloc[0]
-    # Use absolute values since y-coordinates often descend (negative diff)
     if (abs(x_dim) != abs(y_dim)) or (abs(x_dim) != target_dem_resolution):
         raise ValueError(
             f"Output dimensions do not line up with expectations. "
             f"Target DEM res: {target_dem_resolution}. x_dim, y_dim = {x_dim}, {y_dim}"
         )
 
-    ds["final_surface_flood_volume_cm"] = (
-        ds["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
+    ds_summary["final_surface_flood_volume_cm"] = (
+        ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
     ).sum()
+    ds_summary["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
 
-    ds["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
+    # Assign event_iloc coordinate and expand dims (metadata operations)
+    ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
+    ds_summary = ds_summary.expand_dims("event_iloc")
 
-    # Assign event_iloc coordinate and expand dims
-    ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
-    ds = ds.expand_dims("event_iloc")
+    if verbose:
+        print(f"[Summary] Materializing summary results (.compute())", flush=True)
 
-    return ds
+    # Phase 1.2: This is where the actual computation happens
+    # Dask optimizes the entire computation graph and executes it efficiently
+    # Only the small summary dataset (no timestep dimension) is materialized
+    ds_summary = ds_summary.compute()
+
+    if verbose:
+        print(f"[Summary] Summary generation complete", flush=True)
+
+    return ds_summary
