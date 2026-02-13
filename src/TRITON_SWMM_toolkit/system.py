@@ -969,10 +969,7 @@ class TRITONSWMM_system:
             triton_check = "[100%] Built target triton.exe" in log
             if triton_check:
                 return True
-
-        # Fallback: if compilation log is missing but executable exists, accept as successful
-        exe_path = self.sys_paths.TRITON_build_dir_cpu / "triton.exe"
-        return exe_path.exists()
+        return False
 
     @property
     def compilation_triton_only_gpu_successful(self) -> bool:
@@ -986,8 +983,7 @@ class TRITONSWMM_system:
             if triton_check:
                 return True
 
-        exe_path = self.sys_paths.TRITON_build_dir_gpu / "triton.exe"
-        return exe_path.exists()
+        return False
 
     @property
     def compilation_triton_only_successful(self) -> bool:
