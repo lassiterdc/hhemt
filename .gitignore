@@ -212,6 +212,7 @@ __marimo__/
 *test_data/*/swmm/*
 profile_runner.py.lprof
 profiling/retrieve_profile.out
+*test_data/reference_for_addressing*
 
 # Local/large vendored or external content
 external/
