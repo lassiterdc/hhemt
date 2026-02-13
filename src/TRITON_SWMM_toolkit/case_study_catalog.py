@@ -183,7 +183,7 @@ class UVACaseStudies:
         }
 
         system_overrides = {
-            "toggle_triton_model": True,
+            "toggle_triton_model": False,
             "toggle_tritonswmm_model": True,
             "toggle_swmm_model": False,
             "gpu_compilation_backend": None,
