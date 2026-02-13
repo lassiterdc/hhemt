@@ -36,8 +36,10 @@ class TRITONSWMM_system:
         )
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
-            dem_processed=system_dir / "elevation.dem",
-            mannings_processed=system_dir / "mannings.dem",
+            dem_processed=system_dir
+            / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
+            mannings_processed=system_dir
+            / f"mannings_{self.cfg_system.target_dem_resolution:.2f}m.dem",
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
