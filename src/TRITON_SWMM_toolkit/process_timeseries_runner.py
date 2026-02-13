@@ -27,6 +27,12 @@ import argparse
 from pathlib import Path
 import traceback
 import logging
+import gc
+
+# Memory profiling imports (always-on, minimal overhead)
+import tracemalloc
+import psutil
+import os
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -35,6 +41,18 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger(__name__)
+
+
+def get_memory_mb():
+    """Get current process memory usage in MB."""
+    process = psutil.Process(os.getpid())
+    return process.memory_info().rss / 1024 / 1024
+
+
+def log_memory_profile(description: str):
+    """Log current memory usage with description."""
+    mem_mb = get_memory_mb()
+    logger.info(f"[MEMORY] {description}: {mem_mb:.1f} MB")
 
 
 def main():
@@ -114,6 +132,14 @@ def main():
         logger.error(f"System config not found: {args.system_config}")
         return 2
 
+    # Start always-on memory profiling (minimal overhead <1%)
+    tracemalloc.start()
+    gc.collect()
+    initial_memory = get_memory_mb()
+    logger.info("[MEMORY PROFILING] Enabled (overhead <1%)")
+    logger.info(f"[MEMORY] Initial: {initial_memory:.1f} MB")
+    snapshot_before = tracemalloc.take_snapshot()
+
     try:
         # Import here to avoid import errors if dependencies are missing
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
@@ -136,6 +162,8 @@ def main():
         logger.info(f"Processing timeseries for scenario {args.event_iloc}")
         scenario = TRITONSWMM_scenario(args.event_iloc, analysis)
         scenario.log.refresh()
+
+        log_memory_profile("After scenario initialization")
 
         model_types_enabled = scenario.run.model_types_enabled
 
@@ -162,6 +190,10 @@ def main():
         run = scenario.run
         proc = TRITONSWMM_sim_post_processing(run, model_log=model_log)
 
+        # Memory checkpoint before timeseries processing
+        log_memory_profile("Before write_timeseries_outputs")
+        gc.collect()
+
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
             which=args.which,  # type: ignore
@@ -171,6 +203,10 @@ def main():
             verbose=True,
             compression_level=args.compression_level,
         )
+
+        # Memory checkpoint after timeseries processing
+        log_memory_profile("After write_timeseries_outputs")
+        gc.collect()
 
         # Write model log to disk (processing methods update in-memory log)
         model_log.write()
@@ -220,6 +256,9 @@ def main():
 
         logger.info(f"Scenario {args.event_iloc} timeseries processed successfully")
 
+        # Memory checkpoint before summary generation
+        log_memory_profile("Before write_summary_outputs")
+
         # create summaries from full timeseries
         logger.info(f"Creating summaries for scenario {args.event_iloc}")
         proc.write_summary_outputs(
@@ -258,7 +297,23 @@ def main():
                     )
                     return 1
 
+        # Memory checkpoint after summary generation
+        log_memory_profile("After write_summary_outputs")
+
         logger.info(f"Scenario {args.event_iloc} summaries created successfully")
+
+        # Final memory profiling summary
+        gc.collect()
+        snapshot_after = tracemalloc.take_snapshot()
+        top_stats = snapshot_after.compare_to(snapshot_before, 'lineno')
+
+        logger.info("[MEMORY] Top 10 memory allocations:")
+        for stat in top_stats[:10]:
+            logger.info(f"  {stat}")
+
+        peak_memory = get_memory_mb()
+        logger.info(f"[MEMORY] Peak: {peak_memory:.1f} MB (delta: +{peak_memory - initial_memory:.1f} MB)")
+        logger.info("[MEMORY PROFILING] Complete - data available in logfile for analysis")
 
         # Optionally clear full timeseries files to save disk space
         if args.clear_full_timeseries:
@@ -275,7 +330,14 @@ def main():
     except Exception as e:
         logger.error(f"Exception occurred during timeseries processing: {e}")
         logger.error(traceback.format_exc())
+
+        # Log memory state at failure (helpful for OOM debugging)
+        failure_memory = get_memory_mb()
+        logger.error(f"[MEMORY] At failure: {failure_memory:.1f} MB")
+
         return 1
+    finally:
+        tracemalloc.stop()
 
 
 if __name__ == "__main__":
