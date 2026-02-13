@@ -79,11 +79,11 @@ class analysis_config(cfgBaseModel):
         "multi_sim_run_method = 1_job_many_srun_tasks.",
     )
     hpc_mem_allocation_for_sim_output_processing_mb: int = Field(
-        64000,
+        12000,
         description="Memory allocation for creating simulation time series.",
     )
     hpc_mem_allocation_for_analysis_output_consolidation_mb: int = Field(
-        64000,
+        12000,
         description="Memory allocation for consolidating simulation summaries across all scenarios.",
     )
     # local run constraints
