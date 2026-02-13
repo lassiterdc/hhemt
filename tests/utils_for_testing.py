@@ -1,11 +1,15 @@
 import os
 import socket
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pandas as pd
 import pytest
 
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 
 def uses_slurm() -> bool:
@@ -886,4 +890,123 @@ def assert_model_simulations_complete(
             f"{model_type.upper()} simulations incomplete for "
             f"{len(incomplete_scenarios)} of {len(analysis.df_sims)} scenarios. "
             "Run with pytest -v for scenario list."
+        )
+
+
+def assert_datasets_equal(
+    ds_reference: "xr.Dataset",
+    ds_actual: "xr.Dataset",
+    dataset_name: str,
+    skip_vars: list[str] | None = None,
+    rtol: float = 1e-9,
+    atol: float = 1e-12,
+) -> None:
+    """
+    Assert two datasets have identical data values (order-agnostic).
+
+    Parameters
+    ----------
+    ds_reference : xr.Dataset
+        Reference dataset
+    ds_actual : xr.Dataset
+        Actual (freshly generated) dataset
+    dataset_name : str
+        Name for error messages (e.g., "TRITONSWMM_TRITON.zarr")
+    skip_vars : list[str], optional
+        Variable names to skip (e.g., performance timers)
+    rtol : float
+        Relative tolerance for np.allclose
+    atol : float
+        Absolute tolerance for np.allclose
+
+    Raises
+    ------
+    AssertionError
+        If datasets differ in dimensions, variables, or values
+    """
+    import numpy as np
+
+    skip_vars = skip_vars or []
+
+    # Check dimensions match (order-agnostic)
+    ref_dims = set(ds_reference.dims)
+    actual_dims = set(ds_actual.dims)
+    if ref_dims != actual_dims:
+        raise AssertionError(
+            f"{dataset_name}: Dimension names differ.\n"
+            f"  Reference: {sorted(ref_dims)}\n"
+            f"  Actual: {sorted(actual_dims)}"
+        )
+
+    # Check data variables match (order-agnostic, excluding skipped)
+    ref_vars = set(ds_reference.data_vars) - set(skip_vars)
+    actual_vars = set(ds_actual.data_vars) - set(skip_vars)
+    if ref_vars != actual_vars:
+        missing = ref_vars - actual_vars
+        extra = actual_vars - ref_vars
+        raise AssertionError(
+            f"{dataset_name}: Data variables differ.\n"
+            f"  Missing in actual: {sorted(missing) if missing else 'none'}\n"
+            f"  Extra in actual: {sorted(extra) if extra else 'none'}"
+        )
+
+    # Compare each data variable
+    mismatched_vars = []
+    for var in ref_vars:
+        ref_da = ds_reference[var]
+        actual_da = ds_actual[var]
+
+        # Get dimension names (order-agnostic comparison)
+        ref_dims_list = list(ref_da.dims)
+        actual_dims_list = list(actual_da.dims)
+
+        # Check dimension names match (order doesn't matter)
+        if set(ref_dims_list) != set(actual_dims_list):
+            mismatched_vars.append(
+                f"{var}: dimension names differ (ref={ref_dims_list}, actual={actual_dims_list})"
+            )
+            continue
+
+        # Transpose actual to match reference dimension order if needed
+        if ref_dims_list != actual_dims_list:
+            actual_da = actual_da.transpose(*ref_dims_list)
+
+        # Use coordinate-based alignment to handle coordinate reversal (e.g., y-coords)
+        # This ensures we're comparing the same geographic locations even if coordinates
+        # are in different order (e.g., ascending vs descending)
+        try:
+            actual_da_aligned = actual_da.reindex_like(ref_da, method=None)
+        except Exception as e:
+            mismatched_vars.append(
+                f"{var}: coordinate alignment failed ({str(e)})"
+            )
+            continue
+
+        ref_values = ref_da.values
+        actual_values = actual_da_aligned.values
+
+        # Now shapes should match after transpose and reindex
+        if ref_values.shape != actual_values.shape:
+            mismatched_vars.append(
+                f"{var}: shape mismatch even after transpose and reindex (ref={ref_values.shape}, actual={actual_values.shape})"
+            )
+            continue
+
+        # Compare values (handle string dtypes specially)
+        if np.issubdtype(ref_values.dtype, np.str_) or np.issubdtype(ref_values.dtype, np.object_):
+            # String comparison
+            if not np.array_equal(ref_values, actual_values):
+                mismatched_vars.append(f"{var}: string values differ")
+        else:
+            # Numeric comparison with tolerance
+            if not np.allclose(ref_values, actual_values, rtol=rtol, atol=atol, equal_nan=True):
+                max_diff = np.nanmax(np.abs(ref_values - actual_values))
+                mismatched_vars.append(
+                    f"{var}: numeric values differ (max_abs_diff={max_diff:.2e})"
+                )
+
+    if mismatched_vars:
+        raise AssertionError(
+            f"{dataset_name}: {len(mismatched_vars)} variable(s) have mismatched values:\n  " +
+            "\n  ".join(mismatched_vars)
         )
