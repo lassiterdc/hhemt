@@ -413,7 +413,7 @@ rule prepare_scenario:
         for model_type in enabled_models:
             # For SWMM, use fixed CPU-only resources (no GPU, limited threads)
             if model_type == "swmm":
-                swmm_cpus = self.cfg_analysis.n_threads_swmm or 1
+                swmm_cpus = self.cfg_analysis.n_omp_threads or 1
                 swmm_resources = self._build_resource_block(
                     partition=self.cfg_analysis.hpc_ensemble_partition,
                     runtime_min=hpc_time_min,
@@ -562,7 +562,7 @@ rule consolidate:
             config.update(
                 {
                     "cores": self.cfg_analysis.local_cpu_cores_for_workflow,
-                    "keep-going": False,
+                    "keep-going": True,
                 }
             )
         elif mode == "single_job":
