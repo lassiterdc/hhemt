@@ -309,6 +309,11 @@ class TRITONSWMM_system:
         str_flt = str_flt.apply(lambda x: str(x).ljust(longest_num, "0"))
         return str_flt
 
+    def _sync_compilation_log_field(self, log_field, success: bool):
+        current_value = log_field.get()
+        if current_value is None or current_value != success:
+            log_field.set(success)
+
     # compilation stuff
     def compile_TRITON_SWMM(
         self,
@@ -967,23 +972,34 @@ class TRITONSWMM_system:
             log = ut.read_text_file_as_string(logfile)
             # TRITON-only does NOT have swmm5 target
             triton_check = "[100%] Built target triton.exe" in log
-            if triton_check:
-                return True
-        return False
+            success = triton_check
+        else:
+            success = False
+        self._sync_compilation_log_field(
+            self.log.compilation_triton_cpu_successful, success
+        )
+        return success
 
     @property
     def compilation_triton_only_gpu_successful(self) -> bool:
         """Check if TRITON-only GPU backend compiled successfully."""
         if self.sys_paths.TRITON_build_dir_gpu is None:
-            return False
+            success = False
+            self._sync_compilation_log_field(
+                self.log.compilation_triton_gpu_successful, success
+            )
+            return success
         logfile = self.sys_paths.TRITON_build_dir_gpu / "compilation.log"
         if logfile.exists():
             log = ut.read_text_file_as_string(logfile)
             triton_check = "[100%] Built target triton.exe" in log
-            if triton_check:
-                return True
-
-        return False
+            success = triton_check
+        else:
+            success = False
+        self._sync_compilation_log_field(
+            self.log.compilation_triton_gpu_successful, success
+        )
+        return success
 
     @property
     def compilation_triton_only_successful(self) -> bool:
@@ -1137,18 +1153,29 @@ class TRITONSWMM_system:
     def compilation_swmm_successful(self) -> bool:
         """Check if standalone SWMM compiled successfully."""
         if self.sys_paths.SWMM_build_dir is None:
-            return False
+            success = False
+            self._sync_compilation_log_field(
+                self.log.compilation_swmm_successful, success
+            )
+            return success
         logfile = self.sys_paths.SWMM_build_dir / "compilation.log"
         if not logfile.exists():
-            return False
+            success = False
+            self._sync_compilation_log_field(
+                self.log.compilation_swmm_successful, success
+            )
+            return success
         log = ut.read_text_file_as_string(logfile)
         success_markers = ("Built target runswmm", "Built target swmm5")
         failure_markers = ("CMake Error", "error:", "FAILED")
         if any(marker in log for marker in success_markers):
-            return True
-        if any(marker in log for marker in failure_markers):
-            return False
-        return False
+            success = True
+        elif any(marker in log for marker in failure_markers):
+            success = False
+        else:
+            success = False
+        self._sync_compilation_log_field(self.log.compilation_swmm_successful, success)
+        return success
 
     @property
     def swmm_executable(self) -> Path | None:
@@ -1196,19 +1223,35 @@ class TRITONSWMM_system:
         log = self.retrieve_compilation_log("cpu")
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log
-        return swmm_check and triton_check
+        success = swmm_check and triton_check
+        self._sync_compilation_log_field(
+            self.log.compilation_tritonswmm_cpu_successful, success
+        )
+        return success
 
     @property
     def compilation_gpu_successful(self) -> bool:
         """Check if TRITON-SWMM GPU backend compiled successfully."""
         if self.sys_paths.compilation_logfile_gpu is None:
-            return False
+            success = False
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_gpu_successful, success
+            )
+            return success
         if not self.sys_paths.compilation_logfile_gpu.exists():
-            return False
+            success = False
+            self._sync_compilation_log_field(
+                self.log.compilation_tritonswmm_gpu_successful, success
+            )
+            return success
         log = self.retrieve_compilation_log("gpu")
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log
-        return swmm_check and triton_check
+        success = swmm_check and triton_check
+        self._sync_compilation_log_field(
+            self.log.compilation_tritonswmm_gpu_successful, success
+        )
+        return success
 
     @property
     def compilation_successful(self) -> bool:
