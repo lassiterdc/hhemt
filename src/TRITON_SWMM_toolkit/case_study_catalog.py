@@ -158,7 +158,7 @@ class UVACaseStudies:
         )
 
     @classmethod
-    def retrieve_norfolk_UVA_sensitivity_suite(
+    def benchmarking(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         """UVA HPC sensitivity analysis."""
