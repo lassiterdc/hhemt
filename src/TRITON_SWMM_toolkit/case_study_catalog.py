@@ -81,9 +81,7 @@ class CaseStudyBuilder:
             fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
-        new_system_config_yaml = (
-            self.system.cfg_system.system_directory / f"{case_system_dirname}.yaml"
-        )
+        new_system_config_yaml = anlysys_dir / f"cfg_system.yaml"
 
         new_system_config_yaml.write_text(
             yaml.safe_dump(
@@ -106,7 +104,7 @@ class CaseStudyBuilder:
 
         cfg_analysis = analysis_config.model_validate(cfg_analysis)
         # write analysis as yaml
-        cfg_anlysys_yaml = anlysys_dir / f"{analysis_name}.yaml"
+        cfg_anlysys_yaml = anlysys_dir / f"cfg_analysis.yaml"
         cfg_anlysys_yaml.write_text(
             yaml.safe_dump(
                 cfg_analysis.model_dump(mode="json"),
@@ -155,6 +153,7 @@ class UVACaseStudies:
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
+            case_system_dirname="case_og_dem_res_3.7m",
         )
 
     @classmethod

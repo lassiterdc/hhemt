@@ -107,9 +107,7 @@ class retrieve_TRITON_SWMM_test_case:
             shutil.rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
-        new_system_config_yaml = (
-            self.system.cfg_system.system_directory / f"{test_system_dirname}.yaml"
-        )
+        new_system_config_yaml = anlysys_dir / f"cfg_system.yaml"
 
         new_system_config_yaml.write_text(
             yaml.safe_dump(
@@ -146,7 +144,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         cfg_analysis = analysis_config.model_validate(cfg_analysis)
         # write analysis as yaml
-        cfg_anlysys_yaml = anlysys_dir / f"{analysis_name}.yaml"
+        cfg_anlysys_yaml = anlysys_dir / f"cfg_analysis.yaml"
         cfg_anlysys_yaml.write_text(
             yaml.safe_dump(
                 cfg_analysis.model_dump(mode="json"),
