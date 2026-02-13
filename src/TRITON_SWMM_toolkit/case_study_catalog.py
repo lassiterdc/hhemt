@@ -143,6 +143,10 @@ class UVACaseStudies:
             "toggle_swmm_model": False,
             "gpu_compilation_backend": None,
             "target_dem_resolution": 3.6567656220319873,
+            "processed_xllcorner": 3696703.833599999,
+            "processed_yllcorner": 1059880.7176479595,
+            "ncols": 526,
+            "nrows": 513,
         }
 
         return CaseStudyBuilder(
