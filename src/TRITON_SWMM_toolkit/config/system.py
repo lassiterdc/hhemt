@@ -158,6 +158,20 @@ class system_config(cfgBaseModel):
         None,
         description="Constant manning's coefficient to use. Only applies if toggle_use_constant_mannings is set to True.",
     )
+    processed_xllcorner: Optional[float] = Field(
+        None,
+        description=(
+            "Optional lower-left x-coordinate to anchor processed DEM/Manning outputs "
+            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+        ),
+    )
+    processed_yllcorner: Optional[float] = Field(
+        None,
+        description=(
+            "Optional lower-left y-coordinate to anchor processed DEM/Manning outputs "
+            "(in DEM CRS units). When set, processed rasters are aligned to this origin."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -197,6 +211,13 @@ class system_config(cfgBaseModel):
             lst_rqrd_if_false=[],
         )
         errors.extend(additional_errors)
+
+        processed_xllcorner = values.get("processed_xllcorner")
+        processed_yllcorner = values.get("processed_yllcorner")
+        if (processed_xllcorner is None) ^ (processed_yllcorner is None):
+            errors.append(
+                "processed_xllcorner and processed_yllcorner must be provided together."
+            )
 
         if errors:
             raise ValueError("; ".join(errors))

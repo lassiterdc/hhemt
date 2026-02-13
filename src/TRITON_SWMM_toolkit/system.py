@@ -10,6 +10,7 @@ import pandas as pd
 import rioxarray as rxr
 import xarray as xr
 from rasterio.enums import Resampling
+from rasterio.transform import from_origin
 
 import TRITON_SWMM_toolkit.utils as ut
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -221,7 +222,12 @@ class TRITONSWMM_system:
             )
             rds_dem = rds_dem.rio.interpolate_na(method="nearest")
         # coarsen
-        rds_dem_coarse = coarsen_georaster(rds_dem, target_resolution)
+        rds_dem_coarse = coarsen_georaster(
+            rds_dem,
+            target_resolution,
+            xllcorner=self.cfg_system.processed_xllcorner,
+            yllcorner=self.cfg_system.processed_yllcorner,
+        )
         return rds_dem_coarse
 
     def _create_mannings_raster_matching_dem(self, fillna_val=-9999):
@@ -239,7 +245,12 @@ class TRITONSWMM_system:
         assert (
             np.isclose(rds_mannings.rio.resolution(), rds_dem.rio.resolution())  # type: ignore
         ).sum() == 2
-        rds_mannings_coarse = coarsen_georaster(rds_mannings, target_resolution)
+        rds_mannings_coarse = coarsen_georaster(
+            rds_mannings,
+            target_resolution,
+            xllcorner=self.cfg_system.processed_xllcorner,
+            yllcorner=self.cfg_system.processed_yllcorner,
+        )
         assert rds_mannings.min().values > 0
         return rds_mannings_coarse
 
@@ -1370,7 +1381,7 @@ def compute_grid_resolution(rds):
     return res_xy, mean_grid_size
 
 
-def coarsen_georaster(rds, target_resolution):
+def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None):
     crs = rds.rio.crs
     _, og_avg_gridsize = compute_grid_resolution(rds)
     res_multiplier = target_resolution / og_avg_gridsize
@@ -1380,4 +1391,22 @@ def coarsen_georaster(rds, target_resolution):
     )  # aggregate cells
     _, coarse_avg_gridsize = compute_grid_resolution(rds_coarse)
     assert np.isclose(coarse_avg_gridsize, target_resolution)
+
+    if xllcorner is not None and yllcorner is not None:
+        left, bottom, right, top = rds_coarse.rio.bounds()  # type: ignore
+        ncols = int(np.ceil((right - xllcorner) / target_resolution))
+        nrows = int(np.ceil((top - yllcorner) / target_resolution))
+        transform = from_origin(
+            xllcorner,
+            yllcorner + nrows * target_resolution,
+            target_resolution,
+            target_resolution,
+        )
+        rds_coarse = rds_coarse.rio.reproject(  # type: ignore
+            crs,
+            transform=transform,
+            shape=(nrows, ncols),
+            resampling=Resampling.average,
+        )
+
     return rds_coarse
