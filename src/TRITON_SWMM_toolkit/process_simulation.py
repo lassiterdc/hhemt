@@ -1582,16 +1582,6 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
     xr.Dataset
         Dataset with single variable (varname) indexed by (y, x)
 
-    Notes
-    -----
-    Previous implementation used pandas DataFrame with melt/set_index operations
-    that caused 3-4× memory amplification. This version creates xarray directly
-    from numpy arrays, eliminating intermediate DataFrame objects.
-
-    Memory comparison (513×526 grid):
-    - Old method: ~17 MB per timestep
-    - New method: ~2.5 MB per timestep
-    - Savings: 85% reduction
     """
     if raw_out_type == "asc":
         # ASCII format: space-separated values
@@ -1632,7 +1622,7 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
         attrs={
             "source_file": str(f_triton_output),
             "format": raw_out_type,
-        }
+        },
     ).to_dataset()
 
     return ds_triton_output
