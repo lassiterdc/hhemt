@@ -1349,7 +1349,29 @@ Validated data integrity using independent binary file reader to verify chunked 
 
 **Conclusion**: Week 2 memory optimizations are **production-ready** with zero correctness regression. Safe for HPC deployment.
 
-**Next Steps** (Week 3+):
+**✅ Test Infrastructure Cleanup (Complete)**
+
+After successful validation, deprecated reference comparison test was removed:
+
+**Removed** (commit `02eea2a`):
+- `test_validate_outputs_against_reference()` from `tests/test_PC_04_multisim_with_snakemake.py` (246 lines)
+  - Previously compared zarr outputs against `test_data/reference_for_addressing_memory_allocation_issues/`
+  - Superseded by binary-to-zarr validation which is more authoritative
+
+**Preserved**:
+- `assert_datasets_equal()` utility in `tests/utils_for_testing.py` (general-purpose helper)
+- Validation tools in `test_data/.../debugging/verifying_triton_outputs_are_being_accurately_written/`
+  - `validate_optimized_outputs.py` - Binary-to-zarr validation script
+  - `README.md` - Complete validation methodology and results documentation
+  - Pre-optimization baseline: commit `d602a7e` (Phase 1.1, before Week 2 chunked processing)
+
+**Rationale**: Binary-to-zarr validation validates against ground truth (TRITON `.out` binary files) rather than derived data, doesn't require reference data maintenance, and provides better diagnostics.
+
+**Final Commits**:
+1. `309e678` - feat: implement chunked processing and lazy summaries (Phase 1.2)
+2. `02eea2a` - test: remove deprecated reference comparison test
+
+**Next Steps** (Week 3+ - User-Led):
 - Profile memory usage on full-scale datasets (100+ timesteps)
 - Deploy to HPC and validate under production workloads
 
