@@ -91,6 +91,7 @@ class TRITONSWMM_system:
 
         self._analysis: TRITONSWMM_analysis | None = None
         self.plot = TRITONSWMM_system_plotting(self)
+        self._sync_compilation_status_on_init()
 
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
@@ -313,6 +314,13 @@ class TRITONSWMM_system:
         current_value = log_field.get()
         if current_value is None or current_value != success:
             log_field.set(success)
+
+    def _sync_compilation_status_on_init(self):
+        _ = self.compilation_cpu_successful
+        _ = self.compilation_gpu_successful
+        _ = self.compilation_triton_only_cpu_successful
+        _ = self.compilation_triton_only_gpu_successful
+        _ = self.compilation_swmm_successful
 
     # compilation stuff
     def compile_TRITON_SWMM(
