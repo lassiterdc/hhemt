@@ -135,7 +135,7 @@ class SnakemakeWorkflowBuilder:
         str
             Formatted resources block
         """
-        if partition is None:
+        if partition is None and (self.cfg_analysis.multi_sim_run_method != "local"):
             raise ValueError(
                 "hpc partition must be set when generating SLURM resources"
             )
@@ -316,7 +316,7 @@ class SnakemakeWorkflowBuilder:
         process_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
             runtime_min=120,
-            mem_mb=32000,  # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
+            mem_mb=self.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
             nodes=1,
             tasks=1,
             cpus_per_task=2,  # Parallel compression
@@ -326,7 +326,7 @@ class SnakemakeWorkflowBuilder:
         consolidate_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
             runtime_min=30,
-            mem_mb=32000,  # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
+            mem_mb=self.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
             nodes=1,
             tasks=1,
             cpus_per_task=2,
@@ -2291,7 +2291,7 @@ rule setup:
             process_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
                 runtime_min=120,
-                mem_mb=32000,  # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults
+                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
                 nodes=1,
                 tasks=1,
                 cpus_per_task=2,
@@ -2405,7 +2405,7 @@ rule setup:
 {self._base_builder._build_resource_block(
     partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
     runtime_min=30,
-    mem_mb=8000,
+    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
     nodes=1,
     tasks=1,
     cpus_per_task=1,
@@ -2424,9 +2424,6 @@ rule setup:
 
 '''
 
-        # TODO - find a way to automate these memory sizes or have them as a user input with reasonable defaults for the _build_resource_block
-        # above and below
-
         # Generate master consolidation rule
         snakefile_content += f'''rule master_consolidation:
     input: {', '.join([f'"{flag}"' for flag in subanalysis_flags])}
@@ -2437,7 +2434,7 @@ rule setup:
 {self._base_builder._build_resource_block(
     partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
     runtime_min=30,
-    mem_mb=32000,
+    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
     nodes=1,
     tasks=1,
     cpus_per_task=1,

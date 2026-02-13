@@ -17,7 +17,7 @@ storm_tide_units: 'm'
 toggle_sensitivity_analysis: False
 toggle_storm_tide_boundary: True
 # PARAMETERS
-target_processed_output_type: 'nc' # zarr or nc
+target_processed_output_type: 'zarr' # zarr or nc
 TRITON_raw_output_type: 'bin' # bin or asc
 manhole_diameter: 1.2
 manhole_loss_coefficient: 0.1

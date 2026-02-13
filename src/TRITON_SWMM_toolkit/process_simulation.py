@@ -896,11 +896,11 @@ class TRITONSWMM_sim_post_processing:
             }
         )
 
-        paths_attr = convert_datetime_to_str(paths_attr)
-        config_attr = convert_datetime_to_str(config_attr)
+        # paths_attr = convert_datetime_to_str(paths_attr)
+        # config_attr = convert_datetime_to_str(config_attr)
 
-        ds.attrs["paths"] = json.dumps(paths_attr, default=str)
-        ds.attrs["configuration"] = json.dumps(config_attr, default=str)
+        # ds.attrs["paths"] = json.dumps(paths_attr, default=str)
+        # ds.attrs["configuration"] = json.dumps(config_attr, default=str)
 
         # Convert any datetime objects in attributes to ISO format strings
         # to ensure JSON serializability when writing to zarr

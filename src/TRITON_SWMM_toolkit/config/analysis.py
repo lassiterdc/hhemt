@@ -78,6 +78,14 @@ class analysis_config(cfgBaseModel):
         description="CPUs per node on the HPC cluster. Required for dry runs using "
         "multi_sim_run_method = 1_job_many_srun_tasks.",
     )
+    hpc_mem_allocation_for_sim_output_processing_mb: int = Field(
+        64000,
+        description="Memory allocation for creating simulation time series.",
+    )
+    hpc_mem_allocation_for_analysis_output_consolidation_mb: int = Field(
+        64000,
+        description="Memory allocation for consolidating simulation summaries across all scenarios.",
+    )
     # local run constraints
     local_cpu_cores_for_workflow: Optional[int] = Field(
         None,
@@ -163,6 +171,10 @@ class analysis_config(cfgBaseModel):
     target_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
         description="TRITON processed output type, zarr or nc.",
+    )
+    process_output_target_chunksize_mb: int = Field(
+        200,
+        description="Chunks size for processed outputs.",
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",

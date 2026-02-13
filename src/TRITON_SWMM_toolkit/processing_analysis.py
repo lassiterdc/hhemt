@@ -120,7 +120,6 @@ class TRITONSWMM_analysis_post_processing:
         ds_combined_outputs: xr.Dataset,
         spatial_coords: List[str] | str | None,
         spatial_coord_size: int = 65536,  # 256x256 for x,y coords
-        max_mem_usage_MiB: float = 200,
         verbose: bool = True,
     ):
         """
@@ -149,6 +148,9 @@ class TRITONSWMM_analysis_post_processing:
         dict or "auto"
             Chunk specification for each dimension
         """
+        max_mem_usage_MiB = (
+            self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        )
         # Handle non-spatial data (e.g., performance summaries)
         if spatial_coords is None:
             if verbose:
