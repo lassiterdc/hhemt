@@ -172,6 +172,18 @@ class system_config(cfgBaseModel):
             "(in DEM CRS units). When set, processed rasters are aligned to this origin."
         ),
     )
+    ncols: Optional[int] = Field(
+        None,
+        description=(
+            "Target number of columns in the processed DEM, mannings, and TRITON results"
+        ),
+    )
+    nrows: Optional[int] = Field(
+        None,
+        description=(
+            "Target number of rows in the processed DEM, mannings, and TRITON results"
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -214,9 +226,14 @@ class system_config(cfgBaseModel):
 
         processed_xllcorner = values.get("processed_xllcorner")
         processed_yllcorner = values.get("processed_yllcorner")
-        if (processed_xllcorner is None) ^ (processed_yllcorner is None):
+        ncols = values.get("ncols")
+        nrows = values.get("nrows")
+        processed_fields = [processed_xllcorner, processed_yllcorner, ncols, nrows]
+        if any(val is not None for val in processed_fields) and not all(
+            val is not None for val in processed_fields
+        ):
             errors.append(
-                "processed_xllcorner and processed_yllcorner must be provided together."
+                "processed_xllcorner, processed_yllcorner, ncols, and nrows must be provided together."
             )
 
         if errors:
