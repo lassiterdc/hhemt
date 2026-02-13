@@ -1,4 +1,5 @@
 from TRITON_SWMM_toolkit.utils import write_json
+from filelock import FileLock
 from pathlib import Path
 from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
 import json
@@ -102,7 +103,6 @@ class LogFieldDict(Generic[T]):
         return f"LogFieldDict({self.value!r})"
 
 
-
 # ----------------------------
 # Simulation Processing
 # ----------------------------
@@ -188,7 +188,7 @@ class TRITONSWMM_log(BaseModel):
     # Persistence helpers
     # ----------------------------
     def as_dict(self):
-        return self.model_dump(mode='json')
+        return self.model_dump(mode="json")
 
     def write(self):
         write_json(self.as_dict(), self.logfile)
@@ -521,6 +521,12 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
     )(_logfield_serializer)
+
+    def write(self):
+        lock_path = self.logfile.with_suffix(f"{self.logfile.suffix}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(lock_path)):
+            super().write()
 
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):
