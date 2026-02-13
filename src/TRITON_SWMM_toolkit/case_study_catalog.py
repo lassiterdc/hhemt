@@ -158,7 +158,7 @@ class UVACaseStudies:
         )
 
     @classmethod
-    def benchmarking(
+    def benchmarking_norfolk_irene(
         cls, start_from_scratch: bool = False, download_if_exists: bool = False
     ):
         """UVA HPC sensitivity analysis."""
