@@ -607,7 +607,9 @@ class TRITONSWMM_sim_post_processing:
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
 
-        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        memory_budget_MiB = (
+            self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        )
         n_variables = len(df_outputs.columns)  # H, QX, QY, MH
 
         chunk_size = estimate_timesteps_per_chunk(
@@ -621,9 +623,14 @@ class TRITONSWMM_sim_post_processing:
         n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
 
         if verbose:
-            print(f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB", flush=True)
+            print(
+                f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB",
+                flush=True,
+            )
             print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
+            print(
+                f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True
+            )
             print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
 
         # Process in chunks
@@ -700,14 +707,19 @@ class TRITONSWMM_sim_post_processing:
             # Write incrementally
             if first_chunk:
                 if verbose:
-                    print(f"[Chunked Processing] Creating new zarr store: {fname_out.name}", flush=True)
+                    print(
+                        f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
+                        flush=True,
+                    )
                 encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
                 ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
                     model_type="tritonswmm", astype="str"
                 )
                 ds_chunk.attrs["output_creation_date"] = current_datetime_string()
                 ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
-                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                ds_chunk.to_zarr(
+                    fname_out, mode="w", encoding=encoding, consolidated=False
+                )
                 first_chunk = False
             else:
                 if verbose:
@@ -722,6 +734,7 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
         import zarr
+
         zarr.consolidate_metadata(fname_out)
 
         if verbose:
@@ -805,7 +818,9 @@ class TRITONSWMM_sim_post_processing:
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
 
-        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        memory_budget_MiB = (
+            self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        )
         n_variables = len(df_outputs.columns)
 
         chunk_size = estimate_timesteps_per_chunk(
@@ -819,9 +834,14 @@ class TRITONSWMM_sim_post_processing:
         n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
 
         if verbose:
-            print(f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB", flush=True)
+            print(
+                f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB",
+                flush=True,
+            )
             print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
+            print(
+                f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True
+            )
             print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
 
         # Process in chunks
@@ -898,14 +918,19 @@ class TRITONSWMM_sim_post_processing:
             # Write incrementally
             if first_chunk:
                 if verbose:
-                    print(f"[Chunked Processing] Creating new zarr store: {fname_out.name}", flush=True)
+                    print(
+                        f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
+                        flush=True,
+                    )
                 encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
                 ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
                     model_type="triton", astype="str"
                 )
                 ds_chunk.attrs["output_creation_date"] = current_datetime_string()
                 ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
-                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                ds_chunk.to_zarr(
+                    fname_out, mode="w", encoding=encoding, consolidated=False
+                )
                 first_chunk = False
             else:
                 if verbose:
@@ -920,6 +945,7 @@ class TRITONSWMM_sim_post_processing:
         if verbose:
             print(f"[Chunked Processing] Consolidating zarr metadata", flush=True)
         import zarr
+
         zarr.consolidate_metadata(fname_out)
 
         if verbose:
@@ -1247,7 +1273,9 @@ class TRITONSWMM_sim_post_processing:
             swmm_rpt_file = swmm_out_file.with_suffix(".rpt")
             if swmm_out_file.exists():
                 swmm_out_file.unlink()
-            if swmm_rpt_file.exists():
+            if (
+                swmm_rpt_file.exists() and model != "swmm"
+            ):  # keep rpt file if swmm model
                 swmm_rpt_file.unlink()
             if self.log.raw_SWMM_outputs_cleared:
                 self.log.raw_SWMM_outputs_cleared.set(True)
@@ -1905,12 +1933,16 @@ def summarize_triton_simulation_results(
     ds_summary["time_of_max_velocity_min"] = time_of_max_velocity
 
     # Velocity components at time of max (lazy)
-    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = ds["velocity_x_mps"].sel(
-        timestep_min=time_of_max_velocity
-    ).reset_coords(drop=True)
-    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = ds["velocity_y_mps"].sel(
-        timestep_min=time_of_max_velocity
-    ).reset_coords(drop=True)
+    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = (
+        ds["velocity_x_mps"]
+        .sel(timestep_min=time_of_max_velocity)
+        .reset_coords(drop=True)
+    )
+    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = (
+        ds["velocity_y_mps"]
+        .sel(timestep_min=time_of_max_velocity)
+        .reset_coords(drop=True)
+    )
 
     # Max water level and time of max (lazy)
     # Handle MH variable if it exists with timestep dimension
@@ -1932,7 +1964,9 @@ def summarize_triton_simulation_results(
     )
 
     # Water level in last timestep (lazy)
-    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    ds_summary["wlevel_m_last_tstep"] = (
+        ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    )
     ds_summary["wlevel_m_last_tstep"].attrs[
         "notes"
     ] = "this is the water level in the last reported time step for computing mass balance"
