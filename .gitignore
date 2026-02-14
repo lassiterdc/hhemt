@@ -207,12 +207,14 @@ __marimo__/
 # custom
 *_archive*
 *test_data/*/system*
+*test_data/*/system*
 *test_data/*/tests/*
 *test_data/*/triton/*
 *test_data/*/swmm/*
 profile_runner.py.lprof
 profiling/retrieve_profile.out
 *test_data/reference_for_addressing*
+*case_og_dem_res_3.7m*
 
 # Local/large vendored or external content
 external/
