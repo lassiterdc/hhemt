@@ -18,6 +18,8 @@ import psutil
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
 
+from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
     from .sensitivity_analysis import TRITONSWMM_sensitivity_analysis
@@ -2530,6 +2532,21 @@ rule setup:
         """
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
+
+        sim_resources = (
+            self.master_analysis._resource_manager._get_simulation_resource_requirements()
+        )
+        n_gpus_per_sim = sim_resources["n_gpus"]
+        if n_gpus_per_sim > 0 and not self.system.cfg_system.gpu_compilation_backend:
+            raise ConfigurationError(
+                field="gpu_compilation_backend",
+                message=(
+                    "Sensitivity analysis requests GPUs (n_gpus > 0) but system config "
+                    "has gpu_compilation_backend unset. Set gpu_compilation_backend to "
+                    "CUDA/HIP or set n_gpus: 0 in sub-analyses."
+                ),
+                config_path=self.system.system_config_yaml,
+            )
 
         if multi_sim_method == "1_job_many_srun_tasks":
             # Always submit a batch job for 1-job mode
