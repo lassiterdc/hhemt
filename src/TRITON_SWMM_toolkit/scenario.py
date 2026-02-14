@@ -812,6 +812,10 @@ class TRITONSWMM_scenario:
                 self._system.cfg_system.SWMM_full,
                 self.scen_paths.swmm_full_inp,
             )
+            # Update THREADS parameter to match n_omp_threads configuration
+            self._input_generator.update_swmm_threads_in_inp_file(
+                self.scen_paths.swmm_full_inp
+            )
             self.log.inp_full_model_created_successfully.set(True)
 
         # SWMM hydrology for runoff generation
@@ -819,6 +823,10 @@ class TRITONSWMM_scenario:
             self._runoff_modeler.create_hydrology_model_from_template(
                 self._system.cfg_system.SWMM_hydrology,
                 self.scen_paths.swmm_hydro_inp,
+            )
+            # Update THREADS parameter to match n_omp_threads configuration
+            self._input_generator.update_swmm_threads_in_inp_file(
+                self.scen_paths.swmm_hydro_inp
             )
             self._runoff_modeler.run_swmm_hydro_model(
                 rerun_if_exists=rerun_swmm_hydro_if_outputs_exist,

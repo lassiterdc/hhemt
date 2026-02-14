@@ -318,6 +318,7 @@ class Frontier_TestCases:
 
 class Local_TestCases:
     cpu_sensitivity = "cpu_benchmarking_analysis.xlsx"
+    cpu_sensitivity_swmm = "cpu_benchmarking_analysis_swmm.xlsx"
 
     @classmethod
     def retrieve_norfolk_cpu_config_sensitivity_case(
@@ -337,6 +338,60 @@ class Local_TestCases:
             download_if_exists=download_if_exists,
             n_events=1,
             analysis_overrides=analysis_overrides,
+        )
+
+    @classmethod
+    def retrieve_norfolk_cpu_config_sensitivity_case_triton_only(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ) -> retrieve_TRITON_SWMM_test_case:
+        """Local CPU configuration sensitivity analysis test."""
+        analysis_name = "cpu_config_sensitivity_triton_only"
+        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
+        analysis_overrides = {
+            "toggle_sensitivity_analysis": True,
+            "sensitivity_analysis": sensitivity,
+        }
+        system_overrides = {
+            "toggle_triton_model": True,
+            "toggle_tritonswmm_model": False,
+            "toggle_swmm_model": False,
+        }
+
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            analysis_overrides=analysis_overrides,
+            system_overrides=system_overrides,
+        )
+
+    @classmethod
+    def retrieve_norfolk_cpu_config_sensitivity_case_swmm_only(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ) -> retrieve_TRITON_SWMM_test_case:
+        """Local CPU configuration sensitivity analysis test."""
+        analysis_name = "cpu_config_sensitivity_swmm_only"
+        sensitivity = (
+            all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
+        )
+        analysis_overrides = {
+            "toggle_sensitivity_analysis": True,
+            "sensitivity_analysis": sensitivity,
+        }
+        system_overrides = {
+            "toggle_triton_model": False,
+            "toggle_tritonswmm_model": False,
+            "toggle_swmm_model": True,
+        }
+
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            analysis_overrides=analysis_overrides,
+            system_overrides=system_overrides,
         )
 
     @classmethod

@@ -294,6 +294,32 @@ def test_snakemake_workflow_end_to_end(norfolk_multi_sim_analysis):
     if "swmm" in enabled_models:
         tst_ut.assert_swmm_compiled(analysis)
 
+    # Verify THREADS parameter was updated in SWMM .inp files
+    expected_threads = analysis.cfg_analysis.n_omp_threads
+    assert (
+        expected_threads >= 1
+    ), f"n_omp_threads must be >= 1, but got {expected_threads}"
+
+    for event_iloc in analysis.df_sims.index:
+        proc = analysis._retrieve_sim_run_processing_object(event_iloc)
+        paths = proc.scen_paths
+
+        # Check hydrology.inp (if hydrology enabled)
+        if paths.swmm_hydro_inp.exists():
+            with open(paths.swmm_hydro_inp, "r") as fp:
+                content = fp.read()
+                assert (
+                    f"THREADS              {expected_threads}" in content
+                ), f"hydro.inp for event {event_iloc} should have THREADS={expected_threads}"
+
+        # Check full.inp (if full model enabled)
+        if paths.swmm_full_inp.exists():
+            with open(paths.swmm_full_inp, "r") as fp:
+                content = fp.read()
+                assert (
+                    f"THREADS              {expected_threads}" in content
+                ), f"full.inp for event {event_iloc} should have THREADS={expected_threads}"
+
     # Cross-model consistency: SWMM-only outputs should be compatible with
     # the SWMM outputs embedded in the TRITON-SWMM coupled runs.
     if "swmm" in enabled_models and "tritonswmm" in enabled_models:

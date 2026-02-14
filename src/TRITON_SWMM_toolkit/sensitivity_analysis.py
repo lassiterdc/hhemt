@@ -272,13 +272,63 @@ class TRITONSWMM_sensitivity_analysis:
         )
         return
 
+    def _select_triton_summary(self, sub_analysis: "TRITONSWMM_analysis"):
+        cfg_sys = self.master_analysis._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            return sub_analysis.tritonswmm_TRITON_summary
+        if cfg_sys.toggle_triton_model:
+            return sub_analysis.triton_only_summary
+        raise ValueError(
+            "TRITON outputs requested, but neither TRITONSWMM nor TRITON-only models are enabled."
+        )
+
+    def _select_swmm_node_summary(self, sub_analysis: "TRITONSWMM_analysis"):
+        cfg_sys = self.master_analysis._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            return sub_analysis.tritonswmm_SWMM_node_summary
+        if cfg_sys.toggle_swmm_model:
+            return sub_analysis.swmm_only_node_summary
+        raise ValueError(
+            "SWMM node outputs requested, but neither TRITONSWMM nor SWMM-only models are enabled."
+        )
+
+    def _select_swmm_link_summary(self, sub_analysis: "TRITONSWMM_analysis"):
+        cfg_sys = self.master_analysis._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            return sub_analysis.tritonswmm_SWMM_link_summary
+        if cfg_sys.toggle_swmm_model:
+            return sub_analysis.swmm_only_link_summary
+        raise ValueError(
+            "SWMM link outputs requested, but neither TRITONSWMM nor SWMM-only models are enabled."
+        )
+
+    def _triton_output_mode(self) -> str:
+        cfg_sys = self.master_analysis._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            return "tritonswmm_triton"
+        if cfg_sys.toggle_triton_model:
+            return "triton_only"
+        raise ValueError(
+            "TRITON outputs requested, but no TRITON model is enabled in system config."
+        )
+
+    def _swmm_output_modes(self) -> tuple[str, str]:
+        cfg_sys = self.master_analysis._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            return "tritonswmm_swmm_node", "tritonswmm_swmm_link"
+        if cfg_sys.toggle_swmm_model:
+            return "swmm_only_node", "swmm_only_link"
+        raise ValueError(
+            "SWMM outputs requested, but no SWMM model is enabled in system config."
+        )
+
     def _combine_TRITON_outputs_per_subanalysis(self):
         assert self.TRITON_subanalyses_outputs_consolidated
 
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.tritonswmm_TRITON_summary
+            ds = self._select_triton_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -297,7 +347,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.tritonswmm_SWMM_node_summary
+            ds = self._select_swmm_node_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -317,7 +367,7 @@ class TRITONSWMM_sensitivity_analysis:
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
-            ds = sub_analysis.tritonswmm_SWMM_link_summary
+            ds = self._select_swmm_link_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
             for new_dim, dim_value in config.items():
@@ -344,7 +394,14 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             config = self.df_setup.iloc[sub_analysis_iloc,]
             # Access the performance summary from the sub-analysis
-            ds = sub_analysis.process.tritonswmm_performance_summary
+            if self.master_analysis._system.cfg_system.toggle_tritonswmm_model:
+                ds = sub_analysis.process.tritonswmm_performance_summary
+            elif self.master_analysis._system.cfg_system.toggle_triton_model:
+                ds = sub_analysis.process.triton_only_performance_summary
+            else:
+                raise ValueError(
+                    "Performance summaries requested, but no TRITON model is enabled."
+                )
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
 
@@ -378,24 +435,41 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def TRITON_subanalyses_outputs_consolidated(self):
+        cfg_sys = self.master_analysis._system.cfg_system
         success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            success = (
-                success and sub_analysis.tritonswmm_triton_analysis_summary_created
-            )
+            if cfg_sys.toggle_tritonswmm_model:
+                success = (
+                    success and sub_analysis.tritonswmm_triton_analysis_summary_created
+                )
+            elif cfg_sys.toggle_triton_model:
+                success = success and sub_analysis.triton_only_analysis_summary_created
         return success
 
     @property
     def SWMM_subanalyses_outputs_consolidated(self):
+        cfg_sys = self.master_analysis._system.cfg_system
         node_success = True
         link_success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            node_success = (
-                node_success and sub_analysis.tritonswmm_node_analysis_summary_created
-            )
-            link_success = (
-                link_success and sub_analysis.tritonswmm_link_analysis_summary_created
-            )
+            if cfg_sys.toggle_tritonswmm_model:
+                node_success = (
+                    node_success
+                    and sub_analysis.tritonswmm_node_analysis_summary_created
+                )
+                link_success = (
+                    link_success
+                    and sub_analysis.tritonswmm_link_analysis_summary_created
+                )
+            elif cfg_sys.toggle_swmm_model:
+                node_success = (
+                    node_success
+                    and sub_analysis.swmm_only_node_analysis_summary_created
+                )
+                link_success = (
+                    link_success
+                    and sub_analysis.swmm_only_link_analysis_summary_created
+                )
         return node_success and link_success
 
     def consolidate_outputs(
@@ -426,20 +500,23 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
+        cfg_sys = self.master_analysis._system.cfg_system
         if which in ["TRITON", "both"]:
             ds_combined_outputs = self._combine_TRITON_outputs_per_subanalysis()
+            triton_mode = self._triton_output_mode()
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="tritonswmm_triton",
+                mode=triton_mode,
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         if which in ["SWMM", "both"]:
             ds_combined_outputs = self._combine_SWMM_node_outputs_per_subanalysis()
+            swmm_node_mode, swmm_link_mode = self._swmm_output_modes()
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="tritonswmm_swmm_node",
+                mode=swmm_node_mode,
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
@@ -449,33 +526,32 @@ class TRITONSWMM_sensitivity_analysis:
             )
             self.master_analysis.process._consolidate_outputs(
                 ds_combined_outputs,
-                mode="tritonswmm_swmm_link",
+                mode=swmm_link_mode,
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
 
-        # consolidate performance summaries (independent of 'which' parameter)
-        start_time = time.time()
-        ds_performance = self._combine_TRITONSWMM_performance_per_subanalysis()
-        proc_log = (
-            self.master_analysis.log.tritonswmm_performance_analysis_summary_created
-        )
-        fname_out = (
-            self.master_analysis.analysis_paths.output_tritonswmm_performance_summary
-        )
-        self.master_analysis.process._write_output(
-            ds=ds_performance,
-            fname_out=fname_out,
-            compression_level=compression_level,
-            chunks="auto",
-            verbose=verbose,
-        )
+        # Consolidate performance summaries using MODE_CONFIG pipeline
+        # (independent of 'which' parameter - performance is always combined)
+        if cfg_sys.toggle_tritonswmm_model:
+            perf_mode = "tritonswmm_performance"
+        elif cfg_sys.toggle_triton_model:
+            perf_mode = "triton_only_performance"
+        else:
+            # No TRITON-based model enabled, skip performance consolidation
+            return
 
-        proc_log.set(True)
-        elapsed_s = time.time() - start_time
-        self.master_analysis.log.add_sim_processing_entry(
-            fname_out, ut.get_file_size_MiB(fname_out), elapsed_s, True
+        # Combine performance from all sub-analyses
+        ds_performance = self._combine_TRITONSWMM_performance_per_subanalysis()
+
+        # Use unified consolidation pipeline (includes fail-fast validation)
+        self.master_analysis.process._consolidate_outputs(
+            ds_performance,
+            mode=perf_mode,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            verbose=verbose,
+            compression_level=compression_level,
         )
 
         return
@@ -515,9 +591,9 @@ class TRITONSWMM_sensitivity_analysis:
     def tritonswmm_TRITON_summary(self):
         return self.master_analysis.tritonswmm_TRITON_summary
 
-    @property
-    def TRITONSWMM_runtimes(self):
-        return self.master_analysis.TRITONSWMM_runtimes
+    # @property
+    # def TRITONSWMM_runtimes(self):
+    #     return self.master_analysis.TRITONSWMM_runtimes
 
     def _attributes_varied_for_analysis(self):
         df_setup = self._retrieve_df_setup()

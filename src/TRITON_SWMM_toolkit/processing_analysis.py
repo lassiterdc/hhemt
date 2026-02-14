@@ -48,6 +48,12 @@ class TRITONSWMM_analysis_post_processing:
             "triton_only_performance_analysis_summary_created",
             None,
         ),
+        "tritonswmm_performance": (
+            "output_tritonswmm_performance_summary",
+            "output_tritonswmm_performance_summary",
+            "tritonswmm_performance_analysis_summary_created",
+            None,
+        ),
         "swmm_only_node": (
             "output_swmm_only_node_summary",
             "output_swmm_only_node_summary",
@@ -247,96 +253,6 @@ class TRITONSWMM_analysis_post_processing:
     def swmm_only_link_summary(self):
         return self._open(self._analysis.analysis_paths.output_swmm_only_link_summary)
 
-    def consolidate_TRITONSWMM_performance_summaries(
-        self,
-        overwrite_outputs_if_already_created: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate TRITONSWMM performance summaries across all scenarios.
-
-        This is a simplified consolidation that doesn't require spatial chunking
-        since performance data only has event_iloc and performance metric dimensions.
-
-        Parameters
-        ----------
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing consolidated outputs
-        verbose : bool
-            If True, print progress messages
-        compression_level : int
-            Compression level for output files (0-9)
-        """
-        start_time = time.time()
-        self._analysis._refresh_log()
-
-        fname_out = self._analysis.analysis_paths.output_tritonswmm_performance_summary
-
-        if (
-            self._already_written(fname_out)
-            and (not overwrite_outputs_if_already_created)
-            and fname_out.exists()
-        ):
-            if verbose:
-                print(
-                    f"File already written and overwrite_outputs_if_already_created is set to False. Not overwriting:\n{fname_out}"
-                )
-            return
-
-        # Load and concatenate performance summaries from all scenarios
-        lst_ds = []
-        for event_iloc in self._analysis.df_sims.index:
-            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
-            proc = scen.run.proc
-
-            summary_file = scen.scen_paths.output_tritonswmm_performance_summary
-
-            # Validate path is not None (fail-fast)
-            if summary_file is None:
-                raise ValueError(
-                    f"Performance summary file path is None for event_iloc={event_iloc}. "
-                    f"This indicates a configuration error - check that the appropriate model types "
-                    f"are enabled in system config."
-                )
-
-            if not summary_file.exists():
-                raise FileNotFoundError(
-                    f"Performance summary file not found: {summary_file}. "
-                    f"Make sure to run timeseries processing with summary creation "
-                    f"before consolidating analysis outputs."
-                )
-
-            # Load summary (already has event_iloc coordinate)
-            ds = proc.TRITONSWMM_performance_summary
-            lst_ds.append(ds)
-
-        # Concatenate all summaries
-        ds_combined_outputs = xr.concat(
-            lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
-        )
-
-        # Write output
-        self._write_output(
-            ds_combined_outputs,  # type: ignore
-            fname_out,
-            compression_level,
-            chunks="auto",  # Use auto chunking for performance data
-            verbose=verbose,
-        )
-
-        # Logging
-        self._analysis.log.tritonswmm_performance_analysis_summary_created.set(True)
-        elapsed_s = time.time() - start_time
-        self._analysis.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
-
-        if verbose:
-            print(f"Consolidated TRITONSWMM performance summaries to {fname_out}")
-
-        return
-
     def _already_written(self, f_out) -> bool:
         """
         Checks log file to determine whether the file was written successfully
@@ -402,6 +318,23 @@ class TRITONSWMM_analysis_post_processing:
         self._write_output(
             ds_combined_outputs, fname_out, compression_level, chunks, verbose  # type: ignore
         )
+
+        # Validate output was actually created before setting success flag
+        if fname_out.suffix == ".zarr":
+            # Check for zarr v2 (.zgroup) or zarr v3 (zarr.json) markers
+            has_zgroup = (fname_out / ".zgroup").exists()
+            has_zarr_json = (fname_out / "zarr.json").exists()
+            if not fname_out.exists() or not (has_zgroup or has_zarr_json):
+                raise RuntimeError(
+                    f"Zarr consolidation failed for mode '{mode}': "
+                    f"output missing or incomplete at {fname_out}"
+                )
+        elif not fname_out.exists():
+            raise RuntimeError(
+                f"Consolidation failed for mode '{mode}': "
+                f"output not created at {fname_out}"
+            )
+
         proc_log.set(True)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(

@@ -38,13 +38,16 @@ class analysis_config(cfgBaseModel):
     n_mpi_procs: Optional[int] = Field(
         1, description="Number of MPI ranks per simulation."
     )
-    n_omp_threads: Optional[int] = Field(1, description="Threads per rank")
+    n_omp_threads: Optional[int] = Field(
+        1,
+        description=(
+            "Number of OpenMP threads for simulation execution. For TRITON/TRITON-SWMM models, "
+            "controls OpenMP threading in the executable. For SWMM standalone models, dynamically "
+            "updates the THREADS parameter in the [OPTIONS] section of .inp files."
+        ),
+    )
     n_gpus: Optional[int] = Field(0, description="Number of GPUs per simulation")
     n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
-    # SWMM only
-    n_threads_swmm: Optional[int] = Field(
-        1, description="Threads per rank for SWMM-only simulations"
-    )
 
     # MULTI-SIMULATION EXECUTION METHOD
     multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (

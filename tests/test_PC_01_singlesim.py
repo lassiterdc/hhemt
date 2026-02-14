@@ -31,8 +31,27 @@ def test_run_sim(norfolk_all_models_analysis_cached):
     analysis = norfolk_all_models_analysis_cached
     analysis.run_sims_in_sequence(pickup_where_leftoff=False)
     tst_ut.assert_scenarios_run(analysis)
+
+    # Verify each enabled model type completed successfully
+    # (avoiding df_status which requires Snakefile not present in serial execution)
     for model_type in tst_ut.get_enabled_model_types(analysis):
-        tst_ut.assert_model_simulation_run(analysis, model_type)
+        failed_scenarios = []
+        for event_iloc in analysis.df_sims.index:
+            run = analysis._retrieve_sim_runs(event_iloc)
+            scen = run._scenario
+            if not scen.model_run_completed(model_type):
+                failed_scenarios.append(str(scen.log.logfile.parent))
+
+        if failed_scenarios:
+            pytest.fail(
+                f"{len(failed_scenarios)} {model_type} simulation(s) failed to complete:\n"
+                + "\n".join(f"  - {d}" for d in failed_scenarios[:5])
+                + (
+                    f"\n  ... and {len(failed_scenarios) - 5} more"
+                    if len(failed_scenarios) > 5
+                    else ""
+                )
+            )
 
 
 def test_process_sim(norfolk_all_models_analysis_cached):

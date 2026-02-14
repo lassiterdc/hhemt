@@ -250,11 +250,7 @@ class TRITONSWMM_analysis:
             _consolidate("tritonswmm_triton")
             _consolidate("tritonswmm_swmm_node")
             _consolidate("tritonswmm_swmm_link")
-            self.process.consolidate_TRITONSWMM_performance_summaries(
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
+            _consolidate("tritonswmm_performance")
 
         # TRITON-only model
         if cfg_sys.toggle_triton_model:
@@ -1957,10 +1953,10 @@ class TRITONSWMM_analysis:
                 # Provide model-specific expected resources to downstream validators.
                 if model_type == "swmm":
                     row["run_mode"] = (
-                        "serial" if self.cfg_analysis.n_threads_swmm == 1 else "openmp"
+                        "serial" if self.cfg_analysis.n_omp_threads == 1 else "openmp"
                     )
                     row["n_mpi_procs"] = 1
-                    row["n_omp_threads"] = self.cfg_analysis.n_threads_swmm or 1
+                    row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
                     row["n_gpus"] = 0
                     row["backend_used"] = "cpu"
                 else:

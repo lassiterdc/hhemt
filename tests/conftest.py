@@ -54,6 +54,26 @@ def norfolk_sensitivity_analysis_cached():
 
 
 @pytest.fixture
+def norfolk_sensitivity_triton_only():
+    """TRITON-only sensitivity analysis varying n_omp_threads."""
+    case = (
+        cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case_triton_only(
+            start_from_scratch=True
+        )
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def norfolk_sensitivity_swmm_only():
+    """SWMM-only sensitivity analysis varying n_omp_threads."""
+    case = cases.Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case_swmm_only(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
 def norfolk_frontier_multisim_analysis():
     case = cases.Frontier_TestCases.retrieve_norfolk_frontier_multisim_cpu_serial_case(
         start_from_scratch=True
@@ -111,7 +131,7 @@ def norfolk_uva_multisim_analysis_cached():
 
 @pytest.fixture
 def norfolk_uva_sensitivity_analysis():
-    case = cases.UVA_TestCases.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
+    case = cases.UVA_TestCases.retrieve_norfolk_UVA_sensitivity_minimal(
         start_from_scratch=True
     )
     return case.analysis
@@ -119,7 +139,7 @@ def norfolk_uva_sensitivity_analysis():
 
 @pytest.fixture
 def norfolk_uva_sensitivity_analysis_cached():
-    case = cases.UVA_TestCases.retrieve_norfolk_UVA_sensitivity_CPU_minimal(
+    case = cases.UVA_TestCases.retrieve_norfolk_UVA_sensitivity_minimal(
         start_from_scratch=False
     )
     return case.analysis

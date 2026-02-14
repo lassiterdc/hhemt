@@ -231,6 +231,57 @@ class ScenarioInputGenerator:
         self.scenario.log.inflow_nodes_in_hydraulic_inp_assigned = True
         return
 
+    def update_swmm_threads_in_inp_file(self, inp_file_path: Path) -> None:
+        """
+        Update THREADS parameter in SWMM .inp file OPTIONS section.
+
+        Modifies the THREADS option in the [OPTIONS] section to match the
+        n_omp_threads configuration parameter. This enables dynamic control
+        of SWMM threading for performance tuning and benchmarking studies.
+
+        Parameters
+        ----------
+        inp_file_path : Path
+            Path to the SWMM .inp file to modify
+
+        Notes
+        -----
+        - Preserves all other OPTIONS parameters unchanged
+        - Uses line-by-line replacement to maintain file structure
+        - If THREADS parameter not found, no modification occurs (backward compatible)
+        """
+        n_threads = self.cfg_analysis.n_omp_threads
+
+        with open(inp_file_path, "r") as fp:
+            lines = fp.readlines()
+
+        # Find and replace THREADS line in [OPTIONS] section
+        in_options_section = False
+        threads_found = False
+
+        for idx, line in enumerate(lines):
+            # Track when we enter/exit OPTIONS section
+            if "[OPTIONS]" in line:
+                in_options_section = True
+                continue
+            elif line.startswith("[") and in_options_section:
+                # Left OPTIONS section
+                break
+
+            # Replace THREADS line if found
+            if in_options_section and line.strip().startswith("THREADS"):
+                # Preserve spacing format: "THREADS              {value}"
+                lines[idx] = f"THREADS              {n_threads}\n"
+                threads_found = True
+                break
+
+        # Write back modified file
+        with open(inp_file_path, "w") as fp:
+            fp.writelines(lines)
+
+        # Note: If THREADS not found, file remains unchanged (backward compatible)
+        return
+
     def create_external_boundary_condition_files(self) -> None:
         """
         Create boundary condition files for TRITON.
