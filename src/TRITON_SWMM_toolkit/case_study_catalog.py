@@ -129,13 +129,13 @@ class UVACaseStudies:
 
         analysis_overrides = {
             "run_mode": "hybrid",
-            "hpc_time_min_per_sim": 4 * 60,
+            "hpc_time_min_per_sim": 6 * 60,
             "n_mpi_procs": 2,
             "n_omp_threads": 2,
             "n_nodes": 1,
             "mem_gb_per_cpu": 2,
             "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 12,
+            "hpc_total_job_duration_min": 60 * 72,
         }
         system_overrides = {
             "toggle_triton_model": True,

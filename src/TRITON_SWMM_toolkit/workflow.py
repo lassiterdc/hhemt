@@ -571,7 +571,7 @@ rule consolidate:
             config.update(
                 {
                     "keep-going": True,  # Continue other sims if one fails
-                    "latency-wait": 30,
+                    "latency-wait": 60,
                 }
             )
         else:  # slurm
@@ -590,7 +590,7 @@ rule consolidate:
                 {
                     "executor": "slurm",
                     "jobs": max_concurrent,
-                    "latency-wait": 30,
+                    "latency-wait": 60,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
                     "default-resources": [
