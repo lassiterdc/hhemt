@@ -215,7 +215,7 @@ profile_runner.py.lprof
 profiling/retrieve_profile.out
 *test_data/reference_for_addressing*
 *case_og_dem_res_3.7m*
-
+.debugging/*
 # Local/large vendored or external content
 external/
 

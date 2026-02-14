@@ -189,7 +189,7 @@ class UVACaseStudies:
             "toggle_triton_model": False,
             "toggle_tritonswmm_model": True,
             "toggle_swmm_model": False,
-            "gpu_compilation_backend": None,
+            "gpu_compilation_backend": "CUDA",
         }
 
         return CaseStudyBuilder(
@@ -231,7 +231,7 @@ class UVACaseStudies:
             "toggle_triton_model": True,
             "toggle_tritonswmm_model": False,
             "toggle_swmm_model": False,
-            "gpu_compilation_backend": None,
+            "gpu_compilation_backend": "CUDA",
         }
 
         return CaseStudyBuilder(
