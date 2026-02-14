@@ -553,7 +553,7 @@ rule consolidate:
             "printshellcmds": True,
             "rerun-incomplete": True,
             "keep-going": True,
-            "rerun-triggers": ["mtime", "input"],
+            "rerun-triggers": ["mtime"],  # "input"
         }
         assert isinstance(
             self.cfg_analysis.local_cpu_cores_for_workflow, int
