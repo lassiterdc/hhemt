@@ -118,6 +118,7 @@ class CaseStudyBuilder:
 class UVACaseStudies:
 
     sensitivity_analysis_uva_suite = "full_benchmarking_experiment_uva.xlsx"
+    sensitivity_analysis_uva_suite_swmm = "full_benchmarking_experiment_uva_swmm.xlsx"
 
     @classmethod
     def observed_ensemble_triton_only(
@@ -208,7 +209,7 @@ class UVACaseStudies:
     ):
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
-        analysis_name = "uva_sensitivity_suite"
+        analysis_name = "uva_sensitivity_suite_triton_only"
         sensitivity = (
             all_examples.norfolk_irene().test_case_directory
             / cls.sensitivity_analysis_uva_suite
@@ -232,6 +233,47 @@ class UVACaseStudies:
             "toggle_tritonswmm_model": False,
             "toggle_swmm_model": False,
             "gpu_compilation_backend": "CUDA",
+        }
+
+        return CaseStudyBuilder(
+            example_name=example_name,
+            download_if_exists=download_if_exists,
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overrides=analysis_overrides,
+            system_overrides=system_overrides,
+        )
+
+    @classmethod
+    def benchmarking_norfolk_irene_swmm_only(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """UVA HPC sensitivity analysis."""
+        example_name = "norfolk_irene"
+        analysis_name = "uva_sensitivity_suite_swmm_only"
+        sensitivity = (
+            all_examples.norfolk_irene().test_case_directory
+            / cls.sensitivity_analysis_uva_suite_swmm
+        )
+
+        analysis_overrides = {
+            "toggle_sensitivity_analysis": True,
+            "sensitivity_analysis": sensitivity,
+            "run_mode": "serial",
+            "n_mpi_procs": 1,
+            "n_omp_threads": 1,
+            "n_nodes": 1,
+            "n_gpus": 0,
+            "mem_gb_per_cpu": 2,
+            "hpc_max_simultaneous_sims": 100,
+            "hpc_total_job_duration_min": 60 * 72,
+        }
+
+        system_overrides = {
+            "toggle_triton_model": False,
+            "toggle_tritonswmm_model": False,
+            "toggle_swmm_model": True,
         }
 
         return CaseStudyBuilder(
