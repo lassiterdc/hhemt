@@ -4,13 +4,171 @@ Module for exporting scenario status DataFrame to CSV after all simulations.
 This module provides functionality to export the df_status() DataFrame to a CSV file
 after all simulations complete, regardless of their success or failure. This enables
 debugging by identifying which scenarios failed and why.
+
+Additionally writes a workflow_summary.md file with get_workflow_status() output
+and optionally includes HPC partition information for debugging resource allocation issues.
 """
 
 import argparse
+import os
+import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 import TRITON_SWMM_toolkit.analysis as anlysis
+
+
+def gather_hpc_partition_info() -> str:
+    """
+    Gather HPC partition information for debugging resource allocation issues.
+
+    Runs SLURM commands to collect partition details, QOS limits, and node configurations.
+    This helps diagnose why jobs might fail due to resource constraints.
+
+    Returns
+    -------
+    str
+        Formatted markdown section with partition information, or empty string if not on HPC
+    """
+    # Check if we're on an HPC cluster with SLURM
+    if not os.environ.get("SLURM_CLUSTER_NAME") and subprocess.run(
+        ["which", "scontrol"], capture_output=True
+    ).returncode != 0:
+        return ""
+
+    md_lines = ["## HPC Partition Information", ""]
+    md_lines.append(f"**Collected**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    md_lines.append("")
+
+    commands = [
+        ("Partition Overview", "sinfo -O partitionname,nodes,cpus,memory,time,gres -a"),
+        ("Partition Details", "scontrol show partition -o"),
+        ("QOS Limits", "sacctmgr show qos format=name,maxwall,maxsubmit,maxnodes,maxcpus,maxgres -p"),
+        ("User QOS", f"sacctmgr show user $USER format=User,Account,DefaultQOS,QOS -p"),
+        ("GPU Partitions", "sinfo -o '%P %G' | grep -i gpu"),
+    ]
+
+    for section_name, command in commands:
+        md_lines.append(f"### {section_name}")
+        md_lines.append("```")
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                md_lines.append(result.stdout.strip())
+            else:
+                md_lines.append(f"Command failed or returned no output (exit code: {result.returncode})")
+        except Exception as e:
+            md_lines.append(f"Error running command: {str(e)}")
+        md_lines.append("```")
+        md_lines.append("")
+
+    return "\n".join(md_lines)
+
+
+def write_workflow_summary_md(analysis) -> Path:
+    """
+    Write workflow status summary to markdown file.
+
+    Generates a workflow_summary.md file with:
+    - Workflow status from get_workflow_status()
+    - Completion statistics
+    - Phase details
+    - HPC partition information (if on cluster)
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object containing workflow status
+
+    Returns
+    -------
+    Path
+        Path to the saved markdown file
+    """
+    summary_path = analysis.analysis_paths.analysis_dir / "workflow_summary.md"
+
+    # Get workflow status
+    status = analysis.get_workflow_status()
+
+    # Build markdown content
+    md_lines = [
+        "# Workflow Summary",
+        "",
+        f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"**Analysis ID**: `{analysis.cfg_analysis.analysis_id}`",
+        f"**Analysis Directory**: `{analysis.analysis_paths.analysis_dir}`",
+        "",
+        "---",
+        "",
+        "## Overall Status",
+        "",
+        f"**Workflow Complete**: {status.workflow_complete}",
+        f"**Current Phase**: {status.current_phase}",
+        f"**Recommended Execution Mode**: `{status.recommended_mode}`",
+        "",
+        "## Progress Summary",
+        "",
+        f"- **Total Simulations**: {status.total_simulations}",
+        f"- **Completed**: {status.simulations_completed}",
+        f"- **Failed**: {status.simulations_failed}",
+        f"- **Pending**: {status.simulations_pending}",
+        "",
+        "---",
+        "",
+        "## Phase Details",
+        "",
+    ]
+
+    # Add phase status for each phase
+    phases = [
+        ("Setup", status.setup),
+        ("Preparation", status.preparation),
+        ("Simulation", status.simulation),
+        ("Processing", status.processing),
+        ("Consolidation", status.consolidation),
+    ]
+
+    for phase_name, phase in phases:
+        md_lines.extend([
+            f"### {phase_name}",
+            "",
+            f"- **Complete**: {phase.complete}",
+            f"- **Progress**: {phase.progress:.1%}",
+        ])
+
+        if phase.failed_items:
+            md_lines.append(f"- **Failed Items**: {len(phase.failed_items)}")
+            md_lines.append("  ```")
+            for item in phase.failed_items[:10]:  # Show first 10
+                md_lines.append(f"  {item}")
+            if len(phase.failed_items) > 10:
+                md_lines.append(f"  ... and {len(phase.failed_items) - 10} more")
+            md_lines.append("  ```")
+
+        if phase.message:
+            md_lines.append(f"- **Message**: {phase.message}")
+
+        md_lines.append("")
+
+    # Add HPC partition info if on cluster
+    partition_info = gather_hpc_partition_info()
+    if partition_info:
+        md_lines.append("---")
+        md_lines.append("")
+        md_lines.append(partition_info)
+
+    # Write to file
+    summary_path.write_text("\n".join(md_lines))
+
+    print(f"Workflow summary exported to: {summary_path}", flush=True)
+    return summary_path
 
 
 def export_scenario_status_to_csv(analysis, output_path: Optional[Path] = None) -> Path:
@@ -108,6 +266,12 @@ def main():
             print("Exporting scenario status...", flush=True)
 
         export_scenario_status_to_csv(analysis, args.output_path)
+
+        # Write workflow summary markdown
+        if args.verbose:
+            print("Writing workflow summary...", flush=True)
+
+        write_workflow_summary_md(analysis)
 
         if args.verbose:
             print("Status export completed successfully", flush=True)
