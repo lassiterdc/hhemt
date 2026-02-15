@@ -443,6 +443,61 @@ class TRITONSWMM_run:
         # ----------------------------
         # TRITON/TRITON-SWMM command building
         # ----------------------------
+
+        # CRITICAL VALIDATION: Verify SLURM allocation matches configuration requirements
+        # This prevents infinite hangs when SLURM allocates fewer CPUs than configured
+        # (e.g., due to Snakemake's slurm-jobstep executor misreading available cores)
+        if using_srun and "SLURM_JOB_ID" in os.environ:
+            slurm_cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
+            slurm_ntasks = int(os.environ.get("SLURM_NTASKS", 0))
+            slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+
+            # Calculate what we expect vs what SLURM allocated
+            expected_cpus = n_mpi_procs * n_omp_threads if run_mode != "gpu" else n_gpus * n_omp_threads
+            slurm_allocated = slurm_cpus_on_node
+
+            if slurm_allocated < expected_cpus:
+                error_msg = (
+                    f"\n{'='*80}\n"
+                    f"SLURM RESOURCE ALLOCATION MISMATCH DETECTED\n"
+                    f"{'='*80}\n"
+                    f"Configuration requests: {expected_cpus} CPUs\n"
+                    f"  - MPI ranks: {n_mpi_procs}\n"
+                    f"  - OMP threads per rank: {n_omp_threads}\n"
+                    f"  - Total: {n_mpi_procs} × {n_omp_threads} = {expected_cpus} CPUs\n"
+                    f"\n"
+                    f"SLURM actually allocated: {slurm_allocated} CPUs\n"
+                    f"  - SLURM_CPUS_ON_NODE: {slurm_cpus_on_node}\n"
+                    f"  - SLURM_NTASKS: {slurm_ntasks}\n"
+                    f"  - SLURM_CPUS_PER_TASK: {slurm_cpus_per_task}\n"
+                    f"  - SLURM_JOB_ID: {os.environ.get('SLURM_JOB_ID')}\n"
+                    f"\n"
+                    f"ROOT CAUSE:\n"
+                    f"  This is likely due to a bug in Snakemake's slurm-jobstep executor\n"
+                    f"  that misreads available cores when:\n"
+                    f"    - SLURM_NTASKS > 1 (you have {slurm_ntasks})\n"
+                    f"    - SLURM_CPUS_PER_TASK > 1 (you have {slurm_cpus_per_task})\n"
+                    f"\n"
+                    f"  The jobstep executor incorrectly reports 'Provided cores: {slurm_cpus_per_task}'\n"
+                    f"  instead of the correct total: {slurm_ntasks} × {slurm_cpus_per_task} = "
+                    f"{slurm_ntasks * slurm_cpus_per_task}\n"
+                    f"\n"
+                    f"CONSEQUENCE:\n"
+                    f"  If we proceed, srun will request {expected_cpus} CPUs but only\n"
+                    f"  {slurm_allocated} are allocated, causing an infinite hang.\n"
+                    f"\n"
+                    f"SOLUTION:\n"
+                    f"  1. Use partition with more resources (e.g., 'parallel' instead of 'standard')\n"
+                    f"  2. Reduce n_mpi_procs or n_omp_threads in your configuration\n"
+                    f"  3. Report this issue to Snakemake (slurm-jobstep executor bug)\n"
+                    f"{'='*80}\n"
+                )
+                logger.error(error_msg)
+                raise RuntimeError(
+                    f"SLURM allocated {slurm_allocated} CPUs but configuration requires "
+                    f"{expected_cpus} CPUs. Cannot proceed to avoid infinite hang."
+                )
+
         if run_mode != "gpu":
             if using_srun:
                 launch_cmd_str = (

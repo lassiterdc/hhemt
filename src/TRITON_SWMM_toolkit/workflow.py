@@ -243,6 +243,18 @@ class SnakemakeWorkflowBuilder:
         n_gpus = self.cfg_analysis.n_gpus or 0
         cpus_per_sim = mpi_ranks * omp_threads
 
+        # Determine thread count for Snakemake rules
+        # For MPI/hybrid jobs, use task count (mpi_ranks) instead of total CPUs
+        # to prevent Snakemake from incorrectly scaling threads when it misreads
+        # SLURM_CPUS_PER_TASK as total available cores.
+        # See: .debugging/uva_sensitivity_suite/matching_srun_snakemake_and_slurm_allocation.md
+        if mpi_ranks > 1:
+            # MPI or hybrid: threads = number of MPI tasks
+            snakemake_threads = mpi_ranks
+        else:
+            # Serial or OpenMP: threads = total CPUs
+            snakemake_threads = cpus_per_sim
+
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
@@ -431,7 +443,7 @@ rule prepare_scenario:
             else:
                 # TRITON and TRITON-SWMM use configured resources
                 model_resources = sim_resources
-                model_threads = cpus_per_sim
+                model_threads = snakemake_threads
 
             snakefile_content += f'''
 rule run_{model_type}:
@@ -2257,6 +2269,7 @@ rule setup:
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
             gpus_per_node_config = sub_analysis.cfg_analysis.hpc_gpus_per_node or 0
+            cpus_per_sim = n_mpi * n_omp
 
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml
@@ -2276,6 +2289,13 @@ rule setup:
                 tasks=1,
                 cpus_per_task=1,
             )
+
+            if n_mpi > 1:
+                # MPI or hybrid: threads = number of MPI tasks
+                snakemake_threads = n_mpi
+            else:
+                # Serial or OpenMP: threads = total CPUs
+                snakemake_threads = cpus_per_sim
 
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
@@ -2342,7 +2362,7 @@ rule setup:
     output: "{sim_outflag}"
     log: "logs/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
-    threads: {n_mpi * n_omp}
+    threads: {snakemake_threads}
     resources:
 {sim_resources_sa}
     shell:
