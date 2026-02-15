@@ -601,8 +601,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, val in self.master_analysis.cfg_analysis.model_dump().items():
             # print(key)
             if key in df_setup.columns:
-                if len(df_setup[key].unique()) > 1:
-                    keys_targeted_for_sensitivity.append(key)
+                keys_targeted_for_sensitivity.append(key)
         return keys_targeted_for_sensitivity
 
     def _retrieve_df_setup(self) -> pd.DataFrame:
