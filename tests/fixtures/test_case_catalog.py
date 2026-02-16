@@ -210,7 +210,7 @@ class UVA_TestCases:
             "n_gpus": 0,
             "mem_gb_per_cpu": 2,
             "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 6,
+            "hpc_total_job_duration_min": 60 * 72,
         }
 
         system_overrides = {
