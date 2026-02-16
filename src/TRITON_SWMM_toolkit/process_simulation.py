@@ -1977,10 +1977,26 @@ def summarize_triton_simulation_results(
     # Grid validation (small operation, can materialize)
     x_dim = ds.x.to_series().diff().mode().iloc[0]
     y_dim = ds.y.to_series().diff().mode().iloc[0]
-    if (abs(x_dim) != abs(y_dim)) or (abs(x_dim) != target_dem_resolution):
+
+    # Use tolerance-based comparison for floating-point values
+    # 1 micrometer tolerance is negligible for meter-scale grids but allows for
+    # floating-point precision differences between YAML serialization and binary output
+    tolerance = 1e-6  # 1 micrometer
+
+    if not np.isclose(abs(x_dim), abs(y_dim), atol=tolerance, rtol=0):
         raise ValueError(
-            f"Output dimensions do not line up with expectations. "
-            f"Target DEM res: {target_dem_resolution}. x_dim, y_dim = {x_dim}, {y_dim}"
+            f"X and Y dimensions do not match within tolerance. "
+            f"x_dim: {x_dim}, y_dim: {y_dim}, "
+            f"Difference: {abs(abs(x_dim) - abs(y_dim)):.2e}m, "
+            f"Tolerance: {tolerance}m"
+        )
+
+    if not np.isclose(abs(x_dim), target_dem_resolution, atol=tolerance, rtol=0):
+        raise ValueError(
+            f"Grid dimension does not match target DEM resolution within tolerance. "
+            f"Target: {target_dem_resolution}, Actual: {abs(x_dim)}, "
+            f"Difference: {abs(abs(x_dim) - target_dem_resolution):.2e}m, "
+            f"Tolerance: {tolerance}m"
         )
 
     ds_summary["final_surface_flood_volume_cm"] = (
