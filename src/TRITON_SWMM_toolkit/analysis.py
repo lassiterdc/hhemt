@@ -1599,19 +1599,46 @@ class TRITONSWMM_analysis:
         )
 
         # Check consolidation
-        # Check if analysis-level summary files exist
-        summaries_exist = (
-            self.analysis_paths.output_tritonswmm_triton_summary
-            and self.analysis_paths.output_tritonswmm_triton_summary.exists()
-        )
+        # Check if analysis-level summary files exist for all enabled models
+        enabled_models = self._get_enabled_model_types()
+
+        # Determine which summary files to check based on enabled models
+        summary_checks = {}
+
+        if "tritonswmm" in enabled_models:
+            summary_checks["tritonswmm"] = (
+                self.analysis_paths.output_tritonswmm_triton_summary
+                and self.analysis_paths.output_tritonswmm_triton_summary.exists()
+            )
+
+        if "triton" in enabled_models:
+            summary_checks["triton"] = (
+                self.analysis_paths.output_triton_only_summary
+                and self.analysis_paths.output_triton_only_summary.exists()
+            )
+
+        if "swmm" in enabled_models:
+            summary_checks["swmm"] = (
+                self.analysis_paths.output_swmm_only_node_summary
+                and self.analysis_paths.output_swmm_only_node_summary.exists()
+            )
+
+        # All enabled models must have their summaries
+        summaries_exist = all(summary_checks.values()) if summary_checks else False
+
+        # Build detailed status message
+        consol_details = {}
+        if summary_checks:
+            for model, exists in summary_checks.items():
+                consol_details[model] = f"{'✓' if exists else '✗'} {model.upper()} summaries created"
+        else:
+            consol_details["summaries"] = "✗ No models enabled"
 
         consol_phase = PhaseStatus(
             name="consolidation",
             complete=summaries_exist,
             progress=1.0 if summaries_exist else 0.0,
-            details={
-                "summaries": f"{'✓' if summaries_exist else '✗'} Analysis summaries created"
-            },
+            details=consol_details,
         )
 
         # Determine current phase and recommendation
