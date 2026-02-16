@@ -7,14 +7,15 @@ You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or F
 ### What's Available
 
 - **Configuration**: `cfg_system.yaml`, `cfg_analysis.yaml`
-- **Status tracking**: `scenario_status.csv`, `_status/*.flag` completion markers
+- **Sensitivity analysis**: `sensitivity_analysis_definition.csv` (if sensitivity analysis enabled; shows parameters varied across sub-analyses)
+- **Status tracking**: `scenario_status.csv`, `_status/*.flag` completion markers, `workflow_summary.md` (check header timestamp for freshness)
 - **Master workflow logs**: `logs/_slurm_logs/workflow_batch_*.out` (SLURM stdout for entire workflow)
 - **Snakemake logs**: `.snakemake/log/*.snakemake.log` (Snakemake orchestrator logs)
 - **Rule-specific logs**: `logs/sims/*.log` (prepare, simulation, processing logs)
 - **Per-rule SLURM logs**: `.snakemake/slurm_logs/rule_*/[event_iloc]/[job_id].log`
 - **Performance reports**: `efficiency_report_*.csv`
 
-**Note**: `dry_run_report.md` should NOT be used for debugging as it may pre-date the failed run.
+**Note**: `dry_run_report.md` should NOT be used for debugging as it may pre-date the failed run. Always check `workflow_summary.md` header timestamp to ensure it reflects the current run.
 
 ### What's NOT Available (Unless Requested)
 
@@ -33,7 +34,7 @@ Read `cfg_analysis.yaml` and `cfg_system.yaml`:
 - Execution mode: `multi_sim_run_method` (local, batch_job, 1_job_many_srun_tasks)
 - Run mode: `run_mode` (serial, openmp, mpi, gpu, hybrid)
 - Model types enabled: Check `cfg_system.yaml` for `toggle_triton_model`, `toggle_tritonswmm_model`, `toggle_swmm_model`
-- For sensitivity studies: Note if this is a master config or sub-analysis config
+- **For sensitivity studies**: Check `sensitivity_analysis_definition.csv` to understand which parameters vary across sub-analyses (includes run_mode, n_mpi_procs, n_gpus, n_omp_threads, partition, etc.)
 
 ### Step 2: Check Most Recent Master Workflow Log
 

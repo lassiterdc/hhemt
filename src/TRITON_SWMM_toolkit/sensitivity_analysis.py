@@ -3,6 +3,7 @@ import TRITON_SWMM_toolkit.utils as ut
 import pandas as pd
 from typing import Literal, TYPE_CHECKING
 import time
+from pathlib import Path
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
 import yaml  # type: ignore
@@ -616,6 +617,20 @@ class TRITONSWMM_sensitivity_analysis:
                 "File extension not recognized for file defining sensitivity analysis."
             )
         return df_setup
+
+    def export_sensitivity_definition_csv(self) -> Path:
+        """Export sensitivity analysis definition to analysis directory as CSV.
+
+        Exports only the fields that vary across sub-analyses (self.df_setup columns)
+        to a standardized 'sensitivity_analysis_definition.csv' file in the analysis directory.
+        This allows easier inspection of the sensitivity analysis configuration during debugging.
+
+        Returns:
+            Path to the exported CSV file.
+        """
+        output_path = self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
+        self.df_setup.to_csv(output_path, index=True)
+        return output_path
 
     def _create_sub_analyses(self):
         # create sub analyses

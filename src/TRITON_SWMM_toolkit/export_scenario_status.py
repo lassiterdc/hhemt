@@ -121,13 +121,20 @@ def write_workflow_summary_md(analysis) -> Path:
         ]
     )
 
+    # Get SLURM context if available
+    import os
+    slurm_job_id = os.environ.get("SLURM_JOB_ID", "N/A (not in SLURM)")
+
     # Build markdown content
     md_lines = [
         "# Workflow Summary",
         "",
-        f"**Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"**Analysis ID**: `{analysis.cfg_analysis.analysis_id}`",
-        f"**Analysis Directory**: `{analysis.analysis_paths.analysis_dir}`",
+        f"**⏰ Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"**📋 Analysis ID**: `{analysis.cfg_analysis.analysis_id}`",
+        f"**📁 Analysis Directory**: `{analysis.analysis_paths.analysis_dir}`",
+        f"**🖥️ SLURM Job ID**: `{slurm_job_id}`",
+        "",
+        "> **Note**: This summary reflects the state at generation time above. Check timestamp to ensure it matches your current debugging session.",
         "",
         "---",
         "",
