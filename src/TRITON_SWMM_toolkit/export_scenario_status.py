@@ -43,9 +43,10 @@ def gather_hpc_partition_info() -> str:
         Formatted markdown section with partition information, or empty string if not on HPC
     """
     # Check if we're on an HPC cluster with SLURM
-    if not os.environ.get("SLURM_CLUSTER_NAME") and subprocess.run(
-        ["which", "scontrol"], capture_output=True
-    ).returncode != 0:
+    if (
+        not os.environ.get("SLURM_CLUSTER_NAME")
+        and subprocess.run(["which", "scontrol"], capture_output=True).returncode != 0
+    ):
         return ""
 
     md_lines = ["## HPC Partition Information", ""]
@@ -55,7 +56,10 @@ def gather_hpc_partition_info() -> str:
     commands = [
         ("Partition Overview", "sinfo -O partitionname,nodes,cpus,memory,time,gres -a"),
         ("Partition Details", "scontrol show partition -o"),
-        ("QOS Limits", "sacctmgr show qos format=name,maxwall,maxsubmit,maxnodes,maxcpus,maxgres -p"),
+        (
+            "QOS Limits",
+            "sacctmgr show qos format=name,maxwall,maxsubmit,maxnodes,maxcpus,maxgres -p",
+        ),
         ("User QOS", f"sacctmgr show user $USER format=User,Account,DefaultQOS,QOS -p"),
         ("GPU Partitions", "sinfo -o '%P %G' | grep -i gpu"),
     ]
@@ -65,16 +69,14 @@ def gather_hpc_partition_info() -> str:
         md_lines.append("```")
         try:
             result = subprocess.run(
-                command,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=10
+                command, shell=True, capture_output=True, text=True, timeout=10
             )
             if result.returncode == 0 and result.stdout.strip():
                 md_lines.append(result.stdout.strip())
             else:
-                md_lines.append(f"Command failed or returned no output (exit code: {result.returncode})")
+                md_lines.append(
+                    f"Command failed or returned no output (exit code: {result.returncode})"
+                )
         except Exception as e:
             md_lines.append(f"Error running command: {str(e)}")
         md_lines.append("```")
@@ -109,13 +111,15 @@ def write_workflow_summary_md(analysis) -> Path:
     status = analysis.get_workflow_status()
 
     # Determine if workflow is complete (all phases done)
-    workflow_complete = all([
-        status.setup.complete,
-        status.preparation.complete,
-        status.simulation.complete,
-        status.processing.complete,
-        status.consolidation.complete,
-    ])
+    workflow_complete = all(
+        [
+            status.setup.complete,
+            status.preparation.complete,
+            status.simulation.complete,
+            status.processing.complete,
+            status.consolidation.complete,
+        ]
+    )
 
     # Build markdown content
     md_lines = [
@@ -156,12 +160,14 @@ def write_workflow_summary_md(analysis) -> Path:
     ]
 
     for phase_name, phase in phases:
-        md_lines.extend([
-            f"### {phase_name}",
-            "",
-            f"- **Complete**: {phase.complete}",
-            f"- **Progress**: {phase.progress:.1%}",
-        ])
+        md_lines.extend(
+            [
+                f"### {phase_name}",
+                "",
+                f"- **Complete**: {phase.complete}",
+                f"- **Progress**: {phase.progress:.1%}",
+            ]
+        )
 
         if phase.failed_items:
             md_lines.append(f"- **Failed Items**: {len(phase.failed_items)}")
@@ -269,7 +275,9 @@ def main():
     logger.info(f"Exporting scenario status for analysis")
     logger.info(f"System config: {args.system_config}")
     logger.info(f"Analysis config: {args.analysis_config}")
-    logger.info(f"Output path: {args.output_path if args.output_path else 'default (analysis_dir/scenario_status.csv)'}")
+    logger.info(
+        f"Output path: {args.output_path if args.output_path else 'default (analysis_dir/scenario_status.csv)'}"
+    )
 
     try:
         # Load system configuration
@@ -288,7 +296,7 @@ def main():
         analysis = anlysis.TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
-            skip_log_update=True,
+            skip_log_update=False,
         )
 
         # Export status
