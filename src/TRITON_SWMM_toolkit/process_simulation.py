@@ -1242,7 +1242,9 @@ class TRITONSWMM_sim_post_processing:
         if self.log.TRITON_timeseries_written and bool(
             self.log.TRITON_timeseries_written.get()
         ):
-            fast_rmtree(triton_dir)
+            for child in triton_dir.iterdir():
+                if child.is_dir():
+                    fast_rmtree(child)
             if self.log.raw_TRITON_outputs_cleared:
                 self.log.raw_TRITON_outputs_cleared.set(True)
 
