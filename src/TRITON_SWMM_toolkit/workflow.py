@@ -166,7 +166,7 @@ class SnakemakeWorkflowBuilder:
         mem_mb={mem_mb},
         nodes={sim_nodes}"""
         if mpi:
-            block += ',\n        mpi=True'
+            block += ",\n        mpi=True"
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":
                 block += f',\n        gpu="{gpus_total}"'
@@ -1140,9 +1140,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
 
             efficiency_report_dir = logs_dir / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = (
-                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
-            )
+            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             if verbose:
@@ -1292,9 +1290,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
 
             efficiency_report_dir = logs_dir / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = (
-                f"slurm_efficiency_report_dry_run_{ut.current_datetime_string(filepath_friendly=True)}.csv"
-            )
+            efficiency_report_filename = f"slurm_efficiency_report_dry_run_{ut.current_datetime_string(filepath_friendly=True)}.csv"
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             cmd_args = self._get_snakemake_base_cmd() + [
@@ -1615,7 +1611,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "message": error_msg,
             }
 
-    def _submit_batch_job_workflow(
+    def _deprecated_submit_batch_job_workflow(
         self,
         snakefile_path: Path,
         wait_for_completion: bool = False,
@@ -1652,6 +1648,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             - completed/state/exit_code when wait_for_completion=True
         """
         import warnings
+
         warnings.warn(
             "The sbatch orchestrator approach is deprecated due to orphaned job issues. "
             "This method should not be called directly. batch_job mode now uses tmux orchestration.",
@@ -1759,9 +1756,7 @@ echo "=========================================="
                 / "slurm_efficiency_report"
             )
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = (
-                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
-            )
+            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             # The orchestration job runs snakemake; snakemake then submits worker jobs via executor=slurm
@@ -1943,28 +1938,33 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 )
 
             # Build Snakemake command with absolute paths
-            config_dir = self.analysis_paths.analysis_dir / ".snakemake_profile" / "slurm"
+            config_dir = (
+                self.analysis_paths.analysis_dir / ".snakemake_profile" / "slurm"
+            )
 
             # Create SLURM efficiency report directory and set timestamped filename
             from TRITON_SWMM_toolkit import utils as ut
+
             efficiency_report_dir = (
                 self.analysis.analysis_paths.analysis_dir
                 / "logs"
                 / "slurm_efficiency_report"
             )
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = (
-                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
-            )
+            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             # Build module load commands (include tmux if on HPC)
             module_load_cmd = ""
             if self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-                modules = self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+                modules = (
+                    self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+                )
                 # Ensure tmux is loaded (may already be in the list, but doesn't hurt to include)
                 modules_with_tmux = ["tmux"] + list(modules)
-                module_load_cmd = "module purge && " + " && ".join([f"module load {m}" for m in modules_with_tmux])
+                module_load_cmd = "module purge && " + " && ".join(
+                    [f"module load {m}" for m in modules_with_tmux]
+                )
 
             # Build the full command that will run inside tmux
             snakemake_cmd = f"""
@@ -2035,8 +2035,12 @@ python -m snakemake \\
 
             if send_cmd_result.returncode != 0:
                 # Clean up the session
-                subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
-                error_msg = f"Failed to send command to tmux session: {send_cmd_result.stderr}"
+                subprocess.run(
+                    ["tmux", "kill-session", "-t", session_name], capture_output=True
+                )
+                error_msg = (
+                    f"Failed to send command to tmux session: {send_cmd_result.stderr}"
+                )
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
@@ -2078,7 +2082,10 @@ python -m snakemake \\
                 print(f"[Snakemake] Session name: {session_name}", flush=True)
                 if snakemake_pid:
                     print(f"[Snakemake] Snakemake PID: {snakemake_pid}", flush=True)
-                print(f"[Snakemake] Attach with: tmux attach -t {session_name}", flush=True)
+                print(
+                    f"[Snakemake] Attach with: tmux attach -t {session_name}",
+                    flush=True,
+                )
                 print(f"[Snakemake] Detach with: Ctrl+B, then D", flush=True)
 
             result_dict = {
@@ -2188,7 +2195,10 @@ python -m snakemake \\
                 if check_result.returncode != 0:
                     # Session no longer exists - workflow completed
                     if verbose:
-                        print("[Snakemake] Tmux session exited - workflow complete", flush=True)
+                        print(
+                            "[Snakemake] Tmux session exited - workflow complete",
+                            flush=True,
+                        )
                     return {
                         "completed": True,
                         "message": "Workflow completed successfully",
