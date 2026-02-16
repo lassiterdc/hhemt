@@ -178,8 +178,10 @@ def write_workflow_summary_md(analysis) -> Path:
                 md_lines.append(f"  ... and {len(phase.failed_items) - 10} more")
             md_lines.append("  ```")
 
-        if phase.message:
-            md_lines.append(f"- **Message**: {phase.message}")
+        if phase.details:
+            md_lines.append("- **Details**:")
+            for key, value in phase.details.items():
+                md_lines.append(f"  - {key}: {value}")
 
         md_lines.append("")
 
