@@ -2145,10 +2145,17 @@ python -m snakemake \\
             Shell command prefix to load modules, or empty string if not on HPC
         """
         modules_str = self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-        if modules_str:
-            # modules_str is a space-separated string, e.g., "gcc/11.2.0 openmpi/4.1.1"
-            # Always prepend tmux to ensure it's loaded
-            return f"module purge && module load tmux {modules_str} && "
+
+        # If we're in SLURM or using batch_job mode, always try to load tmux
+        # Even if no other modules are specified, tmux might not be in default PATH
+        if self.analysis.in_slurm or self.cfg_analysis.multi_sim_run_method == "batch_job":
+            if modules_str:
+                # modules_str is a space-separated string, e.g., "gcc/11.2.0 openmpi/4.1.1"
+                return f"module purge && module load tmux {modules_str} && "
+            else:
+                # No other modules, but still load tmux on HPC
+                return "module load tmux && "
+
         return ""
 
     def _get_snakemake_pid_from_tmux(self, session_name: str) -> int | None:
