@@ -3084,7 +3084,7 @@ rule setup:
                 self.sensitivity_analysis._update_master_analysis_log()
                 return dry_run_result
 
-            result = self._base_builder._submit_batch_job_workflow(
+            result = self._base_builder._submit_tmux_workflow(
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
