@@ -131,7 +131,7 @@ class GetTS_TestCases:
 
 class UVA_TestCases:
     sensitivity_UVA_cpu_minimal = "benchmarking_uva_minimal.xlsx"
-    # sensitivity_UVA_cpu_full = "benchmarking_uva_cpus.xlsx"
+    sensitivity_analysis_uva_suite = "full_benchmarking_experiment_uva_test.xlsx"
 
     @classmethod
     def retrieve_norfolk_UVA_multisim_1cpu_case(
@@ -185,6 +185,49 @@ class UVA_TestCases:
             n_events=1,
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
+        )
+
+    @classmethod
+    def benchmarking_norfolk_irene(
+        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+    ):
+        """UVA HPC sensitivity analysis."""
+        # example_name = "norfolk_irene"
+        analysis_name = "uva_sensitivity_suite"
+        sensitivity = (
+            all_examples.ex_Nrflk().test_case_directory
+            / cls.sensitivity_analysis_uva_suite
+        )
+
+        analysis_overrides = {
+            "toggle_sensitivity_analysis": True,
+            "sensitivity_analysis": sensitivity,
+            "run_mode": "serial",
+            "hpc_time_min_per_sim": 5,
+            "n_mpi_procs": 1,
+            "n_omp_threads": 1,
+            "n_nodes": 1,
+            "n_gpus": 0,
+            "mem_gb_per_cpu": 2,
+            "hpc_max_simultaneous_sims": 100,
+            "hpc_total_job_duration_min": 60 * 6,
+        }
+
+        system_overrides = {
+            "toggle_triton_model": False,
+            "toggle_tritonswmm_model": True,
+            "toggle_swmm_model": False,
+            "gpu_compilation_backend": "CUDA",
+        }
+
+        return GetTS_TestCases._retrieve_norfolk_case(
+            analysis_name=analysis_name,
+            start_from_scratch=start_from_scratch,
+            download_if_exists=download_if_exists,
+            n_events=1,
+            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overrides=analysis_overrides,
+            system_overrides=system_overrides,
         )
 
     # ========== Frontier HPC Test Cases ==========
