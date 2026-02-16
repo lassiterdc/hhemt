@@ -249,6 +249,7 @@ The report **must** include:
 3. **Detailed Failure Analysis**
    - One subsection per failure mode
    - **Include exact text/code excerpts from logs** (representative examples)
+   - **Include Snakemake rule definition** showing resource requests (threads, tasks, cpus_per_task, mem_mb, etc.)
    - Pattern analysis (which configurations failed/succeeded)
    - Status tables showing affected sub-analyses
 
@@ -271,6 +272,7 @@ The report **must** include:
 8. **Appendix: Representative Log Excerpts**
    - Full, unedited excerpts showing each failure mode
    - Include file paths for traceability
+   - **Include corresponding Snakemake rule** to show resource allocation requests
 
 #### Report Header Template
 
