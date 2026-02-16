@@ -31,6 +31,8 @@ from pathlib import Path
 import traceback
 import logging
 
+from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+
 # Configure logging to stderr
 logging.basicConfig(
     level=logging.INFO,
@@ -97,6 +99,9 @@ def main():
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
         from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+
+        # Log workflow context for traceability
+        log_workflow_context(logger)
 
         logger.info(f"Loading system configuration from {args.system_config}")
         system = TRITONSWMM_system(args.system_config)

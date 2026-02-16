@@ -27,6 +27,8 @@ import argparse
 from pathlib import Path
 import traceback
 import logging
+
+from TRITON_SWMM_toolkit.log_utils import log_workflow_context
 import gc
 
 # Memory profiling imports (always-on, minimal overhead)
@@ -148,6 +150,9 @@ def main():
         from TRITON_SWMM_toolkit.process_simulation import (
             TRITONSWMM_sim_post_processing,
         )
+
+        # Log workflow context for traceability
+        log_workflow_context(logger)
 
         logger.info(f"Loading system configuration from {args.system_config}")
         system = TRITONSWMM_system(args.system_config)
