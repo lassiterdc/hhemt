@@ -203,7 +203,7 @@ class UVA_TestCases:
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
             "run_mode": "serial",
-            "hpc_time_min_per_sim": 5,
+            "hpc_time_min_per_sim": 20,
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
             "n_nodes": 1,
