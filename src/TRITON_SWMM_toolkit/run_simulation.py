@@ -126,7 +126,7 @@ class TRITONSWMM_run:
         if model_type in ("triton", "tritonswmm"):
             perf_file = self.performance_file(model_type=model_type)
             if perf_file.exists() != success:
-                raise RuntimeError(
+                raise Warning(
                     f"{model_type} simulation has ambiguous completion status:\n"
                     f"  - performance.txt exists = {perf_file.exists()} suggesting completion = {perf_file.exists()}\n"
                     f"  - Log-based check says: success = {success}\n"
@@ -453,7 +453,11 @@ class TRITONSWMM_run:
             slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
 
             # Calculate what we expect vs what SLURM allocated
-            expected_cpus = n_mpi_procs * n_omp_threads if run_mode != "gpu" else n_gpus * n_omp_threads
+            expected_cpus = (
+                n_mpi_procs * n_omp_threads
+                if run_mode != "gpu"
+                else n_gpus * n_omp_threads
+            )
             slurm_allocated = slurm_cpus_on_node
 
             if slurm_allocated < expected_cpus:
