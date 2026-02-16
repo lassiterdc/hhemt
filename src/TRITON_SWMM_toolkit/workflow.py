@@ -243,17 +243,11 @@ class SnakemakeWorkflowBuilder:
         n_gpus = self.cfg_analysis.n_gpus or 0
         cpus_per_sim = mpi_ranks * omp_threads
 
-        # Determine thread count for Snakemake rules
-        # For MPI/hybrid jobs, use task count (mpi_ranks) instead of total CPUs
-        # to prevent Snakemake from incorrectly scaling threads when it misreads
-        # SLURM_CPUS_PER_TASK as total available cores.
-        # See: .debugging/uva_sensitivity_suite/matching_srun_snakemake_and_slurm_allocation.md
-        if mpi_ranks > 1:
-            # MPI or hybrid: threads = number of MPI tasks
-            snakemake_threads = mpi_ranks
-        else:
-            # Serial or OpenMP: threads = total CPUs
-            snakemake_threads = cpus_per_sim
+        # CRITICAL: Snakemake's SLURM executor uses max(threads, tasks×cpus_per_task) for --ntasks
+        # We must set threads = total CPUs needed to ensure correct SLURM allocation
+        # Even though we also set resources.tasks and resources.cpus_per_task correctly,
+        # Snakemake will underallocate if threads < required CPUs
+        snakemake_threads = cpus_per_sim
 
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
@@ -2335,12 +2329,9 @@ rule setup:
                 cpus_per_task=1,
             )
 
-            if n_mpi > 1:
-                # MPI or hybrid: threads = number of MPI tasks
-                snakemake_threads = n_mpi
-            else:
-                # Serial or OpenMP: threads = total CPUs
-                snakemake_threads = cpus_per_sim
+            # CRITICAL: Snakemake's SLURM executor uses max(threads, tasks×cpus_per_task) for allocation
+            # Always set threads = total CPUs to ensure correct SLURM --ntasks value
+            snakemake_threads = cpus_per_sim
 
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
