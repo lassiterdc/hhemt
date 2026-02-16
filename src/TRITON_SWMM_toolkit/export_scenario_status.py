@@ -108,6 +108,15 @@ def write_workflow_summary_md(analysis) -> Path:
     # Get workflow status
     status = analysis.get_workflow_status()
 
+    # Determine if workflow is complete (all phases done)
+    workflow_complete = all([
+        status.setup.complete,
+        status.preparation.complete,
+        status.simulation.complete,
+        status.processing.complete,
+        status.consolidation.complete,
+    ])
+
     # Build markdown content
     md_lines = [
         "# Workflow Summary",
@@ -120,7 +129,7 @@ def write_workflow_summary_md(analysis) -> Path:
         "",
         "## Overall Status",
         "",
-        f"**Workflow Complete**: {status.workflow_complete}",
+        f"**Workflow Complete**: {workflow_complete}",
         f"**Current Phase**: {status.current_phase}",
         f"**Recommended Execution Mode**: `{status.recommended_mode}`",
         "",

@@ -498,10 +498,10 @@ class TRITONSWMM_run:
                     f"  3. Report this issue to Snakemake (slurm-jobstep executor bug)\n"
                     f"{'='*80}\n"
                 )
-                logger.error(error_msg)
                 raise RuntimeError(
                     f"SLURM allocated {slurm_allocated} CPUs but configuration requires "
                     f"{expected_cpus} CPUs. Cannot proceed to avoid infinite hang."
+                    f"{error_msg}"
                 )
 
         if run_mode != "gpu":
