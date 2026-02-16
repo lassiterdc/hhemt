@@ -2,6 +2,7 @@
 import os
 import subprocess
 import time
+import warnings
 import pandas as pd
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import read_text_file_as_list_of_strings
@@ -126,13 +127,14 @@ class TRITONSWMM_run:
         if model_type in ("triton", "tritonswmm"):
             perf_file = self.performance_file(model_type=model_type)
             if perf_file.exists() != success:
-                raise Warning(
+                warnings.warn(
                     f"{model_type} simulation has ambiguous completion status:\n"
                     f"  - performance.txt exists = {perf_file.exists()} suggesting completion = {perf_file.exists()}\n"
                     f"  - Log-based check says: success = {success}\n"
                     f"Performance files should only be written if simulation completes.\n"
                     f"This error indicates completion detection needs strengthening.\n"
-                    f"Check log file for model_type={model_type}"
+                    f"Check log file for model_type={model_type}",
+                    RuntimeWarning,
                 )
         return success
 
