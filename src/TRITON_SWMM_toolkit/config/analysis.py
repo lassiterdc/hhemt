@@ -2,6 +2,7 @@ from pydantic import Field, field_validator, model_validator
 from typing import List, Optional, Literal, Annotated
 from pathlib import Path
 import re
+import math
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 
 
@@ -195,7 +196,7 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Timestep for hydraulic computations in seconds.",
     )
-    TRITON_reporting_timestep_s: float = Field(
+    TRITON_reporting_timestep_s: int | float = Field(
         ...,
         description="Reporting timestep in seconds.",
     )
@@ -264,6 +265,7 @@ class analysis_config(cfgBaseModel):
         hpc_gpus_per_node = values.get("hpc_gpus_per_node")
         hpc_max_simultaneous_sims = values.get("hpc_max_simultaneous_sims")
         hpc_total_job_duration_min = values.get("hpc_total_job_duration_min")
+        hpc_time_min_per_sim = values.get("hpc_time_min_per_sim")
 
         # -------------------------------
         # Validation rules per mode
@@ -360,5 +362,21 @@ class analysis_config(cfgBaseModel):
             raise ValueError(
                 "hpc_total_job_duration_min is required and must be > 0 for multi_sim_run_method=batch_job"
             )
+
+        if multi_sim_method == "batch_job":
+            if hpc_time_min_per_sim is None:
+                raise ValueError(
+                    "hpc_time_min_per_sim is required and must be >= 1 for multi_sim_run_method=batch_job"
+                )
+            if isinstance(hpc_time_min_per_sim, float) and math.isnan(
+                hpc_time_min_per_sim
+            ):
+                raise ValueError(
+                    "hpc_time_min_per_sim must be a valid integer >= 1 for multi_sim_run_method=batch_job (NaN detected)"
+                )
+            if hpc_time_min_per_sim < 1:
+                raise ValueError(
+                    "hpc_time_min_per_sim must be >= 1 for multi_sim_run_method=batch_job"
+                )
 
         return values
