@@ -105,6 +105,7 @@ class SnakemakeWorkflowBuilder:
         gpus_per_node_config: int = 0,
         gpu_hardware: str | None = None,
         gpu_alloc_mode: Literal["gres", "gpus"] = "gres",
+        mpi: bool = False,
     ) -> str:
         """
         Build a Snakemake resources block.
@@ -131,6 +132,8 @@ class SnakemakeWorkflowBuilder:
             GPU model name for SLURM gres/gpus specification
         gpu_alloc_mode : Literal["gres", "gpus"]
             Which SLURM GPU directive to emit in resources
+        mpi : bool
+            If True, adds mpi=True to resources (required for SLURM executor to set --ntasks > 1)
 
         Returns
         -------
@@ -157,6 +160,8 @@ class SnakemakeWorkflowBuilder:
         cpus_per_task={cpus_per_task},
         mem_mb={mem_mb},
         nodes={sim_nodes}"""
+        if mpi:
+            block += ',\n        mpi=True'
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":
                 block += f',\n        gpu="{gpus_total}"'
@@ -318,6 +323,7 @@ class SnakemakeWorkflowBuilder:
             gpus_per_node_config=gpus_per_node_config,
             gpu_hardware=self.system.cfg_system.gpu_hardware,
             gpu_alloc_mode=gpu_alloc_mode,
+            mpi=(self.cfg_analysis.run_mode in ["hybrid", "mpi"]),
         )
 
         # Output processing: I/O bound (1-2 CPUs for compression)
@@ -616,8 +622,6 @@ rule consolidate:
                             "time": "{resources.runtime}:00",
                             "mem": "{resources.mem_mb}",
                             "nodes": "{resources.nodes}",
-                            "ntasks": "{resources.tasks}",
-                            "cpus-per-task": "{resources.cpus_per_task}",
                             "account": "{resources.slurm_account}",
                         }
                     },
@@ -2309,6 +2313,7 @@ rule setup:
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
             gpus_per_node_config = sub_analysis.cfg_analysis.hpc_gpus_per_node or 0
             cpus_per_sim = n_mpi * n_omp
+            run_mode = sub_analysis.cfg_analysis.run_mode
 
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml
@@ -2344,6 +2349,7 @@ rule setup:
                 gpus_per_node_config=gpus_per_node_config,
                 gpu_hardware=self.system.cfg_system.gpu_hardware,
                 gpu_alloc_mode=gpu_alloc_mode,
+                mpi=(run_mode in ["hybrid", "mpi"]),
             )
 
             process_resources_sa = self._base_builder._build_resource_block(
