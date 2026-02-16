@@ -361,13 +361,15 @@ rule all:
 onsuccess:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {config_args}
+            {config_args} \\
+            > logs/export_scenario_status.log 2>&1
     """)
 
 onerror:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {config_args}
+            {config_args} \\
+            > logs/export_scenario_status.log 2>&1
     """)
 
 rule setup:
@@ -2204,13 +2206,15 @@ onstart:
 onsuccess:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {master_config_args}
+            {master_config_args} \\
+            > logs/export_scenario_status.log 2>&1
     """)
 
 onerror:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {master_config_args}
+            {master_config_args} \\
+            > logs/export_scenario_status.log 2>&1
     """)
 
 

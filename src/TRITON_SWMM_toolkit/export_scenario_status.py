@@ -10,13 +10,24 @@ and optionally includes HPC partition information for debugging resource allocat
 """
 
 import argparse
+import logging
 import os
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from TRITON_SWMM_toolkit.log_utils import log_workflow_context
 import TRITON_SWMM_toolkit.analysis as anlysis
+
+# Configure logging to stderr (will be redirected to logfile by Snakefile)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    stream=sys.stderr,
+)
+logger = logging.getLogger(__name__)
 
 
 def gather_hpc_partition_info() -> str:
@@ -243,8 +254,17 @@ def main():
 
     args = parser.parse_args()
 
+    # Log workflow context for traceability
+    log_workflow_context(logger)
+
+    logger.info(f"Exporting scenario status for analysis")
+    logger.info(f"System config: {args.system_config}")
+    logger.info(f"Analysis config: {args.analysis_config}")
+    logger.info(f"Output path: {args.output_path if args.output_path else 'default (analysis_dir/scenario_status.csv)'}")
+
     try:
         # Load system configuration
+        logger.info("Loading system configuration...")
         if args.verbose:
             print(f"Loading system config from: {args.system_config}", flush=True)
 
@@ -253,6 +273,7 @@ def main():
         )
 
         # Load analysis configuration
+        logger.info("Loading analysis configuration...")
         if args.verbose:
             print(f"Loading analysis config from: {args.analysis_config}", flush=True)
         analysis = anlysis.TRITONSWMM_analysis(
@@ -262,17 +283,21 @@ def main():
         )
 
         # Export status
+        logger.info("Exporting scenario status to CSV...")
         if args.verbose:
             print("Exporting scenario status...", flush=True)
 
-        export_scenario_status_to_csv(analysis, args.output_path)
+        csv_path = export_scenario_status_to_csv(analysis, args.output_path)
+        logger.info(f"Scenario status exported to: {csv_path}")
 
         # Write workflow summary markdown
+        logger.info("Writing workflow summary markdown...")
         if args.verbose:
             print("Writing workflow summary...", flush=True)
 
         write_workflow_summary_md(analysis)
 
+        logger.info("Status export completed successfully")
         if args.verbose:
             print("Status export completed successfully", flush=True)
 
