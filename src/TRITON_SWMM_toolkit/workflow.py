@@ -1131,9 +1131,23 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             )
             snakemake_logfile = logs_dir / logfile_name
 
+            # Create SLURM efficiency report directory and set timestamped filename
+            import TRITON_SWMM_toolkit.utils as ut
+
+            efficiency_report_dir = logs_dir / "slurm_efficiency_report"
+            efficiency_report_dir.mkdir(parents=True, exist_ok=True)
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
+            efficiency_report_path = efficiency_report_dir / efficiency_report_filename
+
             if verbose:
                 print(
                     f"[Snakemake] Snakemake output will be logged to: {snakemake_logfile}",
+                    flush=True,
+                )
+                print(
+                    f"[Snakemake] SLURM efficiency report will be written to: {efficiency_report_path}",
                     flush=True,
                 )
 
@@ -1146,6 +1160,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "slurm",
                 "--printshellcmds",
                 "--slurm-efficiency-report",
+                "--slurm-efficiency-report-path",
+                str(efficiency_report_path),
             ]
             if dry_run:
                 cmd_args.append("--dry-run")
@@ -1267,6 +1283,16 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             logs_dir.mkdir(parents=True, exist_ok=True)
             snakemake_logfile = logs_dir / "snakemake_master_dry_run.log"
 
+            # Create SLURM efficiency report directory for dry run validation
+            import TRITON_SWMM_toolkit.utils as ut
+
+            efficiency_report_dir = logs_dir / "slurm_efficiency_report"
+            efficiency_report_dir.mkdir(parents=True, exist_ok=True)
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_dry_run_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
+            efficiency_report_path = efficiency_report_dir / efficiency_report_filename
+
             cmd_args = self._get_snakemake_base_cmd() + [
                 "--profile",
                 str(config_dir),
@@ -1276,6 +1302,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 "slurm",
                 "--printshellcmds",
                 "--slurm-efficiency-report",
+                "--slurm-efficiency-report-path",
+                str(efficiency_report_path),
                 "--dry-run",
             ]
             if verbose:
@@ -1708,6 +1736,18 @@ echo "=========================================="
                     f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
                 )
 
+            # Create SLURM efficiency report directory and set timestamped filename
+            efficiency_report_dir = (
+                self.analysis.analysis_paths.analysis_dir
+                / "logs"
+                / "slurm_efficiency_report"
+            )
+            efficiency_report_dir.mkdir(parents=True, exist_ok=True)
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
+            efficiency_report_path = efficiency_report_dir / efficiency_report_filename
+
             # The orchestration job runs snakemake; snakemake then submits worker jobs via executor=slurm
             script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_snakemake_orchestrator
@@ -1734,7 +1774,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
     --printshellcmds \\
-    --slurm-efficiency-report
+    --slurm-efficiency-report \\
+    --slurm-efficiency-report-path {efficiency_report_path}
 """
 
             script_path = self.analysis_paths.analysis_dir / "run_workflow_batch_job.sh"
