@@ -30,11 +30,52 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def parse_partition_limits(scontrol_output: str) -> dict:
+    """
+    Parse scontrol show partition output into structured data.
+
+    Parameters
+    ----------
+    scontrol_output : str
+        Output from `scontrol show partition -o`
+
+    Returns
+    -------
+    dict
+        Dictionary mapping partition name to dict of key limits
+    """
+    partitions = {}
+    for line in scontrol_output.strip().split("\n"):
+        if not line.strip():
+            continue
+
+        # Parse key=value pairs
+        parts = {}
+        for segment in line.split():
+            if "=" in segment:
+                key, value = segment.split("=", 1)
+                parts[key] = value
+
+        if "PartitionName" not in parts:
+            continue
+
+        partition_name = parts["PartitionName"]
+        partitions[partition_name] = {
+            "MaxNodes": parts.get("MaxNodes", "N/A"),
+            "MaxCPUsPerNode": parts.get("MaxCPUsPerNode", "N/A"),
+            "MaxTime": parts.get("MaxTime", "N/A"),
+            "DefMemPerCPU": parts.get("DefMemPerCPU", "N/A"),
+            "State": parts.get("State", "N/A"),
+        }
+
+    return partitions
+
+
 def gather_hpc_partition_info() -> str:
     """
     Gather HPC partition information for debugging resource allocation issues.
 
-    Runs SLURM commands to collect partition details, QOS limits, and node configurations.
+    Runs SLURM commands to collect partition details and node configurations.
     This helps diagnose why jobs might fail due to resource constraints.
 
     Returns
@@ -52,34 +93,209 @@ def gather_hpc_partition_info() -> str:
     md_lines = ["## HPC Partition Information", ""]
     md_lines.append(f"**Collected**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     md_lines.append("")
+    md_lines.append(
+        "> Use this information to understand resource limits that may affect job allocation."
+    )
+    md_lines.append("")
 
-    commands = [
-        ("Partition Overview", "sinfo -O partitionname,nodes,cpus,memory,time,gres -a"),
-        ("Partition Details", "scontrol show partition -o"),
-        (
-            "QOS Limits",
-            "sacctmgr show qos format=name,maxwall,maxsubmit,maxnodes,maxcpus,maxgres -p",
-        ),
-        ("User QOS", f"sacctmgr show user $USER format=User,Account,DefaultQOS,QOS -p"),
-        ("GPU Partitions", "sinfo -o '%P %G' | grep -i gpu"),
-    ]
+    # Partition overview
+    md_lines.append("### Partition Overview")
+    md_lines.append("```")
+    try:
+        result = subprocess.run(
+            "sinfo -O partitionname,nodes,cpus,memory,time,gres -a",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            md_lines.append(result.stdout.strip())
+        else:
+            md_lines.append(f"Command failed (exit code: {result.returncode})")
+    except Exception as e:
+        md_lines.append(f"Error: {str(e)}")
+    md_lines.append("```")
+    md_lines.append("")
 
-    for section_name, command in commands:
-        md_lines.append(f"### {section_name}")
-        md_lines.append("```")
-        try:
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True, timeout=10
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                md_lines.append(result.stdout.strip())
-            else:
-                md_lines.append(
-                    f"Command failed or returned no output (exit code: {result.returncode})"
+    # Partition limits (parsed into table)
+    md_lines.append("### Partition Resource Limits")
+    md_lines.append("")
+    md_lines.append(
+        "| Partition | Max Nodes | Max CPUs/Node | Max Time | Mem/CPU (MB) | State |"
+    )
+    md_lines.append("|-----------|-----------|---------------|----------|--------------|-------|")
+
+    try:
+        result = subprocess.run(
+            "scontrol show partition -o",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            partitions = parse_partition_limits(result.stdout)
+
+            # Show commonly used partitions first
+            priority_partitions = ["standard", "parallel", "gpu", "gpu-a6000"]
+            shown_partitions = set()
+
+            for partition in priority_partitions:
+                if partition in partitions:
+                    p = partitions[partition]
+                    md_lines.append(
+                        f"| {partition} | {p['MaxNodes']} | {p['MaxCPUsPerNode']} | "
+                        f"{p['MaxTime']} | {p['DefMemPerCPU']} | {p['State']} |"
+                    )
+                    shown_partitions.add(partition)
+
+            # Show remaining partitions
+            for partition, p in sorted(partitions.items()):
+                if partition not in shown_partitions:
+                    md_lines.append(
+                        f"| {partition} | {p['MaxNodes']} | {p['MaxCPUsPerNode']} | "
+                        f"{p['MaxTime']} | {p['DefMemPerCPU']} | {p['State']} |"
+                    )
+        else:
+            md_lines.append("| (command failed) | | | | | |")
+    except Exception as e:
+        md_lines.append(f"| Error: {str(e)} | | | | | |")
+
+    md_lines.append("")
+    md_lines.append(
+        "**Note**: `MaxNodes=1` on `standard` partition means multi-node jobs must use `parallel` partition."
+    )
+    md_lines.append("")
+
+    # GPU partitions
+    md_lines.append("### GPU Partitions")
+    md_lines.append("```")
+    try:
+        result = subprocess.run(
+            "sinfo -o '%P %G' | grep -i gpu",
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            md_lines.append(result.stdout.strip())
+        else:
+            md_lines.append("No GPU partitions found")
+    except Exception as e:
+        md_lines.append(f"Error: {str(e)}")
+    md_lines.append("```")
+    md_lines.append("")
+
+    return "\n".join(md_lines)
+
+
+def gather_resource_allocation_diagnostics(analysis) -> str:
+    """
+    Analyze Snakefile resource specifications and compare with configuration.
+
+    Helps diagnose CPU allocation mismatches by showing what resources were requested
+    in Snakemake rules versus what was expected from configuration.
+
+    Parameters
+    ----------
+    analysis : TRITONSWMM_analysis
+        The analysis object
+
+    Returns
+    -------
+    str
+        Formatted markdown section with resource allocation analysis
+    """
+    import re
+
+    md_lines = ["## Resource Allocation Diagnostics", ""]
+    md_lines.append(
+        "> This section helps diagnose CPU allocation mismatches between configuration and SLURM."
+    )
+    md_lines.append("")
+
+    # Check if Snakefile exists
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+    if not snakefile_path.exists():
+        md_lines.append("**Snakefile not found** - Cannot analyze resource allocation.")
+        return "\n".join(md_lines)
+
+    # Read Snakefile
+    try:
+        snakefile_content = snakefile_path.read_text()
+    except Exception as e:
+        md_lines.append(f"**Error reading Snakefile**: {str(e)}")
+        return "\n".join(md_lines)
+
+    # Extract simulation rules
+    rule_pattern = re.compile(
+        r"rule (simulation_\w+):.*?threads:\s*(\d+).*?resources:.*?"
+        r"tasks=(\d+),\s*cpus_per_task=(\d+).*?(?:gpu=\"(\d+)\")?",
+        re.DOTALL,
+    )
+
+    matches = rule_pattern.findall(snakefile_content)
+
+    if not matches:
+        md_lines.append("**No simulation rules found in Snakefile**")
+        return "\n".join(md_lines)
+
+    md_lines.append("### Simulation Rules Resource Specifications")
+    md_lines.append("")
+    md_lines.append(
+        "| Rule | Threads | Tasks | CPUs/Task | Total CPUs | GPU | Status |"
+    )
+    md_lines.append("|------|---------|-------|-----------|------------|-----|--------|")
+
+    mismatches = []
+    for match in matches:
+        rule_name, threads, tasks, cpus_per_task, gpus = match
+        threads = int(threads)
+        tasks = int(tasks)
+        cpus_per_task = int(cpus_per_task)
+        total_cpus = tasks * cpus_per_task
+        gpus = gpus if gpus else "0"
+
+        # Check for mismatch
+        status = "✅ OK" if threads == total_cpus else "⚠️ MISMATCH"
+        if threads != total_cpus:
+            mismatches.append(
+                (
+                    rule_name,
+                    threads,
+                    tasks,
+                    cpus_per_task,
+                    total_cpus,
                 )
-        except Exception as e:
-            md_lines.append(f"Error running command: {str(e)}")
-        md_lines.append("```")
+            )
+
+        md_lines.append(
+            f"| {rule_name} | {threads} | {tasks} | {cpus_per_task} | "
+            f"{total_cpus} | {gpus} | {status} |"
+        )
+
+    md_lines.append("")
+
+    if mismatches:
+        md_lines.append("### ⚠️ Resource Allocation Mismatches Detected")
+        md_lines.append("")
+        md_lines.append(
+            f"**Found {len(mismatches)} rules where `threads` ≠ `tasks × cpus_per_task`**"
+        )
+        md_lines.append("")
+        md_lines.append(
+            "This can cause issues with Snakemake's slurm-jobstep executor, which may allocate "
+            "`tasks × cpus_per_task` CPUs but only report `cpus_per_task` as available cores."
+        )
+        md_lines.append("")
+    else:
+        md_lines.append("### ✅ All Resource Specifications Consistent")
+        md_lines.append("")
+        md_lines.append(
+            "All simulation rules have `threads` matching `tasks × cpus_per_task`."
+        )
         md_lines.append("")
 
     return "\n".join(md_lines)
@@ -121,10 +337,6 @@ def write_workflow_summary_md(analysis) -> Path:
         ]
     )
 
-    # Get SLURM context if available
-    import os
-    slurm_job_id = os.environ.get("SLURM_JOB_ID", "N/A (not in SLURM)")
-
     # Build markdown content
     md_lines = [
         "# Workflow Summary",
@@ -132,7 +344,6 @@ def write_workflow_summary_md(analysis) -> Path:
         f"**⏰ Generated**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         f"**📋 Analysis ID**: `{analysis.cfg_analysis.analysis_id}`",
         f"**📁 Analysis Directory**: `{analysis.analysis_paths.analysis_dir}`",
-        f"**🖥️ SLURM Job ID**: `{slurm_job_id}`",
         "",
         "> **Note**: This summary reflects the state at generation time above. Check timestamp to ensure it matches your current debugging session.",
         "",
@@ -191,6 +402,13 @@ def write_workflow_summary_md(analysis) -> Path:
                 md_lines.append(f"  - {key}: {value}")
 
         md_lines.append("")
+
+    # Add resource allocation diagnostics
+    resource_diagnostics = gather_resource_allocation_diagnostics(analysis)
+    if resource_diagnostics:
+        md_lines.append("---")
+        md_lines.append("")
+        md_lines.append(resource_diagnostics)
 
     # Add HPC partition info if on cluster
     partition_info = gather_hpc_partition_info()
