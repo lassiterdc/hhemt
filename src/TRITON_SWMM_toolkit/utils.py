@@ -379,7 +379,7 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
     Parameters
     ----------
     log_file_path : Path
-        Path to the log.out file (typically in tritonswmm_logfile_dir)
+        Path to the log.out file
 
     Returns
     -------

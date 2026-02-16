@@ -126,7 +126,6 @@ class TRITONSWMM_scenario:
             sim_swmm_executable=(
                 self._system.swmm_executable if cfg_sys.toggle_swmm_model else None
             ),
-            tritonswmm_logfile_dir=sim_folder / "tritonswmm_sim_logfiles",
             # TRITON-SWMM Coupled Model Outputs
             output_tritonswmm_performance_timeseries=(
                 processed_output_folder / f"TRITONSWMM_perf_tseries.{out_type}"
@@ -356,9 +355,6 @@ class TRITONSWMM_scenario:
         if self.scen_paths.out_tritonswmm:
             self.scen_paths.out_tritonswmm.mkdir(parents=True, exist_ok=True)
 
-        # Legacy logfile dir (for backwards compatibility)
-        if self.scen_paths.tritonswmm_logfile_dir:
-            self.scen_paths.tritonswmm_logfile_dir.mkdir(parents=True, exist_ok=True)
         return
 
     def _retrieve_sim_id_str(self):

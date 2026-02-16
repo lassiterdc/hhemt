@@ -108,7 +108,6 @@ class ScenarioPaths(MainDataClass):
     sim_swmm_executable: Optional[Path] = None  # SWMM standalone executable
 
     # Outputs - TRITON-SWMM Coupled Model
-    tritonswmm_logfile_dir: Optional[Path] = None
     output_tritonswmm_performance_timeseries: Optional[Path] = None
     output_tritonswmm_performance_summary: Optional[Path] = None
     output_tritonswmm_triton_timeseries: Optional[Path] = None
