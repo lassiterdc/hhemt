@@ -615,6 +615,7 @@ rule consolidate:
                         f"runtime=30",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
+                        f"slurm_extra=--job-name={self.cfg_analysis.analysis_id}_{{{{rule}}}}",
                     ],
                     "slurm": {
                         "sbatch": {
@@ -623,7 +624,6 @@ rule consolidate:
                             "mem": "{resources.mem_mb}",
                             "nodes": "{resources.nodes}",
                             "account": "{resources.slurm_account}",
-                            "job-name": f"{self.cfg_analysis.analysis_id}_{{rule}}",
                         }
                     },
                 }
