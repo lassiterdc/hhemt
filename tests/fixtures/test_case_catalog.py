@@ -193,7 +193,7 @@ class UVA_TestCases:
     ):
         """UVA HPC sensitivity analysis."""
         # example_name = "norfolk_irene"
-        analysis_name = "uva_sensitivity_suite"
+        analysis_name = "test_uva_sensitivity_suite"
         sensitivity = (
             all_examples.ex_Nrflk().test_case_directory
             / cls.sensitivity_analysis_uva_suite
