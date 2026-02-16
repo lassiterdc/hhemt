@@ -16,6 +16,7 @@ import math
 import yaml  # type: ignore
 import psutil
 import shutil
+import shlex
 import signal
 import os
 import time
@@ -1914,8 +1915,21 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             - message: str
         """
         try:
-            # Check if tmux is available
-            if not shutil.which("tmux"):
+            # Build module load prefix for HPC systems
+            module_load_prefix = self._get_module_load_prefix()
+
+            # Check if tmux is available (with module load on HPC)
+            tmux_check_cmd = (
+                f"{module_load_prefix}which tmux"
+                if module_load_prefix
+                else "which tmux"
+            )
+            tmux_check = subprocess.run(
+                ["bash", "-c", tmux_check_cmd],
+                capture_output=True,
+                text=True,
+            )
+            if tmux_check.returncode != 0:
                 raise EnvironmentError(
                     "tmux is required for tmux workflow mode but not found in PATH. "
                     "Please install tmux or use multi_sim_run_method='local'."
@@ -1925,9 +1939,10 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             session_name = f"triton_swmm_{self.cfg_analysis.analysis_id}_{timestamp}"
 
-            # Check if session already exists
+            # Check if session already exists (with module load on HPC)
+            has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
             session_check = subprocess.run(
-                ["tmux", "has-session", "-t", session_name],
+                ["bash", "-c", has_session_cmd],
                 capture_output=True,
                 text=True,
             )
@@ -1954,17 +1969,11 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
-            # Build module load commands (include tmux if on HPC)
-            module_load_cmd = ""
-            if self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-                modules = (
-                    self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-                )
-                # Ensure tmux is loaded (may already be in the list, but doesn't hurt to include)
-                modules_with_tmux = ["tmux"] + list(modules)
-                module_load_cmd = "module purge && " + " && ".join(
-                    [f"module load {m}" for m in modules_with_tmux]
-                )
+            # Build module load commands for inside tmux session (reuse the same modules)
+            # This ensures the Snakemake process has access to required modules
+            module_load_cmd = (
+                module_load_prefix.rstrip(" && ") if module_load_prefix else ""
+            )
 
             # Build the full command that will run inside tmux
             snakemake_cmd = f"""
@@ -2006,9 +2015,12 @@ python -m snakemake \\
                 print(f"[Snakemake] Creating tmux session: {session_name}", flush=True)
                 print(f"[Snakemake] Snakefile: {snakefile_path}", flush=True)
 
-            # Create detached tmux session
+            # Create detached tmux session (with module load on HPC)
+            new_session_cmd = (
+                f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
+            )
             tmux_result = subprocess.run(
-                ["tmux", "new-session", "-d", "-s", session_name, "bash"],
+                ["bash", "-c", new_session_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(self.analysis_paths.analysis_dir),
@@ -2026,18 +2038,21 @@ python -m snakemake \\
                     "message": error_msg,
                 }
 
-            # Send the command to the tmux session
+            # Send the command to the tmux session (with module load on HPC)
+            # Note: snakemake_cmd needs to be shell-escaped for send-keys
+            send_keys_cmd = f"{module_load_prefix}tmux send-keys -t {session_name} {shlex.quote(snakemake_cmd)} Enter"
             send_cmd_result = subprocess.run(
-                ["tmux", "send-keys", "-t", session_name, snakemake_cmd, "Enter"],
+                ["bash", "-c", send_keys_cmd],
                 capture_output=True,
                 text=True,
             )
 
             if send_cmd_result.returncode != 0:
-                # Clean up the session
-                subprocess.run(
-                    ["tmux", "kill-session", "-t", session_name], capture_output=True
+                # Clean up the session (with module load on HPC)
+                kill_session_cmd = (
+                    f"{module_load_prefix}tmux kill-session -t {session_name}"
                 )
+                subprocess.run(["bash", "-c", kill_session_cmd], capture_output=True)
                 error_msg = (
                     f"Failed to send command to tmux session: {send_cmd_result.stderr}"
                 )
@@ -2120,6 +2135,26 @@ python -m snakemake \\
                 "message": error_msg,
             }
 
+    def _get_module_load_prefix(self) -> str:
+        """
+        Build module load prefix for HPC tmux commands.
+
+        Returns
+        -------
+        str
+            Shell command prefix to load modules, or empty string if not on HPC
+        """
+        if self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
+            modules_with_tmux = ["tmux"] + list(
+                self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            )
+            return (
+                "module purge && "
+                + " && ".join([f"module load {m}" for m in modules_with_tmux])
+                + " && "
+            )
+        return ""
+
     def _get_snakemake_pid_from_tmux(self, session_name: str) -> int | None:
         """
         Extract Snakemake process ID from tmux session.
@@ -2134,10 +2169,12 @@ python -m snakemake \\
         int | None
             Snakemake PID if found, None otherwise
         """
+        module_load_prefix = self._get_module_load_prefix()
         try:
-            # Get the shell PID in the tmux pane
+            # Get the shell PID in the tmux pane (with module load on HPC)
+            list_panes_cmd = f"{module_load_prefix}tmux list-panes -t {session_name} -F '#{{pane_pid}}'"
             pane_pid_result = subprocess.run(
-                ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+                ["bash", "-c", list_panes_cmd],
                 capture_output=True,
                 text=True,
             )
@@ -2183,11 +2220,15 @@ python -m snakemake \\
             - completed: bool
             - message: str
         """
+        module_load_prefix = self._get_module_load_prefix()
         try:
             while True:
-                # Check if session still exists
+                # Check if session still exists (with module load on HPC)
+                has_session_cmd = (
+                    f"{module_load_prefix}tmux has-session -t {session_name}"
+                )
                 check_result = subprocess.run(
-                    ["tmux", "has-session", "-t", session_name],
+                    ["bash", "-c", has_session_cmd],
                     capture_output=True,
                     text=True,
                 )
