@@ -2144,15 +2144,11 @@ python -m snakemake \\
         str
             Shell command prefix to load modules, or empty string if not on HPC
         """
-        if self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules_with_tmux = ["tmux"] + list(
-                self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-            )
-            return (
-                "module purge && "
-                + " && ".join([f"module load {m}" for m in modules_with_tmux])
-                + " && "
-            )
+        modules_str = self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        if modules_str:
+            # modules_str is a space-separated string, e.g., "gcc/11.2.0 openmpi/4.1.1"
+            # Always prepend tmux to ensure it's loaded
+            return f"module purge && module load tmux {modules_str} && "
         return ""
 
     def _get_snakemake_pid_from_tmux(self, session_name: str) -> int | None:
