@@ -116,7 +116,7 @@ class CaseStudyBuilder:
 
         # Export sensitivity analysis definition if enabled
         if cfg_analysis.toggle_sensitivity_analysis:
-            self.analysis.sensitivity_analysis.export_sensitivity_definition_csv()
+            self.analysis.sensitivity.export_sensitivity_definition_csv()
 
 
 class UVACaseStudies:

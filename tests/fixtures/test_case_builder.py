@@ -158,7 +158,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         # Export sensitivity analysis definition if enabled
         if cfg_analysis.toggle_sensitivity_analysis:
-            self.analysis.sensitivity_analysis.export_sensitivity_definition_csv()
+            self.analysis.sensitivity.export_sensitivity_definition_csv()
 
         self.create_short_intense_weather_timeseries(
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
