@@ -32,6 +32,7 @@ from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
 )
 from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
 import os
+import signal
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
@@ -2104,43 +2105,39 @@ class TRITONSWMM_analysis:
 
     def cancel(self, verbose: bool = True, wait_timeout: int = 30) -> dict:
         """
-        Cancel ongoing SLURM workflow for this analysis.
+        Cancel ongoing tmux workflow for this analysis.
 
-        This method cancels both the orchestrator job and all worker jobs submitted
-        by Snakemake. Only works for multi_sim_run_method == "batch_job".
+        This method sends SIGINT to the Snakemake process running in the tmux session,
+        which triggers Snakemake's built-in cancel_jobs() to cleanly cancel all worker jobs.
 
-        The method uses persistent log data to identify jobs, so it works across
+        The method uses persistent log data to identify the session, so it works across
         terminal sessions (close terminal, reopen, reinitialize analysis, call cancel).
 
         **Key features:**
-        - Checks if jobs are actually running before attempting cancellation
-        - Waits for cancellation to complete and verifies jobs are terminated
+        - Checks if session is actually running before attempting cancellation
+        - Sends SIGINT to Snakemake process for clean cancellation
+        - Waits for Snakemake to finish canceling worker jobs
+        - Verifies all worker jobs are terminated
         - Gracefully handles already-completed workflows
-        - Returns informative messages when no jobs are running
 
         Parameters
         ----------
         verbose : bool, default=True
             Print progress messages
         wait_timeout : int, default=30
-            Maximum seconds to wait for job cancellation verification
+            Maximum seconds to wait for Snakemake process exit
 
         Returns
         -------
         dict
             Cancellation status with keys:
-            - success: bool (True if cancellation succeeded or no jobs running)
-            - orchestrator_canceled: bool
+            - success: bool (True if cancellation succeeded or no session running)
+            - session_canceled: bool
             - workers_canceled: bool
-            - jobs_were_running: bool (False if no jobs found to cancel)
+            - jobs_were_running: bool (False if no session found to cancel)
             - message: str
-            - orchestrator_job_id: str | None
+            - session_name: str | None
             - errors: list[str] (any errors encountered)
-
-        Raises
-        ------
-        ValueError
-            If multi_sim_run_method is not "batch_job"
 
         Examples
         --------
@@ -2151,19 +2148,10 @@ class TRITONSWMM_analysis:
 
         Cancel from new terminal session:
         >>> analysis = TRITONSWMM_analysis("config.yaml", system)
-        >>> cancel_result = analysis.cancel()  # Loads job ID from log
+        >>> cancel_result = analysis.cancel()  # Loads session name from log
         """
         import subprocess
         import datetime
-        import time
-        import re
-
-        # Validation: Only supported for batch_job mode
-        if self.cfg_analysis.multi_sim_run_method != "batch_job":
-            raise ValueError(
-                f"cancel() only supported for multi_sim_run_method='batch_job'. "
-                f"Current mode: '{self.cfg_analysis.multi_sim_run_method}'"
-            )
 
         if verbose:
             print(
@@ -2171,36 +2159,157 @@ class TRITONSWMM_analysis:
                 flush=True,
             )
 
-        # Load orchestrator job ID from persistent log
-        orchestrator_job_id = self.log.orchestrator_job_id.get()
+        # Load session info from persistent log
+        session_name = self.log.tmux_session_name.get()
+        snakemake_pid = self.log.snakemake_pid.get()
         analysis_id = self.cfg_analysis.analysis_id
 
-        # Step 0: Check if jobs are actually running
-        orchestrator_running = False
-        workers_running = False
-
-        if orchestrator_job_id:
-            # Check orchestrator status
-            try:
-                result = subprocess.run(
-                    ["scontrol", "show", "job", orchestrator_job_id],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
+        # Step 0: Check if tmux session exists
+        if not session_name:
+            if verbose:
+                print(
+                    f"[Cancel] No tmux session recorded for analysis '{analysis_id}'",
+                    flush=True,
                 )
+            return {
+                "success": True,
+                "session_canceled": False,
+                "workers_canceled": False,
+                "jobs_were_running": False,
+                "session_name": None,
+                "analysis_id": analysis_id,
+                "message": f"No workflow session found for analysis '{analysis_id}'",
+                "errors": [],
+            }
 
-                if result.returncode == 0:
-                    # Job still in SLURM queue
-                    orchestrator_running = True
-                elif verbose:
+        # Check if session still exists
+        session_check = subprocess.run(
+            ["tmux", "has-session", "-t", session_name],
+            capture_output=True,
+            text=True,
+        )
+
+        if session_check.returncode != 0:
+            if verbose:
+                print(
+                    f"[Cancel] Tmux session '{session_name}' no longer exists (workflow already completed)",
+                    flush=True,
+                )
+            return {
+                "success": True,
+                "session_canceled": False,
+                "workers_canceled": False,
+                "jobs_were_running": False,
+                "session_name": session_name,
+                "analysis_id": analysis_id,
+                "message": f"Tmux session '{session_name}' already completed",
+                "errors": [],
+            }
+
+        # Session exists, proceed with cancellation
+        if verbose:
+            print(
+                f"[Cancel] Canceling workflow in tmux session '{session_name}'",
+                flush=True,
+            )
+
+        errors = []
+
+        # Step 1: Get current Snakemake PID (may have changed since submission)
+        current_pid = self.workflow._get_snakemake_pid_from_tmux(session_name)
+        if current_pid:
+            snakemake_pid = current_pid
+        elif not snakemake_pid:
+            # Could not find PID - try killing session directly
+            if verbose:
+                print(
+                    "[Cancel] WARNING: Could not find Snakemake PID. Killing tmux session directly.",
+                    flush=True,
+                )
+            subprocess.run(
+                ["tmux", "kill-session", "-t", session_name],
+                capture_output=True,
+            )
+            self.log.workflow_canceled.set(True)
+            self.log.workflow_cancellation_time.set(datetime.datetime.now().isoformat())
+
+            return {
+                "success": True,
+                "session_canceled": True,
+                "workers_canceled": False,  # Unknown
+                "jobs_were_running": True,
+                "session_name": session_name,
+                "analysis_id": analysis_id,
+                "message": "Tmux session killed (PID not found - worker cleanup uncertain)",
+                "errors": ["Could not find Snakemake PID for clean cancellation"],
+            }
+
+        # Step 2: Send SIGINT to Snakemake process
+        if verbose:
+            print(
+                f"[Cancel] Sending SIGINT to Snakemake (PID {snakemake_pid})...",
+                flush=True,
+            )
+
+        try:
+            os.kill(snakemake_pid, signal.SIGINT)
+            if verbose:
+                print(f"[Cancel]   ✓ SIGINT sent", flush=True)
+        except ProcessLookupError:
+            if verbose:
+                print(
+                    f"[Cancel]   ⚠ Process {snakemake_pid} already exited",
+                    flush=True,
+                )
+        except PermissionError as e:
+            error_msg = f"Permission denied sending SIGINT to PID {snakemake_pid}: {e}"
+            errors.append(error_msg)
+            if verbose:
+                print(f"[Cancel]   ✗ {error_msg}", flush=True)
+
+        # Step 3: Wait for Snakemake to finish canceling jobs
+        if verbose:
+            print(
+                f"[Cancel] Waiting for Snakemake to cancel worker jobs (timeout: {wait_timeout}s)...",
+                flush=True,
+            )
+
+        start_time = time.time()
+        process_exited = False
+
+        while time.time() - start_time < wait_timeout:
+            time.sleep(2)
+
+            # Check if process still exists
+            try:
+                os.kill(snakemake_pid, 0)  # Signal 0 just checks existence
+            except ProcessLookupError:
+                process_exited = True
+                if verbose:
                     print(
-                        f"[Cancel] Orchestrator job {orchestrator_job_id} not found in queue (already completed)",
+                        f"[Cancel]   ✓ Snakemake process exited",
                         flush=True,
                     )
-            except (subprocess.TimeoutExpired, FileNotFoundError):
+                break
+            except PermissionError:
+                # Process exists but we can't signal it
                 pass
 
-        # Check for active worker jobs
+        if not process_exited:
+            error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
+            errors.append(error_msg)
+            if verbose:
+                print(f"[Cancel]   ⚠ {error_msg}", flush=True)
+                print(
+                    f"[Cancel]   (Killing tmux session anyway)",
+                    flush=True,
+                )
+
+        # Step 4: Verify worker jobs are canceled
+        if verbose:
+            print("[Cancel] Verifying worker jobs are canceled...", flush=True)
+
+        worker_count = 0
         try:
             result = subprocess.run(
                 ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
@@ -2211,218 +2320,49 @@ class TRITONSWMM_analysis:
             )
 
             if result.returncode == 0:
-                worker_count = 0
                 for line in result.stdout.split("\n"):
-                    if analysis_id in line and "orchestrator" not in line:
+                    if analysis_id in line:
                         worker_count += 1
 
-                if worker_count > 0:
-                    workers_running = True
-                    if verbose:
-                        print(
-                            f"[Cancel] Found {worker_count} active worker jobs",
-                            flush=True,
-                        )
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        # Early exit if no jobs running
-        if not orchestrator_running and not workers_running:
-            if verbose:
-                print(
-                    f"[Cancel] No jobs currently running for analysis '{analysis_id}'",
-                    flush=True,
-                )
-                if orchestrator_job_id:
-                    print(
-                        f"[Cancel] (Last submitted orchestrator job {orchestrator_job_id} has completed)",
-                        flush=True,
-                    )
-
-            return {
-                "success": True,
-                "orchestrator_canceled": False,
-                "workers_canceled": False,
-                "jobs_were_running": False,
-                "orchestrator_job_id": orchestrator_job_id,
-                "analysis_id": analysis_id,
-                "message": f"No active jobs found for analysis '{analysis_id}'",
-                "errors": [],
-            }
-
-        # Jobs are running, proceed with cancellation
-        if verbose:
-            print(
-                f"[Cancel] Canceling workflow for analysis '{analysis_id}'", flush=True
-            )
-
-        errors = []
-        orchestrator_canceled = False
-        workers_canceled = False
-
-        # Step 1: Cancel orchestrator job by ID
-        if orchestrator_running:
-            if verbose:
-                print(
-                    f"[Cancel] Canceling orchestrator job {orchestrator_job_id}...",
-                    flush=True,
-                )
-
-            result = subprocess.run(
-                ["scancel", orchestrator_job_id],
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
-                if verbose:
-                    print(f"[Cancel]   ✓ Cancellation command sent", flush=True)
-            else:
-                error_msg = f"Failed to send cancel to orchestrator job {orchestrator_job_id}: {result.stderr.strip()}"
+            if worker_count > 0:
+                error_msg = f"{worker_count} worker jobs still running (Snakemake may not have canceled them)"
                 errors.append(error_msg)
                 if verbose:
-                    print(f"[Cancel]   ✗ {error_msg}", flush=True)
+                    print(f"[Cancel]   ⚠ {error_msg}", flush=True)
+            elif verbose:
+                print(f"[Cancel]   ✓ All worker jobs canceled", flush=True)
 
-        # Step 2: Cancel all worker jobs by name pattern
-        if workers_running:
-            worker_pattern = f"{analysis_id}_*"
+        except (subprocess.TimeoutExpired, FileNotFoundError):
             if verbose:
                 print(
-                    f"[Cancel] Canceling worker jobs matching pattern '{worker_pattern}'...",
+                    "[Cancel]   ⚠ Could not verify worker job status",
                     flush=True,
                 )
 
-            result = subprocess.run(
-                ["scancel", "--name", worker_pattern],
-                capture_output=True,
-                text=True,
-            )
-
-            if result.returncode == 0:
-                if verbose:
-                    print(f"[Cancel]   ✓ Cancellation command sent", flush=True)
-            else:
-                stderr = result.stderr.strip()
-                if (
-                    stderr
-                    and "No jobs found" not in stderr
-                    and "Invalid job" not in stderr
-                ):
-                    error_msg = f"Failed to send cancel to worker jobs: {stderr}"
-                    errors.append(error_msg)
-                    if verbose:
-                        print(f"[Cancel]   ✗ {error_msg}", flush=True)
-
-        # Step 3: Wait for jobs to actually terminate
+        # Step 5: Kill tmux session
         if verbose:
-            print(
-                f"[Cancel] Waiting for jobs to terminate (timeout: {wait_timeout}s)...",
-                flush=True,
-            )
+            print(f"[Cancel] Cleaning up tmux session...", flush=True)
 
-        start_time = time.time()
-        check_interval = 2  # seconds between checks
+        kill_result = subprocess.run(
+            ["tmux", "kill-session", "-t", session_name],
+            capture_output=True,
+            text=True,
+        )
 
-        while time.time() - start_time < wait_timeout:
-            time.sleep(check_interval)
-
-            # Check if orchestrator terminated
-            if orchestrator_running and not orchestrator_canceled:
-                try:
-                    result = subprocess.run(
-                        ["scontrol", "show", "job", orchestrator_job_id],
-                        capture_output=True,
-                        text=True,
-                        timeout=5,
-                    )
-                    if result.returncode != 0:
-                        # Job no longer in queue
-                        orchestrator_canceled = True
-                        if verbose:
-                            print(
-                                f"[Cancel]   ✓ Orchestrator job {orchestrator_job_id} terminated",
-                                flush=True,
-                            )
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    pass
-
-            # Check if workers terminated
-            if workers_running and not workers_canceled:
-                try:
-                    result = subprocess.run(
-                        ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
-                        capture_output=True,
-                        text=True,
-                        shell=True,
-                        timeout=5,
-                    )
-
-                    worker_count = 0
-                    if result.returncode == 0:
-                        for line in result.stdout.split("\n"):
-                            if analysis_id in line and "orchestrator" not in line:
-                                worker_count += 1
-
-                    if worker_count == 0:
-                        workers_canceled = True
-                        if verbose:
-                            print(
-                                f"[Cancel]   ✓ All worker jobs terminated", flush=True
-                            )
-                except (subprocess.TimeoutExpired, FileNotFoundError):
-                    pass
-
-            # Check if all done
-            if (not orchestrator_running or orchestrator_canceled) and (
-                not workers_running or workers_canceled
-            ):
-                break
-
-        # Final verification
-        remaining_jobs = []
-
-        if orchestrator_running and not orchestrator_canceled:
-            remaining_jobs.append(f"orchestrator job {orchestrator_job_id}")
-
-        if workers_running and not workers_canceled:
-            # Count remaining workers
-            try:
-                result = subprocess.run(
-                    ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
-                    capture_output=True,
-                    text=True,
-                    shell=True,
-                    timeout=5,
-                )
-                worker_count = 0
-                if result.returncode == 0:
-                    for line in result.stdout.split("\n"):
-                        if analysis_id in line and "orchestrator" not in line:
-                            worker_count += 1
-                if worker_count > 0:
-                    remaining_jobs.append(f"{worker_count} worker jobs")
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass
-
-        if remaining_jobs:
-            error_msg = f"Timeout: {', '.join(remaining_jobs)} did not terminate within {wait_timeout}s"
+        if kill_result.returncode == 0:
+            if verbose:
+                print(f"[Cancel]   ✓ Tmux session terminated", flush=True)
+        else:
+            error_msg = f"Failed to kill tmux session: {kill_result.stderr.strip()}"
             errors.append(error_msg)
             if verbose:
-                print(f"[Cancel]   ⚠ {error_msg}", flush=True)
-                print(
-                    f"[Cancel]   (Jobs may still be terminating in background)",
-                    flush=True,
-                )
+                print(f"[Cancel]   ✗ {error_msg}", flush=True)
 
-        # Step 4: Update analysis log
+        # Step 6: Update analysis log
         self.log.workflow_canceled.set(True)
         self.log.workflow_cancellation_time.set(datetime.datetime.now().isoformat())
 
-        success = (
-            (not orchestrator_running or orchestrator_canceled)
-            and (not workers_running or workers_canceled)
-            and len(errors) == 0
-        )
+        success = len(errors) == 0 and worker_count == 0
 
         if verbose:
             if success:
@@ -2435,115 +2375,16 @@ class TRITONSWMM_analysis:
 
         return {
             "success": success,
-            "orchestrator_canceled": orchestrator_canceled,
-            "workers_canceled": workers_canceled,
+            "session_canceled": True,
+            "workers_canceled": worker_count == 0,
             "jobs_were_running": True,
-            "orchestrator_job_id": orchestrator_job_id,
+            "session_name": session_name,
             "analysis_id": analysis_id,
             "message": "Workflow canceled"
             if success
             else f"Cancellation issues: {'; '.join(errors)}",
             "errors": errors,
         }
-
-    def get_slurm_job_status(self, verbose: bool = False) -> dict:
-        """
-        Check status of submitted SLURM batch job workflow.
-
-        Returns information about the orchestrator job and worker jobs for
-        batch_job mode workflows.
-
-        Parameters
-        ----------
-        verbose : bool, default=False
-            Print detailed status information
-
-        Returns
-        -------
-        dict
-            Status information with keys:
-            - orchestrator_job_id: str | None
-            - orchestrator_status: str | None (RUNNING, PENDING, COMPLETED, etc.)
-            - submission_time: str | None
-            - canceled: bool
-            - active_workers: int (count of running worker jobs)
-
-        Examples
-        --------
-        >>> status = analysis.get_slurm_job_status(verbose=True)
-        >>> if status["orchestrator_status"] in ["RUNNING", "PENDING"]:
-        >>>     print("Workflow is active")
-        """
-        import subprocess
-        import re
-
-        orchestrator_job_id = self.log.orchestrator_job_id.get()
-        submission_time = self.log.orchestrator_submission_time.get()
-        canceled = self.log.workflow_canceled.get() or False
-
-        # Check orchestrator status
-        orchestrator_status = None
-        if orchestrator_job_id:
-            try:
-                result = subprocess.run(
-                    ["scontrol", "show", "job", orchestrator_job_id],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-
-                if result.returncode == 0:
-                    # Parse JobState from scontrol output
-                    for line in result.stdout.split("\n"):
-                        if "JobState=" in line:
-                            match = re.search(r"JobState=(\S+)", line)
-                            if match:
-                                orchestrator_status = match.group(1)
-                                break
-                else:
-                    orchestrator_status = "COMPLETED"  # Not in queue
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                orchestrator_status = "UNKNOWN"
-
-        # Count active worker jobs
-        active_workers = 0
-        analysis_id = self.cfg_analysis.analysis_id
-        try:
-            result = subprocess.run(
-                ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
-                capture_output=True,
-                text=True,
-                shell=True,
-                timeout=5,
-            )
-
-            if result.returncode == 0:
-                for line in result.stdout.split("\n"):
-                    if analysis_id in line and "orchestrator" not in line:
-                        active_workers += 1
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            pass
-
-        status = {
-            "orchestrator_job_id": orchestrator_job_id,
-            "orchestrator_status": orchestrator_status,
-            "submission_time": submission_time,
-            "canceled": canceled,
-            "active_workers": active_workers,
-        }
-
-        if verbose:
-            print(f"\n{'=' * 60}")
-            print(f"Workflow Status: {self.cfg_analysis.analysis_id}")
-            print(f"{'=' * 60}")
-            print(f"Orchestrator Job ID: {orchestrator_job_id or 'Not submitted'}")
-            print(f"Orchestrator Status: {orchestrator_status or 'N/A'}")
-            print(f"Submission Time:     {submission_time or 'N/A'}")
-            print(f"Canceled:            {canceled}")
-            print(f"Active Workers:      {active_workers}")
-            print(f"{'=' * 60}\n")
-
-        return status
 
 
 # %%

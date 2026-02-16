@@ -15,6 +15,11 @@ import sys
 import math
 import yaml  # type: ignore
 import psutil
+import shutil
+import signal
+import os
+import time
+import datetime
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
 
@@ -615,7 +620,7 @@ rule consolidate:
                         f"runtime=30",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
-                        f"slurm_extra=--job-name={self.cfg_analysis.analysis_id}_{{{{rule}}}}",
+                        f"slurm_extra=--comment={self.cfg_analysis.analysis_id}_{{{{rule}}}}",
                     ],
                     "slurm": {
                         "sbatch": {
@@ -1617,10 +1622,14 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         verbose: bool = True,
     ) -> dict:
         """
-        Submit Snakemake workflow as a long-duration single-core SLURM orchestration job.
+        DEPRECATED: Submit Snakemake workflow as an SLURM sbatch orchestration job.
 
-        This is intended for multi_sim_run_method == "batch_job" where Snakemake
-        should run detached from an interactive Python terminal.
+        **WARNING**: This method runs Snakemake inside an sbatch job, which causes
+        orphaned worker jobs when the orchestrator is canceled. This approach is
+        deprecated in favor of tmux-based orchestration.
+
+        This method is kept for backward compatibility but should not be used.
+        The batch_job mode now uses _submit_tmux_workflow() instead.
 
         Parameters
         ----------
@@ -1642,6 +1651,14 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             - message: str
             - completed/state/exit_code when wait_for_completion=True
         """
+        import warnings
+        warnings.warn(
+            "The sbatch orchestrator approach is deprecated due to orphaned job issues. "
+            "This method should not be called directly. batch_job mode now uses tmux orchestration.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         try:
             if verbose:
                 print(
@@ -1802,14 +1819,14 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 if len(parts) >= 4 and parts[0] == "Submitted":
                     job_id = parts[-1]
 
-                    # Persist job ID to analysis log for cross-session cancellation
+                    # Persist job ID to analysis log (batch_job mode - deprecated)
                     import datetime
 
-                    self.analysis.log.orchestrator_job_id.set(job_id)
-                    self.analysis.log.orchestrator_submission_time.set(
+                    # Note: batch_job mode is deprecated; use tmux mode instead
+                    self.analysis.log.workflow_submission_time.set(
                         datetime.datetime.now().isoformat()
                     )
-                    self.analysis.log.orchestrator_submission_mode.set("batch_job")
+                    self.analysis.log.workflow_submission_mode.set("batch_job")
 
             if submit_result.returncode != 0:
                 error_msg = f"sbatch submission failed: {submit_result.stderr}"
@@ -1868,6 +1885,329 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 "job_id": None,
                 "script_path": None,
                 "message": error_msg,
+            }
+
+    def _submit_tmux_workflow(
+        self,
+        snakefile_path: Path,
+        wait_for_completion: bool = False,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Submit Snakemake workflow in detached tmux session.
+
+        This approach runs Snakemake on the login node in a persistent tmux session,
+        avoiding the orphaned jobs problem with sbatch orchestration. Snakemake's
+        SIGINT handler properly cancels all worker jobs when the session receives SIGINT.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile
+        wait_for_completion : bool
+            If True, block until tmux session exits
+        verbose : bool
+            Print status messages
+
+        Returns
+        -------
+        dict
+            - success: bool
+            - mode: str ("tmux")
+            - session_name: str
+            - snakemake_pid: int
+            - message: str
+        """
+        try:
+            # Check if tmux is available
+            if not shutil.which("tmux"):
+                raise EnvironmentError(
+                    "tmux is required for tmux workflow mode but not found in PATH. "
+                    "Please install tmux or use multi_sim_run_method='local'."
+                )
+
+            # Generate unique session name
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_name = f"triton_swmm_{self.cfg_analysis.analysis_id}_{timestamp}"
+
+            # Check if session already exists
+            session_check = subprocess.run(
+                ["tmux", "has-session", "-t", session_name],
+                capture_output=True,
+                text=True,
+            )
+            if session_check.returncode == 0:
+                raise RuntimeError(
+                    f"Tmux session '{session_name}' already exists. "
+                    "Please check if another workflow is running or kill the session manually."
+                )
+
+            # Build Snakemake command with absolute paths
+            config_dir = self.analysis_paths.analysis_dir / ".snakemake_profile" / "slurm"
+
+            # Create SLURM efficiency report directory and set timestamped filename
+            from TRITON_SWMM_toolkit import utils as ut
+            efficiency_report_dir = (
+                self.analysis.analysis_paths.analysis_dir
+                / "logs"
+                / "slurm_efficiency_report"
+            )
+            efficiency_report_dir.mkdir(parents=True, exist_ok=True)
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
+            efficiency_report_path = efficiency_report_dir / efficiency_report_filename
+
+            # Build module load commands (include tmux if on HPC)
+            module_load_cmd = ""
+            if self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
+                modules = self.cfg_analysis.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+                # Ensure tmux is loaded (may already be in the list, but doesn't hurt to include)
+                modules_with_tmux = ["tmux"] + list(modules)
+                module_load_cmd = "module purge && " + " && ".join([f"module load {m}" for m in modules_with_tmux])
+
+            # Build the full command that will run inside tmux
+            snakemake_cmd = f"""
+set -e  # Exit on error
+
+# Load required modules (including tmux if needed)
+{module_load_cmd}
+
+# Initialize conda
+if [ -n "${{CONDA_EXE}}" ]; then
+    eval "$(${{CONDA_EXE}} shell.bash hook)"
+elif [ -n "${{CONDA_PREFIX}}" ] && [ -f "${{CONDA_PREFIX}}/../etc/profile.d/conda.sh" ]; then
+    source "${{CONDA_PREFIX}}/../etc/profile.d/conda.sh"
+else
+    echo "ERROR: Cannot find conda initialization"
+    exit 1
+fi
+
+# Activate environment
+conda activate triton_swmm_toolkit
+
+# Ensure conda libs are discoverable
+if [ -n "${{CONDA_PREFIX}}" ]; then
+    export LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib:${{LD_LIBRARY_PATH}}"
+fi
+
+# Run Snakemake
+cd {self.analysis_paths.analysis_dir}
+python -m snakemake \\
+    --profile {config_dir} \\
+    --snakefile {snakefile_path} \\
+    --executor slurm \\
+    --printshellcmds \\
+    --slurm-efficiency-report \\
+    --slurm-efficiency-report-path {efficiency_report_path}
+"""
+
+            if verbose:
+                print(f"[Snakemake] Creating tmux session: {session_name}", flush=True)
+                print(f"[Snakemake] Snakefile: {snakefile_path}", flush=True)
+
+            # Create detached tmux session
+            tmux_result = subprocess.run(
+                ["tmux", "new-session", "-d", "-s", session_name, "bash"],
+                capture_output=True,
+                text=True,
+                cwd=str(self.analysis_paths.analysis_dir),
+            )
+
+            if tmux_result.returncode != 0:
+                error_msg = f"Failed to create tmux session: {tmux_result.stderr}"
+                if verbose:
+                    print(f"[Snakemake] ERROR: {error_msg}", flush=True)
+                return {
+                    "success": False,
+                    "mode": "tmux",
+                    "session_name": None,
+                    "snakemake_pid": None,
+                    "message": error_msg,
+                }
+
+            # Send the command to the tmux session
+            send_cmd_result = subprocess.run(
+                ["tmux", "send-keys", "-t", session_name, snakemake_cmd, "Enter"],
+                capture_output=True,
+                text=True,
+            )
+
+            if send_cmd_result.returncode != 0:
+                # Clean up the session
+                subprocess.run(["tmux", "kill-session", "-t", session_name], capture_output=True)
+                error_msg = f"Failed to send command to tmux session: {send_cmd_result.stderr}"
+                if verbose:
+                    print(f"[Snakemake] ERROR: {error_msg}", flush=True)
+                return {
+                    "success": False,
+                    "mode": "tmux",
+                    "session_name": None,
+                    "snakemake_pid": None,
+                    "message": error_msg,
+                }
+
+            # Wait a moment for process to start
+            time.sleep(2)
+
+            # Extract Snakemake PID from tmux session
+            snakemake_pid = self._get_snakemake_pid_from_tmux(session_name)
+
+            if not snakemake_pid:
+                if verbose:
+                    print(
+                        "[Snakemake] WARNING: Could not determine Snakemake PID immediately. "
+                        "This is normal if Snakemake hasn't started yet.",
+                        flush=True,
+                    )
+
+            # Persist session info to analysis log
+            self.analysis.log.tmux_session_name.set(session_name)
+            if snakemake_pid:
+                self.analysis.log.snakemake_pid.set(snakemake_pid)
+            self.analysis.log.workflow_submission_time.set(
+                datetime.datetime.now().isoformat()
+            )
+            self.analysis.log.workflow_submission_mode.set("tmux")
+
+            if verbose:
+                print(
+                    f"[Snakemake] Tmux workflow submitted successfully",
+                    flush=True,
+                )
+                print(f"[Snakemake] Session name: {session_name}", flush=True)
+                if snakemake_pid:
+                    print(f"[Snakemake] Snakemake PID: {snakemake_pid}", flush=True)
+                print(f"[Snakemake] Attach with: tmux attach -t {session_name}", flush=True)
+                print(f"[Snakemake] Detach with: Ctrl+B, then D", flush=True)
+
+            result_dict = {
+                "success": True,
+                "mode": "tmux",
+                "session_name": session_name,
+                "snakemake_pid": snakemake_pid,
+                "message": f"Tmux workflow submitted (session: {session_name})",
+            }
+
+            if wait_for_completion:
+                if verbose:
+                    print("[Snakemake] Waiting for workflow completion...", flush=True)
+                completion_info = self._wait_for_tmux_session_completion(
+                    session_name=session_name,
+                    verbose=verbose,
+                )
+                result_dict.update(completion_info)
+                result_dict["success"] = completion_info["completed"]
+
+            return result_dict
+
+        except Exception as e:
+            error_msg = f"Failed to submit tmux workflow: {str(e)}"
+            if verbose:
+                print(f"[Snakemake] EXCEPTION: {error_msg}", flush=True)
+            return {
+                "success": False,
+                "mode": "tmux",
+                "session_name": None,
+                "snakemake_pid": None,
+                "message": error_msg,
+            }
+
+    def _get_snakemake_pid_from_tmux(self, session_name: str) -> int | None:
+        """
+        Extract Snakemake process ID from tmux session.
+
+        Parameters
+        ----------
+        session_name : str
+            Name of the tmux session
+
+        Returns
+        -------
+        int | None
+            Snakemake PID if found, None otherwise
+        """
+        try:
+            # Get the shell PID in the tmux pane
+            pane_pid_result = subprocess.run(
+                ["tmux", "list-panes", "-t", session_name, "-F", "#{pane_pid}"],
+                capture_output=True,
+                text=True,
+            )
+
+            if pane_pid_result.returncode != 0:
+                return None
+
+            shell_pid = int(pane_pid_result.stdout.strip())
+
+            # Find child process matching "snakemake"
+            pgrep_result = subprocess.run(
+                ["pgrep", "-P", str(shell_pid), "-f", "snakemake"],
+                capture_output=True,
+                text=True,
+            )
+
+            if pgrep_result.returncode == 0 and pgrep_result.stdout.strip():
+                return int(pgrep_result.stdout.strip().split()[0])
+
+            return None
+
+        except Exception:
+            return None
+
+    def _wait_for_tmux_session_completion(
+        self,
+        session_name: str,
+        verbose: bool = True,
+    ) -> dict:
+        """
+        Wait for tmux session to exit.
+
+        Parameters
+        ----------
+        session_name : str
+            Name of the tmux session
+        verbose : bool
+            Print status messages
+
+        Returns
+        -------
+        dict
+            - completed: bool
+            - message: str
+        """
+        try:
+            while True:
+                # Check if session still exists
+                check_result = subprocess.run(
+                    ["tmux", "has-session", "-t", session_name],
+                    capture_output=True,
+                    text=True,
+                )
+
+                if check_result.returncode != 0:
+                    # Session no longer exists - workflow completed
+                    if verbose:
+                        print("[Snakemake] Tmux session exited - workflow complete", flush=True)
+                    return {
+                        "completed": True,
+                        "message": "Workflow completed successfully",
+                    }
+
+                # Session still exists, wait and check again
+                time.sleep(5)
+
+        except KeyboardInterrupt:
+            if verbose:
+                print("\n[Snakemake] Wait interrupted by user", flush=True)
+            return {
+                "completed": False,
+                "message": "Wait interrupted by user",
+            }
+        except Exception as e:
+            return {
+                "completed": False,
+                "message": f"Error while waiting: {str(e)}",
             }
 
     def submit_workflow(
@@ -1999,7 +2339,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         if multi_sim_method == "batch_job":
             if verbose:
                 print(
-                    "[Snakemake] Using batch_job orchestration mode",
+                    "[Snakemake] Using batch_job mode (tmux orchestration)",
                     flush=True,
                 )
 
@@ -2025,6 +2365,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             if verbose:
                 print(f"[Snakemake] Snakefile generated: {snakefile_path}", flush=True)
 
+            # Use batch_job dry run validation (same SLURM profile)
             dry_run_result = self._validate_batch_job_dry_run(
                 snakefile_path=snakefile_path,
                 verbose=verbose,
@@ -2037,7 +2378,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 self.analysis._refresh_log()
                 return dry_run_result
 
-            result = self._submit_batch_job_workflow(
+            result = self._submit_tmux_workflow(
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,

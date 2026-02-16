@@ -54,7 +54,7 @@ class analysis_config(cfgBaseModel):
     multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
         Field(
             "local",
-            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (SLURM job array with independent tasks), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
+            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (tmux session running Snakemake on login node - recommended for HPC), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
         )
     )
     hpc_total_nodes: Optional[int] = Field(

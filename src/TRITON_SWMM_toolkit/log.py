@@ -571,10 +571,11 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
-    # Workflow submission tracking (for batch_job cancellation)
-    orchestrator_job_id: LogField[str] = Field(default_factory=LogField)
-    orchestrator_submission_time: LogField[str] = Field(default_factory=LogField)
-    orchestrator_submission_mode: LogField[str] = Field(default_factory=LogField)
+    # Workflow submission tracking (for tmux-based orchestration)
+    tmux_session_name: LogField[str] = Field(default_factory=LogField)
+    snakemake_pid: LogField[int] = Field(default_factory=LogField)
+    workflow_submission_time: LogField[str] = Field(default_factory=LogField)
+    workflow_submission_mode: LogField[str] = Field(default_factory=LogField)  # "tmux", "batch_job", etc.
     workflow_canceled: LogField[bool] = Field(default_factory=LogField)
     workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
 
@@ -604,12 +605,17 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     )(_create_logfield_validator(bool))
 
     _validate_workflow_str_fields = field_validator(
-        "orchestrator_job_id",
-        "orchestrator_submission_time",
-        "orchestrator_submission_mode",
+        "tmux_session_name",
+        "workflow_submission_time",
+        "workflow_submission_mode",
         "workflow_cancellation_time",
         mode="before",
     )(_create_logfield_validator(str))
+
+    _validate_workflow_int_fields = field_validator(
+        "snakemake_pid",
+        mode="before",
+    )(_create_logfield_validator(int))
 
     # ----------------------------
     # Consolidated serializer
@@ -632,9 +638,10 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "swmm_only_link_analysis_summary_created",
         "cpu_backend_available",
         "gpu_backend_available",
-        "orchestrator_job_id",
-        "orchestrator_submission_time",
-        "orchestrator_submission_mode",
+        "tmux_session_name",
+        "snakemake_pid",
+        "workflow_submission_time",
+        "workflow_submission_mode",
         "workflow_canceled",
         "workflow_cancellation_time",
     )(_logfield_serializer)
