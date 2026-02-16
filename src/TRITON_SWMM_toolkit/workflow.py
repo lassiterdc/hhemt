@@ -623,6 +623,7 @@ rule consolidate:
                             "mem": "{resources.mem_mb}",
                             "nodes": "{resources.nodes}",
                             "account": "{resources.slurm_account}",
+                            "job-name": f"{self.cfg_analysis.analysis_id}_{{rule}}",
                         }
                     },
                 }
@@ -1748,7 +1749,7 @@ echo "=========================================="
 
             # The orchestration job runs snakemake; snakemake then submits worker jobs via executor=slurm
             script_content = f"""#!/bin/bash
-#SBATCH --job-name=triton_snakemake_orchestrator
+#SBATCH --job-name={self.cfg_analysis.analysis_id}_orchestrator
 #SBATCH --partition={orchestration_partition}
 {account_directive}#SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -1800,6 +1801,15 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 parts = submit_result.stdout.strip().split()
                 if len(parts) >= 4 and parts[0] == "Submitted":
                     job_id = parts[-1]
+
+                    # Persist job ID to analysis log for cross-session cancellation
+                    import datetime
+
+                    self.analysis.log.orchestrator_job_id.set(job_id)
+                    self.analysis.log.orchestrator_submission_time.set(
+                        datetime.datetime.now().isoformat()
+                    )
+                    self.analysis.log.orchestrator_submission_mode.set("batch_job")
 
             if submit_result.returncode != 0:
                 error_msg = f"sbatch submission failed: {submit_result.stderr}"

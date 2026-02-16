@@ -571,6 +571,13 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
+    # Workflow submission tracking (for batch_job cancellation)
+    orchestrator_job_id: LogField[str] = Field(default_factory=LogField)
+    orchestrator_submission_time: LogField[str] = Field(default_factory=LogField)
+    orchestrator_submission_mode: LogField[str] = Field(default_factory=LogField)
+    workflow_canceled: LogField[bool] = Field(default_factory=LogField)
+    workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
+
     # ----------------------------
     # Consolidated validators using helper functions
     # ----------------------------
@@ -592,8 +599,17 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "swmm_only_link_analysis_summary_created",
         "cpu_backend_available",
         "gpu_backend_available",
+        "workflow_canceled",
         mode="before",
     )(_create_logfield_validator(bool))
+
+    _validate_workflow_str_fields = field_validator(
+        "orchestrator_job_id",
+        "orchestrator_submission_time",
+        "orchestrator_submission_mode",
+        "workflow_cancellation_time",
+        mode="before",
+    )(_create_logfield_validator(str))
 
     # ----------------------------
     # Consolidated serializer
@@ -616,6 +632,11 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "swmm_only_link_analysis_summary_created",
         "cpu_backend_available",
         "gpu_backend_available",
+        "orchestrator_job_id",
+        "orchestrator_submission_time",
+        "orchestrator_submission_mode",
+        "workflow_canceled",
+        "workflow_cancellation_time",
     )(_logfield_serializer)
 
     # ----------------------------

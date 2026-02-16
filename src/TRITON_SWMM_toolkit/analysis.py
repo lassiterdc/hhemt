@@ -2102,5 +2102,448 @@ class TRITONSWMM_analysis:
     def swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
+    def cancel(self, verbose: bool = True, wait_timeout: int = 30) -> dict:
+        """
+        Cancel ongoing SLURM workflow for this analysis.
+
+        This method cancels both the orchestrator job and all worker jobs submitted
+        by Snakemake. Only works for multi_sim_run_method == "batch_job".
+
+        The method uses persistent log data to identify jobs, so it works across
+        terminal sessions (close terminal, reopen, reinitialize analysis, call cancel).
+
+        **Key features:**
+        - Checks if jobs are actually running before attempting cancellation
+        - Waits for cancellation to complete and verifies jobs are terminated
+        - Gracefully handles already-completed workflows
+        - Returns informative messages when no jobs are running
+
+        Parameters
+        ----------
+        verbose : bool, default=True
+            Print progress messages
+        wait_timeout : int, default=30
+            Maximum seconds to wait for job cancellation verification
+
+        Returns
+        -------
+        dict
+            Cancellation status with keys:
+            - success: bool (True if cancellation succeeded or no jobs running)
+            - orchestrator_canceled: bool
+            - workers_canceled: bool
+            - jobs_were_running: bool (False if no jobs found to cancel)
+            - message: str
+            - orchestrator_job_id: str | None
+            - errors: list[str] (any errors encountered)
+
+        Raises
+        ------
+        ValueError
+            If multi_sim_run_method is not "batch_job"
+
+        Examples
+        --------
+        Cancel from same session:
+        >>> result = analysis.submit_workflow(wait_for_completion=False)
+        >>> # ... later decide to cancel ...
+        >>> cancel_result = analysis.cancel()
+
+        Cancel from new terminal session:
+        >>> analysis = TRITONSWMM_analysis("config.yaml", system)
+        >>> cancel_result = analysis.cancel()  # Loads job ID from log
+        """
+        import subprocess
+        import datetime
+        import time
+        import re
+
+        # Validation: Only supported for batch_job mode
+        if self.cfg_analysis.multi_sim_run_method != "batch_job":
+            raise ValueError(
+                f"cancel() only supported for multi_sim_run_method='batch_job'. "
+                f"Current mode: '{self.cfg_analysis.multi_sim_run_method}'"
+            )
+
+        if verbose:
+            print(
+                f"[Cancel] Checking workflow status for analysis '{self.cfg_analysis.analysis_id}'",
+                flush=True,
+            )
+
+        # Load orchestrator job ID from persistent log
+        orchestrator_job_id = self.log.orchestrator_job_id.get()
+        analysis_id = self.cfg_analysis.analysis_id
+
+        # Step 0: Check if jobs are actually running
+        orchestrator_running = False
+        workers_running = False
+
+        if orchestrator_job_id:
+            # Check orchestrator status
+            try:
+                result = subprocess.run(
+                    ["scontrol", "show", "job", orchestrator_job_id],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+
+                if result.returncode == 0:
+                    # Job still in SLURM queue
+                    orchestrator_running = True
+                elif verbose:
+                    print(
+                        f"[Cancel] Orchestrator job {orchestrator_job_id} not found in queue (already completed)",
+                        flush=True,
+                    )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+        # Check for active worker jobs
+        try:
+            result = subprocess.run(
+                ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
+                capture_output=True,
+                text=True,
+                shell=True,
+                timeout=5,
+            )
+
+            if result.returncode == 0:
+                worker_count = 0
+                for line in result.stdout.split("\n"):
+                    if analysis_id in line and "orchestrator" not in line:
+                        worker_count += 1
+
+                if worker_count > 0:
+                    workers_running = True
+                    if verbose:
+                        print(
+                            f"[Cancel] Found {worker_count} active worker jobs",
+                            flush=True,
+                        )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        # Early exit if no jobs running
+        if not orchestrator_running and not workers_running:
+            if verbose:
+                print(
+                    f"[Cancel] No jobs currently running for analysis '{analysis_id}'",
+                    flush=True,
+                )
+                if orchestrator_job_id:
+                    print(
+                        f"[Cancel] (Last submitted orchestrator job {orchestrator_job_id} has completed)",
+                        flush=True,
+                    )
+
+            return {
+                "success": True,
+                "orchestrator_canceled": False,
+                "workers_canceled": False,
+                "jobs_were_running": False,
+                "orchestrator_job_id": orchestrator_job_id,
+                "analysis_id": analysis_id,
+                "message": f"No active jobs found for analysis '{analysis_id}'",
+                "errors": [],
+            }
+
+        # Jobs are running, proceed with cancellation
+        if verbose:
+            print(
+                f"[Cancel] Canceling workflow for analysis '{analysis_id}'", flush=True
+            )
+
+        errors = []
+        orchestrator_canceled = False
+        workers_canceled = False
+
+        # Step 1: Cancel orchestrator job by ID
+        if orchestrator_running:
+            if verbose:
+                print(
+                    f"[Cancel] Canceling orchestrator job {orchestrator_job_id}...",
+                    flush=True,
+                )
+
+            result = subprocess.run(
+                ["scancel", orchestrator_job_id],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                if verbose:
+                    print(f"[Cancel]   ✓ Cancellation command sent", flush=True)
+            else:
+                error_msg = f"Failed to send cancel to orchestrator job {orchestrator_job_id}: {result.stderr.strip()}"
+                errors.append(error_msg)
+                if verbose:
+                    print(f"[Cancel]   ✗ {error_msg}", flush=True)
+
+        # Step 2: Cancel all worker jobs by name pattern
+        if workers_running:
+            worker_pattern = f"{analysis_id}_*"
+            if verbose:
+                print(
+                    f"[Cancel] Canceling worker jobs matching pattern '{worker_pattern}'...",
+                    flush=True,
+                )
+
+            result = subprocess.run(
+                ["scancel", "--name", worker_pattern],
+                capture_output=True,
+                text=True,
+            )
+
+            if result.returncode == 0:
+                if verbose:
+                    print(f"[Cancel]   ✓ Cancellation command sent", flush=True)
+            else:
+                stderr = result.stderr.strip()
+                if (
+                    stderr
+                    and "No jobs found" not in stderr
+                    and "Invalid job" not in stderr
+                ):
+                    error_msg = f"Failed to send cancel to worker jobs: {stderr}"
+                    errors.append(error_msg)
+                    if verbose:
+                        print(f"[Cancel]   ✗ {error_msg}", flush=True)
+
+        # Step 3: Wait for jobs to actually terminate
+        if verbose:
+            print(
+                f"[Cancel] Waiting for jobs to terminate (timeout: {wait_timeout}s)...",
+                flush=True,
+            )
+
+        start_time = time.time()
+        check_interval = 2  # seconds between checks
+
+        while time.time() - start_time < wait_timeout:
+            time.sleep(check_interval)
+
+            # Check if orchestrator terminated
+            if orchestrator_running and not orchestrator_canceled:
+                try:
+                    result = subprocess.run(
+                        ["scontrol", "show", "job", orchestrator_job_id],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode != 0:
+                        # Job no longer in queue
+                        orchestrator_canceled = True
+                        if verbose:
+                            print(
+                                f"[Cancel]   ✓ Orchestrator job {orchestrator_job_id} terminated",
+                                flush=True,
+                            )
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
+
+            # Check if workers terminated
+            if workers_running and not workers_canceled:
+                try:
+                    result = subprocess.run(
+                        ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
+                        capture_output=True,
+                        text=True,
+                        shell=True,
+                        timeout=5,
+                    )
+
+                    worker_count = 0
+                    if result.returncode == 0:
+                        for line in result.stdout.split("\n"):
+                            if analysis_id in line and "orchestrator" not in line:
+                                worker_count += 1
+
+                    if worker_count == 0:
+                        workers_canceled = True
+                        if verbose:
+                            print(
+                                f"[Cancel]   ✓ All worker jobs terminated", flush=True
+                            )
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
+
+            # Check if all done
+            if (not orchestrator_running or orchestrator_canceled) and (
+                not workers_running or workers_canceled
+            ):
+                break
+
+        # Final verification
+        remaining_jobs = []
+
+        if orchestrator_running and not orchestrator_canceled:
+            remaining_jobs.append(f"orchestrator job {orchestrator_job_id}")
+
+        if workers_running and not workers_canceled:
+            # Count remaining workers
+            try:
+                result = subprocess.run(
+                    ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
+                    capture_output=True,
+                    text=True,
+                    shell=True,
+                    timeout=5,
+                )
+                worker_count = 0
+                if result.returncode == 0:
+                    for line in result.stdout.split("\n"):
+                        if analysis_id in line and "orchestrator" not in line:
+                            worker_count += 1
+                if worker_count > 0:
+                    remaining_jobs.append(f"{worker_count} worker jobs")
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                pass
+
+        if remaining_jobs:
+            error_msg = f"Timeout: {', '.join(remaining_jobs)} did not terminate within {wait_timeout}s"
+            errors.append(error_msg)
+            if verbose:
+                print(f"[Cancel]   ⚠ {error_msg}", flush=True)
+                print(
+                    f"[Cancel]   (Jobs may still be terminating in background)",
+                    flush=True,
+                )
+
+        # Step 4: Update analysis log
+        self.log.workflow_canceled.set(True)
+        self.log.workflow_cancellation_time.set(datetime.datetime.now().isoformat())
+
+        success = (
+            (not orchestrator_running or orchestrator_canceled)
+            and (not workers_running or workers_canceled)
+            and len(errors) == 0
+        )
+
+        if verbose:
+            if success:
+                print(f"[Cancel] ✓ Workflow canceled successfully", flush=True)
+            else:
+                print(
+                    f"[Cancel] ✗ Cancellation completed with warnings/errors",
+                    flush=True,
+                )
+
+        return {
+            "success": success,
+            "orchestrator_canceled": orchestrator_canceled,
+            "workers_canceled": workers_canceled,
+            "jobs_were_running": True,
+            "orchestrator_job_id": orchestrator_job_id,
+            "analysis_id": analysis_id,
+            "message": "Workflow canceled"
+            if success
+            else f"Cancellation issues: {'; '.join(errors)}",
+            "errors": errors,
+        }
+
+    def get_slurm_job_status(self, verbose: bool = False) -> dict:
+        """
+        Check status of submitted SLURM batch job workflow.
+
+        Returns information about the orchestrator job and worker jobs for
+        batch_job mode workflows.
+
+        Parameters
+        ----------
+        verbose : bool, default=False
+            Print detailed status information
+
+        Returns
+        -------
+        dict
+            Status information with keys:
+            - orchestrator_job_id: str | None
+            - orchestrator_status: str | None (RUNNING, PENDING, COMPLETED, etc.)
+            - submission_time: str | None
+            - canceled: bool
+            - active_workers: int (count of running worker jobs)
+
+        Examples
+        --------
+        >>> status = analysis.get_slurm_job_status(verbose=True)
+        >>> if status["orchestrator_status"] in ["RUNNING", "PENDING"]:
+        >>>     print("Workflow is active")
+        """
+        import subprocess
+        import re
+
+        orchestrator_job_id = self.log.orchestrator_job_id.get()
+        submission_time = self.log.orchestrator_submission_time.get()
+        canceled = self.log.workflow_canceled.get() or False
+
+        # Check orchestrator status
+        orchestrator_status = None
+        if orchestrator_job_id:
+            try:
+                result = subprocess.run(
+                    ["scontrol", "show", "job", orchestrator_job_id],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+
+                if result.returncode == 0:
+                    # Parse JobState from scontrol output
+                    for line in result.stdout.split("\n"):
+                        if "JobState=" in line:
+                            match = re.search(r"JobState=(\S+)", line)
+                            if match:
+                                orchestrator_status = match.group(1)
+                                break
+                else:
+                    orchestrator_status = "COMPLETED"  # Not in queue
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                orchestrator_status = "UNKNOWN"
+
+        # Count active worker jobs
+        active_workers = 0
+        analysis_id = self.cfg_analysis.analysis_id
+        try:
+            result = subprocess.run(
+                ["squeue", "-u", "$(whoami)", "-o", "%j", "-h"],
+                capture_output=True,
+                text=True,
+                shell=True,
+                timeout=5,
+            )
+
+            if result.returncode == 0:
+                for line in result.stdout.split("\n"):
+                    if analysis_id in line and "orchestrator" not in line:
+                        active_workers += 1
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+        status = {
+            "orchestrator_job_id": orchestrator_job_id,
+            "orchestrator_status": orchestrator_status,
+            "submission_time": submission_time,
+            "canceled": canceled,
+            "active_workers": active_workers,
+        }
+
+        if verbose:
+            print(f"\n{'=' * 60}")
+            print(f"Workflow Status: {self.cfg_analysis.analysis_id}")
+            print(f"{'=' * 60}")
+            print(f"Orchestrator Job ID: {orchestrator_job_id or 'Not submitted'}")
+            print(f"Orchestrator Status: {orchestrator_status or 'N/A'}")
+            print(f"Submission Time:     {submission_time or 'N/A'}")
+            print(f"Canceled:            {canceled}")
+            print(f"Active Workers:      {active_workers}")
+            print(f"{'=' * 60}\n")
+
+        return status
+
 
 # %%
