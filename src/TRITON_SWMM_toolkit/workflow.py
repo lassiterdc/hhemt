@@ -2233,15 +2233,22 @@ echo "=== Snakemake completed at $(date) ==="
 
             shell_pid = int(pane_pid_result.stdout.strip())
 
-            # Find child process matching "snakemake"
-            pgrep_result = subprocess.run(
-                ["pgrep", "-P", str(shell_pid), "-f", "snakemake"],
+            # Find descendant process matching "snakemake" (not just direct children)
+            # Use ps --ppid to recursively get all descendants
+            ps_result = subprocess.run(
+                ["ps", "-o", "pid,cmd", "--ppid", str(shell_pid), "--forest"],
                 capture_output=True,
                 text=True,
             )
 
-            if pgrep_result.returncode == 0 and pgrep_result.stdout.strip():
-                return int(pgrep_result.stdout.strip().split()[0])
+            if ps_result.returncode == 0:
+                for line in ps_result.stdout.split("\n"):
+                    # Look for python snakemake in the command line
+                    if "snakemake" in line and "python" in line:
+                        # Extract PID (first column)
+                        parts = line.strip().split(None, 1)
+                        if parts and parts[0].isdigit():
+                            return int(parts[0])
 
             return None
 
