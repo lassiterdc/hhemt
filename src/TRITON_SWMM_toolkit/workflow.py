@@ -2233,17 +2233,48 @@ echo "=== Snakemake completed at $(date) ==="
 
             shell_pid = int(pane_pid_result.stdout.strip())
 
-            # Find child process matching "snakemake"
-            pgrep_result = subprocess.run(
-                ["pgrep", "-P", str(shell_pid), "-f", "snakemake"],
-                capture_output=True,
-                text=True,
-            )
+            # Recursively search for Snakemake process in descendant tree
+            # ps --ppid only shows direct children, so we need to recurse manually
+            def find_snakemake_in_descendants(parent_pid: int) -> int | None:
+                # Get direct children of this parent
+                children_result = subprocess.run(
+                    ["ps", "-o", "pid", "--ppid", str(parent_pid), "--no-headers"],
+                    capture_output=True,
+                    text=True,
+                )
 
-            if pgrep_result.returncode == 0 and pgrep_result.stdout.strip():
-                return int(pgrep_result.stdout.strip().split()[0])
+                if children_result.returncode != 0:
+                    return None
 
-            return None
+                child_pids = [
+                    int(pid.strip())
+                    for pid in children_result.stdout.strip().split("\n")
+                    if pid.strip().isdigit()
+                ]
+
+                # Check each child process
+                for child_pid in child_pids:
+                    # Get the command line for this child
+                    cmd_result = subprocess.run(
+                        ["ps", "-o", "cmd", "-p", str(child_pid), "--no-headers"],
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    if cmd_result.returncode == 0:
+                        cmd = cmd_result.stdout.strip()
+                        # Check if this is the Snakemake process
+                        if "snakemake" in cmd and "python" in cmd:
+                            return child_pid
+
+                    # Recurse into this child's descendants
+                    found_pid = find_snakemake_in_descendants(child_pid)
+                    if found_pid:
+                        return found_pid
+
+                return None
+
+            return find_snakemake_in_descendants(shell_pid)
 
         except Exception:
             return None
