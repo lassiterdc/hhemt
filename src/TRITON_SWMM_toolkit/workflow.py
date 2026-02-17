@@ -600,10 +600,6 @@ rule consolidate:
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            gpu_alloc_mode = (
-                self.system.cfg_system.preferred_slurm_option_for_allocating_gpus
-                or "gpus"
-            )
             assert isinstance(
                 max_concurrent, int
             ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
@@ -625,31 +621,11 @@ rule consolidate:
                     "slurm": {
                         "sbatch": {
                             "partition": "{resources.slurm_partition}",
-                            "time": "{resources.runtime}:00",
-                            "mem": "{resources.mem_mb}",
-                            "nodes": "{resources.nodes}",
                             "account": "{resources.slurm_account}",
                         }
                     },
                 }
             )
-
-            sim_resources = (
-                self.analysis._resource_manager._get_simulation_resource_requirements()
-            )
-            n_gpus_per_sim = sim_resources["n_gpus"]
-
-            if n_gpus_per_sim > 0:
-                gpu_hardware = self.system.cfg_system.gpu_hardware
-                if gpu_alloc_mode == "gpus":
-                    if gpu_hardware:
-                        config["slurm"]["sbatch"][
-                            "gpus"
-                        ] = f"{gpu_hardware}:{{resources.gpu}}"
-                    else:
-                        config["slurm"]["sbatch"]["gpus"] = "{resources.gpu}"
-                else:
-                    config["slurm"]["sbatch"]["gres"] = "{resources.gres}"
 
         return config
 

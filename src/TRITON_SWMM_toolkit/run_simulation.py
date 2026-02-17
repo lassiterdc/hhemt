@@ -447,20 +447,24 @@ class TRITONSWMM_run:
         # ----------------------------
 
         # CRITICAL VALIDATION: Verify SLURM allocation matches configuration requirements
-        # This prevents infinite hangs when SLURM allocates fewer CPUs than configured
-        # (e.g., due to Snakemake's slurm-jobstep executor misreading available cores)
+        # This prevents infinite hangs when SLURM allocates fewer CPUs than configured.
+        # For multi-node jobs SLURM_CPUS_ON_NODE reflects only one node's CPUs; the
+        # correct total is SLURM_NTASKS × SLURM_CPUS_PER_TASK across all allocated nodes.
         if using_srun and "SLURM_JOB_ID" in os.environ:
             slurm_cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
             slurm_ntasks = int(os.environ.get("SLURM_NTASKS", 0))
             slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
 
-            # Calculate what we expect vs what SLURM allocated
+            # Calculate what we expect vs what SLURM allocated.
+            # Use NTASKS × CPUS_PER_TASK as the total — this is correct for both
+            # single-node (NTASKS × CPT == CPUS_ON_NODE) and multi-node jobs
+            # (NTASKS × CPT > CPUS_ON_NODE, spread across multiple nodes).
             expected_cpus = (
                 n_mpi_procs * n_omp_threads
                 if run_mode != "gpu"
                 else n_gpus * n_omp_threads
             )
-            slurm_allocated = slurm_cpus_on_node
+            slurm_allocated = slurm_ntasks * slurm_cpus_per_task
 
             if slurm_allocated < expected_cpus:
                 error_msg = (
@@ -473,9 +477,8 @@ class TRITONSWMM_run:
                     f"  - Total: {n_mpi_procs} × {n_omp_threads} = {expected_cpus} CPUs\n"
                     f"\n"
                     f"SLURM actually allocated: {slurm_allocated} CPUs\n"
-                    f"  - SLURM_CPUS_ON_NODE: {slurm_cpus_on_node}\n"
-                    f"  - SLURM_NTASKS: {slurm_ntasks}\n"
-                    f"  - SLURM_CPUS_PER_TASK: {slurm_cpus_per_task}\n"
+                    f"  - SLURM_NTASKS × SLURM_CPUS_PER_TASK: {slurm_ntasks} × {slurm_cpus_per_task} = {slurm_allocated}\n"
+                    f"  - SLURM_CPUS_ON_NODE (single-node view): {slurm_cpus_on_node}\n"
                     f"  - SLURM_JOB_ID: {os.environ.get('SLURM_JOB_ID')}\n"
                     f"\n"
                     f"CONSEQUENCE:\n"

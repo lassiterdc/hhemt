@@ -9,11 +9,12 @@ You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or F
 - **Configuration**: `cfg_system.yaml`, `cfg_analysis.yaml`
 - **Sensitivity analysis**: `sensitivity_analysis_definition.csv` (if sensitivity analysis enabled; shows parameters varied across sub-analyses)
 - **Status tracking**: `scenario_status.csv`, `_status/*.flag` completion markers, `workflow_summary.md` (check header timestamp for freshness)
-- **Master workflow logs**: `logs/_slurm_logs/workflow_batch_*.out` (SLURM stdout for entire workflow)
-- **Snakemake logs**: `.snakemake/log/*.snakemake.log` (Snakemake orchestrator logs)
+- **Master workflow log**: `logs/tmux_session.log` — **always the most recent run** (single file; `run_workflow_tmux.sh` appends to it with `>>`, and since a new tmux session is started for each run, this file represents the latest execution)
+- **Workflow launch script**: `run_workflow_tmux.sh` — the script executed inside the tmux session; shows Snakemake flags, profile paths, and efficiency report path
+- **Snakemake logs**: `.snakemake/log/*.snakemake.log` (Snakemake orchestrator logs; same content as tmux_session.log, use as backup)
 - **Rule-specific logs**: `logs/sims/*.log` (prepare, simulation, processing logs)
 - **Per-rule SLURM logs**: `.snakemake/slurm_logs/rule_*/[event_iloc]/[job_id].log`
-- **Performance reports**: `efficiency_report_*.csv`
+- **Performance reports**: `logs/slurm_efficiency_report/*/efficiency_report_*.csv`
 
 **Note**: `dry_run_report.md` should NOT be used for debugging as it may pre-date the failed run. Always check `workflow_summary.md` header timestamp to ensure it reflects the current run.
 
@@ -36,24 +37,26 @@ Read `cfg_analysis.yaml` and `cfg_system.yaml`:
 - Model types enabled: Check `cfg_system.yaml` for `toggle_triton_model`, `toggle_tritonswmm_model`, `toggle_swmm_model`
 - **For sensitivity studies**: Check `sensitivity_analysis_definition.csv` to understand which parameters vary across sub-analyses (includes run_mode, n_mpi_procs, n_gpus, n_omp_threads, partition, etc.)
 
-### Step 2: Check Most Recent Master Workflow Log
+### Step 2: Check Master Workflow Log
 
-**Primary source**: `logs/_slurm_logs/workflow_batch_[DATETIME]_[JOBID].out`
+**Primary source**: `logs/tmux_session.log`
 
-- Find the **most recent** file (latest datetime in filename):
-  ```bash
-  ls -lt logs/_slurm_logs/workflow_batch_*.out | head -1
-  ```
-- **CRITICAL**: Extract and record the datetime from the filename (format: `YYYY-MM-DDTHHMM SS-ZONE`)
-- This is the master Snakefile log showing all rule executions and failures
+This file captures the full tmux session output — `run_workflow_tmux.sh` uses a group redirect (`} >> tmux_session.log 2>&1`) that captures all stdout/stderr from the entire script body. Since a fresh tmux session is started per run, this file contains the most recent workflow execution. (If multiple runs were executed in the same tmux session, the file will contain multiple runs appended — check for the most recent `=== Tmux session started at ...===` header.)
+
+- Read the beginning to confirm the session start timestamp (line 1: `=== Tmux session started at ...===`)
+- Read the end to find failures and the workflow end marker:
+  - **Clean exit**: ends with `=== Snakemake completed at ... ===`
+  - **Failed exit**: ends with `WorkflowError:` or `Exiting because a job execution failed`
 - Look for:
   - Job submission messages: `Job X has been submitted with SLURM jobid Y`
   - Rule failures: `Error in rule`, `CalledProcessError`, `[FAILED]`
   - Incomplete jobs: Rules that started but never completed
   - Time limit errors: `CANCELLED DUE TO TIME LIMIT`
-  - **Workflow end marker**: Check if log ends cleanly or was interrupted
+  - 0% CPU efficiency warnings (from `--slurm-efficiency-report` flag)
 
-**Cross-reference**: The corresponding `.snakemake/log/[DATETIME].snakemake.log` should have the same datetime and contain similar information. If both exist, prefer `logs/_slurm_logs/*.out` as it's easier to read.
+**Cross-reference**: The `.snakemake/log/[DATETIME].snakemake.log` file contains the same Snakemake orchestrator content; use it as a backup if `tmux_session.log` is missing or truncated.
+
+**Note on old log format**: In older runs, master workflow logs were at `logs/_slurm_logs/workflow_batch_[DATETIME]_[JOBID].out`. If you see this directory instead of `tmux_session.log`, use the most recent file there.
 
 ### Step 3: Verify scenario_status.csv Freshness
 
@@ -64,28 +67,29 @@ Read `cfg_analysis.yaml` and `cfg_system.yaml`:
 **Verification Steps**:
 
 ```bash
-# 1. Find the most recent workflow log (from Step 2)
-LATEST_LOG=$(ls -t logs/_slurm_logs/workflow_batch_*.out | head -1)
-echo "Latest workflow log: $LATEST_LOG"
+# 1. Get the session start timestamp from tmux_session.log (line 1)
+head -1 logs/tmux_session.log
+# e.g. "=== Tmux session started at Mon Feb 16 20:13:51 EST 2026 ==="
 
-# 2. Check if export_scenario_status.log exists and is recent
+# 2. Check if export_scenario_status.log exists and was written after session start
 if [ -f logs/export_scenario_status.log ]; then
-    # Extract SLURM job ID from export log to correlate with workflow log
-    EXPORT_JOB_ID=$(grep "Current SLURM job ID:" logs/export_scenario_status.log | tail -1 | awk '{print $NF}')
-    echo "Export scenario status SLURM job ID: $EXPORT_JOB_ID"
-
-    # Check if the workflow log mentions this export
-    if grep -q "$EXPORT_JOB_ID" "$LATEST_LOG" 2>/dev/null; then
-        echo "✓ scenario_status.csv is up-to-date with latest workflow run"
-    else
-        echo "⚠️  WARNING: export_scenario_status.log exists but doesn't match latest workflow"
-        echo "   scenario_status.csv may be STALE"
-    fi
+    # Check timestamp of export log vs tmux session start
+    echo "export_scenario_status.log last modified: $(stat -c '%y' logs/export_scenario_status.log)"
 
     # Check for export failures
     if grep -q "ERROR\|RuntimeError\|Traceback" logs/export_scenario_status.log; then
         echo "⚠️  ERROR: export_scenario_status failed (see logs/export_scenario_status.log)"
         echo "   scenario_status.csv is UNRELIABLE - use _status/ flags instead"
+    else
+        echo "✓ export_scenario_status.log looks clean"
+    fi
+
+    # Check if tmux_session.log shows the export ran during this workflow
+    if grep -q "export_scenario_status\|Status export completed" logs/tmux_session.log; then
+        echo "✓ scenario_status.csv appears up-to-date with latest workflow run"
+    else
+        echo "⚠️  WARNING: tmux_session.log doesn't mention export_scenario_status"
+        echo "   scenario_status.csv may be STALE"
     fi
 else
     echo "⚠️  WARNING: logs/export_scenario_status.log MISSING"
@@ -354,8 +358,10 @@ If diagnosis is incomplete, request specific files:
 
 ## Important Notes
 
-- **Always start with master workflow log** (`logs/_slurm_logs/*.out`) - it reveals most failures immediately
+- **Always start with master workflow log** (`logs/tmux_session.log`) - it reveals most failures immediately and is always the latest run
 - **Don't assume compilation issues** - if setup succeeded, compilation worked
-- **Focus on most recent run** - ignore older logs with different datetimes
-- **For time limits**: Check if failures correlate with specific resource configs (low CPU counts often timeout)
+- **Focus on most recent run** - `tmux_session.log` is always fresh (overwritten each run); old `.snakemake/log/*.snakemake.log` files may be from prior runs
+- **For time limits**: Check if failures correlate with specific resource configs (GPU jobs may need more time than CPU jobs)
+- **For GPU jobs**: 0% CPU efficiency in SLURM reports is expected for GPU-bound workloads — SLURM sacct only tracks CPU time. A GPU job with 0% CPU efficiency but ~20 min elapsed may have been computing on GPU but not finished, or may have timed out
 - **Keep it focused**: Provide actionable diagnosis, not exhaustive investigation
+- **Efficiency report path changed**: Reports are now nested under `logs/slurm_efficiency_report/[DATETIME].csv/efficiency_report_[UUID].csv` (not at root level)
