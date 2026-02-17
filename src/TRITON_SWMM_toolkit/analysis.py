@@ -2216,7 +2216,7 @@ class TRITONSWMM_analysis:
         errors = []
 
         # Step 1: Get current Snakemake PID (may have changed since submission)
-        current_pid = self.workflow._get_snakemake_pid_from_tmux(session_name)
+        current_pid = self._workflow_builder._get_snakemake_pid_from_tmux(session_name)
         if current_pid:
             snakemake_pid = current_pid
         elif not snakemake_pid:

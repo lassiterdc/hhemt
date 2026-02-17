@@ -2048,25 +2048,10 @@ echo "=== Snakemake completed at $(date) ==="
             workflow_script.write_text(workflow_content)
             workflow_script.chmod(0o755)
 
-            if verbose:
-                print(f"[Snakemake] Creating tmux session: {session_name}", flush=True)
-                print(f"[Snakemake] Snakefile: {snakefile_path}", flush=True)
-                print(
-                    f"[Snakemake] Module load prefix: {repr(module_load_prefix)}",
-                    flush=True,
-                )
-                print(f"[Snakemake] Workflow script: {workflow_script}", flush=True)
-                print(f"[Snakemake] Log output: {tmux_log}", flush=True)
-
             # Create detached tmux session (with module load on HPC)
             new_session_cmd = (
                 f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
             )
-            if verbose:
-                print(
-                    f"[Snakemake] Creating session with command: {new_session_cmd}",
-                    flush=True,
-                )
 
             tmux_result = subprocess.run(
                 ["bash", "-c", new_session_cmd],
@@ -2087,33 +2072,9 @@ echo "=== Snakemake completed at $(date) ==="
                     "message": error_msg,
                 }
 
-            if verbose:
-                print(f"[Snakemake] Session created successfully", flush=True)
-                # Verify session exists by listing all sessions
-                list_sessions_cmd = f"{module_load_prefix}tmux list-sessions"
-                list_result = subprocess.run(
-                    ["bash", "-c", list_sessions_cmd],
-                    capture_output=True,
-                    text=True,
-                )
-                if list_result.returncode == 0:
-                    print(
-                        f"[Snakemake] Active tmux sessions:\n{list_result.stdout}",
-                        flush=True,
-                    )
-                else:
-                    print(
-                        f"[Snakemake] WARNING: Could not list tmux sessions", flush=True
-                    )
-
             # Execute THE workflow script in the tmux session
             exec_cmd = f"bash {workflow_script}"
             send_keys_cmd = f"{module_load_prefix}tmux send-keys -t {session_name} {shlex.quote(exec_cmd)} Enter"
-
-            if verbose:
-                print(
-                    f"[Snakemake] Executing workflow script in tmux session", flush=True
-                )
 
             send_cmd_result = subprocess.run(
                 ["bash", "-c", send_keys_cmd],
@@ -2140,24 +2101,13 @@ echo "=== Snakemake completed at $(date) ==="
                     "message": error_msg,
                 }
 
-            if verbose:
-                print(
-                    f"[Snakemake] Command sent successfully to tmux session", flush=True
-                )
-
             # Wait a moment for process to start
             time.sleep(2)
 
             # Extract Snakemake PID from tmux session
             snakemake_pid = self._get_snakemake_pid_from_tmux(session_name)
 
-            if not snakemake_pid:
-                if verbose:
-                    print(
-                        "[Snakemake] WARNING: Could not determine Snakemake PID immediately. "
-                        "This is normal if Snakemake hasn't started yet.",
-                        flush=True,
-                    )
+            # Note: snakemake_pid may be None if Snakemake hasn't started yet
 
             # Persist session info to analysis log
             self.analysis.log.tmux_session_name.set(session_name)
