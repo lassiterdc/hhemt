@@ -1976,13 +1976,11 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             )
 
             # Build the full command that will run inside tmux
-            # Redirect output to a log file for debugging
+            # Write output to a log file for debugging
             tmux_log = self.analysis_paths.analysis_dir / "logs" / "tmux_session.log"
             snakemake_cmd = f"""
+{{
 set -e  # Exit on error
-
-# Redirect all output to log file
-exec > >(tee -a {tmux_log}) 2>&1
 
 echo "=== Tmux session started at $(date) ==="
 
@@ -2024,6 +2022,7 @@ python -m snakemake \\
     --slurm-efficiency-report \\
     --slurm-efficiency-report-path {efficiency_report_path}
 echo "=== Snakemake completed at $(date) ==="
+}} >> {tmux_log} 2>&1
 """
 
             if verbose:
