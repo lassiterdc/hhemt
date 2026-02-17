@@ -2041,6 +2041,9 @@ echo "=== Snakemake completed at $(date) ==="
             new_session_cmd = (
                 f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
             )
+            if verbose:
+                print(f"[Snakemake] Creating session with command: {new_session_cmd}", flush=True)
+
             tmux_result = subprocess.run(
                 ["bash", "-c", new_session_cmd],
                 capture_output=True,
@@ -2060,9 +2063,30 @@ echo "=== Snakemake completed at $(date) ==="
                     "message": error_msg,
                 }
 
+            if verbose:
+                print(f"[Snakemake] Session created successfully", flush=True)
+                # Verify session exists by listing all sessions
+                list_sessions_cmd = f"{module_load_prefix}tmux list-sessions"
+                list_result = subprocess.run(
+                    ["bash", "-c", list_sessions_cmd],
+                    capture_output=True,
+                    text=True,
+                )
+                if list_result.returncode == 0:
+                    print(f"[Snakemake] Active tmux sessions:\n{list_result.stdout}", flush=True)
+                else:
+                    print(f"[Snakemake] WARNING: Could not list tmux sessions", flush=True)
+
             # Send the command to the tmux session (with module load on HPC)
             # Note: snakemake_cmd needs to be shell-escaped for send-keys
             send_keys_cmd = f"{module_load_prefix}tmux send-keys -t {session_name} {shlex.quote(snakemake_cmd)} Enter"
+
+            if verbose:
+                print(f"[Snakemake] Sending command to session...", flush=True)
+                # Print first 200 chars of the command for debugging
+                cmd_preview = snakemake_cmd[:200] + "..." if len(snakemake_cmd) > 200 else snakemake_cmd
+                print(f"[Snakemake] Command preview: {repr(cmd_preview)}", flush=True)
+
             send_cmd_result = subprocess.run(
                 ["bash", "-c", send_keys_cmd],
                 capture_output=True,
@@ -2087,6 +2111,9 @@ echo "=== Snakemake completed at $(date) ==="
                     "snakemake_pid": None,
                     "message": error_msg,
                 }
+
+            if verbose:
+                print(f"[Snakemake] Command sent successfully to tmux session", flush=True)
 
             # Wait a moment for process to start
             time.sleep(2)
