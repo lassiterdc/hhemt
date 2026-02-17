@@ -2103,7 +2103,7 @@ class TRITONSWMM_analysis:
     def swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
-    def cancel(self, verbose: bool = True, wait_timeout: int = 30) -> dict:
+    def cancel(self, verbose: bool = True, wait_timeout: int = 120) -> dict:
         """
         Cancel ongoing tmux workflow for this analysis.
 
@@ -2280,10 +2280,18 @@ class TRITONSWMM_analysis:
         while time.time() - start_time < wait_timeout:
             time.sleep(2)
 
-            # Check if process still exists
-            try:
-                os.kill(snakemake_pid, 0)  # Signal 0 just checks existence
-            except ProcessLookupError:
+            # Check if process still exists using ps (works across permission boundaries)
+            ps_check = subprocess.run(
+                ["ps", "-p", str(snakemake_pid)],
+                capture_output=True,
+            )
+            elapsed = int(time.time() - start_time)
+            if verbose:
+                print(
+                    f"[Cancel]   [debug] ps returncode={ps_check.returncode} at {elapsed}s",
+                    flush=True,
+                )
+            if ps_check.returncode != 0:
                 process_exited = True
                 if verbose:
                     print(
@@ -2291,9 +2299,6 @@ class TRITONSWMM_analysis:
                         flush=True,
                     )
                 break
-            except PermissionError:
-                # Process exists but we can't signal it
-                pass
 
         if not process_exited:
             error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
