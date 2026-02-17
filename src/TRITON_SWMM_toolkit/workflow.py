@@ -2018,10 +2018,25 @@ if [ -n "${{CONDA_PREFIX}}" ]; then
     export LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib:${{LD_LIBRARY_PATH}}"
 fi
 
+# Diagnostics: confirm activation and Snakemake availability
+echo "=========================================="
+echo "DIAGNOSTICS: Conda activation + Snakemake"
+echo "=========================================="
+echo "CONDA_PREFIX: ${{CONDA_PREFIX:-<not set>}}"
+echo "CONDA_DEFAULT_ENV: ${{CONDA_DEFAULT_ENV:-<not set>}}"
+echo "Python (PATH): $(which python)"
+echo "Python (conda): ${{CONDA_PREFIX}}/bin/python"
+echo "PATH (head):"
+echo "${{PATH}}" | tr ':' '\\n' | head -n 10 | sed 's/^/  /'
+echo "=========================================="
+
+${{CONDA_PREFIX}}/bin/python -V
+${{CONDA_PREFIX}}/bin/python -m snakemake --version
+
 # Run Snakemake
 cd {self.analysis_paths.analysis_dir}
 echo "=== Starting Snakemake ==="
-python -m snakemake \\
+${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
