@@ -2037,7 +2037,10 @@ echo "=== Snakemake completed at $(date) ==="
             if verbose:
                 print(f"[Snakemake] Creating tmux session: {session_name}", flush=True)
                 print(f"[Snakemake] Snakefile: {snakefile_path}", flush=True)
-                print(f"[Snakemake] Module load prefix: {repr(module_load_prefix)}", flush=True)
+                print(
+                    f"[Snakemake] Module load prefix: {repr(module_load_prefix)}",
+                    flush=True,
+                )
                 print(f"[Snakemake] Workflow script: {workflow_script}", flush=True)
                 print(f"[Snakemake] Log output: {tmux_log}", flush=True)
 
@@ -2046,7 +2049,10 @@ echo "=== Snakemake completed at $(date) ==="
                 f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
             )
             if verbose:
-                print(f"[Snakemake] Creating session with command: {new_session_cmd}", flush=True)
+                print(
+                    f"[Snakemake] Creating session with command: {new_session_cmd}",
+                    flush=True,
+                )
 
             tmux_result = subprocess.run(
                 ["bash", "-c", new_session_cmd],
@@ -2077,16 +2083,23 @@ echo "=== Snakemake completed at $(date) ==="
                     text=True,
                 )
                 if list_result.returncode == 0:
-                    print(f"[Snakemake] Active tmux sessions:\n{list_result.stdout}", flush=True)
+                    print(
+                        f"[Snakemake] Active tmux sessions:\n{list_result.stdout}",
+                        flush=True,
+                    )
                 else:
-                    print(f"[Snakemake] WARNING: Could not list tmux sessions", flush=True)
+                    print(
+                        f"[Snakemake] WARNING: Could not list tmux sessions", flush=True
+                    )
 
             # Execute THE workflow script in the tmux session
             exec_cmd = f"bash {workflow_script}"
             send_keys_cmd = f"{module_load_prefix}tmux send-keys -t {session_name} {shlex.quote(exec_cmd)} Enter"
 
             if verbose:
-                print(f"[Snakemake] Executing workflow script in tmux session", flush=True)
+                print(
+                    f"[Snakemake] Executing workflow script in tmux session", flush=True
+                )
 
             send_cmd_result = subprocess.run(
                 ["bash", "-c", send_keys_cmd],
@@ -2114,7 +2127,9 @@ echo "=== Snakemake completed at $(date) ==="
                 }
 
             if verbose:
-                print(f"[Snakemake] Command sent successfully to tmux session", flush=True)
+                print(
+                    f"[Snakemake] Command sent successfully to tmux session", flush=True
+                )
 
             # Wait a moment for process to start
             time.sleep(2)
@@ -2194,11 +2209,16 @@ echo "=== Snakemake completed at $(date) ==="
         str
             Shell command prefix to load modules, or empty string if not on HPC
         """
-        modules_str = self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        modules_str = (
+            self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        )
 
         # If we're in SLURM or using batch_job mode, always try to load tmux
         # Even if no other modules are specified, tmux might not be in default PATH
-        if self.analysis.in_slurm or self.cfg_analysis.multi_sim_run_method == "batch_job":
+        if (
+            self.analysis.in_slurm
+            or self.cfg_analysis.multi_sim_run_method == "batch_job"
+        ):
             if modules_str:
                 # modules_str is a space-separated string, e.g., "gcc/11.2.0 openmpi/4.1.1"
                 return f"module purge && module load tmux {modules_str} && "
