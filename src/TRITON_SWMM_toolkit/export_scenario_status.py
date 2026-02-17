@@ -187,6 +187,11 @@ def gather_hpc_partition_info() -> str:
         md_lines.append(f"Error: {str(e)}")
     md_lines.append("```")
     md_lines.append("")
+    md_lines.append(
+        "**Note**: GPU allocation may be subject to QOS limits (e.g., max GPUs per user). "
+        "Check `sacctmgr show assoc where account=<account> format=qos,GrpTRES,MaxTRES -p` for limits."
+    )
+    md_lines.append("")
 
     return "\n".join(md_lines)
 

@@ -9,7 +9,8 @@ You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or F
 - **Configuration**: `cfg_system.yaml`, `cfg_analysis.yaml`
 - **Sensitivity analysis**: `sensitivity_analysis_definition.csv` (if sensitivity analysis enabled; shows parameters varied across sub-analyses)
 - **Status tracking**: `scenario_status.csv`, `_status/*.flag` completion markers, `workflow_summary.md` (check header timestamp for freshness)
-- **Master workflow log**: `logs/tmux_session.log` — **always the most recent run** (single file; `run_workflow_tmux.sh` appends to it with `>>`, and since a new tmux session is started for each run, this file represents the latest execution)
+- **Partition limits**: `workflow_summary.md` includes HPC partition information (MaxNodes, MaxCPUs, GRES/GPU limits) — **use this to diagnose resource overallocation errors**
+- **Master workflow log**: `logs/tmux_session_YYYYMMDD_HHMMSS.log` — timestamped log for each run (sorted by timestamp to find latest)
 - **Workflow launch script**: `run_workflow_tmux.sh` — the script executed inside the tmux session; shows Snakemake flags, profile paths, and efficiency report path
 - **Snakemake logs**: `.snakemake/log/*.snakemake.log` (Snakemake orchestrator logs; same content as tmux_session.log, use as backup)
 - **Rule-specific logs**: `logs/sims/*.log` (prepare, simulation, processing logs)
@@ -39,14 +40,18 @@ Read `cfg_analysis.yaml` and `cfg_system.yaml`:
 
 ### Step 2: Check Master Workflow Log
 
-**Primary source**: `logs/tmux_session.log`
+**Primary source**: `logs/tmux_session_YYYYMMDD_HHMMSS.log` (timestamped, sorted by recency)
 
-This file captures the full tmux session output — `run_workflow_tmux.sh` uses a group redirect (`} >> tmux_session.log 2>&1`) that captures all stdout/stderr from the entire script body. Since a fresh tmux session is started per run, this file contains the most recent workflow execution. (If multiple runs were executed in the same tmux session, the file will contain multiple runs appended — check for the most recent `=== Tmux session started at ...===` header.)
+This file captures the full tmux session output for a single run. Find the most recent file:
+```bash
+ls -t logs/tmux_session_*.log | head -1
+```
 
-- Read the beginning to confirm the session start timestamp (line 1: `=== Tmux session started at ...===`)
-- Read the end to find failures and the workflow end marker:
-  - **Clean exit**: ends with `=== Snakemake completed at ... ===`
-  - **Failed exit**: ends with `WorkflowError:` or `Exiting because a job execution failed`
+Each log contains:
+- Session start timestamp: `=== Tmux session started at ...===`
+- Workflow end marker:
+  - **Clean exit**: `=== Snakemake completed at ... (exit: 0) ===`
+  - **Failed exit**: `WorkflowError:` or `Exiting because a job execution failed`, followed by `exit: 1`
 - Look for:
   - Job submission messages: `Job X has been submitted with SLURM jobid Y`
   - Rule failures: `Error in rule`, `CalledProcessError`, `[FAILED]`
@@ -54,9 +59,11 @@ This file captures the full tmux session output — `run_workflow_tmux.sh` uses 
   - Time limit errors: `CANCELLED DUE TO TIME LIMIT`
   - 0% CPU efficiency warnings (from `--slurm-efficiency-report` flag)
 
-**Cross-reference**: The `.snakemake/log/[DATETIME].snakemake.log` file contains the same Snakemake orchestrator content; use it as a backup if `tmux_session.log` is missing or truncated.
+**Cross-reference**: The `.snakemake/log/[DATETIME].snakemake.log` file contains the same Snakemake orchestrator content; use it as a backup if tmux logs are missing.
 
-**Note on old log format**: In older runs, master workflow logs were at `logs/_slurm_logs/workflow_batch_[DATETIME]_[JOBID].out`. If you see this directory instead of `tmux_session.log`, use the most recent file there.
+**Note on old log formats**:
+- Pre-timestamping (< Feb 2026): `logs/tmux_session.log` (single file, appended across runs)
+- Pre-tmux (< Feb 2026): `logs/_slurm_logs/workflow_batch_[DATETIME]_[JOBID].out`
 
 ### Step 3: Verify scenario_status.csv Freshness
 
@@ -67,34 +74,38 @@ This file captures the full tmux session output — `run_workflow_tmux.sh` uses 
 **Verification Steps**:
 
 ```bash
-# 1. Get the session start timestamp from tmux_session.log (line 1)
-head -1 logs/tmux_session.log
-# e.g. "=== Tmux session started at Mon Feb 16 20:13:51 EST 2026 ==="
+# 1. Find most recent tmux session log
+latest_log=$(ls -t logs/tmux_session_*.log 2>/dev/null | head -1)
+if [ -z "$latest_log" ]; then
+    echo "⚠️  No tmux session logs found"
+    exit 1
+fi
 
-# 2. Check if export_scenario_status.log exists and was written after session start
+# 2. Get session start timestamp
+session_start=$(head -1 "$latest_log" | grep -oP '(?<=at ).*')
+echo "Latest session started: $session_start"
+
+# 3. Check if export_scenario_status.log exists and was written after session start
 if [ -f logs/export_scenario_status.log ]; then
-    # Check timestamp of export log vs tmux session start
-    echo "export_scenario_status.log last modified: $(stat -c '%y' logs/export_scenario_status.log)"
+    export_time=$(stat -c '%y' logs/export_scenario_status.log)
+    echo "export_scenario_status.log last modified: $export_time"
 
     # Check for export failures
     if grep -q "ERROR\|RuntimeError\|Traceback" logs/export_scenario_status.log; then
-        echo "⚠️  ERROR: export_scenario_status failed (see logs/export_scenario_status.log)"
+        echo "⚠️  ERROR: export_scenario_status failed"
         echo "   scenario_status.csv is UNRELIABLE - use _status/ flags instead"
     else
         echo "✓ export_scenario_status.log looks clean"
     fi
 
-    # Check if tmux_session.log shows the export ran during this workflow
-    if grep -q "export_scenario_status\|Status export completed" logs/tmux_session.log; then
-        echo "✓ scenario_status.csv appears up-to-date with latest workflow run"
+    # Check if latest tmux log shows the export ran
+    if grep -q "export_scenario_status\|Status export completed" "$latest_log"; then
+        echo "✓ scenario_status.csv appears up-to-date"
     else
-        echo "⚠️  WARNING: tmux_session.log doesn't mention export_scenario_status"
-        echo "   scenario_status.csv may be STALE"
+        echo "⚠️  WARNING: export_scenario_status not found in $latest_log"
     fi
 else
     echo "⚠️  WARNING: logs/export_scenario_status.log MISSING"
-    echo "   export_scenario_status may not have run"
-    echo "   scenario_status.csv is likely STALE"
 fi
 ```
 
@@ -358,10 +369,11 @@ If diagnosis is incomplete, request specific files:
 
 ## Important Notes
 
-- **Always start with master workflow log** (`logs/tmux_session.log`) - it reveals most failures immediately and is always the latest run
+- **Always start with workflow_summary.md** - provides partition limits, resource diagnostics, and phase completion status
+- **Check partition limits for overallocation errors** - `workflow_summary.md` includes `MaxNodes`, `MaxCPUsPerNode`, and GPU counts per partition; use this to diagnose `QOSMaxGRESPerUser` or resource allocation failures
+- **Find latest tmux log** - Use `ls -t logs/tmux_session_*.log | head -1` to find most recent workflow run
 - **Don't assume compilation issues** - if setup succeeded, compilation worked
-- **Focus on most recent run** - `tmux_session.log` is always fresh (overwritten each run); old `.snakemake/log/*.snakemake.log` files may be from prior runs
 - **For time limits**: Check if failures correlate with specific resource configs (GPU jobs may need more time than CPU jobs)
 - **For GPU jobs**: 0% CPU efficiency in SLURM reports is expected for GPU-bound workloads — SLURM sacct only tracks CPU time. A GPU job with 0% CPU efficiency but ~20 min elapsed may have been computing on GPU but not finished, or may have timed out
 - **Keep it focused**: Provide actionable diagnosis, not exhaustive investigation
-- **Efficiency report path changed**: Reports are now nested under `logs/slurm_efficiency_report/[DATETIME].csv/efficiency_report_[UUID].csv` (not at root level)
+- **Efficiency report path**: Reports are nested under `logs/slurm_efficiency_report/[DATETIME].csv/efficiency_report_[UUID].csv`

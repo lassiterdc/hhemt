@@ -1951,8 +1951,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             )
 
             # Build the full command that will run inside tmux
-            # Write output to a log file for debugging
-            tmux_log = self.analysis_paths.analysis_dir / "logs" / "tmux_session.log"
+            # Write output to a timestamped log file for debugging
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            tmux_log = self.analysis_paths.analysis_dir / "logs" / f"tmux_session_{timestamp}.log"
 
             # Create THE workflow script - this is what actually gets executed
             workflow_script = self.analysis_paths.analysis_dir / "run_workflow_tmux.sh"
