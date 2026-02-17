@@ -2035,6 +2035,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --version
 # Run Snakemake
 cd {self.analysis_paths.analysis_dir}
 echo "=== Starting Snakemake ==="
+set +e
 ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
@@ -2042,7 +2043,10 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --printshellcmds \\
     --slurm-efficiency-report \\
     --slurm-efficiency-report-path {efficiency_report_path}
-echo "=== Snakemake completed at $(date) ==="
+snakemake_status=$?
+echo "=== Snakemake completed at $(date) (exit: $snakemake_status) ==="
+tmux kill-session -t {session_name}
+exit $snakemake_status
 }} >> {tmux_log} 2>&1
 """
             workflow_script.write_text(workflow_content)
