@@ -1976,11 +1976,20 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             )
 
             # Build the full command that will run inside tmux
+            # Redirect output to a log file for debugging
+            tmux_log = self.analysis_paths.analysis_dir / "logs" / "tmux_session.log"
             snakemake_cmd = f"""
 set -e  # Exit on error
 
+# Redirect all output to log file
+exec > >(tee -a {tmux_log}) 2>&1
+
+echo "=== Tmux session started at $(date) ==="
+
 # Load required modules (including tmux if needed)
 {module_load_cmd}
+
+echo "=== Modules loaded ==="
 
 # Initialize conda
 if [ -n "${{CONDA_EXE}}" ]; then
@@ -1992,8 +2001,12 @@ else
     exit 1
 fi
 
+echo "=== Conda initialized ==="
+
 # Activate environment
 conda activate triton_swmm_toolkit
+
+echo "=== Environment activated ==="
 
 # Ensure conda libs are discoverable
 if [ -n "${{CONDA_PREFIX}}" ]; then
@@ -2002,6 +2015,7 @@ fi
 
 # Run Snakemake
 cd {self.analysis_paths.analysis_dir}
+echo "=== Starting Snakemake ==="
 python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
@@ -2009,11 +2023,20 @@ python -m snakemake \\
     --printshellcmds \\
     --slurm-efficiency-report \\
     --slurm-efficiency-report-path {efficiency_report_path}
+echo "=== Snakemake completed at $(date) ==="
 """
 
             if verbose:
                 print(f"[Snakemake] Creating tmux session: {session_name}", flush=True)
                 print(f"[Snakemake] Snakefile: {snakefile_path}", flush=True)
+                print(f"[Snakemake] Module load prefix: {repr(module_load_prefix)}", flush=True)
+
+            # Write the command to a log file for debugging
+            tmux_cmd_log = self.analysis_paths.analysis_dir / "logs" / "tmux_command.sh"
+            tmux_cmd_log.parent.mkdir(parents=True, exist_ok=True)
+            tmux_cmd_log.write_text(snakemake_cmd)
+            if verbose:
+                print(f"[Snakemake] Command saved to: {tmux_cmd_log}", flush=True)
 
             # Create detached tmux session (with module load on HPC)
             new_session_cmd = (
