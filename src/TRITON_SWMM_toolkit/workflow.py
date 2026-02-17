@@ -161,13 +161,24 @@ class SnakemakeWorkflowBuilder:
         gpus_per_node = math.ceil(gpus_total / sim_nodes) if gpus_total > 0 else 0
 
         block = f"""        slurm_partition=\"{partition_name}\",
-        runtime={runtime_min},
-        tasks={tasks},
+        runtime={runtime_min},"""
+
+        # For GPU jobs: set tasks=1 (1 task per GPU, SLURM executor uses --ntasks-per-gpu)
+        # For non-GPU jobs: set tasks=<actual MPI rank count>
+        if gpus_total > 0:
+            block += f"\n        tasks=1,"  # 1:1 GPU-to-task mapping
+        else:
+            block += f"\n        tasks={tasks},"  # Use actual task count
+
+        block += f"""
         cpus_per_task={cpus_per_task},
         mem_mb={mem_mb},
         nodes={sim_nodes}"""
-        if mpi:
+
+        # Only set mpi=True for non-GPU MPI jobs (has no effect on GPU jobs)
+        if mpi and gpus_total == 0:
             block += ",\n        mpi=True"
+
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":
                 block += f',\n        gpu="{gpus_total}"'
