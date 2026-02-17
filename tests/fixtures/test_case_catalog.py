@@ -203,7 +203,7 @@ class UVA_TestCases:
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
             "run_mode": "serial",
-            "hpc_time_min_per_sim": 20,
+            "hpc_time_min_per_sim": 40,
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
             "n_nodes": 1,
@@ -245,7 +245,7 @@ class Frontier_TestCases:
         analysis_overrides = {
             "run_mode": "gpu",
             "n_gpus": 1,
-            "hpc_time_min_per_sim": 2,
+            "hpc_time_min_per_sim": 40,
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
             "n_nodes": 1,
@@ -271,7 +271,7 @@ class Frontier_TestCases:
         """Frontier HPC multi-simulation test with serial CPU execution."""
         analysis_overrides = {
             "run_mode": "serial",
-            "hpc_time_min_per_sim": 2,
+            "hpc_time_min_per_sim": 40,
             "n_mpi_procs": 1,
             "n_omp_threads": 1,
             "n_nodes": 1,
