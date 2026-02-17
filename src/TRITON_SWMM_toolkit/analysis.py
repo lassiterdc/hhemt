@@ -2103,7 +2103,7 @@ class TRITONSWMM_analysis:
     def swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
-    def cancel(self, verbose: bool = True, wait_timeout: int = 120) -> dict:
+    def cancel(self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False) -> dict:
         """
         Cancel ongoing tmux workflow for this analysis.
 
@@ -2124,8 +2124,10 @@ class TRITONSWMM_analysis:
         ----------
         verbose : bool, default=True
             Print progress messages
-        wait_timeout : int, default=30
+        wait_timeout : int, default=120
             Maximum seconds to wait for Snakemake process exit
+        debug : bool, default=False
+            Print detailed per-iteration diagnostics during the wait loop
 
         Returns
         -------
@@ -2286,7 +2288,7 @@ class TRITONSWMM_analysis:
                 capture_output=True,
             )
             elapsed = int(time.time() - start_time)
-            if verbose:
+            if debug:
                 print(
                     f"[Cancel]   [debug] ps returncode={ps_check.returncode} at {elapsed}s",
                     flush=True,
