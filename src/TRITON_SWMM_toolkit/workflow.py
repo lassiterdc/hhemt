@@ -621,7 +621,6 @@ rule consolidate:
                         f"runtime=30",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
-                        f"slurm_extra=--comment={self.cfg_analysis.analysis_id}_{{{{rule}}}}",
                     ],
                     "slurm": {
                         "sbatch": {
@@ -2177,11 +2176,23 @@ echo "=== Snakemake completed at $(date) ==="
                 print(f"[Snakemake] Session name: {session_name}", flush=True)
                 if snakemake_pid:
                     print(f"[Snakemake] Snakemake PID: {snakemake_pid}", flush=True)
+                print(f"[Snakemake] Log file: {tmux_log}", flush=True)
+                print("", flush=True)
+                print("[Snakemake] Useful commands:", flush=True)
+                print(f"[Snakemake]   Monitor log:      tail -f {tmux_log}", flush=True)
                 print(
-                    f"[Snakemake] Attach with: tmux attach -t {session_name}",
+                    f"[Snakemake]   Attach to session: tmux attach -t {session_name}",
                     flush=True,
                 )
-                print(f"[Snakemake] Detach with: Ctrl+B, then D", flush=True)
+                print(f"[Snakemake]   Detach from session: Ctrl+B, then D", flush=True)
+                print(
+                    f"[Snakemake]   Kill this session: tmux kill-session -t {session_name}",
+                    flush=True,
+                )
+                print(
+                    "[Snakemake]   List all sessions: tmux list-sessions",
+                    flush=True,
+                )
 
             result_dict = {
                 "success": True,
