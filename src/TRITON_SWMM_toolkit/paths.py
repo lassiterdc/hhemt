@@ -51,6 +51,8 @@ class AnalysisPaths(MainDataClass):
     f_log: Path
     analysis_dir: Path
     simulation_directory: Path
+    analysis_log_directory: Path
+    simlog_directory: Path
 
     # TRITON-SWMM Coupled Model consolidated outputs
     output_tritonswmm_triton_summary: Optional[Path] = None

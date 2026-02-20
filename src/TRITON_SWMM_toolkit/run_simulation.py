@@ -41,6 +41,26 @@ class TRITONSWMM_run:
                 return fallback
         return out_dir if out_dir is not None else fallback
 
+    def _analysis_level_model_logfile(
+        self, model_type: Literal["triton", "tritonswmm", "swmm"]
+    ) -> Path:
+        """Return analysis-level model runtime log path for this scenario.
+
+        Naming convention:
+        - Sensitivity sub-analysis: model_{model_type}_sa{N}_evt{event_iloc}.log
+        - Regular analysis: model_{model_type}_evt{event_iloc}.log
+        """
+        log_dir = self._analysis.analysis_paths.simlog_directory
+        subanalysis_id = ""
+        if getattr(self._analysis.cfg_analysis, "is_subanalysis", False):
+            subanalysis_id = str(self._analysis.cfg_analysis.analysis_id) + "_"
+            master_analysis_yaml = self._analysis.cfg_analysis.master_analysis_cfg_yaml
+            log_dir = master_analysis_yaml.parent / "logs" / "sims"
+
+        fname = f"model_{model_type}_{subanalysis_id}evt{self._scenario.event_iloc}.log"
+
+        return log_dir / fname
+
     def raw_triton_output_dir(
         self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"
     ):
@@ -96,20 +116,7 @@ class TRITONSWMM_run:
         bool
             True if the specified model completed successfully
         """
-        log_dir = self._scenario.scen_paths.logs_dir
-        if not log_dir:
-            return False
-
-        if model_type == "triton":
-            log_file = log_dir / "run_triton.log"
-        elif model_type == "tritonswmm":
-            log_file = log_dir / "run_tritonswmm.log"
-        elif model_type == "swmm":
-            log_file = log_dir / "run_swmm.log"
-        else:
-            raise ValueError(
-                f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}"
-            )
+        log_file = self._analysis_level_model_logfile(model_type)
 
         if not log_file.exists():
             return False
@@ -318,18 +325,15 @@ class TRITONSWMM_run:
         if model_type == "triton":
             exe = self._scenario.scen_paths.sim_triton_executable
             cfg = self._scenario.scen_paths.triton_cfg
-            log_dir = self._scenario.scen_paths.logs_dir
-            model_logfile = log_dir / "run_triton.log" if log_dir else None
+            model_logfile = self._analysis_level_model_logfile("triton")
         elif model_type == "tritonswmm":
             exe = self._scenario.scen_paths.sim_tritonswmm_executable
             cfg = self._scenario.scen_paths.triton_swmm_cfg
-            log_dir = self._scenario.scen_paths.logs_dir
-            model_logfile = log_dir / "run_tritonswmm.log" if log_dir else None
+            model_logfile = self._analysis_level_model_logfile("tritonswmm")
         elif model_type == "swmm":
             exe = self._scenario.scen_paths.sim_swmm_executable
             cfg = None  # SWMM uses .inp file, not CFG
-            log_dir = self._scenario.scen_paths.logs_dir
-            model_logfile = log_dir / "run_swmm.log" if log_dir else None
+            model_logfile = self._analysis_level_model_logfile("swmm")
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
 

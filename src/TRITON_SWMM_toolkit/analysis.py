@@ -80,10 +80,15 @@ class TRITONSWMM_analysis:
         ext = self.cfg_analysis.target_processed_output_type
         cfg_sys = self._system.cfg_system
 
+        analysis_log_directory = analysis_dir / "logs"
+        simlog_directory = analysis_log_directory / "sims"
+
         analysis_paths_kwargs = dict(
             f_log=analysis_dir / "log.json",
             analysis_dir=analysis_dir,
             simulation_directory=analysis_dir / "sims",
+            simlog_directory=simlog_directory,
+            analysis_log_directory=analysis_log_directory,
         )
 
         # TRITON-SWMM coupled model consolidated outputs
@@ -1631,7 +1636,9 @@ class TRITONSWMM_analysis:
         consol_details = {}
         if summary_checks:
             for model, exists in summary_checks.items():
-                consol_details[model] = f"{'✓' if exists else '✗'} {model.upper()} summaries created"
+                consol_details[model] = (
+                    f"{'✓' if exists else '✗'} {model.upper()} summaries created"
+                )
         else:
             consol_details["summaries"] = "✗ No models enabled"
 
@@ -2103,7 +2110,9 @@ class TRITONSWMM_analysis:
     def swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
-    def cancel(self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False) -> dict:
+    def cancel(
+        self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False
+    ) -> dict:
         """
         Cancel ongoing tmux workflow for this analysis.
 
@@ -2303,7 +2312,9 @@ class TRITONSWMM_analysis:
                 break
 
         if not process_exited:
-            error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
+            error_msg = (
+                f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
+            )
             errors.append(error_msg)
             if verbose:
                 print(f"[Cancel]   ⚠ {error_msg}", flush=True)
@@ -2387,9 +2398,11 @@ class TRITONSWMM_analysis:
             "jobs_were_running": True,
             "session_name": session_name,
             "analysis_id": analysis_id,
-            "message": "Workflow canceled"
-            if success
-            else f"Cancellation issues: {'; '.join(errors)}",
+            "message": (
+                "Workflow canceled"
+                if success
+                else f"Cancellation issues: {'; '.join(errors)}"
+            ),
             "errors": errors,
         }
 

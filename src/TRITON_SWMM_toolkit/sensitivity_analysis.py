@@ -628,7 +628,9 @@ class TRITONSWMM_sensitivity_analysis:
         Returns:
             Path to the exported CSV file.
         """
-        output_path = self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
+        output_path = (
+            self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
+        )
         self.df_setup.to_csv(output_path, index=True)
         return output_path
 
@@ -652,6 +654,10 @@ class TRITONSWMM_sensitivity_analysis:
             cfg_anlysys_yaml = sub_analysis_directory / f"{sa_id}.yaml"
 
             cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
+
+            cfg_snstvty_analysis.master_analysis_cfg_yaml = (
+                self.master_analysis.analysis_config_yaml
+            )
 
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(

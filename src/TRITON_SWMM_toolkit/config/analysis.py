@@ -210,9 +210,13 @@ class analysis_config(cfgBaseModel):
         None,
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
     )
-    is_subanalysis: Optional[bool] = Field(
+    is_subanalysis: bool = Field(
         False,
         description="This is used in the backend to help route subanalyses to appropriate processes.",
+    )
+    master_analysis_cfg_yaml: Optional[Path] = Field(
+        None,
+        description="Path to the configuration file of the master analysis.",
     )
 
     # VALIDATION - STRING REQUIREMENTS
@@ -248,6 +252,22 @@ class analysis_config(cfgBaseModel):
             lst_rqrd_if_false=[],
         )
         errors.extend(additional_errors)
+
+        if errors:
+            raise ValueError("; ".join(errors))
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_subanalysis_requirements(cls, values):
+        errors = []
+        if values.get("is_subanalysis") is True:
+            if values.get("master_analysis_cfg_yaml") is None:
+                errors.append(
+                    "master_analysis_cfg_yaml must be provided when is_subanalysis=True"
+                )
+            if values.get("analysis_dir") is None:
+                errors.append("analysis_dir must be provided when is_subanalysis=True")
 
         if errors:
             raise ValueError("; ".join(errors))

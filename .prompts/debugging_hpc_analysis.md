@@ -14,6 +14,11 @@ You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or F
 - **Workflow launch script**: `run_workflow_tmux.sh` — the script executed inside the tmux session; shows Snakemake flags, profile paths, and efficiency report path
 - **Snakemake logs**: `.snakemake/log/*.snakemake.log` (Snakemake orchestrator logs; same content as tmux_session.log, use as backup)
 - **Rule-specific logs**: `logs/sims/*.log` (prepare, simulation, processing logs)
+- **Model runtime logs** (NEW): Written directly to the analysis-level **simlog directory**
+  (`analysis_paths.simlog_directory`, typically `logs/sims/`) by the simulation runner:
+  - Regular analyses: `logs/sims/model_{model_type}_evt{event_iloc}.log`
+  - Sensitivity analyses: `logs/sims/model_{model_type}_sa_{N}_evt{event_iloc}.log`
+  - `model_type` ∈ {`triton`, `tritonswmm`, `swmm`}
 - **Per-rule SLURM logs**: `.snakemake/slurm_logs/rule_*/[event_iloc]/[job_id].log`
 - **Performance reports**: `logs/slurm_efficiency_report/*/efficiency_report_*.csv`
 
@@ -163,6 +168,22 @@ For incomplete rules identified in Step 3, check `logs/sims/*.log`:
 - `consolidate_sa_{N}.log`
 
 Generally good for finding Python errors and exceptions (`Traceback`, `Error:`)
+
+### Step 5b: Check Model Runtime Logs (analysis-level)
+
+The simulation runner now writes model stdout/stderr directly to the analysis-level
+**simlog directory** (`analysis_paths.simlog_directory`, typically `logs/sims/`) so logs are available even when runs timeout. These are the
+most reliable source for model-level progress and termination signals.
+
+**Regular analysis naming**:
+- `logs/sims/model_triton_evt{event_iloc}.log`
+- `logs/sims/model_tritonswmm_evt{event_iloc}.log`
+- `logs/sims/model_swmm_evt{event_iloc}.log`
+
+**Sensitivity analysis naming** (where `sa_0`, `sa_1`, etc. is the sub-analysis ID):
+- `logs/sims/model_triton_sa_{N}_evt{M}.log` (e.g. `model_triton_sa_0_evt0.log`)
+- `logs/sims/model_tritonswmm_sa_{N}_evt{M}.log` (e.g. `model_tritonswmm_sa_0_evt0.log`)
+- `logs/sims/model_swmm_sa_{N}_evt{M}.log` (e.g. `model_swmm_sa_0_evt0.log`)
 
 ### Step 6: Check Per-Rule SLURM Logs
 
