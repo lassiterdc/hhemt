@@ -28,6 +28,8 @@ import yaml
 from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 import TRITON_SWMM_toolkit.constants as cnst
+import TRITON_SWMM_toolkit.utils as ut
+
 
 # Import from production package
 from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
@@ -104,7 +106,7 @@ class retrieve_TRITON_SWMM_test_case:
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
-            shutil.rmtree(anlysys_dir)
+            ut.fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
         new_system_config_yaml = anlysys_dir / f"cfg_system.yaml"
