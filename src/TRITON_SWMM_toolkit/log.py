@@ -645,6 +645,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_submission_mode",
         "workflow_canceled",
         "workflow_cancellation_time",
+        "workflow_submission_node",
     )(_logfield_serializer)
 
     # ----------------------------
