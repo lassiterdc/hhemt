@@ -373,6 +373,9 @@ def read_text_file_as_list_of_strings(file):
 
 
 def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
+    #  TODO retrieveing wall time from the log path is bad because if the sim
+    # is resumed from a hotstart file, the time will only reflect the
+    # last chunk of the simulation since its restarting
     """
     Parse TRITON log.out file to extract actual compute resource usage.
 
