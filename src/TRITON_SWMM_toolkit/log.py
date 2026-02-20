@@ -610,6 +610,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_submission_time",
         "workflow_submission_mode",
         "workflow_cancellation_time",
+        "workflow_submission_node",
         mode="before",
     )(_create_logfield_validator(str))
 
