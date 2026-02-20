@@ -124,6 +124,15 @@ class analysis_config(cfgBaseModel):
         None,
         description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
+    hpc_login_node: Optional[str] = Field(
+        None,
+        description=(
+            "Specific HPC login node hostname for tmux session reattach (e.g., 'login1.hpc.virginia.edu'). "
+            "Only needed if the cluster uses round-robin login load balancing. "
+            "If unset, the toolkit auto-detects and stores the submission node hostname at launch time. "
+            "When set, reattach hints will use ssh to this node directly."
+        ),
+    )
     python_path: Optional[Path] = Field(
         None,
         description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",

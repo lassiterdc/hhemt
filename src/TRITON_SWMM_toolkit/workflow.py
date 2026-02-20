@@ -21,6 +21,7 @@ import signal
 import os
 import time
 import datetime
+import socket
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
 
@@ -2104,6 +2105,9 @@ exit $snakemake_status
 
             # Note: snakemake_pid may be None if Snakemake hasn't started yet
 
+            # Capture the login node hostname for node-pinned reattach commands
+            submission_node = socket.gethostname()
+
             # Persist session info to analysis log
             self.analysis.log.tmux_session_name.set(session_name)
             if snakemake_pid:
@@ -2112,6 +2116,24 @@ exit $snakemake_status
                 datetime.datetime.now().isoformat()
             )
             self.analysis.log.workflow_submission_mode.set("tmux")
+            self.analysis.log.workflow_submission_node.set(submission_node)
+
+            # Determine the node to use in reattach commands:
+            # prefer explicit config value, fall back to auto-detected hostname
+            reattach_node = self.cfg_analysis.hpc_login_node or submission_node
+
+            # Build node-pinned reattach commands (required when cluster uses
+            # round-robin login load balancers, e.g. login.hpc.virginia.edu)
+            module_load_cmd = self._get_module_load_prefix()
+            if module_load_cmd:
+                # On HPC: include module load tmux so a fresh SSH session can attach
+                reattach_cmd = f"ssh {reattach_node} -t 'module load tmux && tmux attach -t {session_name}'"
+                kill_cmd = f"ssh {reattach_node} -t 'module load tmux && tmux kill-session -t {session_name}'"
+                list_cmd = f"ssh {reattach_node} -t 'module load tmux && tmux list-sessions'"
+            else:
+                reattach_cmd = f"tmux attach -t {session_name}"
+                kill_cmd = f"tmux kill-session -t {session_name}"
+                list_cmd = "tmux list-sessions"
 
             if verbose:
                 print(
@@ -2119,6 +2141,7 @@ exit $snakemake_status
                     flush=True,
                 )
                 print(f"[Snakemake] Session name: {session_name}", flush=True)
+                print(f"[Snakemake] Submission node: {submission_node}", flush=True)
                 if snakemake_pid:
                     print(f"[Snakemake] Snakemake PID: {snakemake_pid}", flush=True)
                 print(f"[Snakemake] Log file: {tmux_log}", flush=True)
@@ -2126,16 +2149,16 @@ exit $snakemake_status
                 print("[Snakemake] Useful commands:", flush=True)
                 print(f"[Snakemake]   Monitor log:      tail -f {tmux_log}", flush=True)
                 print(
-                    f"[Snakemake]   Attach to session: tmux attach -t {session_name}",
+                    f"[Snakemake]   Attach to session: {reattach_cmd}",
                     flush=True,
                 )
                 print(f"[Snakemake]   Detach from session: Ctrl+B, then D", flush=True)
                 print(
-                    f"[Snakemake]   Kill this session: tmux kill-session -t {session_name}",
+                    f"[Snakemake]   Kill this session: {kill_cmd}",
                     flush=True,
                 )
                 print(
-                    "[Snakemake]   List all sessions: tmux list-sessions",
+                    f"[Snakemake]   List all sessions: {list_cmd}",
                     flush=True,
                 )
 

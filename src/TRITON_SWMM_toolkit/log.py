@@ -576,6 +576,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     snakemake_pid: LogField[int] = Field(default_factory=LogField)
     workflow_submission_time: LogField[str] = Field(default_factory=LogField)
     workflow_submission_mode: LogField[str] = Field(default_factory=LogField)  # "tmux", "batch_job", etc.
+    workflow_submission_node: LogField[str] = Field(default_factory=LogField)  # login node hostname at submission time
     workflow_canceled: LogField[bool] = Field(default_factory=LogField)
     workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
 

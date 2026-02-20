@@ -593,6 +593,19 @@ def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
                 fix_hint="Set hpc_account",
             )
 
+        if not cfg.hpc_login_node:
+            result.add_warning(
+                field="analysis.hpc_login_node",
+                message=(
+                    "hpc_login_node is not set. If your cluster uses round-robin login load balancing "
+                    "(e.g., login.hpc.virginia.edu routes to different nodes), tmux reattach commands "
+                    "may not work from a new SSH session. The toolkit will auto-detect and store the "
+                    "submission node hostname as a fallback, but setting hpc_login_node explicitly is recommended."
+                ),
+                current_value=None,
+                fix_hint="Set hpc_login_node to your specific login node (e.g., 'login1.hpc.virginia.edu')",
+            )
+
 
 # ============================================================================
 # Data Cross-Consistency Validators
