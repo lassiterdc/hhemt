@@ -394,12 +394,16 @@ class TRITONSWMM_run:
         # GPU configuration
         # ----------------------------
         if run_mode == "gpu":
-            # expose the requested GPUs
-            gpu_list = ",".join(str(i) for i in range(n_gpus))  # type: ignore
-            # AMD ROCm / Frontier
-            env["HIP_VISIBLE_DEVICES"] = gpu_list
-            # NVIDIA / CUDA
-            env["CUDA_VISIBLE_DEVICES"] = gpu_list
+            # When running under srun with --ntasks-per-gpu=1, SLURM automatically sets
+            # CUDA_VISIBLE_DEVICES=0 in each task's environment, remapping each task's
+            # assigned GPU to local index 0. Setting CUDA_VISIBLE_DEVICES in the parent
+            # environment would override this per-task remapping, causing all MPI ranks to
+            # see the full GPU list and compete for GPU 0 (0% utilization on the others).
+            # Only set device visibility explicitly when NOT using srun (local GPU execution).
+            if not using_srun:
+                gpu_list = ",".join(str(i) for i in range(n_gpus))  # type: ignore
+                env["HIP_VISIBLE_DEVICES"] = gpu_list
+                env["CUDA_VISIBLE_DEVICES"] = gpu_list
             env["OMP_NUM_THREADS"] = str(n_omp_threads)  # optional: threads per GPU
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
