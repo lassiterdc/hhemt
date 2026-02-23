@@ -7,6 +7,7 @@ import pandas as pd
 from pathlib import Path
 from TRITON_SWMM_toolkit.utils import read_text_file_as_list_of_strings
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+from TRITON_SWMM_toolkit.resource_management import _parse_slurm_allocated_gpus
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -502,6 +503,21 @@ class TRITONSWMM_run:
                     f"{error_msg}"
                 )
 
+        if using_srun and "SLURM_JOB_ID" in os.environ and run_mode == "gpu":
+            allocated_gpus = _parse_slurm_allocated_gpus(os.environ)
+            expected_gpus = int(n_gpus or 0)
+            if allocated_gpus > 0 and allocated_gpus < expected_gpus:
+                raise RuntimeError(
+                    f"\n{'='*80}\n"
+                    f"SLURM GPU ALLOCATION MISMATCH DETECTED\n"
+                    f"{'='*80}\n"
+                    f"Configuration requires {expected_gpus} GPUs but SLURM allocation "
+                    f"appears to provide {allocated_gpus}.\n"
+                    f"Refusing launch to avoid hanging/oversubscription.\n"
+                    f"Inspect SLURM_GPUS/SLURM_GPUS_ON_NODE/SLURM_JOB_GPUS and sbatch request.\n"
+                    f"{'='*80}\n"
+                )
+
         if run_mode != "gpu":
             if using_srun:
                 launch_cmd_str = (
@@ -510,8 +526,7 @@ class TRITONSWMM_run:
                     f"--ntasks={n_mpi_procs} "
                     f"--cpus-per-task={n_omp_threads} "
                     # "--exclusive "
-                    "--cpu-bind=none "
-                    "--overlap "
+                    "--cpu-bind=cores "
                     f"{exe} {cfg}"
                 )
             elif run_mode in ("serial", "openmp"):
@@ -528,8 +543,7 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     f"{gpu_to_task_bind}"
                     # "--exclusive "
-                    "--cpu-bind=none "
-                    "--overlap "
+                    "--cpu-bind=cores "
                     f"{exe} {cfg}"
                 )
             else:

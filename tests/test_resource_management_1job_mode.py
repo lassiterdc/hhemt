@@ -116,3 +116,43 @@ def test_sim_requirements_multi_node_config():
 # Note: Sensitivity analysis tests would require setting up sub-analyses,
 # which is more complex. The basic mechanism (finding MAX per-sim requirements)
 # is tested implicitly through the workflow integration tests.
+
+
+# ---------------------------------------------------------------------------
+# _parse_slurm_allocated_gpus unit tests
+# ---------------------------------------------------------------------------
+from TRITON_SWMM_toolkit.resource_management import _parse_slurm_allocated_gpus
+
+
+def test_parse_slurm_gpus_integer():
+    """SLURM_GPUS as a plain integer string."""
+    assert _parse_slurm_allocated_gpus({"SLURM_GPUS": "4"}) == 4
+
+
+def test_parse_slurm_gpus_comma_separated_ids():
+    """SLURM_GPUS as comma-separated GPU IDs (some sites use this)."""
+    assert _parse_slurm_allocated_gpus({"SLURM_GPUS": "0,1,2,3"}) == 4
+
+
+def test_parse_slurm_gpus_on_node_fallback():
+    """Falls back to SLURM_GPUS_ON_NODE when SLURM_GPUS is absent."""
+    assert _parse_slurm_allocated_gpus({"SLURM_GPUS_ON_NODE": "2"}) == 2
+
+
+def test_parse_slurm_job_gpus_fallback():
+    """Falls back to SLURM_JOB_GPUS (comma-separated device IDs) as last resort."""
+    assert _parse_slurm_allocated_gpus({"SLURM_JOB_GPUS": "0,1"}) == 2
+
+
+def test_parse_slurm_gpus_priority_order():
+    """SLURM_GPUS takes priority over SLURM_GPUS_ON_NODE."""
+    assert _parse_slurm_allocated_gpus({"SLURM_GPUS": "4", "SLURM_GPUS_ON_NODE": "2"}) == 4
+
+
+def test_parse_slurm_no_gpu_vars_returns_zero_and_prints(capsys):
+    """Returns 0 and emits a [GPU-PREFLIGHT] diagnostic when no vars are found."""
+    result = _parse_slurm_allocated_gpus({})
+    assert result == 0
+    captured = capsys.readouterr()
+    assert "[GPU-PREFLIGHT]" in captured.out
+    assert "SLURM_GPUS" in captured.out

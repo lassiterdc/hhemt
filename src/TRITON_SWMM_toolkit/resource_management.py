@@ -10,7 +10,7 @@ Classes:
 
 import os
 import psutil
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Mapping
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -404,3 +404,58 @@ class ResourceManager:
             "cpus_per_node": cpus_on_node,
             "memory_per_node_MiB": mem_per_node_MiB,
         }
+
+
+def _parse_slurm_allocated_gpus(env: Mapping[str, str]) -> int:
+    """Best-effort parse of allocated GPU count from common SLURM env vars.
+
+    Tries variables in priority order. If none yield a usable value, prints
+    a diagnostic to stdout (captured in runner logs) listing what was tried.
+
+    Parameters
+    ----------
+    env : dict[str, str]
+        Environment variable mapping (typically os.environ).
+
+    Returns
+    -------
+    int
+        Total GPUs visible from SLURM metadata for this job allocation,
+        or 0 if not detectable.
+    """
+    import re
+
+    tried: dict[str, str | None] = {}
+
+    # Most reliable if present — total GPUs for the job
+    val = env.get("SLURM_GPUS")
+    tried["SLURM_GPUS"] = val
+    if val:
+        if val.isdigit():
+            return int(val)
+        # Some sites encode as comma-separated IDs
+        parts = [p for p in re.split(r"[,\s]+", val.strip()) if p]
+        if parts:
+            return len(parts)
+
+    # Per-node view — sufficient for single-node jobs
+    val = env.get("SLURM_GPUS_ON_NODE")
+    tried["SLURM_GPUS_ON_NODE"] = val
+    if val and val.isdigit():
+        return int(val)
+
+    # Comma-separated list of GPU device IDs (e.g. "0,1,2,3")
+    val = env.get("SLURM_JOB_GPUS")
+    tried["SLURM_JOB_GPUS"] = val
+    if val:
+        parts = [p for p in val.split(",") if p.strip()]
+        if parts:
+            return len(parts)
+
+    # Nothing usable found — emit diagnostic so logs show what was checked
+    print(
+        f"[GPU-PREFLIGHT] Could not detect allocated GPU count from SLURM environment. "
+        f"Tried: {tried}. Skipping GPU preflight check.",
+        flush=True,
+    )
+    return 0

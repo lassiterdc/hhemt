@@ -31,6 +31,37 @@ from pathlib import Path
 import traceback
 import logging
 
+
+def _raise_enriched_srun_error(stderr_text: str, *, run_mode: str, cmd: str) -> None:
+    """Parse known srun failure patterns and raise a RuntimeError with actionable hints."""
+    hints = []
+    s = (stderr_text or "").lower()
+
+    if "pmi" in s or "pmix" in s or "pmi2" in s:
+        hints.append(
+            "MPI/PMI handshake issue detected. Check cluster MPI integration and "
+            "consider adding --mpi=<pmix|pmi2> as an explicit config toggle."
+        )
+    if "cpu bind" in s or "cpuset" in s or "cgroup" in s:
+        hints.append(
+            "CPU binding/cgroup issue detected. Verify cpus-per-task, OMP settings, "
+            "and site binding policy. Consider a cpu_bind config override."
+        )
+    if "invalid generic resource" in s or "gres" in s or "gpu" in s:
+        hints.append(
+            "GPU/GRES mismatch detected. Verify sbatch GPU request and "
+            "SLURM_GPUS/SLURM_GPUS_ON_NODE/SLURM_JOB_GPUS environment variables."
+        )
+
+    detail = "\n".join(f"- {h}" for h in hints) if hints else "- No known pattern matched."
+    raise RuntimeError(
+        "srun launch failed.\n"
+        f"Run mode: {run_mode}\n"
+        f"Command: {cmd}\n"
+        f"Known diagnostics:\n{detail}\n"
+        f"Raw stderr:\n{stderr_text}"
+    )
+
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
 
 # Configure logging to stderr
@@ -201,9 +232,13 @@ def main():
                 cmd,
                 env={**os.environ, **env},
                 stdout=lf,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,
             )
             _rc = proc.wait()  # Return code checked via status below
+        stderr_text = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+
+        if _rc != 0:
+            _raise_enriched_srun_error(stderr_text, run_mode=run_mode, cmd=" ".join(cmd))
 
         # Update simulation log with results
         end_time = time.time()
