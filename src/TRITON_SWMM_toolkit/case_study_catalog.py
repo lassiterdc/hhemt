@@ -266,6 +266,7 @@ class UVACaseStudies:
             "sensitivity_analysis": sensitivity,
             "run_mode": "serial",
             "n_mpi_procs": 1,
+            "hpc_time_min_per_sim": 60 * 6,
             "n_omp_threads": 1,
             "n_nodes": 1,
             "n_gpus": 0,
