@@ -25,7 +25,7 @@ Reusable prompts for common workflow tasks. Reference with `@.prompts/<filename>
 
 ### Planning
 
-- **`plan_implementation.md`** — Use plan mode to design approach before coding
+- **`implementation_plan.md`** — Consolidated planning prompt (default plan output to `docs/planning/active/`, strict structure, and required self-checks)
 
 ## Usage
 
