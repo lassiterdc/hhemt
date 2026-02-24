@@ -1769,7 +1769,28 @@ module purge
 
 ${{CONDA_PREFIX}}/bin/python -V
 ${{CONDA_PREFIX}}/bin/python -m snakemake --version
-${{CONDA_PREFIX}}/bin/python -m snakemake \\
+
+# Capture Snakemake plugin stack versions and environment size for debugging.
+mkdir -p {str(self.analysis_paths.analysis_log_directory)}
+{{
+    echo "captured: $(date -Iseconds)"
+    echo "env_size_bytes: $(env | wc -c)"
+    echo "path_length_chars: ${{#PATH}}"
+    ${{CONDA_PREFIX}}/bin/python -m snakemake --version 2>/dev/null | sed 's/^/snakemake: /'
+    ${{CONDA_PREFIX}}/bin/pip show \\
+        snakemake-executor-plugin-slurm \\
+        snakemake-executor-plugin-slurm-jobstep \\
+        snakemake-interface-executor-plugins \\
+        snakemake-interface-common \\
+        2>/dev/null | grep -E "^(Name|Version):"
+    ${{CONDA_PREFIX}}/bin/python --version 2>&1 | sed 's/^/python: /'
+}} > {str(self.analysis_paths.analysis_log_directory)}/snakemake_versions.txt
+
+# Trim PATH before launching Snakemake to prevent ARG_MAX overflow in scontrol calls.
+SLURM_BIN=$(dirname "$(command -v scontrol 2>/dev/null || echo "/opt/slurm/current/bin/scontrol")")
+env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin:/bin" \\
+    LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib" \\
+    ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\
@@ -2024,11 +2045,38 @@ echo "=========================================="
 ${{CONDA_PREFIX}}/bin/python -V
 ${{CONDA_PREFIX}}/bin/python -m snakemake --version
 
+# Capture Snakemake plugin stack versions and environment size for debugging.
+# Written before the PATH trim so env_size_bytes reflects the pre-trim state.
+mkdir -p {self.analysis_paths.analysis_log_directory}
+{{
+    echo "captured: $(date -Iseconds)"
+    echo "env_size_bytes: $(env | wc -c)"
+    echo "path_length_chars: ${{#PATH}}"
+    ${{CONDA_PREFIX}}/bin/python -m snakemake --version 2>/dev/null | sed 's/^/snakemake: /'
+    ${{CONDA_PREFIX}}/bin/pip show \\
+        snakemake-executor-plugin-slurm \\
+        snakemake-executor-plugin-slurm-jobstep \\
+        snakemake-interface-executor-plugins \\
+        snakemake-interface-common \\
+        2>/dev/null | grep -E "^(Name|Version):"
+    ${{CONDA_PREFIX}}/bin/python --version 2>&1 | sed 's/^/python: /'
+}} > {self.analysis_paths.analysis_log_directory}/snakemake_versions.txt
+
+# Trim PATH and LD_LIBRARY_PATH before launching Snakemake.
+# After module load and conda activate, PATH can exceed Linux ARG_MAX limits.
+# The snakemake-executor-plugin-slurm calls scontrol inheriting the full
+# environment; if the env is too large, it crashes with OSError: [Errno 7]
+# Argument list too long. We scope the trim to just the Snakemake process
+# using `env` so the surrounding tmux script is unaffected.
+SLURM_BIN=$(dirname "$(command -v scontrol 2>/dev/null || echo "/opt/slurm/current/bin/scontrol")")
+
 # Run Snakemake
 cd {self.analysis_paths.analysis_dir}
 echo "=== Starting Snakemake ==="
 set +e
-${{CONDA_PREFIX}}/bin/python -m snakemake \\
+env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin:/bin" \\
+    LD_LIBRARY_PATH="${{CONDA_PREFIX}}/lib" \\
+    ${{CONDA_PREFIX}}/bin/python -m snakemake \\
     --profile {config_dir} \\
     --snakefile {snakefile_path} \\
     --executor slurm \\

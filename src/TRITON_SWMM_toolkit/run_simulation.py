@@ -368,17 +368,23 @@ class TRITONSWMM_run:
                         flush=True,
                     )
 
-        og_env = os.environ.copy()
         env = dict()
         swmm_dir = self._analysis._system.cfg_system.SWMM_software_directory
         if swmm_dir:
             swmm_path = swmm_dir / "swmm_build" / "bin"
-            env["LD_LIBRARY_PATH"] = (
-                f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
-            )
+            # Only the SWMM bin directory is needed here. The bash -lc login shell
+            # rebuilds LD_LIBRARY_PATH from scratch via /etc/profile and module load,
+            # and the explicit `export LD_LIBRARY_PATH=...` at the end of the command
+            # string (after module load) sets the authoritative final value inside the
+            # subprocess. Appending the full accumulated os.environ LD_LIBRARY_PATH would
+            # bloat the subprocess environment and risks hitting Linux ARG_MAX limits.
+            env["LD_LIBRARY_PATH"] = str(swmm_path)
 
-        # Preserve PATH from parent environment to ensure subprocess can find executables
-        env["PATH"] = og_env.get("PATH", "")
+        # PATH is intentionally omitted from the env dict. The bash -lc (login shell)
+        # rebuilds PATH from /etc/profile and the module load in the command string
+        # adds the correct HPC paths. Copying os.environ["PATH"] here would propagate
+        # the full accumulated module environment into the subprocess argument list,
+        # which can exceed Linux's ARG_MAX limit and cause OSError: [Errno 7].
 
         # ----------------------------
         # OpenMP configuration
