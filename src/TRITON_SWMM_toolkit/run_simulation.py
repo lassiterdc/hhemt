@@ -533,6 +533,10 @@ class TRITONSWMM_run:
                     f"--cpus-per-task={n_omp_threads} "
                     # "--exclusive "
                     "--cpu-bind=cores "
+                    "--overlap "  # Required in batch_job mode: allows srun step to share
+                    # the parent job's allocation rather than requesting exclusive sub-step
+                    # resources. Without this, srun blocks waiting for resources that are
+                    # already consumed by the batch script process, causing hangs/timeouts.
                     f"{exe} {cfg}"
                 )
             elif run_mode in ("serial", "openmp"):
@@ -550,6 +554,7 @@ class TRITONSWMM_run:
                     f"{gpu_to_task_bind}"
                     # "--exclusive "
                     "--cpu-bind=cores "
+                    "--overlap "  # See note above on --overlap in batch_job mode.
                     f"{exe} {cfg}"
                 )
             else:
