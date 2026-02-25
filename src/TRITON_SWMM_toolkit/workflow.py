@@ -426,7 +426,7 @@ rule prepare_scenario:
 
         # Add simulation rules (separate rules per model type)
         sim_input = (
-            "_status/sims/scenario_{{event_iloc}}_prepared.flag"
+            "_status/sims/scenario_{event_iloc}_prepared.flag"
             if prepare_scenarios
             else "_status/setup_complete.flag"
         )

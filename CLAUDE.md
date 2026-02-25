@@ -170,7 +170,6 @@ toggle_swmm_model: true        # Enable standalone SWMM
 **Key behaviors:**
 - Models run **concurrently** via separate Snakemake rules
 - Each model has its own compilation, executable, and output directories
-- Resource allocation: SWMM limited to 4 CPUs (no GPU), TRITON/TRITON-SWMM use configured resources
 
 ### Directory Structure (Per Scenario)
 
