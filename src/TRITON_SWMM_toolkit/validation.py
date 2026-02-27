@@ -464,6 +464,18 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
                 current_value=mpi,
                 fix_hint=f"Set n_mpi_procs >= {nodes}",
             )
+        if nodes > 1 and mpi % nodes != 0:
+            result.add_error(
+                field="analysis.n_mpi_procs",
+                message=(
+                    f"n_mpi_procs ({mpi}) is not divisible by n_nodes ({nodes}). "
+                    f"SLURM distributes tasks as integers per node; the remainder "
+                    f"concentrates extra tasks on one node and can exceed the per-node "
+                    f"CPU limit (e.g. 2 tasks × cpus_per_task > node capacity)."
+                ),
+                current_value=mpi,
+                fix_hint=f"Set n_mpi_procs to a multiple of n_nodes ({nodes}), e.g. {nodes * (mpi // nodes + 1)}",
+            )
 
     elif mode == "hybrid":
         if mpi <= 1:
@@ -494,6 +506,18 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
                 current_value=mpi,
                 fix_hint=f"Set n_mpi_procs >= {nodes}",
             )
+        if nodes > 1 and mpi % nodes != 0:
+            result.add_error(
+                field="analysis.n_mpi_procs",
+                message=(
+                    f"n_mpi_procs ({mpi}) is not divisible by n_nodes ({nodes}). "
+                    f"SLURM distributes tasks as integers per node; the remainder "
+                    f"concentrates extra tasks on one node and can exceed the per-node "
+                    f"CPU limit (e.g. 2 tasks × cpus_per_task > node capacity)."
+                ),
+                current_value=mpi,
+                fix_hint=f"Set n_mpi_procs to a multiple of n_nodes ({nodes}), e.g. {nodes * (mpi // nodes + 1)}",
+            )
 
     elif mode == "gpu":
         if gpus < 1:
@@ -509,6 +533,18 @@ def _validate_run_mode_consistency(cfg: analysis_config, result: ValidationResul
                 message=f"Multi-node GPU requires n_mpi_procs ({mpi}) >= n_nodes ({nodes})",
                 current_value=mpi,
                 fix_hint=f"Set n_mpi_procs >= {nodes}",
+            )
+        if nodes > 1 and mpi % nodes != 0:
+            result.add_error(
+                field="analysis.n_mpi_procs",
+                message=(
+                    f"n_mpi_procs ({mpi}) is not divisible by n_nodes ({nodes}). "
+                    f"SLURM distributes tasks as integers per node; the remainder "
+                    f"concentrates extra tasks on one node and can exceed the per-node "
+                    f"CPU limit (e.g. 2 tasks × cpus_per_task > node capacity)."
+                ),
+                current_value=mpi,
+                fix_hint=f"Set n_mpi_procs to a multiple of n_nodes ({nodes}), e.g. {nodes * (mpi // nodes + 1)}",
             )
 
 

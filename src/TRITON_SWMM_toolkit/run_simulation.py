@@ -402,6 +402,21 @@ class TRITONSWMM_run:
             env["OMP_NUM_THREADS"] = "1"
 
         # ----------------------------
+        # MPI NIC policy (Frontier / Cray MPICH)
+        # ----------------------------
+        # Cray MPICH's default MPICH_OFI_NIC_POLICY=NUMA aborts MPI_Init when a rank's
+        # allocated CPU set spans more than one NUMA domain. This happens whenever
+        # cpus-per-task exceeds the allocatable cores per NUMA domain (14 on Frontier
+        # with -S 8 core specialization), or when uneven task distribution across nodes
+        # causes a rank to land on a non-NUMA-aligned core boundary.
+        # BLOCK policy assigns NICs by rank block order instead of NUMA topology,
+        # bypassing the confinement requirement entirely. It is safe for all MPI configs.
+        # Empirically validated on Frontier 2026-02-27 (see
+        # docs/planning/active/bugs/empirical_frontier_srun_nic_policy_testing.md).
+        if run_mode in ("mpi", "hybrid"):
+            env["MPICH_OFI_NIC_POLICY"] = "BLOCK"
+
+        # ----------------------------
         # GPU configuration
         # ----------------------------
         if run_mode == "gpu":
