@@ -8,6 +8,8 @@ You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or F
 
 The user will always pass this prompt along with the directory path to the analysis directory. This is a WSL machine, so if you receive a filepath like `C:\Users\Daniel\Downloads\2026-2-23\frontier_sensitivity_suite`, it's WSL translation is `/mnt/c/Users/Daniel/Downloads/2026-2-23/frontier_sensitivity_suite`
 
+Do not make changes to any document other than the debugging report. Explicit approval from the user is required before proceeding with any bug fix strategy.
+
 ### What's Available
 
 - **Configuration**: `cfg_system.yaml`, `cfg_analysis.yaml`

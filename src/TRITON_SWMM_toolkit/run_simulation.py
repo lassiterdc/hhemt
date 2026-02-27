@@ -465,7 +465,13 @@ class TRITONSWMM_run:
         # This prevents infinite hangs when SLURM allocates fewer CPUs than configured.
         # For multi-node jobs SLURM_CPUS_ON_NODE reflects only one node's CPUs; the
         # correct total is SLURM_NTASKS × SLURM_CPUS_PER_TASK across all allocated nodes.
-        if using_srun and "SLURM_JOB_ID" in os.environ:
+        #
+        # NOTE: This check is only valid for batch_job mode where each SLURM job is
+        # purpose-sized to one simulation. In 1_job_many_srun_tasks mode, SLURM_NTASKS
+        # reflects the parent job's task count (e.g. 8 for --gres=gpu:8), NOT the
+        # per-srun-step budget. Individual srun steps can use any portion of the full
+        # exclusive node allocation (SLURM_CPUS_ON_NODE × SLURM_JOB_NUM_NODES).
+        if using_srun and "SLURM_JOB_ID" in os.environ and multi_sim_run_method != "1_job_many_srun_tasks":
             slurm_cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))
             slurm_ntasks = int(os.environ.get("SLURM_NTASKS", 0))
             slurm_cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
