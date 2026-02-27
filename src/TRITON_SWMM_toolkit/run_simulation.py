@@ -519,7 +519,11 @@ class TRITONSWMM_run:
                     f"{error_msg}"
                 )
 
-        if using_srun and "SLURM_JOB_ID" in os.environ and run_mode == "gpu":
+        # NOTE: Same reasoning as CPU check above — in 1_job_many_srun_tasks mode,
+        # SLURM_GPUS_ON_NODE/SLURM_JOB_GPUS reflect the parent job's per-node GPU count
+        # (e.g. 8), not the total pool available to srun steps. A 2-node GPU sim requesting
+        # 16 GPUs is valid against a 64-GPU pool even though the parent env reports 8.
+        if using_srun and "SLURM_JOB_ID" in os.environ and run_mode == "gpu" and multi_sim_run_method != "1_job_many_srun_tasks":
             allocated_gpus = _parse_slurm_allocated_gpus(os.environ)
             expected_gpus = int(n_gpus or 0)
             if allocated_gpus > 0 and allocated_gpus < expected_gpus:
