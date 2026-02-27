@@ -1,14 +1,15 @@
 # %%
-import TRITON_SWMM_toolkit.utils as ut
-import pandas as pd
-from typing import Literal, TYPE_CHECKING
-import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+import pandas as pd
+import xarray as xr
+import yaml  # type: ignore
+
+import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
-import yaml  # type: ignore
-import TRITON_SWMM_toolkit.analysis as anlysis
-import xarray as xr
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -323,64 +324,75 @@ class TRITONSWMM_sensitivity_analysis:
             "SWMM outputs requested, but no SWMM model is enabled in system config."
         )
 
+    def _combine_subanalysis_outputs(self, lst_ds: list):
+        """
+        Concatenate per-sub-analysis datasets along a flat ``sub_analysis_iloc``
+        dimension, attaching sensitivity parameters as non-dimension coordinates.
+
+        Each dataset in ``lst_ds`` must already carry a scalar ``sub_analysis_iloc``
+        coordinate.  The sensitivity parameters from ``self.df_setup`` (e.g.
+        ``run_mode``, ``n_mpi_procs``, ``n_gpus``) are broadcast onto the
+        concatenated dimension as 1-D non-dimension coordinates so they travel with
+        the data without expanding the array into a sparse Cartesian product.
+
+        The resulting layout keeps all parameter metadata in one place:
+
+            ds.sub_analysis_iloc          → [0, 1, …, N-1]
+            ds.run_mode                   → ['gpu', 'serial', …]   (non-dim coord)
+            ds.n_mpi_procs                → [1, 1, …]              (non-dim coord)
+            ds['max_wlevel_m'].shape      → (N, event_iloc, y, x)  (dense, no NaNs)
+
+        Compared with the previous ``xr.combine_by_coords`` approach (which created a
+        Cartesian product of all unique parameter values), this reduces the nominal
+        array size from ~11 TB to ~85 MB for a 36-SA × 537 × 551 spatial domain.
+        """
+        ds_combined = xr.concat(lst_ds, dim="sub_analysis_iloc", combine_attrs="drop")
+
+        # Attach sensitivity parameters as non-dimension coordinates on sub_analysis_iloc.
+        sa_ilocs = [int(ds["sub_analysis_iloc"].values) for ds in lst_ds]
+        for col in self.df_setup.columns:
+            values = [self.df_setup.loc[i, col] for i in sa_ilocs]
+            ds_combined = ds_combined.assign_coords(
+                {col: ("sub_analysis_iloc", np.array(values))}
+            )
+
+        return ds_combined
+
     def _combine_TRITON_outputs_per_subanalysis(self):
         assert self.TRITON_subanalyses_outputs_consolidated
 
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = self._select_triton_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
-            for new_dim, dim_value in config.items():
-                ds = ds.assign_coords(coords={new_dim: dim_value})
-                ds = ds.expand_dims(new_dim)
             lst_ds.append(ds)
 
-        ds_triton_outputs = xr.combine_by_coords(
-            lst_ds, combine_attrs="drop", join="outer"
-        )
-        return ds_triton_outputs
+        return self._combine_subanalysis_outputs(lst_ds)
 
     def _combine_SWMM_node_outputs_per_subanalysis(self):
         assert self.SWMM_subanalyses_outputs_consolidated
 
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = self._select_swmm_node_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
-            for new_dim, dim_value in config.items():
-                ds = ds.assign_coords(coords={new_dim: dim_value})
-                ds = ds.expand_dims(new_dim)
-
             lst_ds.append(ds)
 
-        ds_node_outputs = xr.combine_by_coords(
-            lst_ds, combine_attrs="drop", join="outer"
-        )
-        return ds_node_outputs
+        return self._combine_subanalysis_outputs(lst_ds)
 
     def _combine_SWMM_link_outputs_outputs_per_subanalysis(self):
         assert self.SWMM_subanalyses_outputs_consolidated
 
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            config = self.df_setup.iloc[sub_analysis_iloc,]
             ds = self._select_swmm_link_summary(sub_analysis)
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
-            for new_dim, dim_value in config.items():
-                ds = ds.assign_coords(coords={new_dim: dim_value})
-                ds = ds.expand_dims(new_dim)
-
             lst_ds.append(ds)
 
-        ds_link_outputs = xr.combine_by_coords(
-            lst_ds, combine_attrs="drop", join="outer"
-        )
-        return ds_link_outputs
+        return self._combine_subanalysis_outputs(lst_ds)
 
     def _combine_TRITONSWMM_performance_per_subanalysis(self):
         """
@@ -389,12 +401,12 @@ class TRITONSWMM_sensitivity_analysis:
         Returns
         -------
         xr.Dataset
-            Combined performance dataset with sensitivity analysis dimensions
+            Combined performance dataset with ``sub_analysis_iloc`` as the sole
+            sensitivity dimension and sensitivity parameters attached as
+            non-dimension coordinates.
         """
         lst_ds = []
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            config = self.df_setup.iloc[sub_analysis_iloc,]
-            # Access the performance summary from the sub-analysis
             if self.master_analysis._system.cfg_system.toggle_tritonswmm_model:
                 ds = sub_analysis.process.tritonswmm_performance_summary
             elif self.master_analysis._system.cfg_system.toggle_triton_model:
@@ -405,18 +417,9 @@ class TRITONSWMM_sensitivity_analysis:
                 )
             ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
             ds = ds.expand_dims("sub_analysis_iloc")
-
-            # Add sensitivity analysis dimensions
-            for new_dim, dim_value in config.items():
-                ds = ds.assign_coords(coords={new_dim: dim_value})
-                ds = ds.expand_dims(new_dim)
-
             lst_ds.append(ds)
 
-        ds_performance = xr.combine_by_coords(
-            lst_ds, combine_attrs="drop", join="outer"
-        )
-        return ds_performance
+        return self._combine_subanalysis_outputs(lst_ds)
 
     def _consolidate_outputs_in_each_subanalysis(
         self,

@@ -757,7 +757,7 @@ def compute_optimal_chunks(
 
     lst_non_spatial_coords = []
     for coord in ds.coords:
-        if coord not in spatial_coords:
+        if coord not in spatial_coords and coord in ds.dims:
             lst_non_spatial_coords.append(coord)
 
     # Categorize variables by whether they have spatial dimensions
