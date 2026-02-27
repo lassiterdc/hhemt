@@ -631,7 +631,9 @@ class TRITONSWMM_sensitivity_analysis:
         output_path = (
             self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
         )
-        self.df_setup.to_csv(output_path, index=True)
+        df_export = self.df_setup.copy()
+        df_export.insert(0, "subanalysis_id", [f"sa_{idx}" for idx in df_export.index])
+        df_export.to_csv(output_path, index=True)
         return output_path
 
     def _create_sub_analyses(self):
@@ -742,6 +744,10 @@ class TRITONSWMM_sensitivity_analysis:
 
             # Preserve existing naming convention while adding a singular alias
             sub_df_status["sub_analysis_iloc"] = sub_analysis_iloc
+            sub_df_status["subanalysis_id"] = f"sa_{sub_analysis_iloc}"
+            sub_df_status = sub_df_status[
+                ["subanalysis_id"] + [c for c in sub_df_status.columns if c != "subanalysis_id"]
+            ]
 
             status_frames.append(sub_df_status)
 

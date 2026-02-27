@@ -191,6 +191,10 @@ def test_snakemake_sensitivity_workflow_dry_run(
     assert "snakemake_allocated_nTasks" in df_status.columns
     assert "snakemake_allocated_omp_threads" in df_status.columns
     assert "snakemake_allocated_total_cpus" in df_status.columns
+    assert "subanalysis_id" in df_status.columns
+    assert df_status["subanalysis_id"].str.startswith("sa_").all()
+    expected_ids = [f"sa_{i}" for i in range(len(df_status))]
+    assert df_status["subanalysis_id"].tolist() == expected_ids
 
 
 @pytest.mark.slow

@@ -2005,6 +2005,9 @@ class TRITONSWMM_analysis:
                     )
                     row["backend_used"] = scen.log.triton_backend_used.get()
 
+                if self.in_slurm:
+                    row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
+
                 # Actual resources and wall time (model-dependent availability)
                 if model_type == "tritonswmm":
                     log_out_path = (
