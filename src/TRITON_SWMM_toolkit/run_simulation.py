@@ -368,17 +368,21 @@ class TRITONSWMM_run:
                         flush=True,
                     )
 
+        og_env = os.environ.copy()
         env = dict()
         swmm_dir = self._analysis._system.cfg_system.SWMM_software_directory
         if swmm_dir:
             swmm_path = swmm_dir / "swmm_build" / "bin"
-            # Only the SWMM bin directory is needed here. The bash -lc login shell
-            # rebuilds LD_LIBRARY_PATH from scratch via /etc/profile and module load,
-            # and the explicit `export LD_LIBRARY_PATH=...` at the end of the command
-            # string (after module load) sets the authoritative final value inside the
-            # subprocess. Appending the full accumulated os.environ LD_LIBRARY_PATH would
-            # bloat the subprocess environment and risks hitting Linux ARG_MAX limits.
-            env["LD_LIBRARY_PATH"] = str(swmm_path)
+            # Prepend the SWMM bin directory to the parent LD_LIBRARY_PATH so that
+            # HPC-provided library paths (rocm, libfabric, etc.) inherited from the
+            # SBATCH environment are preserved. The SBATCH script loads all required
+            # modules before launching Snakemake, so og_env["LD_LIBRARY_PATH"] already
+            # contains the full set of needed paths on both login and compute nodes.
+            # Passing this via env= dict (not via shell command string) avoids any
+            # ARG_MAX concerns since env vars go through a separate execve() vector.
+            env["LD_LIBRARY_PATH"] = (
+                f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
+            )
 
         # PATH is intentionally omitted from the env dict. The bash -lc (login shell)
         # rebuilds PATH from /etc/profile and the module load in the command string
@@ -568,11 +572,12 @@ class TRITONSWMM_run:
         else:
             raise ValueError(f"Unknown run_mode: {run_mode}")
 
-        # Build the full command with explicit environment variable exports
-        # This ensures LD_LIBRARY_PATH is set AFTER module loading, preventing it from being overwritten
+        # Build the full command with explicit environment variable exports.
+        # env["LD_LIBRARY_PATH"] already contains the full path set (swmm_bin prepended
+        # to og_env's LD_LIBRARY_PATH which includes rocm/libfabric paths from the SBATCH
+        # module load), so ordering relative to module_load_cmd doesn't matter here.
         env_exports = []
         for key, value in env.items():
-            # Escape any special characters in the value
             escaped_value = value.replace('"', '\\"')
             env_exports.append(f'export {key}="{escaped_value}"')
         env_export_str = "; ".join(env_exports)
