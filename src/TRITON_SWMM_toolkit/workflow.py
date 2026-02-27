@@ -182,7 +182,7 @@ class SnakemakeWorkflowBuilder:
 
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":
-                block += f',\n        gpu="{gpus_total}"'
+                block += f',\n        gpu={gpus_total}'
                 if gpu_hardware:
                     block += f',\n        gpu_model="{gpu_hardware}"'
             else:

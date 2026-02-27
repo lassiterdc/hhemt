@@ -2,7 +2,11 @@
 
 ## Context
 
+This is a prompt.
+
 You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or Frontier). The user has transferred analysis outputs via Globus to `.debugging/`, **EXCLUDING** `sims/` and `subanalyses/` directories due to size constraints (raw TRITON/TRITON-SWMM outputs can be multi-GB per simulation).
+
+The user will always pass this prompt along with the directory path to the analysis directory. This is a WSL machine, so if you receive a filepath like `C:\Users\Daniel\Downloads\2026-2-23\frontier_sensitivity_suite`, it's WSL translation is `/mnt/c/Users/Daniel/Downloads/2026-2-23/frontier_sensitivity_suite`
 
 ### What's Available
 

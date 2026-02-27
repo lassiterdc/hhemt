@@ -23,6 +23,7 @@ channels:
 dependencies:
   - python=3.11
   - snakemake
+  - filelock
   - typer
   - pydantic
   - pyyaml
