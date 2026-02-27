@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Read `.prompts/philosophy.md` before beginning any task.** It is the authoritative reference for terminology, code design rules, error handling, logging patterns, code style, testing philosophy, and working norms with the developer.
+
 ## Project Overview
 
 TRITON-SWMM Toolkit orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations. It supports single simulations, multi-simulation ensembles, and sensitivity analysis studies across local machines and HPC clusters (UVA, Oak Ridge Frontier).
@@ -21,61 +23,7 @@ pytest tests/test_PC_01_singlesim.py
 
 # Skip slow tests
 pytest -m "not slow" tests/
-
-# Lint and format
-ruff check src/
-ruff format src/
 ```
-
-## Development Philosophy
-
-### Backward Compatibility
-
-**Backward compatibility is NOT a priority for this project.**
-
-Rationale:
-- Single developer codebase
-- Better to have clean code than maintain deprecated APIs
-- Refactoring should remove old patterns, not preserve them
-- Git history provides access to old implementations if needed
-
-When refactoring:
-- ❌ Don't add deprecation warnings
-- ❌ Don't keep old APIs "for compatibility"
-- ❌ Don't create compatibility shims or aliases
-- ✅ Do update all usage sites immediately
-- ✅ Do delete obsolete code completely
-- ✅ Do use git history if old patterns are needed later
-
-Exception: Configuration file formats should maintain backward compatibility
-where practical, since they may be versioned separately from code.
-
-Example:
-```python
-# BAD - Keeping deprecated API
-class OldAPI:
-    @classmethod
-    def old_method(cls):
-        warnings.warn("Use new_method instead", DeprecationWarning)
-        return cls.new_method()
-
-# GOOD - Clean replacement
-class NewAPI:
-    @classmethod
-    def improved_method(cls):
-        # New implementation
-        pass
-# Old API completely removed, all call sites updated
-```
-
-### Completion Status: Log-Based Checks over File Existence
-
-**Prefer log-based checks over file existence checks for determining processing completion.**
-
-- `_already_written()` verifies a file was written *successfully*, not just that it exists
-- A file may exist but be corrupt, incomplete, or from a previous failed run
-- File existence checks are redundant when log checks are available and can mask errors
-- Exception: File existence is appropriate for verifying *input* files before reading them
 
 ## Architecture
 
@@ -111,25 +59,23 @@ TRITONSWMM_scenario (scenario.py)
 | `paths.py` | Dataclasses: SysPaths, AnalysisPaths, ScenarioPaths |
 | `log.py` | JSON-persisted logging with LogField[T] pattern |
 
-### Runner Scripts (Snakemake Entry Points)
+### Runner Scripts and Workflow Phases
 
-Snakemake rules invoke these as subprocesses:
+Snakemake rules invoke these scripts as subprocesses in sequence:
 
-| Script | Purpose |
-|--------|---------|
-| `setup_workflow.py` | System inputs processing and TRITON compilation |
-| `prepare_scenario_runner.py` | Scenario preparation in subprocess |
-| `run_simulation_runner.py` | Simulation execution in subprocess |
-| `process_timeseries_runner.py` | Output processing in subprocess |
-| `consolidate_workflow.py` | Analysis-level output consolidation |
+| Phase | Rule | Runner Script | Resources |
+|-------|------|---------------|-----------|
+| 1 — Setup | `rule setup` | `setup_workflow.py` | 1 CPU |
+| 2 — Scenario Preparation | `rule prepare_scenario` | `prepare_scenario_runner.py` | 1 CPU, parallel |
+| 3 — Simulation Execution | `rule run_simulation` | `run_simulation_runner.py` | Multi-CPU/GPU |
+| 4 — Output Processing | `rule process_outputs` | `process_timeseries_runner.py` | 2 CPUs |
+| 5 — Consolidation | `rule consolidate` | `consolidate_workflow.py` | 1 CPU |
 
 Exit codes: 0=success, 1=failure, 2=invalid arguments.
 
 ### Runner Script Architecture
 
 **IMPORTANT**: Runner scripts execute TRITON directly, not recursively.
-
-Each runner script should use `prepare_simulation_command()` to get the actual TRITON-SWMM executable command:
 
 ```python
 # ✅ CORRECT (in runner scripts):
@@ -141,98 +87,27 @@ proc = subprocess.Popen(cmd, env={**os.environ, **env}, ...)  # Executes TRITON 
 launcher, finalize = run._create_subprocess_sim_run_launcher(...)  # Spawns another runner!
 ```
 
-**Method Usage:**
-- `prepare_simulation_command()`: Use in runner scripts to get TRITON executable command
-- `_create_subprocess_sim_run_launcher()`: Use in analysis/executor classes for concurrent execution (spawns runner subprocess)
+- `prepare_simulation_command()`: use in runner scripts to get TRITON executable command
+- `_create_subprocess_sim_run_launcher()`: use in analysis/executor classes (spawns runner subprocess)
 
 ## Multi-Model Integration
 
-The toolkit supports **concurrent execution** of three model types within a single analysis:
+Three model types can run concurrently within a single analysis:
 
-### Model Types
+| Model Type | Description |
+|------------|-------------|
+| `triton` | 2D hydrodynamic only (no SWMM coupling) |
+| `tritonswmm` | Coupled 2D surface + 1D drainage |
+| `swmm` | Standalone EPA SWMM |
 
-| Model Type | Description | Use Case |
-|------------|-------------|----------|
-| **TRITON-only** | 2D hydrodynamic (no SWMM coupling) | Pure surface water modeling, coastal flooding |
-| **TRITON-SWMM** | Coupled 2D surface + 1D drainage | Urban flooding with stormwater infrastructure |
-| **SWMM-only** | Standalone EPA SWMM | Stormwater network analysis without surface routing |
-
-### Configuration Toggles
-
-Enable model types via `system_config.yaml`:
-
+Enable via `system_config.yaml`:
 ```yaml
-toggle_triton_model: true      # Enable TRITON-only
-toggle_tritonswmm_model: true  # Enable TRITON-SWMM coupled
-toggle_swmm_model: true        # Enable standalone SWMM
+toggle_triton_model: true
+toggle_tritonswmm_model: true
+toggle_swmm_model: true
 ```
 
-**Key behaviors:**
-- Models run **concurrently** via separate Snakemake rules
-- Each model has its own compilation, executable, and output directories
-
-### Directory Structure (Per Scenario)
-
-```
-{scenario_dir}/
-├── logs/                      # Centralized logs
-│   ├── run_triton.log
-│   ├── run_tritonswmm.log
-│   └── run_swmm.log
-├── out_triton/                # TRITON-only outputs
-├── out_tritonswmm/            # Coupled model outputs
-├── out_swmm/                  # SWMM-only outputs
-├── TRITON.cfg                 # TRITON-only config (inp_filename commented)
-├── TRITONSWMM.cfg             # Coupled model config
-└── swmm_full.inp              # SWMM input
-```
-
-### Compilation
-
-Setup workflow compiles enabled models:
-
-```bash
-python -m TRITON_SWMM_toolkit.setup_workflow \
-    --system-config system.yaml \
-    --analysis-config analysis.yaml \
-    --compile-tritonswmm \    # Compile coupled model
-    --compile-triton-only \   # Compile TRITON-only
-    --compile-swmm            # Compile standalone SWMM
-```
-
-**Build directories:**
-- TRITON-SWMM: `build_tritonswmm_cpu/`, `build_tritonswmm_gpu/`
-- TRITON-only: `build_triton_cpu/`, `build_triton_gpu/` (CMake flag: `-DTRITON_ENABLE_SWMM=OFF`)
-- SWMM: `swmm_build/` (standalone EPA SWMM executable)
-
-### Workflow Rules
-
-Snakemake generates **separate rules per model type**:
-
-```python
-rule run_triton:          # TRITON-only simulation
-    threads: {cpus}
-    resources: gpus={gpus}
-
-rule run_tritonswmm:      # Coupled simulation
-    threads: {cpus}
-    resources: gpus={gpus}
-
-rule run_swmm:            # SWMM-only simulation
-    threads: 4            # CPU-only, limited threads
-```
-
-Processing rules similarly split: `process_triton`, `process_tritonswmm`, `process_swmm`
-
-### Status Tracking
-
-`analysis.df_status` includes `model_types_enabled` column showing which models are active:
-
-```python
-df_status["model_types_enabled"]  # e.g., "triton,tritonswmm,swmm"
-```
-
-For multi-model workflows, all enabled models run for each scenario, with outputs in separate directories.
+Each model has its own compilation, Snakemake rules (`run_triton`, `run_tritonswmm`, `run_swmm`), and output directories (`out_triton/`, `out_tritonswmm/`, `out_swmm/`). Build directories: `build_tritonswmm_cpu/`, `build_triton_gpu/`, `swmm_build/`, etc.
 
 ## Configuration System
 
@@ -241,56 +116,7 @@ Configuration flows: **YAML → Pydantic → Analysis/Scenario classes**
 - `system_config`: DEM paths, TRITON compilation, Manning's coefficients
 - `analysis_config`: Simulation parameters, HPC settings, weather data, execution mode
 
-### Toggle-Based Validation
-
-Many fields are conditionally required based on boolean toggles:
-```python
-toggle_use_constant_mannings: bool
-constant_mannings: Optional[float]    # Required if toggle=True
-landuse_lookup_file: Optional[Path]   # Required if toggle=False
-```
-
-### Preflight Validation
-
-**Module**: `src/TRITON_SWMM_toolkit/validation.py`
-
-The toolkit provides comprehensive preflight validation to catch configuration errors before launching expensive simulation work:
-
-```python
-from TRITON_SWMM_toolkit.validation import preflight_validate
-
-# Validate configs directly
-result = preflight_validate(cfg_system, cfg_analysis)
-if not result.is_valid:
-    print(result)  # Show all errors and warnings
-    result.raise_if_invalid()  # Raise ConfigurationError
-
-# Or use Analysis.validate() method
-analysis = system.analysis
-analysis.validate().raise_if_invalid()
-```
-
-**What's validated:**
-
-- **System config**: Path existence, toggle dependencies (manning's, hydrology, SWMM), model selection (at least one model enabled)
-- **Analysis config**: Weather data files, run-mode consistency (MPI/OMP/GPU allocation), HPC sanity checks
-- **Data consistency**: Event alignment, storm tide variables/units, rainfall units
-
-**ValidationResult API:**
-- `is_valid` — True if no errors (warnings allowed)
-- `has_warnings` — True if any warnings present
-- `errors` — List of ERROR-level issues (must be fixed)
-- `warnings` — List of WARNING-level issues (review recommended)
-- `raise_if_invalid()` — Raise ConfigurationError if validation failed
-
-**Error messages** include field, problem description, current value, and actionable fix hints.
-
-**When to validate:**
-- Before launching simulations (call `analysis.validate()`)
-- In CLI entry points (automatic validation)
-- After loading configs from YAML (preflight checks)
-
-See `docs/planning/refactors/frontend_validation_checklist.md` for complete validation coverage.
+Many fields are conditionally required based on boolean toggles. Call `analysis.validate().raise_if_invalid()` before launching simulations (`src/TRITON_SWMM_toolkit/validation.py`).
 
 ### Critical Configuration Fields
 
@@ -298,12 +124,10 @@ See `docs/planning/refactors/frontend_validation_checklist.md` for complete vali
 |-------|--------|
 | `multi_sim_run_method` | Controls execution: `local`, `batch_job`, `1_job_many_srun_tasks` |
 | `run_mode` | CPU/GPU config: `serial`, `openmp`, `mpi`, `gpu`, `hybrid` |
-| `hpc_max_simultaneous_sims` | **Required** for `1_job_many_srun_tasks` mode (no default) |
+| `hpc_max_simultaneous_sims` | **Required** for `batch_job` mode (no default) |
 | `hpc_sbatch_time_upper_limit_min` | Optional cap on SBATCH runtime |
 
 ## HPC & SLURM Integration
-
-### SLURM Detection Logic
 
 ```python
 in_slurm = ("SLURM_JOB_ID" in os.environ) or (multi_sim_run_method == "1_job_many_srun_tasks")
@@ -311,277 +135,66 @@ in_slurm = ("SLURM_JOB_ID" in os.environ) or (multi_sim_run_method == "1_job_man
 
 When `in_slurm=True`, simulations launch via `srun` (not direct execution).
 
-### Execution Modes
-
 | Mode | Behavior |
 |------|----------|
 | `local` | Serial or ThreadPoolExecutor on local machine |
-| `batch_job` | SLURM job array (one job per simulation) |
-| `1_job_many_srun_tasks` | Single SBATCH with multiple srun invocations (active development) |
+| `batch_job` | One SLURM job per simulation |
+| `1_job_many_srun_tasks` | Single SBATCH with multiple srun invocations |
 
-### Key Environment Variables
+Key env vars: `SLURM_JOB_ID`, `SLURM_ARRAY_TASK_ID` (maps to `event_iloc`), `additional_modules_needed_to_run_TRITON_SWMM_on_hpc`.
 
-- `SLURM_JOB_ID` - Indicates running in SLURM context
-- `SLURM_ARRAY_TASK_ID` - Maps to event_iloc in array jobs
-- Module loading via `additional_modules_needed_to_run_TRITON_SWMM_on_hpc`
+`1_job_many_srun_tasks`: uses `--exclusive` + `hpc_total_nodes`; does not require `hpc_max_simultaneous_sims`. See `docs/implementation/1_job_many_srun_tasks_redesign.md` and the `hpc-slurm-integration` agent.
 
-### 1-Job-Many-srun-Tasks Mode
+## Conda Environment
 
-Single SLURM allocation runs all simulations:
-- Snakemake `cores` = total CPUs in allocation (dynamically calculated from SLURM env vars)
-- Each simulation launches via `srun` inside the allocation
-- GPU resources specified via Snakemake resource limits
-- Uses `--exclusive` + `hpc_total_nodes` (no `hpc_max_simultaneous_sims` needed)
-- See `docs/implementation/1_job_many_srun_tasks_redesign.md` for design details
+The working environment is defined in `workflow/envs/triton_swmm.yaml` — all dependencies for development, testing, and simulation. Update this file when adding new dependencies.
 
-## Workflow Phases
-
-Snakemake workflows follow five distinct phases with separate rules:
-
-1. **Setup** (`rule setup`): System inputs processing and TRITON compilation
-   - Runner: `setup_workflow.py`
-   - Resources: 1 CPU, minimal memory
-
-2. **Scenario Preparation** (`rule prepare_scenario`): SWMM model generation
-   - Runner: `prepare_scenario_runner.py`
-   - Resources: 1 CPU (lightweight file I/O)
-   - Runs in parallel for all simulations
-
-3. **Simulation Execution** (`rule run_simulation`): TRITON-SWMM runs
-   - Runner: `run_simulation_runner.py`
-   - Resources: Multi-CPU/GPU as configured (resource-intensive)
-   - Depends on scenario preparation completion
-
-4. **Output Processing** (`rule process_outputs`): Timeseries extraction and compression
-   - Runner: `process_timeseries_runner.py`
-   - Resources: 2 CPUs for parallel compression (I/O bound)
-   - Depends on simulation completion
-
-5. **Consolidation** (`rule consolidate`): Analysis-level output aggregation
-   - Runner: `consolidate_workflow.py`
-   - Resources: 1 CPU
-   - Depends on all output processing completion
-
-This separation allows:
-- **Checkpoint recovery**: Restart from any phase if failure occurs
-- **Resource optimization**: Each phase gets appropriate CPU/GPU/memory allocation
-- **Clear dependencies**: Snakemake DAG explicitly shows workflow structure
-
-## Conda Environment Architecture
-
-The toolkit uses **two separate conda environments** for clean separation of concerns:
-
-### Primary Environment (`environment.yaml`)
-- **Purpose**: Orchestration layer (Snakemake, workflow management, development tools)
-- **Contains**: Snakemake, Snakemake plugins (SLURM executor), Typer CLI, testing/linting tools
-- **Location**: Root directory
-- **When to update**: When adding orchestration features or new CLI commands
-
-### Task Environment (`workflow/envs/triton_swmm.yaml`)
-- **Purpose**: Simulation execution layer (individual runner scripts)
-- **Contains**: SWMM, scientific Python stack (scipy, dask, zarr), geospatial tools (geopandas, cartopy), data I/O
-- **Location**: `workflow/envs/`
-- **When to update**: When runner scripts need new dependencies (e.g., new output formats, scientific libraries)
-
-**Why this split?**
-1. **Lightweight execution**: Snakemake doesn't need simulation dependencies; runner scripts don't need Snakemake
-2. **HPC efficiency**: Smaller task environment = faster conda solve times on clusters
-3. **Clean separation**: Orchestration (Snakemake rules) vs. execution (runner scripts) are isolated
-4. **Caching**: Snakemake can cache and reuse the lighter task environment across jobs
-
-**How it works:**
-- Main environment (primary) is activated on login
-- Snakemake reads Snakefile and generates rules
-- Each rule's `conda:` directive specifies `workflow/envs/triton_swmm.yaml`
-- Snakemake creates/caches the task environment and runs rules within it
+Note: `environment.yaml` at the repo root and the `conda:` directives in generated Snakefiles are scaffolding for a potential future two-environment split, but are not currently active (Snakemake is not invoked with `--use-conda`).
 
 ## Testing
 
-### Platform-Organized Tests
+- `test_PC_*.py` — local; `test_UVA_*.py` — UVA HPC; `test_frontier_*.py` — Frontier. Tests auto-skip by platform.
+- Fixtures use `GetTS_TestCases` from `examples.py`. Use `start_from_scratch=False` for cached/fast iteration.
+- Use assertion helpers from `tests/utils_for_testing.py` (`assert_scenarios_run`, `assert_model_outputs_exist`, etc.) — not raw property checks. See `.claude/agents/triton-test-suite.md` for the full reference.
 
-- `test_PC_*.py` - Local machine tests
-- `test_UVA_*.py` - UVA HPC cluster tests
-- `test_frontier_*.py` - Oak Ridge Frontier tests
+## Exception Hierarchy
 
-Tests auto-skip based on platform detection.
+All toolkit exceptions inherit from `TRITONSWMMError` (`exceptions.py`):
 
-### Test Fixtures
-
-Fixtures use `GetTS_TestCases` from `examples.py`:
-```python
-@pytest.fixture
-def norfolk_multi_sim_analysis():
-    case = tst.retrieve_norfolk_multi_sim_test_case(start_from_scratch=True)
-    return case.system.analysis
-```
-
-Use `start_from_scratch=False` for cached fixtures (faster iteration).
-
-### Platform Detection Utilities (`tests/utils_for_testing.py`)
-
-```python
-uses_slurm()      # True if SLURM_JOB_ID in environment
-on_frontier()     # True if hostname contains "frontier"
-on_UVA_HPC()      # True if hostname contains "virginia"
-```
-
-### Test Assertion Patterns
-
-Use standardized assertion helpers for consistent error messages and better debugging:
-
-**Workflow Phase Completion:**
-```python
-tst_ut.assert_scenarios_setup(analysis)          # All scenarios created
-tst_ut.assert_scenarios_run(analysis)            # All simulations complete
-tst_ut.assert_timeseries_processed(analysis)     # All outputs processed
-tst_ut.assert_phases_complete(analysis, phases=["setup", "preparation"])
-```
-
-**Model-Specific Validation:**
-```python
-tst_ut.assert_model_simulation_run(analysis, model_type)      # Simulation completed
-tst_ut.assert_model_outputs_processed(analysis, model_type)   # Outputs exist
-tst_ut.assert_model_simulations_complete(analysis, model_type)  # All scenarios done
-```
-
-**Multi-Model Output Validation:**
-```python
-tst_ut.assert_model_outputs_exist(analysis)  # All enabled models have outputs
-tst_ut.assert_model_outputs_exist(
-    analysis,
-    model_types=["triton", "tritonswmm"],  # Explicit subset
-    check_timeseries=True,
-    check_summaries=True
-)
-```
-
-**File Existence:**
-```python
-tst_ut.assert_file_exists(path, description="Snakefile")  # Always include description
-```
-
-**Snakefile Validation:**
-```python
-tst_ut.assert_snakefile_has_rules(content, ["setup", "run_simulation", ...])
-tst_ut.assert_snakefile_has_flags(content, ["--compression-level 5", ...])
-```
-
-**Compilation Validation:**
-```python
-tst_ut.assert_triton_compiled(analysis)
-tst_ut.assert_tritonswmm_compiled(analysis)
-tst_ut.assert_swmm_compiled(analysis)
-```
-
-**Key principles:**
-- All helpers support `verbose=True` mode (or use `pytest -v`) for detailed output
-- Helpers provide clear failure messages with counts and actionable information
-- Use helpers instead of direct property checks (`assert analysis.all_scenarios_created` gives poor errors)
-- File paths should always include descriptive context in error messages
-
-## Code Style
-
-- Line length: 120 characters
-- Linter: ruff (E, W, F, I, B, UP rules)
-- Python: ≥3.10, target 3.12+
-- Configuration models inherit from `cfgBaseModel`
-- Use `Literal` types for enumerated options
-
-### Logging & Error Handling
-
-**Exception Hierarchy**: All toolkit-specific exceptions inherit from `TRITONSWMMError` (see `src/TRITON_SWMM_toolkit/exceptions.py`):
-
-- `CompilationError` - TRITON/SWMM build failures (stores model_type, backend, logfile, return_code)
-- `ConfigurationError` - Invalid config values or toggle conflicts (stores field, message, config_path)
-- `SimulationError` - Simulation execution failures (stores event_iloc, model_type, logfile)
-- `ProcessingError` - Output processing failures (stores operation, filepath, reason)
-- `WorkflowError` - Snakemake workflow failures (stores phase, return_code, stderr)
-- `SLURMError` - SLURM job submission/monitoring failures (stores operation, job_id, reason)
-- `ResourceAllocationError` - CPU/GPU/memory allocation failures (stores resource_type, requested, available)
-
-**Logging Patterns**:
-
-- **User-facing progress**: Use `print(f"[NAMESPACE] Message", flush=True)` with verbose guards
-  - Examples: `[CPU] Compiling...`, `[Snakemake] Job submitted`, `[SLURM] Running`
-  - Keep these for real-time feedback in interactive sessions and HPC logs
-- **Diagnostic output**: Use `logger = logging.getLogger(__name__)` for library code (deferred to future phases)
-- **Runner scripts**: Already use module-level loggers correctly (no changes needed)
-
-**Error Handling**:
-
-- **Raise custom exceptions** from `exceptions.py` with full contextual attributes
-- **Fail-fast**: Critical paths must raise exceptions, never silently return False
-- **Preserve context**: Exceptions include file paths, return codes, log locations for actionable debugging
-- Example:
-  ```python
-  if not compilation_successful:
-      raise CompilationError(
-          model_type="tritonswmm",
-          backend="cpu",
-          logfile=compilation_log,
-          return_code=proc.returncode,
-      )
-  ```
+- `CompilationError` — build failures (model_type, backend, logfile, return_code)
+- `ConfigurationError` — invalid config or toggle conflicts (field, message, config_path)
+- `SimulationError` — execution failures (event_iloc, model_type, logfile)
+- `ProcessingError` — output processing failures (operation, filepath, reason)
+- `WorkflowError` — Snakemake failures (phase, return_code, stderr)
+- `SLURMError` — job submission/monitoring failures (operation, job_id, reason)
+- `ResourceAllocationError` — CPU/GPU/memory failures (resource_type, requested, available)
 
 ## Gotchas
 
-1. **`hpc_max_simultaneous_sims` has no default** - Must be explicitly set for `1_job_many_srun_tasks` mode
-
-2. **Sensitivity analysis GPU constraint** - Cannot mix GPU and non-GPU modes in single sensitivity analysis
-
-3. **SLURM detection includes config check** - `in_slurm` is True when `multi_sim_run_method == "1_job_many_srun_tasks"` even without `SLURM_JOB_ID`
-
-4. **Runner scripts use argparse** - Each has specific CLI flags; check docstrings for usage
-
-5. **TRITON-SWMM SWMM output path bug** - TRITON-SWMM writes SWMM outputs to `sim_folder/output/swmm/` and `log.out` to `sim_folder/output/` regardless of CFG `output_folder`. Workarounds tagged `TODO(TRITON-OUTPUT-PATH-BUG)`. See `docs/implementation/triton_output_path_bug.md`. (note this was resolved manually on 2/9/2026)
-
-6. **`log.out` overwrite with multi-model** - Both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`. Last to finish overwrites the other. Resource-usage parsing may be incorrect for one model type.
+1. **`hpc_max_simultaneous_sims` has no default** — required for `batch_job` mode
+2. **Sensitivity analysis GPU constraint** — cannot mix GPU and non-GPU modes in a single sensitivity analysis
+3. **SLURM detection includes config check** — `in_slurm` is True when `multi_sim_run_method == "1_job_many_srun_tasks"` even without `SLURM_JOB_ID`
+4. **Runner scripts use argparse** — each has specific CLI flags; check docstrings for usage
+5. **`log.out` overwrite with multi-model** — both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`; last to finish overwrites the other
 
 ## Specialized Agent Documentation
 
-The `.claude/agents/` directory contains detailed guidance for specific subsystems:
-- `pydantic-config-specialist.md` - Configuration validation patterns
-- `snakemake-workflow.md` - Workflow generation and DAG structure
-- `hpc-slurm-integration.md` - SLURM execution modes and cluster configs
-- `output-processing.md` - SWMM/TRITON output parsing
-- `sensitivity-analysis.md` - Parameter sweep orchestration
-- `swmm-model-generation.md` - SWMM .inp generation and hydrology/hydraulics split
-- `triton-test-suite.md` - Testing patterns and fixtures
-- `triton-debugger.md` - Debugging workflow failures
+> **Note**: Agent files are currently being audited for staleness. Until the audit is complete (see `docs/planning/active/refactors/agent_files_audit.md`), treat agent file content as potentially outdated — verify against source code when in doubt.
 
-## Maintaining This Documentation
+- `pydantic-config-specialist.md` — Configuration validation patterns
+- `snakemake-workflow.md` — Workflow generation and DAG structure
+- `hpc-slurm-integration.md` — SLURM execution modes and cluster configs
+- `output-processing.md` — SWMM/TRITON output parsing
+- `sensitivity-analysis.md` — Parameter sweep orchestration
+- `swmm-model-generation.md` — SWMM .inp generation and hydrology/hydraulics split
+- `triton-test-suite.md` — Testing patterns and fixtures
+- `triton-debugger.md` — Debugging workflow failures
 
-### When to Update CLAUDE.md
-
-Update this file when:
-- Adding new modules or major refactoring existing ones
-- Changing build/test/lint commands or tooling
-- Modifying the three-layer architecture (System/Analysis/Scenario)
-- Adding new execution modes or HPC integration patterns
-- Changing critical configuration fields or validation patterns
-- Discovering new "gotchas" that developers should know upfront
-
-### When to Update Agent Documentation
-
-Update `.claude/agents/*.md` when:
-- Modifying core patterns in agent's domain (e.g., changing toggle validation logic → update `pydantic-config-specialist.md`)
-- Adding new runner scripts or changing subprocess invocation patterns → update `snakemake-workflow.md`
-- Changing SLURM execution modes or resource management → update `hpc-slurm-integration.md`
-- Modifying SWMM model generation patterns → update `swmm-model-generation.md`
-- Adding new test utilities or platform detection helpers → update `triton-test-suite.md`
-
-### Development Priorities
-
-See `docs/planning/priorities.md` for the current prioritized checklist of planned
-work, organized into tiers with dependency information. Update that file as work
-progresses or priorities shift.
-
-### Documentation Update Checklist
+## Documentation Update Checklist
 
 When making significant code changes:
-- [ ] Does this change affect architecture described in CLAUDE.md?
-- [ ] Does this change affect patterns documented in any agent file?
-- [ ] Are there new "gotchas" or non-obvious behaviors to document?
-- [ ] Do build/test commands still work as documented?
+- [ ] Does this change affect architecture described in CLAUDE.md? Verify class names, module names, file paths, and config fields still match.
+- [ ] Does this change affect patterns in any agent file? (Agent files are currently being audited — see above.)
+- [ ] Does this introduce new philosophy rules or update existing ones? (update `.prompts/philosophy.md`)
+- [ ] Are there new gotchas or non-obvious behaviors to document?
 - [ ] Are there new critical configuration fields to highlight?
-- [ ] Should `docs/planning/priorities.md` be updated?

@@ -1,22 +1,12 @@
-# Lightweight execution environment for TRITON-SWMM simulation tasks
+# Working environment for TRITON-SWMM toolkit development and simulation execution.
 #
-# IMPORTANT: This environment is for individual Snakemake rule tasks (runner scripts),
-# NOT for Snakemake itself.
+# NOTE: This is currently the single active environment for all work — development,
+# testing, and running simulations. It contains the full dependency set.
 #
-# Architecture:
-# - Main environment (root environment.yaml): Contains Snakemake + orchestration tools
-# - Task environment (this file): Contains only runtime dependencies for simulations
-#   (SWMM, scientific Python stack, geospatial tools, data I/O)
-#
-# This separation allows:
-# 1. Snakemake to run in the primary conda environment
-# 2. Each simulation task to run in this lighter cached environment
-# 3. Faster environment creation on HPC systems (fewer packages)
-# 4. Isolation between orchestration and execution layers
-#
-# When Snakemake rules invoke runner scripts (prepare_scenario_runner.py,
-# run_simulation_runner.py, process_timeseries_runner.py, etc.),
-# they use this environment via the Snakefile 'conda:' directive.
+# The Snakefile 'conda:' directives reference this file, but --use-conda is NOT
+# currently passed to Snakemake, so those directives have no effect. The two-environment
+# split (orchestration vs. execution) described in older comments is aspirational and
+# not yet implemented.
 
 name: triton_swmm_toolkit
 channels:

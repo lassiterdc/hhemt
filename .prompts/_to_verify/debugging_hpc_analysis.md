@@ -253,10 +253,10 @@ Based on evidence from Steps 1-5, determine:
 
 ### Step 0: Check for Previous Debugging Reports
 
-**ALWAYS check first** if previous debugging reports exist:
+**ALWAYS check first** if previous debugging report and other related docs exist:
 
 ```bash
-ls -lt debugging_report_*.md | head -5
+ls -lt debugging_docs/debugging_report*.md | head -5
 ```
 
 If previous reports exist:
@@ -265,15 +265,18 @@ If previous reports exist:
 3. Note which issues have been fixed vs. persist
 4. Track progress across debugging rounds
 
+
 ### Step 1-6: Follow Systematic Debugging Workflow (see above)
 
-### Step 7: Write Debugging Report
+### Step 8: Write Debugging Report
 
 **REQUIRED**: After completing diagnosis, write a comprehensive markdown report to:
 
 ```
-{analysis_dir}/debugging_report_{YYYYMMDD_HHMMSS}.md
+{analysis_dir}/debugging_docs/debugging_report_{YYYYMMDD_HHMM}.md
 ```
+
+IMPORTANT: Make sure that you are returning a unique and accurate HHMM. DO NOTE OVERWRITE OTHER REPORTS.
 
 The report **must** include:
 
@@ -351,6 +354,29 @@ If prior reports exist, add a section:
 ```
 
 ---
+
+### Step 9 (if failures are encountered):
+
+- Write a plan to plan to debug the failures to docs/planning/active/bugs/fixing_gpu_workflow.md
+   - Prefix the filename with the current date (YYYY-MM-DD) followed by a concise yet descriptive name for the file
+- If other debugging plans inside of docs/planning/active/bugs/ seem related, analyze those plans to see:
+   1. If they are current
+      - stale plans should either be moved to an 'archive' subdirectory (docs/planning/active/bugs/archive) or refreshed
+      - completed plans should be moved to a 'fixed' subdirectory, docs/planning/active/bugs/fixed
+      - Make recommendations about how to handle related debugging plans if encountered. Do not proceed with any changes without explicit approval from the developer.
+- If empirical tests are needed on the HPC system to verify that hypothesized fixes will work, create a section of the planning document called "Empirical HPC Testing" with copy-pasteable bash code chunks that the user will run, followed by empty bash code chunks like shown below:
+
+***Test:**
+```bash
+{COPY-PASTEABLE CODE CHUNK FOR USER TO RUN}
+```
+
+**Output:**
+```bash
+
+```
+
+- Update the debugging report to reference this plan
 
 ## Output Format
 

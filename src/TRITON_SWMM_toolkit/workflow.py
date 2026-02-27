@@ -71,7 +71,13 @@ class SnakemakeWorkflowBuilder:
             self.python_executable = configured_python
 
     def _get_conda_env_path(self) -> Path:
-        """Get absolute path to conda environment file."""
+        """Get absolute path to conda environment file.
+
+        The path is embedded in generated Snakefiles via the 'conda:' directive, but
+        --use-conda is not currently passed to Snakemake, so the directive is inert.
+        The two-environment split is aspirational; this file is currently the single
+        working environment for all toolkit work.
+        """
         triton_toolkit_root = Path(__file__).parent.parent.parent
         return triton_toolkit_root / "workflow" / "envs" / "triton_swmm.yaml"
 
