@@ -260,6 +260,7 @@ If previous reports exist:
 2. Reference previous findings in your new report
 3. Note which issues have been fixed vs. persist
 4. Track progress across debugging rounds
+5. Identify any planning documents for the bug fixes that were created based on the debugging report
 
 
 ### Step 1-6: Follow Systematic Debugging Workflow (see above)
@@ -272,7 +273,7 @@ If previous reports exist:
 {analysis_dir}/debugging_docs/debugging_report_{YYYYMMDD_HHMM}.md
 ```
 
-IMPORTANT: Make sure that you are returning a unique and accurate HHMM. DO NOTE OVERWRITE OTHER REPORTS.
+IMPORTANT: Run `date` via Bash tool to get the current local time **immediately before writing the report**, then use that exact HHMM in the filename and Report Date header. Do not infer the time from log timestamps or the system prompt — always call `date` first. DO NOT OVERWRITE OTHER REPORTS.
 
 The report **must** include:
 
@@ -320,7 +321,7 @@ The report **must** include:
 ```markdown
 # HPC Debugging Report: {Analysis Name}
 
-**Report Date**: {YYYY-MM-DD HH:MM:SS}
+**Report Date**: {YYYY-MM-DD HH:MM} — from `date` output, not inferred
 **Analysis ID**: `{analysis_id}`
 **Workflow Run Date**: {date of failed run}
 **Previous Reports**: {list previous report dates or "None (initial report)"}
@@ -364,8 +365,8 @@ If either specialist is relevant, **recommend deployment to the developer before
 
 - Write a bug-fix plan to `docs/planning/bugs/YYYY-MM-DD_concise-descriptive-name.md`
 - Check other plans in `docs/planning/bugs/` for related issues:
-  - Stale plans → move to `docs/planning/bugs/shelved/` or refresh
-  - Completed plans → move to `docs/planning/bugs/completed/`
+  - Assess freshness. Stale plans → move to `docs/planning/bugs/shelved/` or refresh
+  - Assess completion status. Completed plans → move to `docs/planning/bugs/completed/`
   - Make recommendations; do not move/modify without explicit developer approval
 - If empirical HPC tests are needed, follow the **Empirical testing** protocol in `conventions.md` (HPC debugging protocol section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
 - Update the debugging report to reference this plan
