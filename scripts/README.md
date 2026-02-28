@@ -22,8 +22,6 @@ python scripts/check_doc_freshness.py
 **File Mapping:**
 | Source File | Documentation |
 |-------------|---------------|
-| `workflow.py` | `snakemake-specialist.md` |
-| `execution.py`, `resource_management.py` | `snakemake-specialist.md` |
 | `system.py`, `analysis.py`, `scenario.py` | `.prompts/architecture.md` |
 | `config/` | `.prompts/architecture.md` |
 

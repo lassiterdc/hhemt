@@ -279,6 +279,24 @@ Construct the prompt with:
 
 A well-framed prompt with a clear write target gets source-cited answers in one shot. Vague prompts waste turns reconstructing context the main agent already has. The developer may prefer tighter back-and-forth in the current conversation instead.
 
+#### System-level agents and skills
+
+Specialist agents are tracked in `~/dev/claude-workspace/agents/` and symlinked to `~/.claude/agents/` (user-level — available in all Claude Code sessions). The canonical source is the `claude-workspace` git repo.
+
+Agents are **project-agnostic by default** — they carry no TRITON-SWMM context unless you pass it explicitly. When invoking a specialist on a TRITON-SWMM task, include the relevant context files in your prompt:
+
+```
+Use the snakemake-specialist (passing @.prompts/conventions.md and @.prompts/architecture.md) to investigate why...
+```
+
+Pass only what the specialist needs for the task. For many specialist questions (e.g., "why does this srun flag behave this way?") no project context is needed at all.
+
+**When creating a new specialist:**
+1. Add the agent file to `~/dev/claude-workspace/agents/<agent-name>.md`
+2. Run `~/dev/claude-workspace/setup.sh` to create the symlink in `~/.claude/agents/`
+
+**On a fresh machine:** clone `claude-workspace` and run `setup.sh`.
+
 #### Do not use general-purpose agents for directed lookups
 
 If you need to verify a file path, directory structure, or specific value that a prior tool call or specialist output already implied, use `Glob`, `Grep`, or `Bash` directly — not an Explore or general-purpose agent. Agents carry significant token overhead; a directed tool call is the right choice for simple verification. Reserve agents for genuinely open-ended exploration where the answer space is unknown.

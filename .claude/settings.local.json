@@ -64,7 +64,9 @@
       "WebFetch(domain:haseebmajid.dev)",
       "WebFetch(domain:waylonwalker.com)",
       "WebFetch(domain:aiechoes.substack.com)",
-      "WebFetch(domain:docs.anthropic.com)"
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(gh repo:*)",
+      "Bash(chmod +x:*)"
     ]
   },
   "outputStyle": "Explanatory",

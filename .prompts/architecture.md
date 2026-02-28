@@ -152,15 +152,18 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 
 ## Specialist Agents
 
-Active agents in `.claude/agents/`:
-- `snakemake-specialist.md` — Snakemake internals, SLURM executor plugin, workflow debugging, HPC job resource mapping
-- `triton-specialist.md` — TRITON build system, Kokkos backends, SWMM coupling mechanics, compute config selection
-- `slurm-specialist.md` — SLURM scheduler internals, job lifecycle, srun step creation, site-specific configs for Frontier and UVA
+Active agents are tracked in `~/dev/claude-workspace/agents/` and symlinked to
+`~/.claude/agents/` (user-level — available in all Claude Code sessions).
+
+- `snakemake-specialist` — Snakemake internals, SLURM executor plugin, workflow debugging, HPC job resource mapping
+- `triton-specialist` — TRITON build system, Kokkos backends, SWMM coupling mechanics, compute config selection
+- `slurm-specialist` — SLURM scheduler internals, job lifecycle, srun step creation, site-specific configs for Frontier and UVA
+
+Agents are project-agnostic. Pass TRITON-SWMM context explicitly when needed — typically `@.prompts/conventions.md` and/or `@.prompts/architecture.md` in the invocation prompt. See `conventions.md` §"System-level agents and skills" for the pattern.
 
 **When to invoke a specialist** (subject to the "always confirm before spawning subagents" rule in `conventions.md`):
 - The task requires deep knowledge of Snakemake DAG scheduling, SLURM executor internals, or TRITON build/Kokkos/coupling mechanics — areas where the specialist's curated startup reads and domain knowledge outperform inline research.
 - The investigation would require reading large source files (`workflow.py` is ~3400 lines; TRITON headers are extensive) that would flood the main context.
 - The task is pure research with no code to write, and parallelizing the investigation with a subagent is more efficient.
-
 
 Eight previous agents are archived in `.claude/agents_archive/`. They are not active. See `docs/planning/refactors/agent_files_audit.md` for context.
