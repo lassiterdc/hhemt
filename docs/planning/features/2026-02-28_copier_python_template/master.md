@@ -1,7 +1,7 @@
 # Copier Template System: Master Plan
 
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — restructured into multi-phase subdirectory; updated agent stub approach, repo name, cookiecutter references, and conventions.md portability assessment following subagent refactor completion and preflight review
+**Last edited**: 2026-02-28 — added Phase 2 (build copier-specialist agent); renumbered subsequent phases
 
 ---
 
@@ -12,11 +12,12 @@ This is a four-phase plan for building and adopting a Copier-based Python projec
 | Phase | Goal | Scope | Status | Doc |
 |-------|------|-------|--------|-----|
 | **Phase 1** | Build the `copier-python-template` repo | New repo; no changes to existing projects | Pending | `1_build_template.md` |
-| **Phase 2** | Spin up `multidriver-swg` from the template; verify ReadTheDocs; walk through the update tutorial | New repo; template repo may receive minor fixes | Pending | `2_spin_up_multidriver.md` |
-| **Phase 3** | Formalize the `copier update` workflow as a reference document | Completed during Phase 2; documents the update workflow for future sessions | Pending | `3_update_workflow_reference.md` |
-| **Phase 4** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | Pending | `4_toolkit_adoption.md` |
+| **Phase 2** | Build the `copier-specialist` agent | New agent in `claude-workspace`; no changes to existing projects | Pending | `2_build_copier_specialist.md` |
+| **Phase 3** | Spin up `multidriver-swg` via the copier-specialist; verify ReadTheDocs; walk through the update tutorial | New repo; template repo may receive minor fixes | Pending | `3_spin_up_multidriver.md` |
+| **Phase 4** | Formalize the `copier update` workflow as a reference document; fully initialize copier-specialist | Reference doc written in template repo; agent startup reads updated | Pending | `4_update_workflow_reference.md` |
+| **Phase 5** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | Pending | `5_toolkit_adoption.md` |
 
-Phases must be completed in order — each depends on the previous. Use `@.prompts/proceed_with_implementation.md` with the relevant phase doc at the start of each phase.
+Phases must be completed in order — each depends on the previous. Use `@.prompts/proceed_with_implementation.md` with the relevant phase doc at the start of each phase. From Phase 3 onward, use the `copier-specialist` agent to perform Copier operations.
 
 ---
 

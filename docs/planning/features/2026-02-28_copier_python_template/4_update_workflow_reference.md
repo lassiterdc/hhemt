@@ -1,8 +1,8 @@
-# Phase 3: `copier update` Workflow Reference Guide
+# Phase 4: `copier update` Workflow Reference Guide
 
 **Part of**: `master.md` — Copier Template System
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — extracted from master plan
+**Last edited**: 2026-02-28 — renumbered from Phase 3 to Phase 4; added copier-specialist agent startup reads update step
 
 ---
 
@@ -10,13 +10,13 @@
 
 Produce a concise written reference you can follow independently in future sessions when you want to propagate template changes to one or more downstream projects. This is a living reference — update it as you encounter edge cases.
 
-This phase is completed **during** Phase 2 (Step 2.4 produces the experience; this phase formalizes it as a reusable document).
+This phase is completed **during** Phase 3 (Step 3.4 produces the hands-on experience; this phase formalizes it as a reusable document and then uses it to fully initialize the copier-specialist agent).
 
 ---
 
 ## The Reference Document
 
-After completing Phase 2 Step 2.4, Claude will write a `docs/planning/reference/copier_update_workflow.md` file **in the `copier-python-template` repo** covering:
+After completing Phase 3 Step 3.4, Claude will write a `docs/planning/reference/copier_update_workflow.md` file **in the `copier-python-template` repo** covering:
 
 ### Part 1: Making a Template Change
 
@@ -69,4 +69,6 @@ grep -r "_commit:" ~/dev/*/.copier-answers.yml 2>/dev/null
 - [ ] `docs/planning/reference/copier_update_workflow.md` written in `copier-python-template`
 - [ ] Document covers all four parts: making a change, propagating it, conflict scenarios, version tracking
 - [ ] Document committed and pushed to the template repo
+- [ ] `copier-specialist` agent startup reads updated to include the reference doc (remove the "until that file exists" placeholder in `2_build_copier_specialist.md` body; add the path as an active startup read)
+- [ ] Agent confirmed via self-report: reads both `README.md` and `copier_update_workflow.md` on startup
 - [ ] `@.prompts/qaqc_and_commit.md` completed and findings reported to developer

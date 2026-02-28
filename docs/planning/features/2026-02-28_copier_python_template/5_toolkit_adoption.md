@@ -1,8 +1,8 @@
-# Phase 4: Retroactively Adopt Copier in TRITON-SWMM Toolkit
+# Phase 5: Retroactively Adopt Copier in TRITON-SWMM Toolkit
 
 **Part of**: `master.md` — Copier Template System
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — extracted from master plan; added Step 4.4 (multi-project propagation exercise) per developer request
+**Last edited**: 2026-02-28 — renumbered from Phase 4 to Phase 5; use copier-specialist agent to guide adoption
 
 ---
 

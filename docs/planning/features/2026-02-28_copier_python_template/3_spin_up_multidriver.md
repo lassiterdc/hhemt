@@ -1,8 +1,8 @@
-# Phase 2: Spin Up `multidriver-swg` and Verify the Template
+# Phase 3: Spin Up `multidriver-swg` and Verify the Template
 
 **Part of**: `master.md` — Copier Template System
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — extracted from master plan
+**Last edited**: 2026-02-28 — renumbered from Phase 2 to Phase 3; use copier-specialist agent to perform generation
 
 ---
 
