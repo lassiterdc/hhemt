@@ -155,6 +155,7 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 Active agents in `.claude/agents/`:
 - `snakemake-specialist.md` — Snakemake internals, SLURM executor plugin, workflow debugging, HPC job resource mapping
 - `triton-specialist.md` — TRITON build system, Kokkos backends, SWMM coupling mechanics, compute config selection
+- `slurm-specialist.md` — SLURM scheduler internals, job lifecycle, srun step creation, site-specific configs for Frontier and UVA
 
 **When to invoke a specialist** (subject to the "always confirm before spawning subagents" rule in `conventions.md`):
 - The task requires deep knowledge of Snakemake DAG scheduling, SLURM executor internals, or TRITON build/Kokkos/coupling mechanics — areas where the specialist's curated startup reads and domain knowledge outperform inline research.
