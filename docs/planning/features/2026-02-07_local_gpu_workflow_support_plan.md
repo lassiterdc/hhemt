@@ -1,5 +1,7 @@
 # Plan: Implement `local_gpus_for_workflow` Support in Snakemake Local Mode
 
+**Created:** 2026-02-07
+
 ## Context
 
 `analysis_config` already defines:

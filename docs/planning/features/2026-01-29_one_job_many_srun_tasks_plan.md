@@ -1,5 +1,7 @@
 # 1-Job Many `srun` Tasks: Goal, Findings, and Implementation Plan
 
+**Created:** 2026-01-29
+
 ## Goal
 
 Enable Snakemake-based orchestration for HPC systems that require a single big

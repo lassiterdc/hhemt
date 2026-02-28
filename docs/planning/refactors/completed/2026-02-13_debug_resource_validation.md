@@ -1,5 +1,7 @@
 # Plan: Fix Resource Validation for SWMM-Only Models
 
+**Created:** 2026-02-13
+
 ## Context
 
 The resource validation system (`consolidate_workflow.py:validate_resource_usage`) was designed to verify that TRITON/TRITON-SWMM simulations used the expected compute resources (MPI tasks, OMP threads, GPUs) by parsing `log.out` files.

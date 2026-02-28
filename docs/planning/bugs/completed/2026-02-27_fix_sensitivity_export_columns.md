@@ -1,5 +1,7 @@
 # Implementation Plan: Improve Sensitivity Analysis Export Columns
 
+**Created:** 2026-02-27
+
 ## Task Understanding
 
 ### Requirements

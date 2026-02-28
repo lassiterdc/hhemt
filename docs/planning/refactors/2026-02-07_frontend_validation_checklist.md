@@ -1,5 +1,7 @@
 # Front-End Validation Checklist (Human-Readable)
 
+**Created:** 2026-02-07
+
 ## Goal
 
 A practical list of checks the CLI/API should run **before launching expensive

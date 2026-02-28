@@ -1,5 +1,7 @@
 # Implementation Plan: Dynamic SWMM Thread Control
 
+**Created:** 2026-02-13
+
 ## Phased Implementation Plan
 
 ### Phase 1: Core .inp File Modification

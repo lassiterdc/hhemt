@@ -1,5 +1,7 @@
 # Test Refactor Assessment + Multi-Phase Plan
 
+**Created:** 2026-01-28
+
 ## Context
 The current `tests/test_PC_*` suite contains repeated setup logic (retrieving analysis objects, generating Snakefiles, checking logs) and duplicated assertion blocks. This increases maintenance cost and risks divergence in expected behaviors. The same patterns appear in other test groups (Frontier/UVA), so a phased refactor should start with PC-prefixed tests and then generalize.
 

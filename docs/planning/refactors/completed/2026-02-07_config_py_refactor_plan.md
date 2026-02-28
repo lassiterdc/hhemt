@@ -1,5 +1,7 @@
 # `config.py` Refactor Plan (Strict + Backward-Compatible)
 
+**Created:** 2026-02-07
+
 ## Objective
 
 Refactor `src/TRITON_SWMM_toolkit/config.py` to be cleaner, stricter, and easier

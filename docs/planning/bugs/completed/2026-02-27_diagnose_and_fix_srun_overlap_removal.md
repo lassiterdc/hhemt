@@ -1,5 +1,7 @@
 # Implementation Plan: Diagnose and Fix srun --overlap Removal
 
+**Created:** 2026-02-27
+
 ## Task Understanding
 
 ### Requirements
