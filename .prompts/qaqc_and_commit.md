@@ -39,7 +39,7 @@ Report back with findings organized into four sections:
 
 **`input needed`** — a bulleted list of all decisions or questions needing input, with options and recommendations for each
 
-**`implementation plan status`** — Describe the completion status of the primary planning document that was implemented. Recommend if the planning document needs to be refreshed and/or is ready to be closed (see `.prompts/conventions.md` for guidance on planning document organization)
+**`implementation plan status`** — Describe the completion status of the primary planning document that was implemented. Recommend if the planning document needs to be refreshed and/or is ready to be closed (see `.prompts/conventions.md` for guidance on planning document organization). Plans should accurately reflect the work done prior to being marked for completion since other agents may need to reference that plan as a dependency.
 
 Note: scope creep may occur as tangential issues are discovered during implementation. Consider whether multiple commits are recommended. If so, report under **`proposed commits`** with subheaders that would become the top commit message, followed by a table of files included in each commit and a summary of the changes in each file.
 
