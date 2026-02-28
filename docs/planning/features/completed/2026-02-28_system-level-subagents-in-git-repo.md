@@ -61,7 +61,11 @@
 
 ## Implementation Strategy
 
-### Chosen Approach: Symlink + Skills
+> **⚠️ Post-implementation design change**: The skills-based auto-context approach described below was implemented and then replaced during the invocation validation tutorial. The final implementation uses **explicit context passing** instead — agents are project-agnostic and receive context only when the developer includes `@` file references in the invocation prompt. The `triton-swmm-context` skill was created and then deleted. The `skills:` frontmatter fields were added and then removed. See the Definition of Done for accurate final state.
+>
+> The sections below are preserved as historical record of the original design.
+
+### Chosen Approach: Symlink + Skills (superseded — see note above)
 
 **Phase A** — Create `~/dev/claude-workspace` as a private git repo with `agents/` and `skills/` directories and a `setup.sh` symlink script.
 
@@ -76,6 +80,7 @@
 ### Alternatives Considered
 
 - **Pure symlink (no skills)**: Keep per-agent startup-read boilerplate but symlink the files. No single place to update context instructions; adding a new prompt file requires touching all agents.
+- **Explicit context passing (final choice)**: Agents carry no project context by default. Developer passes `@.prompts/conventions.md` and/or `@.prompts/architecture.md` in the invocation prompt when needed. Scales to any number of projects without agent modification.
 - **Duplicate files (no symlinks)**: Copy agents into `~/.claude/agents/` and accept drift from the project copy. Not viable — no single source of truth.
 - **Plugin distribution**: Overkill for a single developer.
 
@@ -84,31 +89,32 @@
 | Approach | Version control | Cross-machine | Auto-context | Context isolation | Complexity |
 |----------|----------------|---------------|--------------|-------------------|------------|
 | Symlink + skills | ✅ | ✅ clone + re-symlink | ✅ via skills field | ✅ explicit per agent | Low-medium |
+| Symlink + explicit passing (final) | ✅ | ✅ clone + re-symlink | ❌ manual per invocation | ✅ zero agent changes needed | Low |
 | Pure symlink | ✅ | ✅ | ❌ manual per agent | ✅ | Low |
 | Duplicate | ❌ | ❌ | ❌ | ✅ | Low |
 
-**Winner: Symlink + skills** — cleanest long-term; skills eliminate boilerplate and allow context to be updated in one place as the project evolves.
+**Original winner: Symlink + skills**. **Final choice: Symlink + explicit passing** — scales cleanly to N projects without ever modifying agent files; context boundary is visible at invocation time.
 
 ---
 
 ## File-by-File Change Plan
 
-### New repo: `~/dev/claude-workspace/`
+> **⚠️ Historical record** — describes the original skills-based plan. Final repo structure has no `skills/triton-swmm-context/` directory; agents have no `skills:` frontmatter. See Definition of Done for actual final state.
+
+### New repo: `~/dev/claude-workspace/` (final structure — no skills directory)
 
 ```
 claude-workspace/
 ├── README.md
 ├── setup.sh                          ← automates symlink creation on a fresh machine
 ├── agents/
-│   ├── snakemake-specialist.md       ← flat .md files (agents are flat)
+│   ├── snakemake-specialist.md       ← flat .md files, no skills: field
 │   ├── triton-specialist.md
 │   └── slurm-specialist.md
-└── skills/
-    └── triton-swmm-context/          ← skills are DIRECTORIES
-        └── SKILL.md                  ← required entrypoint
+└── skills/                           ← exists but empty (future use)
 ```
 
-**Important**: agents are flat `.md` files; skills are directories containing `SKILL.md`. These are different structures — symlinks reflect this (file symlinks for agents, directory symlinks for skills).
+**Original plan included** `skills/triton-swmm-context/SKILL.md` — this was created and deleted. See Implementation Strategy note above.
 
 #### Initializing the repo and first push to GitHub
 
