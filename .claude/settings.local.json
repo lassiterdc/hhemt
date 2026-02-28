@@ -56,7 +56,15 @@
       "Bash(ruff:*)",
       "Bash(git:*)",
       "Bash(seq 0:*)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(pip show:*)",
+      "WebFetch(domain:copier.readthedocs.io)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:haseebmajid.dev)",
+      "WebFetch(domain:waylonwalker.com)",
+      "WebFetch(domain:aiechoes.substack.com)",
+      "WebFetch(domain:docs.anthropic.com)"
     ]
   },
   "outputStyle": "Explanatory",

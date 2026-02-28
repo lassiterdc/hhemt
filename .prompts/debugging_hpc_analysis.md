@@ -352,21 +352,9 @@ If prior reports exist, add a section:
 
 ---
 
-### Step 8b: Consider Specialist Agent Consultation
-
-After writing the debugging report, assess whether the root cause touches a domain where a specialist agent would add value:
-
-- **`snakemake-specialist`** — if the failure involves Snakemake rule generation, SLURM executor plugin behavior, job resource mapping, srun flag construction, or wildcard/DAG issues
-- **`triton-specialist`** — if the failure involves TRITON compute config selection, Kokkos backends, MPI/GPU initialization, SWMM coupling mechanics, or TRITON-level log interpretation
-- **`slurm-specialist`** — if the failure involves SLURM scheduler behavior, job pending/hanging, step creation failures, resource allocation limits, CPU/GPU affinity, or site-specific Frontier/UVA cluster configuration
-
-If a specialist is relevant, **recommend deployment to the developer before proceeding to Step 9**. Specialists start with a fresh context — they do not inherit this conversation. When invoking one, pass:
-1. **The full debugging report** (path: `{analysis_dir}/debugging_docs/debugging_report_*.md`) — it contains everything the specialist needs: configs, log excerpts, srun commands, failure patterns, and root cause hypotheses
-2. **A single, precise question** — e.g., "Does `--cpu-bind=cores` under `--overlap` serialize srun step admission on a shared node in SLURM 24.11.5?" not "help me debug this"
-
-Do not deploy subagents without explicit developer approval (per `conventions.md` AI working norms). Inform the developer of the context you intend to pass.
-
 ### Step 9 (if failures are encountered):
+
+**Write the planning document first, before invoking any specialist.**
 
 - Write a bug-fix plan to `docs/planning/bugs/YYYY-MM-DD_concise-descriptive-name.md`
 - Check other plans in `docs/planning/bugs/` for related issues:
@@ -374,7 +362,18 @@ Do not deploy subagents without explicit developer approval (per `conventions.md
   - Assess completion status. Completed plans → move to `docs/planning/bugs/completed/`
   - Make recommendations; do not move/modify without explicit developer approval
 - If empirical HPC tests are needed, follow the **Empirical testing** protocol in `conventions.md` (HPC debugging protocol section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
+- If a specialist will be consulted, add a placeholder section (e.g., `## Specialist Findings`) to the plan now — this becomes the specialist's write target (see `.prompts/conventions.md § Spawning subagents` for full guidelines)
 - Update the debugging report to reference this plan
+
+### Step 8b: Consider Specialist Agent Consultation
+
+After writing the debugging report **and** the planning document (Step 9), assess whether the root cause touches a domain where a specialist agent would add value:
+
+- **`snakemake-specialist`** — if the failure involves Snakemake rule generation, SLURM executor plugin behavior, job resource mapping, srun flag construction, or wildcard/DAG issues
+- **`triton-specialist`** — if the failure involves TRITON compute config selection, Kokkos backends, MPI/GPU initialization, SWMM coupling mechanics, or TRITON-level log interpretation
+- **`slurm-specialist`** — if the failure involves SLURM scheduler behavior, job pending/hanging, step creation failures, resource allocation limits, CPU/GPU affinity, or site-specific Frontier/UVA cluster configuration
+
+If one or more specialists are relevant, recommend all of them to the developer and wait for approval. When proposing each invocation, the context artifact to pass is **the full debugging report** (`{analysis_dir}/debugging_docs/debugging_report_*.md`) as read-only context, plus the planning document as the write target. For all other subagent guidelines (write targets, multiple specialists, prompt construction, efficiency), see `.prompts/conventions.md § Spawning subagents`.
 
 ## Output Format
 
