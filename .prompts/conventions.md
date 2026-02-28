@@ -261,59 +261,36 @@ All commits require prior approval from the developer.
 Notebooks in `tests/dev/` are developer testing scratchpads — they contain transient state (`start_from_scratch`, cell outputs, etc.) and should never be staged or committed. If a notebook appears in `git status`, exclude it from the commit.
 
 ### Spawning subagents
-Never invoke the Task tool to spawn a subagent without first confirming with the developer. Subagents start with a fresh context — they do not inherit the conversation history. When requesting approval, show the developer:
-1. **What you intend to delegate and why** — which specialist, what domain question it will answer
-2. **The planning document the specialist will write to** — every subagent invocation must have a designated write target (see below)
-3. **The exact prompt and context you intend to pass** — the developer should approve the full invocation before it runs
 
-#### Subagents must have a designated write target
+Available agents and their scopes are catalogued in `~/dev/claude-workspace/README.md`.
 
-Every subagent must be given a specific document path and section to write its findings into. Subagent findings written only to conversation text are lost across sessions and cannot be referenced by other agents. The write target is almost always a **planning document** in `docs/planning/`.
+Never invoke the Task tool without first confirming with the developer. Subagents start fresh — they do not inherit conversation history. If the root cause spans multiple domains, recommend all relevant specialists rather than picking one. Present the developer with:
+1. **Which specialist(s) and why** — what domain question each will answer
+2. **The write target** — exact planning doc path and section where findings will be recorded
+3. **The full prompt** — developer approves before it runs
 
-**Before requesting developer approval to invoke a subagent:**
-1. Identify whether an appropriate planning doc already exists (check `docs/planning/bugs/`, `docs/planning/features/`, etc.)
-2. If no appropriate doc exists, create one (or recommend one to the developer) before requesting the subagent invocation
-3. Add a placeholder section to the planning doc (e.g., `## Specialist Findings`, `## Empirical HPC Testing`) where the subagent will write
-4. If the right location is not obvious, coordinate with the developer and make a recommendation — do not invoke the subagent until the write target is confirmed
+#### Write target is required
 
-**When the appropriate planning doc is not obvious**, present the developer with a recommendation:
-- Which planning doc type fits (`bugs/`, `features/`, `refactors/`)
-- What the doc should be named (`YYYY-MM-DD_concise-descriptive-name.md`)
-- Which section within it the subagent will fill in
+Specialist findings written only to conversation text are lost across sessions. Every invocation must have a specific planning doc path and section designated before approval is requested.
 
-#### Recommending multiple specialists is encouraged
+If no appropriate doc exists yet, recommend one to the developer — which type (`bugs/`, `features/`, `refactors/`), what to name it (`YYYY-MM-DD_name.md`), and which section the specialist will fill in.
 
-Do not feel obligated to select a single "best" specialist. If the root cause spans multiple domains (e.g., a failure that involves both SLURM resource assignment *and* TRITON initialization), recommend all relevant specialists to the developer and explain what each one would add. The developer will decide which to invoke and in what order. A correct multi-specialist recommendation is better than an incorrect single-specialist judgment call.
+#### Constructing the prompt
 
-Construct the prompt with:
-- **The planning document path** — tell the specialist exactly where to write its findings and in what section
-- **The relevant read-only artifact** — a debugging report, code snippet, or log excerpt for context (not to write to)
-- **Precise, scoped questions** — any number is fine, but each must be specific and answerable from source code or documentation. E.g., "Does `--cpu-bind=cores` under `--overlap` serialize srun step admission on a shared node in SLURM 24.11.5?" not "help me debug this"
-- **A prompt efficiency self-assessment request** — ask the specialist to include a brief note at the end of its written findings on how the prompt or context could have been tightened to reduce token cost. This surfaces inefficiencies organically for future improvement.
+- **Write target** — tell the specialist exactly where to record findings and in what section
+- **Read-only artifact** — a log excerpt, code snippet, or report for context (not to write to)
+- **Precise, scoped questions** — answerable from source code or docs; e.g., "Does `--cpu-bind=cores` under `--overlap` serialize srun step admission in SLURM 24.11.5?" not "help me debug this"
+- **Efficiency self-assessment** — ask the specialist to note how the prompt or context could be tightened; surfaces inefficiencies for future improvement
 
-A well-framed prompt with a clear write target gets source-cited answers in one shot. Vague prompts waste turns reconstructing context the main agent already has. The developer may prefer tighter back-and-forth in the current conversation instead.
+#### System-level agents
 
-#### System-level agents and skills
+Agents are project-agnostic — pass `@.prompts/conventions.md` and/or `@.prompts/architecture.md` explicitly when needed. Pass only what the task requires; many specialist questions need no project context at all.
 
-Specialist agents are tracked in `~/dev/claude-workspace/agents/` and symlinked to `~/.claude/agents/` (user-level — available in all Claude Code sessions). The canonical source is the `claude-workspace` git repo.
-
-Agents are **project-agnostic by default** — they carry no TRITON-SWMM context unless you pass it explicitly. When invoking a specialist on a TRITON-SWMM task, include the relevant context files in your prompt:
-
-```
-Use the snakemake-specialist (passing @.prompts/conventions.md and @.prompts/architecture.md) to investigate why...
-```
-
-Pass only what the specialist needs for the task. For many specialist questions (e.g., "why does this srun flag behave this way?") no project context is needed at all.
-
-**When creating a new specialist:**
-1. Add the agent file to `~/dev/claude-workspace/agents/<agent-name>.md`
-2. Run `~/dev/claude-workspace/setup.sh` to create the symlink in `~/.claude/agents/`
-
-**On a fresh machine:** clone `claude-workspace` and run `setup.sh`.
+Eight previous agents are archived in `.claude/agents_archive/` (not active). See `docs/planning/refactors/2026-02-27_agent_files_audit.md` for context.
 
 #### Do not use general-purpose agents for directed lookups
 
-If you need to verify a file path, directory structure, or specific value that a prior tool call or specialist output already implied, use `Glob`, `Grep`, or `Bash` directly — not an Explore or general-purpose agent. Agents carry significant token overhead; a directed tool call is the right choice for simple verification. Reserve agents for genuinely open-ended exploration where the answer space is unknown.
+Use `Glob`, `Grep`, or `Bash` for verifying file paths, directory structure, or specific values — not an Explore or general-purpose agent. Reserve agents for genuinely open-ended exploration where the answer space is unknown.
 
 ### `#user:` comments in planning documents are blocking
 In planning documents, all comments prefixed with `#user:` are developer feedback that must ALL be addressed before any implementation can take place. Remove each comment only after written confirmation from the developer that it has been sufficiently addressed. Implications for the entire planning document should be considered when addressing these comments.

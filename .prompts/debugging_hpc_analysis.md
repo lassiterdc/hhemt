@@ -367,13 +367,9 @@ If prior reports exist, add a section:
 
 ### Step 8b: Consider Specialist Agent Consultation
 
-After writing the debugging report **and** the planning document (Step 9), assess whether the root cause touches a domain where a specialist agent would add value:
+After writing the debugging report **and** the planning document (Step 9), assess whether a specialist agent would add value. Available agents and their scopes are in `~/dev/claude-workspace/README.md`. For invocation guidelines see `.prompts/conventions.md § Spawning subagents`.
 
-- **`snakemake-specialist`** — if the failure involves Snakemake rule generation, SLURM executor plugin behavior, job resource mapping, srun flag construction, or wildcard/DAG issues
-- **`triton-specialist`** — if the failure involves TRITON compute config selection, Kokkos backends, MPI/GPU initialization, SWMM coupling mechanics, or TRITON-level log interpretation
-- **`slurm-specialist`** — if the failure involves SLURM scheduler behavior, job pending/hanging, step creation failures, resource allocation limits, CPU/GPU affinity, or site-specific Frontier/UVA cluster configuration
-
-If one or more specialists are relevant, recommend all of them to the developer and wait for approval. When proposing each invocation, the context artifact to pass is **the full debugging report** (`{analysis_dir}/debugging_docs/debugging_report_*.md`) as read-only context, plus the planning document as the write target. For all other subagent guidelines (write targets, multiple specialists, prompt construction, efficiency), see `.prompts/conventions.md § Spawning subagents`.
+When proposing a specialist invocation in this context, the read-only artifact to pass is **the full debugging report** (`{analysis_dir}/debugging_docs/debugging_report_*.md`), with the planning document as the write target.
 
 ## Output Format
 
