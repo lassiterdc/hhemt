@@ -360,7 +360,11 @@ After writing the debugging report, assess whether the root cause touches a doma
 - **`triton-specialist`** — if the failure involves TRITON compute config selection, Kokkos backends, MPI/GPU initialization, SWMM coupling mechanics, or TRITON-level log interpretation
 - **`slurm-specialist`** — if the failure involves SLURM scheduler behavior, job pending/hanging, step creation failures, resource allocation limits, CPU/GPU affinity, or site-specific Frontier/UVA cluster configuration
 
-If either specialist is relevant, **recommend deployment to the developer before proceeding to Step 9**. Describe specifically what you would ask the specialist and what question you expect it to help answer. Do not deploy subagents without explicit developer approval (per `conventions.md` AI working norms).
+If a specialist is relevant, **recommend deployment to the developer before proceeding to Step 9**. Specialists start with a fresh context — they do not inherit this conversation. When invoking one, pass:
+1. **The full debugging report** (path: `{analysis_dir}/debugging_docs/debugging_report_*.md`) — it contains everything the specialist needs: configs, log excerpts, srun commands, failure patterns, and root cause hypotheses
+2. **A single, precise question** — e.g., "Does `--cpu-bind=cores` under `--overlap` serialize srun step admission on a shared node in SLURM 24.11.5?" not "help me debug this"
+
+Do not deploy subagents without explicit developer approval (per `conventions.md` AI working norms). Inform the developer of the context you intend to pass.
 
 ### Step 9 (if failures are encountered):
 

@@ -236,8 +236,16 @@ All commits require prior approval from the developer.
 ### Never commit Jupyter notebooks
 Notebooks in `tests/dev/` are developer testing scratchpads — they contain transient state (`start_from_scratch`, cell outputs, etc.) and should never be staged or committed. If a notebook appears in `git status`, exclude it from the commit.
 
-### Always confirm before spawning subagents
-Never invoke the Task tool to spawn a subagent or background agent without first confirming with the developer. Describe what you intend to delegate and why, and wait for explicit approval. The developer may prefer tighter back-and-forth in the current conversation.
+### Spawning subagents
+Never invoke the Task tool to spawn a subagent without first confirming with the developer. Subagents start with a fresh context — they do not inherit the conversation history. When requesting approval, show the developer:
+1. **What you intend to delegate and why** — which specialist, what domain question it will answer
+2. **The exact prompt and context you intend to pass** — the developer should approve the full invocation before it runs
+
+Construct the prompt with:
+- **The relevant artifact explicitly** — a debugging report, planning doc, code snippet, or log excerpt rather than reconstructing context in prose
+- **A single, precise question** — e.g., "Does `--cpu-bind=cores` under `--overlap` serialize srun step admission on a shared node in SLURM 24.11.5?" not "help me debug this"
+
+A well-framed prompt with the right artifact gets a source-cited answer in one shot. Vague prompts waste turns reconstructing context the main agent already has. The developer may prefer tighter back-and-forth in the current conversation instead.
 
 ### `#user:` comments in planning documents are blocking
 In planning documents, all comments prefixed with `#user:` are developer feedback that must ALL be addressed before any implementation can take place. Remove each comment only after written confirmation from the developer that it has been sufficiently addressed. Implications for the entire planning document should be considered when addressing these comments.
