@@ -174,6 +174,16 @@ Planning documents live in `docs/planning/` organized by type (`bugs/`, `feature
 
 See `docs/planning/README.md` for the full structure.
 
+### Recording out-of-scope observations
+
+When implementation work surfaces a real issue that is out of scope for the current task (e.g., pre-existing linting violations noticed while running ruff, an unused import that warrants investigation, a questionable pattern in untouched code), record it in a planning document rather than silently suppressing it or fixing it in-band:
+
+- **Code quality / linting debt** → `docs/planning/bugs/tech_debt_<topic>.md`
+- **Potential bug** → `docs/planning/bugs/<date>_<topic>.md`
+- **Enhancement idea** → `docs/planning/features/<date>_<topic>.md`
+
+The recording document should include: what was observed, where (file + line), why it was deferred, and enough context to act on it cold. Link to it from the originating plan's definition-of-done checklist so the observation is traceable. Do **not** use `# TODO` comments in source code, `MEMORY.md` bullets, or inline `# noqa` suppressions as the sole record — these are invisible to planning workflows.
+
 ### Code style
 
 - **Python**: ≥3.10, target 3.12+
