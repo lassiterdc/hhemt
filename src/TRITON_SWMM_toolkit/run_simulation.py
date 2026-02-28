@@ -412,7 +412,7 @@ class TRITONSWMM_run:
         # BLOCK policy assigns NICs by rank block order instead of NUMA topology,
         # bypassing the confinement requirement entirely. It is safe for all MPI configs.
         # Empirically validated on Frontier 2026-02-27 (see
-        # docs/planning/active/bugs/empirical_frontier_srun_nic_policy_testing.md).
+        # docs/planning/bugs/completed/empirical_frontier_srun_nic_policy_testing.md).
         if run_mode in ("mpi", "hybrid"):
             env["MPICH_OFI_NIC_POLICY"] = "BLOCK"
 
@@ -566,6 +566,11 @@ class TRITONSWMM_run:
                     # the parent job's allocation rather than requesting exclusive sub-step
                     # resources. Without this, srun blocks waiting for resources that are
                     # already consumed by the batch script process, causing hangs/timeouts.
+                    "--kill-on-bad-exit=1 "  # If any task exits non-zero (e.g. partial PMI
+                    # launch failure where only remote-node tasks fail), srun sends SIGKILL to
+                    # all surviving tasks immediately rather than waiting for them to exit
+                    # naturally. Prevents indefinite hangs when tasks are blocked at MPI_Init
+                    # PMI_Barrier waiting for failed peers (observed as 118-min hang in Run 7).
                     f"{exe} {cfg}"
                 )
             elif run_mode in ("serial", "openmp"):
@@ -584,6 +589,7 @@ class TRITONSWMM_run:
                     # "--exclusive "
                     "--cpu-bind=cores "
                     "--overlap "  # See note above on --overlap in batch_job mode.
+                    "--kill-on-bad-exit=1 "  # See note above on --kill-on-bad-exit=1.
                     f"{exe} {cfg}"
                 )
             else:
