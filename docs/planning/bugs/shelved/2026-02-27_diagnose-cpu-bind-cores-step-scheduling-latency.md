@@ -3,7 +3,7 @@
 **Date**: 2026-02-27
 **Priority**: Medium (affects job efficiency and allocation budget in 1_job_many_srun_tasks mode)
 **Related debugging report**: `frontier_sensitivity_suite/debugging_docs/debugging_report_20260227_2056.md` (Run 7)
-**Status**: Empirical testing pending — interactive Frontier allocation not yet obtained (as of 2026-02-28)
+**Status**: SHELVED (2026-02-28) — anomaly never recurred; empirical Test 5 not obtained; frontier_sensitivity_suite completed successfully without further sa_26 issues. Reopen if 4000s+ latency anomaly is observed again in future runs.
 
 ---
 

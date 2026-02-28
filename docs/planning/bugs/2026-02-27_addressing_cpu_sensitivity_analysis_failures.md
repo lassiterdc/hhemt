@@ -178,6 +178,25 @@ Conditions to trigger updates:
 
 ---
 
+## Post-Implementation Findings (2026-02-28)
+
+Two additional issues were discovered and resolved during UVA CPU sensitivity suite runs after the original plan was implemented. These were not part of the original plan scope.
+
+### Finding 1: High MPI rank counts cause indefinite hang after simulation starts
+
+**Observation**: Sub-analyses with ≥32 MPI ranks caused simulations to hang indefinitely after starting (not a time limit — actual MPI-level deadlock or barrier hang). This is separate from the PMI `inet_connect` transient failures.
+
+**Resolution**: Removed all sub-analyses with ≥32 MPI ranks from the UVA CPU benchmarking Excel (`full_benchmarking_experiment_uva.xlsx`).
+- **Commit**: `8afde85` (2026-02-25) — "remove 32 mpi tests"
+
+### Finding 2: Frontier allocates 8 cores to GPU hardware — effective CPU limit is 56, not 64
+
+**Observation**: Frontier compute nodes have 64 CPUs listed in partition information, but 8 of those cores are reserved for GPU hardware management. CPU-only jobs (and CPU components of hybrid jobs) can access at most **56 CPUs per node**, not 64.
+
+**Resolution**: The `hpc_cpus_per_node` configuration value for Frontier analyses should be set to `56` (not `64`). The sensitivity suite definition and test fixtures referencing Frontier CPU-per-node counts were updated accordingly.
+
+**Impact on sensitivity suite design**: Any sub-analyses designed around 64 CPUs/node on Frontier are invalid. The maximum safe per-node CPU request for CPU work on Frontier is 56.
+
 ### Self-Check Results
 
 1. **Header/body alignment check**
