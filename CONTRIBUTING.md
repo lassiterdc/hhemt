@@ -28,34 +28,27 @@ Look through the GitHub issues for features. Anything tagged with "enhancement" 
 
 TRITON-SWMM Toolkit could always use more documentation, whether as part of the official docs, in docstrings, or even on the web in blog posts, articles, and such.
 
-#### Maintaining CLAUDE.md and Agent Documentation
+#### Maintaining AI Context Documentation
 
-The project uses CLAUDE.md and specialized agent documentation (`.claude/agents/*.md`) to help Claude Code work effectively in this codebase. When contributing:
+The project uses `.prompts/architecture.md`, `.prompts/conventions.md`, and specialized agent documentation (`.claude/agents/*.md`) to help AI tools work effectively in this codebase. When contributing:
 
-**Update CLAUDE.md when:**
+**Update `.prompts/architecture.md` when:**
 - Adding new modules or refactoring architecture
-- Changing build/test/lint commands
 - Modifying critical configuration fields
 - Adding new execution modes or HPC patterns
 - Discovering new "gotchas"
 
+**Update `.prompts/conventions.md` when:**
+- Establishing new code design rules or working norms
+- Changing error handling or logging conventions
+- Updating testing philosophy
+
 **Update agent docs when:**
-- Changing core patterns in an agent's domain (e.g., toggle validation → update `pydantic-config-specialist.md`)
-- Adding runner scripts → update `snakemake-workflow.md`
-- Modifying SLURM execution → update `hpc-slurm-integration.md`
-- Changing SWMM model generation → update `swmm-model-generation.md`
+- Changing core patterns in an agent's domain
+- Adding runner scripts or modifying workflow generation
+- Modifying SLURM execution or resource management
 
-**Automated checks:**
-```sh
-# Install pre-commit hooks (recommended)
-pip install pre-commit
-pre-commit install
-
-# Manual check before committing
-./scripts/update_docs_check.sh
-```
-
-See [CLAUDE.md "Maintaining This Documentation"](CLAUDE.md#maintaining-this-documentation) and [scripts/README.md](scripts/README.md) for details.
+See [scripts/README.md](scripts/README.md) for automated freshness checks.
 
 ### Submit Feedback
 

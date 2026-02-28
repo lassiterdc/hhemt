@@ -6,7 +6,7 @@ This directory contains utility scripts for the TRITON-SWMM toolkit.
 
 ### `check_doc_freshness.py`
 
-Python script that checks if CLAUDE.md or agent documentation needs updating based on file changes.
+Python script that checks if `.prompts/architecture.md` or agent documentation needs updating based on file changes.
 
 **Usage:**
 ```bash
@@ -16,21 +16,16 @@ python scripts/check_doc_freshness.py
 ```
 
 **How it works:**
-- Maps source files to their corresponding agent documentation
-- Detects staged changes in git (Python files plus CLAUDE.md trigger files like `pyproject.toml`)
-- Prints reminders (non-blocking) when docs might be stale
+- Maps source files to their corresponding documentation
+- Detects staged changes in git and prints reminders (non-blocking) when docs might be stale
 
 **File Mapping:**
 | Source File | Documentation |
 |-------------|---------------|
-| `config.py` | `pydantic-config-specialist.md` |
-| `workflow.py` | `snakemake-workflow.md` |
-| `execution.py`, `resource_management.py` | `hpc-slurm-integration.md` |
-| `sensitivity_analysis.py` | `sensitivity-analysis.md` |
-| `swmm_*.py`, `scenario_inputs.py` | `swmm-model-generation.md` |
-| `swmm_output_parser.py`, `process_simulation.py` | `output-processing.md` |
-| `conftest.py`, `utils_for_testing.py` | `triton-test-suite.md` |
-| `system.py`, `analysis.py`, `scenario.py` | `CLAUDE.md` |
+| `workflow.py` | `snakemake-specialist.md` |
+| `execution.py`, `resource_management.py` | `snakemake-specialist.md` |
+| `system.py`, `analysis.py`, `scenario.py` | `.prompts/architecture.md` |
+| `config/` | `.prompts/architecture.md` |
 
 ### `update_docs_check.sh`
 

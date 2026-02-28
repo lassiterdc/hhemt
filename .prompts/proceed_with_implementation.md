@@ -16,7 +16,7 @@ The requested work (whether by subagent or current conversation) should:
    - Review related scripts that will be modified, and any scripts that depend on or are depended on by those scripts
    - If the implementation relies on existing test functions, review them
    - If part of a multiphase workflow, review the preceding planning doc (potentially in an `implemented/` folder)
-4. Read `.prompts/philosophy.md` and check for discrepancies between the plan and philosophy. If discrepancies exist, explain them with direct quotes from `.prompts/philosophy.md` and provide recommendations on how to handle each.
+4. Read `.prompts/conventions.md` and check for discrepancies between the plan and philosophy. If discrepancies exist, explain them with direct quotes from `.prompts/conventions.md` and provide recommendations on how to handle each.
 5. If the plan is associated with a master plan, review the master planning document. If there are discrepancies, report them with direct quotes from both documents and judge which is more likely to be stale.
 6. Return a **preflight report** with findings from steps 1–5. The report must include:
    - Model and/or subagents used

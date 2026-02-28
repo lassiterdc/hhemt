@@ -19,8 +19,8 @@ Produce a clear, repo-aware plan that:
 
 Review enough context to produce a grounded plan:
 
-1. `.prompts/philosophy.md` for project rules, development philosophy, and terminology
-2. `CLAUDE.md` for architecture, key modules, and runner script patterns
+1. `.prompts/conventions.md` for project rules, development philosophy, and terminology
+2. `.prompts/architecture.md` for architecture, key modules, and runner script patterns
 3. Existing implementation patterns in `src/` and related tests in `tests/`
 4. Any directly referenced files from the user request
 
@@ -83,7 +83,7 @@ Use **exactly** these headings, in this order:
    - Note: smoke tests are only relevant for local runs — SLURM-specific changes require HPC testing coordinated with the developer
 
 7. `## Documentation and Tracker Updates`
-   - Docs that may need updates (e.g., `.prompts/philosophy.md`, `CLAUDE.md`, agent docs, planning trackers)
+   - Docs that may need updates (e.g., `.prompts/conventions.md`, `.prompts/architecture.md`, agent docs, planning trackers)
    - Conditions that trigger those updates
 
 8. `## Decisions Needed from User`
@@ -117,7 +117,7 @@ After drafting the plan, perform and report this check:
    - Are all sections necessary?
    - If any section can be removed without losing important context or actionable guidance, remove it.
 
-3. **Alignment with `.prompts/philosophy.md`**
+3. **Alignment with `.prompts/conventions.md`**
    - Does the approach align with the design philosophy of this project?
    - Are there adjustments needed to abide by good software development practices?
 

@@ -12,17 +12,17 @@ Review any related planning documents and verify that success criteria were met 
 
 ## Step 2: Check Against Philosophy
 
-Read `.prompts/philosophy.md` and consider whether the changes align with the project philosophy.
+Read `.prompts/conventions.md` and consider whether the changes align with the project philosophy.
 
 - Consider implications for the entirety of each script you touched — this is an opportunity to ensure the entire script, not just recently implemented work, abides by the project philosophy
-- If there are discrepancies, explain them with direct quotes from `.prompts/philosophy.md`
-- Include a numerically indexed table covering each item across all sections of philosophy.md, with columns for: whether it was honored, exceptions, issues, and recommendations
+- If there are discrepancies, explain them with direct quotes from `.prompts/conventions.md`
+- Include a numerically indexed table covering each item across all sections of conventions.md, with columns for: whether it was honored, exceptions, issues, and recommendations
 
-## Step 2b: Check CLAUDE.md Freshness
+## Step 2b: Check Architecture Doc Freshness
 
-Review `CLAUDE.md` and verify that any architecture, module, or pattern described there still matches the current codebase as changed by this implementation.
+Review `.prompts/architecture.md` and verify that any architecture, module, or pattern described there still matches the current codebase as changed by this implementation.
 
-- Check: do module names, class names, file paths, and config field descriptions in CLAUDE.md still match the code?
+- Check: do module names, class names, file paths, and config field descriptions still match the code?
 - Check: are any "Gotchas" now resolved or newly relevant?
 - Check: should any new runner scripts, modules, or execution modes be documented?
 - If updates are needed, include them in the commit (or as a separate chore commit if substantial)
@@ -35,7 +35,7 @@ Report back with findings organized into four sections:
 
 **`implementation vs plan`** — how the implementation compares to the planning document(s)
 
-**`implementation vs philosophy`** — how the implementation compares to `.prompts/philosophy.md`
+**`implementation vs philosophy`** — how the implementation compares to `.prompts/conventions.md`
 
 **`input needed`** — a bulleted list of all decisions or questions needing input, with options and recommendations for each
 

@@ -214,7 +214,7 @@ The following sections are currently in CLAUDE.md but belong in agent files once
 
 ## Future Consideration: `architecture.md` Modular Approach
 
-**Idea**: Extract all architecture content from CLAUDE.md into a dedicated `.prompts/architecture.md`, then hook it from both CLAUDE.md (via the "Read before beginning" directive) and `philosophy.md`. This would:
+**Idea**: Extract all architecture content from CLAUDE.md into a dedicated `.prompts/architecture.md`, then hook it from both CLAUDE.md (via the "Read before beginning" directive) and `conventions.md`. This would:
 - Keep CLAUDE.md focused on tooling, commands, and quick-reference material
 - Make architecture.md independently loadable for deep dives
 - Reduce CLAUDE.md length significantly
