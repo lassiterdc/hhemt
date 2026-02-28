@@ -43,11 +43,7 @@ Do not make changes to any document other than the debugging report. Explicit ap
 
 ### Step 1: Identify Execution Mode and System Setup
 
-Read `cfg_analysis.yaml` and `cfg_system.yaml`:
-- Execution mode: `multi_sim_run_method` (local, batch_job, 1_job_many_srun_tasks)
-- Run mode: `run_mode` (serial, openmp, mpi, gpu, hybrid)
-- Model types enabled: Check `cfg_system.yaml` for `toggle_triton_model`, `toggle_tritonswmm_model`, `toggle_swmm_model`
-- **For sensitivity studies**: Check `sensitivity_analysis_definition.csv` to understand which parameters vary across sub-analyses (includes run_mode, n_mpi_procs, n_gpus, n_omp_threads, partition, etc.)
+Read `cfg_analysis.yaml` and `cfg_system.yaml` to understand the execution context (`multi_sim_run_method`, `run_mode`, enabled model types). **For sensitivity studies**: also check `sensitivity_analysis_definition.csv` to understand which parameters vary across sub-analyses (includes run_mode, n_mpi_procs, n_gpus, n_omp_threads, partition, etc.).
 
 ### Step 2: Check Master Workflow Log
 
@@ -357,25 +353,12 @@ If prior reports exist, add a section:
 
 ### Step 9 (if failures are encountered):
 
-- Write a plan to plan to debug the failures to docs/planning/active/bugs/fixing_gpu_workflow.md
-   - Prefix the filename with the current date (YYYY-MM-DD) followed by a concise yet descriptive name for the file
-- If other debugging plans inside of docs/planning/active/bugs/ seem related, analyze those plans to see:
-   1. If they are current
-      - stale plans should either be moved to an 'archive' subdirectory (docs/planning/active/bugs/archive) or refreshed
-      - completed plans should be moved to a 'fixed' subdirectory, docs/planning/active/bugs/fixed
-      - Make recommendations about how to handle related debugging plans if encountered. Do not proceed with any changes without explicit approval from the developer.
-- If empirical tests are needed on the HPC system to verify that hypothesized fixes will work, create a section of the planning document called "Empirical HPC Testing" with copy-pasteable bash code chunks that the user will run, followed by empty bash code chunks like shown below:
-
-***Test:**
-```bash
-{COPY-PASTEABLE CODE CHUNK FOR USER TO RUN}
-```
-
-**Output:**
-```bash
-
-```
-
+- Write a bug-fix plan to `docs/planning/bugs/YYYY-MM-DD_concise-descriptive-name.md`
+- Check other plans in `docs/planning/bugs/` for related issues:
+  - Stale plans → move to `docs/planning/bugs/shelved/` or refresh
+  - Completed plans → move to `docs/planning/bugs/completed/`
+  - Make recommendations; do not move/modify without explicit developer approval
+- If empirical HPC tests are needed, follow the **Empirical testing** protocol in `conventions.md` (HPC debugging protocol section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
 - Update the debugging report to reference this plan
 
 ## Output Format
@@ -408,7 +391,7 @@ If diagnosis is incomplete, request specific files:
 - Simulation files or folders: `sims/{event_id}/` (exclude `out_*` directories)
 - Configuration files from subanalyses
 
-**Then write the debugging report as described in Step 7.**
+**Then write the debugging report as described in Step 8.**
 
 ---
 

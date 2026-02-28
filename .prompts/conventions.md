@@ -163,6 +163,17 @@ Cluster-specific values (partition names, GPU hardware strings, NIC policy env v
 **Track utility candidates in `docs/planning/utility_package_candidates.md`.**
 Do not extract immediately — track for batch evaluation.
 
+### Planning document lifecycle
+
+Planning documents live in `docs/planning/` organized by type (`bugs/`, `features/`, `refactors/`). Each type directory has a `completed/` subdirectory; a `shelved/` subdirectory is created as needed.
+
+- **Active work**: document lives directly in the type directory (e.g., `docs/planning/bugs/my_fix.md`)
+- **Completed**: move to `completed/` within the same type directory (e.g., `docs/planning/bugs/completed/my_fix.md`)
+- **Deprioritized/blocked**: move to `shelved/` within the same type directory (create if it doesn't exist)
+- **No longer relevant**: delete
+
+See `docs/planning/README.md` for the full structure.
+
 ### Code style
 
 - **Python**: ≥3.10, target 3.12+
@@ -185,13 +196,24 @@ Prefer **GeoJSON** over Shapefile format for new spatial inputs:
 - **Log-based completion checks**: prefer log-based checks over file existence checks (see universal principle above; `_already_written()` is the toolkit implementation)
 - **SLURM-specific tests require HPC**: do not attempt to mock SLURM behavior locally; coordinate HPC testing with the developer directly
 
+**Smoke tests** — apply judgment to determine which tests, if any, are warranted for a given implementation. Run in the order listed; each test depends on lower-level functionality being correct.
+
+| Test | Command | What it covers | Run when |
+|------|---------|---------------|----------|
+| PC_01 | `pytest tests/test_PC_01_singlesim.py -v` | Single simulation end-to-end: scenario setup, serial execution, output processing for all enabled model types | Touching scenario preparation, single-sim execution, output processing, or any code in the scenario→run→process pipeline |
+| PC_02 | `pytest tests/test_PC_02_multisim.py -v` | Multi-simulation concurrent execution: parallel scenario prep, concurrent sim launch, timeseries processing | Touching concurrent execution, `LocalConcurrentExecutor`, or multi-sim orchestration in `analysis.py` |
+| PC_04 | `pytest tests/test_PC_04_multisim_with_snakemake.py -v` | Snakemake workflow generation and local execution: Snakefile generation, rule structure, flags, full local Snakemake run | Touching `workflow.py`, Snakefile templates, rule generation, or any change that affects how Snakemake orchestrates local runs |
+| PC_05 | `pytest tests/test_PC_05_sensitivity_analysis_with_snakemake.py -v` | Sensitivity analysis workflow: sub-analysis Snakefile generation, master Snakefile generation, full sensitivity run via Snakemake | Touching `sensitivity_analysis.py`, sensitivity-specific workflow generation, or sub-analysis orchestration. **Do NOT impose artificial timeouts — legitimately takes 12-15 minutes** |
+
+Not every implementation requires smoke tests. Pure documentation changes, planning doc updates, or changes isolated to HPC-only paths (SLURM submission, srun flags) do not need local smoke tests — coordinate HPC-specific validation with the developer directly.
+
 ### HPC debugging protocol
 
 *The principle (don't guess at remote systems) is universal; the log paths below are toolkit-specific.*
 
 You cannot execute commands on Frontier, UVA, or any HPC cluster. Do not guess at HPC runtime behavior or propose fixes based on speculation.
 
-**Step 1: Exhaust available log files first.** Before requesting anything from the developer, check whether the answer is already in logs produced during the failed run. Key sources: TRITON's `output/log.out` (compute config, MPI/GPU setup), runner script logs (`logs/run_{model_type}.log`, includes full SLURM environment from `log_workflow_context()`), Snakemake SLURM logs (`.snakemake/slurm_logs/`), and SBATCH wrapper logs (`logs/_slurm_logs/workflow_batch_*_%j.out`). Ask the developer to share relevant log files before requesting HPC commands.
+**Step 1: Exhaust available log files first.** Before requesting anything from the developer, check whether the answer is already in logs produced during the failed run. Key sources: master workflow log (`logs/tmux_session_YYYYMMDD_HHMMSS.log`), runner script logs (`logs/sims/{rule}_{event_iloc}.log` and model runtime logs `logs/sims/model_{model_type}_evt{event_iloc}.log`), Snakemake SLURM logs (`.snakemake/slurm_logs/`). Ask the developer to share relevant log files before requesting HPC commands. See `debugging_hpc_analysis.md` for the full log taxonomy.
 
 **Step 2: Empirical testing when logs are insufficient.** When log files don't answer the question, coordinate tests with the developer:
 1. Identify the specific unknowns.

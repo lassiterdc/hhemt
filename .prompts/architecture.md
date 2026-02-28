@@ -156,4 +156,10 @@ Active agents in `.claude/agents/`:
 - `snakemake-specialist.md` — Snakemake internals, SLURM executor plugin, workflow debugging, HPC job resource mapping
 - `triton-specialist.md` — TRITON build system, Kokkos backends, SWMM coupling mechanics, compute config selection
 
-Eight previous agents are archived in `.claude/agents_archive/`. They are not active. See `docs/planning/active/refactors/agent_files_audit.md` for context.
+**When to invoke a specialist** (subject to the "always confirm before spawning subagents" rule in `conventions.md`):
+- The task requires deep knowledge of Snakemake DAG scheduling, SLURM executor internals, or TRITON build/Kokkos/coupling mechanics — areas where the specialist's curated startup reads and domain knowledge outperform inline research.
+- The investigation would require reading large source files (`workflow.py` is ~3400 lines; TRITON headers are extensive) that would flood the main context.
+- The task is pure research with no code to write, and parallelizing the investigation with a subagent is more efficient.
+
+
+Eight previous agents are archived in `.claude/agents_archive/`. They are not active. See `docs/planning/refactors/agent_files_audit.md` for context.

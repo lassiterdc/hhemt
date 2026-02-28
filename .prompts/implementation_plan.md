@@ -26,14 +26,12 @@ Review enough context to produce a grounded plan:
 
 ## Plan Output Location (Default)
 
-By default, write the implementation plan to:
+By default, write the implementation plan to the appropriate subdirectory:
+- `docs/planning/features/`
+- `docs/planning/refactors/`
+- `docs/planning/bugs/`
 
-`docs/planning/active/`
-
-Use a suitable subdirectory when applicable:
-- `docs/planning/active/features/`
-- `docs/planning/active/refactors/`
-- `docs/planning/active/bugs/`
+When complete, move the plan to the `completed/` subdirectory within the same type directory (e.g., `docs/planning/bugs/completed/`).
 
 Use a descriptive snake_case filename ending in `.md`.
 

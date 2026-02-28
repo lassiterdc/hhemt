@@ -10,11 +10,11 @@ Review any related planning documents and verify that success criteria were met 
 - If a master plan document is associated with this implementation, verify its freshness as it relates to changes made here
 - Summarize issues in a table
 
-## Step 2: Check Against Philosophy
+## Step 2: Check Against Conventions
 
-Read `.prompts/conventions.md` and consider whether the changes align with the project philosophy.
+Read `.prompts/conventions.md` and consider whether the changes align with the project conventions.
 
-- Consider implications for the entirety of each script you touched — this is an opportunity to ensure the entire script, not just recently implemented work, abides by the project philosophy
+- Consider implications for the entirety of each script you touched — this is an opportunity to ensure the entire script, not just recently implemented work, abides by the project conventions
 - If there are discrepancies, explain them with direct quotes from `.prompts/conventions.md`
 - Include a numerically indexed table covering each item across all sections of conventions.md, with columns for: whether it was honored, exceptions, issues, and recommendations
 
@@ -35,9 +35,11 @@ Report back with findings organized into four sections:
 
 **`implementation vs plan`** — how the implementation compares to the planning document(s)
 
-**`implementation vs philosophy`** — how the implementation compares to `.prompts/conventions.md`
+**`implementation vs conventions`** — how the implementation compares to `.prompts/conventions.md`
 
 **`input needed`** — a bulleted list of all decisions or questions needing input, with options and recommendations for each
+
+**`implementation plan status`** — Describe the completion status of the primary planning document that was implemented. Recommend if the planning document needs to be refreshed and/or is ready to be closed (see `.prompts/conventions.md` for guidance on planning document organization)
 
 Note: scope creep may occur as tangential issues are discovered during implementation. Consider whether multiple commits are recommended. If so, report under **`proposed commits`** with subheaders that would become the top commit message, followed by a table of files included in each commit and a summary of the changes in each file.
 
