@@ -25,7 +25,7 @@ import socket
 from pathlib import Path
 from typing import Literal, TYPE_CHECKING, Any
 
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -88,6 +88,88 @@ class SnakemakeWorkflowBuilder:
         `snakemake` console script is not on PATH.
         """
         return [sys.executable, "-m", "snakemake"]
+
+    def _check_and_clear_snakemake_lock(self, snakefile_path: Path, dry_run: bool, verbose: bool = True) -> None:
+        """Check for a stale Snakemake lock and prompt the user to clear it.
+
+        Snakemake leaves lock files in .snakemake/locks/ when a workflow is
+        killed (e.g. SLURM time limit). If not cleared before the next run,
+        Snakemake exits immediately with LockException, wasting any queued
+        compute allocation.
+
+        Skipped when dry_run=True — dry runs don't submit anything, so a lock
+        is not dangerous, and the real submission call will check again.
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile (used to build the --unlock command).
+        dry_run : bool
+            If True, skip the lock check entirely.
+        verbose : bool
+            If True, print status messages.
+
+        Raises
+        ------
+        WorkflowError
+            If lock files are found and the user declines to unlock, or if
+            snakemake --unlock itself fails.
+        """
+        if dry_run:
+            return
+        locks_dir = self.analysis_paths.analysis_dir / ".snakemake" / "locks"
+        lock_files = list(locks_dir.glob("*.lock")) if locks_dir.exists() else []
+        if not lock_files:
+            return
+
+        lock_names = ", ".join(f.name for f in lock_files)
+        print(
+            f"[Snakemake] WARNING: Stale lock files detected in {locks_dir}:",
+            flush=True,
+        )
+        print(f"[Snakemake]   {lock_names}", flush=True)
+        print(
+            "[Snakemake] This usually means a previous job was killed before Snakemake "
+            "could clean up.\n"
+            "[Snakemake] Only unlock if no other Snakemake process is currently running "
+            "in this directory.",
+            flush=True,
+        )
+
+        response = input("[Snakemake] Run snakemake --unlock and proceed? [y/N]: ").strip()
+        if response.lower() != "y":
+            manual_cmd = f"{sys.executable} -m snakemake --unlock --snakefile {snakefile_path}"
+            raise WorkflowError(
+                phase="pre-submission lock check",
+                return_code=1,  # sentinel: user aborted (WorkflowError requires int)
+                stderr=(
+                    "Workflow submission aborted. If no other Snakemake process is "
+                    f"running, unlock manually and retry:\n  {manual_cmd}"
+                ),
+            )
+
+        unlock_cmd = self._get_snakemake_base_cmd() + [
+            "--unlock",
+            "--snakefile",
+            str(snakefile_path),
+        ]
+        if verbose:
+            print(f"[Snakemake] Running: {' '.join(unlock_cmd)}", flush=True)
+
+        result = subprocess.run(
+            unlock_cmd,
+            cwd=str(self.analysis_paths.analysis_dir),
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise WorkflowError(
+                phase="snakemake --unlock",
+                return_code=result.returncode,
+                stderr=result.stderr,
+            )
+        if verbose:
+            print("[Snakemake] Unlock successful. Proceeding.", flush=True)
 
     def _get_config_args(self, analysis_config_yaml: Path | None = None) -> str:
         """
@@ -154,16 +236,12 @@ class SnakemakeWorkflowBuilder:
             Formatted resources block
         """
         if partition is None and (self.cfg_analysis.multi_sim_run_method != "local"):
-            raise ValueError(
-                "hpc partition must be set when generating SLURM resources"
-            )
+            raise ValueError("hpc partition must be set when generating SLURM resources")
         partition_name = partition
         if gpus_total > 0 and gpus_per_node_config < 1:
             raise ValueError("hpc_gpus_per_node must be set when requesting GPUs")
 
-        nodes_from_gpu = self._calculate_nodes_for_gpus(
-            gpus_total, gpus_per_node_config
-        )
+        nodes_from_gpu = self._calculate_nodes_for_gpus(gpus_total, gpus_per_node_config)
         sim_nodes = max(nodes, nodes_from_gpu)
         gpus_per_node = math.ceil(gpus_total / sim_nodes) if gpus_total > 0 else 0
 
@@ -188,7 +266,7 @@ class SnakemakeWorkflowBuilder:
 
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":
-                block += f',\n        gpu={gpus_total}'
+                block += f",\n        gpu={gpus_total}"
                 if gpu_hardware:
                     block += f',\n        gpu_model="{gpu_hardware}"'
             else:
@@ -282,9 +360,7 @@ class SnakemakeWorkflowBuilder:
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
         gpus_per_node_config = self.cfg_analysis.hpc_gpus_per_node or 0
-        gpu_alloc_mode = (
-            self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
-        )
+        gpu_alloc_mode = self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
@@ -432,9 +508,7 @@ rule prepare_scenario:
 
         # Add simulation rules (separate rules per model type)
         sim_input = (
-            "_status/sims/scenario_{event_iloc}_prepared.flag"
-            if prepare_scenarios
-            else "_status/setup_complete.flag"
+            "_status/sims/scenario_{event_iloc}_prepared.flag" if prepare_scenarios else "_status/setup_complete.flag"
         )
 
         # Determine which model types are enabled
@@ -538,9 +612,7 @@ rule process_{model_type}:
                 flag_pattern = f"{model_type}_{{event_iloc}}_processed.flag"
             else:
                 flag_pattern = f"{model_type}_{{event_iloc}}_complete.flag"
-            consolidate_inputs.append(
-                f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)'
-            )
+            consolidate_inputs.append(f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)')
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
@@ -566,9 +638,7 @@ rule consolidate:
 '''
         return snakefile_content
 
-    def generate_snakemake_config(
-        self, mode: Literal["local", "slurm", "single_job"]
-    ) -> dict:
+    def generate_snakemake_config(self, mode: Literal["local", "slurm", "single_job"]) -> dict:
         """
         Generate dynamic snakemake config based on analysis_config and system_config.
 
@@ -597,9 +667,9 @@ rule consolidate:
             "keep-going": True,
             "rerun-triggers": ["mtime", "input"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -620,9 +690,9 @@ rule consolidate:
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
+            assert isinstance(max_concurrent, int), (
+                "hpc_max_simultaneous_sims is required for generate_snakemake_config"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -649,9 +719,7 @@ rule consolidate:
 
         return config
 
-    def write_snakemake_config(
-        self, config: dict, mode: Literal["local", "slurm", "single_job"]
-    ) -> Path:
+    def write_snakemake_config(self, config: dict, mode: Literal["local", "slurm", "single_job"]) -> Path:
         """
         Write snakemake config to analysis directory.
 
@@ -682,9 +750,7 @@ rule consolidate:
 
         return config_dir
 
-    def _generate_single_job_submission_script(
-        self, snakefile_path: Path, config_dir: Path
-    ) -> Path:
+    def _generate_single_job_submission_script(self, snakefile_path: Path, config_dir: Path) -> Path:
         """
         Generate SLURM batch script that runs Snakemake.
 
@@ -706,28 +772,20 @@ rule consolidate:
         """
         import TRITON_SWMM_toolkit.utils as ut
 
-        batch_log_path = (
-            self.analysis.analysis_paths.analysis_log_directory / "_slurm_logs"
-        )
+        batch_log_path = self.analysis.analysis_paths.analysis_log_directory / "_slurm_logs"
         batch_log_path.mkdir(exist_ok=True, parents=True)
         # Get per-simulation resource requirements (without requiring totals)
-        sim_resources = (
-            self.analysis._resource_manager._get_simulation_resource_requirements()
-        )
+        sim_resources = self.analysis._resource_manager._get_simulation_resource_requirements()
 
         # Get total nodes from config (user specifies directly)
         total_nodes = self.cfg_analysis.hpc_total_nodes
-        assert isinstance(
-            total_nodes, int
-        ), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+        assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
 
         # Get job duration
         job_time = self.cfg_analysis.hpc_total_job_duration_min
         assert isinstance(job_time, int), "hpc_total_job_duration_min required"
 
-        assert (
-            self.analysis.in_slurm
-        ), "_generate_submission_script only makes sense to run in a SLURM environment."
+        assert self.analysis.in_slurm, "_generate_submission_script only makes sense to run in a SLURM environment."
 
         # Convert to HH:MM:SS format
         hours = job_time // 60
@@ -737,13 +795,9 @@ rule consolidate:
         additional_sbatch_args = ""
         if self.cfg_analysis.additional_SBATCH_params:
             additional_sbatch_args = "#SBATCH "
-            additional_sbatch_args += "\n#SBATCH ".join(
-                self.cfg_analysis.additional_SBATCH_params
-            )
+            additional_sbatch_args += "\n#SBATCH ".join(self.cfg_analysis.additional_SBATCH_params)
 
-        modules = (
-            self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-        )
+        modules = self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         module_load_cmd = ""
         if modules:
             module_load_cmd = f"module load {modules}"
@@ -818,9 +872,9 @@ echo ""
 
         if n_gpus_per_sim > 0:
             gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
-            assert isinstance(
-                gpus_per_node, int
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            assert isinstance(gpus_per_node, int), (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self.system.cfg_system.gpu_hardware
             if gpu_hardware:
@@ -906,16 +960,12 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             config_dir = self.write_snakemake_config(config, mode="local")
 
             if verbose:
-                print(
-                    f"[Snakemake] Using dynamic config from: {config_dir}", flush=True
-                )
+                print(f"[Snakemake] Using dynamic config from: {config_dir}", flush=True)
 
             # Create log directory and file for Snakemake output
             logs_dir = self.analysis_paths.analysis_log_directory
             logs_dir.mkdir(parents=True, exist_ok=True)
-            logfile_name = (
-                "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
-            )
+            logfile_name = "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
             snakemake_logfile = logs_dir / logfile_name
 
             if verbose:
@@ -934,15 +984,16 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             # Explicitly pass --cores for multicore local runs
             # (ensures CLI-level cores setting when profile behavior varies)
             local_cores = self.cfg_analysis.local_cpu_cores_for_workflow
-            assert isinstance(
-                local_cores, int
-            ), "local_cpu_cores_for_workflow must be specified for local runs"
+            assert isinstance(local_cores, int), "local_cpu_cores_for_workflow must be specified for local runs"
             if local_cores > 1:
                 cmd_args.extend(["--cores", str(local_cores)])
 
             # Add dry-run flag last
             if dry_run:
                 cmd_args.append("--dry-run")
+
+            # Check for stale lock before running Snakemake locally (skipped on dry runs)
+            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=dry_run, verbose=verbose)
 
             with open(snakemake_logfile, "w") as log_f:
                 result = subprocess.run(
@@ -958,9 +1009,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 print(f"[Snakemake] command: \n     {cmd}")
 
             if result.returncode != 0:
-                error_msg = (
-                    f"Snakemake workflow failed.\nSee logs for {snakefile_path.parent}"
-                )
+                error_msg = f"Snakemake workflow failed.\nSee logs for {snakefile_path.parent}"
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
@@ -1026,9 +1075,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS)
         hpc_cpus_per_node = getattr(analysis.cfg_analysis, "hpc_cpus_per_node", None)
         hpc_total_nodes = getattr(analysis.cfg_analysis, "hpc_total_nodes", None)
-        if not isinstance(hpc_cpus_per_node, int) or not isinstance(
-            hpc_total_nodes, int
-        ):
+        if not isinstance(hpc_cpus_per_node, int) or not isinstance(hpc_total_nodes, int):
             if verbose:
                 print(
                     "[Snakemake] Skipping single-job dry-run validation: "
@@ -1126,9 +1173,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             # Create log directory and file for Snakemake output
             logs_dir = self.analysis_paths.analysis_log_directory
             logs_dir.mkdir(parents=True, exist_ok=True)
-            logfile_name = (
-                "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
-            )
+            logfile_name = "snakemake_master_dry_run.log" if dry_run else "snakemake_master.log"
             snakemake_logfile = logs_dir / logfile_name
 
             # Create SLURM efficiency report directory and set timestamped filename
@@ -1136,7 +1181,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
 
             efficiency_report_dir = logs_dir / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             if verbose:
@@ -1286,7 +1333,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
 
             efficiency_report_dir = logs_dir / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = f"slurm_efficiency_report_dry_run_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_dry_run_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             cmd_args = self._get_snakemake_base_cmd() + [
@@ -1316,10 +1365,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 )
 
             if result.returncode != 0:
-                error_msg = (
-                    "Snakemake batch_job dry run failed. "
-                    f"See logs for {snakefile_path.parent}"
-                )
+                error_msg = f"Snakemake batch_job dry run failed. See logs for {snakefile_path.parent}"
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
@@ -1332,9 +1378,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                 }
 
             if verbose:
-                print(
-                    "[Snakemake] Batch-job dry run completed successfully", flush=True
-                )
+                print("[Snakemake] Batch-job dry run completed successfully", flush=True)
 
             return {
                 "success": True,
@@ -1396,9 +1440,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         last_state = None
 
         if verbose:
-            print(
-                f"[Snakemake] Waiting for SLURM job {job_id} to complete...", flush=True
-            )
+            print(f"[Snakemake] Waiting for SLURM job {job_id} to complete...", flush=True)
 
         while True:
             # Check timeout
@@ -1511,14 +1553,15 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
                     flush=True,
                 )
 
+            # Check for stale lock before consuming a SLURM allocation
+            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=False, verbose=verbose)
+
             # Generate single_job profile
             config = self.generate_snakemake_config(mode="single_job")
             config_dir = self.write_snakemake_config(config, mode="single_job")
 
             # Generate submission script
-            script_path = self._generate_single_job_submission_script(
-                snakefile_path, config_dir
-            )
+            script_path = self._generate_single_job_submission_script(snakefile_path, config_dir)
 
             if verbose:
                 print(
@@ -1665,9 +1708,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
 
             # Long-duration walltime for orchestration job
             job_time = self.cfg_analysis.hpc_total_job_duration_min
-            assert isinstance(
-                job_time, int
-            ), "hpc_total_job_duration_min required for multi_sim_run_method='batch_job'"
+            assert isinstance(job_time, int), "hpc_total_job_duration_min required for multi_sim_run_method='batch_job'"
 
             hours = job_time // 60
             minutes = job_time % 60
@@ -1689,21 +1730,15 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             # Logs for sbatch script stdout/stderr
             import TRITON_SWMM_toolkit.utils as ut
 
-            batch_log_path = (
-                self.analysis.analysis_paths.analysis_log_directory / "_slurm_logs"
-            )
+            batch_log_path = self.analysis.analysis_paths.analysis_log_directory / "_slurm_logs"
             batch_log_path.mkdir(exist_ok=True, parents=True)
 
             additional_sbatch_args = ""
             if self.cfg_analysis.additional_SBATCH_params:
                 additional_sbatch_args = "#SBATCH "
-                additional_sbatch_args += "\n#SBATCH ".join(
-                    self.cfg_analysis.additional_SBATCH_params
-                )
+                additional_sbatch_args += "\n#SBATCH ".join(self.cfg_analysis.additional_SBATCH_params)
 
-            modules = (
-                self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-            )
+            modules = self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
             module_load_cmd = ""
             if modules:
                 module_load_cmd = f"module load {modules}"
@@ -1741,17 +1776,14 @@ echo "=========================================="
 
             account_directive = ""
             if self.cfg_analysis.hpc_account:
-                account_directive = (
-                    f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
-                )
+                account_directive = f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
 
             # Create SLURM efficiency report directory and set timestamped filename
-            efficiency_report_dir = (
-                self.analysis.analysis_paths.analysis_log_directory
-                / "slurm_efficiency_report"
-            )
+            efficiency_report_dir = self.analysis.analysis_paths.analysis_log_directory / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             # The orchestration job runs snakemake; snakemake then submits worker jobs via executor=slurm
@@ -1834,9 +1866,7 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                     import datetime
 
                     # Note: batch_job mode is deprecated; use tmux mode instead
-                    self.analysis.log.workflow_submission_time.set(
-                        datetime.datetime.now().isoformat()
-                    )
+                    self.analysis.log.workflow_submission_time.set(datetime.datetime.now().isoformat())
                     self.analysis.log.workflow_submission_mode.set("batch_job")
 
             if submit_result.returncode != 0:
@@ -1934,11 +1964,7 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
             module_load_prefix = self._get_module_load_prefix()
 
             # Check if tmux is available (with module load on HPC)
-            tmux_check_cmd = (
-                f"{module_load_prefix}which tmux"
-                if module_load_prefix
-                else "which tmux"
-            )
+            tmux_check_cmd = f"{module_load_prefix}which tmux" if module_load_prefix else "which tmux"
             tmux_check = subprocess.run(
                 ["bash", "-c", tmux_check_cmd],
                 capture_output=True,
@@ -1949,6 +1975,9 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                     "tmux is required for tmux workflow mode but not found in PATH. "
                     "Please install tmux or use multi_sim_run_method='local'."
                 )
+
+            # Check for stale lock before launching tmux session
+            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=False, verbose=verbose)
 
             # Generate unique session name
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1968,34 +1997,26 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                 )
 
             # Build Snakemake command with absolute paths
-            config_dir = (
-                self.analysis_paths.analysis_dir / ".snakemake_profile" / "slurm"
-            )
+            config_dir = self.analysis_paths.analysis_dir / ".snakemake_profile" / "slurm"
 
             # Create SLURM efficiency report directory and set timestamped filename
             from TRITON_SWMM_toolkit import utils as ut
 
-            efficiency_report_dir = (
-                self.analysis.analysis_paths.analysis_log_directory
-                / "slurm_efficiency_report"
-            )
+            efficiency_report_dir = self.analysis.analysis_paths.analysis_log_directory / "slurm_efficiency_report"
             efficiency_report_dir.mkdir(parents=True, exist_ok=True)
-            efficiency_report_filename = f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            efficiency_report_filename = (
+                f"slurm_efficiency_report_{ut.current_datetime_string(filepath_friendly=True)}.csv"
+            )
             efficiency_report_path = efficiency_report_dir / efficiency_report_filename
 
             # Build module load commands for inside tmux session (reuse the same modules)
             # This ensures the Snakemake process has access to required modules
-            module_load_cmd = (
-                module_load_prefix.rstrip(" && ") if module_load_prefix else ""
-            )
+            module_load_cmd = module_load_prefix.rstrip(" && ") if module_load_prefix else ""
 
             # Build the full command that will run inside tmux
             # Write output to a timestamped log file for debugging
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            tmux_log = (
-                self.analysis_paths.analysis_log_directory
-                / f"tmux_session_{timestamp}.log"
-            )
+            tmux_log = self.analysis_paths.analysis_log_directory / f"tmux_session_{timestamp}.log"
 
             # Create THE workflow script - this is what actually gets executed
             workflow_script = self.analysis_paths.analysis_dir / "run_workflow_tmux.sh"
@@ -2099,9 +2120,7 @@ exit $snakemake_status
             workflow_script.chmod(0o755)
 
             # Create detached tmux session (with module load on HPC)
-            new_session_cmd = (
-                f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
-            )
+            new_session_cmd = f"{module_load_prefix}tmux new-session -d -s {session_name} bash"
 
             tmux_result = subprocess.run(
                 ["bash", "-c", new_session_cmd],
@@ -2134,13 +2153,9 @@ exit $snakemake_status
 
             if send_cmd_result.returncode != 0:
                 # Clean up the session (with module load on HPC)
-                kill_session_cmd = (
-                    f"{module_load_prefix}tmux kill-session -t {session_name}"
-                )
+                kill_session_cmd = f"{module_load_prefix}tmux kill-session -t {session_name}"
                 subprocess.run(["bash", "-c", kill_session_cmd], capture_output=True)
-                error_msg = (
-                    f"Failed to send command to tmux session: {send_cmd_result.stderr}"
-                )
+                error_msg = f"Failed to send command to tmux session: {send_cmd_result.stderr}"
                 if verbose:
                     print(f"[Snakemake] ERROR: {error_msg}", flush=True)
                 return {
@@ -2166,9 +2181,7 @@ exit $snakemake_status
             self.analysis.log.tmux_session_name.set(session_name)
             if snakemake_pid:
                 self.analysis.log.snakemake_pid.set(snakemake_pid)
-            self.analysis.log.workflow_submission_time.set(
-                datetime.datetime.now().isoformat()
-            )
+            self.analysis.log.workflow_submission_time.set(datetime.datetime.now().isoformat())
             self.analysis.log.workflow_submission_mode.set("tmux")
             self.analysis.log.workflow_submission_node.set(submission_node)
 
@@ -2257,16 +2270,11 @@ exit $snakemake_status
         str
             Shell command prefix to load modules, or empty string if not on HPC
         """
-        modules_str = (
-            self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-        )
+        modules_str = self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
 
         # If we're in SLURM or using batch_job mode, always try to load tmux
         # Even if no other modules are specified, tmux might not be in default PATH
-        if (
-            self.analysis.in_slurm
-            or self.cfg_analysis.multi_sim_run_method == "batch_job"
-        ):
+        if self.analysis.in_slurm or self.cfg_analysis.multi_sim_run_method == "batch_job":
             if modules_str:
                 # modules_str is a space-separated string, e.g., "gcc/11.2.0 openmpi/4.1.1"
                 return f"module purge && module load tmux {modules_str} && "
@@ -2319,9 +2327,7 @@ exit $snakemake_status
                     return None
 
                 child_pids = [
-                    int(pid.strip())
-                    for pid in children_result.stdout.strip().split("\n")
-                    if pid.strip().isdigit()
+                    int(pid.strip()) for pid in children_result.stdout.strip().split("\n") if pid.strip().isdigit()
                 ]
 
                 # Check each child process
@@ -2376,9 +2382,7 @@ exit $snakemake_status
         try:
             while True:
                 # Check if session still exists (with module load on HPC)
-                has_session_cmd = (
-                    f"{module_load_prefix}tmux has-session -t {session_name}"
-                )
+                has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
                 check_result = subprocess.run(
                     ["bash", "-c", has_session_cmd],
                     capture_output=True,
@@ -2823,7 +2827,7 @@ onerror:
 
         snakefile_content += f'''rule all:
     input: 
-        {', '.join([f'"{flag}"' for flag in consolidation_flags])},
+        {", ".join([f'"{flag}"' for flag in consolidation_flags])},
         "_status/master_consolidation_complete.flag"
 
 rule setup:
@@ -2831,14 +2835,16 @@ rule setup:
     log: "{log_dir_str}/setup.log"
     conda: "{conda_env_path}"
     resources:
-{self._base_builder._build_resource_block(
-    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-    runtime_min=30,
-    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
-    nodes=1,
-    tasks=1,
-    cpus_per_task=1,
-)}
+{
+            self._base_builder._build_resource_block(
+                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+        }
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -2846,7 +2852,9 @@ rule setup:
             {master_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""}\\
+            {
+            "--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""
+        }\\
             {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
@@ -2874,10 +2882,7 @@ rule setup:
                 analysis_config_yaml=sub_analysis.analysis_config_yaml
             )
 
-            gpu_alloc_mode = (
-                self.system.cfg_system.preferred_slurm_option_for_allocating_gpus
-                or "gpus"
-            )
+            gpu_alloc_mode = self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
 
             # Build resource blocks for this sub-analysis
             prep_resources_sa = self._base_builder._build_resource_block(
@@ -2948,11 +2953,7 @@ rule setup:
                 # Phase 2: Simulation execution
                 sim_rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
                 sim_outflag = f"_status/{sim_rule_name}_complete.flag"
-                sim_input = (
-                    f'"{prep_outflag}"'
-                    if prepare_scenarios
-                    else '"_status/setup_complete.flag"'
-                )
+                sim_input = f'"{prep_outflag}"' if prepare_scenarios else '"_status/setup_complete.flag"'
 
                 snakefile_content += f'''rule {sim_rule_name}:
     input: {sim_input}
@@ -3010,25 +3011,29 @@ rule setup:
 
                 sub_analysis_sim_flags.append(final_flag)
 
-            subanalysis_flag = f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
+            subanalysis_flag = (
+                f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
+            )
             subanalysis_flags.append(subanalysis_flag)
 
             # Consolidate outputs after all sims have been run
             prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
             snakefile_content += f'''rule consolidate_{prefix}{sa_id}:
-    input: {', '.join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
+    input: {", ".join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
     output: "{subanalysis_flag}"
     log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"
     conda: "{conda_env_path}"
     resources:
-{self._base_builder._build_resource_block(
-    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-    runtime_min=30,
-    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
-    nodes=1,
-    tasks=1,
-    cpus_per_task=1,
-)}
+{
+                self._base_builder._build_resource_block(
+                    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    runtime_min=30,
+                    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+                    nodes=1,
+                    tasks=1,
+                    cpus_per_task=1,
+                )
+            }
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -3045,19 +3050,21 @@ rule setup:
 
         # Generate master consolidation rule
         snakefile_content += f'''rule master_consolidation:
-    input: {', '.join([f'"{flag}"' for flag in subanalysis_flags])}
+    input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
     output: "_status/master_consolidation_complete.flag"
     log: "{log_dir_str}/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:
-{self._base_builder._build_resource_block(
-    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-    runtime_min=30,
-    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
-    nodes=1,
-    tasks=1,
-    cpus_per_task=1,
-)}
+{
+            self._base_builder._build_resource_block(
+                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+        }
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
@@ -3150,9 +3157,7 @@ rule setup:
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
 
-        sim_resources = (
-            self.master_analysis._resource_manager._get_simulation_resource_requirements()
-        )
+        sim_resources = self.master_analysis._resource_manager._get_simulation_resource_requirements()
         n_gpus_per_sim = sim_resources["n_gpus"]
         if n_gpus_per_sim > 0 and not self.system.cfg_system.gpu_compilation_backend:
             raise ConfigurationError(
@@ -3190,9 +3195,7 @@ rule setup:
                 pickup_where_leftoff=pickup_where_leftoff,
             )
 
-            master_snakefile_path = (
-                self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-            )
+            master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
             master_snakefile_path.write_text(master_snakefile_content)
 
             if verbose:
@@ -3204,12 +3207,8 @@ rule setup:
             # Create required directories
             analysis_dir = self.master_analysis.analysis_paths.analysis_dir
             (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
-            self.analysis_paths.analysis_log_directory.mkdir(
-                parents=True, exist_ok=True
-            )
-            (self.analysis_paths.analysis_log_directory / "sims").mkdir(
-                parents=True, exist_ok=True
-            )
+            self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
+            (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
 
             # Always perform a dry run validation first
             dry_run_result = self._base_builder._validate_single_job_dry_run(
@@ -3256,9 +3255,7 @@ rule setup:
                 pickup_where_leftoff=pickup_where_leftoff,
             )
 
-            master_snakefile_path = (
-                self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-            )
+            master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
             master_snakefile_path.write_text(master_snakefile_content)
 
             if verbose:
@@ -3269,12 +3266,8 @@ rule setup:
 
             analysis_dir = self.master_analysis.analysis_paths.analysis_dir
             (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
-            self.analysis_paths.analysis_log_directory.mkdir(
-                parents=True, exist_ok=True
-            )
-            (self.analysis_paths.analysis_log_directory / "sims").mkdir(
-                parents=True, exist_ok=True
-            )
+            self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
+            (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
 
             dry_run_result = self._base_builder._validate_batch_job_dry_run(
                 snakefile_path=master_snakefile_path,
@@ -3326,9 +3319,7 @@ rule setup:
             pickup_where_leftoff=pickup_where_leftoff,
         )
 
-        master_snakefile_path = (
-            self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
-        )
+        master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
         master_snakefile_path.write_text(master_snakefile_content)
 
         if verbose:
@@ -3341,9 +3332,7 @@ rule setup:
         # (onstart: in Snakefile runs AFTER DAG parsing, too late for file validation)
         analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
-        self.master_analysis.analysis_paths.simlog_directory.mkdir(
-            parents=True, exist_ok=True
-        )
+        self.master_analysis.analysis_paths.simlog_directory.mkdir(parents=True, exist_ok=True)
 
         if verbose:
             print(
@@ -3389,11 +3378,7 @@ rule setup:
             )
 
         # Print snakemake log file location if available
-        if (
-            verbose
-            and result.get("snakemake_logfile") is not None
-            and not wait_for_completion
-        ):
+        if verbose and result.get("snakemake_logfile") is not None and not wait_for_completion:
             print(
                 f"[Snakemake] Sensitivity analysis workflow submitted in background.",
                 flush=True,
