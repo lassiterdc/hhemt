@@ -176,6 +176,24 @@ Planning documents live in `docs/planning/` organized by type (`bugs/`, `feature
 
 See `docs/planning/README.md` for the full structure.
 
+#### Multi-phase plans
+
+When a plan will be implemented and committed in phases across separate sessions, use a subdirectory instead of a single file:
+
+```
+docs/planning/<type>/YYYY-MM-DD_<name>/
+├── master.md              ← overview, cross-phase dependencies, decisions log, phase status table
+├── 1_<phase1_name>.md     ← phase 1 content only
+├── 2_<phase2_name>.md
+...
+└── implemented/           ← completed phase docs move here
+```
+
+- The subdirectory uses the same `YYYY-MM-DD_<name>` naming convention as atomic docs
+- Each phase doc is the implementation unit — use `@.prompts/proceed_with_implementation.md` with the phase doc, not `master.md`
+- When a phase is complete, move its doc to `implemented/` and update the phase status table in `master.md`
+- When all phases are complete, move the entire subdirectory to `completed/` (e.g., `docs/planning/features/completed/2026-02-28_my_plan/`)
+
 #### Completed documents describe final state, not history
 
 A completed document is a **reference**, not an audit trail. Other agents and future sessions may read it as a dependency. It must accurately describe what was built — not what was considered and rejected.
@@ -254,6 +272,9 @@ Never propose a code change to fix an HPC issue that has not been empirically co
 
 *Claude Code conventions for this developer. Light editing needed to port to a different AI tool.*
 
+### Never assume permission to start making edits
+Developer permission is required before making any file edits. When you believe the plan is implementation ready, summarize the changes you plan to make and recommend proceeding with implementation.
+
 ### Never commit without explicit permission
 All commits require prior approval from the developer.
 
@@ -285,8 +306,6 @@ If no appropriate doc exists yet, recommend one to the developer — which type 
 #### System-level agents
 
 Agents are project-agnostic — pass `@.prompts/conventions.md` and/or `@.prompts/architecture.md` explicitly when needed. Pass only what the task requires; many specialist questions need no project context at all.
-
-Eight previous agents are archived in `.claude/agents_archive/` (not active). See `docs/planning/refactors/2026-02-27_agent_files_audit.md` for context.
 
 #### Do not use general-purpose agents for directed lookups
 

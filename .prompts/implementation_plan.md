@@ -37,8 +37,6 @@ Use a `YYYY-MM-DD_descriptive_snake_case_name.md` filename, where the date is to
 
 If the user does **not** request a different destination, this default is required.
 
-If the plan is very long, consider creating a subdirectory with a master planning document and per-phase documents prefixed with an alphanumeric character for alphabetical sorting. Include an `implemented/` subdirectory to move completed plans into.
-
 ## Planning Workflow
 
 1. Restate the task and success criteria in your own words
@@ -46,6 +44,9 @@ If the plan is very long, consider creating a subdirectory with a master plannin
 3. Propose approach options (briefly), then select one with rationale
 4. Build a phased implementation sequence (prep → code changes → validation)
 5. List open decisions that require user confirmation before implementation
+6. **Assess plan scope**: Determine whether this plan is atomic (single commit or tightly related set of commits implementable in one session) or multi-phase (phases implemented and committed separately, possibly across sessions). Recommend the appropriate structure:
+   - **Atomic**: single planning doc, no subdirectory needed
+   - **Multi-phase**: recommend the subdirectory structure described in the "Multi-phase plans" section of `.prompts/conventions.md` but do not create it yet — wait for scope agreement
 
 ## Required Output Format
 
@@ -124,6 +125,17 @@ After drafting the plan, perform and report this check:
    - Remove any irrelevant or redundant information
 
 Report a short "Self-Check Results" summary at the end.
+
+## Scope Gate (Required Before Closing This Planning Session)
+
+After the developer has agreed to the full plan scope, re-evaluate:
+
+**Is this plan atomic or multi-phase?**
+
+- **Atomic**: single planning doc is correct. No further action needed.
+- **Multi-phase** (phases committed separately, or future agents will need to read phases independently): restructure now into the subdirectory layout described in the "Multi-phase plans" section of `.prompts/conventions.md`. Move and rename the file, create phase docs, and confirm the restructure with the developer before closing.
+
+---
 
 ## Approval Gate
 

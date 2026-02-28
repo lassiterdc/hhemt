@@ -10,12 +10,12 @@ First, ask the user whether to delegate the task to an Opus subagent via the Tas
 
 The requested work (whether by subagent or current conversation) should:
 
-1. Read the planning doc passed as context. Make note of significant uncertainties. If this is part of a multiphase plan, verify this is the correct next phase to implement.
+1. Read the planning doc passed as context. Make note of significant uncertainties. If this is a phase doc inside a multi-phase subdirectory, also read `master.md` in the same directory for cross-phase context and dependencies. Verify this is the correct next phase to implement (check the phase status table in `master.md`).
 2. Make sure all decisions requiring developer input have been made.
 3. Evaluate the freshness of the plan. Evaluation should include:
    - Review related scripts that will be modified, and any scripts that depend on or are depended on by those scripts
    - If the implementation relies on existing test functions, review them
-   - If part of a multiphase workflow, review the preceding planning doc (potentially in an `implemented/` folder)
+   - If part of a multi-phase plan, review the preceding phase doc (check the `implemented/` subdirectory within the same planning directory)
 4. Read `.prompts/conventions.md` and check for discrepancies between the plan and philosophy. If discrepancies exist, explain them with direct quotes from `.prompts/conventions.md` and provide recommendations on how to handle each.
 5. If the plan is associated with a master plan, review the master planning document. If there are discrepancies, report them with direct quotes from both documents and judge which is more likely to be stale.
 6. Return a **preflight report** with findings from steps 1–5. The report must include:
@@ -44,4 +44,4 @@ This is a final check. Do not proceed until all steps below are complete.
    - Consider whether the edits uncovered additional decisions or uncertainties. If so, present them.
    - Make a recommendation whether or not to proceed with implementation.
 4. Upon explicit approval from the developer, proceed with implementation.
-5. Notify the developer when the task is done. If issues arose during implementation or you had to make judgment calls, explain them. **Never commit without explicit permission from the developer.**
+5. Implement `@.prompts/qaqc_and_commit.md`
