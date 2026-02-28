@@ -351,6 +351,15 @@ If prior reports exist, add a section:
 
 ---
 
+### Step 8b: Consider Specialist Agent Consultation
+
+After writing the debugging report, assess whether the root cause touches a domain where a specialist agent would add value:
+
+- **`snakemake-specialist`** — if the failure involves Snakemake rule generation, SLURM executor plugin behavior, job resource mapping, srun flag construction, or wildcard/DAG issues
+- **`triton-specialist`** — if the failure involves TRITON compute config selection, Kokkos backends, MPI/GPU initialization, SWMM coupling mechanics, or TRITON-level log interpretation
+
+If either specialist is relevant, **recommend deployment to the developer before proceeding to Step 9**. Describe specifically what you would ask the specialist and what question you expect it to help answer. Do not deploy subagents without explicit developer approval (per `conventions.md` AI working norms).
+
 ### Step 9 (if failures are encountered):
 
 - Write a bug-fix plan to `docs/planning/bugs/YYYY-MM-DD_concise-descriptive-name.md`
