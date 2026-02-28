@@ -230,10 +230,10 @@ After the initial migration, `.prompts/` will have this structure. Files in `_to
 - [x] `qaqc_and_commit.md` philosophy sections explicitly named (all 5 sections listed)
 
 ### Phase 4 — `_to_verify/` triage (ongoing, one file at a time)
-- [ ] Each file in `_to_verify/` reviewed; Table 3 "Outcome" column filled in
-- [ ] Accepted files moved to `.prompts/`; discarded files deleted
-- [ ] `.prompts/README.md` rewritten to reflect final structure
-- [ ] `doc_freshness_check.md` updated to include `conventions.md` (Table 2, item M)
+- [x] Each file in `_to_verify/` reviewed; Table 3 "Outcome" column filled in
+- [x] Accepted files moved to `.prompts/`; discarded files deleted (`_to_verify/` directory removed)
+- [x] `.prompts/README.md` — decided no README needed; 6 self-evident files, CLAUDE.md dispatches to directory
+- [x] `doc_freshness_check.md` — discarded (file was in `_to_verify/`, not promoted); `conventions.md` referenced directly in `qaqc_and_commit.md` Step 2 instead
 
 ### Out of scope (tracked separately)
-- Agent file audit and cleanup → `docs/planning/active/refactors/agent_files_audit.md`
+- Agent file audit and cleanup → `docs/planning/refactors/agent_files_audit.md`

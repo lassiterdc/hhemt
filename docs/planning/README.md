@@ -1,42 +1,29 @@
 # Planning Documentation Structure
 
-This directory contains planning documents organized by status and category.
+Planning documents are organized by type. Each type directory has a `completed/` subdirectory for finished work, and a `shelved/` subdirectory created as needed for deprioritized or blocked work.
 
 ## Directory Structure
 
 ```
 planning/
-├── active/              # Currently planned or in-progress work
-│   ├── bugs/           # Bug fixes (fixing_*.md)
-│   ├── features/       # New functionality (feat_*.md, *_plan.md)
-│   └── refactors/      # Code improvements (refac_*.md, *_design.md)
-├── completed/          # Finished work (for reference/history)
-├── shelved/            # Deprioritized or blocked work
-├── debugging/          # Active debugging sessions
+├── bugs/               # Bug fix plans
+│   └── completed/      # Implemented bug fixes
+├── features/           # New functionality plans
+│   └── completed/      # Implemented features
+├── refactors/          # Code improvement plans
+│   └── completed/      # Implemented refactors
 └── reference/          # Vision docs, specs, roadmaps (not actionable tasks)
 ```
-
-## Document Counts
-
-- **Active/Bugs**: 3 documents
-- **Active/Features**: 7 documents
-- **Active/Refactors**: 13 documents
-- **Completed**: 2 documents
-- **Debugging**: 3 documents
-- **Reference**: 6 documents
 
 ## Moving Documents
 
 When a document's status changes:
 
-- **Task started** → Keep in `active/` (already there)
-- **Task completed** → Move to `completed/`
-- **Task blocked/deprioritized** → Move to `shelved/`
-- **Task no longer relevant** → Delete or move to `completed/` with note
+- **Task completed** → Move to `completed/` within the same type directory
+- **Task blocked/deprioritized** → Move to `shelved/` within the same type directory (create if needed)
+- **Task no longer relevant** → Delete
 
 ## Naming Conventions
 
-- Bug fixes: `fixing_*.md`
-- Features: `feat_*.md` or `*_plan.md`
-- Refactors: `refac_*.md` or `*_design.md`
-- Reference: `*_vision.md`, `*_spec.md`, `*_roadmap.md`
+- No strict prefix required; use descriptive snake_case filenames
+- Reference docs: `*_vision.md`, `*_spec.md`, `*_roadmap.md`
