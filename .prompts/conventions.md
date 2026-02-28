@@ -174,6 +174,18 @@ Planning documents live in `docs/planning/` organized by type (`bugs/`, `feature
 
 See `docs/planning/README.md` for the full structure.
 
+#### Completed documents describe final state, not history
+
+A completed document is a **reference**, not an audit trail. Other agents and future sessions may read it as a dependency. It must accurately describe what was built — not what was considered and rejected.
+
+Before closing a document:
+- Remove or replace sections describing approaches that were not implemented
+- Replace phased implementation plans with a concise "What Was Built" summary
+- Keep: requirements, key decisions with rationale, file inventory, Definition of Done
+- Drop: superseded alternatives, dead-end phase breakdowns, trade-off tables for rejected approaches
+
+The git history is the audit trail. The completed doc is the reference.
+
 ### Recording out-of-scope observations
 
 When implementation work surfaces a real issue that is out of scope for the current task (e.g., pre-existing linting violations noticed while running ruff, an unused import that warrants investigation, a questionable pattern in untouched code), record it in a planning document rather than silently suppressing it or fixing it in-band:
