@@ -1,6 +1,6 @@
 # Development Priorities
 
-**Last Updated:** 2026-02-09 (Tier 1 Phase 6b.2.1 complete: Unified fixture pilot validated ✅)
+**Last Updated:** 2026-02-28 (Frontier sensitivity suite complete ✅; UVA CPU suite complete ✅)
 **Status:** Active — update this document as work progresses.
 
 ---
@@ -117,6 +117,14 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - Implement HPC inheritance and merge semantics
   - _Ref:_ `docs/planning/features/2026-02-07_hpc_inheritance_spec.md`
 
+- [x] **Frontier & UVA HPC validation** (Tier 4) — **Complete**
+  - ✅ Fixed `--ntasks-per-gpu=1` → `--gpus-per-task=1` (GPU task expansion bug on Frontier)
+  - ✅ Added `--kill-on-bad-exit=1` to srun (prevents Cray PMI hang)
+  - ✅ Tmux-based Snakemake orchestration for `batch_job` mode (avoids nested SLURM context)
+  - ✅ Automatic Snakemake lock detection and unlock on resume
+  - ✅ ARG_MAX PATH trim in `workflow.py` (LD_LIBRARY_PATH trim reverted — broke Frontier)
+  - ✅ UVA CPU suite: sa_19 moved to `parallel` partition; time limit raised to 90 min; ≥32 MPI rank configs removed
+
 - [x] **API facade & notebook UX** (Phase 4 of implementation roadmap) — **Complete**
   - ✅ Implemented `Toolkit` high-level API with from_configs() and run() methods
   - ✅ Comprehensive docstrings with usage examples for all public methods
@@ -138,10 +146,12 @@ These are driven by specific HPC usage needs rather than architectural improveme
   - _Priority:_ Low until GPU testing begins
   - _Ref:_ `docs/planning/features/2026-02-07_local_gpu_workflow_support_plan.md`
 
-- [ ] **Frontier end-to-end validation**
-  - Run full test suites on Frontier with multi-model + GPU
-  - Validate 1-job-many-srun-tasks mode on real cluster
-  - _Priority:_ Next cluster access window
+- [x] **Frontier end-to-end validation**
+  - ✅ Full GPU sensitivity suite (36 sub-analyses) completed — Run 11, Job 4157398 (2026-02-28)
+  - ✅ `assert_analysis_workflow_completed_successfully` passes: all `actual_nTasks == n_gpus`
+  - ✅ `--gpus-per-task=1` fix confirmed; `--kill-on-bad-exit=1` prevents PMI hang
+  - ✅ UVA CPU sensitivity suite also complete (20/20 sub-analyses, all flags present)
+  - _Ref:_ `docs/planning/bugs/completed/2026-02-28_gpu-mpi-scaling-machine-file-override.md`
 
 - [ ] **Tool provisioning & reliability** (Phase 5 of implementation roadmap)
   - `--redownload` behavior with provenance logging
