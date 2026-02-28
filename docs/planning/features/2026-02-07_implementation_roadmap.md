@@ -8,9 +8,8 @@ API that uses the same orchestration semantics.
 ## Phase 0 — Planning Baseline ✅ COMPLETE
 
 Deliverables:
-- `cli_vision.md`
-- `cli_command_spec.md`
-- `api_vision.md`
+- initial CLI vision and command spec (superseded by implementation)
+- initial API vision (superseded by implementation)
 - this roadmap
 
 Exit criteria:

@@ -237,4 +237,4 @@ The following sections are currently in CLAUDE.md but belong in agent files once
 - [ ] CLAUDE.md "When to Update Agent Documentation" updated to mention startup read paths
 - [ ] CLAUDE.md staleness notice in "Specialized Agent Documentation" removed
 - [ ] Sections listed in "CLAUDE.md Content Awaiting Agent Migration" trimmed from CLAUDE.md
-- [ ] `docs/planning/reference/priorities.md` updated
+- [ ] `docs/planning/features/2026-02-07_priorities.md` updated

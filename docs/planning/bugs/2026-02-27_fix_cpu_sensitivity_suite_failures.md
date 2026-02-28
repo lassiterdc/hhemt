@@ -149,7 +149,7 @@ The Excel and fixture changes cannot be validated locally — they exercise SLUR
 ## Documentation and Tracker Updates
 
 - `docs/planning/bugs/addressing_cpu_sensitivity_analysis_failures.md`: The prior plan (addressed the `runtime=2` issue from run 1). Can be moved to `docs/planning/bugs/completed/` after the rerun succeeds.
-- `docs/planning/reference/priorities.md`: Update once all 20 sub-analyses pass on UVA.
+- `docs/planning/features/2026-02-07_priorities.md`: Update once all 20 sub-analyses pass on UVA.
 - `CLAUDE.md`: No changes needed — no new patterns introduced.
 
 ---

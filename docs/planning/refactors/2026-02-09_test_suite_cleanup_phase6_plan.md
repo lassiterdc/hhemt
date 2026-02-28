@@ -3,7 +3,7 @@
 **Status**: Planning
 **Created**: 2026-02-09
 **Owner**: Implementation team
-**Parent**: `docs/planning/cruft_cleanup_plan.md` Phase 6
+**Parent**: `docs/planning/refactors/2026-02-07_cruft_cleanup.md` Phase 6
 
 ---
 
@@ -342,14 +342,13 @@ Recommended sequence to minimize risk:
 2. [ ] Get approval to proceed with Phase 6a.1 (pilot parametrization)
 3. [ ] Implement Phase 6b.1 (audit fixture usage)
 4. [ ] Execute phases in recommended order
-5. [ ] Update `cruft_cleanup_tracker.md` as phases complete
+5. [ ] Update `2026-02-07_cruft_cleanup.md` as phases complete
 
 ---
 
 ## References
 
-- `docs/planning/cruft_cleanup_plan.md` - Parent plan document
-- `docs/planning/cruft_cleanup_tracker.md` - Progress tracker
+- `docs/planning/refactors/2026-02-07_cruft_cleanup.md` - Parent plan document
 - `tests/utils_for_testing.py` - Current test utilities
 - `tests/conftest.py` - Current fixture definitions
 - `tests/fixtures/test_case_catalog.py` - Test case selection logic

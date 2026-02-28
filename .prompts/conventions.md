@@ -167,10 +167,12 @@ Do not extract immediately — track for batch evaluation.
 
 Planning documents live in `docs/planning/` organized by type (`bugs/`, `features/`, `refactors/`). Each type directory has a `completed/` subdirectory; a `shelved/` subdirectory is created as needed.
 
-- **Active work**: document lives directly in the type directory (e.g., `docs/planning/bugs/my_fix.md`)
-- **Completed**: move to `completed/` within the same type directory (e.g., `docs/planning/bugs/completed/my_fix.md`)
+- **Active work**: document lives directly in the type directory (e.g., `docs/planning/bugs/2026-02-28_my_fix.md`)
+- **Completed**: move to `completed/` within the same type directory (e.g., `docs/planning/bugs/completed/2026-02-28_my_fix.md`)
 - **Deprioritized/blocked**: move to `shelved/` within the same type directory (create if it doesn't exist)
 - **No longer relevant**: delete
+
+**Naming convention**: all planning docs use a `YYYY-MM-DD_` date prefix corresponding to the creation date, followed by a descriptive `snake_case` name. Exceptions: `README.md`, `utility_package_candidates.md`, and other persistent tracking documents that have no creation lifecycle.
 
 See `docs/planning/README.md` for the full structure.
 

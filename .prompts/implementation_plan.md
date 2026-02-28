@@ -33,7 +33,7 @@ By default, write the implementation plan to the appropriate subdirectory:
 
 When complete, move the plan to the `completed/` subdirectory within the same type directory (e.g., `docs/planning/bugs/completed/`).
 
-Use a descriptive snake_case filename ending in `.md`.
+Use a `YYYY-MM-DD_descriptive_snake_case_name.md` filename, where the date is today's date.
 
 If the user does **not** request a different destination, this default is required.
 

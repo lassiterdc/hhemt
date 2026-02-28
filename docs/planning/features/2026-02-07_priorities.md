@@ -27,31 +27,31 @@ For reference, these major efforts are done and tested:
 
 Incremental improvements that reduce maintenance burden. Can be done independently.
 
-- [x] **Remove legacy/obsolete runtime paths** (`cruft_cleanup_plan.md` Phase 2)
+- [x] **Remove legacy/obsolete runtime paths** (`2026-02-07_cruft_cleanup.md` Phase 2)
   - Removed `_obsolete_*` methods and dead launch paths in `run_simulation.py`
   - Removed deprecated `SimLog` / `SimEntry` classes from `log.py`
   - Deleted commented-out simlog code
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `cruft_cleanup_tracker.md` Phase 2
+  - _Ref:_ `docs/planning/refactors/2026-02-07_cruft_cleanup.md` Phase 2
 
-- [x] **Logging & error normalization** (`cruft_cleanup_plan.md` Phase 4, Phases 4a-4c)
+- [x] **Logging & error normalization** (`2026-02-07_cruft_cleanup.md` Phase 4, Phases 4a-4c)
   - ✅ Custom exception hierarchy (TRITONSWMMError, CompilationError, ConfigurationError, etc.)
   - ✅ System/compilation layer error handling with full context (logfile, return_code, model_type, backend)
   - ✅ Scenario/run layer error handling (no silent failures found)
   - ⏸️ Deferred: print→logger conversions in output processing, workflow orchestration, config validation (Phases 4d-4f) — non-critical cosmetic improvements
-  - _Ref:_ `docs/planning/cruft_cleanup_plan.md`, `cruft_cleanup_tracker.md` Phase 4
+  - _Ref:_ `docs/planning/refactors/2026-02-07_cruft_cleanup.md` Phase 4
 
-- [ ] **Workaround containment** (`cruft_cleanup_plan.md` Phase 5)
+- [ ] **Workaround containment** (`2026-02-07_cruft_cleanup.md` Phase 5)
   - Centralize `TODO(TRITON-OUTPUT-PATH-BUG)` logic behind minimal interfaces
   - Currently in 4 source files — see `docs/implementation/triton_output_path_bug.md`
   - _Blocked by:_ Upstream TRITON-SWMM fix for `output_folder` directive
 
-- [ ] **Test suite cleanup** (`cruft_cleanup_plan.md` Phase 6) — **In Progress**
+- [ ] **Test suite cleanup** (`2026-02-07_cruft_cleanup.md` Phase 6) — **In Progress**
   - [ ] **Phase 6a**: Parametrize repeated platform test patterns (6a.1 pilot ✅ complete, next: 6a.2 expand)
   - [ ] **Phase 6b**: Consolidate fixture factories (6b.1 audit ✅, 6b.2 design ✅, 6b.2.1 pilot ✅ validated, next: 6b.2.2 expand)
   - [x] **Phase 6c**: Reduce unconditional diagnostic prints (✅ complete)
   - [x] **Phase 6d**: Standardize assertions (✅ complete: audit, helpers, migration, documentation)
   - _Status:_ Phase 6b.2.1 validated (pilot test passes), ready for Phase 6b.2.2 (expand to UVA/Frontier)
-  - _Ref:_ `test_suite_cleanup_phase6_plan.md`, `test_fixture_audit_phase6b1.md`, `test_fixture_consolidation_phase6b2_design.md`
+  - _Ref:_ `docs/planning/refactors/2026-02-09_test_suite_cleanup_phase6_plan.md`, `docs/planning/refactors/completed/2026-02-09_test_fixture_audit_phase6b1.md`, `docs/planning/refactors/2026-02-09_test_fixture_consolidation_phase6b2_design.md`
 
 ---
 
@@ -59,13 +59,13 @@ Incremental improvements that reduce maintenance burden. Can be done independent
 
 Foundation for CLI/API work. Should be done before Tier 3.
 
-- [x] **Split `config.py` into focused modules** (`config_py_refactor_plan.md` Phase 1)
+- [x] **Split `config.py` into focused modules** (`2026-02-07_config_py_refactor_plan.md` Phase 1)
   - Created `config/` package: base, system, analysis, loaders (validation/display deferred)
   - Updated all import sites immediately (no compatibility shims)
   - Removed dead `gui.py` code (broken SimulationConfig/ConfigGUI)
-  - _Ref:_ `docs/planning/refactors/config_py_refactor_plan.md`, `cruft_cleanup_tracker.md` Phase 1
+  - _Ref:_ `docs/planning/refactors/completed/2026-02-07_config_py_refactor_plan.md`, `docs/planning/refactors/2026-02-07_cruft_cleanup.md` Phase 1
 
-- [x] **Strict validation + validator cleanup** (`config_py_refactor_plan.md` Phase 2)
+- [x] **Strict validation + validator cleanup** (`2026-02-07_config_py_refactor_plan.md` Phase 2)
   - `extra="forbid"` enforced on `cfgBaseModel`
   - Dynamic `toggle_tests` registry replaced with explicit `@model_validator` rules
   - Dead legacy fields and commented-out code removed
@@ -77,7 +77,7 @@ Foundation for CLI/API work. Should be done before Tier 3.
   - ✅ Data cross-consistency (event alignment, storm tide, units)
   - ✅ Analysis.validate() method integration
   - ⏸️ Deferred: Command/profile selection (CLI layer), testcase inheritance, environment checks
-  - _Ref:_ `docs/planning/refactors/frontend_validation_checklist.md`, `src/TRITON_SWMM_toolkit/validation.py`
+  - _Ref:_ `docs/planning/refactors/2026-02-07_frontend_validation_checklist.md`, `src/TRITON_SWMM_toolkit/validation.py`
 
 ---
 
@@ -97,13 +97,13 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - ✅ Wire CLI to Analysis orchestration (system/analysis instantiation, preflight validation, workflow submission)
   - ⏸️ Implement profile resolution with 6-tier precedence (deferred - testcase/case-study profiles blocked)
   - ⏸️ Complete CLI integration tests (04-05, blocked by need for real workflow execution)
-  - _Ref:_ `docs/planning/cli_implementation_design.md`, `docs/planning/cli_command_spec.md`
+  - _Ref:_ `docs/planning/refactors/2026-02-08_cli_implementation_design.md`
 
 - [x] **Shared orchestration core** (Phase 2 of implementation roadmap)
   - ✅ High-level analysis.run() API with mode translation (fresh/resume/overwrite)
   - ✅ WorkflowResult structured return type
   - ✅ Workflow status reporting (get_workflow_status() method + --status CLI flag)
-  - _Ref:_ `docs/planning/implementation_roadmap.md`, `workflow_status_reporting_plan.md`
+  - _Ref:_ `docs/planning/features/2026-02-07_implementation_roadmap.md`, `docs/planning/features/completed/2026-02-09_workflow_status_reporting_plan.md`
 
 - [x] **Implement `triton-swmm run` CLI command** (Phase 3 of implementation roadmap) — **Partial (70%)**
   - ✅ Refactored CLI to use analysis.run() orchestration API (32% code reduction)
@@ -111,11 +111,11 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - ✅ Discovery actions implemented (--list-testcases, --list-case-studies)
   - ⏸️ Dry-run summary output (current implementation sufficient)
   - ⏸️ Profile resolution for testcase/case-study (blocked by catalog implementation)
-  - _Ref:_ `docs/planning/cli_command_spec.md`, `docs/planning/shared_orchestration_design.md`
+  - _Ref:_ `docs/planning/features/2026-02-07_implementation_roadmap.md`
 
 - [ ] **Profile catalog (`tests_and_case_studies.yaml`)** support
   - Implement HPC inheritance and merge semantics
-  - _Ref:_ `docs/planning/hpc_inheritance_spec.md`
+  - _Ref:_ `docs/planning/features/2026-02-07_hpc_inheritance_spec.md`
 
 - [x] **API facade & notebook UX** (Phase 4 of implementation roadmap) — **Complete**
   - ✅ Implemented `Toolkit` high-level API with from_configs() and run() methods
@@ -124,7 +124,7 @@ Depends on Tier 2 (config refactor). Major user-facing changes.
   - ✅ Exported Toolkit in package __init__.py for convenient import
   - ✅ Properties for analysis_dir and n_simulations access
   - ✅ Validated with 45 passing CLI unit tests
-  - _Ref:_ `docs/planning/api_vision.md`, `src/TRITON_SWMM_toolkit/toolkit.py`
+  - _Ref:_ `src/TRITON_SWMM_toolkit/toolkit.py`
 
 ---
 
@@ -136,7 +136,7 @@ These are driven by specific HPC usage needs rather than architectural improveme
   - Add `--resources gpu=<N>` to local Snakemake when `local_gpus_for_workflow` configured
   - Small, self-contained change
   - _Priority:_ Low until GPU testing begins
-  - _Ref:_ `docs/planning/local_gpu_workflow_support_plan.md`
+  - _Ref:_ `docs/planning/features/2026-02-07_local_gpu_workflow_support_plan.md`
 
 - [ ] **Frontier end-to-end validation**
   - Run full test suites on Frontier with multi-model + GPU
@@ -146,7 +146,7 @@ These are driven by specific HPC usage needs rather than architectural improveme
 - [ ] **Tool provisioning & reliability** (Phase 5 of implementation roadmap)
   - `--redownload` behavior with provenance logging
   - Resume/from-scratch safeguards
-  - _Ref:_ `docs/planning/implementation_roadmap.md`
+  - _Ref:_ `docs/planning/features/2026-02-07_implementation_roadmap.md`
 
 ---
 
@@ -174,17 +174,13 @@ These are driven by specific HPC usage needs rather than architectural improveme
 
 | Document | Topic |
 |----------|-------|
-| `planning/cruft_cleanup_plan.md` | 7-phase cleanup roadmap (Phases 0-7) |
-| `planning/implementation_roadmap.md` | 6-phase CLI/API convergence roadmap |
-| `planning/cli_vision.md` | Snakemake-first CLI design principles |
-| `planning/cli_command_spec.md` | Formal `triton-swmm run` command contract |
-| `planning/api_vision.md` | Python API layers and parity requirements |
-| `planning/hpc_inheritance_spec.md` | `tests_and_case_studies.yaml` schema |
-| `planning/local_gpu_workflow_support_plan.md` | Local GPU workflow resource limiting |
-| `planning/workflow_status_reporting_plan.md` | --status flag design and implementation |
-| `planning/shared_orchestration_design.md` | High-level orchestration API design |
-| `planning/refactors/config_py_refactor_plan.md` | config.py split into focused modules |
-| `planning/refactors/frontend_validation_checklist.md` | Preflight validation checks |
+| `planning/refactors/2026-02-07_cruft_cleanup.md` | 7-phase cleanup roadmap (Phases 0-7) with status tracker |
+| `planning/features/2026-02-07_implementation_roadmap.md` | 6-phase CLI/API convergence roadmap |
+| `planning/features/2026-02-07_hpc_inheritance_spec.md` | `tests_and_case_studies.yaml` schema |
+| `planning/features/2026-02-07_local_gpu_workflow_support_plan.md` | Local GPU workflow resource limiting |
+| `planning/refactors/2026-02-08_cli_implementation_design.md` | CLI implementation design |
+| `planning/refactors/2026-02-07_frontend_validation_checklist.md` | Preflight validation checks |
+| `planning/refactors/completed/2026-02-07_config_py_refactor_plan.md` | config.py split into focused modules |
 
 ### Archived (completed, historical context only)
 

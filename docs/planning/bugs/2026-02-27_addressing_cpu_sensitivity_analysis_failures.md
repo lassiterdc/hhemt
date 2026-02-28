@@ -140,7 +140,7 @@ HPC coordinated validation with user (required for SLURM behavior):
 
 ## Documentation and Tracker Updates
 
-- `docs/planning/reference/priorities.md`
+- `docs/planning/features/2026-02-07_priorities.md`
   - Update bug priority/status once implementation is merged and UVA rerun passes.
 - `CLAUDE.md` (Gotchas / HPC guidance)
   - Add note about unsafe low `hpc_time_min_per_sim` in sensitivity batch runs if the final implementation introduces policy floors/validation.

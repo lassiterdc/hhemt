@@ -10,9 +10,8 @@ planning/
 │   └── completed/      # Implemented bug fixes
 ├── features/           # New functionality plans
 │   └── completed/      # Implemented features
-├── refactors/          # Code improvement plans
-│   └── completed/      # Implemented refactors
-└── reference/          # Vision docs, specs, roadmaps (not actionable tasks)
+└── refactors/          # Code improvement plans
+    └── completed/      # Implemented refactors
 ```
 
 ## Moving Documents
@@ -25,5 +24,5 @@ When a document's status changes:
 
 ## Naming Conventions
 
-- No strict prefix required; use descriptive snake_case filenames
-- Reference docs: `*_vision.md`, `*_spec.md`, `*_roadmap.md`
+- All planning docs use a `YYYY-MM-DD_descriptive_snake_case_name.md` filename where the date is the creation date
+- Exceptions: `README.md` and other persistent tracking documents with no creation lifecycle
