@@ -34,7 +34,11 @@ This project uses a conda environment named `triton_swmm_toolkit`.
 
 ## Terminology
 
-Consistent vocabulary prevents AI/human miscommunication and catches conceptual errors early. The following terms have precise meanings in this codebase.
+See domain glossaries for shared definitions:
+- `~/dev/claude-workspace/glossary/flood_risk_management.md` — combined, compound, rain-only, surge-only, event_iloc
+- `~/dev/claude-workspace/glossary/hydrology.md` — storm surge, storm tide, tidal phase, return period, AEP
+
+Toolkit-specific terms (precise meanings in this codebase):
 
 | Term | Meaning | Usage |
 |------|---------|-------|
