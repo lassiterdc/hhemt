@@ -42,9 +42,7 @@ class TRITONSWMM_run:
                 return fallback
         return out_dir if out_dir is not None else fallback
 
-    def _analysis_level_model_logfile(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> Path:
+    def _analysis_level_model_logfile(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
         """Return analysis-level model runtime log path for this scenario.
 
         Naming convention:
@@ -62,9 +60,7 @@ class TRITONSWMM_run:
 
         return log_dir / fname
 
-    def raw_triton_output_dir(
-        self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"
-    ):
+    def raw_triton_output_dir(self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"):
         """Directory containing raw TRITON binary output files (H, QX, QY, MH).
 
         Parameters
@@ -98,9 +94,7 @@ class TRITONSWMM_run:
         """Legacy completion check for the coupled TRITON-SWMM model."""
         return self.model_run_completed("tritonswmm")
 
-    def model_run_completed(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> bool:
+    def model_run_completed(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> bool:
         """Check if a simulation completed for a specific model type.
 
         Uses log file markers as source of truth:
@@ -150,9 +144,7 @@ class TRITONSWMM_run:
     def performance_timeseries_dir(self):
         return self._triton_swmm_raw_output_directory / "performance"
 
-    def performance_file(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> Path:
+    def performance_file(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
         """Get performance.txt file for a specific model type.
 
         Parameters
@@ -173,9 +165,7 @@ class TRITONSWMM_run:
             # SWMM doesn't write performance.txt files
             output_dir = self._scenario.scen_paths.out_swmm
         else:
-            raise ValueError(
-                f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}"
-            )
+            raise ValueError(f"model_type must be 'triton', 'tritonswmm', or 'swmm', got {model_type}")
 
         if output_dir is None:
             # Fallback for legacy structure
@@ -248,9 +238,7 @@ class TRITONSWMM_run:
             file_as_list = read_text_file_as_list_of_strings(cfg["f_cfg"])
             df_cfgs.loc[step, "file_line_length"] = len(file_as_list)  # type: ignore
 
-        typical_length = (
-            df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
-        )
+        typical_length = df_cfgs["file_line_length"][df_cfgs["file_line_length"] > 0].mode().iloc[0]
         latest_complete = df_cfgs[df_cfgs["file_line_length"] == typical_length]
         if latest_complete.empty:
             return None
@@ -311,9 +299,7 @@ class TRITONSWMM_run:
         """
         valid_types = ("triton", "tritonswmm", "swmm")
         if model_type not in valid_types:
-            raise ValueError(
-                f"model_type must be one of {valid_types}, got {model_type}"
-            )
+            raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
         multi_sim_run_method = self._analysis.cfg_analysis.multi_sim_run_method
         # using_srun = multi_sim_run_method == "1_job_many_srun_tasks"
@@ -359,9 +345,7 @@ class TRITONSWMM_run:
             )
             if hotstart_cfg is not None:
                 cfg = hotstart_cfg
-                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(
-                    hotstart_cfg
-                )
+                sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(hotstart_cfg)
                 if verbose:
                     print(
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",
@@ -380,9 +364,7 @@ class TRITONSWMM_run:
             # contains the full set of needed paths on both login and compute nodes.
             # Passing this via env= dict (not via shell command string) avoids any
             # ARG_MAX concerns since env vars go through a separate execve() vector.
-            env["LD_LIBRARY_PATH"] = (
-                f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
-            )
+            env["LD_LIBRARY_PATH"] = f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
 
         # PATH is intentionally omitted from the env dict. The bash -lc (login shell)
         # rebuilds PATH from /etc/profile and the module load in the command string
@@ -420,11 +402,12 @@ class TRITONSWMM_run:
         # GPU configuration
         # ----------------------------
         if run_mode == "gpu":
-            # When running under srun with --ntasks-per-gpu=1, SLURM automatically sets
-            # CUDA_VISIBLE_DEVICES=0 in each task's environment, remapping each task's
-            # assigned GPU to local index 0. Setting CUDA_VISIBLE_DEVICES in the parent
-            # environment would override this per-task remapping, causing all MPI ranks to
-            # see the full GPU list and compete for GPU 0 (0% utilization on the others).
+            # When running under srun with GPU binding flags (--gpus-per-task=1 in
+            # "gpus" mode or --ntasks-per-gpu=1 in "gres" mode), SLURM automatically
+            # sets CUDA_VISIBLE_DEVICES per task, remapping each task's assigned GPU
+            # to local index 0. Setting CUDA_VISIBLE_DEVICES in the parent environment
+            # would override this per-task remapping, causing all MPI ranks to see the
+            # full GPU list and compete for GPU 0 (0% utilization on the others).
             # Only set device visibility explicitly when NOT using srun (local GPU execution).
             if not using_srun:
                 gpu_list = ",".join(str(i) for i in range(n_gpus))  # type: ignore
@@ -436,9 +419,7 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
-        modules = (
-            self._scenario._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-        )
+        modules = self._scenario._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         module_load_cmd = ""
 
         if modules:
@@ -499,18 +480,14 @@ class TRITONSWMM_run:
             # Use NTASKS × CPUS_PER_TASK as the total — this is correct for both
             # single-node (NTASKS × CPT == CPUS_ON_NODE) and multi-node jobs
             # (NTASKS × CPT > CPUS_ON_NODE, spread across multiple nodes).
-            expected_cpus = (
-                n_mpi_procs * n_omp_threads
-                if run_mode != "gpu"
-                else n_gpus * n_omp_threads
-            )
+            expected_cpus = n_mpi_procs * n_omp_threads if run_mode != "gpu" else n_gpus * n_omp_threads
             slurm_allocated = slurm_ntasks * slurm_cpus_per_task
 
             if slurm_allocated < expected_cpus:
                 error_msg = (
-                    f"\n{'='*80}\n"
+                    f"\n{'=' * 80}\n"
                     f"SLURM RESOURCE ALLOCATION MISMATCH DETECTED\n"
-                    f"{'='*80}\n"
+                    f"{'=' * 80}\n"
                     f"Configuration requests: {expected_cpus} CPUs\n"
                     f"  - MPI ranks: {n_mpi_procs}\n"
                     f"  - OMP threads per rank: {n_omp_threads}\n"
@@ -526,7 +503,7 @@ class TRITONSWMM_run:
                     f"  {slurm_allocated} are allocated, causing an infinite hang while waiting\n"
                     f"  for resources that will never become available.\n"
                     f"\n"
-                    f"{'='*80}\n"
+                    f"{'=' * 80}\n"
                 )
                 raise RuntimeError(
                     f"SLURM allocated {slurm_allocated} CPUs but configuration requires "
@@ -538,19 +515,24 @@ class TRITONSWMM_run:
         # SLURM_GPUS_ON_NODE/SLURM_JOB_GPUS reflect the parent job's per-node GPU count
         # (e.g. 8), not the total pool available to srun steps. A 2-node GPU sim requesting
         # 16 GPUs is valid against a 64-GPU pool even though the parent env reports 8.
-        if using_srun and "SLURM_JOB_ID" in os.environ and run_mode == "gpu" and multi_sim_run_method != "1_job_many_srun_tasks":
+        if (
+            using_srun
+            and "SLURM_JOB_ID" in os.environ
+            and run_mode == "gpu"
+            and multi_sim_run_method != "1_job_many_srun_tasks"
+        ):
             allocated_gpus = _parse_slurm_allocated_gpus(os.environ)
             expected_gpus = int(n_gpus or 0)
             if allocated_gpus > 0 and allocated_gpus < expected_gpus:
                 raise RuntimeError(
-                    f"\n{'='*80}\n"
+                    f"\n{'=' * 80}\n"
                     f"SLURM GPU ALLOCATION MISMATCH DETECTED\n"
-                    f"{'='*80}\n"
+                    f"{'=' * 80}\n"
                     f"Configuration requires {expected_gpus} GPUs but SLURM allocation "
                     f"appears to provide {allocated_gpus}.\n"
                     f"Refusing launch to avoid hanging/oversubscription.\n"
                     f"Inspect SLURM_GPUS/SLURM_GPUS_ON_NODE/SLURM_JOB_GPUS and sbatch request.\n"
-                    f"{'='*80}\n"
+                    f"{'=' * 80}\n"
                 )
 
         if run_mode != "gpu":
@@ -576,17 +558,39 @@ class TRITONSWMM_run:
             elif run_mode in ("serial", "openmp"):
                 launch_cmd_str = f"{exe} {cfg}"
             elif run_mode in ("mpi", "hybrid"):
-                launch_cmd_str = "mpirun " f"-np {str(n_mpi_procs)} " f"{exe} {cfg}"
+                launch_cmd_str = f"mpirun -np {str(n_mpi_procs)} {exe} {cfg}"
         elif run_mode == "gpu":
-            gpu_to_task_bind = "--gpus-per-task=1 "
             if using_srun:
+                # GPU-to-task binding depends on the batch allocation mode.
+                # The two SLURM GPU flag families are mutually exclusive:
+                #
+                # - "gpus" mode (Frontier): --gpus-per-task=1
+                #   Assigns 1 GPU per task. Required because --ntasks-per-gpu=1
+                #   expands task count to match full-node GPU count on exclusive
+                #   allocations (gres.c:_handle_ntasks_per_tres_step).
+                #
+                # - "gres" mode (UVA): --ntasks-per-gpu=1
+                #   Same flag family as the Snakemake executor's sbatch
+                #   --ntasks-per-gpu=1 (submit_string.py:79-91). Redundant
+                #   with SLURM_NTASKS_PER_GPU=1 inherited from batch env, but
+                #   kept as defense-in-depth for per-task GPU isolation
+                #   (triggers tres_bind=gres/gpu:single:1). --gpus-per-task
+                #   MUST NOT be used here — it conflicts with the inherited
+                #   SLURM_NTASKS_PER_GPU (fatal in SLURM).
+                #
+                # See: completed/2026-02-28_gpu-mpi-scaling-machine-file-override.md
+                #      bugs/2026-03-01_fix_gpu_srun_flag_conflict.md
+                gpu_alloc_mode = self._scenario._system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+                if gpu_alloc_mode == "gpus":
+                    gpu_bind_flag = "--gpus-per-task=1 "
+                else:
+                    gpu_bind_flag = "--ntasks-per-gpu=1 "
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
                     f"--ntasks={n_gpus} "
                     f"--cpus-per-task={n_omp_threads} "
-                    f"{gpu_to_task_bind}"
-                    # "--exclusive "
+                    f"{gpu_bind_flag}"
                     "--cpu-bind=cores "
                     "--overlap "  # See note above on --overlap in batch_job mode.
                     "--kill-on-bad-exit=1 "  # See note above on --kill-on-bad-exit=1.
