@@ -6,7 +6,7 @@ This is a prompt.
 
 You are debugging a TRITON-SWMM analysis that failed on an HPC cluster (UVA or Frontier). The user has transferred analysis outputs via Globus to `.debugging/`, **EXCLUDING** `sims/` and `subanalyses/` directories due to size constraints (raw TRITON/TRITON-SWMM outputs can be multi-GB per simulation).
 
-The user will always pass this prompt along with the directory path to the analysis directory. This is a WSL machine, so if you receive a filepath like `C:\Users\Daniel\Downloads\2026-2-23\frontier_sensitivity_suite`, it's WSL translation is `/mnt/c/Users/Daniel/Downloads/2026-2-23/frontier_sensitivity_suite`
+The user will always pass this prompt along with the directory path to the analysis directory. This is a WSL machine, so if you receive a filepath like `C:\Users\Daniel\Downloads\2026-2-23\frontier_sensitivity_suite` or `/C/Users/Daniel/Downloads/2026-2-23/frontier_sensitivity_suite/`, it's WSL translation is `/mnt/c/Users/Daniel/Downloads/2026-2-23/frontier_sensitivity_suite`
 
 Do not make changes to any document other than the debugging report. Explicit approval from the user is required before proceeding with any bug fix strategy.
 
@@ -363,7 +363,7 @@ If prior reports exist, add a section:
   - Make recommendations; do not move/modify without explicit developer approval
 - If empirical HPC tests are needed, follow the **HPC empirical testing protocol** in `CLAUDE.md` (Architecture Patterns section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
 - If a specialist will be consulted, add a placeholder section (e.g., `## Specialist Findings`) to the plan now — this becomes the specialist's write target (see `~/dev/claude-workspace/specialist_agent_docs/ai-working-norms.md § Spawning subagents` for full guidelines)
-- Update the debugging report to reference this plan
+- Update the debugging report header conten to reference the relevant planning document(s) using `**Debug fix planning docs**:` followed by a bulleted list of the planning documents created OR folowed up on from previous debuggign reports
 
 ### Step 8b: Consider Specialist Agent Consultation
 
