@@ -1,7 +1,7 @@
 # Copier Template System: Master Plan
 
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — merged Phase 4 (update workflow reference) into Phase 3; renumbered to 4 phases; refreshed decisions log; added Future Considerations section; updated all stale `.prompts/` references to match actual template structure
+**Last edited**: 2026-03-01 — Phase 3 complete; updated status, scope, decisions log, and template file inventory
 
 ---
 
@@ -13,7 +13,7 @@ This is a four-phase plan for building and adopting a Copier-based Python projec
 |-------|------|-------|--------|-----|
 | **Phase 1** | Build the `copier-python-template` repo | New repo; no changes to existing projects | ✅ Complete | `implemented/1_build_template.md` |
 | **Phase 2** | Build the `copier-specialist` agent | New agent in `claude-workspace`; no changes to existing projects | ✅ Complete | `implemented/2_build_copier_specialist.md` |
-| **Phase 3** | Spin up `multidriver-swg` via the copier-specialist; verify ReadTheDocs; walk through the update tutorial; write the copier update reference guide | New repo; template repo may receive minor fixes | Pending | `3_spin_up_multidriver.md` |
+| **Phase 3** | Spin up `multidriver-swg`; verify ReadTheDocs; walk through update tutorial; write copier update reference guide; add PyPI publishing to template | New repo; template bugfixes and new features | ✅ Complete | `implemented/3_spin_up_multidriver.md` |
 | **Phase 4** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | Pending | `4_toolkit_adoption.md` |
 
 Phases must be completed in order — each depends on the previous. Use `/proceed-with-implementation` with the relevant phase doc at the start of each phase. From Phase 3 onward, use the `copier-specialist` agent to perform Copier operations.
@@ -50,24 +50,31 @@ The refactor promoting project-level agents to user-level (`~/.claude/agents/`) 
 | Phase 4 merge into Phase 3 | Update workflow reference guide written as Phase 3 Step 3.5, not a separate phase | Eliminates awkward "done during Phase 3" coupling from original Phase 4 |
 | Copier update reference location | `COPIER_UPDATE_GUIDE.md` at template repo root | Non-rendered reference alongside README.md; not in `docs/` (not project documentation) |
 | `.scratch/` convention | Template-level (in `.gitignore` of every generated project) | Lightweight; useful for subagent transcripts and temporary working files in any project |
+| `multidriver-swg` repo visibility | Public | Developer preference; no sensitive content |
+| Description period convention | Stored without period; template appends `.` in prose contexts | Prevents double-period bug; metadata fields don't need periods |
+| `python_version` default | `3.11` (changed from `3.12`) | Developer's current target version |
+| PyPI publishing method | Trusted publishers (OIDC) via `pypa/gh-action-pypi-publish` | Modern best practice; no API tokens or secrets needed |
+| TestPyPI as gate | Publish to TestPyPI first on all version tags, then PyPI | Simpler than pre-release-only; catches issues before real PyPI |
 
 ---
 
 ## Template File Inventory (Ground Truth)
 
-The actual template structure as of Phase 3 preflight (supersedes references in implemented Phase 1 doc):
+The actual template structure as of v1.1.1 (Phase 3 complete):
 
 ```
 copier-python-template/
 ├── copier.yml
 ├── README.md
+├── COPIER_UPDATE_GUIDE.md                 ← Setup + update reference (Parts 0–5)
 ├── .copier-tasks.py
 └── template/
-    ├── CLAUDE.md                          ← AI norms, planning lifecycle, code style (inline)
-    ├── CONTRIBUTING.md                    ← Development principles (Part I equivalent)
+    ├── CLAUDE.md                          ← AI norms, planning lifecycle, code style
+    ├── CONTRIBUTING.md                    ← Development principles + AI workflow
     ├── architecture.md                    ← Generic stub (at root, not .prompts/)
     ├── README.md
     ├── HISTORY.md
+    ├── requirements.txt                   ← Doc build deps for ReadTheDocs
     ├── .copier-answers.yml
     ├── .gitignore                         ← Standard Python + .scratch/ + scientific data
     ├── .pre-commit-config.yaml
@@ -75,6 +82,9 @@ copier-python-template/
     ├── .claude/
     │   ├── settings.local.json
     │   └── agents/README.md
+    ├── .github/
+    │   └── workflows/
+    │       └── publish.yml                ← PyPI/TestPyPI via trusted publishers
     ├── pyproject.toml
     ├── mkdocs.yml                         ← With pymdownx.superfences + Mermaid config
     ├── scripts/check_doc_freshness.py
