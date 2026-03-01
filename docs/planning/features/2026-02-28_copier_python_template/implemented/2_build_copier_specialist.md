@@ -4,6 +4,8 @@
 **Written**: 2026-02-28
 **Last edited**: 2026-02-28 — Phase 2 complete
 
+> **⚠ Staleness notice (2026-02-28)**: The startup reads reference to a future `copier_update_workflow.md` (line 37) reflects the original Phase 4 plan. Phase 4 has since been merged into Phase 3 — the reference doc will be `COPIER_UPDATE_GUIDE.md` at the template repo root, not under `docs/planning/reference/`. Update the agent's startup reads when Phase 3 completes.
+
 ---
 
 ## What Was Built

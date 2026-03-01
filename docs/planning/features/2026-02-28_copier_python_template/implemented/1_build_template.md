@@ -4,6 +4,8 @@
 **Written**: 2026-02-28
 **Last edited**: 2026-02-28 — updated copier.yml spec with actual Copier 9.x configuration (_envops, _templates_suffix); added template/.copier-answers.yml; corrected task command and build-backend; noted settings.local.json force-add requirement
 
+> **⚠ Staleness notice (2026-02-28)**: The template was significantly restructured after this phase was implemented. The `.prompts/` directory no longer exists in the template. Content was reorganized: `conventions.md` → split into `CLAUDE.md` (AI norms, planning lifecycle, code style) + `CONTRIBUTING.md` (development principles); `architecture.md` → repo root (not `.prompts/`); `implementation_plan.md`, `qaqc_and_commit.md`, `proceed_with_implementation.md` → removed from template (these are skills/prompts in the toolkit, not template files). The file tree and file-by-file plan below reflect the *original* plan, not the final built state. Consult the actual template repo for ground truth.
+
 ---
 
 ## Task Understanding
