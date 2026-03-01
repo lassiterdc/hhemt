@@ -1,7 +1,7 @@
 # Copier Template System: Master Plan
 
 **Written**: 2026-02-28
-**Last edited**: 2026-03-01 — Phase 3 complete; updated status, scope, decisions log, and template file inventory
+**Last edited**: 2026-03-01 — Phase 4 complete; all phases done; updated template inventory to v1.1.2
 
 ---
 
@@ -14,7 +14,7 @@ This is a four-phase plan for building and adopting a Copier-based Python projec
 | **Phase 1** | Build the `copier-python-template` repo | New repo; no changes to existing projects | ✅ Complete | `implemented/1_build_template.md` |
 | **Phase 2** | Build the `copier-specialist` agent | New agent in `claude-workspace`; no changes to existing projects | ✅ Complete | `implemented/2_build_copier_specialist.md` |
 | **Phase 3** | Spin up `multidriver-swg`; verify ReadTheDocs; walk through update tutorial; write copier update reference guide; add PyPI publishing to template | New repo; template bugfixes and new features | ✅ Complete | `implemented/3_spin_up_multidriver.md` |
-| **Phase 4** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | Pending | `4_toolkit_adoption.md` |
+| **Phase 4** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | ✅ Complete | `implemented/4_toolkit_adoption.md` |
 
 Phases must be completed in order — each depends on the previous. Use `/proceed-with-implementation` with the relevant phase doc at the start of each phase. From Phase 3 onward, use the `copier-specialist` agent to perform Copier operations.
 
@@ -60,7 +60,7 @@ The refactor promoting project-level agents to user-level (`~/.claude/agents/`) 
 
 ## Template File Inventory (Ground Truth)
 
-The actual template structure as of v1.1.1 (Phase 3 complete):
+The actual template structure as of v1.1.2 (Phase 4 complete):
 
 ```
 copier-python-template/
@@ -87,7 +87,6 @@ copier-python-template/
     │       └── publish.yml                ← PyPI/TestPyPI via trusted publishers
     ├── pyproject.toml
     ├── mkdocs.yml                         ← With pymdownx.superfences + Mermaid config
-    ├── scripts/check_doc_freshness.py
     ├── docs/
     │   ├── index.md                       ← Mermaid flowchart
     │   ├── installation.md                ← Admonition block
@@ -117,6 +116,14 @@ After Phase 4 is complete, consider building a Claude skill (`/create-repo`) tha
 
 This would formalize the Phase 3 workflow as a repeatable, hands-off process. The `.scratch/` convention (added to template `.gitignore` during Phase 3 preflight) supports this pattern.
 
-### Toolkit CONTRIBUTING.md modernization
+### Toolkit CONTRIBUTING.md modernization — DONE (Phase 4)
 
-The toolkit's `CONTRIBUTING.md` is severely outdated (references flake8, tox, virtualenvwrapper, `setup.py develop`, Make commands). Phase 4 (toolkit adoption) is the natural place to address this — the pre-migration audit table already notes this conflict. The toolkit's `CONTRIBUTING.md` should be rebuilt to align with the template's structure while preserving TRITON-SWMM-specific content from `.prompts/conventions.md`.
+Resolved during Phase 4: toolkit's outdated `CONTRIBUTING.md` was replaced wholesale with the template version. No unique valuable content was lost (verified via line-level audit).
+
+### Teach `/copier-update` skill to protect `settings.local.json`
+
+Discovered during Phase 4 Step 4.6: `copier update` overwrites `.claude/settings.local.json` with the template's minimal version, wiping project-specific tool permissions, output style, indexing config, and exclude patterns. The file should stay in the template (so new projects get a reasonable starting point) but the `/copier-update` skill should auto-restore it via `git checkout` after every update and flag it in the risk assessment table.
+
+### Add conda environment guidance to template CLAUDE.md
+
+Discovered during Phase 4: agents frequently waste tokens trying to run `copier`, `ruff`, `pytest` etc. outside the project's conda environment, then discovering `command not found`. The template's `CLAUDE.md` should include a section documenting which conda environment to use and the `conda run -n <env>` pattern. Also note that `--defaults` is required when running `copier update` through `conda run` (no interactive terminal).
