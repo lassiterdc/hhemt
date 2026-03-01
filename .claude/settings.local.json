@@ -74,7 +74,8 @@
       "Bash(test:*)",
       "Bash(ln:*)",
       "Bash(copier copy:*)",
-      "WebFetch(domain:packaging.python.org)"
+      "WebFetch(domain:packaging.python.org)",
+      "Skill(commit-commands:commit)"
     ]
   },
   "outputStyle": "Explanatory",
