@@ -1,7 +1,7 @@
 # Fix: GPU srun `--gpus-per-task` / `SLURM_NTASKS_PER_GPU` Cross-Platform Conflict
 
 **Plan Date**: 2026-03-01
-**Status**: Complete — implemented, tests passing
+**Status**: Complete — implemented, tests passing, UVA validation confirmed
 **Related Debug Report**: `test_uva_sensitivity_suite_full_suite/debugging_docs/debugging_report_20260301_0200.md`
 **Related Prior Plans**:
 - `completed/2026-02-28_gpu-mpi-scaling-machine-file-override.md` — added `--gpus-per-task=1` to fix Frontier task expansion
