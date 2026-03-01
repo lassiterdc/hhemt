@@ -1,0 +1,12 @@
+# Changes here will be overwritten by Copier; DO NOT EDIT
+_commit: v1.1.1
+_src_path: /home/***REMOVED***/dev/copier-python-template
+author_email: daniel.lassiter@outlook.com
+author_name: Daniel Lassiter
+description: Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management)
+    simulations across local machines and HPC clusters
+github_username: lassiterdc
+package_name: TRITON_SWMM_toolkit
+project_name: TRITON-SWMM Toolkit
+project_slug: TRITON-SWMM_toolkit
+python_version: '3.11'

@@ -1,6 +1,6 @@
 # Architecture
 
-Reference document for the TRITON-SWMM toolkit codebase. Tool-agnostic — load this alongside `.prompts/conventions.md` at the start of any AI-assisted session.
+Reference document for the TRITON-SWMM toolkit codebase. Tool-agnostic — load this alongside `CONTRIBUTING.md` at the start of any AI-assisted session.
 
 ---
 
@@ -147,6 +147,3 @@ Note: `environment.yaml` at the repo root and the `conda:` directives in generat
 3. **SLURM detection includes config check** — `in_slurm` is True when `multi_sim_run_method == "1_job_many_srun_tasks"` even without `SLURM_JOB_ID`
 4. **Runner scripts use argparse** — each has specific CLI flags; check docstrings for usage
 5. **`log.out` overwrite with multi-model** — both TRITON-only and TRITON-SWMM write to `sim_folder/output/log.out`; last to finish overwrites the other
-
----
-

@@ -361,13 +361,13 @@ If prior reports exist, add a section:
   - Assess freshness. Stale plans → move to `docs/planning/bugs/shelved/` or refresh
   - Assess completion status. Completed plans → move to `docs/planning/bugs/completed/`
   - Make recommendations; do not move/modify without explicit developer approval
-- If empirical HPC tests are needed, follow the **Empirical testing** protocol in `conventions.md` (HPC debugging protocol section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
-- If a specialist will be consulted, add a placeholder section (e.g., `## Specialist Findings`) to the plan now — this becomes the specialist's write target (see `.prompts/conventions.md § Spawning subagents` for full guidelines)
+- If empirical HPC tests are needed, follow the **HPC empirical testing protocol** in `CLAUDE.md` (Architecture Patterns section): add an `## Empirical HPC Testing` section to the plan with copy-pasteable commands and empty output blocks
+- If a specialist will be consulted, add a placeholder section (e.g., `## Specialist Findings`) to the plan now — this becomes the specialist's write target (see `~/dev/claude-workspace/specialist_agent_docs/ai-working-norms.md § Spawning subagents` for full guidelines)
 - Update the debugging report to reference this plan
 
 ### Step 8b: Consider Specialist Agent Consultation
 
-After writing the debugging report **and** the planning document (Step 9), assess whether a specialist agent would add value. Available agents and their scopes are in `~/dev/claude-workspace/README.md`. For invocation guidelines see `.prompts/conventions.md § Spawning subagents`.
+After writing the debugging report **and** the planning document (Step 9), assess whether a specialist agent would add value. Available agents and their scopes are in `~/dev/claude-workspace/README.md`. For invocation guidelines see `~/dev/claude-workspace/specialist_agent_docs/ai-working-norms.md § Spawning subagents`.
 
 When proposing a specialist invocation in this context, the read-only artifact to pass is **the full debugging report** (`{analysis_dir}/debugging_docs/debugging_report_*.md`), with the planning document as the write target.
 

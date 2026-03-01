@@ -204,9 +204,17 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# custom
+# Scratch directory (subagent transcripts, temporary working files)
+.scratch/
+
+# Scientific data
+*.nc
+*.nc4
+*.zarr
+*.h5
+
+# TRITON-SWMM toolkit custom
 *_archive*
-*test_data/*/system*
 *test_data/*/system*
 *test_data/*/tests/*
 *test_data/*/triton/*
@@ -218,16 +226,5 @@ profiling/retrieve_profile.out
 .debugging/*
 # Local/large vendored or external content
 external/
-
 # Large test/model artifacts (keep only what you intend to version)
 test_data/norfolk_coastal_flooding/triton/*
-
-# Common workflow outputs
-build/
-dist/
-
-# Scientific data
-*.nc
-*.nc4
-*.zarr
-*.h5
