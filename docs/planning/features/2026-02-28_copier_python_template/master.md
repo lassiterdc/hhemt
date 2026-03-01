@@ -1,7 +1,7 @@
 # Copier Template System: Master Plan
 
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — Phase 1 complete; repo at github.com/lassiterdc/copier-python-template tagged v1.0.0
+**Last edited**: 2026-02-28 — Phase 2 complete; copier-specialist agent built in claude-workspace
 
 ---
 
@@ -12,7 +12,7 @@ This is a five-phase plan for building and adopting a Copier-based Python projec
 | Phase | Goal | Scope | Status | Doc |
 |-------|------|-------|--------|-----|
 | **Phase 1** | Build the `copier-python-template` repo | New repo; no changes to existing projects | ✅ Complete | `implemented/1_build_template.md` |
-| **Phase 2** | Build the `copier-specialist` agent | New agent in `claude-workspace`; no changes to existing projects | Pending | `2_build_copier_specialist.md` |
+| **Phase 2** | Build the `copier-specialist` agent | New agent in `claude-workspace`; no changes to existing projects | ✅ Complete | `implemented/2_build_copier_specialist.md` |
 | **Phase 3** | Spin up `multidriver-swg` via the copier-specialist; verify ReadTheDocs; walk through the update tutorial | New repo; template repo may receive minor fixes | Pending | `3_spin_up_multidriver.md` |
 | **Phase 4** | Formalize the `copier update` workflow as a reference document; fully initialize copier-specialist | Reference doc written in template repo; agent startup reads updated | Pending | `4_update_workflow_reference.md` |
 | **Phase 5** | Retroactively adopt Copier in the TRITON-SWMM toolkit | Modifies existing toolkit repo | Pending | `5_toolkit_adoption.md` |
