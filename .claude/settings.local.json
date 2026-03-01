@@ -66,7 +66,15 @@
       "WebFetch(domain:aiechoes.substack.com)",
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(gh repo:*)",
-      "Bash(chmod +x:*)"
+      "Bash(chmod +x:*)",
+      "Bash(mv:*)",
+      "Bash(rm:*)",
+      "Bash(pip install:*)",
+      "Bash(mkdocs build:*)",
+      "Bash(test:*)",
+      "Bash(ln:*)",
+      "Bash(copier copy:*)",
+      "WebFetch(domain:packaging.python.org)"
     ]
   },
   "outputStyle": "Explanatory",
