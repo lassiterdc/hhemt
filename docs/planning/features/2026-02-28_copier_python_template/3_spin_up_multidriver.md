@@ -64,7 +64,7 @@ Confirm the repo appears at `https://github.com/lassiterdc/multidriver-swg`.
 
 If any of the four fail, diagnose and fix in the template repo before proceeding to Step 3.4.
 
-> **Note — expected Mermaid rendering**: The template's `mkdocs.yml` was updated during preflight to include `pymdownx.superfences` with Mermaid fence configuration and `admonition` + `pymdownx.details` extensions. If Mermaid diagrams still fail to render, check that the `pymdownx` package is installed (it ships with `mkdocs-material`) and that the fence configuration is correct. The `pyproject.toml` must include `pymdownx-extensions` or rely on Material's bundled version.
+> **Note — expected Mermaid rendering**: The template's `mkdocs.yml` was updated during preflight to include `pymdownx.superfences` with Mermaid fence configuration and `admonition` + `pymdownx.details` extensions. If Mermaid diagrams still fail to render, check that the fence configuration in `mkdocs.yml` is correct — `pymdownx` ships bundled with `mkdocs-material`, so no separate dependency is needed.
 
 ---
 
