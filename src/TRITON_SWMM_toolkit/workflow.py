@@ -831,6 +831,11 @@ else
     echo "WARNING: CONDA_PREFIX not set after conda activate"
 fi
 
+# Fix for Frontier: GPFS /ccs/home compute node mounts do not support HDF5 POSIX byte-range
+# locking. Without this, xr.open_dataset() on NetCDF-4 files fails with errno 524 on compute
+# nodes. This env var is inherited by all srun child steps via SLURM's default --export=ALL.
+export HDF5_USE_FILE_LOCKING=FALSE
+
 # ===================================================================
 # DIAGNOSTIC OUTPUT - Environment state after LD_LIBRARY_PATH fix
 # ===================================================================
