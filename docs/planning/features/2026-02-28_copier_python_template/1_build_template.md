@@ -2,7 +2,7 @@
 
 **Part of**: `master.md` — Copier Template System
 **Written**: 2026-02-28
-**Last edited**: 2026-02-28 — extracted from master plan; applied preflight updates (repo name, agent stub approach, conventions.md portability, cookiecutter references purged)
+**Last edited**: 2026-02-28 — updated copier.yml spec with actual Copier 9.x configuration (_envops, _templates_suffix); added template/.copier-answers.yml; corrected task command and build-backend; noted settings.local.json force-add requirement
 
 ---
 
@@ -165,9 +165,10 @@ copier-python-template/
     │   ├── qaqc_and_commit.md                    # Copied verbatim
     │   └── proceed_with_implementation.md        # Copied verbatim
     ├── .claude/
-    │   ├── settings.local.json                   # Generic permissions stub
+    │   ├── settings.local.json                   # Generic permissions stub (requires git add -f)
     │   └── agents/
     │       └── README.md                         # Redirect to ~/dev/claude-workspace/
+    ├── .copier-answers.yml                        # Tells Copier how to write answers file
     ├── .pre-commit-config.yaml                   # ruff hooks + commented check-claude-docs example
     ├── .gitignore                                 # Standard Python gitignore
     ├── .readthedocs.yaml                         # MkDocs config for ReadTheDocs
@@ -214,8 +215,16 @@ This plan creates a **new repository** — no files in the TRITON-SWMM toolkit a
 Declares template variables with Copier's YAML question format:
 ```yaml
 _subdirectory: template   # Generated files live in template/ subdirectory
+_templates_suffix: ""     # Render all files as templates (not just .jinja files)
+_envops:                  # Switch delimiters from {{ }} to [[ ]] to avoid Jinja2 conflicts
+  block_start_string: "[%"
+  block_end_string: "%]"
+  comment_start_string: "[#"
+  comment_end_string: "#]"
+  variable_start_string: "[["
+  variable_end_string: "]]"
 _tasks:
-  - python .copier-tasks.py validate  # Post-generation validation
+  - "python [[ _copier_conf.src_path ]]/.copier-tasks.py validate [[package_name]]"
 
 project_name:
   type: str
@@ -257,7 +266,11 @@ python_version:
   default: "3.12"
 ```
 
-Note: `[[...]]` is Copier's default variable delimiter (vs Cookiecutter's `{{...}}`). Copier supports Jinja2 filters inline in defaults (e.g., `lower`, `replace`), which auto-derives `project_slug` from `project_name`.
+Note: Copier 9.x defaults to `{{ }}` (standard Jinja2). The `_envops` block above switches to `[[ ]]` to avoid conflicts with any `{{ }}` literals that might appear in generated files. The `_templates_suffix: ""` setting tells Copier to render all files as templates (by default only `.jinja` files are rendered). Copier supports Jinja2 filters inline in defaults (e.g., `lower`, `replace`), which auto-derives `project_slug` from `project_name`.
+
+Also required (not shown above): `template/.copier-answers.yml` containing `[[ _copier_answers|to_nice_yaml ]]` — this tells Copier where and how to write the answers file in the generated project.
+
+**`settings.local.json` note**: A global gitignore (`~/.config/git/ignore`) typically excludes `**/.claude/settings.local.json`. Use `git add -f template/.claude/settings.local.json` to force-include it when committing the template repo.
 
 ### `.copier-tasks.py`
 
