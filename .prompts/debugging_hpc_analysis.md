@@ -163,7 +163,7 @@ For incomplete rules identified in Step 3, check `logs/sims/*.log`:
 - `triton_{event_iloc}.log` or `tritonswmm_{event_iloc}.log` or `swmm_{event_iloc}.log`
 - `process_triton_{event_iloc}.log` or `process_tritonswmm_{event_iloc}.log` or `process_swmm_{event_iloc}.log`
 
-**Sensitivity analysis naming**:
+**Sensitivity analysis naming** (note: rule-specific logs use `sa{N}` without underscore; model runtime logs in Step 5b use `sa_{N}` with underscore — both are correct):
 - `prepare_sa{N}_evt{M}.log`
 - `simulation_sa{N}_evt{M}.log`
 - `process_sa{N}_evt{M}.log`
@@ -421,5 +421,6 @@ If diagnosis is incomplete, request specific files:
 - **Don't assume compilation issues** - if setup succeeded, compilation worked
 - **For time limits**: Check if failures correlate with specific resource configs (GPU jobs may need more time than CPU jobs)
 - **For GPU jobs**: 0% CPU efficiency in SLURM reports is expected for GPU-bound workloads — SLURM sacct only tracks CPU time. A GPU job with 0% CPU efficiency but ~20 min elapsed may have been computing on GPU but not finished, or may have timed out
+- **Snakemake executor implicit GPU flags**: When the SLURM executor detects "gpu" in the `gres` resource string, it unconditionally adds `--ntasks-per-gpu={tasks}` to the sbatch command (`submit_string.py:79-91`). This sets `SLURM_NTASKS_PER_GPU` in the job environment, which is invisible in the Snakefile and can conflict with srun GPU flags like `--gpus-per-task`. If GPU srun flags fail with mutual exclusion errors, check whether the executor is injecting conflicting flags
 - **Keep it focused**: Provide actionable diagnosis, not exhaustive investigation
 - **Efficiency report path**: Reports are nested under `logs/slurm_efficiency_report/[DATETIME].csv/efficiency_report_[UUID].csv`
