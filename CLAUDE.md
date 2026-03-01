@@ -13,6 +13,15 @@ Read `~/dev/claude-workspace/specialist_agent_docs/planning-document-lifecycle.m
 
 ---
 
+## Environment
+
+This project uses a conda environment named `triton_swmm_toolkit`.
+
+- **Running tools**: Use `conda run -n triton_swmm_toolkit <command>` or activate the environment first with `conda activate triton_swmm_toolkit`.
+- **Copier updates**: When running `copier update` through `conda run`, pass `--defaults` since there is no interactive terminal: `conda run -n triton_swmm_toolkit copier update --trust --skip-tasks --defaults`.
+
+---
+
 ## Code Style
 
 - **Python**: ≥3.10, target 3.12+

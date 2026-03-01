@@ -1,8 +1,9 @@
 # Changes here will be overwritten by Copier; DO NOT EDIT
-_commit: v1.1.2
+_commit: v1.2.0
 _src_path: /home/***REMOVED***/dev/copier-python-template
 author_email: daniel.lassiter@outlook.com
 author_name: Daniel Lassiter
+conda_env_name: triton_swmm_toolkit
 description: Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management)
     simulations across local machines and HPC clusters
 github_username: lassiterdc
