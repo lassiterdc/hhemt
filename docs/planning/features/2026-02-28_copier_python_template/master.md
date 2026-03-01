@@ -7,7 +7,7 @@
 
 ## Overview
 
-This is a four-phase plan for building and adopting a Copier-based Python project template system named `copier-python-template`.
+This is a five-phase plan for building and adopting a Copier-based Python project template system named `copier-python-template`.
 
 | Phase | Goal | Scope | Status | Doc |
 |-------|------|-------|--------|-----|
