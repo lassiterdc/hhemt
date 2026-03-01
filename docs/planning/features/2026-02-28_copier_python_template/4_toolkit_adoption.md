@@ -98,6 +98,16 @@ Now that both `multidriver-swg` and the toolkit are under Copier management, exe
 
 ---
 
+## Deferred Observations (from Phase 3 QA/QC)
+
+The following were surfaced during Phase 3 preflight and QA/QC review. They belong in Phase 4 scope:
+
+- **`.prompts/` elimination**: The toolkit still uses `.prompts/conventions.md`, `.prompts/architecture.md`, `.prompts/qaqc_and_commit.md`, etc. The template has already moved to `CLAUDE.md` + `CONTRIBUTING.md` + root `architecture.md` + skills. Phase 4 should complete this migration.
+- **`conventions.md` skill references**: Lines 193 and 328 reference `@.prompts/proceed_with_implementation.md` and `@.prompts/qaqc_and_commit.md` using the old path pattern. Should be updated to `/proceed-with-implementation` and `/qaqc-and-commit` skill invocations.
+- **Local `.prompts/qaqc_and_commit.md` superseded**: The skill version at `~/.claude/skills/qaqc-and-commit/SKILL.md` is newer (includes `/reflect` step, updated co-author tag). The local file should be removed.
+
+---
+
 ## Open Decision for Phase 4
 
 **`.readthedocs.yaml` conflict** — two options:
