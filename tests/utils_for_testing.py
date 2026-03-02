@@ -60,10 +60,7 @@ def assert_snakefile_has_rules(content: str, rules: list[str]):
         if rule in ["run_simulation", "process_outputs"]:
             # For these rules, check if ANY model-specific variant exists
             base = "run" if rule == "run_simulation" else "process"
-            has_variant = any(
-                f"rule {base}_{model}" in content
-                for model in ["triton", "tritonswmm", "swmm"]
-            )
+            has_variant = any(f"rule {base}_{model}" in content for model in ["triton", "tritonswmm", "swmm"])
             has_exact = f"rule {rule}" in content
             if not (has_variant or has_exact):
                 missing.append(rule)
@@ -92,9 +89,7 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
         assert analysis._system.compilation_successful, "TRITON-SWMM compilation failed"
 
     if cfg_sys.toggle_triton_model:
-        assert (
-            analysis._system.compilation_triton_only_successful
-        ), "TRITON-only compilation failed"
+        assert analysis._system.compilation_triton_only_successful, "TRITON-only compilation failed"
 
     if cfg_sys.toggle_swmm_model:
         assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
@@ -118,10 +113,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
     """
     if not analysis.all_scenarios_created:
         if verbose:
-            print(
-                "\n  Failed scenarios:\n    - "
-                + "\n    - ".join(analysis.scenarios_not_created)
-            )
+            print("\n  Failed scenarios:\n    - " + "\n    - ".join(analysis.scenarios_not_created))
         pytest.fail(
             f"Scenario setup failed for {len(analysis.scenarios_not_created)} "
             f"of {analysis.n_scenarios} scenarios. Run with pytest -v for details."
@@ -140,19 +132,14 @@ def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
     """
     if not analysis.all_sims_run:
         if verbose:
-            print(
-                "\n  Failed simulations:\n    - "
-                + "\n    - ".join(analysis.scenarios_not_run)
-            )
+            print("\n  Failed simulations:\n    - " + "\n    - ".join(analysis.scenarios_not_run))
         pytest.fail(
             f"Simulation failed for {len(analysis.scenarios_not_run)} "
             f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
         )
 
 
-def assert_timeseries_processed(
-    analysis: TRITONSWMM_analysis, which: str = "both", verbose: bool = False
-):
+def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "both", verbose: bool = False):
     """Assert that requested timeseries outputs were processed.
 
     Parameters
@@ -169,9 +156,7 @@ def assert_timeseries_processed(
         if verbose:
             print(
                 "\n  Failed TRITONSWMM performance:\n    - "
-                + "\n    - ".join(
-                    analysis.TRITONSWMM_performance_time_series_not_processed
-                )
+                + "\n    - ".join(analysis.TRITONSWMM_performance_time_series_not_processed)
             )
         pytest.fail(
             f"TRITONSWMM performance timeseries processing failed for "
@@ -181,10 +166,7 @@ def assert_timeseries_processed(
     # TRITON time series
     if which in ("both", "TRITON") and not analysis.all_TRITON_timeseries_processed:
         if verbose:
-            print(
-                "\n  Failed TRITON timeseries:\n    - "
-                + "\n    - ".join(analysis.TRITON_time_series_not_processed)
-            )
+            print("\n  Failed TRITON timeseries:\n    - " + "\n    - ".join(analysis.TRITON_time_series_not_processed))
         pytest.fail(
             f"TRITON timeseries processing failed for "
             f"{len(analysis.TRITON_time_series_not_processed)} scenarios. "
@@ -193,10 +175,7 @@ def assert_timeseries_processed(
     # SWMM time series
     if which in ("both", "SWMM") and not analysis.all_SWMM_timeseries_processed:
         if verbose:
-            print(
-                "\n  Failed SWMM timeseries:\n    - "
-                + "\n    - ".join(analysis.SWMM_time_series_not_processed)
-            )
+            print("\n  Failed SWMM timeseries:\n    - " + "\n    - ".join(analysis.SWMM_time_series_not_processed))
         pytest.fail(
             f"SWMM timeseries processing failed for "
             f"{len(analysis.SWMM_time_series_not_processed)} scenarios. "
@@ -251,10 +230,7 @@ def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
                 missing.append(desc)
 
     if missing:
-        pytest.fail(
-            f"Missing analysis-level consolidated summaries:\n"
-            + "\n".join(f"  - {m}" for m in missing)
-        )
+        pytest.fail(f"Missing analysis-level consolidated summaries:\n" + "\n".join(f"  - {m}" for m in missing))
 
 
 def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
@@ -320,14 +296,13 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
         "actual_total_gpus",
         "actual_gpu_backend",
         "actual_build_type",
-        "actual_wall_time_s",
+        "perf_Total",
     ]
 
     missing_columns = [col for col in required_columns if col not in df.columns]
     if missing_columns:
         pytest.fail(
-            f"scenario_status.csv missing required columns: {missing_columns}\n"
-            f"Available columns: {list(df.columns)}"
+            f"scenario_status.csv missing required columns: {missing_columns}\nAvailable columns: {list(df.columns)}"
         )
 
     # Verify row count matches number of model runs (long-format df_status)
@@ -335,8 +310,7 @@ def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
 
     if len(df) != expected_rows:
         pytest.fail(
-            f"scenario_status.csv has {len(df)} rows, expected {expected_rows} "
-            f"(one per model run row in df_status)"
+            f"scenario_status.csv has {len(df)} rows, expected {expected_rows} (one per model run row in df_status)"
         )
 
 
@@ -428,11 +402,7 @@ def assert_model_simulation_run(
         pytest.fail(
             f"{len(failed)} {model_type} simulation(s) failed to complete:\n"
             + "\n".join(f"  - {d}" for d in failed_dirs[:5])
-            + (
-                f"\n  ... and {len(failed_dirs) - 5} more"
-                if len(failed_dirs) > 5
-                else ""
-            )
+            + (f"\n  ... and {len(failed_dirs) - 5} more" if len(failed_dirs) > 5 else "")
         )
 
 
@@ -521,9 +491,7 @@ def assert_model_outputs_processed(
         # Check each required path exists
         for desc, path in required_paths:
             if path is None:
-                missing_outputs.append(
-                    f"{desc} (path not configured) - scenario {event_iloc}"
-                )
+                missing_outputs.append(f"{desc} (path not configured) - scenario {event_iloc}")
             elif not path.exists():
                 missing_outputs.append(f"{desc} ({path.name}) - scenario {event_iloc}")
 
@@ -531,11 +499,7 @@ def assert_model_outputs_processed(
         pytest.fail(
             f"{model_type} output processing incomplete:\n"
             + "\n".join(f"  - {m}" for m in missing_outputs[:10])
-            + (
-                f"\n  ... and {len(missing_outputs) - 10} more"
-                if len(missing_outputs) > 10
-                else ""
-            )
+            + (f"\n  ... and {len(missing_outputs) - 10} more" if len(missing_outputs) > 10 else "")
         )
 
 
@@ -565,10 +529,7 @@ def assert_enabled_models_match_config(analysis: TRITONSWMM_analysis):
         expected_models.add("swmm")
 
     if model_types_present != expected_models:
-        pytest.fail(
-            f"Model types in df_status ({model_types_present}) don't match "
-            f"enabled toggles ({expected_models})"
-        )
+        pytest.fail(f"Model types in df_status ({model_types_present}) don't match enabled toggles ({expected_models})")
 
 
 def get_enabled_model_types(analysis: TRITONSWMM_analysis) -> list[str]:
@@ -683,9 +644,7 @@ def assert_model_outputs_exist(
             missing_outputs.append(f"Summaries: {str(e)}")
 
     if missing_outputs:
-        error_msg = (
-            f"Model output validation failed for {len(missing_outputs)} check(s):\n"
-        )
+        error_msg = f"Model output validation failed for {len(missing_outputs)} check(s):\n"
         error_msg += "\n".join(f"  - {msg}" for msg in missing_outputs)
         if not verbose:
             error_msg += "\nRun with pytest -v for detailed output lists."
@@ -793,17 +752,12 @@ def assert_phases_complete(
 
     for phase_name in phases:
         if phase_name not in phase_status_map:
-            pytest.fail(
-                f"Invalid phase name: '{phase_name}'. "
-                f"Valid phases: {list(phase_status_map.keys())}"
-            )
+            pytest.fail(f"Invalid phase name: '{phase_name}'. Valid phases: {list(phase_status_map.keys())}")
 
         phase_obj = phase_status_map[phase_name]
         if not phase_obj.complete:
             if verbose:
-                print(
-                    f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete"
-                )
+                print(f"\n  {phase_name.capitalize()}: {phase_obj.progress:.0%} complete")
                 if phase_obj.failed_items:
                     print(f"    Failed items: {phase_obj.failed_items}")
             incomplete.append(f"{phase_name} ({phase_obj.progress:.0%})")
@@ -861,16 +815,11 @@ def assert_model_simulations_complete(
     """
     valid_types = ["triton", "tritonswmm", "swmm"]
     if model_type not in valid_types:
-        raise ValueError(
-            f"Invalid model_type: '{model_type}'. Valid types: {valid_types}"
-        )
+        raise ValueError(f"Invalid model_type: '{model_type}'. Valid types: {valid_types}")
 
     enabled_models = get_enabled_model_types(analysis)
     if model_type not in enabled_models:
-        raise ValueError(
-            f"Model type '{model_type}' not enabled. "
-            f"Enabled models: {enabled_models}"
-        )
+        raise ValueError(f"Model type '{model_type}' not enabled. Enabled models: {enabled_models}")
 
     incomplete_scenarios = []
 
@@ -933,9 +882,7 @@ def assert_datasets_equal(
     actual_dims = set(ds_actual.dims)
     if ref_dims != actual_dims:
         raise AssertionError(
-            f"{dataset_name}: Dimension names differ.\n"
-            f"  Reference: {sorted(ref_dims)}\n"
-            f"  Actual: {sorted(actual_dims)}"
+            f"{dataset_name}: Dimension names differ.\n  Reference: {sorted(ref_dims)}\n  Actual: {sorted(actual_dims)}"
         )
 
     # Check data variables match (order-agnostic, excluding skipped)
@@ -962,9 +909,7 @@ def assert_datasets_equal(
 
         # Check dimension names match (order doesn't matter)
         if set(ref_dims_list) != set(actual_dims_list):
-            mismatched_vars.append(
-                f"{var}: dimension names differ (ref={ref_dims_list}, actual={actual_dims_list})"
-            )
+            mismatched_vars.append(f"{var}: dimension names differ (ref={ref_dims_list}, actual={actual_dims_list})")
             continue
 
         # Transpose actual to match reference dimension order if needed
@@ -977,9 +922,7 @@ def assert_datasets_equal(
         try:
             actual_da_aligned = actual_da.reindex_like(ref_da, method=None)
         except Exception as e:
-            mismatched_vars.append(
-                f"{var}: coordinate alignment failed ({str(e)})"
-            )
+            mismatched_vars.append(f"{var}: coordinate alignment failed ({str(e)})")
             continue
 
         ref_values = ref_da.values
@@ -1001,12 +944,10 @@ def assert_datasets_equal(
             # Numeric comparison with tolerance
             if not np.allclose(ref_values, actual_values, rtol=rtol, atol=atol, equal_nan=True):
                 max_diff = np.nanmax(np.abs(ref_values - actual_values))
-                mismatched_vars.append(
-                    f"{var}: numeric values differ (max_abs_diff={max_diff:.2e})"
-                )
+                mismatched_vars.append(f"{var}: numeric values differ (max_abs_diff={max_diff:.2e})")
 
     if mismatched_vars:
         raise AssertionError(
-            f"{dataset_name}: {len(mismatched_vars)} variable(s) have mismatched values:\n  " +
-            "\n  ".join(mismatched_vars)
+            f"{dataset_name}: {len(mismatched_vars)} variable(s) have mismatched values:\n  "
+            + "\n  ".join(mismatched_vars)
         )

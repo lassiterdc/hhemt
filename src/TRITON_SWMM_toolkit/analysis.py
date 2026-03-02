@@ -1,45 +1,76 @@
 # %%
 
+import os
+import signal
+import threading
+import time
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+from typing import TYPE_CHECKING, Literal
+
 import pandas as pd
-from typing import Literal, Callable, List, Optional, TYPE_CHECKING
-from TRITON_SWMM_toolkit.paths import AnalysisPaths
-from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
-from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
-from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
-from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
-from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
-from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
-from TRITON_SWMM_toolkit.resource_management import ResourceManager
+
+from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
 from TRITON_SWMM_toolkit.execution import (
-    SerialExecutor,
     LocalConcurrentExecutor,
+    SerialExecutor,
     SlurmExecutor,
 )
+from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
+from TRITON_SWMM_toolkit.paths import AnalysisPaths
+from TRITON_SWMM_toolkit.plot_analysis import TRITONSWMM_analysis_plotting
+from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
+from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
+from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
+from TRITON_SWMM_toolkit.resource_management import ResourceManager
+from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
     generate_dry_run_report_markdown,
-)
-from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
-from TRITON_SWMM_toolkit.utils import parse_triton_log_file, fast_rmtree
-from TRITON_SWMM_toolkit.swmm_output_parser import (
-    retrieve_swmm_performance_stats_from_rpt,
 )
 from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
     parse_regular_workflow_model_allocations,
     parse_sensitivity_analysis_workflow_model_allocations,
 )
-from TRITON_SWMM_toolkit.validation import preflight_validate, ValidationResult
-import os
-import signal
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-import threading
+from TRITON_SWMM_toolkit.swmm_output_parser import (
+    retrieve_swmm_performance_stats_from_rpt,
+)
+from TRITON_SWMM_toolkit.utils import fast_rmtree, parse_triton_log_file
+from TRITON_SWMM_toolkit.validation import ValidationResult, preflight_validate
+from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 
 if TYPE_CHECKING:
-    from .system import TRITONSWMM_system
     from .orchestration import WorkflowResult, WorkflowStatus
+    from .system import TRITONSWMM_system
+
+# All variable names present in TRITON performance.txt files.
+# Used to build all-None dicts for model types with no performance dataset (SWMM).
+PERF_VARS: list[str] = [
+    "Compute",
+    "MPI",
+    "IO",
+    "Resize",
+    "SWMM",
+    "Other",
+    "Simulation",
+    "Init",
+    "Total",
+]
+
+# Display order for perf_* columns in df_status / scenario_status.csv.
+# Total is first for quick scanning; breakdown follows in descending importance.
+PERF_VARS_ORDERED: list[str] = [
+    "Total",
+    "Compute",
+    "SWMM",
+    "MPI",
+    "Simulation",
+    "IO",
+    "Resize",
+    "Other",
+    "Init",
+]
 
 
 class TRITONSWMM_analysis:
@@ -73,9 +104,7 @@ class TRITONSWMM_analysis:
         if cfg_analysis.analysis_dir:
             analysis_dir = cfg_analysis.analysis_dir
         else:
-            analysis_dir = (
-                self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
-            )
+            analysis_dir = self._system.cfg_system.system_directory / self.cfg_analysis.analysis_id
 
         ext = self.cfg_analysis.target_processed_output_type
         cfg_sys = self._system.cfg_system
@@ -93,36 +122,24 @@ class TRITONSWMM_analysis:
 
         # TRITON-SWMM coupled model consolidated outputs
         if cfg_sys.toggle_tritonswmm_model:
-            analysis_paths_kwargs["output_tritonswmm_triton_summary"] = (
-                analysis_dir / f"TRITONSWMM_TRITON.{ext}"
-            )
-            analysis_paths_kwargs["output_tritonswmm_node_summary"] = (
-                analysis_dir / f"TRITONSWMM_SWMM_nodes.{ext}"
-            )
-            analysis_paths_kwargs["output_tritonswmm_link_summary"] = (
-                analysis_dir / f"TRITONSWMM_SWMM_links.{ext}"
-            )
+            analysis_paths_kwargs["output_tritonswmm_triton_summary"] = analysis_dir / f"TRITONSWMM_TRITON.{ext}"
+            analysis_paths_kwargs["output_tritonswmm_node_summary"] = analysis_dir / f"TRITONSWMM_SWMM_nodes.{ext}"
+            analysis_paths_kwargs["output_tritonswmm_link_summary"] = analysis_dir / f"TRITONSWMM_SWMM_links.{ext}"
             analysis_paths_kwargs["output_tritonswmm_performance_summary"] = (
                 analysis_dir / f"TRITONSWMM_performance.{ext}"
             )
 
         # TRITON-only consolidated outputs
         if cfg_sys.toggle_triton_model:
-            analysis_paths_kwargs["output_triton_only_summary"] = (
-                analysis_dir / f"TRITON_only.{ext}"
-            )
+            analysis_paths_kwargs["output_triton_only_summary"] = analysis_dir / f"TRITON_only.{ext}"
             analysis_paths_kwargs["output_triton_only_performance_summary"] = (
                 analysis_dir / f"TRITON_only_performance.{ext}"
             )
 
         # SWMM-only consolidated outputs
         if cfg_sys.toggle_swmm_model:
-            analysis_paths_kwargs["output_swmm_only_node_summary"] = (
-                analysis_dir / f"SWMM_only_nodes.{ext}"
-            )
-            analysis_paths_kwargs["output_swmm_only_link_summary"] = (
-                analysis_dir / f"SWMM_only_links.{ext}"
-            )
+            analysis_paths_kwargs["output_swmm_only_node_summary"] = analysis_dir / f"SWMM_only_nodes.{ext}"
+            analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
@@ -357,9 +374,7 @@ class TRITONSWMM_analysis:
             scen = TRITONSWMM_scenario(event_iloc, self)
             # Check if all enabled models completed for this scenario
             enabled_models = scen.run.model_types_enabled
-            all_models_completed = all(
-                scen.model_run_completed(model_type) for model_type in enabled_models
-            )
+            all_models_completed = all(scen.model_run_completed(model_type) for model_type in enabled_models)
             if not all_models_completed:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
@@ -394,14 +409,12 @@ class TRITONSWMM_analysis:
             if self._system.cfg_system.toggle_tritonswmm_model:
                 log = scen.get_log("tritonswmm")
                 perf_ok = perf_ok and bool(
-                    log.performance_timeseries_written
-                    and log.performance_timeseries_written.get()
+                    log.performance_timeseries_written and log.performance_timeseries_written.get()
                 )
             if self._system.cfg_system.toggle_triton_model:
                 log = scen.get_log("triton")
                 perf_ok = perf_ok and bool(
-                    log.performance_timeseries_written
-                    and log.performance_timeseries_written.get()
+                    log.performance_timeseries_written and log.performance_timeseries_written.get()
                 )
             if not perf_ok:
                 scens_not_processed.append(str(scen.scen_paths.sim_folder))
@@ -425,16 +438,10 @@ class TRITONSWMM_analysis:
             triton_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
                 log = scen.get_log("tritonswmm")
-                triton_ok = triton_ok and (
-                    log.TRITON_timeseries_written
-                    and bool(log.TRITON_timeseries_written.get())
-                )
+                triton_ok = triton_ok and (log.TRITON_timeseries_written and bool(log.TRITON_timeseries_written.get()))
             if self._system.cfg_system.toggle_triton_model:
                 log = scen.get_log("triton")
-                triton_ok = triton_ok and (
-                    log.TRITON_timeseries_written
-                    and bool(log.TRITON_timeseries_written.get())
-                )
+                triton_ok = triton_ok and (log.TRITON_timeseries_written and bool(log.TRITON_timeseries_written.get()))
             if not triton_ok:
                 scens_not_processed.append(str(scen.scen_paths.sim_folder))
         return scens_not_processed
@@ -450,21 +457,13 @@ class TRITONSWMM_analysis:
             swmm_ok = True
             if self._system.cfg_system.toggle_tritonswmm_model:
                 log = scen.get_log("tritonswmm")
-                node_ok = log.SWMM_node_timeseries_written and bool(
-                    log.SWMM_node_timeseries_written.get()
-                )
-                link_ok = log.SWMM_link_timeseries_written and bool(
-                    log.SWMM_link_timeseries_written.get()
-                )
+                node_ok = log.SWMM_node_timeseries_written and bool(log.SWMM_node_timeseries_written.get())
+                link_ok = log.SWMM_link_timeseries_written and bool(log.SWMM_link_timeseries_written.get())
                 swmm_ok = swmm_ok and (node_ok and link_ok)
             if self._system.cfg_system.toggle_swmm_model:
                 log = scen.get_log("swmm")
-                node_ok = log.SWMM_node_timeseries_written and bool(
-                    log.SWMM_node_timeseries_written.get()
-                )
-                link_ok = log.SWMM_link_timeseries_written and bool(
-                    log.SWMM_link_timeseries_written.get()
-                )
+                node_ok = log.SWMM_node_timeseries_written and bool(log.SWMM_node_timeseries_written.get())
+                link_ok = log.SWMM_link_timeseries_written and bool(log.SWMM_link_timeseries_written.get())
                 swmm_ok = swmm_ok and (node_ok and link_ok)
             if not swmm_ok:
                 scens_not_processed.append(str(scen.scen_paths.sim_folder))
@@ -493,9 +492,7 @@ class TRITONSWMM_analysis:
             all_sims_run = sens.all_sims_run
             all_TRITON_outputs_processed = sens.all_TRITON_timeseries_processed
             all_SWMM_outputs_processed = sens.all_SWMM_timeseries_processed
-            all_TRITONSWMM_performance_outputs_processed = (
-                sens.all_TRITONSWMM_performance_timeseries_processed
-            )
+            all_TRITONSWMM_performance_outputs_processed = sens.all_TRITONSWMM_performance_timeseries_processed
             all_raw_TRITON_outputs_cleared = sens.all_raw_TRITON_outputs_cleared
             all_raw_SWMM_outputs_cleared = sens.all_raw_SWMM_outputs_cleared
         else:
@@ -503,10 +500,7 @@ class TRITONSWMM_analysis:
                 scen = TRITONSWMM_scenario(event_iloc, self)
                 # sim run status - check if all enabled models completed
                 enabled_models = scen.run.model_types_enabled
-                scen_all_models_completed = all(
-                    scen.model_run_completed(model_type)
-                    for model_type in enabled_models
-                )
+                scen_all_models_completed = all(scen.model_run_completed(model_type) for model_type in enabled_models)
                 all_sims_run = all_sims_run and scen_all_models_completed
 
                 # Scenario creation status comes exclusively from scenario prep log
@@ -521,58 +515,40 @@ class TRITONSWMM_analysis:
                     # TRITON outputs (triton and tritonswmm models)
                     if model_type in ("triton", "tritonswmm"):
                         triton_ok = bool(
-                            model_log.TRITON_timeseries_written
-                            and model_log.TRITON_timeseries_written.get()
+                            model_log.TRITON_timeseries_written and model_log.TRITON_timeseries_written.get()
                         )
-                        all_TRITON_outputs_processed = (
-                            all_TRITON_outputs_processed and triton_ok
-                        )
+                        all_TRITON_outputs_processed = all_TRITON_outputs_processed and triton_ok
 
                         perf_ok = bool(
-                            model_log.performance_timeseries_written
-                            and model_log.performance_timeseries_written.get()
+                            model_log.performance_timeseries_written and model_log.performance_timeseries_written.get()
                         )
                         all_TRITONSWMM_performance_outputs_processed = (
                             all_TRITONSWMM_performance_outputs_processed and perf_ok
                         )
 
                         cleared = bool(
-                            model_log.raw_TRITON_outputs_cleared
-                            and model_log.raw_TRITON_outputs_cleared.get()
+                            model_log.raw_TRITON_outputs_cleared and model_log.raw_TRITON_outputs_cleared.get()
                         )
-                        all_raw_TRITON_outputs_cleared = (
-                            all_raw_TRITON_outputs_cleared and cleared
-                        )
+                        all_raw_TRITON_outputs_cleared = all_raw_TRITON_outputs_cleared and cleared
 
                     # SWMM outputs (swmm and tritonswmm models)
                     if model_type in ("swmm", "tritonswmm"):
                         node_ok = bool(
-                            model_log.SWMM_node_timeseries_written
-                            and model_log.SWMM_node_timeseries_written.get()
+                            model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
                         )
                         link_ok = bool(
-                            model_log.SWMM_link_timeseries_written
-                            and model_log.SWMM_link_timeseries_written.get()
+                            model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
                         )
                         swmm_ok = node_ok and link_ok
-                        all_SWMM_outputs_processed = (
-                            all_SWMM_outputs_processed and swmm_ok
-                        )
+                        all_SWMM_outputs_processed = all_SWMM_outputs_processed and swmm_ok
 
-                        cleared = bool(
-                            model_log.raw_SWMM_outputs_cleared
-                            and model_log.raw_SWMM_outputs_cleared.get()
-                        )
-                        all_raw_SWMM_outputs_cleared = (
-                            all_raw_SWMM_outputs_cleared and cleared
-                        )
+                        cleared = bool(model_log.raw_SWMM_outputs_cleared and model_log.raw_SWMM_outputs_cleared.get())
+                        all_raw_SWMM_outputs_cleared = all_raw_SWMM_outputs_cleared and cleared
         self.log.all_scenarios_created.set(all_scens_created)
         self.log.all_sims_run.set(all_sims_run)
         self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
         self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
-        self.log.all_TRITONSWMM_performance_timeseries_processed.set(
-            all_TRITONSWMM_performance_outputs_processed
-        )
+        self.log.all_TRITONSWMM_performance_timeseries_processed.set(all_TRITONSWMM_performance_outputs_processed)
         self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
         self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return
@@ -700,11 +676,11 @@ class TRITONSWMM_analysis:
 
     def run_python_functions_concurrently(
         self,
-        function_launchers: List[Callable[[], None]],
+        function_launchers: list[Callable[[], None]],
         min_memory_per_function_MiB: int | None = 1024,
         max_parallel: int | None = None,
         verbose: bool = True,
-    ) -> List[int]:
+    ) -> list[int]:
         """
         Run Python functions concurrently, limiting parallelism by CPU and memory.
 
@@ -734,12 +710,11 @@ class TRITONSWMM_analysis:
 
         if verbose:
             print(
-                f"Running {len(function_launchers)} functions "
-                f"(max parallel = {effective_max_parallel})",
+                f"Running {len(function_launchers)} functions (max parallel = {effective_max_parallel})",
                 flush=True,
             )
 
-        results: List[int] = []
+        results: list[int] = []
         batch_start = time.time()  # Reference point for all tasks
 
         def wrapper(idx: int, launcher: Callable[[], None]):
@@ -752,8 +727,7 @@ class TRITONSWMM_analysis:
 
             if verbose:
                 print(
-                    f"Function {idx}: duration={duration:.2f}s, "
-                    f"completed_at={completed_at:.2f}s",
+                    f"Function {idx}: duration={duration:.2f}s, completed_at={completed_at:.2f}s",
                     flush=True,
                 )
             return idx
@@ -762,10 +736,7 @@ class TRITONSWMM_analysis:
         # Execute
         # ----------------------------
         with ThreadPoolExecutor(max_workers=effective_max_parallel) as executor:
-            futures = {
-                executor.submit(wrapper, idx, launcher): idx
-                for idx, launcher in enumerate(function_launchers)
-            }
+            futures = {executor.submit(wrapper, idx, launcher): idx for idx, launcher in enumerate(function_launchers)}
 
             for future in as_completed(futures):
                 idx = futures[future]
@@ -860,9 +831,7 @@ class TRITONSWMM_analysis:
                 expected_subanalysis_ids=expected_sa_ids,
             )
             allocations = {
-                model_type: alloc.copy()
-                for model_type in enabled_models
-                for alloc in sa_allocations.values()
+                model_type: alloc.copy() for model_type in enabled_models for alloc in sa_allocations.values()
             }
         else:
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
@@ -925,9 +894,7 @@ class TRITONSWMM_analysis:
             raise ValueError("scenario_creation_complete must be 'success'")
         valid_types = ("triton", "tritonswmm", "swmm")
         if model_type not in valid_types:
-            raise ValueError(
-                f"model_type must be one of {valid_types}, got {model_type}"
-            )
+            raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
         if model_type == "triton":
             if not self._system.compilation_triton_only_successful:
@@ -960,9 +927,7 @@ class TRITONSWMM_analysis:
         finalize_sim(proc, start_time, sim_logfile, lf)
 
         # self._update_log()  # updates analysis log
-        if process_outputs_after_sim_completion and run._scenario.model_run_completed(
-            model_type
-        ):
+        if process_outputs_after_sim_completion and run._scenario.model_run_completed(model_type):
             if model_type == "triton":
                 outputs_to_process = "TRITON"
             elif model_type == "swmm":
@@ -1097,20 +1062,16 @@ class TRITONSWMM_analysis:
         """
         launch_and_finalize_functions_tuples = []
         enabled_model_types = self._get_enabled_model_types()
-        scenario_locks = {
-            event_iloc: threading.Lock() for event_iloc in self.df_sims.index
-        }
+        scenario_locks = {event_iloc: threading.Lock() for event_iloc in self.df_sims.index}
 
         for event_iloc in self.df_sims.index:
             run = self._retrieve_sim_runs(event_iloc)
             lock = scenario_locks[event_iloc]
             for model_type in enabled_model_types:
-                launch_and_finalize_functions_tuple = (
-                    run._create_subprocess_sim_run_launcher(
-                        pickup_where_leftoff=pickup_where_leftoff,
-                        verbose=verbose,
-                        model_type=model_type,
-                    )
+                launch_and_finalize_functions_tuple = run._create_subprocess_sim_run_launcher(
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    verbose=verbose,
+                    model_type=model_type,
                 )
                 if launch_and_finalize_functions_tuple is None:
                     continue
@@ -1140,16 +1101,14 @@ class TRITONSWMM_analysis:
                     finally:
                         _lock.release()
 
-                launch_and_finalize_functions_tuples.append(
-                    (locked_launcher, locked_finalize)
-                )
+                launch_and_finalize_functions_tuples.append((locked_launcher, locked_finalize))
 
         return launch_and_finalize_functions_tuples
 
     def run_simulations_concurrently(
         self,
         launch_functions: list[tuple],
-        max_concurrent: Optional[int] = None,
+        max_concurrent: int | None = None,
         verbose: bool = True,
     ):
         """
@@ -1174,9 +1133,7 @@ class TRITONSWMM_analysis:
         list
             List of simulation statuses
         """
-        return self._execution_strategy.execute_simulations(
-            launch_functions, max_concurrent, verbose
-        )
+        return self._execution_strategy.execute_simulations(launch_functions, max_concurrent, verbose)
 
     def run_sims_in_sequence(
         self,
@@ -1205,8 +1162,7 @@ class TRITONSWMM_analysis:
             for model_type in enabled_model_types:
                 if verbose:
                     print(
-                        f"Running sim {event_iloc} ({model_type}) and "
-                        f"pickup_where_leftoff = {pickup_where_leftoff}",
+                        f"Running sim {event_iloc} ({model_type}) and pickup_where_leftoff = {pickup_where_leftoff}",
                         flush=True,
                     )
                 self.run_sim(
@@ -1228,10 +1184,10 @@ class TRITONSWMM_analysis:
         from_scratch: bool = False,
         dry_run: bool = False,
         # phases: Optional[List[str]] = None,
-        events: Optional[List[int]] = None,
+        events: list[int] | None = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
-        wait_for_job_completion: Optional[bool] = None,
+        wait_for_job_completion: bool | None = None,
         clear_raw_outputs: bool = True,
         override_hpc_total_nodes: int | None = None,
     ) -> "WorkflowResult":
@@ -1332,7 +1288,8 @@ class TRITONSWMM_analysis:
         # accompanied by a print statement of the current status.
 
         import time
-        from .orchestration import translate_mode, translate_phases, WorkflowResult
+
+        from .orchestration import WorkflowResult, translate_mode, translate_phases
 
         start_time = time.time()
 
@@ -1399,7 +1356,7 @@ class TRITONSWMM_analysis:
         }
 
         if verbose:
-            print(f"Submitting workflow with args:")
+            print("Submitting workflow with args:")
             print(workflow_params)
 
         # Call underlying submit_workflow
@@ -1410,22 +1367,15 @@ class TRITONSWMM_analysis:
 
         # Determine which phases were completed based on parameters
         phases_completed = []
-        if (
-            workflow_params["process_system_level_inputs"]
-            or workflow_params["compile_TRITON_SWMM"]
-        ):
+        if workflow_params["process_system_level_inputs"] or workflow_params["compile_TRITON_SWMM"]:
             phases_completed.append("setup")
         if workflow_params["prepare_scenarios"]:
             phases_completed.append("prepare")
-        if workflow_params[
-            "prepare_scenarios"
-        ]:  # Simulate always runs if scenarios prepared
+        if workflow_params["prepare_scenarios"]:  # Simulate always runs if scenarios prepared
             phases_completed.append("simulate")
         if workflow_params["process_timeseries"]:
             phases_completed.append("process")
-        if workflow_params[
-            "process_timeseries"
-        ]:  # Consolidate happens after processing
+        if workflow_params["process_timeseries"]:  # Consolidate happens after processing
             phases_completed.append("consolidate")
 
         # Get event list (all events in analysis)
@@ -1435,9 +1385,7 @@ class TRITONSWMM_analysis:
         return WorkflowResult(
             success=result_dict.get("success", False),
             mode=result_dict.get("mode", exec_mode),
-            execution_time=(
-                elapsed if result_dict.get("success") and exec_mode == "local" else None
-            ),
+            execution_time=(elapsed if result_dict.get("success") and exec_mode == "local" else None),
             phases_completed=phases_completed if result_dict.get("success") else [],
             events_processed=events_processed if result_dict.get("success") else [],
             snakefile_path=result_dict.get("snakefile_path"),
@@ -1462,11 +1410,7 @@ class TRITONSWMM_analysis:
             sens = self.sensitivity
             sensitivity_scenario = len(sens.df_setup)
 
-        n_total = (
-            len(self.df_sims)
-            * len(self._get_enabled_model_types())
-            * sensitivity_scenario
-        )
+        n_total = len(self.df_sims) * len(self._get_enabled_model_types()) * sensitivity_scenario
         return n_total
 
     def get_workflow_status(self) -> "WorkflowStatus":
@@ -1504,21 +1448,16 @@ class TRITONSWMM_analysis:
         --------
         run : High-level workflow execution method
         """
-        from .orchestration import WorkflowStatus, PhaseStatus
+        from .orchestration import PhaseStatus, WorkflowStatus
 
         # Check setup phase
         system_log = self._system.log
         dem_done = system_log.dem_processed.get()
-        mannings_done = (
-            self._system.cfg_system.toggle_use_constant_mannings
-            or system_log.mannings_processed.get()
-        )
+        mannings_done = self._system.cfg_system.toggle_use_constant_mannings or system_log.mannings_processed.get()
         compiled = system_log.compilation_tritonswmm_cpu_successful.get()
 
         setup_complete = dem_done and mannings_done and compiled
-        setup_progress = (
-            1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
-        )
+        setup_progress = 1.0 if setup_complete else 0.5 if (dem_done or compiled) else 0.0
         setup_details = {
             "dem": f"{'✓' if dem_done else '✗'} DEM processed",
             "mannings": f"{'✓' if mannings_done else '✗'} Manning's processed",
@@ -1544,9 +1483,7 @@ class TRITONSWMM_analysis:
             name="preparation",
             complete=all_prepared,
             progress=n_prepared / n_total if n_total > 0 else 0.0,
-            details={
-                "scenarios": f"{'✓' if all_prepared else '⚠'} {n_prepared}/{n_total} scenarios created"
-            },
+            details={"scenarios": f"{'✓' if all_prepared else '⚠'} {n_prepared}/{n_total} scenarios created"},
             failed_items=[str(p) for p in not_prepared],
         )
 
@@ -1559,9 +1496,7 @@ class TRITONSWMM_analysis:
             name="simulation",
             complete=all_run,
             progress=n_run / n_total if n_total > 0 else 0.0,
-            details={
-                "sims": f"{'✓' if all_run else '⚠'} {n_run}/{n_total} simulations completed"
-            },
+            details={"sims": f"{'✓' if all_run else '⚠'} {n_run}/{n_total} simulations completed"},
             failed_items=[str(p) for p in not_run],
         )
 
@@ -1570,9 +1505,7 @@ class TRITONSWMM_analysis:
         triton_enabled = "triton" in enabled_models or "tritonswmm" in enabled_models
         swmm_enabled = "swmm" in enabled_models or "tritonswmm" in enabled_models
 
-        triton_missing = (
-            len(self.TRITON_time_series_not_processed) if triton_enabled else 0
-        )
+        triton_missing = len(self.TRITON_time_series_not_processed) if triton_enabled else 0
         swmm_missing = len(self.SWMM_time_series_not_processed) if swmm_enabled else 0
 
         triton_total = n_total if triton_enabled else 0
@@ -1601,8 +1534,7 @@ class TRITONSWMM_analysis:
                     else "✓ TRITON outputs processed: n/a"
                 ),
                 "swmm": (
-                    f"{'✓' if swmm_proc_complete else '✗'} SWMM outputs processed: "
-                    f"{swmm_processed}/{swmm_total}"
+                    f"{'✓' if swmm_proc_complete else '✗'} SWMM outputs processed: {swmm_processed}/{swmm_total}"
                     if swmm_enabled
                     else "✓ SWMM outputs processed: n/a"
                 ),
@@ -1641,9 +1573,7 @@ class TRITONSWMM_analysis:
         consol_details = {}
         if summary_checks:
             for model, exists in summary_checks.items():
-                consol_details[model] = (
-                    f"{'✓' if exists else '✗'} {model.upper()} summaries created"
-                )
+                consol_details[model] = f"{'✓' if exists else '✗'} {model.upper()} summaries created"
         else:
             consol_details["summaries"] = "✗ No models enabled"
 
@@ -1662,9 +1592,7 @@ class TRITONSWMM_analysis:
         elif not all_prepared:
             current = "preparation"
             rec_mode = "resume"
-            rec_text = (
-                f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
-            )
+            rec_text = f"Use 'resume' to create {len(not_prepared)} remaining scenarios."
         elif not all_run:
             current = "simulation"
             rec_mode = "resume"
@@ -1680,9 +1608,7 @@ class TRITONSWMM_analysis:
         else:
             current = "complete"
             rec_mode = "n/a"
-            rec_text = (
-                "All phases complete. Use 'fresh' if you want to redo the analysis."
-            )
+            rec_text = "All phases complete. Use 'fresh' if you want to redo the analysis."
 
         return WorkflowStatus(
             analysis_id=self.cfg_analysis.analysis_id,
@@ -1934,6 +1860,117 @@ class TRITONSWMM_analysis:
                 rows.append(row)
         return pd.DataFrame(rows)
 
+    def _get_performance_summary_row(
+        self,
+        event_iloc: int,
+        model_type: Literal["triton", "tritonswmm", "swmm"],
+    ) -> dict[str, float | None]:
+        """
+        Extract per-category timing totals from the performance summary dataset for one scenario.
+
+        Returns a dict keyed by ``perf_<VarName>`` for all variables in PERF_VARS.
+        Values are ``None`` for SWMM rows (no TRITON performance dataset) and for
+        TRITON/TRITONSWMM rows where the performance summary has not been written yet.
+
+        Parameters
+        ----------
+        event_iloc : int
+            The event index for the scenario.
+        model_type : Literal["triton", "tritonswmm", "swmm"]
+            The model type for this row.
+
+        Returns
+        -------
+        dict[str, float | None]
+            Keyed by ``perf_<VarName>`` for each variable in PERF_VARS.
+        """
+        null_row: dict[str, float | None] = {f"perf_{v}": None for v in PERF_VARS}
+
+        if model_type == "swmm":
+            return null_row
+
+        # Gate on log flag — performance summary only written when processing completes
+        scen = TRITONSWMM_scenario(event_iloc, self)
+        model_log = scen.get_log(model_type)
+        if model_log.performance_summary_written is None:
+            return null_row
+        if model_log.performance_summary_written.get() is not True:
+            return null_row
+
+        proc = self._retrieve_sim_run_processing_object(event_iloc)
+        if model_type == "tritonswmm":
+            ds = proc.TRITONSWMM_performance_summary
+        else:  # triton
+            ds = proc.TRITON_only_performance_summary
+        return {f"perf_{v}": float(ds[v].values.item()) for v in PERF_VARS}
+
+    @staticmethod
+    def _reorder_df_status_columns(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Reorder df_status columns into a canonical reader-friendly layout.
+
+        Groups: identity/status → weather/setup → sensitivity params →
+        performance breakdown → expected resources → actual resources → snakemake alloc.
+
+        Any columns present in the DataFrame but not in the canonical list are
+        appended at the end so no data is silently dropped.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            The raw df_status DataFrame.
+
+        Returns
+        -------
+        pd.DataFrame
+            DataFrame with columns in canonical order.
+        """
+        fixed_identity = [
+            "subanalysis_id",
+            "sub_analysis_iloc",
+            "event_iloc",
+            "model_type",
+            "scenario_setup",
+            "run_completed",
+            "scenario_directory",
+        ]
+        fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED]
+        fixed_resources = [
+            "run_mode",
+            "n_mpi_procs",
+            "n_omp_threads",
+            "n_gpus",
+            "n_nodes",
+            "backend_used",
+        ]
+        fixed_actual = [
+            "actual_nTasks",
+            "actual_omp_threads",
+            "actual_gpus",
+            "actual_total_gpus",
+            "actual_gpu_backend",
+            "actual_build_type",
+        ]
+        fixed_snakemake = [
+            "snakemake_allocated_nTasks",
+            "snakemake_allocated_omp_threads",
+            "snakemake_allocated_total_cpus",
+            "snakemake_allocation_parse_error",
+        ]
+        all_fixed = fixed_identity + fixed_perf + fixed_resources + fixed_actual + fixed_snakemake
+        # Columns not in any fixed group are weather/setup or sensitivity params —
+        # place them between identity and performance (groups 2 & 3).
+        dynamic_cols = [c for c in df.columns if c not in all_fixed]
+        ordered = [c for c in fixed_identity if c in df.columns]
+        ordered += dynamic_cols
+        ordered += [c for c in fixed_perf if c in df.columns]
+        ordered += [c for c in fixed_resources if c in df.columns]
+        ordered += [c for c in fixed_actual if c in df.columns]
+        ordered += [c for c in fixed_snakemake if c in df.columns]
+        # Append any unexpected columns that slipped through
+        ordered += [c for c in df.columns if c not in ordered]
+        return df[ordered]
+
     @property
     def df_status(self):
         """
@@ -1957,13 +1994,9 @@ class TRITONSWMM_analysis:
             allocation_columns = [
                 col
                 for col in df_status_joined.columns
-                if col.startswith("snakemake_")
-                and col != "snakemake_allocation_parse_error"
+                if col.startswith("snakemake_") and col != "snakemake_allocation_parse_error"
             ]
-            if (
-                allocation_columns
-                and df_status_joined[allocation_columns].isna().any().any()
-            ):
+            if allocation_columns and df_status_joined[allocation_columns].isna().any().any():
                 missing = df_status_joined.loc[
                     df_status_joined[allocation_columns].isna().any(axis=1),
                     ["model_type", "scenario_directory", "event_iloc"],
@@ -1972,7 +2005,7 @@ class TRITONSWMM_analysis:
                     "Missing Snakemake allocations after join for sensitivity status rows. "
                     f"First missing rows: {missing.head().to_dict(orient='records')}"
                 )
-            return df_status_joined
+            return self._reorder_df_status_columns(df_status_joined)
 
         enabled_models_untyped = self._get_enabled_model_types()
         enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
@@ -1998,9 +2031,7 @@ class TRITONSWMM_analysis:
 
                 # Provide model-specific expected resources to downstream validators.
                 if model_type == "swmm":
-                    row["run_mode"] = (
-                        "serial" if self.cfg_analysis.n_omp_threads == 1 else "openmp"
-                    )
+                    row["run_mode"] = "serial" if self.cfg_analysis.n_omp_threads == 1 else "openmp"
                     row["n_mpi_procs"] = 1
                     row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
                     row["n_gpus"] = 0
@@ -2009,21 +2040,15 @@ class TRITONSWMM_analysis:
                     row["run_mode"] = self.cfg_analysis.run_mode
                     row["n_mpi_procs"] = self.cfg_analysis.n_mpi_procs or 1
                     row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
-                    row["n_gpus"] = (
-                        self.cfg_analysis.n_gpus or 0
-                        if self.cfg_analysis.run_mode == "gpu"
-                        else 0
-                    )
+                    row["n_gpus"] = self.cfg_analysis.n_gpus or 0 if self.cfg_analysis.run_mode == "gpu" else 0
                     row["backend_used"] = scen.log.triton_backend_used.get()
 
                 if self.in_slurm:
                     row["n_nodes"] = 1 if model_type == "swmm" else self.cfg_analysis.n_nodes or 1
 
-                # Actual resources and wall time (model-dependent availability)
+                # Actual resources (model-dependent availability)
                 if model_type == "tritonswmm":
-                    log_out_path = (
-                        scen.scen_paths.out_tritonswmm or scen.scen_paths.sim_folder
-                    ) / "log.out"
+                    log_out_path = (scen.scen_paths.out_tritonswmm or scen.scen_paths.sim_folder) / "log.out"
                     log_data = parse_triton_log_file(log_out_path)
                     row["actual_nTasks"] = log_data["nTasks"]
                     row["actual_omp_threads"] = log_data["omp_threads_per_task"]
@@ -2031,11 +2056,8 @@ class TRITONSWMM_analysis:
                     row["actual_total_gpus"] = log_data["total_gpus"]
                     row["actual_gpu_backend"] = log_data["gpu_backend"]
                     row["actual_build_type"] = log_data["build_type"]
-                    row["actual_wall_time_s"] = log_data["wall_time_s"]
                 elif model_type == "triton":
-                    log_out_path = (
-                        scen.scen_paths.out_triton or scen.scen_paths.sim_folder
-                    ) / "log.out"
+                    log_out_path = (scen.scen_paths.out_triton or scen.scen_paths.sim_folder) / "log.out"
                     log_data = parse_triton_log_file(log_out_path)
                     row["actual_nTasks"] = log_data["nTasks"]
                     row["actual_omp_threads"] = log_data["omp_threads_per_task"]
@@ -2043,26 +2065,23 @@ class TRITONSWMM_analysis:
                     row["actual_total_gpus"] = log_data["total_gpus"]
                     row["actual_gpu_backend"] = log_data["gpu_backend"]
                     row["actual_build_type"] = log_data["build_type"]
-                    row["actual_wall_time_s"] = log_data["wall_time_s"]
                 else:  # swmm
-                    swmm_report_data = retrieve_swmm_performance_stats_from_rpt(
-                        scen.scen_paths.swmm_full_rpt_file
-                    )
+                    swmm_report_data = retrieve_swmm_performance_stats_from_rpt(scen.scen_paths.swmm_full_rpt_file)
                     row["actual_nTasks"] = 1
-                    row["actual_omp_threads"] = swmm_report_data.get(
-                        "actual_omp_threads"
-                    )
+                    row["actual_omp_threads"] = swmm_report_data.get("actual_omp_threads")
                     row["actual_gpus"] = None
                     row["actual_total_gpus"] = None
                     row["actual_gpu_backend"] = "none"
                     row["actual_build_type"] = "SWMM"
-                    row["actual_wall_time_s"] = swmm_report_data.get("wall_time_s")
+
+                # Performance breakdown from processed summary dataset
+                row.update(self._get_performance_summary_row(event_iloc, model_type))
 
                 rows.append(row)
 
         df_status = pd.DataFrame(rows)
         if self.cfg_analysis.is_subanalysis:
-            return df_status
+            return self._reorder_df_status_columns(df_status)
         else:
             df_status_joined = df_status.merge(
                 self.df_snakemake_allocations,
@@ -2072,13 +2091,9 @@ class TRITONSWMM_analysis:
             allocation_columns = [
                 col
                 for col in df_status_joined.columns
-                if col.startswith("snakemake_")
-                and col != "snakemake_allocation_parse_error"
+                if col.startswith("snakemake_") and col != "snakemake_allocation_parse_error"
             ]
-            if (
-                allocation_columns
-                and df_status_joined[allocation_columns].isna().any().any()
-            ):
+            if allocation_columns and df_status_joined[allocation_columns].isna().any().any():
                 missing = df_status_joined.loc[
                     df_status_joined[allocation_columns].isna().any(axis=1),
                     ["model_type", "scenario_directory", "event_iloc"],
@@ -2087,7 +2102,7 @@ class TRITONSWMM_analysis:
                     "Missing Snakemake allocations after join for status rows. "
                     f"First missing rows: {missing.head().to_dict(orient='records')}"
                 )
-            return df_status_joined
+            return self._reorder_df_status_columns(df_status_joined)
 
     # TRITON-SWMM model accessors
     @property
@@ -2124,9 +2139,7 @@ class TRITONSWMM_analysis:
     def swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
-    def cancel(
-        self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False
-    ) -> dict:
+    def cancel(self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False) -> dict:
         """
         Cancel ongoing tmux workflow for this analysis.
 
@@ -2175,8 +2188,8 @@ class TRITONSWMM_analysis:
         >>> analysis = TRITONSWMM_analysis("config.yaml", system)
         >>> cancel_result = analysis.cancel()  # Loads session name from log
         """
-        import subprocess
         import datetime
+        import subprocess
 
         if verbose:
             print(
@@ -2279,7 +2292,7 @@ class TRITONSWMM_analysis:
         try:
             os.kill(snakemake_pid, signal.SIGINT)
             if verbose:
-                print(f"[Cancel]   ✓ SIGINT sent", flush=True)
+                print("[Cancel]   ✓ SIGINT sent", flush=True)
         except ProcessLookupError:
             if verbose:
                 print(
@@ -2320,20 +2333,18 @@ class TRITONSWMM_analysis:
                 process_exited = True
                 if verbose:
                     print(
-                        f"[Cancel]   ✓ Snakemake process exited",
+                        "[Cancel]   ✓ Snakemake process exited",
                         flush=True,
                     )
                 break
 
         if not process_exited:
-            error_msg = (
-                f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
-            )
+            error_msg = f"Snakemake process {snakemake_pid} did not exit within {wait_timeout}s"
             errors.append(error_msg)
             if verbose:
                 print(f"[Cancel]   ⚠ {error_msg}", flush=True)
                 print(
-                    f"[Cancel]   (Killing tmux session anyway)",
+                    "[Cancel]   (Killing tmux session anyway)",
                     flush=True,
                 )
 
@@ -2362,7 +2373,7 @@ class TRITONSWMM_analysis:
                 if verbose:
                     print(f"[Cancel]   ⚠ {error_msg}", flush=True)
             elif verbose:
-                print(f"[Cancel]   ✓ All worker jobs canceled", flush=True)
+                print("[Cancel]   ✓ All worker jobs canceled", flush=True)
 
         except (subprocess.TimeoutExpired, FileNotFoundError):
             if verbose:
@@ -2373,7 +2384,7 @@ class TRITONSWMM_analysis:
 
         # Step 5: Kill tmux session
         if verbose:
-            print(f"[Cancel] Cleaning up tmux session...", flush=True)
+            print("[Cancel] Cleaning up tmux session...", flush=True)
 
         kill_result = subprocess.run(
             ["tmux", "kill-session", "-t", session_name],
@@ -2383,7 +2394,7 @@ class TRITONSWMM_analysis:
 
         if kill_result.returncode == 0:
             if verbose:
-                print(f"[Cancel]   ✓ Tmux session terminated", flush=True)
+                print("[Cancel]   ✓ Tmux session terminated", flush=True)
         else:
             error_msg = f"Failed to kill tmux session: {kill_result.stderr.strip()}"
             errors.append(error_msg)
@@ -2398,10 +2409,10 @@ class TRITONSWMM_analysis:
 
         if verbose:
             if success:
-                print(f"[Cancel] ✓ Workflow canceled successfully", flush=True)
+                print("[Cancel] ✓ Workflow canceled successfully", flush=True)
             else:
                 print(
-                    f"[Cancel] ✗ Cancellation completed with warnings/errors",
+                    "[Cancel] ✗ Cancellation completed with warnings/errors",
                     flush=True,
                 )
 
@@ -2412,11 +2423,7 @@ class TRITONSWMM_analysis:
             "jobs_were_running": True,
             "session_name": session_name,
             "analysis_id": analysis_id,
-            "message": (
-                "Workflow canceled"
-                if success
-                else f"Cancellation issues: {'; '.join(errors)}"
-            ),
+            "message": ("Workflow canceled" if success else f"Cancellation issues: {'; '.join(errors)}"),
             "errors": errors,
         }
 

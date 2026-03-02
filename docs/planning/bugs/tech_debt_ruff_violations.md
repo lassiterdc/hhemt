@@ -1,4 +1,4 @@
-# Tech Debt: Pre-existing ruff violations in workflow.py
+# Tech Debt: Pre-existing ruff violations
 
 **Noted**: 2026-02-28
 
@@ -36,3 +36,16 @@ is to strip the trailing ` && ` suffix — use `removesuffix(" && ")` instead.
 
 Low — violations are cosmetic or minor. Address in a dedicated linting pass, not mixed
 into feature work.
+
+---
+
+## `analysis.py` — 2026-03-02
+
+Surfaced during `enrich_scenario_status_csv` feature work. Two pre-existing violations remain after auto-fix pass:
+
+| Code | Location | Description |
+|------|----------|-------------|
+| E501 | Line 1229, docstring | Line too long (126 > 120) — in a docstring, safe to wrap |
+| F841 | Line 1380, `run()` method | `system_log = self._system.log` assigned but never used; `run()` has two `# TODO - hardcoded` comments nearby suggesting the method is incomplete |
+
+The `F841` warrants investigation: `system_log` appears to be a placeholder for planned event-filtering functionality that is not yet implemented. See `# TODO` comments at lines 1387–1388 in `run()` for context. Do not remove until the incomplete `events` parameter filtering is resolved.

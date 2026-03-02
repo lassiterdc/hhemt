@@ -25,9 +25,7 @@ from TRITON_SWMM_toolkit.log import TRITONSWMM_model_log
 
 
 class TRITONSWMM_sim_post_processing:
-    def __init__(
-        self, run: TRITONSWMM_run, model_log: TRITONSWMM_model_log | None = None
-    ) -> None:
+    def __init__(self, run: TRITONSWMM_run, model_log: TRITONSWMM_model_log | None = None) -> None:
         self._run = run
         self._scenario = run._scenario
         self._analysis = run._scenario._analysis
@@ -48,9 +46,7 @@ class TRITONSWMM_sim_post_processing:
         self.scen_paths = self._scenario.scen_paths
         self._log_write_status()
 
-    def _set_active_model_log(
-        self, model_type: Literal["triton", "tritonswmm", "swmm"]
-    ) -> None:
+    def _set_active_model_log(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> None:
         """Set self.log to the appropriate model-specific log for this operation."""
         self._current_model_type = model_type
         if self._model_log_override is not None:
@@ -140,23 +136,16 @@ class TRITONSWMM_sim_post_processing:
         enabled_models = self._run.model_types_enabled
 
         if which in {"TRITON", "both"}:
-            triton_done = (
-                "triton" in enabled_models
-                and self._scenario.model_run_completed("triton")
-            ) or (
-                "tritonswmm" in enabled_models
-                and self._scenario.model_run_completed("tritonswmm")
+            triton_done = ("triton" in enabled_models and self._scenario.model_run_completed("triton")) or (
+                "tritonswmm" in enabled_models and self._scenario.model_run_completed("tritonswmm")
             )
             if not triton_done:
                 raise RuntimeError(
                     f"TRITON simulation not completed. Check model log files in {self._scenario.scen_paths.logs_dir}"
                 )
         if which in {"SWMM", "both"}:
-            swmm_done = (
-                "swmm" in enabled_models and self._scenario.model_run_completed("swmm")
-            ) or (
-                "tritonswmm" in enabled_models
-                and self._scenario.model_run_completed("tritonswmm")
+            swmm_done = ("swmm" in enabled_models and self._scenario.model_run_completed("swmm")) or (
+                "tritonswmm" in enabled_models and self._scenario.model_run_completed("tritonswmm")
             )
             if not swmm_done:
                 raise RuntimeError(
@@ -265,9 +254,7 @@ class TRITONSWMM_sim_post_processing:
             A launcher function that executes the subprocess
         """
         event_iloc = self._scenario.event_iloc
-        processing_logfile = (
-            self.log.logfile.parent / f"timeseries_processing_{event_iloc}.log"
-        )
+        processing_logfile = self.log.logfile.parent / f"timeseries_processing_{event_iloc}.log"
 
         # Build command - always use direct Python execution (no srun)
         cmd = [
@@ -335,11 +322,7 @@ class TRITONSWMM_sim_post_processing:
             "output_tritonswmm_performance_timeseries",
         )
         # Get performance directory for TRITON-SWMM coupled model
-        perf_dir = (
-            self.scen_paths.out_tritonswmm / "performance"
-            if self.scen_paths.out_tritonswmm
-            else None
-        )
+        perf_dir = self.scen_paths.out_tritonswmm / "performance" if self.scen_paths.out_tritonswmm else None
         self._export_performance_tseries(
             fname_out=fname_out,
             performance_dir=perf_dir,
@@ -361,11 +344,7 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_performance_timeseries",
         )
         # Get performance directory for TRITON-only model
-        perf_dir = (
-            self.scen_paths.out_triton / "performance"
-            if self.scen_paths.out_triton
-            else None
-        )
+        perf_dir = self.scen_paths.out_triton / "performance" if self.scen_paths.out_triton else None
         self._export_performance_tseries(
             fname_out=fname_out,
             performance_dir=perf_dir,
@@ -385,10 +364,7 @@ class TRITONSWMM_sim_post_processing:
         overwrite_outputs_if_already_created: bool,
         log_field,
     ):
-        if (
-            self._already_written(fname_out)
-            and not overwrite_outputs_if_already_created
-        ):
+        if self._already_written(fname_out) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -414,9 +390,7 @@ class TRITONSWMM_sim_post_processing:
         fpattern_prefix = "performance"
         varname = "performance"
         fldr_out_triton = performance_dir
-        perf_tseries = return_filelist_by_tstep(
-            fldr_out_triton, fpattern_prefix, min_per_tstep, varname
-        )
+        perf_tseries = return_filelist_by_tstep(fldr_out_triton, fpattern_prefix, min_per_tstep, varname)
 
         # Fail fast if directory exists but no performance files found
         # This likely indicates files are being written to the wrong location
@@ -432,9 +406,7 @@ class TRITONSWMM_sim_post_processing:
         for tstep, f in perf_tseries.items():
             df_ranks, ___ = parse_performance_file(f)
             df_ranks[perf_tseries.index.name] = tstep
-            df_ranks = df_ranks.reset_index().set_index(
-                [perf_tseries.index.name, "Rank"]
-            )
+            df_ranks = df_ranks.reset_index().set_index([perf_tseries.index.name, "Rank"])
             lst_perf_tseries.append(df_ranks)
             if (df_ranks < 0).any().any():
                 perfs_with_negatives.append(str(f))
@@ -471,9 +443,7 @@ class TRITONSWMM_sim_post_processing:
         self._write_output(ds, fname_out, comp_level, verbose)
 
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         log_field.set(True)
         return
 
@@ -488,6 +458,10 @@ class TRITONSWMM_sim_post_processing:
     @property
     def TRITON_only_performance_tseries(self):
         return self._open(self.scen_paths.output_triton_only_performance_timeseries)
+
+    @property
+    def TRITON_only_performance_summary(self):
+        return self._open(self.scen_paths.output_triton_only_performance_summary)
 
     def _export_TRITONSWMM_performance_summary(
         self,
@@ -539,10 +513,7 @@ class TRITONSWMM_sim_post_processing:
         log_field,
     ):
         start_time = time.time()
-        if (
-            self._already_written(fname_out)
-            and not overwrite_outputs_if_already_created
-        ):
+        if self._already_written(fname_out) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -551,14 +522,10 @@ class TRITONSWMM_sim_post_processing:
 
         ds = ds.sum(dim="timestep_min").mean(dim="Rank")
         ds.attrs["units"] = "seconds"
-        ds.attrs["notes"] = (
-            "Values represent the sum of compute times per timestep averaged across MPI ranks."
-        )
+        ds.attrs["notes"] = "Values represent the sum of compute times per timestep averaged across MPI ranks."
         self._write_output(ds, fname_out, compression_level, verbose)
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         log_field.set(True)
         return
 
@@ -574,10 +541,7 @@ class TRITONSWMM_sim_post_processing:
             self.scen_paths.output_tritonswmm_triton_timeseries,
             "output_tritonswmm_triton_timeseries",
         )
-        if (
-            self._already_written(fname_out)
-            and not overwrite_outputs_if_already_created
-        ):
+        if self._already_written(fname_out) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -607,9 +571,7 @@ class TRITONSWMM_sim_post_processing:
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
 
-        memory_budget_MiB = (
-            self._analysis.cfg_analysis.process_output_target_chunksize_mb
-        )
+        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
         n_variables = len(df_outputs.columns)  # H, QX, QY, MH
 
         chunk_size = estimate_timesteps_per_chunk(
@@ -628,9 +590,7 @@ class TRITONSWMM_sim_post_processing:
                 flush=True,
             )
             print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(
-                f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True
-            )
+            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
             print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
 
         # Process in chunks
@@ -665,9 +625,7 @@ class TRITONSWMM_sim_post_processing:
                             )
                         continue
 
-                    ds_triton_output = load_triton_output_w_xarray(
-                        rds_dem, f, varname, raw_out_type
-                    )
+                    ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
                 if not lst_ds_timesteps:
@@ -712,14 +670,10 @@ class TRITONSWMM_sim_post_processing:
                         flush=True,
                     )
                 encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
-                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
-                    model_type="tritonswmm", astype="str"
-                )
+                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="tritonswmm", astype="str")
                 ds_chunk.attrs["output_creation_date"] = current_datetime_string()
                 ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
-                ds_chunk.to_zarr(
-                    fname_out, mode="w", encoding=encoding, consolidated=False
-                )
+                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
                 first_chunk = False
             else:
                 if verbose:
@@ -741,9 +695,7 @@ class TRITONSWMM_sim_post_processing:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
 
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
         if self.log.TRITON_timeseries_written:
@@ -766,10 +718,7 @@ class TRITONSWMM_sim_post_processing:
             "output_triton_only_timeseries",
         )
 
-        if (
-            self._already_written(fname_out)
-            and not overwrite_outputs_if_already_created
-        ):
+        if self._already_written(fname_out) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             if clear_raw_outputs:
@@ -779,17 +728,14 @@ class TRITONSWMM_sim_post_processing:
         raw_out_type = self._analysis.cfg_analysis.TRITON_raw_output_type
         out_triton = self._scenario.scen_paths.out_triton
         if out_triton is None:
-            raise FileNotFoundError(
-                "out_triton path is None. Ensure TRITON-only model is enabled in system config."
-            )
+            raise FileNotFoundError("out_triton path is None. Ensure TRITON-only model is enabled in system config.")
         fldr_out_triton = out_triton / raw_out_type
 
         if not fldr_out_triton.exists() or not any(fldr_out_triton.iterdir()):
             if self._already_written(fname_out):
                 if verbose:
                     print(
-                        f"Raw TRITON-only outputs not found, but {fname_out.name} exists. "
-                        "Skipping reprocessing.",
+                        f"Raw TRITON-only outputs not found, but {fname_out.name} exists. Skipping reprocessing.",
                         flush=True,
                     )
                 if clear_raw_outputs:
@@ -797,8 +743,7 @@ class TRITONSWMM_sim_post_processing:
                 return
             raise FileNotFoundError(
                 "No TRITON outputs found to process for TRITON-only model. "
-                f"Expected files in: {fldr_out_triton} "
-                + f" (raw type: {raw_out_type}). "
+                f"Expected files in: {fldr_out_triton} " + f" (raw type: {raw_out_type}). "
                 "Ensure the TRITON-only simulation completed and wrote outputs."
             )
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
@@ -818,9 +763,7 @@ class TRITONSWMM_sim_post_processing:
         # Phase 1.2: Chunked processing - calculate optimal chunk size
         from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
 
-        memory_budget_MiB = (
-            self._analysis.cfg_analysis.process_output_target_chunksize_mb
-        )
+        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
         n_variables = len(df_outputs.columns)
 
         chunk_size = estimate_timesteps_per_chunk(
@@ -839,9 +782,7 @@ class TRITONSWMM_sim_post_processing:
                 flush=True,
             )
             print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(
-                f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True
-            )
+            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
             print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
 
         # Process in chunks
@@ -876,9 +817,7 @@ class TRITONSWMM_sim_post_processing:
                             )
                         continue
 
-                    ds_triton_output = load_triton_output_w_xarray(
-                        rds_dem, f, varname, raw_out_type
-                    )
+                    ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
                     lst_ds_timesteps.append(ds_triton_output)
 
                 if not lst_ds_timesteps:
@@ -923,14 +862,10 @@ class TRITONSWMM_sim_post_processing:
                         flush=True,
                     )
                 encoding = return_dic_zarr_encodings(ds_chunk, comp_level)
-                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(
-                    model_type="triton", astype="str"
-                )
+                ds_chunk.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="triton", astype="str")
                 ds_chunk.attrs["output_creation_date"] = current_datetime_string()
                 ds_chunk.attrs = convert_datetime_to_str(ds_chunk.attrs)
-                ds_chunk.to_zarr(
-                    fname_out, mode="w", encoding=encoding, consolidated=False
-                )
+                ds_chunk.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
                 first_chunk = False
             else:
                 if verbose:
@@ -952,9 +887,7 @@ class TRITONSWMM_sim_post_processing:
             print(f"[Chunked Processing] Complete: {fname_out.name}", flush=True)
 
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Mark timeseries as written
         if self.log.TRITON_timeseries_written:
@@ -1039,13 +972,9 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._swmm_node_outputs_processed(model)
         links_already_written = self._swmm_link_outputs_processed(model)
 
-        if (
-            nodes_already_written and links_already_written
-        ) and not overwrite_outputs_if_already_created:
+        if (nodes_already_written and links_already_written) and not overwrite_outputs_if_already_created:
             if verbose:
-                print(
-                    f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
-                )
+                print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
             if clear_raw_outputs:
                 self._clear_raw_SWMM_outputs(model)
             return
@@ -1061,9 +990,7 @@ class TRITONSWMM_sim_post_processing:
         else:
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes, f_out_nodes, comp_level, verbose)  # type: ignore
-            self.log.add_sim_processing_entry(
-                f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
-            )
+            self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
         # WRITE LINKS
         if links_already_written and not overwrite_outputs_if_already_created:
             if verbose:
@@ -1101,13 +1028,9 @@ class TRITONSWMM_sim_post_processing:
     ):
         processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
 
-        ds.attrs["sim_date"] = self._scenario.latest_sim_date(
-            model_type=self._current_model_type, astype="str"
-        )
+        ds.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=self._current_model_type, astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
-        paths_attr = paths_to_strings(
-            self._analysis.dict_of_all_sim_files(self._scenario.event_iloc)
-        )
+        paths_attr = paths_to_strings(self._analysis.dict_of_all_sim_files(self._scenario.event_iloc))
         config_attr = paths_to_strings(
             {
                 "system": self._system.cfg_system.model_dump(),
@@ -1172,41 +1095,25 @@ class TRITONSWMM_sim_post_processing:
     @property
     def SWMM_outputs_processed(self):
         """Check if SWMM outputs processed for current model log."""
-        node_ok = self.log.SWMM_node_timeseries_written and bool(
-            self.log.SWMM_node_timeseries_written.get()
-        )
-        link_ok = self.log.SWMM_link_timeseries_written and bool(
-            self.log.SWMM_link_timeseries_written.get()
-        )
+        node_ok = self.log.SWMM_node_timeseries_written and bool(self.log.SWMM_node_timeseries_written.get())
+        link_ok = self.log.SWMM_link_timeseries_written and bool(self.log.SWMM_link_timeseries_written.get())
         return node_ok and link_ok
 
-    def _swmm_link_outputs_processed(
-        self, model: Literal["swmm", "tritonswmm"]
-    ) -> bool:
+    def _swmm_link_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
         if model == "tritonswmm":
-            swmm_links = self._already_written(
-                self.scen_paths.output_tritonswmm_link_time_series
-            )
+            swmm_links = self._already_written(self.scen_paths.output_tritonswmm_link_time_series)
         else:
-            swmm_links = self._already_written(
-                self.scen_paths.output_swmm_only_link_time_series
-            )
+            swmm_links = self._already_written(self.scen_paths.output_swmm_only_link_time_series)
         # With model-specific logs, just set the single field
         if self.log.SWMM_link_timeseries_written:
             self.log.SWMM_link_timeseries_written.set(swmm_links)
         return swmm_links
 
-    def _swmm_node_outputs_processed(
-        self, model: Literal["swmm", "tritonswmm"]
-    ) -> bool:
+    def _swmm_node_outputs_processed(self, model: Literal["swmm", "tritonswmm"]) -> bool:
         if model == "tritonswmm":
-            swmm_nodes = self._already_written(
-                self.scen_paths.output_tritonswmm_node_time_series
-            )
+            swmm_nodes = self._already_written(self.scen_paths.output_tritonswmm_node_time_series)
         else:
-            swmm_nodes = self._already_written(
-                self.scen_paths.output_swmm_only_node_time_series
-            )
+            swmm_nodes = self._already_written(self.scen_paths.output_swmm_only_node_time_series)
         # With model-specific logs, just set the single field
         if self.log.SWMM_node_timeseries_written:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
@@ -1239,9 +1146,7 @@ class TRITONSWMM_sim_post_processing:
             return
 
         # Check if timeseries have been written before clearing
-        if self.log.TRITON_timeseries_written and bool(
-            self.log.TRITON_timeseries_written.get()
-        ):
+        if self.log.TRITON_timeseries_written and bool(self.log.TRITON_timeseries_written.get()):
             for child in triton_dir.iterdir():
                 if child.is_dir():
                     fast_rmtree(child)
@@ -1267,17 +1172,13 @@ class TRITONSWMM_sim_post_processing:
             if swmm_out_file is None:
                 return  # No coupled SWMM outputs to clear
 
-        outputs_processed = self._swmm_node_outputs_processed(
-            model
-        ) and self._swmm_link_outputs_processed(model)
+        outputs_processed = self._swmm_node_outputs_processed(model) and self._swmm_link_outputs_processed(model)
         if outputs_processed:
             swmm_out_file = Path(swmm_out_file)
             swmm_rpt_file = swmm_out_file.with_suffix(".rpt")
             if swmm_out_file.exists():
                 swmm_out_file.unlink()
-            if (
-                swmm_rpt_file.exists() and model != "swmm"
-            ):  # keep rpt file if swmm model
+            if swmm_rpt_file.exists() and model != "swmm":  # keep rpt file if swmm model
                 swmm_rpt_file.unlink()
             if self.log.raw_SWMM_outputs_cleared:
                 self.log.raw_SWMM_outputs_cleared.set(True)
@@ -1320,9 +1221,7 @@ class TRITONSWMM_sim_post_processing:
         # Performance summaries: use model_type to determine which to create
         if (which == "TRITON" or which == "both") and model_type is not None:
             if model_type == "tritonswmm":
-                perf_tseries_path = (
-                    self.scen_paths.output_tritonswmm_performance_timeseries
-                )
+                perf_tseries_path = self.scen_paths.output_tritonswmm_performance_timeseries
                 if perf_tseries_path is not None and perf_tseries_path.exists():
                     self._export_TRITONSWMM_performance_summary(
                         overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
@@ -1330,13 +1229,8 @@ class TRITONSWMM_sim_post_processing:
                         compression_level=compression_level,
                     )
             elif model_type == "triton":
-                triton_perf_tseries_path = (
-                    self.scen_paths.output_triton_only_performance_timeseries
-                )
-                if (
-                    triton_perf_tseries_path is not None
-                    and triton_perf_tseries_path.exists()
-                ):
+                triton_perf_tseries_path = self.scen_paths.output_triton_only_performance_timeseries
+                if triton_perf_tseries_path is not None and triton_perf_tseries_path.exists():
                     self._export_TRITON_only_performance_summary(
                         overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                         verbose=verbose,
@@ -1371,8 +1265,7 @@ class TRITONSWMM_sim_post_processing:
                     )
             elif model_type is None:
                 raise ValueError(
-                    "model_type parameter is required for TRITON summary generation. "
-                    "Must be 'triton' or 'tritonswmm'."
+                    "model_type parameter is required for TRITON summary generation. Must be 'triton' or 'tritonswmm'."
                 )
 
         if (which == "both") or (which == "SWMM"):
@@ -1403,8 +1296,7 @@ class TRITONSWMM_sim_post_processing:
                     )
             elif model_type is None:
                 raise ValueError(
-                    "model_type parameter is required for SWMM summary generation. "
-                    "Must be 'tritonswmm' or 'swmm'."
+                    "model_type parameter is required for SWMM summary generation. Must be 'tritonswmm' or 'swmm'."
                 )
 
         # Phase 1.3: Explicit garbage collection after summary generation
@@ -1446,10 +1338,7 @@ class TRITONSWMM_sim_post_processing:
 
         fname_out = self._validate_path(summary_path, path_name)
 
-        if (
-            self._already_written(fname_out)
-            and not overwrite_outputs_if_already_created
-        ):
+        if self._already_written(fname_out) and not overwrite_outputs_if_already_created:
             if verbose:
                 print(f"{fname_out.name} already written. Not overwriting.")
             return
@@ -1468,9 +1357,7 @@ class TRITONSWMM_sim_post_processing:
         # Write
         self._write_output(ds_summary, fname_out, comp_level, verbose)
         elapsed_s = time.time() - start_time
-        self.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
         # With model-specific logs, just set the single field
         if self.log.TRITON_summary_written:
             self.log.TRITON_summary_written.set(True)
@@ -1527,13 +1414,9 @@ class TRITONSWMM_sim_post_processing:
         nodes_already_written = self._already_written(f_out_nodes)
         links_already_written = self._already_written(f_out_links)
 
-        if (
-            nodes_already_written and links_already_written
-        ) and not overwrite_outputs_if_already_created:
+        if (nodes_already_written and links_already_written) and not overwrite_outputs_if_already_created:
             if verbose:
-                print(
-                    f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting."
-                )
+                print(f"{f_out_nodes.name} and {f_out_links.name} already written. Not overwriting.")
             return
 
         # Load full timeseries from the appropriate files
@@ -1542,24 +1425,18 @@ class TRITONSWMM_sim_post_processing:
 
         # Summarize nodes
         if not nodes_already_written or overwrite_outputs_if_already_created:
-            ds_nodes_summary = summarize_swmm_simulation_results(
-                ds_nodes_full, self._scenario.event_iloc
-            )
+            ds_nodes_summary = summarize_swmm_simulation_results(ds_nodes_full, self._scenario.event_iloc)
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_nodes_summary, f_out_nodes, comp_level, verbose)
-            self.log.add_sim_processing_entry(
-                f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True
-            )
+            self.log.add_sim_processing_entry(f_out_nodes, get_file_size_MiB(f_out_nodes), elapsed_s, True)
             # With model-specific logs, just set the single field
             if self.log.SWMM_node_summary_written:
                 self.log.SWMM_node_summary_written.set(True)
 
         # Summarize links
         if not links_already_written or overwrite_outputs_if_already_created:
-            ds_links_summary = summarize_swmm_simulation_results(
-                ds_links_full, self._scenario.event_iloc
-            )
+            ds_links_summary = summarize_swmm_simulation_results(ds_links_full, self._scenario.event_iloc)
 
             elapsed_s = time.time() - start_time
             self._write_output(ds_links_summary, f_out_links, comp_level, verbose)
@@ -1592,16 +1469,11 @@ class TRITONSWMM_sim_post_processing:
             If True, print progress messages
         """
         if (which == "both") or (which == "TRITON"):
-            if (
-                self.log.TRITON_summary_written
-                and self.log.TRITON_summary_written.get()
-            ):
+            if self.log.TRITON_summary_written and self.log.TRITON_summary_written.get():
                 triton_ts_path = self.scen_paths.output_tritonswmm_triton_timeseries
                 if triton_ts_path is not None and triton_ts_path.exists():
                     if verbose:
-                        print(
-                            f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}"
-                        )
+                        print(f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}")
                     if triton_ts_path.is_dir():
                         fast_rmtree(triton_ts_path)
                     else:
@@ -1612,22 +1484,14 @@ class TRITONSWMM_sim_post_processing:
                 print("TRITON summary not created yet, not clearing full timeseries")
 
         if (which == "both") or (which == "SWMM"):
-            node_summary_ok = (
-                self.log.SWMM_node_summary_written
-                and self.log.SWMM_node_summary_written.get()
-            )
-            link_summary_ok = (
-                self.log.SWMM_link_summary_written
-                and self.log.SWMM_link_summary_written.get()
-            )
+            node_summary_ok = self.log.SWMM_node_summary_written and self.log.SWMM_node_summary_written.get()
+            link_summary_ok = self.log.SWMM_link_summary_written and self.log.SWMM_link_summary_written.get()
             if node_summary_ok and link_summary_ok:
                 # Clear node timeseries
                 node_ts_path = self.scen_paths.output_tritonswmm_node_time_series
                 if node_ts_path is not None and node_ts_path.exists():
                     if verbose:
-                        print(
-                            f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}"
-                        )
+                        print(f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}")
                     if node_ts_path.is_dir():
                         fast_rmtree(node_ts_path)
                     else:
@@ -1637,9 +1501,7 @@ class TRITONSWMM_sim_post_processing:
                 link_ts_path = self.scen_paths.output_tritonswmm_link_time_series
                 if link_ts_path is not None and link_ts_path.exists():
                     if verbose:
-                        print(
-                            f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}"
-                        )
+                        print(f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}")
                     if link_ts_path.is_dir():
                         fast_rmtree(link_ts_path)
                     else:
@@ -1662,12 +1524,8 @@ class TRITONSWMM_sim_post_processing:
     @property
     def SWMM_summary_processed(self) -> bool:
         """Check if SWMM summaries have been created for current model log."""
-        node_ok = self.log.SWMM_node_summary_written and bool(
-            self.log.SWMM_node_summary_written.get()
-        )
-        link_ok = self.log.SWMM_link_summary_written and bool(
-            self.log.SWMM_link_summary_written.get()
-        )
+        node_ok = self.log.SWMM_node_summary_written and bool(self.log.SWMM_node_summary_written.get())
+        link_ok = self.log.SWMM_link_summary_written and bool(self.log.SWMM_link_summary_written.get())
         return node_ok and link_ok
 
 
@@ -1715,18 +1573,14 @@ def parse_performance_file(filepath):
     return df_ranks, s_average
 
 
-def return_filelist_by_tstep(
-    fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname
-):
+def return_filelist_by_tstep(fldr_out_triton: Path, fpattern_prefix, min_per_tstep, varname):
     lst_f_out = list(fldr_out_triton.glob(f"{fpattern_prefix}*"))
     if len(lst_f_out) == 0:
         return pd.Series()
     lst_reporting_tstep_min = []
     for f in lst_f_out:
         if "_" in f.name:
-            tstep_parts = (
-                f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
-            )
+            tstep_parts = f.name.split(f"{fpattern_prefix}_")[-1].split(".")[0].split("_")
             if int(tstep_parts[1]) != 0:
                 sys.exit(
                     f"problem parsing reporting timestep for file {f}\nnot expecting nonzero values behind the last underscore"
@@ -1749,18 +1603,10 @@ def return_fpath_wlevels(fldr_out_triton: Path, reporting_interval_s: int | floa
     ## retrive the reporting time interval from the cfg file
     min_per_tstep = reporting_interval_s / 60
     # associate filepaths to timesteps
-    s_outputs_mh = return_filelist_by_tstep(
-        fldr_out_triton, "MH", min_per_tstep, "max_wlevel_m"
-    )
-    s_outputs_h = return_filelist_by_tstep(
-        fldr_out_triton, "H", min_per_tstep, "wlevel_m"
-    )
-    s_outputs_qx = return_filelist_by_tstep(
-        fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps"
-    )
-    s_outputs_qy = return_filelist_by_tstep(
-        fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps"
-    )
+    s_outputs_mh = return_filelist_by_tstep(fldr_out_triton, "MH", min_per_tstep, "max_wlevel_m")
+    s_outputs_h = return_filelist_by_tstep(fldr_out_triton, "H", min_per_tstep, "wlevel_m")
+    s_outputs_qx = return_filelist_by_tstep(fldr_out_triton, "QX", min_per_tstep, "velocity_x_mps")
+    s_outputs_qy = return_filelist_by_tstep(fldr_out_triton, "QY", min_per_tstep, "velocity_y_mps")
     lst_out = [s_outputs_mh, s_outputs_h, s_outputs_qx, s_outputs_qy]
     non_empty_dfs = [s for s in lst_out if s is not None]
     df_outputs = pd.concat(non_empty_dfs, axis=1)
@@ -1813,10 +1659,7 @@ def load_triton_output_w_xarray(rds_dem, f_triton_output, varname, raw_out_type)
         # Reshape to 2D grid
         data_values = data_values.reshape((y_dim, x_dim))
     else:
-        raise ValueError(
-            f"Unknown TRITON raw output type: '{raw_out_type}'. "
-            "Expected 'bin' or 'asc'."
-        )
+        raise ValueError(f"Unknown TRITON raw output type: '{raw_out_type}'. Expected 'bin' or 'asc'.")
 
     # Direct numpy-to-xarray conversion (no pandas overhead)
     ds_triton_output = xr.DataArray(
@@ -1936,14 +1779,10 @@ def summarize_triton_simulation_results(
 
     # Velocity components at time of max (lazy)
     ds_summary["velocity_x_mps_at_time_of_max_velocity"] = (
-        ds["velocity_x_mps"]
-        .sel(timestep_min=time_of_max_velocity)
-        .reset_coords(drop=True)
+        ds["velocity_x_mps"].sel(timestep_min=time_of_max_velocity).reset_coords(drop=True)
     )
     ds_summary["velocity_y_mps_at_time_of_max_velocity"] = (
-        ds["velocity_y_mps"]
-        .sel(timestep_min=time_of_max_velocity)
-        .reset_coords(drop=True)
+        ds["velocity_y_mps"].sel(timestep_min=time_of_max_velocity).reset_coords(drop=True)
     )
 
     # Max water level and time of max (lazy)
@@ -1961,17 +1800,13 @@ def summarize_triton_simulation_results(
         # Compute from wlevel_m timeseries
         ds_summary["max_wlevel_m"] = ds["wlevel_m"].max(dim=tstep_dimname, skipna=True)
 
-    ds_summary["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(
-        dim=tstep_dimname, skipna=True
-    )
+    ds_summary["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(dim=tstep_dimname, skipna=True)
 
     # Water level in last timestep (lazy)
-    ds_summary["wlevel_m_last_tstep"] = (
-        ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    ds_summary["wlevel_m_last_tstep"].attrs["notes"] = (
+        "this is the water level in the last reported time step for computing mass balance"
     )
-    ds_summary["wlevel_m_last_tstep"].attrs[
-        "notes"
-    ] = "this is the water level in the last reported time step for computing mass balance"
 
     # Compute final stored volume (lazy)
     # Grid validation (small operation, can materialize)
@@ -1999,9 +1834,7 @@ def summarize_triton_simulation_results(
             f"Tolerance: {tolerance}m"
         )
 
-    ds_summary["final_surface_flood_volume_cm"] = (
-        ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
-    ).sum()
+    ds_summary["final_surface_flood_volume_cm"] = (ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
     ds_summary["final_surface_flood_volume_cm"].attrs["units"] = "cubic meters"
 
     # Assign event_iloc coordinate and expand dims (metadata operations)

@@ -9,7 +9,7 @@ Read these files before beginning any task:
 
 ## Planning Document Lifecycle
 
-Read `~/dev/claude-workspace/specialist_agent_docs/planning-document-lifecycle.md` for the full lifecycle rules.
+Read `~/dev/claude-workspace/instructions/protocols/planning-document-lifecycle.md` for the full lifecycle rules.
 
 ---
 
@@ -35,8 +35,8 @@ This project uses a conda environment named `triton_swmm_toolkit`.
 ## Terminology
 
 See domain glossaries for shared definitions:
-- `~/dev/claude-workspace/glossary/flood_risk_management.md` — combined, compound, rain-only, surge-only, event_iloc
-- `~/dev/claude-workspace/glossary/hydrology.md` — storm surge, storm tide, tidal phase, return period, AEP
+- `~/dev/claude-workspace/instructions/glossary/flood_risk_management.md` — combined, compound, rain-only, surge-only, event_iloc
+- `~/dev/claude-workspace/instructions/glossary/hydrology.md` — storm surge, storm tide, tidal phase, return period, AEP
 
 Toolkit-specific terms (precise meanings in this codebase):
 
@@ -78,6 +78,8 @@ Exception types:
 ### Log-based completion checks
 
 The toolkit implementation of the universal "prefer log-based checks" principle: `_already_written()` verifies a file was written *successfully*, not just that it exists. Prefer it over raw file existence checks.
+
+**Scenario log vs. model log**: `scen.log` is a `TRITONSWMM_scenario_log` — it tracks scenario *preparation* state only (INP creation, TRITON config copy, etc.). Per-model-type simulation and processing state (e.g., `simulation_completed`, `performance_summary_written`, `TRITON_summary_written`) lives in a separate `TRITONSWMM_model_log`, accessed via `scen.get_log(model_type)`. Accessing a processing-phase field on `scen.log` will raise `AttributeError` at runtime.
 
 ### Logging patterns
 
@@ -188,4 +190,4 @@ These skills are available only in this project (symlinked from `~/dev/claude-wo
 
 ## AI Working Norms
 
-Read `~/dev/claude-workspace/specialist_agent_docs/ai-working-norms.md` for the full protocol.
+Read `~/dev/claude-workspace/instructions/norms/ai-working-norms.md` for the full protocol.

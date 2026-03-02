@@ -5,6 +5,12 @@ This module provides functionality to export the df_status() DataFrame to a CSV 
 after all simulations complete, regardless of their success or failure. This enables
 debugging by identifying which scenarios failed and why.
 
+The exported CSV includes performance breakdown columns (perf_Total, perf_Compute,
+perf_SWMM, perf_MPI, etc.) drawn from the processed performance summary dataset.
+These columns are populated only for rows where output processing completed; they
+are NaN for SWMM model type rows (no TRITON performance dataset) and for any scenario
+where processing did not finish.
+
 Additionally writes a workflow_summary.md file with get_workflow_status() output
 and optionally includes HPC partition information for debugging resource allocation issues.
 """
@@ -93,9 +99,7 @@ def gather_hpc_partition_info() -> str:
     md_lines = ["## HPC Partition Information", ""]
     md_lines.append(f"**Collected**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     md_lines.append("")
-    md_lines.append(
-        "> Use this information to understand resource limits that may affect job allocation."
-    )
+    md_lines.append("> Use this information to understand resource limits that may affect job allocation.")
     md_lines.append("")
 
     # Partition overview
@@ -121,9 +125,7 @@ def gather_hpc_partition_info() -> str:
     # Partition limits (parsed into table)
     md_lines.append("### Partition Resource Limits")
     md_lines.append("")
-    md_lines.append(
-        "| Partition | Max Nodes | Max CPUs/Node | Max Time | Mem/CPU (MB) | State |"
-    )
+    md_lines.append("| Partition | Max Nodes | Max CPUs/Node | Max Time | Mem/CPU (MB) | State |")
     md_lines.append("|-----------|-----------|---------------|----------|--------------|-------|")
 
     try:
@@ -216,9 +218,7 @@ def gather_resource_allocation_diagnostics(analysis) -> str:
     import re
 
     md_lines = ["## Resource Allocation Diagnostics", ""]
-    md_lines.append(
-        "> This section helps diagnose CPU allocation mismatches between configuration and SLURM."
-    )
+    md_lines.append("> This section helps diagnose CPU allocation mismatches between configuration and SLURM.")
     md_lines.append("")
 
     # Check if Snakefile exists
@@ -249,9 +249,7 @@ def gather_resource_allocation_diagnostics(analysis) -> str:
 
     md_lines.append("### Simulation Rules Resource Specifications")
     md_lines.append("")
-    md_lines.append(
-        "| Rule | Threads | Tasks | CPUs/Task | Total CPUs | GPU | Status |"
-    )
+    md_lines.append("| Rule | Threads | Tasks | CPUs/Task | Total CPUs | GPU | Status |")
     md_lines.append("|------|---------|-------|-----------|------------|-----|--------|")
 
     mismatches = []
@@ -276,19 +274,14 @@ def gather_resource_allocation_diagnostics(analysis) -> str:
                 )
             )
 
-        md_lines.append(
-            f"| {rule_name} | {threads} | {tasks} | {cpus_per_task} | "
-            f"{total_cpus} | {gpus} | {status} |"
-        )
+        md_lines.append(f"| {rule_name} | {threads} | {tasks} | {cpus_per_task} | {total_cpus} | {gpus} | {status} |")
 
     md_lines.append("")
 
     if mismatches:
         md_lines.append("### ⚠️ Resource Allocation Mismatches Detected")
         md_lines.append("")
-        md_lines.append(
-            f"**Found {len(mismatches)} rules where `threads` ≠ `tasks × cpus_per_task`**"
-        )
+        md_lines.append(f"**Found {len(mismatches)} rules where `threads` ≠ `tasks × cpus_per_task`**")
         md_lines.append("")
         md_lines.append(
             "This can cause issues with Snakemake's slurm-jobstep executor, which may allocate "
@@ -298,9 +291,7 @@ def gather_resource_allocation_diagnostics(analysis) -> str:
     else:
         md_lines.append("### ✅ All Resource Specifications Consistent")
         md_lines.append("")
-        md_lines.append(
-            "All simulation rules have `threads` matching `tasks × cpus_per_task`."
-        )
+        md_lines.append("All simulation rules have `threads` matching `tasks × cpus_per_task`.")
         md_lines.append("")
 
     return "\n".join(md_lines)
@@ -472,9 +463,7 @@ def export_scenario_status_to_csv(analysis, output_path: Optional[Path] = None) 
 
 def main():
     """Command-line interface for exporting scenario status."""
-    parser = argparse.ArgumentParser(
-        description="Export scenario status to CSV after simulations complete"
-    )
+    parser = argparse.ArgumentParser(description="Export scenario status to CSV after simulations complete")
     parser.add_argument(
         "--analysis-config",
         type=Path,
