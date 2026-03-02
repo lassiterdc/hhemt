@@ -280,3 +280,39 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
     assert (
         init_pos < activate_pos
     ), "Conda initialization must come before conda activate"
+
+
+def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
+    """override_hpc_total_nodes replaces hpc_total_nodes in the generated SBATCH script."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    # Config says 2 nodes; we override to 3
+    assert analysis.cfg_analysis.hpc_total_nodes == 2
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir, override_hpc_total_nodes=3
+    )
+
+    script_content = script_path.read_text()
+    assert "--nodes=3" in script_content, "Override should produce --nodes=3, not config value of 2"
+    assert "--nodes=2" not in script_content, "Config value should not appear when overridden"
+
+
+def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
+    """override_hpc_total_nodes raises ConfigurationError when multi_sim_run_method != 1_job_many_srun_tasks."""
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    analysis.cfg_analysis.multi_sim_run_method = "local"
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+
+    with pytest.raises(ConfigurationError, match="override_hpc_total_nodes"):
+        workflow_builder.submit_workflow(override_hpc_total_nodes=3)

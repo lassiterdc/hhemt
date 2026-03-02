@@ -750,7 +750,12 @@ rule consolidate:
 
         return config_dir
 
-    def _generate_single_job_submission_script(self, snakefile_path: Path, config_dir: Path) -> Path:
+    def _generate_single_job_submission_script(
+        self,
+        snakefile_path: Path,
+        config_dir: Path,
+        override_hpc_total_nodes: int | None = None,
+    ) -> Path:
         """
         Generate SLURM batch script that runs Snakemake.
 
@@ -764,6 +769,9 @@ rule consolidate:
             Path to the Snakefile
         config_dir : Path
             Path to the Snakemake profile config directory
+        override_hpc_total_nodes : int | None
+            If provided, overrides cfg_analysis.hpc_total_nodes for this submission
+            without mutating the config object. Only valid for 1_job_many_srun_tasks mode.
 
         Returns
         -------
@@ -777,8 +785,8 @@ rule consolidate:
         # Get per-simulation resource requirements (without requiring totals)
         sim_resources = self.analysis._resource_manager._get_simulation_resource_requirements()
 
-        # Get total nodes from config (user specifies directly)
-        total_nodes = self.cfg_analysis.hpc_total_nodes
+        # Get total nodes — use override if provided, otherwise fall back to config
+        total_nodes = override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes
         assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
 
         # Get job duration
@@ -1056,6 +1064,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         snakefile_path: Path,
         analysis: "TRITONSWMM_analysis",
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Perform dry-run validation for 1_job_many_srun_tasks mode.
@@ -1071,6 +1080,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             The analysis object (regular or master sensitivity analysis)
         verbose : bool
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If provided, overrides cfg_analysis.hpc_total_nodes for the CPU budget
+            calculation. Must match the value passed to _generate_single_job_submission_script.
 
         Returns
         -------
@@ -1079,7 +1091,11 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         """
         # Compute expected resources to match SBATCH script (--cores $TOTAL_CPUS)
         hpc_cpus_per_node = getattr(analysis.cfg_analysis, "hpc_cpus_per_node", None)
-        hpc_total_nodes = getattr(analysis.cfg_analysis, "hpc_total_nodes", None)
+        hpc_total_nodes = (
+            override_hpc_total_nodes
+            if override_hpc_total_nodes is not None
+            else getattr(analysis.cfg_analysis, "hpc_total_nodes", None)
+        )
         if not isinstance(hpc_cpus_per_node, int) or not isinstance(hpc_total_nodes, int):
             if verbose:
                 print(
@@ -1521,6 +1537,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
         snakefile_path: Path,
         wait_for_completion: bool = False,
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Submit workflow as a single SLURM batch job.
@@ -1537,6 +1554,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             If True, wait for job completion
         verbose : bool, default=True
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If provided, overrides cfg_analysis.hpc_total_nodes for this submission
+            without mutating the config object. Only valid for 1_job_many_srun_tasks mode.
 
         Returns
         -------
@@ -1566,7 +1586,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {sn
             config_dir = self.write_snakemake_config(config, mode="single_job")
 
             # Generate submission script
-            script_path = self._generate_single_job_submission_script(snakefile_path, config_dir)
+            script_path = self._generate_single_job_submission_script(
+                snakefile_path, config_dir, override_hpc_total_nodes=override_hpc_total_nodes
+            )
 
             if verbose:
                 print(
@@ -2441,6 +2463,7 @@ exit $snakemake_status
         wait_for_completion: bool = False,
         dry_run: bool = False,
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake.
@@ -2485,6 +2508,10 @@ exit $snakemake_status
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
+            without mutating the config object. Only valid when multi_sim_run_method is
+            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -2493,6 +2520,16 @@ exit $snakemake_status
         """
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
+
+        if override_hpc_total_nodes is not None and multi_sim_method != "1_job_many_srun_tasks":
+            raise ConfigurationError(
+                field="override_hpc_total_nodes",
+                message=(
+                    f"override_hpc_total_nodes is only valid when multi_sim_run_method='1_job_many_srun_tasks', "
+                    f"but current method is '{multi_sim_method}'."
+                ),
+                config_path=None,
+            )
 
         if multi_sim_method == "1_job_many_srun_tasks":
             # Always submit a batch job for 1-job mode
@@ -2531,6 +2568,7 @@ exit $snakemake_status
                 snakefile_path=snakefile_path,
                 analysis=self.analysis,
                 verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
 
             if dry_run:
@@ -2543,6 +2581,7 @@ exit $snakemake_status
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
 
             self.analysis._refresh_log()
@@ -3106,6 +3145,7 @@ rule setup:
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -3149,6 +3189,10 @@ rule setup:
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
+            without mutating the config object. Only valid when multi_sim_run_method is
+            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -3173,6 +3217,16 @@ rule setup:
                     "CUDA/HIP or set n_gpus: 0 in sub-analyses."
                 ),
                 config_path=self.system.system_config_yaml,
+            )
+
+        if override_hpc_total_nodes is not None and multi_sim_method != "1_job_many_srun_tasks":
+            raise ConfigurationError(
+                field="override_hpc_total_nodes",
+                message=(
+                    f"override_hpc_total_nodes is only valid when multi_sim_run_method='1_job_many_srun_tasks', "
+                    f"but current method is '{multi_sim_method}'."
+                ),
+                config_path=None,
             )
 
         if multi_sim_method == "1_job_many_srun_tasks":
@@ -3220,6 +3274,7 @@ rule setup:
                 snakefile_path=master_snakefile_path,
                 analysis=self.master_analysis,
                 verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
 
             if dry_run:
@@ -3232,6 +3287,7 @@ rule setup:
                 snakefile_path=master_snakefile_path,
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
 
             self.sensitivity_analysis._update_master_analysis_log()
