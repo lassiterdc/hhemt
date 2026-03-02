@@ -139,6 +139,7 @@ class TRITONSWMM_sensitivity_analysis:
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -180,6 +181,9 @@ class TRITONSWMM_sensitivity_analysis:
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If set, overrides `hpc_total_nodes` in the generated SBATCH script without
+            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
 
         Returns
         -------
@@ -208,6 +212,7 @@ class TRITONSWMM_sensitivity_analysis:
             wait_for_completion=wait_for_completion,
             dry_run=dry_run,
             verbose=verbose,
+            override_hpc_total_nodes=override_hpc_total_nodes,
         )
 
     def run_all_sims(

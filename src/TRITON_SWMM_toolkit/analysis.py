@@ -1233,6 +1233,7 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         wait_for_job_completion: Optional[bool] = None,
         clear_raw_outputs: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> "WorkflowResult":
         # TODO - Snakemake will consider outputs as stale
         # if any rules change. Change mode or phases
@@ -1279,6 +1280,9 @@ class TRITONSWMM_analysis:
         wait_for_job_completion: bool
             The python process will wait for the job to finish before proceeding.
             Mainly used for test cases and debugging.
+        override_hpc_total_nodes : int | None
+            If set, overrides `hpc_total_nodes` in the generated SBATCH script without
+            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
 
         Returns
         -------
@@ -1391,6 +1395,7 @@ class TRITONSWMM_analysis:
             "wait_for_completion": wait_for_job_completion,
             "dry_run": dry_run,
             "verbose": verbose,
+            "override_hpc_total_nodes": override_hpc_total_nodes,
         }
 
         if verbose:
@@ -1715,6 +1720,7 @@ class TRITONSWMM_analysis:
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
+        override_hpc_total_nodes: int | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -1759,6 +1765,9 @@ class TRITONSWMM_analysis:
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
+        override_hpc_total_nodes : int | None
+            If set, overrides `hpc_total_nodes` in the generated SBATCH script without
+            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
 
         Returns
         -------
@@ -1789,6 +1798,7 @@ class TRITONSWMM_analysis:
                 wait_for_completion=wait_for_completion,
                 dry_run=dry_run,
                 verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -1809,6 +1819,7 @@ class TRITONSWMM_analysis:
                 wait_for_completion=wait_for_completion,
                 dry_run=dry_run,
                 verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
             )
 
         if dry_run and result.get("success"):

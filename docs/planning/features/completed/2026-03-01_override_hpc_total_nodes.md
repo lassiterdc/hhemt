@@ -26,7 +26,7 @@ If `override_hpc_total_nodes` is passed when `multi_sim_run_method != "1_job_man
 - `submit_workflow(override_hpc_total_nodes=5)` generates `#SBATCH --nodes=5` even when `cfg_analysis.hpc_total_nodes=50`.
 - `submit_workflow(override_hpc_total_nodes=5)` when `multi_sim_run_method="local"` raises `ConfigurationError` immediately, before any workflow generation.
 - No change to behavior when `override_hpc_total_nodes=None` (default).
-- Both `SnakemakeWorkflowBuilder` and `SensitivityAnalysisWorkflowBuilder` support the parameter.
+- Both `SnakemakeWorkflowBuilder` and `SensitivityAnalysisWorkflowBuilder` support the parameter, as do the `Analysis.run()`, `Analysis.submit_workflow()`, and `TRITONSWMM_sensitivity_analysis.submit_workflow()` façade layers.
 - Test coverage added.
 
 ---
@@ -166,4 +166,5 @@ conda run -n triton_swmm_toolkit ruff format src/TRITON_SWMM_toolkit/workflow.py
 - [x] Two new tests added and passing in `test_workflow_1job_sbatch_generation.py`
 - [x] `ruff check` and `ruff format` pass
 - [x] `architecture.md` unchanged (no structural change)
+- [x] `override_hpc_total_nodes` added to `Analysis.run()`, `Analysis.submit_workflow()`, and `TRITONSWMM_sensitivity_analysis.submit_workflow()` façade layers
 - [x] Debugging skill update (`docs/planning/features/2026-03-01_debug_prompt_timeout_node_recommendation.md`) implemented concurrently

@@ -111,6 +111,14 @@ launcher, finalize = run._create_subprocess_sim_run_launcher(...)  # Spawns anot
 - `prepare_simulation_command()` — use in runner scripts
 - `_create_subprocess_sim_run_launcher()` — use only in analysis/executor classes
 
+### submit_workflow() façade layers
+
+`Analysis.submit_workflow()` and `TRITONSWMM_sensitivity_analysis.submit_workflow()` are façade layers over `SnakemakeWorkflowBuilder.submit_workflow()` and `SensitivityAnalysisWorkflowBuilder.submit_workflow()` respectively. Any new parameter added to a builder's `submit_workflow()` must also be threaded through all three façade layers:
+
+1. `TRITONSWMM_sensitivity_analysis.submit_workflow()` → `self._workflow_builder.submit_workflow()`
+2. `Analysis.submit_workflow()` → `self.sensitivity.submit_workflow()` and `self._workflow_builder.submit_workflow()`
+3. `Analysis.run()` → injected into `workflow_params` dict → `self.submit_workflow()`
+
 ### Snakemake conventions
 
 `workflow.py` should use wildcards as much as possible to keep generated Snakefiles human-readable. Use rule-generating loops only when a cleaner canonical Snakemake approach isn't available.
