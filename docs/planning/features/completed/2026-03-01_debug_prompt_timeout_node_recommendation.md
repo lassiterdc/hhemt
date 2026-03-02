@@ -1,7 +1,7 @@
 # Feature: Timeout-Aware Node Recommendation in HPC Debugging Skill
 
 **Written**: 2026-03-01
-**Status**: Deferred — do not implement without explicit developer approval
+**Status**: Completed
 
 ---
 
@@ -54,7 +54,7 @@ Present as:
 
 ## Implementation Notes
 
-- This logic lives in the `/debug-hpc-analysis` skill (`~/dev/claude-workspace/skills/TRITON-SWMM_toolkit/debug-hpc-analysis/SKILL.md`) and its protocol file (`.prompts/debugging_hpc_analysis.md`), not in Python source code.
+- This logic lives in the `/debug-hpc-analysis` skill (`~/dev/claude-workspace/projects/TRITON-SWMM_toolkit/skills/debug-hpc-analysis/SKILL.md`) inline — there is no separate `.prompts/debugging_hpc_analysis.md` file. Not in Python source code.
 - The recommendation must reference the new `override_hpc_total_nodes` parameter (requires that feature to be implemented first — see `docs/planning/features/2026-03-01_override_hpc_total_nodes.md`).
 - The agent should make a concrete recommendation, not just explain the formula.
 - If the sensitivity definition CSV is not available (excluded from transfer), the agent should note that it cannot make a node recommendation and ask the user to provide the resource requirements manually.
@@ -69,7 +69,7 @@ Requires `override_hpc_total_nodes` feature (`docs/planning/features/2026-03-01_
 
 ## Definition of Done
 
-- [ ] `.prompts/debugging_hpc_analysis.md` and `/debug-hpc-analysis` SKILL.md updated with time-limit-specific branch in Step 7 (Root Cause) and Step 8 (Recommended Fixes)
-- [ ] Agent asks about partition time limit when all failures are time-limit cancellations
-- [ ] Agent computes and recommends `override_hpc_total_nodes` value with explanation
-- [ ] Recommendation covers both sensitivity analyses (per-subanalysis resource lookup) and regular analyses (per-sim node count × incomplete count)
+- [x] `/debug-hpc-analysis` SKILL.md updated with time-limit-specific branch in Step 7 (Root Cause) and Step 8 (Recommended Fixes)
+- [x] Agent asks about partition time limit when all failures are time-limit cancellations
+- [x] Agent computes and recommends `override_hpc_total_nodes` value with explanation
+- [x] Recommendation covers both sensitivity analyses (per-subanalysis resource lookup) and regular analyses (per-sim node count × incomplete count)
