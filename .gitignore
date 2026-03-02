@@ -207,6 +207,9 @@ __marimo__/
 # Scratch directory (subagent transcripts, temporary working files)
 .scratch/
 
+# Claude AI config (stored privately in claude-workspace, symlinked here)
+/.claude/
+
 # Scientific data
 *.nc
 *.nc4
