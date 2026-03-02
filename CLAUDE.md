@@ -166,6 +166,18 @@ Not every implementation requires smoke tests. Pure documentation changes, plann
 
 ---
 
+## Project-Specific Skills
+
+These skills are available only in this project (symlinked from `~/dev/claude-workspace/skills/TRITON-SWMM_toolkit/`):
+
+| Skill | Purpose |
+|-------|---------|
+| `/debug-hpc-analysis` | Debug a failed TRITON-SWMM HPC analysis. Pass the analysis directory path as the argument. |
+
+> Skills are symlinked from `~/dev/claude-workspace/projects/TRITON-SWMM_toolkit/skills/`. Re-run `~/dev/claude-workspace/setup.sh` on a new machine to restore symlinks.
+
+---
+
 ## AI Working Norms
 
 Read `~/dev/claude-workspace/specialist_agent_docs/ai-working-norms.md` for the full protocol.
