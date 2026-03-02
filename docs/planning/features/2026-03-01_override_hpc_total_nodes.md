@@ -1,7 +1,7 @@
 # Implementation Plan: `override_hpc_total_nodes` Parameter for `submit_workflow()`
 
 **Written**: 2026-03-01
-**Last edited**: 2026-03-01 — initial draft
+**Last edited**: 2026-03-01 — codebase verification pass; added assert clarification for `_generate_single_job_submission_script()` and delegation note for `SensitivityAnalysisWorkflowBuilder`
 
 ---
 
@@ -35,9 +35,9 @@ If `override_hpc_total_nodes` is passed when `multi_sim_run_method != "1_job_man
 
 - **`workflow.py:753`** — `_generate_single_job_submission_script(snakefile_path, config_dir)`: reads `self.cfg_analysis.hpc_total_nodes` at line 781. This is the single write point for `--nodes=` in the sbatch script.
 - **`workflow.py:2425`** — `SnakemakeWorkflowBuilder.submit_workflow()`: 18 parameters. Calls `_submit_single_job_workflow()` for `1_job_many_srun_tasks` mode.
-- **`workflow.py:~2550`** — `SensitivityAnalysisWorkflowBuilder.submit_workflow()`: separate override, same structure. Also calls `_submit_single_job_workflow()`.
-- **`workflow.py:~1054`** — `_validate_single_job_dry_run()`: uses `hpc_cpus_per_node * hpc_total_nodes` for CPU budget. Must also receive the override.
-- **`workflow.py:~1519`** — `_submit_single_job_workflow()`: calls `_generate_single_job_submission_script()`. This is the call chain entry point for threading the override.
+- **`workflow.py:3088`** — `SensitivityAnalysisWorkflowBuilder.submit_workflow()`: separate class (not a subclass of `SnakemakeWorkflowBuilder`), holds `_base_builder` instance. Calls `self._base_builder._validate_single_job_dry_run()` at line 3219 and `self._base_builder._submit_single_job_workflow()` at line 3231.
+- **`workflow.py:1054`** — `_validate_single_job_dry_run()`: uses `hpc_cpus_per_node * hpc_total_nodes` for CPU budget at line 1098. Must also receive the override.
+- **`workflow.py:1519`** — `_submit_single_job_workflow()`: calls `_generate_single_job_submission_script()` at line 1569. This is the call chain threading point.
 - **`config/analysis.py:60`** — `hpc_total_nodes: Optional[int]` — field definition.
 - **`exceptions.py`** — `ConfigurationError(field, message, config_path)` — the right exception type for mode/parameter mismatch.
 - **`tests/test_workflow_1job_sbatch_generation.py`** — existing tests for sbatch generation. Test for `override_hpc_total_nodes` belongs here.
@@ -92,6 +92,7 @@ The override parameter must be threaded through `_submit_single_job_workflow()` 
 
 **2. `SensitivityAnalysisWorkflowBuilder.submit_workflow()`**
 - Same changes as above.
+- Note: this builder does not inherit from `SnakemakeWorkflowBuilder` — it holds a `_base_builder` instance. The dry-run and single-job calls inside this method are `self._base_builder._validate_single_job_dry_run(...)` and `self._base_builder._submit_single_job_workflow(...)`. Pass `override_hpc_total_nodes` at both call sites.
 
 **3. `_submit_single_job_workflow()`**
 - Add `override_hpc_total_nodes: int | None = None` to signature.
@@ -106,7 +107,17 @@ The override parameter must be threaded through `_submit_single_job_workflow()` 
 
 **5. `_generate_single_job_submission_script()`**
 - Add `override_hpc_total_nodes: int | None = None` to signature.
-- Replace `total_nodes = self.cfg_analysis.hpc_total_nodes` with the override-aware version.
+- At line 781–782, the existing code is:
+  ```python
+  total_nodes = self.cfg_analysis.hpc_total_nodes
+  assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+  ```
+  Replace with:
+  ```python
+  total_nodes = override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes
+  assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
+  ```
+  The assert must follow the resolved value, not precede it.
 
 ### `tests/test_workflow_1job_sbatch_generation.py`
 
