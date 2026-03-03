@@ -458,8 +458,8 @@ import subprocess
 SIM_IDS = {list(range(n_sims))}
 
 rule all:
-    input: "_status/output_consolidation_complete.flag"
-    
+    input: "_status/e_consolidate_complete.flag"
+
 onsuccess:
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
@@ -475,7 +475,7 @@ onerror:
     """)
 
 rule setup:
-    output: "_status/setup_complete.flag"
+    output: "_status/a_setup_complete.flag"
     log: "{log_dir_str}/setup.log"
     conda: "{conda_env_path}"
     resources:
@@ -488,8 +488,8 @@ rule setup:
         if prepare_scenarios:
             snakefile_content += f'''
 rule prepare_scenario:
-    input: "_status/setup_complete.flag"
-    output: "_status/sims/scenario_{{event_iloc}}_prepared.flag"
+    input: "_status/a_setup_complete.flag"
+    output: "_status/b_prepare_{{event_iloc}}_complete.flag"
     log: "{log_dir_str}/sims/prepare_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     resources:
@@ -508,7 +508,7 @@ rule prepare_scenario:
 
         # Add simulation rules (separate rules per model type)
         sim_input = (
-            "_status/sims/scenario_{event_iloc}_prepared.flag" if prepare_scenarios else "_status/setup_complete.flag"
+            "_status/b_prepare_{event_iloc}_complete.flag" if prepare_scenarios else "_status/a_setup_complete.flag"
         )
 
         # Determine which model types are enabled
@@ -550,7 +550,7 @@ rule prepare_scenario:
             snakefile_content += f'''
 rule run_{model_type}:
     input: "{sim_input}"
-    output: "_status/sims/{model_type}_{{event_iloc}}_complete.flag"
+    output: "_status/c_run_{model_type}_{{event_iloc}}_complete.flag"
     log: "{log_dir_str}/sims/{model_type}_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     threads: {model_threads}
@@ -583,8 +583,8 @@ rule run_{model_type}:
 
                 snakefile_content += f'''
 rule process_{model_type}:
-    input: "_status/sims/{model_type}_{{event_iloc}}_complete.flag"
-    output: "_status/sims/{model_type}_{{event_iloc}}_processed.flag"
+    input: "_status/c_run_{model_type}_{{event_iloc}}_complete.flag"
+    output: "_status/d_process_{model_type}_{{event_iloc}}_complete.flag"
     log: "{log_dir_str}/sims/process_{model_type}_{{event_iloc}}.log"
     conda: "{conda_env_path}"
     resources:
@@ -609,10 +609,10 @@ rule process_{model_type}:
         consolidate_inputs = []
         for model_type in enabled_models:
             if process_timeseries:
-                flag_pattern = f"{model_type}_{{event_iloc}}_processed.flag"
+                flag_pattern = f"d_process_{model_type}_{{event_iloc}}_complete.flag"
             else:
-                flag_pattern = f"{model_type}_{{event_iloc}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/sims/{flag_pattern}", event_iloc=SIM_IDS)')
+                flag_pattern = f"c_run_{model_type}_{{event_iloc}}_complete.flag"
+            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_iloc=SIM_IDS)')
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
@@ -620,7 +620,7 @@ rule process_{model_type}:
         snakefile_content += f'''
 rule consolidate:
     input: {consolidate_input_str}
-    output: "_status/output_consolidation_complete.flag"
+    output: "_status/e_consolidate_complete.flag"
     log: "{log_dir_str}/consolidate.log"
     conda: "{conda_env_path}"
     resources:
@@ -2866,16 +2866,16 @@ onerror:
         consolidation_flags = []
         for sa_id in self.sensitivity_analysis.sub_analyses.keys():  # type: ignore
             consolidation_flags.append(
-                f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
+                f"_status/e_consolidate_sa{sa_id}_complete.flag"  # type: ignore
             )
 
         snakefile_content += f'''rule all:
-    input: 
+    input:
         {", ".join([f'"{flag}"' for flag in consolidation_flags])},
-        "_status/master_consolidation_complete.flag"
+        "_status/f_consolidate_master_complete.flag"
 
 rule setup:
-    output: "_status/setup_complete.flag"
+    output: "_status/a_setup_complete.flag"
     log: "{log_dir_str}/setup.log"
     conda: "{conda_env_path}"
     resources:
@@ -2971,10 +2971,10 @@ rule setup:
                 # Phase 1: Scenario preparation (if enabled)
                 if prepare_scenarios:
                     prep_rule_name = f"prepare_sa{sa_id}_evt{event_iloc}"
-                    prep_outflag = f"_status/{prep_rule_name}_complete.flag"
+                    prep_outflag = f"_status/b_prepare_sa{sa_id}_{event_iloc}_complete.flag"
 
                     snakefile_content += f'''rule {prep_rule_name}:
-    input: "_status/setup_complete.flag"
+    input: "_status/a_setup_complete.flag"
     output: "{prep_outflag}"
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
@@ -2996,8 +2996,8 @@ rule setup:
 
                 # Phase 2: Simulation execution
                 sim_rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
-                sim_outflag = f"_status/{sim_rule_name}_complete.flag"
-                sim_input = f'"{prep_outflag}"' if prepare_scenarios else '"_status/setup_complete.flag"'
+                sim_outflag = f"_status/c_run_{model_type}_sa{sa_id}_{event_iloc}_complete.flag"
+                sim_input = f'"{prep_outflag}"' if prepare_scenarios else '"_status/a_setup_complete.flag"'
 
                 snakefile_content += f'''rule {sim_rule_name}:
     input: {sim_input}
@@ -3024,7 +3024,7 @@ rule setup:
                 # Phase 3: Output processing (if enabled)
                 if process_timeseries:
                     process_rule_name = f"process_sa{sa_id}_evt{event_iloc}"
-                    process_outflag = f"_status/{process_rule_name}_complete.flag"
+                    process_outflag = f"_status/d_process_{model_type}_sa{sa_id}_{event_iloc}_complete.flag"
 
                     snakefile_content += f'''rule {process_rule_name}:
     input: "{sim_outflag}"
@@ -3055,9 +3055,7 @@ rule setup:
 
                 sub_analysis_sim_flags.append(final_flag)
 
-            subanalysis_flag = (
-                f"_status/consolidate_{self.sensitivity_analysis.sub_analyses_prefix}{sa_id}_complete.flag"  # type: ignore
-            )
+            subanalysis_flag = f"_status/e_consolidate_sa{sa_id}_complete.flag"
             subanalysis_flags.append(subanalysis_flag)
 
             # Consolidate outputs after all sims have been run
@@ -3095,7 +3093,7 @@ rule setup:
         # Generate master consolidation rule
         snakefile_content += f'''rule master_consolidation:
     input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
-    output: "_status/master_consolidation_complete.flag"
+    output: "_status/f_consolidate_master_complete.flag"
     log: "{log_dir_str}/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:

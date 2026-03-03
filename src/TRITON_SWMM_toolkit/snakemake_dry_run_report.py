@@ -116,22 +116,24 @@ def _parse_missing_status_flags(lines: list[str]) -> dict[str, list[int]]:
         "triton_complete": set(),
         "triton_processed": set(),
     }
+    # Matches new unified flag scheme: _status/{phase}_{...}_{event_iloc}_complete.flag
+    # Phase b = prepare, phase c = run, phase d = process
     pattern = re.compile(
-        r"_status/sims/(scenario|triton)_(\d+)_(prepared|complete|processed)\.flag:\s+False"
+        r"_status/(b_prepare|c_run_(?:triton|tritonswmm|swmm)|d_process_(?:triton|tritonswmm|swmm))_(\d+)_complete\.flag:\s+False"
     )
 
     for line in lines:
         m = pattern.search(line)
         if not m:
             continue
-        prefix, sim_id_str, suffix = m.groups()
+        phase, sim_id_str = m.groups()
         sim_id = int(sim_id_str)
 
-        if prefix == "scenario" and suffix == "prepared":
+        if phase == "b_prepare":
             missing["scenario_prepared"].add(sim_id)
-        elif prefix == "triton" and suffix == "complete":
+        elif phase.startswith("c_run_"):
             missing["triton_complete"].add(sim_id)
-        elif prefix == "triton" and suffix == "processed":
+        elif phase.startswith("d_process_"):
             missing["triton_processed"].add(sim_id)
 
     return {k: sorted(v) for k, v in missing.items()}
