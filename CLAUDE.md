@@ -131,7 +131,7 @@ Cluster-specific values (partition names, GPU hardware strings, NIC policy env v
 
 ### Utility candidate tracking
 
-Track project-agnostic utility candidates in `docs/planning/utility_package_candidates.md`. Do not extract immediately — track for batch evaluation.
+Track project-agnostic utility candidates in `~/dev/dcl-utils/docs/planning/utility_package_candidates.md` (GitHub: https://github.com/lassiterdc/dcl-utils). Do not extract immediately — track for batch evaluation.
 
 ### GIS data
 
