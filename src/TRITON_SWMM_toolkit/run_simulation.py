@@ -140,6 +140,38 @@ class TRITONSWMM_run:
                 )
         return success
 
+    def _classify_model_log_failure(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> str:
+        """Classify the failure mode of an incomplete simulation from its model log.
+
+        Reads the analysis-level model log and searches for known SLURM failure
+        markers. Intended to be called only when ``model_run_completed()`` returns
+        False for the same model_type.
+
+        Parameters
+        ----------
+        model_type : Literal["triton", "tritonswmm", "swmm"]
+            Which model's log to inspect.
+
+        Returns
+        -------
+        str
+            One of:
+            - ``"timeout"`` — log contains ``DUE TO TIME LIMIT`` (SLURM wall-time kill)
+            - ``"unclassified"`` — log exists but no known failure marker found
+            - ``"no_log"`` — model log file does not exist
+        """
+        log_file = self._analysis_level_model_logfile(model_type)
+
+        if not log_file.exists():
+            return "no_log"
+
+        log_content = log_file.read_text()
+
+        if "DUE TO TIME LIMIT" in log_content:
+            return "timeout"
+
+        return "unclassified"
+
     @property
     def performance_timeseries_dir(self):
         return self._triton_swmm_raw_output_directory / "performance"
@@ -377,10 +409,11 @@ class TRITONSWMM_run:
         # ----------------------------
         if run_mode in ("openmp", "hybrid"):
             env["OMP_NUM_THREADS"] = str(n_omp_threads)
-            # env["OMP_PROC_BIND"] = "spread"
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
         else:
+            # OMP_PROC_BIND intentionally omitted for serial/mpi/gpu modes (OMP_NUM_THREADS=1);
+            # Kokkos will warn about its absence but the warning is cosmetic at 1 thread.
             env["OMP_NUM_THREADS"] = "1"
 
         # ----------------------------

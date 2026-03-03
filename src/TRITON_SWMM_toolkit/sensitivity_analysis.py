@@ -722,6 +722,45 @@ class TRITONSWMM_sensitivity_analysis:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
+    def classify_incomplete_sim_failures(self) -> dict[str, str]:
+        """Scan model logs for all incomplete simulations across sub-analyses and classify each failure.
+
+        Aggregates ``_classify_model_log_failure()`` across all sub-analyses.
+        Works for both ``"1_job_many_srun_tasks"`` and ``"batch_job"`` execution
+        methods — the SLURM cancellation marker appears in the model log in both cases.
+
+        Returns
+        -------
+        dict[str, str]
+            Maps scenario identifier (e.g. ``"sa1_0"``) to failure class:
+
+            - ``"timeout"`` — log contains ``DUE TO TIME LIMIT``
+            - ``"unclassified"`` — log exists but no known failure marker found
+            - ``"no_log"`` — model log file does not exist
+        """
+        results: dict[str, str] = {}
+        for sa_id, sub_analysis in self.sub_analyses.items():
+            for event_iloc in sub_analysis.df_sims.index:
+                scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
+                enabled_models = scen.run.model_types_enabled
+                for model_type in enabled_models:
+                    if not scen.model_run_completed(model_type):
+                        key = f"sa{sa_id}_{event_iloc}"
+                        results[key] = scen.run._classify_model_log_failure(model_type)
+        return results
+
+    @property
+    def is_timeout_only_failure(self) -> bool:
+        """True iff all incomplete simulations across sub-analyses have timeout-classified failures.
+
+        Returns False if there are no incomplete sims (all done), or if any
+        incomplete sim has an unclassified or no_log failure.
+        """
+        failures = self.classify_incomplete_sim_failures()
+        if not failures:
+            return False
+        return all(v == "timeout" for v in failures.values())
+
     @property
     def df_status(self):
         """

@@ -1,5 +1,6 @@
 # %%
 
+import math
 import os
 import signal
 import threading
@@ -79,6 +80,7 @@ class TRITONSWMM_analysis:
         analysis_config_yaml: Path,
         system: "TRITONSWMM_system",
         skip_log_update: bool = False,
+        verbose: bool = True,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -96,6 +98,9 @@ class TRITONSWMM_analysis:
             The TRITON-SWMM system object containing system configuration
         skip_log_update : bool, optional
             If True, skip initial log update (default: False)
+        verbose : bool, optional
+            If True, print a resume status summary when prior ``_status/`` flags
+            are detected (default: True)
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
@@ -178,6 +183,85 @@ class TRITONSWMM_analysis:
 
             self._update_log()
         self._resource_manager = ResourceManager(self)
+        if verbose:
+            self._print_resume_status()
+
+    def _print_resume_status(self) -> None:
+        """Print a resume status summary if prior _status/ flags are detected.
+
+        Fires at the end of ``__init__()`` when ``verbose=True``. Skips silently
+        on first runs (no flags present). For ``1_job_many_srun_tasks`` analyses
+        with incomplete sims, also prints a node recommendation.
+        """
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists() or not any(status_dir.glob("*.flag")):
+            return  # first run — no flags yet
+
+        # Determine primary model type for counting c_run_* flags
+        cfg_sys = self._system.cfg_system
+        if cfg_sys.toggle_tritonswmm_model:
+            primary_model_type = "tritonswmm"
+        elif cfg_sys.toggle_triton_model:
+            primary_model_type = "triton"
+        else:
+            primary_model_type = "swmm"
+
+        # Count completed simulations via glob — fast, no scenario instantiation
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
+        else:
+            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_*_complete.flag"))
+
+        total_sims = self.nsims
+        n_complete = len(sim_flags)
+        n_incomplete = total_sims - n_complete
+
+        analysis_id = self.cfg_analysis.analysis_id
+        print(f"[Analysis] Resuming {analysis_id} — {n_complete}/{total_sims} sims complete.", flush=True)
+
+        if n_incomplete == 0:
+            return
+
+        # Node recommendation — only for 1_job_many_srun_tasks
+        if self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+            # Compute per-sim node requirement for each incomplete sub-analysis
+            failures = self.classify_incomplete_sim_failures()
+            if self.cfg_analysis.toggle_sensitivity_analysis:
+                incomplete_nodes: list[int] = []
+                incomplete_sa_ids = {int(k.split("_")[0][2:]) for k in failures}
+                for sa_id in incomplete_sa_ids:
+                    sa = self.sensitivity.sub_analyses[sa_id]
+                    n_gpus = sa.cfg_analysis.n_gpus or 0
+                    gpus_per_node = sa.cfg_analysis.hpc_gpus_per_node or 1
+                    if n_gpus > 0:
+                        nodes = math.ceil(n_gpus / gpus_per_node)
+                    else:
+                        nodes = sa.cfg_analysis.n_nodes or 1
+                    incomplete_nodes.append(nodes)
+                max_per_sim_nodes = max(incomplete_nodes) if incomplete_nodes else 1
+                recommended_nodes = max_per_sim_nodes
+            else:
+                n_nodes = self.cfg_analysis.n_nodes or 1
+                max_per_sim_nodes = n_nodes
+                recommended_nodes = n_incomplete * n_nodes
+
+            current_nodes = self.cfg_analysis.hpc_total_nodes
+            print(
+                f"[Analysis] Node recommendation for re-run:\n"
+                f"  Max per-sim nodes (across incomplete sims): {max_per_sim_nodes}\n"
+                f"  Recommended override_hpc_total_nodes={recommended_nodes}\n"
+                f"  (Current hpc_total_nodes={current_nodes})",
+                flush=True,
+            )
+
+            if failures:
+                if self.is_timeout_only_failure:
+                    print("[Analysis] All failures are SLURM time limits — increase --time and re-run.", flush=True)
+                else:
+                    print(
+                        "[Analysis] Some failures are not time limits — see debugging docs for root cause.",
+                        flush=True,
+                    )
 
     def validate(self) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
@@ -378,6 +462,48 @@ class TRITONSWMM_analysis:
             if not all_models_completed:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
+
+    def classify_incomplete_sim_failures(self) -> dict[str, str]:
+        """Scan model logs for all incomplete simulations and classify each failure.
+
+        Reads the analysis-level model log for each incomplete simulation and
+        searches for known SLURM failure markers. Works for both
+        ``"1_job_many_srun_tasks"`` and ``"batch_job"`` execution methods —
+        the SLURM cancellation marker appears in the model log in both cases.
+
+        Returns
+        -------
+        dict[str, str]
+            Maps scenario identifier (e.g. ``"sa1_0"``) to failure class:
+
+            - ``"timeout"`` — log contains ``DUE TO TIME LIMIT``
+            - ``"unclassified"`` — log exists but no known failure marker found
+            - ``"no_log"`` — model log file does not exist
+        """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.classify_incomplete_sim_failures()
+
+        results: dict[str, str] = {}
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            enabled_models = scen.run.model_types_enabled
+            for model_type in enabled_models:
+                if not scen.model_run_completed(model_type):
+                    key = f"{event_iloc}"
+                    results[key] = scen.run._classify_model_log_failure(model_type)
+        return results
+
+    @property
+    def is_timeout_only_failure(self) -> bool:
+        """True iff all incomplete simulations have timeout-classified failures.
+
+        Returns False if there are no incomplete sims (all done), or if any
+        incomplete sim has an unclassified or no_log failure.
+        """
+        failures = self.classify_incomplete_sim_failures()
+        if not failures:
+            return False
+        return all(v == "timeout" for v in failures.values())
 
     @property
     def all_scenarios_created(self):
