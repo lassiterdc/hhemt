@@ -22,10 +22,10 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+
 import TRITON_SWMM_toolkit.analysis as anlysis
+from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 # Configure logging to stderr (will be redirected to logfile by Snakefile)
 logging.basicConfig(
@@ -198,105 +198,6 @@ def gather_hpc_partition_info() -> str:
     return "\n".join(md_lines)
 
 
-def gather_resource_allocation_diagnostics(analysis) -> str:
-    """
-    Analyze Snakefile resource specifications and compare with configuration.
-
-    Helps diagnose CPU allocation mismatches by showing what resources were requested
-    in Snakemake rules versus what was expected from configuration.
-
-    Parameters
-    ----------
-    analysis : TRITONSWMM_analysis
-        The analysis object
-
-    Returns
-    -------
-    str
-        Formatted markdown section with resource allocation analysis
-    """
-    import re
-
-    md_lines = ["## Resource Allocation Diagnostics", ""]
-    md_lines.append("> This section helps diagnose CPU allocation mismatches between configuration and SLURM.")
-    md_lines.append("")
-
-    # Check if Snakefile exists
-    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
-    if not snakefile_path.exists():
-        md_lines.append("**Snakefile not found** - Cannot analyze resource allocation.")
-        return "\n".join(md_lines)
-
-    # Read Snakefile
-    try:
-        snakefile_content = snakefile_path.read_text()
-    except Exception as e:
-        md_lines.append(f"**Error reading Snakefile**: {str(e)}")
-        return "\n".join(md_lines)
-
-    # Extract simulation rules
-    rule_pattern = re.compile(
-        r"rule (simulation_\w+):.*?threads:\s*(\d+).*?resources:.*?"
-        r"tasks=(\d+),\s*cpus_per_task=(\d+).*?(?:gpu=\"(\d+)\")?",
-        re.DOTALL,
-    )
-
-    matches = rule_pattern.findall(snakefile_content)
-
-    if not matches:
-        md_lines.append("**No simulation rules found in Snakefile**")
-        return "\n".join(md_lines)
-
-    md_lines.append("### Simulation Rules Resource Specifications")
-    md_lines.append("")
-    md_lines.append("| Rule | Threads | Tasks | CPUs/Task | Total CPUs | GPU | Status |")
-    md_lines.append("|------|---------|-------|-----------|------------|-----|--------|")
-
-    mismatches = []
-    for match in matches:
-        rule_name, threads, tasks, cpus_per_task, gpus = match
-        threads = int(threads)
-        tasks = int(tasks)
-        cpus_per_task = int(cpus_per_task)
-        total_cpus = tasks * cpus_per_task
-        gpus = gpus if gpus else "0"
-
-        # Check for mismatch
-        status = "✅ OK" if threads == total_cpus else "⚠️ MISMATCH"
-        if threads != total_cpus:
-            mismatches.append(
-                (
-                    rule_name,
-                    threads,
-                    tasks,
-                    cpus_per_task,
-                    total_cpus,
-                )
-            )
-
-        md_lines.append(f"| {rule_name} | {threads} | {tasks} | {cpus_per_task} | {total_cpus} | {gpus} | {status} |")
-
-    md_lines.append("")
-
-    if mismatches:
-        md_lines.append("### ⚠️ Resource Allocation Mismatches Detected")
-        md_lines.append("")
-        md_lines.append(f"**Found {len(mismatches)} rules where `threads` ≠ `tasks × cpus_per_task`**")
-        md_lines.append("")
-        md_lines.append(
-            "This can cause issues with Snakemake's slurm-jobstep executor, which may allocate "
-            "`tasks × cpus_per_task` CPUs but only report `cpus_per_task` as available cores."
-        )
-        md_lines.append("")
-    else:
-        md_lines.append("### ✅ All Resource Specifications Consistent")
-        md_lines.append("")
-        md_lines.append("All simulation rules have `threads` matching `tasks × cpus_per_task`.")
-        md_lines.append("")
-
-    return "\n".join(md_lines)
-
-
 def write_workflow_summary_md(analysis) -> Path:
     """
     Write workflow status summary to markdown file.
@@ -341,7 +242,8 @@ def write_workflow_summary_md(analysis) -> Path:
         f"**📋 Analysis ID**: `{analysis.cfg_analysis.analysis_id}`",
         f"**📁 Analysis Directory**: `{analysis.analysis_paths.analysis_dir}`",
         "",
-        "> **Note**: This summary reflects the state at generation time above. Check timestamp to ensure it matches your current debugging session.",
+        "> **Note**: This summary reflects the state at generation time above. "
+        "Check timestamp to ensure it matches your current debugging session.",
         "",
         "---",
         "",
@@ -399,13 +301,6 @@ def write_workflow_summary_md(analysis) -> Path:
 
         md_lines.append("")
 
-    # Add resource allocation diagnostics
-    resource_diagnostics = gather_resource_allocation_diagnostics(analysis)
-    if resource_diagnostics:
-        md_lines.append("---")
-        md_lines.append("")
-        md_lines.append(resource_diagnostics)
-
     # Add HPC partition info if on cluster
     partition_info = gather_hpc_partition_info()
     if partition_info:
@@ -420,7 +315,7 @@ def write_workflow_summary_md(analysis) -> Path:
     return summary_path
 
 
-def export_scenario_status_to_csv(analysis, output_path: Optional[Path] = None) -> Path:
+def export_scenario_status_to_csv(analysis, output_path: Path | None = None) -> Path:
     """
     Export the scenario status DataFrame to a CSV file.
 
@@ -493,7 +388,7 @@ def main():
     # Log workflow context for traceability
     log_workflow_context(logger)
 
-    logger.info(f"Exporting scenario status for analysis")
+    logger.info("Exporting scenario status for analysis")
     logger.info(f"System config: {args.system_config}")
     logger.info(f"Analysis config: {args.analysis_config}")
     logger.info(
