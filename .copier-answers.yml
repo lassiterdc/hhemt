@@ -1,6 +1,6 @@
 # Changes here will be overwritten by Copier; DO NOT EDIT
 _commit: v1.2.0
-_src_path: /home/***REMOVED***/dev/copier-python-template
+_src_path: /home/***REMOVED***/dev/copier-workspace
 author_email: daniel.lassiter@outlook.com
 author_name: Daniel Lassiter
 conda_env_name: triton_swmm_toolkit
