@@ -208,6 +208,7 @@ __marimo__/
 .scratch/
 
 # Claude AI config (stored privately in claude-workspace, symlinked here)
+/CLAUDE.md
 /.claude/
 
 # Scientific data
