@@ -1,0 +1,39 @@
+# Globus Transfer Specification Template
+# ----------------------------------------
+# Copy this file and fill in your paths.
+# Store your copy as configs/transfers/<name>.yaml — it is git-ignored.
+# Run /fetch-hpc-results for a guided walkthrough.
+#
+# To find collection UUIDs: https://app.globus.org > Collections > search by name
+# UVA UUID is in constants.py: UVA_GLOBUS_COLLECTION_UUID
+# Frontier UUID: confirm at app.globus.org (search "OLCF DTN")
+
+label: "My Analysis Results Transfer"
+
+endpoints:
+  # Source collection (where results currently live)
+  source_uuid: "REPLACE_WITH_SOURCE_UUID"
+  # Destination collection (where you want results)
+  destination_uuid: "REPLACE_WITH_DESTINATION_UUID"
+
+# List of path pairs to transfer.
+# All paths are absolute on their respective Globus endpoints.
+# recursive: true includes all files in the directory (including hidden files).
+items:
+  - source_path: "/scratch/your_username/your_analysis_dir/output"
+    destination_path: "/path/on/local/machine/output"
+    recursive: true
+
+# Globus sync level controls which files are skipped:
+#   0 = transfer all files (no skip)
+#   1 = skip if destination file exists (any size)
+#   2 = skip if destination file exists and has same mtime (default)
+#   3 = skip if destination file exists and checksum matches
+sync_level: 2
+
+# Transfer task deadline in minutes (null = no deadline)
+deadline_minutes: null
+
+# Email notifications from Globus (uses your Globus account email)
+notify_on_succeeded: false
+notify_on_failed: true

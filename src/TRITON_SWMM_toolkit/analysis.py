@@ -384,7 +384,7 @@ class TRITONSWMM_analysis:
         which : Literal["system", "analysis", "both"], optional
             Which configuration to print (default: "both")
         """
-        if which == ["system", "both"]:
+        if which in ["system", "both"]:
             print("=== System Configuration ===", flush=True)
             self._system.cfg_system.display_tabulate_cfg()
         if which == "both":
@@ -392,6 +392,48 @@ class TRITONSWMM_analysis:
         if which in ["analysis", "both"]:
             print("=== analysis Configuration ===", flush=True)
             self.cfg_analysis.display_tabulate_cfg()
+
+    def globus_to_local(self, transfer_yaml: "Path") -> str:
+        """Transfer HPC results to local machine via Globus.
+
+        Args:
+            transfer_yaml: Path to a transfer spec YAML in configs/transfers/.
+                           See configs/transfers/template_transfer.yaml.
+
+        Returns:
+            Globus task ID. Pass to ``GlobusTransferManager().wait(task_id)``
+            to block until complete, or monitor at app.globus.org.
+
+        Example::
+
+            task_id = analysis.globus_to_local(
+                Path("configs/transfers/my_frontier_run.yaml")
+            )
+        """
+        from pathlib import Path as _Path
+        from TRITON_SWMM_toolkit.config.loaders import load_transfer_config
+        from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
+
+        spec = load_transfer_config(_Path(transfer_yaml))
+        manager = GlobusTransferManager()
+        return manager.transfer(spec)
+
+    def globus_to_hpc(self, transfer_yaml: "Path") -> str:
+        """Transfer local inputs to HPC via Globus.
+
+        Args:
+            transfer_yaml: Path to a transfer spec YAML in configs/transfers/.
+
+        Returns:
+            Globus task ID.
+        """
+        from pathlib import Path as _Path
+        from TRITON_SWMM_toolkit.config.loaders import load_transfer_config
+        from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
+
+        spec = load_transfer_config(_Path(transfer_yaml))
+        manager = GlobusTransferManager()
+        return manager.transfer(spec)
 
     def print_all_yaml_defined_input_files(self):
         print_json_file_tree(self.dict_of_exp_and_sys_config())
@@ -1328,85 +1370,50 @@ class TRITONSWMM_analysis:
         """
         High-level orchestration method for running TRITON-SWMM workflows.
 
-        This method provides a simplified, intent-based API that replaces direct
-        calls to submit_workflow(). It handles parameter translation, state detection,
-        and mode inference internally.
-
-        To determine which mode to use, check workflow status first:
-
-            >>> status = analysis.get_workflow_status()
-            >>> print(status.recommendation)
-            >>> result = analysis.run(mode=status.recommended_mode)
-
         Parameters
         ----------
-        mode : Literal["fresh", "resume"]
-            Execution mode:
-            - "fresh": Start from scratch, delete all artifacts
-            - "resume": Continue from last checkpoint (default)
-        phases : Optional[List[str]]
-            Which workflow phases to run. If None, runs all phases.
-            Valid phases: ["setup", "prepare", "simulate", "process", "consolidate"]
-        events : Optional[List[int]]
-            Subset of event_ilocs to process. If None, processes all events.
-            [Note: Event filtering not yet implemented, parameter reserved for future use]
-        execution_mode : Literal["auto", "local", "slurm"]
-            Where to execute: auto-detect (default), force local, or force SLURM
+        from_scratch : bool
+            If True, delete all analysis artifacts and start fresh.
+            If False (default), resume from last completed checkpoint.
         dry_run : bool
-            If True, validate workflow but don't execute
+            If True, validate workflow but don't execute.
+        events : list[int] | None
+            Subset of event_ilocs to process. If None, processes all events.
+        execution_mode : Literal["auto", "local", "slurm"]
+            Where to execute: auto-detect (default), force local, or force SLURM.
         verbose : bool
-            If True, print progress messages
+            If True, print progress messages.
         clear_raw_outputs : bool
-            Determines whether TRITON-SWMM raw outputs are cleared after time series
-            are successfully processed. Only set to False if debugging.
-        wait_for_job_completion: bool
-            The python process will wait for the job to finish before proceeding.
-            Mainly used for test cases and debugging.
+            If True, clears TRITON-SWMM raw outputs after time series are
+            successfully processed. Set to False only when debugging.
+        wait_for_job_completion : bool | None
+            If True, block until the SLURM job finishes. Mainly for tests.
         override_hpc_total_nodes : int | None
-            If set, overrides `hpc_total_nodes` in the generated SBATCH script without
-            mutating the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
+            Overrides `hpc_total_nodes` in the SBATCH script without mutating
+            the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
 
         Returns
         -------
         WorkflowResult
-            Structured result object with success status, execution details,
-            and phases completed. Supports truthiness check: if result: ...
+            Structured result object with success status and execution details.
 
         Examples
         --------
-        Simple resume (default behavior):
+        Resume (default):
 
         >>> result = analysis.run()
-        >>> if result.success:
-        ...     print(f"Completed {len(result.events_processed)} events")
 
         Fresh start:
 
-        >>> result = analysis.run(mode="fresh")
-
-        Run specific phases only:
-
-        >>> result = analysis.run(phases=["setup", "prepare"])
+        >>> result = analysis.run(from_scratch=True)
 
         Dry-run validation:
 
         >>> result = analysis.run(dry_run=True, verbose=True)
-        >>> print(result.phases_completed)
-
-        Notes
-        -----
-        This method consolidates parameter translation logic that was previously
-        duplicated across CLI and API usage. It provides a single source of truth
-        for orchestration.
-
-        For advanced users who need fine-grained control over 15+ parameters,
-        the lower-level submit_workflow() method is still available, though its
-        use is discouraged in favor of this higher-level API.
 
         See Also
         --------
         submit_workflow : Lower-level workflow submission (15+ parameters)
-        WorkflowResult : Structured result object returned by this method
         """
         # TODO - if from_scratch = True, user should be prompted for manual input to
         # type something like 'y' 'yes' or 'proceed' if the status of the
@@ -2166,7 +2173,7 @@ class TRITONSWMM_analysis:
                     row["run_mode"] = self.cfg_analysis.run_mode
                     row["n_mpi_procs"] = self.cfg_analysis.n_mpi_procs or 1
                     row["n_omp_threads"] = self.cfg_analysis.n_omp_threads or 1
-                    row["n_gpus"] = self.cfg_analysis.n_gpus or 0 if self.cfg_analysis.run_mode == "gpu" else 0
+                    row["n_gpus"] = (self.cfg_analysis.n_gpus or 0) if self.cfg_analysis.run_mode == "gpu" else 0
                     row["backend_used"] = scen.log.triton_backend_used.get()
 
                 if self.in_slurm:

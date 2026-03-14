@@ -1,0 +1,4 @@
+# Ignore user transfer configs — they contain personal paths and UUIDs.
+# Only the template is committed.
+*.yaml
+!template_transfer.yaml

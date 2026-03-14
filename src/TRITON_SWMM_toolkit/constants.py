@@ -1,14 +1,11 @@
-# from pathlib import Path
 from enum import Enum
 from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
 import os
 from pathlib import Path
 
-# TESTING
 APP_NAME = "TRITON_SWMM_toolkit"
 NORFOLK_EX = "norfolk_coastal_flooding"
 NORFOLK_ANALYSIS_CONFIG = "template_analysis_config.yaml"
-# NORFOLK_sensitivity_EXP_CONFIG = "template_sensitivity_analysis_config.yaml"
 NORFOLK_SYSTEM_CONFIG = "template_system_config.yaml"
 NORFOLK_CASE_CONFIG = "case.yaml"
 
@@ -87,3 +84,17 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     target_processed_output_type="zarr",  # nc
     hpc_login_node="login1.hpc.virginia.edu",
 )
+
+# Globus endpoint identifiers
+# UUIDs are stable public identifiers for Globus collections.
+# Find them at app.globus.org > Collections > search by name.
+# Per-user paths (usernames, experiment dirs) belong in configs/transfers/ YAML,
+# not here — see configs/transfers/template_transfer.yaml.
+UVA_GLOBUS_COLLECTION_NAME = "UVA Standard Security Storage"
+UVA_GLOBUS_COLLECTION_UUID = "e6b338df-213b-4d7b-b04a-900c5ce2b062"
+UVA_GLOBUS_SCRATCH_BASE = "/scratch/{username}"  # expand with os.getenv("USER")
+
+FRONTIER_GLOBUS_COLLECTION_NAME = "OLCF DTN (Globus 5)"
+FRONTIER_GLOBUS_COLLECTION_UUID = None  # TODO: confirm at app.globus.org > Collections > search "OLCF DTN"
+FRONTIER_GLOBUS_SCRATCH_BASE = "/lustre/orion/***REMOVED***/scratch/{username}"
+FRONTIER_GLOBUS_PROJECT_BASE = "/lustre/orion/***REMOVED***/proj-shared"

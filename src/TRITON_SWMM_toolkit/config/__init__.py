@@ -4,5 +4,6 @@ Submodules:
     base    — cfgBaseModel base class, display helpers, validate_from_toggle
     system  — system_config Pydantic model and validators
     analysis — analysis_config Pydantic model and validators
-    loaders — load_system_config, load_system_config_from_dict, load_analysis_config
+    loaders — load_system_config, load_system_config_from_dict, load_analysis_config, load_transfer_config
+    globus  — GlobusEndpoints, GlobusTransferItem, GlobusTransferSpec (plain BaseModel, not cfgBaseModel)
 """

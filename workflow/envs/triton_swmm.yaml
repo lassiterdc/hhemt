@@ -53,3 +53,4 @@ dependencies:
       - notebook
       - jupyter_server
       - ipywidgets
+      - globus-sdk>=3.0
