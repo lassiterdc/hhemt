@@ -21,3 +21,27 @@ A persistent record of implementation ideas, enhancement proposals, and future d
 **Description**: Loading an analysis on Frontier can take several minutes, during which the existing lock detection prompts the user to hit `y` and Enter before proceeding. When `squeue -u $USER` returns empty, there is no risk of unlocking a live job — the manual gate is unnecessary. Auto-unlocking in this case eliminates the wait.
 **Approach notes**: none
 **Related ideas**: Idea 1 (automatic retries — this is a prerequisite for unattended retry); `features/completed/2026-02-28_snakemake-lock-detection-and-auto-unlock.md` (existing lock detection infrastructure, direct extension point); `bugs/completed/2026-02-13_fix_unlock_snakemake_if_interrupted.md` (earlier context)
+
+---
+
+### Group: analysis.py Decomposition
+
+## Idea 3: Decompose TRITONSWMM_analysis — extract status aggregation, status table, and sensitivity strategy
+
+**Surfaced**: 2026-03-14
+**Priority**: Medium
+**Requires**: /plan-implementation (large refactor, regression risk)
+**Description**: Three related structural problems in `analysis.py` identified by SE specialist audit:
+- **RC-1**: `_update_log` (~100 lines, `analysis.py:~478–576`) contains nested boolean accumulators across six status dimensions duplicated between sensitivity and non-sensitivity branches. Extract to a `LogStatusSnapshot` dataclass returned by each branch — reduces method to ~15 lines.
+- **RC-2**: `df_status` (~130+ lines, `analysis.py:~2100–2231`) mixes data assembly, I/O (log file parsing), and validation across three model types and two execution paths. Extract to a `StatusTableBuilder` class to make it independently testable.
+- **RC-4**: ~10 properties repeat `if toggle_sensitivity_analysis: return self.sensitivity.X` pattern. A Strategy pattern or delegator helper would eliminate the repeated conditional dispatch and make each provider independently testable.
+**Approach notes**: These three should be tackled together in a single plan since they all reduce the same root problem (analysis class doing too much). Run /plan-implementation with SE specialist consultation before starting.
+**Related ideas**: none
+
+## Idea 4: run() method parameter drift cleanup
+
+**Surfaced**: 2026-03-14
+**Priority**: Low
+**Description**: `run()` still has two hardcoded `translate_mode("resume")` / `translate_phases(None)` TODO lines that override user input (`analysis.py:~1442–1443`). These need a focused cleanup pass: decide whether `mode` and `phases` will ever be re-exposed, and either implement them or remove `translate_mode`/`translate_phases` call sites entirely.
+**Approach notes**: Dead commented-out params already removed (2026-03-14). Remaining work: resolve the two hardcoded TODOs and the `from_scratch` confirmation prompt TODO (~line 1418).
+**Related ideas**: Idea 3 (analysis decomposition — may be easier after that refactor)

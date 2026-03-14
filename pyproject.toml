@@ -15,6 +15,21 @@ license = {text = "CC BY-NC 4.0"}
 
 dependencies = [
     "filelock",
+    "pydantic",
+    "pyyaml",
+    "zarr",
+    "scipy",
+    "dask",
+    "matplotlib",
+    "seaborn",
+    "sparse",
+    "pint",
+    "bagit",
+    "openpyxl",
+    "rioxarray",
+    "geopandas",
+    "pyproj",
+    "shapely",
     "hsclient",
     "pyswmm",
     "swmmio",
@@ -22,7 +37,7 @@ dependencies = [
     "notebook",
     "jupyter_server",
     "ipywidgets",
-    "globus-sdk>=3.0"
+    "globus-sdk>=3.0",
 ]
 requires-python = ">= 3.10"
 

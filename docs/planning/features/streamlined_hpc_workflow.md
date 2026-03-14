@@ -308,6 +308,22 @@ The SE specialist review should be an instructional surface, not just a code rev
 
 ---
 
+## Appendix: Setup Friction Log
+
+Points of friction encountered during empirical setup — captured for improving `/setup-hpc-integration` skill and future onboarding.
+
+| # | Step | Friction | Resolution |
+|---|------|----------|------------|
+| 1 | Register native app at developers.globus.org | Registration page shows multiple app types with non-obvious labels. The correct one is labeled "Register a thick client or script that will be installed and run by users on their devices" — the word "native" only appears in its description, not its title. | Select that option. It is the only native app type. |
+| 2 | Naming the native app | Registration form has two name fields: "Project name" (Globus organizational container) and "App name" (the specific app). No guidance provided. | Use `TRITON-SWMM Toolkit` for both — they can be identical. |
+| 7 | `data_access` scope for Globus 5 mapped collections | UVA collection requires a `data_access` dependent scope at auth time. Globus Connect Personal (Desktop) does NOT. Passing the Desktop UUID as a collection causes "unknown scope" error. | Pass only HPC-side mapped collection UUIDs to `GlobusTransferManager(collection_uuids=[...])`. The `analysis.globus_to_local()` and `globus_to_hpc()` wrappers handle this automatically. |
+| 6 | Copy/paste between browser and terminal | Linux terminal uses different shortcuts than browser. Easy to paste wrong thing at auth code prompt. | Browser→terminal: `Ctrl+C` to copy in browser, `Ctrl+Shift+V` to paste in terminal. Terminal→anywhere: `Ctrl+Shift+C` to copy from terminal. |
+| 5 | GCP setup screen: Login vs Advanced vs Setup Key | Three options shown with no guidance on which to pick. GUI dialog box is too small to resize. | Use CLI mode instead: `globusconnectpersonal -setup --no-gui`. Prints a URL to open in browser; paste auth code back into terminal. |
+| 4 | Installing Globus Connect Personal on Linux | No in-repo guidance. GUI deps (`tk`, `tcllib`) must be installed first via apt, then the tarball must be downloaded manually — it is not in apt. The Globus website install docs use a literal `x.y.z` placeholder for the version number. | `sudo apt-get install tk tcllib`, then `wget https://downloads.globus.org/globus-connect-personal/linux/stable/globusconnectpersonal-latest.tgz && tar xzf globusconnectpersonal-latest.tgz`. Binary is at `~/globusconnectpersonal-<version>/globusconnectpersonal`. |
+| 3 | Other app registration fields | Form shows redirects, required identity, pre-selected identity provider, user effective identity, prompt for named grant, privacy policy URL, terms and conditions URL — no guidance on which to fill. | Leave all at defaults. Redirects defaults to `https://auth.globus.org/v2/web/auth-code` — keep it. "User effective identity" is checked by default — leave it checked (includes identity info in token response, harmless). All others blank/unchecked. |
+
+---
+
 ## Appendix: Originating Idea
 
 ```

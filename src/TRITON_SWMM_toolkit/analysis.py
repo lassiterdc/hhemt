@@ -415,7 +415,7 @@ class TRITONSWMM_analysis:
         from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
 
         spec = load_transfer_config(_Path(transfer_yaml))
-        manager = GlobusTransferManager()
+        manager = GlobusTransferManager(collection_uuids=[spec.endpoints.source_uuid])
         return manager.transfer(spec)
 
     def globus_to_hpc(self, transfer_yaml: "Path") -> str:
@@ -432,7 +432,7 @@ class TRITONSWMM_analysis:
         from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
 
         spec = load_transfer_config(_Path(transfer_yaml))
-        manager = GlobusTransferManager()
+        manager = GlobusTransferManager(collection_uuids=[spec.endpoints.destination_uuid])
         return manager.transfer(spec)
 
     def print_all_yaml_defined_input_files(self):
@@ -1348,10 +1348,8 @@ class TRITONSWMM_analysis:
 
     def run(
         self,
-        # mode: Literal["fresh", "resume"] = "resume",
         from_scratch: bool = False,
         dry_run: bool = False,
-        # phases: Optional[List[str]] = None,
         events: list[int] | None = None,
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
@@ -1359,14 +1357,6 @@ class TRITONSWMM_analysis:
         clear_raw_outputs: bool = True,
         override_hpc_total_nodes: int | None = None,
     ) -> "WorkflowResult":
-        # TODO - Snakemake will consider outputs as stale
-        # if any rules change. Change mode or phases
-        # causes rules to change, which makes the entire
-        # workflow stale. As a workaround, I am getting
-        # rid of these arguments and using a 'from_scratch'
-        # argument instead that basically deletes all setup
-        # stuff (dem, mannings, compilation build folders)
-        # and deletes the analysis folder.
         """
         High-level orchestration method for running TRITON-SWMM workflows.
 

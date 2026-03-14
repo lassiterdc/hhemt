@@ -26,11 +26,9 @@ import globus_sdk
 
 from TRITON_SWMM_toolkit.config.globus import GlobusTransferSpec
 
-# Client ID for this application registered at developers.globus.org.
-# This is a public identifier — it does not grant any special privileges.
-# TODO: Replace with the real client ID after registering a native app at
-# https://developers.globus.org — see /setup-hpc-integration Step 3.
-_GLOBUS_CLIENT_ID = "REPLACE_WITH_REGISTERED_CLIENT_ID"
+# Client ID registered at developers.globus.org for the TRITON-SWMM Toolkit
+# native app. This is a public identifier — it does not grant any privileges.
+_GLOBUS_CLIENT_ID = "f52d5f54-fc84-4086-90ff-69ddc30c9334"
 
 # Globus transfer task polling interval (seconds)
 _POLL_INTERVAL_S = 10
@@ -45,12 +43,20 @@ _SIM_OUTPUT_EXCLUDE_PATTERNS = [
 class GlobusTransferManager:
     """Authenticates with Globus and submits transfer tasks.
 
+    Args:
+        collection_uuids: UUIDs of Globus 5 mapped collections that require
+            ``data_access`` consent (e.g. UVA Standard Security Storage,
+            Frontier OLCF DTN).  Globus Connect Personal endpoints do NOT
+            need to be listed here — only HPC-side mapped collections do.
+
     Attributes:
         transfer_client: Authenticated :class:`globus_sdk.TransferClient`.
     """
 
-    def __init__(self) -> None:
-        self.transfer_client = self._get_authenticated_client()
+    def __init__(self, collection_uuids: list[str] | None = None) -> None:
+        self.transfer_client = self._get_authenticated_client(
+            collection_uuids or []
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -72,7 +78,6 @@ class GlobusTransferManager:
             Globus task ID string.  Pass to :meth:`wait` to block until done.
         """
         tdata = globus_sdk.TransferData(
-            self.transfer_client,
             spec.endpoints.source_uuid,
             spec.endpoints.destination_uuid,
             label=spec.label,
@@ -145,49 +150,60 @@ class GlobusTransferManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_authenticated_client() -> globus_sdk.TransferClient:
+    def _get_authenticated_client(
+        collection_uuids: list[str],
+    ) -> globus_sdk.TransferClient:
         """Return an authenticated TransferClient using native app flow.
 
         Credentials are cached locally by globus-sdk's token storage.
         On first run this opens a browser for OAuth2 login.
+
+        Args:
+            collection_uuids: UUIDs of Globus 5 mapped collections that require
+                ``data_access`` consent.  Added as dependent scopes on the
+                transfer scope so the API accepts requests against those
+                collections.
         """
+        from globus_sdk.token_storage import JSONTokenStorage
+        from globus_sdk.scopes import GCSCollectionScopes, Scope
+
+        _TRANSFER_RS = "transfer.api.globus.org"
+
+        # Build transfer scope, adding data_access for each mapped collection
+        transfer_scope = Scope(str(globus_sdk.TransferClient.scopes.all))
+        for uuid in collection_uuids:
+            transfer_scope = transfer_scope.with_dependency(
+                GCSCollectionScopes(uuid).data_access
+            )
+
         client = globus_sdk.NativeAppAuthClient(_GLOBUS_CLIENT_ID)
-        token_storage = globus_sdk.tokenstorage.SimpleJSONFileAdapter(
-            Path.home() / ".globus_tokens.json"
-        )
+        token_storage = JSONTokenStorage(Path.home() / ".globus_tokens.json")
 
         # Try to load cached tokens first
-        try:
+        cached = token_storage.get_token_data(_TRANSFER_RS)
+        if cached is not None and cached.refresh_token is not None:
             authorizer = globus_sdk.RefreshTokenAuthorizer(
-                token_storage.get_token_data(
-                    globus_sdk.TransferClient.scopes.all
-                )["refresh_token"],
+                cached.refresh_token,
                 client,
-                access_token=token_storage.get_token_data(
-                    globus_sdk.TransferClient.scopes.all
-                )["access_token"],
-                expires_at=token_storage.get_token_data(
-                    globus_sdk.TransferClient.scopes.all
-                )["expires_at_seconds"],
-                on_refresh=lambda r: token_storage.store(r),
+                access_token=cached.access_token,
+                expires_at=cached.expires_at_seconds,
+                on_refresh=lambda r: token_storage.store_token_response(r),
             )
-        except Exception:
+        else:
             # No cached tokens — run interactive login
-            client.oauth2_start_flow(refresh_tokens=True)
+            client.oauth2_start_flow(transfer_scope, refresh_tokens=True)
             authorize_url = client.oauth2_get_authorize_url()
             print(f"[Globus] Please log in:\n{authorize_url}", flush=True)
             auth_code = input("Enter the auth code: ").strip()
             token_response = client.oauth2_exchange_code_for_tokens(auth_code)
-            token_storage.store(token_response)
-            transfer_tokens = token_response.by_resource_server[
-                "transfer.api.globus.org"
-            ]
+            token_storage.store_token_response(token_response)
+            transfer_tokens = token_response.by_resource_server[_TRANSFER_RS]
             authorizer = globus_sdk.RefreshTokenAuthorizer(
                 transfer_tokens["refresh_token"],
                 client,
                 access_token=transfer_tokens["access_token"],
                 expires_at=transfer_tokens["expires_at_seconds"],
-                on_refresh=lambda r: token_storage.store(r),
+                on_refresh=lambda r: token_storage.store_token_response(r),
             )
 
         return globus_sdk.TransferClient(authorizer=authorizer)

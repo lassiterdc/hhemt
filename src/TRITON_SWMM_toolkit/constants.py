@@ -91,10 +91,13 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
 # Per-user paths (usernames, experiment dirs) belong in configs/transfers/ YAML,
 # not here — see configs/transfers/template_transfer.yaml.
 UVA_GLOBUS_COLLECTION_NAME = "UVA Standard Security Storage"
-UVA_GLOBUS_COLLECTION_UUID = "e6b338df-213b-4d7b-b04a-900c5ce2b062"
+UVA_GLOBUS_COLLECTION_UUID = "af187d15-768f-4449-8670-d00e1eb1ce6a"
 UVA_GLOBUS_SCRATCH_BASE = "/scratch/{username}"  # expand with os.getenv("USER")
 
 FRONTIER_GLOBUS_COLLECTION_NAME = "OLCF DTN (Globus 5)"
 FRONTIER_GLOBUS_COLLECTION_UUID = None  # TODO: confirm at app.globus.org > Collections > search "OLCF DTN"
 FRONTIER_GLOBUS_SCRATCH_BASE = "/lustre/orion/***REMOVED***/scratch/{username}"
 FRONTIER_GLOBUS_PROJECT_BASE = "/lustre/orion/***REMOVED***/proj-shared"
+
+DESKTOP_GLOBUS_COLLECTION_NAME = "Desktop"
+DESKTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
