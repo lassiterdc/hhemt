@@ -6,6 +6,8 @@ risk: Low
 priority: 2.55
 priority-label: "Do now"
 created: 2026-03-14
+completed: true
+completed_date: 2026-03-14
 description: VS Code Remote-SSH for terminal access, globus-sdk Python transfer module with Analysis API methods, Pydantic-validated transfer configs, and two project skills for setup and runtime transfer triggering.
 ---
 
