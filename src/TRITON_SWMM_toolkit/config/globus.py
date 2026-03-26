@@ -86,6 +86,38 @@ def _normalize_wsl_path(path: str) -> str:
     return path
 
 
+def _to_globus_connect_personal_path(path: str) -> str:
+    """Translate a Windows or WSL path to Globus Connect Personal format.
+
+    GCP on Windows uses ``/DRIVE/rest/of/path`` (uppercase drive letter),
+    not the WSL ``/mnt/d/...`` format.
+
+    Accepts:
+        - ``D:\\Dropbox\\foo`` → ``/D/Dropbox/foo``
+        - ``D:/Dropbox/foo``  → ``/D/Dropbox/foo``
+        - ``/mnt/d/Dropbox/foo`` → ``/D/Dropbox/foo``
+        - ``/D/Dropbox/foo`` → ``/D/Dropbox/foo`` (already correct)
+
+    Raises:
+        ValueError: If the path uses an unsupported format (e.g. UNC paths).
+    """
+    if path.startswith("\\\\") or path.startswith("//"):
+        raise ValueError(f"UNC paths are not supported: {path}")
+    # Windows drive letter path
+    m = _WINDOWS_DRIVE_RE.match(path)
+    if m:
+        drive = m.group(1).upper()
+        rest = path[m.end() :].replace("\\", "/")
+        return f"/{drive}/{rest}"
+    # WSL /mnt/X/ path
+    wsl_re = re.match(r"^/mnt/([a-zA-Z])/(.*)", path)
+    if wsl_re:
+        drive = wsl_re.group(1).upper()
+        rest = wsl_re.group(2)
+        return f"/{drive}/{rest}"
+    return path
+
+
 def _get_endpoint_uuids(system: str) -> tuple[str, str, bool, str | None]:
     """Return ``(source_uuid, scratch_base, needs_data_access, session_domain)`` for *system*.
 
@@ -183,7 +215,7 @@ class PostRunTransferConfig(BaseModel):
         from TRITON_SWMM_toolkit.constants import DESKTOP_GLOBUS_COLLECTION_UUID
 
         source_uuid, _scratch_base, _needs_data_access, _session_domain = _get_endpoint_uuids(self.system)
-        dest_root = _normalize_wsl_path(self.destination_root)
+        dest_root = _to_globus_connect_personal_path(self.destination_root)
         dest_path = f"{dest_root.rstrip('/')}/{analysis_id}"
         source_path = str(analysis_dir)
 

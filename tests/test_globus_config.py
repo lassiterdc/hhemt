@@ -113,7 +113,7 @@ class TestToTransferSpec:
         assert spec.endpoints.destination_uuid == "***REMOVED***"
         assert len(spec.items) == 1
         assert spec.items[0].source_path == "/lustre/orion/***REMOVED***/scratch/user/my_analysis"
-        assert spec.items[0].destination_path == "/mnt/d/Dropbox/results/my_analysis"
+        assert spec.items[0].destination_path == "/D/Dropbox/results/my_analysis"
         assert spec.sync_level == 0
 
     def test_include_sims_generates_per_sim_items(self):
@@ -163,4 +163,4 @@ class TestToTransferSpec:
             analysis_dir=Path("/lustre/test"),
             analysis_id="run1",
         )
-        assert spec.items[0].destination_path == "/mnt/d/results/run1"
+        assert spec.items[0].destination_path == "/D/results/run1"
