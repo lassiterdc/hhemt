@@ -470,6 +470,7 @@ class TRITONSWMM_analysis:
             task_id = analysis.transfer_results(config)
         """
         from TRITON_SWMM_toolkit.config.globus import (
+            _get_endpoint_uuids,
             _normalize_wsl_path,
         )
         from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
@@ -485,7 +486,10 @@ class TRITONSWMM_analysis:
         if dest_dir.exists():
             self._handle_destination_conflict(dest_dir, config.conflict_policy)
 
-        manager = GlobusTransferManager(collection_uuids=[spec.endpoints.source_uuid])
+        # Only pass collection_uuids for endpoints that need data_access consent
+        _uuid, _base, needs_data_access = _get_endpoint_uuids(config.system)
+        consent_uuids = [spec.endpoints.source_uuid] if needs_data_access else []
+        manager = GlobusTransferManager(collection_uuids=consent_uuids)
         task_id = manager.transfer(spec, exclude_dirs=config.exclude_patterns)
 
         if config.wait_for_transfer:
