@@ -10,7 +10,6 @@ error reporting.
 """
 
 from pathlib import Path
-from typing import Optional
 
 
 class TRITONSWMMError(Exception):
@@ -18,6 +17,7 @@ class TRITONSWMMError(Exception):
 
     Catch this to handle all toolkit-specific exceptions.
     """
+
     pass
 
 
@@ -33,12 +33,8 @@ class ConfigurationError(TRITONSWMMError):
         field: The configuration field that failed validation
         config_path: Optional path to the configuration file
     """
-    def __init__(
-        self,
-        field: str,
-        message: str,
-        config_path: Optional[Path] = None
-    ):
+
+    def __init__(self, field: str, message: str, config_path: Path | None = None):
         self.field = field
         self.config_path = config_path
 
@@ -61,13 +57,8 @@ class CompilationError(TRITONSWMMError):
         logfile: Path to compilation log file with detailed error output
         return_code: Process return code from compilation command
     """
-    def __init__(
-        self,
-        model_type: str,
-        backend: str,
-        logfile: Path,
-        return_code: int
-    ):
+
+    def __init__(self, model_type: str, backend: str, logfile: Path, return_code: int):
         self.model_type = model_type
         self.backend = backend
         self.logfile = logfile
@@ -91,19 +82,13 @@ class SimulationError(TRITONSWMMError):
         model_type: Which model failed ('triton', 'tritonswmm', 'swmm')
         logfile: Optional path to simulation log file
     """
-    def __init__(
-        self,
-        event_iloc: int,
-        model_type: str,
-        logfile: Optional[Path] = None
-    ):
+
+    def __init__(self, event_iloc: int, model_type: str, logfile: Path | None = None):
         self.event_iloc = event_iloc
         self.model_type = model_type
         self.logfile = logfile
 
-        lines = [
-            f"Simulation failed for event_iloc={event_iloc} (model={model_type})"
-        ]
+        lines = [f"Simulation failed for event_iloc={event_iloc} (model={model_type})"]
         if logfile:
             lines.append(f"  Log: {logfile}")
 
@@ -121,12 +106,8 @@ class ProcessingError(TRITONSWMMError):
         filepath: Optional path to the file being processed
         reason: Optional detailed error reason
     """
-    def __init__(
-        self,
-        operation: str,
-        filepath: Optional[Path] = None,
-        reason: str = ""
-    ):
+
+    def __init__(self, operation: str, filepath: Path | None = None, reason: str = ""):
         self.operation = operation
         self.filepath = filepath
         self.reason = reason
@@ -151,20 +132,13 @@ class WorkflowError(TRITONSWMMError):
         return_code: Process return code from Snakemake
         stderr: Optional stderr output from Snakemake
     """
-    def __init__(
-        self,
-        phase: str,
-        return_code: int,
-        stderr: str = ""
-    ):
+
+    def __init__(self, phase: str, return_code: int, stderr: str = ""):
         self.phase = phase
         self.return_code = return_code
         self.stderr = stderr
 
-        lines = [
-            f"Workflow failed during {phase} phase",
-            f"  Return code: {return_code}"
-        ]
+        lines = [f"Workflow failed during {phase} phase", f"  Return code: {return_code}"]
         if stderr.strip():
             lines.append(f"  Error output:\n{self._indent(stderr)}")
 
@@ -187,12 +161,8 @@ class SLURMError(TRITONSWMMError):
         job_id: Optional SLURM job ID
         reason: Optional detailed error reason
     """
-    def __init__(
-        self,
-        operation: str,
-        job_id: Optional[str] = None,
-        reason: str = ""
-    ):
+
+    def __init__(self, operation: str, job_id: str | None = None, reason: str = ""):
         self.operation = operation
         self.job_id = job_id
         self.reason = reason
@@ -217,20 +187,13 @@ class ResourceAllocationError(TRITONSWMMError):
         requested: Requested resource amount
         available: Available resource amount (if known)
     """
-    def __init__(
-        self,
-        resource_type: str,
-        requested: str,
-        available: Optional[str] = None
-    ):
+
+    def __init__(self, resource_type: str, requested: str, available: str | None = None):
         self.resource_type = resource_type
         self.requested = requested
         self.available = available
 
-        lines = [
-            f"Resource allocation failed for {resource_type}",
-            f"  Requested: {requested}"
-        ]
+        lines = [f"Resource allocation failed for {resource_type}", f"  Requested: {requested}"]
         if available:
             lines.append(f"  Available: {available}")
 
@@ -248,18 +211,43 @@ class CLIValidationError(TRITONSWMMError):
         argument: The argument(s) that failed validation
         fix_hint: Optional hint for how to fix the issue
     """
-    def __init__(
-        self,
-        argument: str,
-        message: str,
-        fix_hint: str = ""
-    ):
+
+    def __init__(self, argument: str, message: str, fix_hint: str = ""):
         self.argument = argument
         self.fix_hint = fix_hint
 
         lines = [f"Invalid argument: {argument}", f"  {message}"]
         if fix_hint:
             lines.append(f"  Fix: {fix_hint}")
+
+        super().__init__("\n".join(lines))
+
+
+class GlobusTransferError(TRITONSWMMError):
+    """Globus transfer failure.
+
+    Raised when a Globus transfer task fails, is cancelled, or times out.
+
+    Attributes:
+        task_id: Globus task ID
+        status: Terminal task status ('FAILED', 'CANCELLED', etc.)
+        detail_url: URL to view task details on app.globus.org
+    """
+
+    def __init__(
+        self,
+        task_id: str,
+        status: str,
+        message: str = "",
+    ):
+        self.task_id = task_id
+        self.status = status
+        self.detail_url = f"https://app.globus.org/activity/{task_id}"
+
+        lines = [f"Globus transfer {task_id} ended with status={status}"]
+        if message:
+            lines.append(f"  {message}")
+        lines.append(f"  Details: {self.detail_url}")
 
         super().__init__("\n".join(lines))
 
@@ -273,10 +261,8 @@ class WorkflowPlanningError(TRITONSWMMError):
     Attributes:
         phase: The planning phase that failed
     """
+
     def __init__(self, phase: str, reason: str):
         self.phase = phase
 
-        super().__init__(
-            f"Workflow planning failed during {phase}\n"
-            f"  Reason: {reason}"
-        )
+        super().__init__(f"Workflow planning failed during {phase}\n" f"  Reason: {reason}")

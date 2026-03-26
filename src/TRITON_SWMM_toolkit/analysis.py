@@ -42,6 +42,7 @@ from TRITON_SWMM_toolkit.validation import ValidationResult, preflight_validate
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 
 if TYPE_CHECKING:
+    from .config.globus import PostRunTransferConfig
     from .orchestration import WorkflowResult, WorkflowStatus
     from .system import TRITONSWMM_system
 
@@ -411,6 +412,7 @@ class TRITONSWMM_analysis:
             )
         """
         from pathlib import Path as _Path
+
         from TRITON_SWMM_toolkit.config.loaders import load_transfer_config
         from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
 
@@ -428,12 +430,131 @@ class TRITONSWMM_analysis:
             Globus task ID.
         """
         from pathlib import Path as _Path
+
         from TRITON_SWMM_toolkit.config.loaders import load_transfer_config
         from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
 
         spec = load_transfer_config(_Path(transfer_yaml))
         manager = GlobusTransferManager(collection_uuids=[spec.endpoints.destination_uuid])
         return manager.transfer(spec)
+
+    def transfer_results(
+        self,
+        config: "PostRunTransferConfig",
+    ) -> str:
+        """Transfer analysis results to local machine via Globus.
+
+        This is a standalone method — it does not require ``run()`` to have
+        been called first.  Use it for the "submit on HPC, poll squeue,
+        transfer when done" workflow.
+
+        Args:
+            config: User-facing transfer configuration.  See
+                :class:`~TRITON_SWMM_toolkit.config.globus.PostRunTransferConfig`.
+
+        Returns:
+            Globus task ID.
+
+        Raises:
+            GlobusTransferError: If the transfer fails or is cancelled
+                (only when ``config.wait_for_transfer`` is True).
+
+        Example::
+
+            from TRITON_SWMM_toolkit.config.globus import PostRunTransferConfig
+
+            config = PostRunTransferConfig(
+                destination_root=r"D:\\Dropbox\\_GradSchool\\repos\\TRITON-SWMM_toolkit\\frontier",
+                system="frontier",
+            )
+            task_id = analysis.transfer_results(config)
+        """
+        from TRITON_SWMM_toolkit.config.globus import (
+            _normalize_wsl_path,
+        )
+        from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
+
+        spec = config.to_transfer_spec(
+            analysis_dir=self.analysis_paths.analysis_dir,
+            analysis_id=self.cfg_analysis.analysis_id,
+        )
+
+        # Handle destination conflict
+        dest_path = _normalize_wsl_path(config.destination_root).rstrip("/")
+        dest_dir = Path(f"{dest_path}/{self.cfg_analysis.analysis_id}")
+        if dest_dir.exists():
+            self._handle_destination_conflict(dest_dir, config.conflict_policy)
+
+        manager = GlobusTransferManager(collection_uuids=[spec.endpoints.source_uuid])
+        task_id = manager.transfer(spec, exclude_dirs=config.exclude_patterns)
+
+        if config.wait_for_transfer:
+            manager.wait(task_id, timeout_minutes=config.timeout_minutes)
+
+        return task_id
+
+    @staticmethod
+    def _handle_destination_conflict(
+        dest_dir: Path,
+        policy: str,
+    ) -> None:
+        """Handle an existing destination directory before transfer.
+
+        Args:
+            dest_dir: The local destination directory that already exists.
+            policy: One of ``"prompt"``, ``"archive"``, ``"clear"``.
+
+        Raises:
+            ConfigurationError: If *policy* is ``"prompt"`` and stdin is
+                not a TTY.
+        """
+        import shutil
+        import sys
+
+        from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+        if policy == "archive":
+            import datetime
+
+            suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive_dir = dest_dir.parent / "archived"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            archived = archive_dir / f"{dest_dir.name}_{suffix}"
+            print(
+                f"[Transfer] Archiving existing destination → {archived}",
+                flush=True,
+            )
+            shutil.move(str(dest_dir), str(archived))
+
+        elif policy == "clear":
+            print(
+                f"[Transfer] Clearing existing destination: {dest_dir}",
+                flush=True,
+            )
+            shutil.rmtree(dest_dir)
+
+        elif policy == "prompt":
+            if not sys.stdin.isatty():
+                raise ConfigurationError(
+                    field="conflict_policy",
+                    message=(
+                        "conflict_policy='prompt' requires an interactive terminal. "
+                        "Use 'archive' or 'clear' for non-interactive contexts."
+                    ),
+                )
+            print(
+                f"\n[Transfer] Destination already exists: {dest_dir}",
+                flush=True,
+            )
+            print("  (a) Archive to archived/ subfolder", flush=True)
+            print("  (c) Clear and overwrite", flush=True)
+            print("  (s) Skip — proceed with sync_level transfer", flush=True)
+            choice = input("  Choice [a/c/s]: ").strip().lower()
+            if choice == "a":
+                TRITONSWMM_analysis._handle_destination_conflict(dest_dir, "archive")
+            elif choice == "c":
+                TRITONSWMM_analysis._handle_destination_conflict(dest_dir, "clear")
+            # "s" or anything else: skip, let Globus handle via sync_level
 
     def print_all_yaml_defined_input_files(self):
         print_json_file_tree(self.dict_of_exp_and_sys_config())
@@ -1317,7 +1438,8 @@ class TRITONSWMM_analysis:
         Arguments passed to run:
             - mode: Mode | Literal["single_core"]
             - pickup_where_leftoff
-        Arguments passed to processing process_sim_timeseriess (and only needed if process_outputs_after_sim_completion=True):
+        Arguments passed to processing process_sim_timeseriess
+        (only needed if process_outputs_after_sim_completion=True):
             - which: Literal["TRITON", "SWMM", "both"]
             - clear_raw_outputs: bool
             - overwrite_outputs_if_already_created: bool
@@ -1356,6 +1478,7 @@ class TRITONSWMM_analysis:
         wait_for_job_completion: bool | None = None,
         clear_raw_outputs: bool = True,
         override_hpc_total_nodes: int | None = None,
+        transfer_config: "PostRunTransferConfig | None" = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1381,6 +1504,9 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes : int | None
             Overrides `hpc_total_nodes` in the SBATCH script without mutating
             the config. Only valid for `multi_sim_run_method="1_job_many_srun_tasks"`.
+        transfer_config : PostRunTransferConfig | None
+            If provided, automatically transfer results to the local machine
+            after successful completion (requires ``wait_for_job_completion=True``).
 
         Returns
         -------
@@ -1401,9 +1527,21 @@ class TRITONSWMM_analysis:
 
         >>> result = analysis.run(dry_run=True, verbose=True)
 
+        Auto-transfer after completion:
+
+        >>> from TRITON_SWMM_toolkit.config.globus import PostRunTransferConfig
+        >>> result = analysis.run(
+        ...     wait_for_job_completion=True,
+        ...     transfer_config=PostRunTransferConfig(
+        ...         destination_root=r"D:\\Dropbox\\results",
+        ...         system="frontier",
+        ...     ),
+        ... )
+
         See Also
         --------
         submit_workflow : Lower-level workflow submission (15+ parameters)
+        transfer_results : Standalone transfer method
         """
         # TODO - if from_scratch = True, user should be prompted for manual input to
         # type something like 'y' 'yes' or 'proceed' if the status of the
@@ -1414,6 +1552,13 @@ class TRITONSWMM_analysis:
 
         from .orchestration import WorkflowResult, translate_mode, translate_phases
 
+        # Pre-run transfer validation — fail fast before submitting the workflow
+        if transfer_config is not None:
+            transfer_config.to_transfer_spec(
+                analysis_dir=self.analysis_paths.analysis_dir,
+                analysis_id=self.cfg_analysis.analysis_id,
+            )
+
         start_time = time.time()
 
         # Event filtering not yet implemented - validate parameter
@@ -1422,7 +1567,6 @@ class TRITONSWMM_analysis:
                 "Event filtering via events parameter not yet implemented. "
                 "For now, all events in analysis will be processed."
             )
-        system_log = self._system.log
 
         if from_scratch:
             # remove analysis folder
@@ -1503,6 +1647,12 @@ class TRITONSWMM_analysis:
 
         # Get event list (all events in analysis)
         events_processed = list(self.df_sims.index)
+
+        # Post-completion auto-transfer
+        if transfer_config is not None and wait_for_job_completion and result_dict.get("success", False):
+            if verbose:
+                print("[Transfer] Workflow succeeded — initiating Globus transfer...", flush=True)
+            self.transfer_results(transfer_config)
 
         # Build WorkflowResult
         return WorkflowResult(

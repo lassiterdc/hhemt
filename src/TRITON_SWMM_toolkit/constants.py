@@ -1,7 +1,7 @@
-from enum import Enum
-from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
 import os
 from pathlib import Path
+
+from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
 
 APP_NAME = "TRITON_SWMM_toolkit"
 NORFOLK_EX = "norfolk_coastal_flooding"
@@ -72,9 +72,7 @@ UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
     gpu_compilation_backend="CUDA",
     gpu_hardware="a6000",  # a100
     hpc_gpus_per_node=8,
-    example_data_dir=Path("/scratch")
-    / os.getenv("USER", "unknown")
-    / "triton_swmm_toolkit_data",
+    example_data_dir=Path("/scratch") / os.getenv("USER", "unknown") / "triton_swmm_toolkit_data",
     toggle_triton_model=False,
     toggle_tritonswmm_model=True,
     toggle_swmm_model=False,
@@ -95,9 +93,18 @@ UVA_GLOBUS_COLLECTION_UUID = "af187d15-768f-4449-8670-d00e1eb1ce6a"
 UVA_GLOBUS_SCRATCH_BASE = "/scratch/{username}"  # expand with os.getenv("USER")
 
 FRONTIER_GLOBUS_COLLECTION_NAME = "OLCF DTN (Globus 5)"
-FRONTIER_GLOBUS_COLLECTION_UUID = None  # TODO: confirm at app.globus.org > Collections > search "OLCF DTN"
+FRONTIER_GLOBUS_COLLECTION_UUID = "36d521b3-c182-4071-b7d5-91db5d380d42"
 FRONTIER_GLOBUS_SCRATCH_BASE = "/lustre/orion/***REMOVED***/scratch/{username}"
 FRONTIER_GLOBUS_PROJECT_BASE = "/lustre/orion/***REMOVED***/proj-shared"
 
 DESKTOP_GLOBUS_COLLECTION_NAME = "Desktop"
 DESKTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
+
+# System-name-to-endpoint mapping for PostRunTransferConfig.
+# Keys are system names matching PlatformConfig.name values.
+# Values are (source_uuid, source_scratch_base) tuples — the source is
+# the HPC endpoint, the destination is always DESKTOP_GLOBUS_COLLECTION_UUID.
+GLOBUS_SYSTEM_ENDPOINTS: dict[str, tuple[str, str]] = {
+    "uva": (UVA_GLOBUS_COLLECTION_UUID, UVA_GLOBUS_SCRATCH_BASE),
+    "frontier": (FRONTIER_GLOBUS_COLLECTION_UUID, FRONTIER_GLOBUS_SCRATCH_BASE),
+}

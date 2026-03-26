@@ -16,11 +16,11 @@ Authentication:
     runs are non-interactive.  Run the ``/setup-hpc-integration`` skill for
     a guided setup walkthrough.
 """
+
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional
 
 import globus_sdk
 
@@ -54,9 +54,7 @@ class GlobusTransferManager:
     """
 
     def __init__(self, collection_uuids: list[str] | None = None) -> None:
-        self.transfer_client = self._get_authenticated_client(
-            collection_uuids or []
-        )
+        self.transfer_client = self._get_authenticated_client(collection_uuids or [])
 
     # ------------------------------------------------------------------
     # Public API
@@ -66,13 +64,16 @@ class GlobusTransferManager:
         self,
         spec: GlobusTransferSpec,
         filter_sim_outputs: bool = False,
+        exclude_dirs: list[str] | None = None,
     ) -> str:
         """Submit all items in *spec* as a single Globus transfer task.
 
         Args:
-            spec:               Transfer specification loaded from YAML.
+            spec:               Transfer specification.
             filter_sim_outputs: If True, exclude large intermediate sim files
                                 (see ``_SIM_OUTPUT_EXCLUDE_PATTERNS``).
+            exclude_dirs:       Directory path suffixes to exclude via Globus
+                                filter rules (e.g. ``["subanalyses/"]``).
 
         Returns:
             Globus task ID string.  Pass to :meth:`wait` to block until done.
@@ -98,6 +99,10 @@ class GlobusTransferManager:
             for pattern in _SIM_OUTPUT_EXCLUDE_PATTERNS:
                 tdata.add_filter_rule(pattern, method="exclude", type="file")
 
+        if exclude_dirs:
+            for pattern in exclude_dirs:
+                tdata.add_filter_rule(pattern, method="exclude", type="dir")
+
         response = self.transfer_client.submit_transfer(tdata)
         task_id: str = response["task_id"]
         print(f"[Globus] Transfer submitted — task_id={task_id}", flush=True)
@@ -107,7 +112,7 @@ class GlobusTransferManager:
         self,
         task_id: str,
         polling_interval: int = _POLL_INTERVAL_S,
-        timeout_minutes: Optional[int] = None,
+        timeout_minutes: int | None = None,
     ) -> None:
         """Block until Globus task *task_id* completes or raises on failure.
 
@@ -117,31 +122,25 @@ class GlobusTransferManager:
             timeout_minutes:  Raise :exc:`TimeoutError` if task exceeds this.
 
         Raises:
-            RuntimeError:  If the transfer task fails or is cancelled.
-            TimeoutError:  If *timeout_minutes* is set and elapsed.
+            GlobusTransferError: If the transfer task fails or is cancelled.
+            TimeoutError:        If *timeout_minutes* is set and elapsed.
         """
-        deadline = (
-            time.time() + timeout_minutes * 60 if timeout_minutes else None
-        )
+        deadline = time.time() + timeout_minutes * 60 if timeout_minutes else None
         while True:
             task = self.transfer_client.get_task(task_id)
             status = task["status"]
             print(f"[Globus] Task {task_id} status: {status}", flush=True)
 
             if status == "SUCCEEDED":
-                print(f"[Globus] Transfer complete.", flush=True)
+                print("[Globus] Transfer complete.", flush=True)
                 return
             if status in ("FAILED", "CANCELLED"):
-                raise RuntimeError(
-                    f"Globus transfer {task_id} ended with status={status}. "
-                    f"View details at https://app.globus.org/activity/{task_id}"
-                )
+                from TRITON_SWMM_toolkit.exceptions import GlobusTransferError
+
+                raise GlobusTransferError(task_id=task_id, status=status)
 
             if deadline and time.time() > deadline:
-                raise TimeoutError(
-                    f"Globus transfer {task_id} did not complete within "
-                    f"{timeout_minutes} minutes."
-                )
+                raise TimeoutError(f"Globus transfer {task_id} did not complete within " f"{timeout_minutes} minutes.")
 
             time.sleep(polling_interval)
 
@@ -164,17 +163,15 @@ class GlobusTransferManager:
                 transfer scope so the API accepts requests against those
                 collections.
         """
-        from globus_sdk.token_storage import JSONTokenStorage
         from globus_sdk.scopes import GCSCollectionScopes, Scope
+        from globus_sdk.token_storage import JSONTokenStorage
 
         _TRANSFER_RS = "transfer.api.globus.org"
 
         # Build transfer scope, adding data_access for each mapped collection
         transfer_scope = Scope(str(globus_sdk.TransferClient.scopes.all))
         for uuid in collection_uuids:
-            transfer_scope = transfer_scope.with_dependency(
-                GCSCollectionScopes(uuid).data_access
-            )
+            transfer_scope = transfer_scope.with_dependency(GCSCollectionScopes(uuid).data_access)
 
         client = globus_sdk.NativeAppAuthClient(_GLOBUS_CLIENT_ID)
         token_storage = JSONTokenStorage(Path.home() / ".globus_tokens.json")
@@ -209,13 +206,11 @@ class GlobusTransferManager:
         return globus_sdk.TransferClient(authorizer=authorizer)
 
     @staticmethod
-    def _deadline_str(minutes: Optional[int]) -> Optional[str]:
+    def _deadline_str(minutes: int | None) -> str | None:
         """Convert deadline minutes to ISO 8601 string for Globus API."""
         if minutes is None:
             return None
         import datetime
 
-        deadline = datetime.datetime.utcnow() + datetime.timedelta(
-            minutes=minutes
-        )
+        deadline = datetime.datetime.utcnow() + datetime.timedelta(minutes=minutes)
         return deadline.strftime("%Y-%m-%dT%H:%M:%S")
