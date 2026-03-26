@@ -114,12 +114,15 @@ def _get_endpoint_uuids(system: str) -> tuple[str, str, bool]:
 # User-facing transfer config
 # ---------------------------------------------------------------------------
 
-# Default directories excluded from post-run transfers.
+# Default directory names excluded from post-run transfers.
+# Globus filter rules match on directory *names* (no path separators allowed).
+# These match anywhere in the tree — e.g. "out_triton" excludes any directory
+# named out_triton at any depth.
 DEFAULT_EXCLUDE_PATTERNS = [
-    "subanalyses/",
-    "sims/out_triton/",
-    "sims/out_tritonswmm/",
-    "sims/out_swmm/",
+    "subanalyses",
+    "out_triton",
+    "out_tritonswmm",
+    "out_swmm",
 ]
 
 
