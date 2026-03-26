@@ -73,14 +73,16 @@ def test_frontier():
 def test_uva():
     """Transfer UVA results to local machine. Edit paths before running."""
     config = PostRunTransferConfig(
-        destination_root=r"D:\Dropbox\_GradSchool\repos\TRITON-SWMM_toolkit\uva",
+        destination_root="/D/Dropbox/_GradSchool/repos/TRITON-SWMM_toolkit/uva",
         system="uva",
     )
 
     spec = config.to_transfer_spec(
-        # TODO: replace with actual UVA analysis path
-        analysis_dir=Path("/scratch/***REMOVED***/TRITON-SWMM_toolkit/EDIT_ME"),
-        analysis_id="EDIT_ME",
+        analysis_dir=Path(
+            "/dtn/landings/users/d/dc/***REMOVED***/project/***REMOVED***/***REMOVED***/norfolk/"
+            "TRITON-SWMM_toolkit/test_data/norfolk_coastal_flooding/cases/uva_sensitivity_suite"
+        ),
+        analysis_id="uva_sensitivity_suite",
     )
 
     print(f"Label: {spec.label}")
