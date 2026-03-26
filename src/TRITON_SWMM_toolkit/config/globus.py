@@ -182,6 +182,7 @@ class PostRunTransferConfig(BaseModel):
 
     destination_root: str
     system: str
+    destination_endpoint_uuid: str | None = None
     exclude_patterns: list[str] = DEFAULT_EXCLUDE_PATTERNS
     include_sims: list[int] | None = None
     conflict_policy: Literal["prompt", "archive", "clear"] = "prompt"
@@ -212,9 +213,10 @@ class PostRunTransferConfig(BaseModel):
             A fully-populated :class:`GlobusTransferSpec` ready for
             :meth:`GlobusTransferManager.transfer`.
         """
-        from TRITON_SWMM_toolkit.constants import DESKTOP_GLOBUS_COLLECTION_UUID
+        from TRITON_SWMM_toolkit.constants import LAPTOP_GLOBUS_COLLECTION_UUID
 
         source_uuid, _scratch_base, _needs_data_access, _session_domain = _get_endpoint_uuids(self.system)
+        dest_uuid = self.destination_endpoint_uuid or LAPTOP_GLOBUS_COLLECTION_UUID
         dest_root = _to_globus_connect_personal_path(self.destination_root)
         dest_path = f"{dest_root.rstrip('/')}/{analysis_id}"
         source_path = str(analysis_dir)
@@ -254,7 +256,7 @@ class PostRunTransferConfig(BaseModel):
             label=label,
             endpoints=GlobusEndpoints(
                 source_uuid=source_uuid,
-                destination_uuid=DESKTOP_GLOBUS_COLLECTION_UUID,
+                destination_uuid=dest_uuid,
             ),
             items=items,
             sync_level=self.sync_level,

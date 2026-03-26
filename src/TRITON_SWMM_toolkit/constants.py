@@ -100,6 +100,9 @@ FRONTIER_GLOBUS_PROJECT_BASE = "/lustre/orion/***REMOVED***/proj-shared"
 DESKTOP_GLOBUS_COLLECTION_NAME = "Desktop"
 DESKTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
 
+LAPTOP_GLOBUS_COLLECTION_NAME = "personal_laptop"
+LAPTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
+
 # System-name-to-endpoint mapping for PostRunTransferConfig.
 # Keys are system names matching PlatformConfig.name values.
 # Values are (source_uuid, scratch_base, needs_data_access, session_domain) tuples.
