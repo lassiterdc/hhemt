@@ -486,10 +486,15 @@ class TRITONSWMM_analysis:
         if dest_dir.exists():
             self._handle_destination_conflict(dest_dir, config.conflict_policy)
 
-        # Only pass collection_uuids for endpoints that need data_access consent
-        _uuid, _base, needs_data_access = _get_endpoint_uuids(config.system)
+        # Only pass collection_uuids for endpoints that need data_access consent;
+        # pass session_required_domains for domain-restricted endpoints (e.g. OLCF).
+        _uuid, _base, needs_data_access, session_domain = _get_endpoint_uuids(config.system)
         consent_uuids = [spec.endpoints.source_uuid] if needs_data_access else []
-        manager = GlobusTransferManager(collection_uuids=consent_uuids)
+        session_domains = [session_domain] if session_domain else None
+        manager = GlobusTransferManager(
+            collection_uuids=consent_uuids,
+            session_required_domains=session_domains,
+        )
         task_id = manager.transfer(spec, exclude_dirs=config.exclude_patterns)
 
         if config.wait_for_transfer:

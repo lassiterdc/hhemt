@@ -15,6 +15,20 @@ Authentication:
     OAuth2 login.  Credentials are cached locally by globus-sdk so subsequent
     runs are non-interactive.  Run the ``/setup-hpc-integration`` skill for
     a guided setup walkthrough.
+
+    For endpoints with domain-restricted access policies (e.g. OLCF DTN,
+    which requires ``sso.ccs.ornl.gov`` identities), pass the required domain
+    to the constructor::
+
+        manager = GlobusTransferManager(
+            collection_uuids=["36d521b3-..."],
+            session_required_domains=["sso.ccs.ornl.gov"],
+        )
+
+    This causes the Globus Auth flow to force authentication through the
+    correct identity provider.  Without this, Globus Auth auto-selects the
+    active browser session identity (often the wrong one) and the Transfer
+    API returns a 403 ``PermissionDenied`` on ``submit_transfer``.
 """
 
 from __future__ import annotations
@@ -48,13 +62,28 @@ class GlobusTransferManager:
             ``data_access`` consent (e.g. UVA Standard Security Storage,
             Frontier OLCF DTN).  Globus Connect Personal endpoints do NOT
             need to be listed here — only HPC-side mapped collections do.
+        session_required_domains: Domain(s) that Globus Auth must use for
+            authentication, e.g. ``["sso.ccs.ornl.gov"]`` for OLCF endpoints.
+            When provided, the OAuth2 authorize URL is constructed with
+            ``session_required_single_domain`` and ``prompt=login``, forcing
+            the user through the correct identity provider.  If omitted, Globus
+            Auth uses whatever browser session is active, which may not satisfy
+            the endpoint's resource policy.
 
     Attributes:
         transfer_client: Authenticated :class:`globus_sdk.TransferClient`.
     """
 
-    def __init__(self, collection_uuids: list[str] | None = None) -> None:
-        self.transfer_client = self._get_authenticated_client(collection_uuids or [])
+    def __init__(
+        self,
+        collection_uuids: list[str] | None = None,
+        session_required_domains: list[str] | None = None,
+    ) -> None:
+        self._collection_uuids = collection_uuids or []
+        self.transfer_client = self._get_authenticated_client(
+            self._collection_uuids,
+            session_required_domains=session_required_domains,
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -103,7 +132,25 @@ class GlobusTransferManager:
             for pattern in exclude_dirs:
                 tdata.add_filter_rule(pattern, method="exclude", type="dir")
 
-        response = self.transfer_client.submit_transfer(tdata)
+        try:
+            response = self.transfer_client.submit_transfer(tdata)
+        except globus_sdk.TransferAPIError as err:
+            authz = err.info.authorization_parameters
+            if not authz:
+                raise
+            # Token was issued for a wrong/insufficient identity.  Re-authenticate
+            # with the domain(s) demanded by the endpoint policy, then retry once.
+            domains = authz.session_required_single_domain or []
+            print(
+                f"[Globus] Session policy requires domain(s): {domains}. " "Re-authenticating...",
+                flush=True,
+            )
+            self.transfer_client = self._get_authenticated_client(
+                self._collection_uuids,
+                session_required_domains=domains,
+                force_login=True,
+            )
+            response = self.transfer_client.submit_transfer(tdata)
         task_id: str = response["task_id"]
         print(f"[Globus] Transfer submitted — task_id={task_id}", flush=True)
         return task_id
@@ -151,6 +198,8 @@ class GlobusTransferManager:
     @staticmethod
     def _get_authenticated_client(
         collection_uuids: list[str],
+        session_required_domains: list[str] | None = None,
+        force_login: bool = False,
     ) -> globus_sdk.TransferClient:
         """Return an authenticated TransferClient using native app flow.
 
@@ -162,6 +211,14 @@ class GlobusTransferManager:
                 ``data_access`` consent.  Added as dependent scopes on the
                 transfer scope so the API accepts requests against those
                 collections.
+            session_required_domains: If provided, the Globus Auth authorize URL
+                will include ``session_required_single_domain`` for each domain,
+                forcing the user to authenticate with an identity from one of
+                those domains.  Required for domain-restricted endpoints such as
+                the OLCF DTN (``sso.ccs.ornl.gov``).
+            force_login: If True, delete any cached tokens and run a fresh
+                interactive login regardless of cached state.  Use this when a
+                previously cached token was issued for the wrong identity.
         """
         from globus_sdk.scopes import GCSCollectionScopes, Scope
         from globus_sdk.token_storage import JSONTokenStorage
@@ -174,9 +231,14 @@ class GlobusTransferManager:
             transfer_scope = transfer_scope.with_dependency(GCSCollectionScopes(uuid).data_access)
 
         client = globus_sdk.NativeAppAuthClient(_GLOBUS_CLIENT_ID)
-        token_storage = JSONTokenStorage(Path.home() / ".globus_tokens.json")
+        token_file = Path.home() / ".globus_tokens.json"
+        token_storage = JSONTokenStorage(token_file)
 
-        # Try to load cached tokens first
+        if force_login:
+            # Wipe the cached file so stale/wrong-identity tokens are not reused.
+            token_file.unlink(missing_ok=True)
+
+        # Try to load cached tokens first (skipped when force_login wiped the file)
         cached = token_storage.get_token_data(_TRANSFER_RS)
         if cached is not None and cached.refresh_token is not None:
             authorizer = globus_sdk.RefreshTokenAuthorizer(
@@ -187,9 +249,16 @@ class GlobusTransferManager:
                 on_refresh=lambda r: token_storage.store_token_response(r),
             )
         else:
-            # No cached tokens — run interactive login
+            # No cached tokens — run interactive login.
+            # Pass session_required_single_domain so Globus Auth forces the user
+            # through the correct identity provider (e.g. sso.ccs.ornl.gov for
+            # OLCF endpoints) rather than auto-selecting the active browser session.
             client.oauth2_start_flow(transfer_scope, refresh_tokens=True)
-            authorize_url = client.oauth2_get_authorize_url()
+            need_forced_login = bool(session_required_domains or force_login)
+            authorize_url = client.oauth2_get_authorize_url(
+                session_required_single_domain=session_required_domains or [],
+                **({"prompt": "login"} if need_forced_login else {}),
+            )
             print(f"[Globus] Please log in:\n{authorize_url}", flush=True)
             auth_code = input("Enter the auth code: ").strip()
             token_response = client.oauth2_exchange_code_for_tokens(auth_code)

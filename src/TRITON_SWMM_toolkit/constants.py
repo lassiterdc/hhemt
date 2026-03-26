@@ -102,11 +102,17 @@ DESKTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
 
 # System-name-to-endpoint mapping for PostRunTransferConfig.
 # Keys are system names matching PlatformConfig.name values.
-# Values are (source_uuid, source_scratch_base, needs_data_access) tuples.
+# Values are (source_uuid, scratch_base, needs_data_access, session_domain) tuples.
 # needs_data_access: whether the endpoint requires a data_access dependent
-# scope at auth time.  UVA (Globus 5 mapped collection) does; OLCF DTN does not.
-# Passing a UUID that doesn't register data_access causes UNKNOWN_SCOPE_ERROR.
-GLOBUS_SYSTEM_ENDPOINTS: dict[str, tuple[str, str, bool]] = {
-    "uva": (UVA_GLOBUS_COLLECTION_UUID, UVA_GLOBUS_SCRATCH_BASE, True),
-    "frontier": (FRONTIER_GLOBUS_COLLECTION_UUID, FRONTIER_GLOBUS_SCRATCH_BASE, False),
+#   scope at auth time.  UVA (Globus 5 mapped collection) does; OLCF DTN does not.
+# session_domain: identity domain required by the endpoint's access policy.
+#   OLCF requires sso.ccs.ornl.gov; UVA has no domain restriction (None).
+GLOBUS_SYSTEM_ENDPOINTS: dict[str, tuple[str, str, bool, str | None]] = {
+    "uva": (UVA_GLOBUS_COLLECTION_UUID, UVA_GLOBUS_SCRATCH_BASE, True, None),
+    "frontier": (
+        FRONTIER_GLOBUS_COLLECTION_UUID,
+        FRONTIER_GLOBUS_SCRATCH_BASE,
+        False,
+        "sso.ccs.ornl.gov",
+    ),
 }
