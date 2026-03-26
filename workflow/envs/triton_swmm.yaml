@@ -54,3 +54,5 @@ dependencies:
       - jupyter_server
       - ipywidgets
       - globus-sdk>=3.0
+      - marimo
+      - networkx<3.4  # pin for swmmio compatibility

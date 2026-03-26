@@ -86,8 +86,8 @@ def _normalize_wsl_path(path: str) -> str:
     return path
 
 
-def _get_endpoint_uuids(system: str) -> tuple[str, str, bool]:
-    """Return ``(source_uuid, scratch_base, needs_data_access)`` for *system*.
+def _get_endpoint_uuids(system: str) -> tuple[str, str, bool, str | None]:
+    """Return ``(source_uuid, scratch_base, needs_data_access, session_domain)`` for *system*.
 
     Raises:
         ConfigurationError: If *system* is unknown or its UUID is None.
@@ -101,13 +101,13 @@ def _get_endpoint_uuids(system: str) -> tuple[str, str, bool]:
             field="system",
             message=(f"Unknown Globus system '{system}'. " f"Valid systems: {sorted(GLOBUS_SYSTEM_ENDPOINTS)}"),
         )
-    source_uuid, scratch_base, needs_data_access = entry
+    source_uuid, scratch_base, needs_data_access, session_domain = entry
     if source_uuid is None:
         raise ConfigurationError(
             field="system",
             message=f"Globus collection UUID for '{system}' is not configured.",
         )
-    return source_uuid, scratch_base, needs_data_access
+    return source_uuid, scratch_base, needs_data_access, session_domain
 
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ class PostRunTransferConfig(BaseModel):
         """
         from TRITON_SWMM_toolkit.constants import DESKTOP_GLOBUS_COLLECTION_UUID
 
-        source_uuid, _scratch_base, _needs_data_access = _get_endpoint_uuids(self.system)
+        source_uuid, _scratch_base, _needs_data_access, _session_domain = _get_endpoint_uuids(self.system)
         dest_root = _normalize_wsl_path(self.destination_root)
         dest_path = f"{dest_root.rstrip('/')}/{analysis_id}"
         source_path = str(analysis_dir)
