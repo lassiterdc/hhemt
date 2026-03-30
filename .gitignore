@@ -210,6 +210,8 @@ __marimo__/
 # Claude AI config (stored privately in claude-workspace, symlinked here)
 /CLAUDE.md
 /.claude/
+/AGENTS.md
+/.clinerules
 
 # Scientific data
 *.nc
