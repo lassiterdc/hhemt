@@ -26,6 +26,7 @@ def norfolk_1job_analysis():
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "test_partition"
+    analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition = "test_partition"
     analysis.cfg_analysis.hpc_account = "test_account"
     analysis.cfg_analysis.hpc_max_simultaneous_sims = 10
     analysis.cfg_analysis.local_cpu_cores_for_workflow = 4

@@ -22,7 +22,6 @@ channels:
   - bioconda
 dependencies:
   - python=3.11
-  - snakemake
   - filelock
   - typer
   - pydantic
@@ -48,6 +47,10 @@ dependencies:
   - fiona
   - pyproj
   - shapely
+  # build tools
+  - cmake
+  - openmpi
+  - gxx_linux-64
   # other stuff
   - coverage
   - pytest
@@ -56,6 +59,7 @@ dependencies:
   - ipdb
   - ipykernel
   - pip
+  - setuptools<81
   - pip:
       - hsclient
       - pyswmm
@@ -64,5 +68,6 @@ dependencies:
       - notebook
       - jupyter_server
       - ipywidgets
-      - snakemake-executor-plugin-slurm
-      - snakemake-storage-plugin-fs
+      - snakemake==9.15.0
+      - snakemake-executor-plugin-slurm==2.0.3
+      - snakemake-storage-plugin-fs==1.1.3
