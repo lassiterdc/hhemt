@@ -14,14 +14,16 @@
     # module load {conda app, e.g., miniforge}
     # conda env create -f environment.yaml
     # conda (or source) activate triton_swmm_toolkit
-# to use development version if git cloned:
-  # python -m pip install -e .
+# IMPORTANT: after creating the environment, install the package in editable mode:
+  # pip install -e .
+  # (required — without this, imports of TRITON_SWMM_toolkit will fail)
 name: triton_swmm_toolkit
 channels:
   - conda-forge
   - bioconda
 dependencies:
   - python=3.11
+  - cmake
   - snakemake
   - filelock
   - typer
@@ -57,6 +59,7 @@ dependencies:
   - ipykernel
   - pip
   - pip:
+      - "setuptools<78"  # hsclient uses pkg_resources, removed from setuptools>=78
       - hsclient
       - pyswmm
       - swmmio
