@@ -213,6 +213,9 @@ __marimo__/
 /AGENTS.md
 /.clinerules
 
+# Codex CLI config
+.codex/
+
 # Scientific data
 *.nc
 *.nc4
