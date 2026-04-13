@@ -1213,6 +1213,7 @@ class TRITONSWMM_analysis:
         if verbose:
             print("run instance instantiated", flush=True)
 
+        self.analysis_paths.simlog_directory.mkdir(parents=True, exist_ok=True)
         # Use the subprocess launcher pattern, mirroring process_sim_timeseries
         launcher, finalize_sim = run._create_subprocess_sim_run_launcher(
             pickup_where_leftoff=pickup_where_leftoff,

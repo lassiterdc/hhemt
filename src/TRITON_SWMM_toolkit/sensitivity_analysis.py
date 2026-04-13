@@ -354,7 +354,7 @@ class TRITONSWMM_sensitivity_analysis:
         ds_combined = xr.concat(lst_ds, dim="sub_analysis_iloc", combine_attrs="drop")
 
         # Attach sensitivity parameters as non-dimension coordinates on sub_analysis_iloc.
-        sa_ilocs = [int(ds["sub_analysis_iloc"].values) for ds in lst_ds]
+        sa_ilocs = [ds["sub_analysis_iloc"].values.item() for ds in lst_ds]
         for col in self.df_setup.columns:
             values = [self.df_setup.loc[i, col] for i in sa_ilocs]
             ds_combined = ds_combined.assign_coords(

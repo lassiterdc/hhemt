@@ -27,6 +27,7 @@ def create_mock_analysis():
 
     class MockConfig:
         target_processed_output_type = "zarr"
+        process_output_target_chunksize_mb = 200
 
     class MockAnalysis:
         cfg_analysis = MockConfig()

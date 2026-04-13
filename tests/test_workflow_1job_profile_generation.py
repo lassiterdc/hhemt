@@ -74,7 +74,7 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
 
     # Should have keep-going and latency-wait
     assert config["keep-going"] is True, "Should continue on failures"
-    assert config["latency-wait"] == 30, "Should have latency-wait"
+    assert config["latency-wait"] == 60, "Should have latency-wait"
 
     # No GPU resources for CPU-only
     assert "resources" not in config, "Should not have GPU resources for CPU-only mode"
