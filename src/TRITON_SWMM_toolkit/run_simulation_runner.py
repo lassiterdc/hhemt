@@ -191,6 +191,7 @@ def main():
         import os
 
         start_time = time.time()
+        model_logfile.parent.mkdir(parents=True, exist_ok=True)
         with open(model_logfile, "w") as lf:
             proc = subprocess.Popen(
                 cmd,

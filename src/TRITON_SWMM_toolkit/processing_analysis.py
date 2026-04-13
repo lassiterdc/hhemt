@@ -127,12 +127,14 @@ class TRITONSWMM_analysis_post_processing:
         spatial_coords: List[str] | str | None,
         spatial_coord_size: int = 65536,  # 256x256 for x,y coords
         verbose: bool = True,
+        max_mem_usage_MiB: int | None = None,
     ):
         """
         Compute optimal chunk sizes for writing xarray datasets to disk.
 
         This is a wrapper around utils.compute_optimal_chunks() that provides
-        the memory budget from analysis configuration.
+        the memory budget from analysis configuration, with an optional override
+        for testing at specific memory budgets.
 
         Parameters
         ----------
@@ -144,6 +146,9 @@ class TRITONSWMM_analysis_post_processing:
             Target total cells per spatial chunk (default 65536 = 256^2)
         verbose : bool
             Print chunk information if True
+        max_mem_usage_MiB : int | None
+            Memory budget override in MiB. If None, reads from
+            cfg_analysis.process_output_target_chunksize_mb.
 
         Returns
         -------
@@ -152,9 +157,8 @@ class TRITONSWMM_analysis_post_processing:
         """
         from TRITON_SWMM_toolkit.utils import compute_optimal_chunks
 
-        max_mem_usage_MiB = (
-            self._analysis.cfg_analysis.process_output_target_chunksize_mb
-        )
+        if max_mem_usage_MiB is None:
+            max_mem_usage_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
 
         return compute_optimal_chunks(
             ds=ds_combined_outputs,
