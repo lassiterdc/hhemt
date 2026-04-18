@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -229,7 +230,9 @@ class TRITONSWMM_analysis:
             failures = self.classify_incomplete_sim_failures()
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 incomplete_nodes: list[int] = []
-                incomplete_sa_ids = {int(k.split("_")[0][2:]) for k in failures}
+                incomplete_sa_ids = {
+                    re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures
+                }
                 for sa_id in incomplete_sa_ids:
                     sa = self.sensitivity.sub_analyses[sa_id]
                     n_gpus = sa.cfg_analysis.n_gpus or 0

@@ -119,6 +119,18 @@ class TRITONSWMM_analysis_post_processing:
         ds_combined_outputs = xr.concat(
             lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
         )
+
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        event_ids = [
+            compute_event_id_slug(
+                self._analysis._retrieve_weather_indexer_using_integer_index(ei)
+            )
+            for ei in self._analysis.df_sims.index
+        ]
+        ds_combined_outputs = ds_combined_outputs.assign_coords(
+            event_id=("event_iloc", event_ids)
+        )
         return ds_combined_outputs  # type: ignore
 
     def _chunk_for_writing(

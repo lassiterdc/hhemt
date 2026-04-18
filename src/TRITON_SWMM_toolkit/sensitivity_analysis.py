@@ -353,10 +353,15 @@ class TRITONSWMM_sensitivity_analysis:
         """
         ds_combined = xr.concat(lst_ds, dim="sub_analysis_iloc", combine_attrs="drop")
 
+        # Attach sa_id string auxiliary coord (dual indexing: integer dim + string aux).
+        sa_ids = [str(ds["sa_id"].values.item()) for ds in lst_ds]
+        ds_combined = ds_combined.assign_coords(
+            {"sa_id": ("sub_analysis_iloc", np.array(sa_ids))}
+        )
+
         # Attach sensitivity parameters as non-dimension coordinates on sub_analysis_iloc.
-        sa_ilocs = [ds["sub_analysis_iloc"].values.item() for ds in lst_ds]
         for col in self.df_setup.columns:
-            values = [self.df_setup.loc[i, col] for i in sa_ilocs]
+            values = [self.df_setup.loc[sa_id, col] for sa_id in sa_ids]
             ds_combined = ds_combined.assign_coords(
                 {col: ("sub_analysis_iloc", np.array(values))}
             )
@@ -367,9 +372,9 @@ class TRITONSWMM_sensitivity_analysis:
         assert self.TRITON_subanalyses_outputs_consolidated
 
         lst_ds = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
             ds = self._select_triton_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
             ds = ds.expand_dims("sub_analysis_iloc")
             lst_ds.append(ds)
 
@@ -379,9 +384,9 @@ class TRITONSWMM_sensitivity_analysis:
         assert self.SWMM_subanalyses_outputs_consolidated
 
         lst_ds = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
             ds = self._select_swmm_node_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
             ds = ds.expand_dims("sub_analysis_iloc")
             lst_ds.append(ds)
 
@@ -391,9 +396,9 @@ class TRITONSWMM_sensitivity_analysis:
         assert self.SWMM_subanalyses_outputs_consolidated
 
         lst_ds = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
             ds = self._select_swmm_link_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
             ds = ds.expand_dims("sub_analysis_iloc")
             lst_ds.append(ds)
 
@@ -411,7 +416,7 @@ class TRITONSWMM_sensitivity_analysis:
             non-dimension coordinates.
         """
         lst_ds = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
             if self.master_analysis._system.cfg_system.toggle_tritonswmm_model:
                 ds = sub_analysis.process.tritonswmm_performance_summary
             elif self.master_analysis._system.cfg_system.toggle_triton_model:
@@ -420,7 +425,7 @@ class TRITONSWMM_sensitivity_analysis:
                 raise ValueError(
                     "Performance summaries requested, but no TRITON model is enabled."
                 )
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": sub_analysis_iloc})
+            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
             ds = ds.expand_dims("sub_analysis_iloc")
             lst_ds.append(ds)
 
@@ -614,6 +619,8 @@ class TRITONSWMM_sensitivity_analysis:
         return keys_targeted_for_sensitivity
 
     def _retrieve_df_setup(self) -> pd.DataFrame:
+        import re as _re
+
         snstivity_definition = self.master_analysis.cfg_analysis.sensitivity_analysis
         f_extension = snstivity_definition.name.lower().split(".")[-1]  # type: ignore
         if f_extension == "csv":
@@ -624,6 +631,24 @@ class TRITONSWMM_sensitivity_analysis:
             raise ValueError(
                 "File extension not recognized for file defining sensitivity analysis."
             )
+        if "sa_id" not in df_setup.columns:
+            raise ValueError(
+                "sensitivity_analysis file must contain a required 'sa_id' column. "
+                "Values may be integer or string but must be unique and match "
+                "^[A-Za-z0-9_.]+$ to be safe for Snakemake wildcards."
+            )
+        df_setup["sa_id"] = df_setup["sa_id"].astype(str)
+        if not df_setup["sa_id"].is_unique:
+            dupes = df_setup["sa_id"][df_setup["sa_id"].duplicated()].tolist()
+            raise ValueError(f"sa_id values must be unique. Duplicates: {dupes}")
+        pat = _re.compile(r"^[A-Za-z0-9_.]+$")
+        bad = [v for v in df_setup["sa_id"] if not pat.match(v)]
+        if bad:
+            raise ValueError(
+                f"sa_id values must match ^[A-Za-z0-9_.]+$ (Snakemake-wildcard safe). "
+                f"Offending values: {bad}"
+            )
+        df_setup = df_setup.set_index("sa_id")
         return df_setup
 
     def export_sensitivity_definition_csv(self) -> Path:
@@ -640,20 +665,24 @@ class TRITONSWMM_sensitivity_analysis:
             self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
         )
         df_export = self.df_setup.copy()
-        df_export.insert(0, "subanalysis_id", [f"sa_{idx}" for idx in df_export.index])
         df_export.to_csv(output_path, index=True)
         return output_path
 
     def _create_sub_analyses(self):
-        # create sub analyses
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():
+            sa_id = str(idx)
             cfg_snstvty_analysis = self.master_analysis.cfg_analysis.model_copy()
 
             for key, val in row.items():
+                if key == "gpu_hardware_override":
+                    if pd.isna(val) or val == "":
+                        continue
+                    setattr(cfg_snstvty_analysis, key, str(val))
+                    continue
                 setattr(cfg_snstvty_analysis, key, val)  # type: ignore
-            sa_id = f"{self.sub_analyses_prefix}{idx}"
-            cfg_snstvty_analysis.analysis_id = sa_id  # type: ignore
+            analysis_id = f"{self.sub_analyses_prefix}{sa_id}"
+            cfg_snstvty_analysis.analysis_id = analysis_id  # type: ignore
             sub_analysis_directory = self.subanalysis_dir / str(
                 cfg_snstvty_analysis.analysis_id
             )
@@ -661,7 +690,7 @@ class TRITONSWMM_sensitivity_analysis:
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
             cfg_snstvty_analysis.is_subanalysis = True
 
-            cfg_anlysys_yaml = sub_analysis_directory / f"{sa_id}.yaml"
+            cfg_anlysys_yaml = sub_analysis_directory / f"{analysis_id}.yaml"
 
             cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
 
@@ -672,16 +701,14 @@ class TRITONSWMM_sensitivity_analysis:
             cfg_anlysys_yaml.write_text(
                 yaml.safe_dump(
                     cfg_snstvty_analysis.model_dump(mode="json"),
-                    sort_keys=False,  # .dict() for pydantic v1
+                    sort_keys=False,
                 )
             )
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=self._system,
             )
-            # Mark sub-analysis instances with parent sensitivity context so
-            # status/allocation parsing can route to the master Snakefile.
-            dic_sensitivity_analyses[idx] = anlsys
+            dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
 
     def compile_TRITON_SWMM_for_sensitivity_analysis(
@@ -745,7 +772,8 @@ class TRITONSWMM_sensitivity_analysis:
                 enabled_models = scen.run.model_types_enabled
                 for model_type in enabled_models:
                     if not scen.model_run_completed(model_type):
-                        key = f"sa{sa_id}_{event_iloc}"
+                        event_id = scen.event_id
+                        key = f"sa-{sa_id}_evt-{event_id}"
                         results[key] = scen.run._classify_model_log_failure(model_type)
         return results
 
@@ -778,22 +806,19 @@ class TRITONSWMM_sensitivity_analysis:
         """
         status_frames = []
 
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for sa_id, sub_analysis in self.sub_analyses.items():
             assert (
                 sub_analysis.cfg_analysis.is_subanalysis
             ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
             sub_df_status = sub_analysis.df_status.copy()
 
-            # Add sensitivity parameter columns for this sub-analysis row
-            setup_row = self.df_setup.iloc[sub_analysis_iloc, :]
+            setup_row = self.df_setup.loc[sa_id, :]
             for key, val in setup_row.items():
                 sub_df_status[key] = val
 
-            # Preserve existing naming convention while adding a singular alias
-            sub_df_status["sub_analysis_iloc"] = sub_analysis_iloc
-            sub_df_status["subanalysis_id"] = f"sa_{sub_analysis_iloc}"
+            sub_df_status["sa_id"] = sa_id
             sub_df_status = sub_df_status[
-                ["subanalysis_id"] + [c for c in sub_df_status.columns if c != "subanalysis_id"]
+                ["sa_id"] + [c for c in sub_df_status.columns if c != "sa_id"]
             ]
 
             status_frames.append(sub_df_status)

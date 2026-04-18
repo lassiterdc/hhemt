@@ -342,7 +342,16 @@ class SnakemakeWorkflowBuilder:
         str
             Complete Snakefile content as a string
         """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
         n_sims = len(self.analysis.df_sims)
+        event_ids = [
+            compute_event_id_slug(
+                self.analysis._retrieve_weather_indexer_using_integer_index(i)
+            )
+            for i in range(n_sims)
+        ]
+        iloc_by_event_id = {event_ids[i]: i for i in range(n_sims)}
         hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim or 30
 
         mpi_ranks = self.cfg_analysis.n_mpi_procs or 1
@@ -455,7 +464,8 @@ import os
 import glob
 import subprocess
 
-SIM_IDS = {list(range(n_sims))}
+SIM_IDS = {event_ids!r}
+ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 
 rule all:
     input: "_status/e_consolidate_complete.flag"
@@ -489,15 +499,17 @@ rule setup:
             snakefile_content += f'''
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
-    output: "_status/b_prepare_{{event_iloc}}_complete.flag"
-    log: "{log_dir_str}/sims/prepare_{{event_iloc}}.log"
+    output: "_status/b_prepare_evt-{{event_id}}_complete.flag"
+    log: "{log_dir_str}/sims/prepare_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
 {prep_resources}
     shell:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.prepare_scenario_runner \\
-            --event-iloc {{wildcards.event_iloc}} \\
+            --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
@@ -508,7 +520,7 @@ rule prepare_scenario:
 
         # Add simulation rules (separate rules per model type)
         sim_input = (
-            "_status/b_prepare_{event_iloc}_complete.flag" if prepare_scenarios else "_status/a_setup_complete.flag"
+            "_status/b_prepare_evt-{event_id}_complete.flag" if prepare_scenarios else "_status/a_setup_complete.flag"
         )
 
         # Determine which model types are enabled
@@ -550,16 +562,18 @@ rule prepare_scenario:
             snakefile_content += f'''
 rule run_{model_type}:
     input: "{sim_input}"
-    output: "_status/c_run_{model_type}_{{event_iloc}}_complete.flag"
-    log: "{log_dir_str}/sims/{model_type}_{{event_iloc}}.log"
+    output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+    log: "{log_dir_str}/sims/{model_type}_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     threads: {model_threads}
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
 {model_resources}
     shell:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
-            --event-iloc {{wildcards.event_iloc}} \\
+            --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
@@ -583,16 +597,18 @@ rule run_{model_type}:
 
                 snakefile_content += f'''
 rule process_{model_type}:
-    input: "_status/c_run_{model_type}_{{event_iloc}}_complete.flag"
-    output: "_status/d_process_{model_type}_{{event_iloc}}_complete.flag"
-    log: "{log_dir_str}/sims/process_{model_type}_{{event_iloc}}.log"
+    input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+    output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
+    log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
 {process_resources}
     shell:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
-            --event-iloc {{wildcards.event_iloc}} \\
+            --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
             --which {which_arg} \\
@@ -609,10 +625,10 @@ rule process_{model_type}:
         consolidate_inputs = []
         for model_type in enabled_models:
             if process_timeseries:
-                flag_pattern = f"d_process_{model_type}_{{event_iloc}}_complete.flag"
+                flag_pattern = f"d_process_{model_type}_evt-{{event_id}}_complete.flag"
             else:
-                flag_pattern = f"c_run_{model_type}_{{event_iloc}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_iloc=SIM_IDS)')
+                flag_pattern = f"c_run_{model_type}_evt-{{event_id}}_complete.flag"
+            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
@@ -2809,6 +2825,8 @@ class SensitivityAnalysisWorkflowBuilder:
         str
             Master Snakefile content
         """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
@@ -2866,7 +2884,7 @@ onerror:
         consolidation_flags = []
         for sa_id in self.sensitivity_analysis.sub_analyses.keys():  # type: ignore
             consolidation_flags.append(
-                f"_status/e_consolidate_sa{sa_id}_complete.flag"  # type: ignore
+                f"_status/e_consolidate_sa-{sa_id}_complete.flag"  # type: ignore
             )
 
         snakefile_content += f'''rule all:
@@ -2942,6 +2960,10 @@ rule setup:
             # Always set threads = total CPUs to ensure correct SLURM --ntasks value
             snakemake_threads = cpus_per_sim
 
+            gpu_hw_override = getattr(
+                sub_analysis.cfg_analysis, "gpu_hardware_override", None
+            )
+            gpu_hw = gpu_hw_override or self.system.cfg_system.gpu_hardware
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
@@ -2951,7 +2973,7 @@ rule setup:
                 cpus_per_task=n_omp,
                 gpus_total=n_gpus,
                 gpus_per_node_config=gpus_per_node_config,
-                gpu_hardware=self.system.cfg_system.gpu_hardware,
+                gpu_hardware=gpu_hw,
                 gpu_alloc_mode=gpu_alloc_mode,
                 mpi=(run_mode in ["hybrid", "mpi"]),
             )
@@ -2968,10 +2990,19 @@ rule setup:
             # For each simulation in this sub-analysis
             sub_analysis_sim_flags = []
             for event_iloc in sub_analysis.df_sims.index:
+                event_id = compute_event_id_slug(
+                    sub_analysis._retrieve_weather_indexer_using_integer_index(
+                        event_iloc
+                    )
+                )
+                # Rule names must be valid Python identifiers (no `.`, `-`).
+                # Flag paths keep the hyphen-delimited format for wildcard parsing.
+                sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
+                event_id_rule = event_id.replace(".", "_").replace("-", "_")
                 # Phase 1: Scenario preparation (if enabled)
                 if prepare_scenarios:
-                    prep_rule_name = f"prepare_sa{sa_id}_evt{event_iloc}"
-                    prep_outflag = f"_status/b_prepare_sa{sa_id}_{event_iloc}_complete.flag"
+                    prep_rule_name = f"prepare_sa_{sa_id_rule}_evt_{event_id_rule}"
+                    prep_outflag = f"_status/b_prepare_sa-{sa_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {prep_rule_name}:
     input: "_status/a_setup_complete.flag"
@@ -2995,8 +3026,8 @@ rule setup:
 '''
 
                 # Phase 2: Simulation execution
-                sim_rule_name = f"simulation_sa{sa_id}_evt{event_iloc}"
-                sim_outflag = f"_status/c_run_{model_type}_sa{sa_id}_{event_iloc}_complete.flag"
+                sim_rule_name = f"simulation_sa_{sa_id_rule}_evt_{event_id_rule}"
+                sim_outflag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
                 sim_input = f'"{prep_outflag}"' if prepare_scenarios else '"_status/a_setup_complete.flag"'
 
                 snakefile_content += f'''rule {sim_rule_name}:
@@ -3023,8 +3054,8 @@ rule setup:
 
                 # Phase 3: Output processing (if enabled)
                 if process_timeseries:
-                    process_rule_name = f"process_sa{sa_id}_evt{event_iloc}"
-                    process_outflag = f"_status/d_process_{model_type}_sa{sa_id}_{event_iloc}_complete.flag"
+                    process_rule_name = f"process_sa_{sa_id_rule}_evt_{event_id_rule}"
+                    process_outflag = f"_status/d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {process_rule_name}:
     input: "{sim_outflag}"
@@ -3055,12 +3086,13 @@ rule setup:
 
                 sub_analysis_sim_flags.append(final_flag)
 
-            subanalysis_flag = f"_status/e_consolidate_sa{sa_id}_complete.flag"
+            subanalysis_flag = f"_status/e_consolidate_sa-{sa_id}_complete.flag"
             subanalysis_flags.append(subanalysis_flag)
 
-            # Consolidate outputs after all sims have been run
+            # Consolidate outputs after all sims have been run. Sanitize for
+            # use as a Snakemake rule identifier.
             prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
-            snakefile_content += f'''rule consolidate_{prefix}{sa_id}:
+            snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
     input: {", ".join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
     output: "{subanalysis_flag}"
     log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"

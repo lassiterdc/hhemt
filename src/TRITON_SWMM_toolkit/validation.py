@@ -374,6 +374,25 @@ def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
     # HPC sanity checks (section 5)
     _validate_hpc_configuration(cfg, result)
 
+    # gpu_hardware_override is only honored for sub-analyses
+    if (
+        getattr(cfg, "gpu_hardware_override", None) is not None
+        and not cfg.is_subanalysis
+    ):
+        result.add_warning(
+            field="analysis.gpu_hardware_override",
+            message=(
+                "gpu_hardware_override is set on a non-subanalysis config; "
+                "this field is only honored for sensitivity sub-analyses and "
+                "will be ignored."
+            ),
+            current_value=cfg.gpu_hardware_override,
+            fix_hint=(
+                "Remove gpu_hardware_override from the master analysis yaml, "
+                "or add it as a per-row column in the sensitivity CSV."
+            ),
+        )
+
     return result
 
 

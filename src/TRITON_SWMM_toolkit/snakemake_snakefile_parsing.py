@@ -22,7 +22,7 @@ _RULE_RE = re.compile(r"^\s*rule\s+([A-Za-z0-9_]+)\s*:\s*$")
 _TASKS_RE = re.compile(r"\btasks\s*=\s*(\d+)\b")
 _CPUS_RE = re.compile(r"\bcpus_per_task\s*=\s*(\d+)\b")
 _GPU_RE = re.compile(r"\bgpu\s*=\s*(\d+)\b")
-_SA_SIM_RE = re.compile(r"^simulation_sa(\d+)_evt(\d+)$")
+_SA_SIM_RE = re.compile(r"^simulation_sa_(.+?)_evt_(.+)$")
 
 
 def _read_snakefile_text(snakefile_path: Path) -> str:
@@ -113,12 +113,12 @@ def parse_regular_workflow_model_allocations(
 
 def parse_sensitivity_analysis_workflow_model_allocations(
     snakefile_path: Path,
-    expected_subanalysis_ids: list[int] | None = None,
-) -> dict[int, dict[str, int]]:
+    expected_subanalysis_ids: list[str] | None = None,
+) -> dict[str, dict[str, int]]:
     """Parse per-subanalysis allocations from flattened sensitivity Snakefile.
 
     The flattened sensitivity Snakefile contains rules named like:
-    ``simulation_sa{sa_id}_evt{event_id}``.
+    ``simulation_sa-{sa_id}_evt-{event_id}``.
 
     This parser extracts Snakemake resources from those simulation rules and
     returns one allocation per subanalysis. If multiple event rules for the
@@ -127,14 +127,14 @@ def parse_sensitivity_analysis_workflow_model_allocations(
     snakefile_text = _read_snakefile_text(snakefile_path)
     rule_blocks = _extract_rule_blocks(snakefile_text)
 
-    allocations_by_sa: dict[int, dict[str, int]] = {}
+    allocations_by_sa: dict[str, dict[str, int]] = {}
 
     for rule_name, rule_block in rule_blocks.items():
         match = _SA_SIM_RE.match(rule_name)
         if match is None:
             continue
 
-        sa_id = int(match.group(1))
+        sa_id = match.group(1)
         parsed_alloc = _parse_rule_resources(rule_name=rule_name, rule_block=rule_block)
 
         if sa_id in allocations_by_sa and allocations_by_sa[sa_id] != parsed_alloc:
@@ -148,7 +148,7 @@ def parse_sensitivity_analysis_workflow_model_allocations(
     if not allocations_by_sa:
         raise SnakefileParsingError(
             "No sensitivity simulation rules found. Expected rules matching "
-            "'simulation_sa{sa_id}_evt{event_id}'."
+            "'simulation_sa-{sa_id}_evt-{event_id}'."
         )
 
     if expected_subanalysis_ids is not None:
