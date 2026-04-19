@@ -309,12 +309,11 @@ def main() -> int:
         # Phase 3b: Consolidate outputs
         if args.consolidate_sensitivity_analysis_outputs:
             logger.info(
-                "Consolidating subanalysis-level outputs into master analysis outputs..."
+                "Consolidating subanalysis-level outputs into master sensitivity DataTree..."
             )
             try:
-                analysis.sensitivity.consolidate_subanalysis_outputs(
-                    which=args.which,
-                    overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
+                analysis.sensitivity.consolidate_sensitivity_datatree(
+                    overwrite_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )
