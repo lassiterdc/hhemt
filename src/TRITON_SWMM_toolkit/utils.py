@@ -543,7 +543,8 @@ def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     for coord in ds.coords:  # type: ignore
         dtype_kind = ds[coord].dtype.kind  # type: ignore
         if dtype_kind == "U":  # Unicode string coordinates
-            max_len = ds[coord].str.len().max().item()
+            max_len_arr = ds[coord].str.len().max()
+            max_len = int(max_len_arr.compute() if hasattr(max_len_arr.data, "compute") else max_len_arr.values)
             encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
 
     return encoding
@@ -905,7 +906,8 @@ def write_datatree_zarr(
     encoding: dict = {}
     for path, node in tree.subtree_with_keys:
         if node.has_data:
-            encoding[path] = return_dic_zarr_encodings(node.dataset, compression_level)
+            key = path if path.startswith("/") else f"/{path}"
+            encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
     with warnings.catch_warnings():
         warnings.filterwarnings(
             "ignore",

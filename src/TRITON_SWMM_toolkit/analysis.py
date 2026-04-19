@@ -153,6 +153,12 @@ class TRITONSWMM_analysis:
             analysis_dir / "analysis_datatree.zarr"
         )
 
+        # Sensitivity-level DataTree zarr (Phase 3) — aggregates sub-analyses.
+        if cfg_analysis.toggle_sensitivity_analysis:
+            analysis_paths_kwargs["sensitivity_datatree_zarr"] = (
+                analysis_dir / "sensitivity_datatree.zarr"
+            )
+
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[

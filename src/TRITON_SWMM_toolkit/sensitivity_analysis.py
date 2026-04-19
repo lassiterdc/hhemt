@@ -8,11 +8,31 @@ import xarray as xr
 import yaml  # type: ignore
 
 import TRITON_SWMM_toolkit.analysis as anlysis
+from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
 from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+
+
+def _to_native_attr(value):
+    """Cast pandas / numpy scalars to JSON-safe native Python types for zarr attrs."""
+    if pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (ValueError, AttributeError):
+            pass
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (np.floating,)):
+        return float(value)
+    if isinstance(value, (np.bool_,)):
+        return bool(value)
+    return value
 
 
 class TRITONSWMM_sensitivity_analysis:
@@ -279,158 +299,6 @@ class TRITONSWMM_sensitivity_analysis:
         )
         return
 
-    def _select_triton_summary(self, sub_analysis: "TRITONSWMM_analysis"):
-        cfg_sys = self.master_analysis._system.cfg_system
-        if cfg_sys.toggle_tritonswmm_model:
-            return sub_analysis.tritonswmm_TRITON_summary
-        if cfg_sys.toggle_triton_model:
-            return sub_analysis.triton_only_summary
-        raise ValueError(
-            "TRITON outputs requested, but neither TRITONSWMM nor TRITON-only models are enabled."
-        )
-
-    def _select_swmm_node_summary(self, sub_analysis: "TRITONSWMM_analysis"):
-        cfg_sys = self.master_analysis._system.cfg_system
-        if cfg_sys.toggle_tritonswmm_model:
-            return sub_analysis.tritonswmm_SWMM_node_summary
-        if cfg_sys.toggle_swmm_model:
-            return sub_analysis.swmm_only_node_summary
-        raise ValueError(
-            "SWMM node outputs requested, but neither TRITONSWMM nor SWMM-only models are enabled."
-        )
-
-    def _select_swmm_link_summary(self, sub_analysis: "TRITONSWMM_analysis"):
-        cfg_sys = self.master_analysis._system.cfg_system
-        if cfg_sys.toggle_tritonswmm_model:
-            return sub_analysis.tritonswmm_SWMM_link_summary
-        if cfg_sys.toggle_swmm_model:
-            return sub_analysis.swmm_only_link_summary
-        raise ValueError(
-            "SWMM link outputs requested, but neither TRITONSWMM nor SWMM-only models are enabled."
-        )
-
-    def _triton_output_mode(self) -> str:
-        cfg_sys = self.master_analysis._system.cfg_system
-        if cfg_sys.toggle_tritonswmm_model:
-            return "tritonswmm_triton"
-        if cfg_sys.toggle_triton_model:
-            return "triton_only"
-        raise ValueError(
-            "TRITON outputs requested, but no TRITON model is enabled in system config."
-        )
-
-    def _swmm_output_modes(self) -> tuple[str, str]:
-        cfg_sys = self.master_analysis._system.cfg_system
-        if cfg_sys.toggle_tritonswmm_model:
-            return "tritonswmm_swmm_node", "tritonswmm_swmm_link"
-        if cfg_sys.toggle_swmm_model:
-            return "swmm_only_node", "swmm_only_link"
-        raise ValueError(
-            "SWMM outputs requested, but no SWMM model is enabled in system config."
-        )
-
-    def _combine_subanalysis_outputs(self, lst_ds: list):
-        """
-        Concatenate per-sub-analysis datasets along a flat ``sub_analysis_iloc``
-        dimension, attaching sensitivity parameters as non-dimension coordinates.
-
-        Each dataset in ``lst_ds`` must already carry a scalar ``sub_analysis_iloc``
-        coordinate.  The sensitivity parameters from ``self.df_setup`` (e.g.
-        ``run_mode``, ``n_mpi_procs``, ``n_gpus``) are broadcast onto the
-        concatenated dimension as 1-D non-dimension coordinates so they travel with
-        the data without expanding the array into a sparse Cartesian product.
-
-        The resulting layout keeps all parameter metadata in one place:
-
-            ds.sub_analysis_iloc          → [0, 1, …, N-1]
-            ds.run_mode                   → ['gpu', 'serial', …]   (non-dim coord)
-            ds.n_mpi_procs                → [1, 1, …]              (non-dim coord)
-            ds['max_wlevel_m'].shape      → (N, event_iloc, y, x)  (dense, no NaNs)
-
-        Compared with the previous ``xr.combine_by_coords`` approach (which created a
-        Cartesian product of all unique parameter values), this reduces the nominal
-        array size from ~11 TB to ~85 MB for a 36-SA × 537 × 551 spatial domain.
-        """
-        ds_combined = xr.concat(lst_ds, dim="sub_analysis_iloc", combine_attrs="drop")
-
-        # Attach sa_id string auxiliary coord (dual indexing: integer dim + string aux).
-        sa_ids = [str(ds["sa_id"].values.item()) for ds in lst_ds]
-        ds_combined = ds_combined.assign_coords(
-            {"sa_id": ("sub_analysis_iloc", np.array(sa_ids))}
-        )
-
-        # Attach sensitivity parameters as non-dimension coordinates on sub_analysis_iloc.
-        for col in self.df_setup.columns:
-            values = [self.df_setup.loc[sa_id, col] for sa_id in sa_ids]
-            ds_combined = ds_combined.assign_coords(
-                {col: ("sub_analysis_iloc", np.array(values))}
-            )
-
-        return ds_combined
-
-    def _combine_TRITON_outputs_per_subanalysis(self):
-        assert self.TRITON_subanalyses_outputs_consolidated
-
-        lst_ds = []
-        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
-            ds = self._select_triton_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
-            ds = ds.expand_dims("sub_analysis_iloc")
-            lst_ds.append(ds)
-
-        return self._combine_subanalysis_outputs(lst_ds)
-
-    def _combine_SWMM_node_outputs_per_subanalysis(self):
-        assert self.SWMM_subanalyses_outputs_consolidated
-
-        lst_ds = []
-        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
-            ds = self._select_swmm_node_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
-            ds = ds.expand_dims("sub_analysis_iloc")
-            lst_ds.append(ds)
-
-        return self._combine_subanalysis_outputs(lst_ds)
-
-    def _combine_SWMM_link_outputs_outputs_per_subanalysis(self):
-        assert self.SWMM_subanalyses_outputs_consolidated
-
-        lst_ds = []
-        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
-            ds = self._select_swmm_link_summary(sub_analysis)
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
-            ds = ds.expand_dims("sub_analysis_iloc")
-            lst_ds.append(ds)
-
-        return self._combine_subanalysis_outputs(lst_ds)
-
-    def _combine_TRITONSWMM_performance_per_subanalysis(self):
-        """
-        Combine TRITONSWMM performance summaries from all sub-analyses.
-
-        Returns
-        -------
-        xr.Dataset
-            Combined performance dataset with ``sub_analysis_iloc`` as the sole
-            sensitivity dimension and sensitivity parameters attached as
-            non-dimension coordinates.
-        """
-        lst_ds = []
-        for iloc, (sa_id, sub_analysis) in enumerate(self.sub_analyses.items()):
-            if self.master_analysis._system.cfg_system.toggle_tritonswmm_model:
-                ds = sub_analysis.process.tritonswmm_performance_summary
-            elif self.master_analysis._system.cfg_system.toggle_triton_model:
-                ds = sub_analysis.process.triton_only_performance_summary
-            else:
-                raise ValueError(
-                    "Performance summaries requested, but no TRITON model is enabled."
-                )
-            ds = ds.assign_coords(coords={"sub_analysis_iloc": iloc, "sa_id": sa_id})
-            ds = ds.expand_dims("sub_analysis_iloc")
-            lst_ds.append(ds)
-
-        return self._combine_subanalysis_outputs(lst_ds)
-
     def _consolidate_outputs_in_each_subanalysis(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -514,61 +382,131 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        cfg_sys = self.master_analysis._system.cfg_system
-        if which in ["TRITON", "both"]:
-            ds_combined_outputs = self._combine_TRITON_outputs_per_subanalysis()
-            triton_mode = self._triton_output_mode()
-            self.master_analysis.process._consolidate_outputs(
-                ds_combined_outputs,
-                mode=triton_mode,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
-        if which in ["SWMM", "both"]:
-            ds_combined_outputs = self._combine_SWMM_node_outputs_per_subanalysis()
-            swmm_node_mode, swmm_link_mode = self._swmm_output_modes()
-            self.master_analysis.process._consolidate_outputs(
-                ds_combined_outputs,
-                mode=swmm_node_mode,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
-            ds_combined_outputs = (
-                self._combine_SWMM_link_outputs_outputs_per_subanalysis()
-            )
-            self.master_analysis.process._consolidate_outputs(
-                ds_combined_outputs,
-                mode=swmm_link_mode,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
+        """Consolidate sub-analyses into a hierarchical sensitivity DataTree zarr.
 
-        # Consolidate performance summaries using MODE_CONFIG pipeline
-        # (independent of 'which' parameter - performance is always combined)
-        if cfg_sys.toggle_tritonswmm_model:
-            perf_mode = "tritonswmm_performance"
-        elif cfg_sys.toggle_triton_model:
-            perf_mode = "triton_only_performance"
-        else:
-            # No TRITON-based model enabled, skip performance consolidation
-            return
-
-        # Combine performance from all sub-analyses
-        ds_performance = self._combine_TRITONSWMM_performance_per_subanalysis()
-
-        # Use unified consolidation pipeline (includes fail-fast validation)
-        self.master_analysis.process._consolidate_outputs(
-            ds_performance,
-            mode=perf_mode,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-            verbose=verbose,
+        Replaces the previous per-mode flat ``xr.concat`` path. Each sub-analysis
+        first builds its per-analysis DataTree (``analysis_datatree.zarr``); then
+        the master assembles all sub-analyses into a single
+        ``sensitivity_datatree.zarr`` at the master analysis dir.
+        """
+        self.consolidate_sensitivity_datatree(
+            overwrite_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
+            verbose=verbose,
+        )
+        return
+
+    def build_sensitivity_datatree(self) -> "xr.DataTree":
+        """Assemble the master sensitivity DataTree lazily from sub-analysis trees.
+
+        Each sub-analysis's consolidated DataTree (``analysis_datatree.zarr``) is
+        opened lazily and grafted under a ``sa_{sa_id}/`` subtree. Sensitivity
+        parameters for each sub-analysis are attached as ``.attrs`` on the
+        ``sa_{sa_id}`` node. A parameter-summary Dataset is written at the root
+        under ``parameters`` for tabular queries.
+        """
+        tree_dict: dict[str, xr.Dataset] = {}
+
+        tree_dict["/"] = xr.Dataset(
+            attrs={
+                "Conventions": "CF-1.13",
+                "title": "TRITON-SWMM sensitivity analysis results",
+                "analysis_id": str(self.master_analysis.cfg_analysis.analysis_id),
+                "output_creation_date": current_datetime_string(),
+            }
         )
 
-        return
+        tree_dict["parameters"] = xr.Dataset.from_dataframe(self.df_setup)
+
+        for sa_id, sub_analysis in self.sub_analyses.items():
+            node_name = f"{self.sub_analyses_prefix}{sa_id}"
+            try:
+                sub_tree = sub_analysis.process.open_datatree()
+            except ValueError:
+                continue
+
+            for path, node in sub_tree.subtree_with_keys:
+                if not node.has_data:
+                    continue
+                rel = path.lstrip("/")
+                if not rel:
+                    continue
+                tree_dict[f"{node_name}/{rel}"] = node.dataset
+
+            setup_row = self.df_setup.loc[sa_id]
+            attrs = {k: _to_native_attr(v) for k, v in setup_row.to_dict().items()}
+            attrs["sa_id"] = str(sa_id)
+            tree_dict[node_name] = xr.Dataset(attrs=attrs)
+
+        tree = xr.DataTree.from_dict(tree_dict)
+        apply_global_attributes(
+            tree, analysis_id=str(self.master_analysis.cfg_analysis.analysis_id)
+        )
+        return tree
+
+    def consolidate_sensitivity_datatree(
+        self,
+        overwrite_if_already_created: bool = False,
+        compression_level: int = 5,
+        verbose: bool = False,
+    ) -> Path:
+        """Build and write the master sensitivity DataTree zarr.
+
+        Ensures each sub-analysis has its own consolidated ``analysis_datatree.zarr``
+        first, then assembles them into a single hierarchical store at
+        ``sensitivity_datatree.zarr``.
+        """
+        fname_out = self.analysis_paths.sensitivity_datatree_zarr
+        if fname_out is None:
+            raise ValueError(
+                "sensitivity_datatree_zarr path is not configured on AnalysisPaths."
+            )
+
+        if (not overwrite_if_already_created) and fname_out.exists():
+            if verbose:
+                print(
+                    f"Sensitivity DataTree zarr already present at {fname_out}. "
+                    "Not overwriting."
+                )
+            return fname_out
+
+        # Ensure each sub-analysis has its analysis_datatree.zarr built.
+        for sa_id, sub_analysis in self.sub_analyses.items():
+            sub_path = sub_analysis.analysis_paths.analysis_datatree_zarr
+            if sub_path is None:
+                continue
+            if overwrite_if_already_created or not sub_path.exists():
+                sub_analysis.process.consolidate_to_datatree(
+                    overwrite_if_already_created=overwrite_if_already_created,
+                    compression_level=compression_level,
+                    verbose=verbose,
+                )
+
+        tree = self.build_sensitivity_datatree()
+        write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+
+        self.master_analysis._refresh_log()
+        if hasattr(
+            self.master_analysis.log, "sensitivity_datatree_consolidation_complete"
+        ):
+            self.master_analysis.log.sensitivity_datatree_consolidation_complete.set(
+                True
+            )
+        if verbose:
+            print(f"Wrote sensitivity DataTree zarr to {fname_out}")
+        return fname_out
+
+    def open_sensitivity_datatree(self) -> "xr.DataTree":
+        """Open the consolidated sensitivity DataTree zarr lazily."""
+        path = self.analysis_paths.sensitivity_datatree_zarr
+        if path is None or not path.exists():
+            raise ValueError(
+                "Sensitivity DataTree zarr not found. "
+                "Run consolidate_sensitivity_datatree() first."
+            )
+        return xr.open_datatree(
+            path, engine="zarr", chunks="auto", consolidated=False
+        )
 
     def create_subanalysis_summaries(
         self,

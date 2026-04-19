@@ -585,6 +585,10 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         default_factory=LogField
     )
     consolidation_version: LogField[int] = Field(default_factory=LogField)
+    # Sensitivity-level DataTree consolidation (Phase 3)
+    sensitivity_datatree_consolidation_complete: LogField[bool] = Field(
+        default_factory=LogField
+    )
     # Track which backends are available at analysis creation time
     cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
@@ -619,6 +623,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "swmm_only_node_analysis_summary_created",
         "swmm_only_link_analysis_summary_created",
         "datatree_consolidation_complete",
+        "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",
         "workflow_canceled",
@@ -661,6 +666,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "swmm_only_link_analysis_summary_created",
         "datatree_consolidation_complete",
         "consolidation_version",
+        "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",
         "tmux_session_name",
