@@ -68,8 +68,32 @@ class TRITONSWMM_analysis_post_processing:
         ),
     }
 
+    _MODE_TO_TREE_PATH = {
+        "tritonswmm_triton": "tritonswmm/triton",
+        "tritonswmm_swmm_node": "tritonswmm/swmm_node",
+        "tritonswmm_swmm_link": "tritonswmm/swmm_link",
+        "tritonswmm_performance": "tritonswmm/performance",
+        "triton_only": "triton_only/triton",
+        "triton_only_performance": "triton_only/performance",
+        "swmm_only_node": "swmm_only/swmm_node",
+        "swmm_only_link": "swmm_only/swmm_link",
+    }
+
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
+
+    def to_datatree(self) -> "xr.DataTree":
+        tree_dict: dict[str, xr.Dataset] = {}
+        for mode, tree_path in self._MODE_TO_TREE_PATH.items():
+            analysis_path_attr = self._MODE_CONFIG[mode][1]
+            f = getattr(self._analysis.analysis_paths, analysis_path_attr)
+            if f is None or not f.exists():
+                continue
+            tree_dict[tree_path] = self._open(f)
+        tree_dict["/"] = xr.Dataset(
+            attrs={"analysis_id": str(self._analysis.cfg_analysis.analysis_id)}
+        )
+        return xr.DataTree.from_dict(tree_dict)
 
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
