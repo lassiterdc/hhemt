@@ -184,6 +184,14 @@ class system_config(cfgBaseModel):
             "Target number of rows in the processed DEM, mannings, and TRITON results"
         ),
     )
+    crs_epsg: Optional[int] = Field(
+        None,
+        description=(
+            "EPSG code for the DEM coordinate reference system. If None, "
+            "derived from the DEM raster at runtime and logged for reproducibility. "
+            "When set, validated against the DEM's CRS at system processing time."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod

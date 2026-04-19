@@ -89,7 +89,13 @@ def test_snakemake_workflow_config_generation(norfolk_multi_sim_analysis):
     )
 
     n_sims = len(analysis.df_sims)
-    assert f"SIM_IDS = {list(range(n_sims))}" in snakefile_content
+    assert "SIM_IDS = [" in snakefile_content
+    assert "ILOC_BY_EVENT_ID = {" in snakefile_content
+    # SIM_IDS must have one entry per simulation (stable event_id strings).
+    import re as _re
+    m = _re.search(r"^SIM_IDS = (\[[^\]]*\])", snakefile_content, _re.MULTILINE)
+    assert m is not None
+    assert len(eval(m.group(1))) == n_sims
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@
 
 import math
 import os
+import re
 import signal
 import threading
 import time
@@ -147,6 +148,17 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["output_swmm_only_node_summary"] = analysis_dir / f"SWMM_only_nodes.{ext}"
             analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
+        # Hierarchical DataTree consolidation (Phase 2)
+        analysis_paths_kwargs["analysis_datatree_zarr"] = (
+            analysis_dir / "analysis_datatree.zarr"
+        )
+
+        # Sensitivity-level DataTree zarr (Phase 3) — aggregates sub-analyses.
+        if cfg_analysis.toggle_sensitivity_analysis:
+            analysis_paths_kwargs["sensitivity_datatree_zarr"] = (
+                analysis_dir / "sensitivity_datatree.zarr"
+            )
+
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
@@ -229,7 +241,9 @@ class TRITONSWMM_analysis:
             failures = self.classify_incomplete_sim_failures()
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 incomplete_nodes: list[int] = []
-                incomplete_sa_ids = {int(k.split("_")[0][2:]) for k in failures}
+                incomplete_sa_ids = {
+                    re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures
+                }
                 for sa_id in incomplete_sa_ids:
                     sa = self.sensitivity.sub_analyses[sa_id]
                     n_gpus = sa.cfg_analysis.n_gpus or 0

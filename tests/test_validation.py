@@ -111,6 +111,33 @@ def test_preflight_validate_integration(norfolk_multi_sim_analysis):
     assert result.is_valid or result.has_warnings
 
 
+def test_gpu_hardware_override_warns_on_non_subanalysis(norfolk_multi_sim_analysis):
+    """Preflight warns when gpu_hardware_override is set on a non-subanalysis config."""
+    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis.model_copy()
+    cfg_analysis.gpu_hardware_override = "a100"
+    cfg_analysis.is_subanalysis = False
+
+    result = validate_analysis_config(cfg_analysis)
+
+    assert result.has_warnings
+    assert any(
+        "gpu_hardware_override" in w.field for w in result.warnings
+    )
+
+
+def test_gpu_hardware_override_silent_on_subanalysis(norfolk_multi_sim_analysis):
+    """Preflight does not warn when gpu_hardware_override is set on a sub-analysis."""
+    cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis.model_copy()
+    cfg_analysis.gpu_hardware_override = "a100"
+    cfg_analysis.is_subanalysis = True
+
+    result = validate_analysis_config(cfg_analysis)
+
+    assert not any(
+        "gpu_hardware_override" in w.field for w in result.warnings
+    )
+
+
 def test_validation_run_mode_serial_with_mpi_fails():
     """Test run_mode=serial with n_mpi_procs > 1 fails validation."""
     # This test would require constructing an invalid config

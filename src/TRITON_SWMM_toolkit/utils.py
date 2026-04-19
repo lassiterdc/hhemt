@@ -543,7 +543,8 @@ def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     for coord in ds.coords:  # type: ignore
         dtype_kind = ds[coord].dtype.kind  # type: ignore
         if dtype_kind == "U":  # Unicode string coordinates
-            max_len = ds[coord].str.len().max().item()
+            max_len_arr = ds[coord].str.len().max()
+            max_len = int(max_len_arr.compute() if hasattr(max_len_arr.data, "compute") else max_len_arr.values)
             encoding[coord] = {"dtype": f"<U{max_len}"}  # type: ignore
 
     return encoding
@@ -892,6 +893,30 @@ def zarr_size_bytes(zarr_path: Path) -> int:
     return sum(f.stat().st_size for f in zarr_path.rglob("*") if f.is_file())
 
 
+def write_datatree_zarr(
+    tree: "xr.DataTree",
+    fname_out: Path,
+    compression_level: int = 5,
+) -> None:
+    """Write a DataTree to a hierarchical zarr store.
+
+    Builds per-group encoding dicts from `return_dic_zarr_encodings()`
+    applied to each populated leaf node's dataset.
+    """
+    encoding: dict = {}
+    for path, node in tree.subtree_with_keys:
+        if node.has_data:
+            key = path if path.startswith("/") else f"/{path}"
+            encoding[key] = return_dic_zarr_encodings(node.dataset, compression_level)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*does not have a Zarr V3 specification.*",
+            category=Warning,
+        )
+        tree.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+
+
 def write_zarr(ds, fname_out, compression_level, chunks: str | dict = "auto"):
     encoding = return_dic_zarr_encodings(ds, compression_level)
     if chunks == "auto":
@@ -917,7 +942,11 @@ def write_zarr_then_netcdf(
     write_zarr(ds, f"{fname_out}.zarr", compression_level, chunks)
     # open and write
     ds = xr.open_dataset(
-        f"{fname_out}.zarr", engine="zarr", chunks="auto", consolidated=False
+        f"{fname_out}.zarr",
+        engine="zarr",
+        chunks="auto",
+        consolidated=False,
+        decode_timedelta=False,
     )
     write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr

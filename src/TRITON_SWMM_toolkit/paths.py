@@ -45,6 +45,8 @@ class SysPaths(MainDataClass):
     compilation_script: Optional[Path] = None
     compilation_logfile: Optional[Path] = None
 
+    system_datatree_zarr: Optional[Path] = None
+
 
 @dataclass
 class AnalysisPaths(MainDataClass):
@@ -67,6 +69,12 @@ class AnalysisPaths(MainDataClass):
     # SWMM-only consolidated outputs
     output_swmm_only_node_summary: Optional[Path] = None
     output_swmm_only_link_summary: Optional[Path] = None
+
+    # Hierarchical DataTree zarr — aggregates all enabled modes into one store.
+    analysis_datatree_zarr: Optional[Path] = None
+
+    # Sensitivity-level hierarchical DataTree zarr (aggregates sub-analysis trees).
+    sensitivity_datatree_zarr: Optional[Path] = None
 
     bash_script_path: Optional[Path] = None
 

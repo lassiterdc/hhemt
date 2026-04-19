@@ -79,3 +79,23 @@ def test_analysis_config_explicit_toggle_dependency(tmp_path: Path):
 
     with pytest.raises(ValidationError, match="storm_tide_boundary_line_gis"):
         analysis_config.model_validate(cfg)
+
+
+def test_analysis_config_gpu_hardware_override_default_none(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    model = analysis_config.model_validate(cfg)
+    assert model.gpu_hardware_override is None
+
+
+def test_analysis_config_gpu_hardware_override_accepts_string(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["gpu_hardware_override"] = "a100"
+    model = analysis_config.model_validate(cfg)
+    assert model.gpu_hardware_override == "a100"
+
+
+def test_analysis_config_gpu_hardware_override_rejects_non_string(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["gpu_hardware_override"] = 42
+    with pytest.raises(ValidationError, match="gpu_hardware_override"):
+        analysis_config.model_validate(cfg)

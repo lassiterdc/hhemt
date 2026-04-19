@@ -188,11 +188,25 @@ def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
     Assert that analysis-level consolidated summaries were created for all enabled model types.
 
     Checks actual file existence on disk, not just log flags, for robust validation.
+
+    For sensitivity analyses, asserts the master-level ``sensitivity_datatree.zarr``
+    exists (flat per-mode concats are no longer written at the master level) and
+    each sub-analysis has its per-mode summaries.
     """
+    paths = analysis.analysis_paths
+
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        sens_zarr = paths.sensitivity_datatree_zarr
+        if sens_zarr is None or not sens_zarr.exists():
+            pytest.fail(
+                f"Sensitivity DataTree zarr not created at {sens_zarr}"
+            )
+        for sa_id, sub_analysis in analysis.sensitivity.sub_analyses.items():
+            assert_analysis_summaries_created(sub_analysis)
+        return
+
     enabled = get_enabled_model_types(analysis)
     missing = []
-
-    paths = analysis.analysis_paths
 
     if "tritonswmm" in enabled:
         for desc, path in [

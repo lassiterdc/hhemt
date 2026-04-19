@@ -26,6 +26,18 @@ from TRITON_SWMM_toolkit.swmm_full_model import SWMMFullModelBuilder
 
 lock = threading.Lock()
 
+
+def compute_event_id_slug(weather_event_indexers: dict) -> str:
+    """Build the stable event_id slug from weather event indexers.
+
+    Pure helper used by both `TRITONSWMM_scenario._retrieve_sim_id_str` and
+    the post-processing event-coordinate builder. Keeping it pure avoids
+    instantiating a scenario (which has directory-materialization side
+    effects) when the slug is all that's needed.
+    """
+    return "_".join(f"{idx}.{val}" for idx, val in weather_event_indexers.items())
+
+
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
 
@@ -45,6 +57,7 @@ class TRITONSWMM_scenario:
         # define sim specific filepaths
         analysis_simulations_folder = self._analysis.analysis_paths.simulation_directory
         self.sim_id_str = self._retrieve_sim_id_str()
+        self.event_id = self.sim_id_str
         sim_folder = analysis_simulations_folder / self.sim_id_str
         processed_output_folder = sim_folder / "processed"
         processed_output_folder.mkdir(parents=True, exist_ok=True)
@@ -358,10 +371,7 @@ class TRITONSWMM_scenario:
         return
 
     def _retrieve_sim_id_str(self):
-        sim_id_str = "_".join(
-            f"{idx}.{val}" for idx, val in self.weather_event_indexers.items()
-        )
-        return f"{self.event_iloc}-{sim_id_str}"
+        return compute_event_id_slug(self.weather_event_indexers)
 
     def seconds_to_hhmm(self, seconds):
         seconds = int(seconds)

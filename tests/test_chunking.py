@@ -126,7 +126,7 @@ def create_sensitivity_dataset(
         "time_of_max_wlevel_min",
         "velocity_y_mps_at_time_of_max_velocity",
     ]
-    nonspatial_vars = ["final_surface_flood_volume_cm"]
+    nonspatial_vars = ["final_surface_flood_volume_m3"]
 
     data_vars = {
         name: (
@@ -151,11 +151,19 @@ def create_sensitivity_dataset(
         data_vars=data_vars,
         coords={
             "sub_analysis_iloc": np.arange(n_sub_analysis),
+            "sa_id": (
+                "sub_analysis_iloc",
+                np.array([f"sa{i}" for i in range(n_sub_analysis)]),
+            ),
             "run_mode": run_mode_labels,
             "n_gpus": np.arange(n_gpus),
             "n_mpi_procs": np.arange(n_mpi),
             "n_omp_threads": np.arange(1, n_omp + 1),
             "event_iloc": np.arange(n_events),
+            "event_id": (
+                "event_iloc",
+                np.array([f"evt.{i}" for i in range(n_events)]),
+            ),
             "x": np.linspace(3.697e6, 3.698e6, nx, dtype=np.float64),
             "y": np.linspace(1.06e6, 1.061e6, ny, dtype=np.float64),
         },
