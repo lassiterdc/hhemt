@@ -148,6 +148,11 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["output_swmm_only_node_summary"] = analysis_dir / f"SWMM_only_nodes.{ext}"
             analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
+        # Hierarchical DataTree consolidation (Phase 2)
+        analysis_paths_kwargs["analysis_datatree_zarr"] = (
+            analysis_dir / "analysis_datatree.zarr"
+        )
+
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[

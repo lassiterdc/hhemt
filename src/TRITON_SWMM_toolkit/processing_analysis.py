@@ -2,8 +2,13 @@ import xarray as xr
 from TRITON_SWMM_toolkit.utils import (
     write_zarr,
     write_netcdf,
+    write_datatree_zarr,
     current_datetime_string,
     get_file_size_MiB,
+)
+from TRITON_SWMM_toolkit.cf_conventions import (
+    apply_cf_attributes,
+    apply_global_attributes,
 )
 from typing import Literal, List
 from typing import TYPE_CHECKING
@@ -95,6 +100,75 @@ class TRITONSWMM_analysis_post_processing:
         )
         return xr.DataTree.from_dict(tree_dict)
 
+    CONSOLIDATION_VERSION = 1
+
+    def consolidate_to_datatree(
+        self,
+        overwrite_if_already_created: bool = False,
+        compression_level: int = 5,
+        verbose: bool = False,
+    ) -> Path:
+        """Assemble enabled consolidation modes into a hierarchical DataTree zarr."""
+        fname_out = self._analysis.analysis_paths.analysis_datatree_zarr
+        if fname_out is None:
+            raise ValueError(
+                "analysis_datatree_zarr path is not configured on AnalysisPaths."
+            )
+
+        if (not overwrite_if_already_created) and fname_out.exists():
+            if verbose:
+                print(f"DataTree zarr already present at {fname_out}. Not overwriting.")
+            return fname_out
+
+        start_time = time.time()
+        tree_dict: dict[str, xr.Dataset] = {}
+        for mode, tree_path in self._MODE_TO_TREE_PATH.items():
+            analysis_path_attr = self._MODE_CONFIG[mode][1]
+            f = getattr(self._analysis.analysis_paths, analysis_path_attr)
+            if f is None or not f.exists():
+                continue
+            ds = self._open(f)
+            apply_cf_attributes(ds, mode)
+            tree_dict[tree_path] = ds
+
+        tree_dict["/"] = xr.Dataset(
+            attrs={
+                "analysis_id": str(self._analysis.cfg_analysis.analysis_id),
+                "output_creation_date": current_datetime_string(),
+                "consolidation_version": self.CONSOLIDATION_VERSION,
+            }
+        )
+        tree = xr.DataTree.from_dict(tree_dict)
+        apply_global_attributes(
+            tree, analysis_id=str(self._analysis.cfg_analysis.analysis_id)
+        )
+
+        write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+
+        self._analysis._refresh_log()
+        if hasattr(self._analysis.log, "datatree_consolidation_complete"):
+            self._analysis.log.datatree_consolidation_complete.set(True)
+        if hasattr(self._analysis.log, "consolidation_version"):
+            self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
+        elapsed_s = time.time() - start_time
+        self._analysis.log.add_sim_processing_entry(
+            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
+        )
+        if verbose:
+            print(f"Wrote DataTree zarr to {fname_out} in {elapsed_s:.1f}s")
+        return fname_out
+
+    def open_datatree(self) -> "xr.DataTree":
+        """Open the consolidated hierarchical DataTree zarr lazily."""
+        path = self._analysis.analysis_paths.analysis_datatree_zarr
+        if path is None or not path.exists():
+            raise ValueError(
+                "DataTree zarr not found. Run consolidate_to_datatree() first."
+            )
+        return xr.open_datatree(
+            path, engine="zarr", chunks="auto", consolidated=False
+        )
+
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
         Load pre-created summary files for each scenario and concatenate them.
@@ -134,6 +208,7 @@ class TRITONSWMM_analysis_post_processing:
             open_kwargs = {
                 "chunks": "auto",
                 "engine": self._open_engine(),
+                "decode_timedelta": False,
             }
             if open_kwargs["engine"] == "zarr":
                 open_kwargs["consolidated"] = False
@@ -243,6 +318,7 @@ class TRITONSWMM_analysis_post_processing:
             open_kwargs = {
                 "chunks": "auto",
                 "engine": self._open_engine(),
+                "decode_timedelta": False,
             }
             if open_kwargs["engine"] == "zarr":
                 open_kwargs["consolidated"] = False
@@ -356,7 +432,7 @@ class TRITONSWMM_analysis_post_processing:
         chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)  # type: ignore
 
         self._write_output(
-            ds_combined_outputs, fname_out, compression_level, chunks, verbose  # type: ignore
+            ds_combined_outputs, fname_out, compression_level, chunks, verbose, mode  # type: ignore
         )
 
         # Validate output was actually created before setting success flag
@@ -389,8 +465,12 @@ class TRITONSWMM_analysis_post_processing:
         compression_level: int,
         chunks: str | dict,
         verbose: bool,
+        mode: str,
     ):
         processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
+
+        if isinstance(ds, xr.Dataset):
+            apply_cf_attributes(ds, mode)
 
         ds.attrs["output_creation_date"] = current_datetime_string()
 

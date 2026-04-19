@@ -487,6 +487,12 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # SWMM compilation
     compilation_swmm_successful: LogField[bool] = Field(default_factory=LogField)
 
+    # System-level DataTree consolidation
+    system_datatree_consolidation_complete: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    dem_crs_epsg: LogField[int] = Field(default_factory=LogField)
+
     # ----------------------------
     # Consolidated validators
     # ----------------------------
@@ -498,6 +504,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_cpu_successful",
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
+        "system_datatree_consolidation_complete",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -506,6 +513,11 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "mannings_shape",
         mode="before",
     )(_create_logfield_validator(tuple))
+
+    _validate_int_fields = field_validator(
+        "dem_crs_epsg",
+        mode="before",
+    )(_create_logfield_validator(int))
 
     # ----------------------------
     # Consolidated serializer
@@ -520,6 +532,8 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_cpu_successful",
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
+        "system_datatree_consolidation_complete",
+        "dem_crs_epsg",
     )(_logfield_serializer)
 
     def write(self):
@@ -566,6 +580,11 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     swmm_only_link_analysis_summary_created: LogField[bool] = Field(
         default_factory=LogField
     )
+    # Hierarchical DataTree consolidation (Phase 2)
+    datatree_consolidation_complete: LogField[bool] = Field(
+        default_factory=LogField
+    )
+    consolidation_version: LogField[int] = Field(default_factory=LogField)
     # Track which backends are available at analysis creation time
     cpu_backend_available: LogField[bool] = Field(default_factory=LogField)
     gpu_backend_available: LogField[bool] = Field(default_factory=LogField)
@@ -599,6 +618,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "triton_only_performance_analysis_summary_created",
         "swmm_only_node_analysis_summary_created",
         "swmm_only_link_analysis_summary_created",
+        "datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",
         "workflow_canceled",
@@ -616,6 +636,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
 
     _validate_workflow_int_fields = field_validator(
         "snakemake_pid",
+        "consolidation_version",
         mode="before",
     )(_create_logfield_validator(int))
 
@@ -638,6 +659,8 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "triton_only_performance_analysis_summary_created",
         "swmm_only_node_analysis_summary_created",
         "swmm_only_link_analysis_summary_created",
+        "datatree_consolidation_complete",
+        "consolidation_version",
         "cpu_backend_available",
         "gpu_backend_available",
         "tmux_session_name",

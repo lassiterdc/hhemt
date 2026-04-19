@@ -80,6 +80,7 @@ class TRITONSWMM_system:
             / "build_tritonswmm_cpu"
             / "compilation.log",
             compilation_script=system_dir / "compile_cpu.sh",
+            system_datatree_zarr=system_dir / "system_datatree.zarr",
         )
 
         # Initialize system log
@@ -92,6 +93,11 @@ class TRITONSWMM_system:
 
         self._analysis: TRITONSWMM_analysis | None = None
         self.plot = TRITONSWMM_system_plotting(self)
+        from TRITON_SWMM_toolkit.processing_system import (
+            TRITONSWMM_system_post_processing,
+        )
+
+        self.process = TRITONSWMM_system_post_processing(self)
         self._sync_compilation_status_on_init()
 
     @property
@@ -232,6 +238,33 @@ class TRITONSWMM_system:
         )
         return rds_dem_coarse
 
+    def _validate_and_log_dem_crs(self, crs) -> None:
+        """Validate DEM CRS against cfg_system.crs_epsg and record on the log."""
+        if crs is None:
+            return
+        try:
+            epsg = crs.to_epsg()
+        except Exception:
+            epsg = None
+        configured = getattr(self.cfg_system, "crs_epsg", None)
+        if configured is not None and epsg is not None and configured != epsg:
+            from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                f"DEM CRS (EPSG:{epsg}) does not match configured crs_epsg "
+                f"(EPSG:{configured})."
+            )
+        if configured is None and epsg is not None:
+            import warnings as _warnings
+
+            _warnings.warn(
+                f"crs_epsg not set in system_config; derived EPSG:{epsg} from DEM.",
+                UserWarning,
+                stacklevel=2,
+            )
+        if epsg is not None and hasattr(self.log, "dem_crs_epsg"):
+            self.log.dem_crs_epsg.set(epsg)
+
     def _create_mannings_raster_matching_dem(self, fillna_val=-9999):
         dem_unprocessed = self.cfg_system.DEM_fullres
         target_resolution = self.cfg_system.target_dem_resolution
@@ -239,6 +272,7 @@ class TRITONSWMM_system:
         rds_mannings = self._create_mannings_raster()
         rds_dem = rxr.open_rasterio(dem_unprocessed)
         crs = rds_dem.rio.crs  # type: ignore
+        self._validate_and_log_dem_crs(crs)
         assert rds_mannings.rio.crs == rds_dem.rio.crs  # type: ignore
         # resample mannings to og dem resolution to ensure exact alignment of final output
         rds_mannings = spatial_resampling(
