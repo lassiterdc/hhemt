@@ -260,9 +260,30 @@ def test_snakemake_workflow_end_to_end(norfolk_multi_sim_analysis):
     - Scenario status CSV and resource usage validation
     - SWMM-only vs TRITON-SWMM output consistency (when both enabled)
     """
+    import subprocess
+    import sys
+    from pathlib import Path
+
     import xarray as xr
 
     analysis = norfolk_multi_sim_analysis
+
+    # Layer 2 validation (worktree-aware test guard): every Snakemake-spawned
+    # Python subprocess must resolve TRITON_SWMM_toolkit.__file__ under the
+    # worktree's src/. We probe via a fresh subprocess that inherits the
+    # current env (the guard exports PYTHONPATH into os.environ at collection).
+    repo_src = Path(__file__).resolve().parent.parent / "src"
+    probe = subprocess.run(
+        [sys.executable, "-c", "import TRITON_SWMM_toolkit; print(TRITON_SWMM_toolkit.__file__)"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    resolved = Path(probe.stdout.strip()).resolve()
+    assert str(resolved).startswith(str(repo_src)), (
+        f"subprocess resolved TRITON_SWMM_toolkit from {resolved}, "
+        f"expected under {repo_src}. Layer 2 PYTHONPATH inheritance is broken."
+    )
 
     result = analysis.submit_workflow(
         mode="local",
