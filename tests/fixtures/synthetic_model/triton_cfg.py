@@ -4,19 +4,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Template copied verbatim from test_data/TRITON_SWMM_test_model/TRITONSWMM.cfg.
-# Python-level substitutions use {token} braces; TRITON-SWMM's own relative path
-# strings (dem_filename, inp_filename, etc.) are literals at write time.
+# Template mirrors Norfolk's TRITON_SWMM_definition_template.cfg (at
+# examples/norfolk_coastal_flooding/data/contents/). Placeholders use the
+# ${NAME} syntax consumed by TRITONSWMM_scenario._generate_TRITON_SWMM_cfg
+# via utils.create_from_template -> string.Template.safe_substitute. Do not
+# pre-substitute these at synth build time — the toolkit fills them in at
+# scenario prep. The file is written verbatim.
 _TEMPLATE = """\
 #---------------------------------------------------------------------------
-# TRITON-SWMM config file - {project_name}
+# TRITON-SWMM config file - ${CASE_DESC}
 #---------------------------------------------------------------------------
 
 #---------------------------------------------------------------------------
 # Mandatory input files
 #---------------------------------------------------------------------------
-dem_filename="dem/elevation.dem"
-inp_filename="swmm/hydraulics.inp"
+dem_filename="${DEM}"
+inp_filename="${SWMM}"
 #---------------------------------------------------------------------------
 # Format=BIN or ASC
 # Option=PAR or SEQ
@@ -24,27 +27,27 @@ inp_filename="swmm/hydraulics.inp"
 input_format=ASC
 input_option=SEQ
 outfile_pattern="%s/%s/%s_%02d_%02d"
-output_format=BIN
+output_format=${OUT_FORMAT}
 output_option=SEQ
 
 #---------------------------------------------------------------------------
 # TRITON-SWMM specific inputs
 #---------------------------------------------------------------------------
-manhole_diameter={manhole_diameter}
-manhole_loss={manhole_loss}
+manhole_diameter=${MH_DIAM}
+manhole_loss=${MH_LOSS}
 
 #---------------------------------------------------------------------------
 # Hydrograph and flow locations information
 #---------------------------------------------------------------------------
-num_sources={num_sources}
-hydrograph_filename="strmflow/tseries.hyg"
-src_loc_file="strmflow/loc.txt"
+num_sources=${NUM_SOURCES}
+hydrograph_filename="${HYDROGRAPH}"
+src_loc_file="${HYDO_SRC_LOC}"
 
 #---------------------------------------------------------------------------
 # Manning input files
 #---------------------------------------------------------------------------
-n_infile="mannings/mannings.dem"
-#const_mann=None
+${MAN_FILE_TOGGLE}n_infile="${MANNINGS}"
+${CONST_MAN_TOGGLE}const_mann=${CONST_MAN}
 
 #---------------------------------------------------------------------------
 # Runoff related information
@@ -56,9 +59,9 @@ num_runoffs=0
 #---------------------------------------------------------------------------
 # External boundaries
 #---------------------------------------------------------------------------
-num_extbc=1
-extbc_dir="extbc"
-extbc_file="extbc/loc.extbc"
+num_extbc=${NUM_EXT_BC}
+extbc_dir="${EXTBC_DIR}"
+extbc_file="${EXTBC_FILE}"
 
 #---------------------------------------------------------------------------
 # time_series_flag=1 to activate, 0 to deactivate
@@ -76,7 +79,7 @@ max_value_print_option=h
 # Start and duration of simulation time in seconds
 #---------------------------------------------------------------------------
 sim_start_time=0
-sim_duration={sim_duration}
+sim_duration=${SIM_DUR_S}
 
 #---------------------------------------------------------------------------
 # If checkpoint_id is 0 that means a clean start
@@ -86,13 +89,13 @@ checkpoint_id=0
 #---------------------------------------------------------------------------
 # time_increment_fixed=0 is for variable dt, 1 for constant dt
 #---------------------------------------------------------------------------
-time_step={time_step}
+time_step=${TSTEP_S}
 time_increment_fixed=0
 
 #---------------------------------------------------------------------------
 # Print interval in seconds of simulation time
 #---------------------------------------------------------------------------
-print_interval={print_interval}
+print_interval=${REPORTING_TSTEP_S}
 
 #---------------------------------------------------------------------------
 # Initial input files
@@ -109,20 +112,18 @@ courant=0.5
 hextra=0.001
 gpu_direct_flag=0
 domain_decomposition=static
-open_boundaries={open_boundaries}
+open_boundaries=${OPEN_BOUNDARIES}
 """
 
 
 def build_cfg(params, dest: Path) -> Path:
-    body = _TEMPLATE.format(
-        project_name="synth",
-        manhole_diameter=params.manhole_diameter_m,
-        manhole_loss=params.manhole_loss_coefficient,
-        num_sources=params.n_rows * params.n_cols,
-        sim_duration=params.sim_duration_min * 60,
-        time_step=params.triton_timestep_s,
-        print_interval=params.reporting_timestep_s,
-        open_boundaries=1,
-    )
-    dest.write_text(body, encoding="utf-8")
+    """Write the synth TRITON-SWMM definition template.
+
+    `params` is accepted for signature parity with the other synthetic-model
+    builders (geometry, landuse, weather) but is not referenced: the template
+    is fully parametrized via ${NAME} placeholders that the toolkit fills in
+    at scenario-prep time, so no synth-side substitution is needed.
+    """
+    del params  # explicit: no synth-side values go into the template
+    dest.write_text(_TEMPLATE, encoding="utf-8")
     return dest
