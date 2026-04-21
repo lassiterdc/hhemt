@@ -272,9 +272,15 @@ class retrieve_synth_TRITON_SWMM_test_case:
             / "synthetic_test_runs"
         )
         self.system_directory = runs_root / analysis_name
+        # Compiled TRITON binaries are shared across all synth analyses (same
+        # git URL/branch, same CMake config) and live outside system_directory
+        # so start_from_scratch wipes of the analysis workspace do not clobber
+        # them. This is what makes warm-cache runs fast.
+        self._software_root = runs_root / "_software"
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
+        self._software_root.mkdir(parents=True, exist_ok=True)
 
         self._write_configs(
             n_events=n_events,
@@ -310,9 +316,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "DEM_fullres": str(self.artifacts.dem),
             "SWMM_hydraulics": str(self.artifacts.swmm_hydraulics),
             "TRITONSWMM_software_directory": str(
-                self.system_directory / "software"
+                self._software_root / "triton"
             ),
-            "TRITONSWMM_git_URL": "https://github.com/UT-CHG/triton",
+            "TRITONSWMM_git_URL": "https://code.ornl.gov/hydro/triton.git",
+            "TRITONSWMM_branch_key": "15eb18a5d25afe5da295cb4b559a62669dbe5bc3",
+            "SWMM_software_directory": str(self._software_root / "swmm"),
             "triton_swmm_configuration_template": str(
                 self.artifacts.tritonswmm_cfg
             ),
@@ -369,6 +377,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "storm_tide_units": "m",
             "multi_sim_run_method": "local",
             "target_processed_output_type": "zarr",
+            "local_cpu_cores_for_workflow": 2,
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])

@@ -99,6 +99,12 @@ C3      J3        OUT1    50      0.013      0         0          0         0
 C1      CIRCULAR  1.0    0      0      0      1
 C2      CIRCULAR  1.0    0      0      0      1
 C3      CIRCULAR  1.0    0      0      0      1
+
+[INFLOWS]
+;;Node  Parameter  TimeSeries  Type  Mfactor  Sfactor  Baseline  Pattern
+
+[CURVES]
+;;Name  Type  X-Value  Y-Value
 """
 
 _COORDS_BLOCK_TEMPLATE = """\
@@ -118,16 +124,35 @@ LINKS ALL
 
 
 def _coord_rows(params) -> str:
-    """Place J1/J2/J3 on real DEM cells along the central valley."""
-    x_center = params.xllcorner + (params.n_cols // 2 + 0.5) * params.cell_size_m
-    y_top = params.yllcorner + (params.n_rows - 1) * params.cell_size_m
-    y_mid = params.yllcorner + (params.n_rows // 2) * params.cell_size_m
-    y_bot = params.yllcorner + 0.5 * params.cell_size_m
+    """Place J1/J2/J3 on real DEM cells along the central valley.
+
+    All nodes sit at cell centers (offset by 0.5 * cell_size) and strictly
+    inside the watershed polygon, which is itself inset one cell from the DEM
+    extent. Outer-edge cells would be rejected by TRITON-SWMM's coupling
+    step with a `node_swmm ... is out of bounds` error.
+    """
+    cs = params.cell_size_m
+    x_center = params.xllcorner + (params.n_cols // 2 + 0.5) * cs
+    # Rows counted from the southern edge. Stay two cells inside the top,
+    # two cells inside the bottom. For the default 30-row grid that's rows
+    # 27, 15, and 2. OUT1 sits one cell south of J3 to give it a valid
+    # downstream cell on the southern boundary of the watershed.
+    y_top = params.yllcorner + (params.n_rows - 3 + 0.5) * cs
+    y_mid = params.yllcorner + (params.n_rows // 2 + 0.5) * cs
+    y_bot = params.yllcorner + (2 + 0.5) * cs
+    # Put OUT1 in the same DEM cell as J3. This is intentional: the toolkit's
+    # scenario_inputs.py step that groups nodes by DEM cell uses
+    # pd.concat(lst_grps_more_than_1_node) which raises "No objects to
+    # concatenate" when every node is in a distinct cell. On the 537×551
+    # Norfolk grid overlaps happen naturally; on the 20×30 synth grid they
+    # don't unless we force one. C3 (J3->OUT1) remains a 50 m conduit — the
+    # co-location is a topology-level hack, not a physics change.
+    y_out = y_bot
     return "\n".join([
         f"J1  {x_center:.2f}  {y_top:.2f}",
         f"J2  {x_center:.2f}  {y_mid:.2f}",
         f"J3  {x_center:.2f}  {y_bot:.2f}",
-        f"OUT1 {x_center:.2f}  {params.yllcorner:.2f}",
+        f"OUT1 {x_center:.2f}  {y_out:.2f}",
     ])
 
 
@@ -141,7 +166,11 @@ def build_templates(params, cache_dir: Path):
     full = cache_dir / "swmm_full.inp"
 
     hydraulics.write_text(header + _LINKS_BLOCK + coords, encoding="utf-8")
-    hydrology.write_text(header + _SUBCATCHMENTS_BLOCK + coords, encoding="utf-8")
+    # Hydrology file needs JUNCTIONS + OUTFALLS so SUBCATCHMENTS can reference
+    # J1/J2/OUT1 as outlet nodes. Including _LINKS_BLOCK in full gives
+    # CONDUITS/XSECTIONS too — harmless for hydrology-only runs; SWMM tolerates
+    # unreferenced link definitions.
+    hydrology.write_text(header + _SUBCATCHMENTS_BLOCK + _LINKS_BLOCK + coords, encoding="utf-8")
     full.write_text(header + _SUBCATCHMENTS_BLOCK + _LINKS_BLOCK + coords, encoding="utf-8")
 
     return hydraulics, hydrology, full

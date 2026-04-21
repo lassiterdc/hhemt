@@ -796,8 +796,16 @@ class Local_TestCases:
             analysis_name="synth_sensitivity",
             model_subset="all",
         )
+        # Sensitivity workflow requires exactly one enabled model. The "all"
+        # subset picks the coupled TRITON-SWMM model as the representative case
+        # because it exercises both the 2D solver and the SWMM coupling
+        # pathway. Pure TRITON-only and SWMM-only cases are covered by the
+        # dedicated sensitivity variants below.
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
         )
@@ -849,6 +857,7 @@ class Local_TestCases:
         df = pd.DataFrame(
             {
                 "sa_id": ["sa_0", "sa_1"],
+                "run_mode": ["serial", "openmp"],
                 "n_omp_threads": [1, 2],
             }
         )
