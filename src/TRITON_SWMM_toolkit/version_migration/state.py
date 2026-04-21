@@ -93,16 +93,25 @@ def read_version_file(target_dir: Path) -> VersionState | None:
     return VersionState.from_dict(json.loads(vf.read_text()))
 
 
-def write_version_file(target_dir: Path, state: VersionState) -> None:
-    """Write _version.json atomically; filelock-guarded."""
+def _unlocked_write_version_file(target_dir: Path, state: VersionState) -> None:
+    """Write _version.json atomically without acquiring the filelock.
+
+    Callers that already hold the lock must use this; public callers use
+    ``write_version_file`` which wraps this with a lock.
+    """
     target_dir.mkdir(parents=True, exist_ok=True)
     vf = _version_file(target_dir)
+    with tempfile.NamedTemporaryFile(mode="w", dir=str(target_dir), delete=False, suffix=".tmp") as tmp:
+        json.dump(state.to_dict(), tmp, indent=2, sort_keys=True)
+        tmp_path = tmp.name
+    os.replace(tmp_path, str(vf))
+
+
+def write_version_file(target_dir: Path, state: VersionState) -> None:
+    """Write _version.json atomically; filelock-guarded."""
     lock = FileLock(str(_lock_file(target_dir)), timeout=LOCK_TIMEOUT_SECONDS)
     with lock:
-        with tempfile.NamedTemporaryFile(mode="w", dir=str(target_dir), delete=False, suffix=".tmp") as tmp:
-            json.dump(state.to_dict(), tmp, indent=2, sort_keys=True)
-            tmp_path = tmp.name
-        os.replace(tmp_path, str(vf))
+        _unlocked_write_version_file(target_dir, state)
 
 
 def stamp_new_target(target_dir: Path, layout_version: int) -> VersionState:
@@ -154,7 +163,7 @@ def record_migration(
                 migration_id=migration_id,
             )
         )
-        write_version_file(target_dir, state)
+        _unlocked_write_version_file(target_dir, state)
     return state
 
 

@@ -151,6 +151,12 @@ def run_migration(
             applied=apply,
         )
 
+    # If _version.json is absent but detection inferred a version from
+    # layout artifacts, stamp it before the first record_migration bumps it.
+    # Dry-run path does not mutate disk.
+    if apply and state.read_version_file(target_dir) is None:
+        state.stamp_new_target(target_dir, current)
+
     applied: list[str] = []
     for m in plan_modules:
         ctx = _construct_context(target_dir, m, dry_run=not apply, cfg_paths=cfg_paths)

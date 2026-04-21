@@ -127,13 +127,27 @@ def validate_registry(modules: list[MigrationModule] | None = None) -> None:
 
 
 def plan(from_: int, target: int) -> list[MigrationModule]:
-    """Return the ordered migration sequence to apply."""
+    """Return the ordered migration sequence to apply.
+
+    Validates only the [from_, target) slice — migrations outside that
+    range may be absent without error. Full-chain validation against
+    [MINIMUM_SUPPORTED_VERSION, LAYOUT_VERSION] is available via
+    ``validate_registry()`` and is exercised by Phase 4's CI check.
+    """
     if target < from_:
         raise RegistryError(f"downgrade unsupported (from={from_}, target={target})")
     if target == from_:
         return []
     modules = discover_migrations()
-    validate_registry(modules)
+    seen_pairs: set[tuple[int, int]] = set()
+    for m in modules:
+        pair = (m.version_from, m.version_to)
+        if pair in seen_pairs:
+            raise RegistryError(
+                f"duplicate (version_from={m.version_from}, version_to={m.version_to})",
+                paths=[m.path],
+            )
+        seen_pairs.add(pair)
     by_from = {m.version_from: m for m in modules}
     out: list[MigrationModule] = []
     cur = from_
