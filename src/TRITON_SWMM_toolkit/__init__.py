@@ -6,6 +6,9 @@ __email__ = "daniel.lassiter@outlook.com"
 # Export high-level API
 from .toolkit import Toolkit
 
+# Export version_migration subpackage
+from TRITON_SWMM_toolkit import version_migration  # noqa: F401
+
 # Export custom exceptions for convenient access
 from .exceptions import (
     TRITONSWMMError,

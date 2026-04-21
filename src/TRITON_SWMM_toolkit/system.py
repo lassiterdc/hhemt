@@ -100,6 +100,13 @@ class TRITONSWMM_system:
         self.process = TRITONSWMM_system_post_processing(self)
         self._sync_compilation_status_on_init()
 
+        # Stamp _version.json at LAYOUT_VERSION at construction (eager - system
+        # dir is materialized synchronously by __init__).
+        from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
+        from TRITON_SWMM_toolkit.version_migration.state import stamp_new_target
+
+        stamp_new_target(self.cfg_system.system_directory, LAYOUT_VERSION)
+
     @property
     def analysis(self) -> "TRITONSWMM_analysis":
         if self._analysis is None:
