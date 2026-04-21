@@ -21,23 +21,19 @@ Example:
     system = test_case.system
 """
 
-import pandas as pd
-import numpy as np
-import shutil
-import yaml
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
-import TRITON_SWMM_toolkit.constants as cnst
-import TRITON_SWMM_toolkit.utils as ut
 
+import numpy as np
+import pandas as pd
+import yaml
+
+import TRITON_SWMM_toolkit.utils as ut
+from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+from TRITON_SWMM_toolkit.config.analysis import analysis_config
 
 # Import from production package
-from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
-from TRITON_SWMM_toolkit.config.analysis import analysis_config
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-
 from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
+from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 
 class retrieve_TRITON_SWMM_test_case:
@@ -70,8 +66,8 @@ class retrieve_TRITON_SWMM_test_case:
         test_system_dirname: str,
         analysis_description: str = "",
         start_from_scratch: bool = False,
-        additional_analysis_configs: Optional[dict] = None,
-        additional_system_configs: Optional[dict] = None,
+        additional_analysis_configs: dict | None = None,
+        additional_system_configs: dict | None = None,
     ):
         """
         Initialize test case from system configuration.
@@ -109,7 +105,7 @@ class retrieve_TRITON_SWMM_test_case:
             ut.fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
-        new_system_config_yaml = anlysys_dir / f"cfg_system.yaml"
+        new_system_config_yaml = anlysys_dir / "cfg_system.yaml"
 
         new_system_config_yaml.write_text(
             yaml.safe_dump(
@@ -146,7 +142,7 @@ class retrieve_TRITON_SWMM_test_case:
 
         cfg_analysis = analysis_config.model_validate(cfg_analysis)
         # write analysis as yaml
-        cfg_anlysys_yaml = anlysys_dir / f"cfg_analysis.yaml"
+        cfg_anlysys_yaml = anlysys_dir / "cfg_analysis.yaml"
         cfg_anlysys_yaml.write_text(
             yaml.safe_dump(
                 cfg_analysis.model_dump(mode="json"),
@@ -231,3 +227,154 @@ class retrieve_TRITON_SWMM_test_case:
         ds_weather_tseries = df_tseries.to_xarray()
         ds_weather_tseries.to_netcdf(f_out)
         return
+
+
+# ============================================================================
+# Synthetic-model variant
+# ============================================================================
+
+import platformdirs  # noqa: E402
+
+from tests.fixtures.synthetic_model import (  # noqa: E402
+    DEFAULT_PARAMS,
+    SyntheticModelParams,
+    get_or_build_synthetic_case,
+)
+
+
+class retrieve_synth_TRITON_SWMM_test_case:
+    """Synthetic-model variant of retrieve_TRITON_SWMM_test_case.
+
+    Composes system_config.yaml and analysis_config.yaml from paths to
+    programmatically-generated inputs. No HydroShare or Norfolk data is loaded.
+    """
+
+    def __init__(
+        self,
+        analysis_name: str,
+        n_events: int = 1,
+        toggle_tritonswmm_model: bool = True,
+        toggle_triton_model: bool = True,
+        toggle_swmm_model: bool = True,
+        toggle_use_swmm_for_hydrology: bool = True,
+        toggle_use_constant_mannings: bool = False,
+        sensitivity_csv: Path | None = None,
+        start_from_scratch: bool = False,
+        params: SyntheticModelParams = DEFAULT_PARAMS,
+        additional_analysis_configs: dict | None = None,
+        additional_system_configs: dict | None = None,
+    ):
+        self.artifacts = get_or_build_synthetic_case(params)
+        self.analysis_name = analysis_name
+
+        runs_root = (
+            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            / "synthetic_test_runs"
+        )
+        self.system_directory = runs_root / analysis_name
+        if start_from_scratch and self.system_directory.exists():
+            ut.fast_rmtree(self.system_directory)
+        self.system_directory.mkdir(parents=True, exist_ok=True)
+
+        self._write_configs(
+            n_events=n_events,
+            toggle_tritonswmm_model=toggle_tritonswmm_model,
+            toggle_triton_model=toggle_triton_model,
+            toggle_swmm_model=toggle_swmm_model,
+            toggle_use_swmm_for_hydrology=toggle_use_swmm_for_hydrology,
+            toggle_use_constant_mannings=toggle_use_constant_mannings,
+            sensitivity_csv=sensitivity_csv,
+            params=params,
+            additional_analysis_configs=additional_analysis_configs or {},
+            additional_system_configs=additional_system_configs or {},
+        )
+
+        self.system = TRITONSWMM_system(self.system_yaml)
+        self.analysis = TRITONSWMM_analysis(self.analysis_yaml, self.system)
+        self.system._analysis = self.analysis
+        if start_from_scratch:
+            self.system.process_system_level_inputs(
+                overwrite_outputs_if_already_created=True, verbose=False
+            )
+
+    def _write_configs(self, **kwargs):
+        events_csv = self.system_directory / "weather_events_to_simulate.csv"
+        pd.DataFrame({"event_index": list(range(kwargs["n_events"]))}).to_csv(
+            events_csv, index=False
+        )
+
+        params = kwargs["params"]
+        system_cfg = {
+            "system_directory": str(self.system_directory),
+            "watershed_gis_polygon": str(self.artifacts.watershed),
+            "DEM_fullres": str(self.artifacts.dem),
+            "SWMM_hydraulics": str(self.artifacts.swmm_hydraulics),
+            "TRITONSWMM_software_directory": str(
+                self.system_directory / "software"
+            ),
+            "TRITONSWMM_git_URL": "https://github.com/UT-CHG/triton",
+            "triton_swmm_configuration_template": str(
+                self.artifacts.tritonswmm_cfg
+            ),
+            "toggle_tritonswmm_model": kwargs["toggle_tritonswmm_model"],
+            "toggle_triton_model": kwargs["toggle_triton_model"],
+            "toggle_swmm_model": kwargs["toggle_swmm_model"],
+            "toggle_use_swmm_for_hydrology": kwargs["toggle_use_swmm_for_hydrology"],
+            "toggle_use_constant_mannings": kwargs["toggle_use_constant_mannings"],
+            "target_dem_resolution": float(params.cell_size_m),
+            "gpu_compilation_backend": None,
+            "crs_epsg": int(params.epsg),
+        }
+        if not kwargs["toggle_use_constant_mannings"]:
+            system_cfg.update(
+                {
+                    "landuse_lookup_file": str(self.artifacts.landuse_lookup),
+                    "landuse_raster": str(self.artifacts.landuse),
+                    "landuse_description_colname": "landuse_description",
+                    "landuse_lookup_class_id_colname": "landuse_class_id",
+                    "landuse_lookup_mannings_colname": "mannings",
+                }
+            )
+        if kwargs["toggle_use_swmm_for_hydrology"]:
+            system_cfg.update(
+                {
+                    "SWMM_hydrology": str(self.artifacts.swmm_hydrology),
+                    "subcatchment_raingage_mapping": str(
+                        self.artifacts.subcatchment_raingage_mapping
+                    ),
+                    "subcatchment_raingage_mapping_gage_id_colname": "raingage_id",
+                }
+            )
+        if kwargs["toggle_swmm_model"]:
+            system_cfg["SWMM_full"] = str(self.artifacts.swmm_full)
+        system_cfg.update(kwargs["additional_system_configs"])
+
+        analysis_cfg = {
+            "analysis_id": self.analysis_name,
+            "weather_event_indices": ["event_index"],
+            "weather_timeseries": str(self.artifacts.weather),
+            "weather_time_series_timestep_dimension_name": "time",
+            "rainfall_units": "mm/hr",
+            "run_mode": "serial",
+            "toggle_sensitivity_analysis": kwargs["sensitivity_csv"] is not None,
+            "toggle_storm_tide_boundary": True,
+            "weather_events_to_simulate": str(events_csv),
+            "manhole_diameter": float(params.manhole_diameter_m),
+            "manhole_loss_coefficient": float(params.manhole_loss_coefficient),
+            "hydraulic_timestep_s": float(params.triton_timestep_s),
+            "TRITON_reporting_timestep_s": float(params.reporting_timestep_s),
+            "open_boundaries": 1,
+            "storm_tide_boundary_line_gis": str(self.artifacts.boundary),
+            "weather_time_series_storm_tide_datavar": "water_level",
+            "storm_tide_units": "m",
+            "multi_sim_run_method": "local",
+            "target_processed_output_type": "zarr",
+        }
+        if kwargs["sensitivity_csv"] is not None:
+            analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])
+        analysis_cfg.update(kwargs["additional_analysis_configs"])
+
+        self.system_yaml = self.system_directory / "system_config.yaml"
+        self.analysis_yaml = self.system_directory / "analysis_config.yaml"
+        self.system_yaml.write_text(yaml.safe_dump(system_cfg, sort_keys=False))
+        self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
