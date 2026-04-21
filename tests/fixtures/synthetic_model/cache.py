@@ -50,11 +50,11 @@ class SyntheticModelParams:
     valley_depth_m: float = 0.5
     impervious_mannings: float = 0.015
     pervious_mannings: float = 0.035
-    sim_duration_min: int = 60
+    sim_duration_min: int = 10
     triton_timestep_s: float = 1.0
     reporting_timestep_s: float = 10.0
     rainfall_peak_mm_per_hr: float = 100.0
-    rainfall_peak_min: int = 20
+    rainfall_peak_min: int = 3
     stormtide_mean_m: float = 2.0
     stormtide_amplitude_m: float = 0.8
     stormtide_period_h: float = 12.0

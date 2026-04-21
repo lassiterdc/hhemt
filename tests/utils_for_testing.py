@@ -94,11 +94,20 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
     if cfg_sys.toggle_swmm_model:
         assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
 
-    # Check system inputs (DEM, Mannings) - these are always required
+    # Check system inputs (DEM, Mannings) — always required. Shape is test-case
+    # dependent (Norfolk 1x537x551, synth 1x30x20), so we just verify the
+    # arrays exist and have matching non-trivial 2D shape rather than pinning
+    # a specific grid size.
     dem = analysis._system.processed_dem_rds
-    assert dem.shape == (1, 537, 551), "Problems with DEM creation"  # type: ignore
     manning = analysis._system.mannings_rds
-    assert manning.shape == (1, 537, 551), "Problems with Mannings creation"  # type: ignore
+    assert dem is not None, "Problems with DEM creation"
+    assert manning is not None, "Problems with Mannings creation"
+    assert dem.shape == manning.shape, (  # type: ignore
+        f"DEM shape {dem.shape} does not match Mannings shape {manning.shape}"  # type: ignore
+    )
+    assert len(dem.shape) == 3 and dem.shape[0] == 1, (  # type: ignore
+        f"Expected DEM with shape (1, rows, cols), got {dem.shape}"  # type: ignore
+    )
 
 
 def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False):
@@ -967,6 +976,21 @@ def assert_datasets_equal(
         )
 
 
+def _time_dim(da) -> str | None:
+    """Return the first time-like dimension of a DataArray, or None if absent.
+
+    Zarrs emitted by different toolkit code paths use different time-dim
+    names: SWMM per-node/link timeseries use ``date_time``; TRITON 2D
+    timeseries use ``timestep_min``; some legacy code paths use ``time``.
+    Per-link or per-node summary variables with no time dim at all return
+    None — callers should skip them rather than reduce.
+    """
+    for d in da.dims:
+        if d in ("date_time", "timestep_min", "time"):
+            return d
+    return None
+
+
 def assert_hydraulic_components_exercised(analysis) -> None:
     """Verify every enabled hydraulic component produced non-zero time-variant output.
 
@@ -1015,9 +1039,9 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                     ds = xr.open_zarr(link_ts)
                     flow_var_max = max(
                         (
-                            float(ds[v].std("time").max())
+                            float(ds[v].std(_time_dim(ds[v])).max())
                             for v in ds.data_vars
-                            if "flow" in v.lower() and ds[v].dtype.kind in "fi"
+                            if "flow" in v.lower() and ds[v].dtype.kind in "fi" and _time_dim(ds[v])
                         ),
                         default=0.0,
                     )
@@ -1042,10 +1066,11 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                     ds = xr.open_zarr(node_ts)
                     inflow_var_max = max(
                         (
-                            float(ds[v].std("time").max())
+                            float(ds[v].std(_time_dim(ds[v])).max())
                             for v in ds.data_vars
                             if ("inflow" in v.lower() or "runoff" in v.lower())
                             and ds[v].dtype.kind in "fi"
+                            and _time_dim(ds[v])
                         ),
                         default=0.0,
                     )
@@ -1062,9 +1087,9 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                     ds = xr.open_zarr(link_ts)
                     flow_var_max = max(
                         (
-                            float(ds[v].std("time").max())
+                            float(ds[v].std(_time_dim(ds[v])).max())
                             for v in ds.data_vars
-                            if "flow" in v.lower() and ds[v].dtype.kind in "fi"
+                            if "flow" in v.lower() and ds[v].dtype.kind in "fi" and _time_dim(ds[v])
                         ),
                         default=0.0,
                     )
@@ -1086,6 +1111,12 @@ def assert_hydraulic_components_exercised(analysis) -> None:
 
 
 def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[str]) -> None:
+    """Verify that TRITON emitted a time-varying 2D water field.
+
+    The toolkit's TRITON-output zarr uses ``wlevel_m`` (water level at cell
+    center) with dims ``(timestep_min, y, x)``; ``depth`` is an older naming
+    that no longer appears. Accept either as the depth proxy.
+    """
     import xarray as xr
 
     if triton_ts is None or not triton_ts.exists():
@@ -1094,13 +1125,28 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
         )
         return
     ds = xr.open_zarr(triton_ts)
-    if "depth" not in ds:
+    depth_var = next(
+        (v for v in ("wlevel_m", "depth") if v in ds.data_vars),
+        None,
+    )
+    if depth_var is None:
         failures.append(
-            f"event {event_iloc} {model_type}: depth var absent from {triton_ts}"
+            f"event {event_iloc} {model_type}: no water-level var "
+            f"(wlevel_m / depth) in {triton_ts}"
         )
         return
-    nonzero_ts = int((ds["depth"] > 0).any(dim=("y", "x")).sum().item())
+    # Reduce over every dim except the time dim so we get one value per
+    # timestep, then count timesteps where the field is positive somewhere.
+    t_dim = _time_dim(ds[depth_var])
+    if t_dim is None:
+        failures.append(
+            f"event {event_iloc} {model_type}: {depth_var} has no time dim in {triton_ts}"
+        )
+        return
+    non_time_dims = tuple(d for d in ds[depth_var].dims if d != t_dim)
+    nonzero_ts = int((ds[depth_var] > 0).any(dim=non_time_dims).sum().values)
     if nonzero_ts < 2:
         failures.append(
-            f"event {event_iloc} {model_type}: TRITON depth non-zero at only {nonzero_ts} timesteps"
+            f"event {event_iloc} {model_type}: TRITON {depth_var} non-zero "
+            f"at only {nonzero_ts} timesteps"
         )

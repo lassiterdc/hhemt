@@ -31,23 +31,43 @@ def _sinusoidal_stormtide(params) -> np.ndarray:
     return params.stormtide_mean_m + params.stormtide_amplitude_m * np.sin(omega * t)
 
 
+_N_SYNTH_EVENTS = 4
+"""Number of synthetic events packed into weather.nc. Must be >= the largest
+``n_events`` any catalog test case uses; sensitivity variants currently use
+1, multi_sim uses 2, so 4 is a safe upper bound. All events carry the same
+rainfall and storm-tide series — the test tier exercises workflow plumbing,
+not weather variability."""
+
+
 def build_weather(params, dest: Path) -> Path:
     rain = _triangular_hyetograph(params)
     tide = _sinusoidal_stormtide(params)
     times = pd.date_range("2000-01-01", periods=len(rain), freq="1min")
 
+    # Each variable gets shape (n_events, n_time) so toolkit's
+    # ds.sel(event_index=K) indexing picks one event's timeseries cleanly.
+    rain_events = np.broadcast_to(rain, (_N_SYNTH_EVENTS, len(rain))).copy()
+    tide_events = np.broadcast_to(tide, (_N_SYNTH_EVENTS, len(tide))).copy()
+
     ds = xr.Dataset(
         data_vars={
-            "RG_synth": (("time",), rain, {"units": "mm/hr", "long_name": "rainfall intensity"}),
+            "RG_synth": (
+                ("event_index", "time"),
+                rain_events,
+                {"units": "mm/hr", "long_name": "rainfall intensity"},
+            ),
             "water_level": (
-                ("time",),
-                tide,
+                ("event_index", "time"),
+                tide_events,
                 {"units": "m", "long_name": "storm tide water level"},
             ),
         },
         coords={
             "time": times,
-            "event_index": (("event",), np.array([0], dtype=np.int32)),
+            "event_index": (
+                ("event_index",),
+                np.arange(_N_SYNTH_EVENTS, dtype=np.int32),
+            ),
         },
     )
     ds.attrs["title"] = "synthetic weather for TRITON-SWMM test suite"

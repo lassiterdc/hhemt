@@ -854,15 +854,19 @@ class Local_TestCases:
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dest_dir / f"{analysis_name}.csv"
+        # Integer sa_ids mirror Norfolk's cpu_benchmarking_analysis.xlsx
+        # convention. The sensitivity workflow composes `consolidate_sa_<sa_id>`
+        # rule names; tests assert on integer-indexed rule names, so strings
+        # like "sa_0" would produce the wrong rule name ("consolidate_sa_sa_0").
         df = pd.DataFrame(
             {
-                "sa_id": ["sa_0", "sa_1"],
+                "sa_id": [0, 1],
                 "run_mode": ["serial", "openmp"],
                 "n_omp_threads": [1, 2],
             }
         )
         assert all(
-            re.fullmatch(r"[A-Za-z0-9_.]+", s) for s in df["sa_id"]
+            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]
         ), "sa_id values must match ^[A-Za-z0-9_.]+$"
         df.to_csv(csv_path, index=False)
         return csv_path
