@@ -9,6 +9,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.slow
 def test_snakemake_workflow_dry_run(norfolk_multi_sim_analysis):
     """End-to-end Snakemake dry-run smoke: DAG constructs, dependencies resolve, no execution."""
     analysis = norfolk_multi_sim_analysis

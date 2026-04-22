@@ -17,6 +17,7 @@ def test_load_system_and_analysis(norfolk_all_models_analysis):
 
 
 # SCENARIO SET UP
+@pytest.mark.slow
 def test_prepare_all_scenarios(norfolk_all_models_analysis_cached):
     analysis = norfolk_all_models_analysis_cached
     analysis.run_prepare_scenarios_serially(
@@ -26,6 +27,7 @@ def test_prepare_all_scenarios(norfolk_all_models_analysis_cached):
     tst_ut.assert_scenarios_setup(analysis)
 
 
+@pytest.mark.slow
 def test_run_sim(norfolk_all_models_analysis_cached):
     analysis = norfolk_all_models_analysis_cached
     analysis.run_sims_in_sequence(pickup_where_leftoff=False)
@@ -53,6 +55,7 @@ def test_run_sim(norfolk_all_models_analysis_cached):
             )
 
 
+@pytest.mark.slow
 def test_process_sim(norfolk_all_models_analysis_cached):
     analysis = norfolk_all_models_analysis_cached
     enabled_models = tst_ut.get_enabled_model_types(analysis)
