@@ -452,6 +452,110 @@ def run_command(
         raise typer.Exit(10)
 
 
+@app.command(name="cleanup-orphans")
+def cleanup_orphans_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="List orphan directories without deleting (default) or delete them with --apply",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Required with --apply to actually delete",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print each orphan path and deletion",
+    ),
+):
+    """List or delete sub-analysis directories orphaned by sensitivity CSV edits.
+
+    When sensitivity sub-analyses are removed from the CSV and the workflow is
+    re-run, their output directories remain on disk. This command identifies
+    those orphans and optionally removes them.
+
+    Examples:
+
+        # List orphans (no deletion)
+        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+            --analysis-config analysis.yaml
+
+        # Actually delete
+        $ triton-swmm cleanup-orphans --system-config system.yaml \\
+            --analysis-config analysis.yaml --apply --force
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        if not analysis.cfg_analysis.toggle_sensitivity_analysis:
+            console_err.print(
+                "[bold red]Error:[/bold red] cleanup-orphans requires a sensitivity analysis "
+                "(toggle_sensitivity_analysis=True in analysis config)."
+            )
+            raise typer.Exit(2)
+
+        if not dry_run and not force:
+            console_err.print(
+                "[bold red]Error:[/bold red] --apply requires --force to confirm deletion."
+            )
+            raise typer.Exit(2)
+
+        orphans = analysis.sensitivity.cleanup_orphan_subanalysis_dirs(
+            dry_run=dry_run,
+            force=force,
+            verbose=verbose,
+        )
+
+        if not orphans:
+            console.print("[green]No orphan sub-analysis directories found.[/green]")
+        elif dry_run:
+            console.print(f"[yellow]Found {len(orphans)} orphan(s) (dry-run; nothing deleted):[/yellow]")
+            for p in orphans:
+                console.print(f"  {p}")
+        else:
+            suffix = "y" if len(orphans) == 1 else "ies"
+            console.print(
+                f"[green]Deleted {len(orphans)} orphan sub-analysis director{suffix}.[/green]"
+            )
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════════
