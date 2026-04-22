@@ -13,13 +13,21 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 
 """
 
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+import pandas as pd
+import platformdirs
 
 import TRITON_SWMM_toolkit.constants as cnst
 
 # Import from test fixtures
-from tests.fixtures.test_case_builder import retrieve_TRITON_SWMM_test_case
+from tests.fixtures.test_case_builder import (
+    retrieve_synth_TRITON_SWMM_test_case,
+    retrieve_TRITON_SWMM_test_case,
+)
 from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
 if TYPE_CHECKING:
@@ -725,3 +733,140 @@ class Local_TestCases:
             n_events=1,
             system_overrides=system_overrides,
         )
+
+    # ========== Synthetic Test Cases ==========
+
+    @staticmethod
+    def retrieve_synth_all_models_test_case(start_from_scratch: bool = False):
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_all_models",
+            n_events=1,
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=True,
+            toggle_swmm_model=True,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_multi_sim_test_case(start_from_scratch: bool = False):
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_multi_sim",
+            n_events=2,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_triton_only_test_case(start_from_scratch: bool = False):
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_triton_only",
+            toggle_tritonswmm_model=False,
+            toggle_triton_model=True,
+            toggle_swmm_model=False,
+            toggle_use_swmm_for_hydrology=False,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_swmm_only_test_case(start_from_scratch: bool = False):
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_swmm_only",
+            toggle_tritonswmm_model=False,
+            toggle_triton_model=False,
+            toggle_swmm_model=True,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_triton_and_tritonswmm_test_case(
+        start_from_scratch: bool = False,
+    ):
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_triton_and_tritonswmm",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=True,
+            toggle_swmm_model=False,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch: bool = False,
+    ):
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity",
+            model_subset="all",
+        )
+        # Sensitivity workflow requires exactly one enabled model. The "all"
+        # subset picks the coupled TRITON-SWMM model as the representative case
+        # because it exercises both the 2D solver and the SWMM coupling
+        # pathway. Pure TRITON-only and SWMM-only cases are covered by the
+        # dedicated sensitivity variants below.
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_triton_only(
+        start_from_scratch: bool = False,
+    ):
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_triton_only",
+            model_subset="triton",
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_triton_only",
+            toggle_tritonswmm_model=False,
+            toggle_swmm_model=False,
+            toggle_use_swmm_for_hydrology=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_swmm_only(
+        start_from_scratch: bool = False,
+    ):
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_swmm_only",
+            model_subset="swmm",
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_swmm_only",
+            toggle_tritonswmm_model=False,
+            toggle_triton_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+        )
+
+    @staticmethod
+    def _write_synth_sensitivity_csv(analysis_name: str, model_subset: str) -> Path:
+        # Sibling dir (not under runs_root/<analysis_name>) so constructor's
+        # start_from_scratch wipe of the analysis dir does not delete the CSV.
+        runs_root = (
+            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            / "synthetic_test_runs"
+        )
+        dest_dir = runs_root / "_sensitivity_configs"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        csv_path = dest_dir / f"{analysis_name}.csv"
+        # Integer sa_ids mirror Norfolk's cpu_benchmarking_analysis.xlsx
+        # convention. The sensitivity workflow composes `consolidate_sa_<sa_id>`
+        # rule names; tests assert on integer-indexed rule names, so strings
+        # like "sa_0" would produce the wrong rule name ("consolidate_sa_sa_0").
+        df = pd.DataFrame(
+            {
+                "sa_id": [0, 1],
+                "run_mode": ["serial", "openmp"],
+                "n_omp_threads": [1, 2],
+            }
+        )
+        assert all(
+            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]
+        ), "sa_id values must match ^[A-Za-z0-9_.]+$"
+        df.to_csv(csv_path, index=False)
+        return csv_path

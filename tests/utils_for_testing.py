@@ -94,11 +94,20 @@ def assert_system_setup(analysis: TRITONSWMM_analysis):
     if cfg_sys.toggle_swmm_model:
         assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
 
-    # Check system inputs (DEM, Mannings) - these are always required
+    # Check system inputs (DEM, Mannings) — always required. Shape is test-case
+    # dependent (Norfolk 1x537x551, synth 1x30x20), so we just verify the
+    # arrays exist and have matching non-trivial 2D shape rather than pinning
+    # a specific grid size.
     dem = analysis._system.processed_dem_rds
-    assert dem.shape == (1, 537, 551), "Problems with DEM creation"  # type: ignore
     manning = analysis._system.mannings_rds
-    assert manning.shape == (1, 537, 551), "Problems with Mannings creation"  # type: ignore
+    assert dem is not None, "Problems with DEM creation"
+    assert manning is not None, "Problems with Mannings creation"
+    assert dem.shape == manning.shape, (  # type: ignore
+        f"DEM shape {dem.shape} does not match Mannings shape {manning.shape}"  # type: ignore
+    )
+    assert len(dem.shape) == 3 and dem.shape[0] == 1, (  # type: ignore
+        f"Expected DEM with shape (1, rows, cols), got {dem.shape}"  # type: ignore
+    )
 
 
 def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False):
@@ -964,4 +973,180 @@ def assert_datasets_equal(
         raise AssertionError(
             f"{dataset_name}: {len(mismatched_vars)} variable(s) have mismatched values:\n  "
             + "\n  ".join(mismatched_vars)
+        )
+
+
+def _time_dim(da) -> str | None:
+    """Return the first time-like dimension of a DataArray, or None if absent.
+
+    Zarrs emitted by different toolkit code paths use different time-dim
+    names: SWMM per-node/link timeseries use ``date_time``; TRITON 2D
+    timeseries use ``timestep_min``; some legacy code paths use ``time``.
+    Per-link or per-node summary variables with no time dim at all return
+    None — callers should skip them rather than reduce.
+    """
+    for d in da.dims:
+        if d in ("date_time", "timestep_min", "time"):
+            return d
+    return None
+
+
+def assert_hydraulic_components_exercised(analysis) -> None:
+    """Verify every enabled hydraulic component produced non-zero time-variant output.
+
+    Raises AssertionError enumerating any component that failed.
+    """
+    import xarray as xr
+
+    failures: list[str] = []
+
+    enabled = [
+        mt
+        for mt in ("triton", "tritonswmm", "swmm")
+        if getattr(analysis._system.cfg_system, f"toggle_{mt}_model")
+    ]
+
+    for event_iloc in analysis.df_sims.index:
+        run = analysis._retrieve_sim_runs(event_iloc)
+        scen = run._scenario
+        sp = scen.scen_paths
+
+        for model_type in enabled:
+            _ = scen.get_log(model_type)
+
+            if model_type == "tritonswmm":
+                node_sum = sp.output_tritonswmm_node_summary
+                if node_sum is None or not node_sum.exists():
+                    failures.append(
+                        f"event {event_iloc} tritonswmm: node summary missing at {node_sum}"
+                    )
+                else:
+                    ds = xr.open_zarr(node_sum)
+                    if not any(
+                        float(ds[v].max()) > 0
+                        for v in ds.data_vars
+                        if ds[v].dtype.kind in "fi"
+                    ):
+                        failures.append(
+                            f"event {event_iloc} tritonswmm: node summary has no positive totals"
+                        )
+                link_ts = sp.output_tritonswmm_link_time_series
+                if link_ts is None or not link_ts.exists():
+                    failures.append(
+                        f"event {event_iloc} tritonswmm: link timeseries missing at {link_ts}"
+                    )
+                else:
+                    ds = xr.open_zarr(link_ts)
+                    flow_var_max = max(
+                        (
+                            float(ds[v].std(_time_dim(ds[v])).max())
+                            for v in ds.data_vars
+                            if "flow" in v.lower() and ds[v].dtype.kind in "fi" and _time_dim(ds[v])
+                        ),
+                        default=0.0,
+                    )
+                    if flow_var_max <= 0:
+                        failures.append(
+                            f"event {event_iloc} tritonswmm: link flow variance is zero"
+                        )
+                triton_ts = sp.output_tritonswmm_triton_timeseries
+                _assert_triton_depth(triton_ts, event_iloc, "tritonswmm", failures)
+
+            elif model_type == "triton":
+                triton_ts = sp.output_triton_only_timeseries
+                _assert_triton_depth(triton_ts, event_iloc, "triton", failures)
+
+            elif model_type == "swmm":
+                node_ts = sp.output_swmm_only_node_time_series
+                if node_ts is None or not node_ts.exists():
+                    failures.append(
+                        f"event {event_iloc} swmm: node timeseries missing at {node_ts}"
+                    )
+                else:
+                    ds = xr.open_zarr(node_ts)
+                    inflow_var_max = max(
+                        (
+                            float(ds[v].std(_time_dim(ds[v])).max())
+                            for v in ds.data_vars
+                            if ("inflow" in v.lower() or "runoff" in v.lower())
+                            and ds[v].dtype.kind in "fi"
+                            and _time_dim(ds[v])
+                        ),
+                        default=0.0,
+                    )
+                    if inflow_var_max <= 0:
+                        failures.append(
+                            f"event {event_iloc} swmm: node inflow/runoff variance is zero"
+                        )
+                link_ts = sp.output_swmm_only_link_time_series
+                if link_ts is None or not link_ts.exists():
+                    failures.append(
+                        f"event {event_iloc} swmm: link timeseries missing at {link_ts}"
+                    )
+                else:
+                    ds = xr.open_zarr(link_ts)
+                    flow_var_max = max(
+                        (
+                            float(ds[v].std(_time_dim(ds[v])).max())
+                            for v in ds.data_vars
+                            if "flow" in v.lower() and ds[v].dtype.kind in "fi" and _time_dim(ds[v])
+                        ),
+                        default=0.0,
+                    )
+                    if flow_var_max <= 0:
+                        failures.append(
+                            f"event {event_iloc} swmm: link flow variance is zero"
+                        )
+
+    weather_ds = xr.open_dataset(analysis.cfg_analysis.weather_timeseries)
+    bc_var = analysis.cfg_analysis.weather_time_series_storm_tide_datavar
+    if bc_var in weather_ds and float(weather_ds[bc_var].std()) <= 0:
+        failures.append("storm-tide boundary variance is zero")
+
+    if failures:
+        raise AssertionError(
+            "assert_hydraulic_components_exercised failed:\n  - "
+            + "\n  - ".join(failures)
+        )
+
+
+def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[str]) -> None:
+    """Verify that TRITON emitted a time-varying 2D water field.
+
+    The toolkit's TRITON-output zarr uses ``wlevel_m`` (water level at cell
+    center) with dims ``(timestep_min, y, x)``; ``depth`` is an older naming
+    that no longer appears. Accept either as the depth proxy.
+    """
+    import xarray as xr
+
+    if triton_ts is None or not triton_ts.exists():
+        failures.append(
+            f"event {event_iloc} {model_type}: triton timeseries missing at {triton_ts}"
+        )
+        return
+    ds = xr.open_zarr(triton_ts)
+    depth_var = next(
+        (v for v in ("wlevel_m", "depth") if v in ds.data_vars),
+        None,
+    )
+    if depth_var is None:
+        failures.append(
+            f"event {event_iloc} {model_type}: no water-level var "
+            f"(wlevel_m / depth) in {triton_ts}"
+        )
+        return
+    # Reduce over every dim except the time dim so we get one value per
+    # timestep, then count timesteps where the field is positive somewhere.
+    t_dim = _time_dim(ds[depth_var])
+    if t_dim is None:
+        failures.append(
+            f"event {event_iloc} {model_type}: {depth_var} has no time dim in {triton_ts}"
+        )
+        return
+    non_time_dims = tuple(d for d in ds[depth_var].dims if d != t_dim)
+    nonzero_ts = int((ds[depth_var] > 0).any(dim=non_time_dims).sum().values)
+    if nonzero_ts < 2:
+        failures.append(
+            f"event {event_iloc} {model_type}: TRITON {depth_var} non-zero "
+            f"at only {nonzero_ts} timesteps"
         )

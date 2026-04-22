@@ -293,3 +293,118 @@ def norfolk_multi_sim_unified_cached(platform_pilot):
         pytest.fail(f"Unsupported platform in pilot: {platform_pilot}")
 
     return case.analysis
+
+
+# ========== Synthetic Test Fixtures ==========
+
+
+@pytest.fixture
+def synth_all_models_analysis():
+    case = cases.Local_TestCases.retrieve_synth_all_models_test_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_all_models_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_all_models_test_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_multi_sim_analysis():
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_multi_sim_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_triton_only_analysis():
+    case = cases.Local_TestCases.retrieve_synth_triton_only_test_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_triton_only_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_triton_only_test_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_swmm_only_analysis():
+    case = cases.Local_TestCases.retrieve_synth_swmm_only_test_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_swmm_only_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_swmm_only_test_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_triton_and_tritonswmm_analysis():
+    case = cases.Local_TestCases.retrieve_synth_triton_and_tritonswmm_test_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_triton_and_tritonswmm_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_triton_and_tritonswmm_test_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_sensitivity_analysis():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_sensitivity_analysis_cached():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch=False
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_sensitivity_triton_only():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_triton_only(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_sensitivity_swmm_only():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_swmm_only(
+        start_from_scratch=True
+    )
+    return case.analysis
