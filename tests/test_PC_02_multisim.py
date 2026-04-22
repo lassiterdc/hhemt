@@ -1,5 +1,6 @@
-import pytest
+"""Regression smoke against real Norfolk data. Detailed assertions live in test_synth_02_multisim.py."""
 
+import pytest
 
 import tests.utils_for_testing as tst_ut
 

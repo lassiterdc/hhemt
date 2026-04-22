@@ -1,3 +1,5 @@
+"""Regression smoke against real Norfolk data. Detailed assertions live in test_synth_00_compile_models.py."""
+
 import pytest
 
 import tests.utils_for_testing as tst_ut
