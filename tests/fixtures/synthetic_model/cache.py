@@ -92,10 +92,23 @@ def _toolkit_version() -> str:
             return "0.0.0+unknown"
 
 
+# Computed once at import time. The SHA-1 of swmm_template.py source bytes is
+# baked into the cache key so topology changes in swmm_template.py (which do
+# NOT change SyntheticModelParams) auto-invalidate every existing
+# synthetic-model cache directory. A params-only cache key would serve stale
+# artifacts after a topology edit; this constant closes that gap. Computing
+# at import time raises an observable ImportError if the source is unreadable
+# (far more diagnosable than an opaque cache-miss surfaced inside _cache_key).
+_SWMM_TEMPLATE_SOURCE_HASH: str = hashlib.sha1(
+    Path(swmm_template.__file__).read_bytes()
+).hexdigest()[:16]
+
+
 def _cache_key(params: SyntheticModelParams) -> str:
     payload = {
         "params": dataclasses.asdict(params),
         "toolkit_version": _toolkit_version(),
+        "swmm_template_source_hash": _SWMM_TEMPLATE_SOURCE_HASH,
     }
     return hashlib.sha1(
         json.dumps(payload, sort_keys=True).encode("utf-8")
