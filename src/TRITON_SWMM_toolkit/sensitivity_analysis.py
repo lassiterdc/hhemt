@@ -606,6 +606,110 @@ class TRITONSWMM_sensitivity_analysis:
         df_export.to_csv(output_path, index=True)
         return output_path
 
+    def find_orphan_subanalysis_dirs(self) -> list[Path]:
+        """Return sub-analysis directories on disk whose sa_id is absent from the current CSV.
+
+        The authoritative set of expected sub-analysis directory names is derived
+        from ``self.df_setup.index`` (the sensitivity CSV's ``sa_id`` column) and
+        the ``self.sub_analyses_prefix`` constant. This ties orphan detection to
+        the CSV directly, so a partially-constructed ``self.sub_analyses`` dict
+        cannot cause legitimate directories to be misclassified as orphans.
+        On-disk ``sa_*`` directories whose suffix fails the Snakemake-wildcard-safe
+        charset ``^[A-Za-z0-9_.]+$`` are skipped — they were not created by this
+        toolkit and must not be deleted by it. If ``self.subanalysis_dir`` does
+        not exist, returns ``[]``.
+        """
+        import re as _re
+
+        if not self.subanalysis_dir.exists():
+            return []
+        expected_names = {
+            f"{self.sub_analyses_prefix}{sa_id}"
+            for sa_id in self.df_setup.index.astype(str)
+        }
+        charset = _re.compile(r"^[A-Za-z0-9_.]+$")
+        orphans: list[Path] = []
+        for entry in self.subanalysis_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if not entry.name.startswith(self.sub_analyses_prefix):
+                continue
+            suffix = entry.name[len(self.sub_analyses_prefix):]
+            if not charset.match(suffix):
+                continue
+            if entry.name not in expected_names:
+                orphans.append(entry)
+        return sorted(orphans)
+
+    def cleanup_orphan_subanalysis_dirs(
+        self,
+        dry_run: bool = True,
+        force: bool = False,
+        verbose: bool = True,
+    ) -> list[Path]:
+        """Identify and optionally delete orphaned sub-analysis directories.
+
+        Uses :meth:`find_orphan_subanalysis_dirs` to locate directories under
+        ``subanalyses/`` whose ``sa_id`` no longer appears in the current CSV.
+
+        Parameters
+        ----------
+        dry_run : bool
+            If True (default), only reports orphans without deleting.
+        force : bool
+            Required when ``dry_run=False``. Without it, the method raises
+            ``ValueError`` to guard against accidental deletion of expensive
+            HPC outputs.
+        verbose : bool
+            If True, prints each orphan path via ``print(..., flush=True)``.
+
+        Returns
+        -------
+        list[Path]
+            The orphan directories (either deleted or proposed for deletion).
+
+        Raises
+        ------
+        ValueError
+            If ``dry_run=False`` and ``force=False``.
+        """
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+        orphans = self.find_orphan_subanalysis_dirs()
+        if verbose:
+            if orphans:
+                print(f"[cleanup-orphans] Found {len(orphans)} orphan sub-analysis directories:", flush=True)
+                for p in orphans:
+                    print(f"  {p}", flush=True)
+            else:
+                print("[cleanup-orphans] No orphan sub-analysis directories found.", flush=True)
+        if dry_run:
+            return orphans
+        if not force:
+            raise ValueError(
+                "cleanup_orphan_subanalysis_dirs called with dry_run=False but "
+                "force=False. Pass force=True to perform deletion."
+            )
+        deleted: list[Path] = []
+        failed: list[tuple[Path, Exception]] = []
+        for p in orphans:
+            if verbose:
+                print(f"[cleanup-orphans] Deleting {p}", flush=True)
+            try:
+                fast_rmtree(p)
+                deleted.append(p)
+            except Exception as exc:
+                failed.append((p, exc))
+                if verbose:
+                    print(f"[cleanup-orphans] FAILED to delete {p}: {exc}", flush=True)
+        if failed:
+            summary = "; ".join(f"{p}: {exc}" for p, exc in failed)
+            raise RuntimeError(
+                f"cleanup_orphan_subanalysis_dirs deleted {len(deleted)} of "
+                f"{len(orphans)} orphans; failures: {summary}"
+            )
+        return deleted
+
     def _create_sub_analyses(self):
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():

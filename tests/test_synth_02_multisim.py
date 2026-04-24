@@ -1,17 +1,16 @@
-"""Regression smoke against real Norfolk data. Detailed assertions live in test_synth_02_multisim.py."""
+"""Synthetic-model multi-sim tier. Mirror of test_PC_02 using synth fixtures."""
 
 import pytest
 
 import tests.utils_for_testing as tst_ut
 
-pytestmark = [
-    pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
-    pytest.mark.slow,
-]
+pytestmark = pytest.mark.skipif(
+    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+)
 
 
-def test_run_multisim_concurrently(norfolk_multi_sim_analysis):
-    analysis = norfolk_multi_sim_analysis
+def test_run_multisim_concurrently(synth_multi_sim_analysis):
+    analysis = synth_multi_sim_analysis
     analysis._system.compile_TRITON_SWMM(recompile_if_already_done_successfully=False)
     prepare_scenario_launchers = analysis.retrieve_prepare_scenario_launchers(
         overwrite_scenario_if_already_set_up=True, verbose=True
@@ -27,11 +26,10 @@ def test_run_multisim_concurrently(norfolk_multi_sim_analysis):
     tst_ut.assert_scenarios_run(analysis)
 
 
-def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cached):
-    analysis = norfolk_multi_sim_analysis_cached
+def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cached):
+    analysis = synth_multi_sim_analysis_cached
     enabled_models = tst_ut.get_enabled_model_types(analysis)
 
-    # Process timeseries and summaries for ALL enabled model types
     for event_iloc in analysis.df_sims.index:
         proc = analysis._retrieve_sim_run_processing_object(event_iloc)
 
@@ -71,15 +69,12 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
 
     analysis._update_log()
 
-    # Validate per-scenario outputs for each model type
     tst_ut.assert_timeseries_processed(analysis)
     for model_type in enabled_models:
         tst_ut.assert_model_outputs_processed(analysis, model_type)
 
-    # Consolidate into analysis-level summaries
     analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
         overwrite_outputs_if_already_created=True,
     )
 
-    # Validate analysis-level consolidated outputs
     tst_ut.assert_analysis_summaries_created(analysis)
