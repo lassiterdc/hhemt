@@ -160,6 +160,7 @@ class TRITONSWMM_sensitivity_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        report_config_path: "Path | None" = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -233,6 +234,7 @@ class TRITONSWMM_sensitivity_analysis:
             dry_run=dry_run,
             verbose=verbose,
             override_hpc_total_nodes=override_hpc_total_nodes,
+            report_config_path=report_config_path,
         )
 
     def run_all_sims(

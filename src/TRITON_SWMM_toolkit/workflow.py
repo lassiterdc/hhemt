@@ -186,7 +186,14 @@ class SnakemakeWorkflowBuilder:
             Config arguments string
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
-        return f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
+        args = (
+            f"--system-config {self.system.system_config_yaml} \\\n"
+            f"            --analysis-config {analysis_cfg}"
+        )
+        report_cfg_path = getattr(self, "_report_config_path", None)
+        if report_cfg_path is not None:
+            args += f" \\\n            --report-config {report_cfg_path}"
+        return args
 
     def _build_resource_block(
         self,
@@ -297,6 +304,7 @@ class SnakemakeWorkflowBuilder:
         overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
+        report_config_path: "Path | None" = None,
     ) -> str:
         """
         Generate Snakefile content with separate rules for prep, simulation, and processing.
@@ -343,6 +351,8 @@ class SnakemakeWorkflowBuilder:
             Complete Snakefile content as a string
         """
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        self._report_config_path = report_config_path
 
         n_sims = len(self.analysis.df_sims)
         event_ids = [
@@ -2480,6 +2490,7 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        report_config_path: "Path | None" = None,
     ) -> dict:
         """
         Submit workflow using Snakemake.
@@ -2534,6 +2545,8 @@ exit $snakemake_status
         dict
             Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
         """
+        self._report_config_path = report_config_path
+
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
 
@@ -2570,6 +2583,7 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                report_config_path=report_config_path,
             )
 
             # Write Snakefile to disk
@@ -2624,6 +2638,7 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
+                report_config_path=report_config_path,
             )
 
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
@@ -2676,6 +2691,7 @@ exit $snakemake_status
             overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
+            report_config_path=report_config_path,
         )
 
         # Write Snakefile to disk
@@ -2778,6 +2794,7 @@ class SensitivityAnalysisWorkflowBuilder:
         process_timeseries: bool = True,
         clear_raw_outputs: bool = True,
         pickup_where_leftoff: bool = True,
+        report_config_path: "Path | None" = None,
     ) -> str:
         """
         For sensitivity analyses.
@@ -3176,6 +3193,7 @@ rule setup:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        report_config_path: "Path | None" = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -3233,6 +3251,9 @@ rule setup:
             - snakefile_path: Path
             - message: str
         """
+        self._report_config_path = report_config_path
+        self._base_builder._report_config_path = report_config_path
+
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
 
@@ -3408,6 +3429,7 @@ rule setup:
             process_timeseries=process_timeseries,
             clear_raw_outputs=clear_raw_outputs,
             pickup_where_leftoff=pickup_where_leftoff,
+            report_config_path=report_config_path,
         )
 
         master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"

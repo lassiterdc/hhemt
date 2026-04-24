@@ -62,6 +62,15 @@ def run_command(
         dir_okay=False,
         readable=True,
     ),
+    report_config: Path | None = typer.Option(
+        None,
+        "--report-config",
+        help="Path to a report_config.yaml. When omitted, uses the built-in default.",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     # ═══════════════════════════════════════════════════════════════
     # Execution Control
     # ═══════════════════════════════════════════════════════════════
@@ -401,6 +410,7 @@ def run_command(
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
+            report_config=report_config,
         )
 
         # Check workflow result

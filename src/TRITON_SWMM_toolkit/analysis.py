@@ -1503,6 +1503,7 @@ class TRITONSWMM_analysis:
         clear_raw_outputs: bool = True,
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
+        report_config: "Path | None" = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1575,6 +1576,36 @@ class TRITONSWMM_analysis:
         import time
 
         from .orchestration import WorkflowResult, translate_mode, translate_phases
+        from .config.report import (
+            DEFAULT_REPORT_CONFIG,
+            report_config as ReportConfigModel,
+            validate_sensitivity_independent_vars,
+        )
+        from .config.loaders import yaml_to_model
+        from .exceptions import ConfigurationError
+
+        # Pre-run report_config validation — fail fast before submitting workflow
+        if report_config is not None:
+            report_config = Path(report_config)
+            try:
+                cfg_report = yaml_to_model(report_config, ReportConfigModel)
+            except Exception as e:
+                raise ConfigurationError(
+                    field="report_config",
+                    message=f"Failed to load/validate {report_config}: {e}",
+                    config_path=report_config,
+                ) from e
+        else:
+            cfg_report = DEFAULT_REPORT_CONFIG
+
+        sa_csv = (
+            self.cfg_analysis.sensitivity_analysis
+            if self.cfg_analysis.toggle_sensitivity_analysis
+            else None
+        )
+        validate_sensitivity_independent_vars(cfg_report, sa_csv)
+        self._cfg_report = cfg_report
+        self._cfg_report_path = report_config
 
         # Pre-run transfer validation — fail fast before submitting the workflow
         if transfer_config is not None:
@@ -1644,6 +1675,7 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
+            "report_config_path": self._cfg_report_path,
         }
 
         if verbose:
@@ -1944,6 +1976,7 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        report_config_path: "Path | None" = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2022,6 +2055,7 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                report_config_path=report_config_path,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2043,6 +2077,7 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                report_config_path=report_config_path,
             )
 
         if dry_run and result.get("success"):

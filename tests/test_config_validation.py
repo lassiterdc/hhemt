@@ -99,3 +99,133 @@ def test_analysis_config_gpu_hardware_override_rejects_non_string(tmp_path: Path
     cfg["gpu_hardware_override"] = 42
     with pytest.raises(ValidationError, match="gpu_hardware_override"):
         analysis_config.model_validate(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — report_config schema validation
+# ---------------------------------------------------------------------------
+
+
+def _write_report_yaml(path: Path, body: str) -> Path:
+    path.write_text(body)
+    return path
+
+
+def test_report_config_loads_default(tmp_path: Path):
+    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+    from TRITON_SWMM_toolkit.config.report import report_config
+
+    yaml_path = _write_report_yaml(
+        tmp_path / "report.yaml",
+        "figure_defaults:\n  dpi: 120\n",
+    )
+    cfg = yaml_to_model(yaml_path, report_config)
+    assert cfg.figure_defaults.dpi == 120
+    assert cfg.sensitivity is None  # F-I-7: default is None
+
+
+def test_report_config_rejects_unknown_field(tmp_path: Path):
+    """Flag 7 — `extra='forbid'` regression test."""
+    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+    from TRITON_SWMM_toolkit.config.report import report_config
+
+    yaml_path = _write_report_yaml(
+        tmp_path / "report.yaml",
+        "system-map:\n  target_epsg: 4326\n",  # hyphen, not underscore
+    )
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        yaml_to_model(yaml_path, report_config)
+
+
+def test_report_config_sensitivity_missing_independent_vars(tmp_path: Path):
+    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+    from TRITON_SWMM_toolkit.config.report import report_config
+
+    yaml_path = _write_report_yaml(
+        tmp_path / "report.yaml",
+        "sensitivity:\n  mode: benchmarking\n",  # missing independent_vars
+    )
+    with pytest.raises(ValidationError, match="independent_vars"):
+        yaml_to_model(yaml_path, report_config)
+
+
+def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_sensitivity_independent_vars,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    csv_path = tmp_path / "sa.csv"
+    pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(
+        csv_path, index=False
+    )
+    cfg = report_config(
+        sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"])
+    )
+    with pytest.raises(ConfigurationError) as exc:
+        validate_sensitivity_independent_vars(cfg, csv_path)
+    assert "missing_col" in str(exc.value)
+
+
+def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
+    """Flag 17 — Snakemake-safe charset validation."""
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_sensitivity_independent_vars,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    csv_path = tmp_path / "sa.csv"
+    pd.DataFrame({"bad name": [1, 2]}).to_csv(csv_path, index=False)
+    cfg = report_config(
+        sensitivity=SensitivityReportConfig(independent_vars=["bad name"])
+    )
+    with pytest.raises(ConfigurationError, match="charset"):
+        validate_sensitivity_independent_vars(cfg, csv_path)
+
+
+def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path: Path):
+    """F-I-6 — sensitivity CSV present with no sensitivity block raises."""
+    from TRITON_SWMM_toolkit.config.report import (
+        report_config,
+        validate_sensitivity_independent_vars,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    csv_path = tmp_path / "sa.csv"
+    csv_path.write_text("col\n1\n")
+    cfg = report_config()  # no sensitivity block
+    with pytest.raises(ConfigurationError, match="must be set"):
+        validate_sensitivity_independent_vars(cfg, csv_path)
+
+
+def test_validate_sensitivity_fails_when_block_present_but_no_csv(tmp_path: Path):
+    from TRITON_SWMM_toolkit.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_sensitivity_independent_vars,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["col"]))
+    with pytest.raises(ConfigurationError, match="no sensitivity CSV path"):
+        validate_sensitivity_independent_vars(cfg, None)
+
+
+def test_report_artifacts_not_in_globus_exclude_patterns():
+    """Flag 14 — R12 automated Globus-exclude audit."""
+    from TRITON_SWMM_toolkit.config.globus import DEFAULT_EXCLUDE_PATTERNS
+
+    for bad in ("plots", "report", "analysis_report.html"):
+        assert not any(bad in p for p in DEFAULT_EXCLUDE_PATTERNS), (
+            f"{bad!r} would match an entry of DEFAULT_EXCLUDE_PATTERNS "
+            f"{DEFAULT_EXCLUDE_PATTERNS}; R12 requires report artifacts "
+            "to be included in the default Globus transfer."
+        )

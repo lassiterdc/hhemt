@@ -13,6 +13,11 @@ def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
     return model_cls.model_validate(yaml.safe_load(cfg_yaml.read_text()))
 
 
+def yaml_to_model(cfg_yaml: Path, model_cls: type[_M]) -> _M:
+    """Load a YAML file and validate it against a Pydantic model class."""
+    return _load_config(cfg_yaml, model_cls)
+
+
 def load_system_config_from_dict(cfg_dict: dict) -> system_config:
     return system_config.model_validate(cfg_dict)
 
