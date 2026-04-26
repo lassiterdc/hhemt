@@ -43,9 +43,9 @@ class SyntheticModelParams:
     n_cols: int = 20
     n_rows: int = 30
     cell_size_m: float = 10.0
-    xllcorner: float = 400000.0       # EPSG:32618 UTM zone 18N
-    yllcorner: float = 4075000.0
-    epsg: int = 32618
+    xllcorner: float = 0.0            # test-case local origin (no real-world geolocation)
+    yllcorner: float = 0.0
+    epsg: int = 3857                  # Web Mercator — accepts (0,0) at equator/prime meridian
     slope_ns: float = 0.01            # 1% N->S
     valley_depth_m: float = 0.5
     impervious_mannings: float = 0.015
@@ -102,6 +102,39 @@ def _cache_key(params: SyntheticModelParams) -> str:
     ).hexdigest()[:16]
 
 
+def _assert_rim_matches_dem(params, dem_path: Path, swmm_full_path: Path) -> None:
+    """Verify that each SWMM junction's rim elevation equals the DEM cell
+    elevation at its coordinate. Enforces the user-locked invariant in the
+    Phase 2 STOP-gate iteration-2 feedback: rim(node) == DEM(col, row)."""
+    import rioxarray as rxr  # local import — avoids GDAL-import-order crash
+    import swmmio
+
+    from . import swmm_template as _t
+
+    dem = rxr.open_rasterio(dem_path).squeeze()
+    m = swmmio.Model(str(swmm_full_path))
+    cs = params.cell_size_m
+    x0 = params.xllcorner
+    y0 = params.yllcorner
+    node_tables = [m.inp.junctions, m.inp.outfalls]
+    coords = m.inp.coordinates
+    for tbl in node_tables:
+        for name, row in tbl.iterrows():
+            x = float(coords.at[name, "X"])
+            y = float(coords.at[name, "Y"])
+            col = int(round((x - x0) / cs - 0.5))
+            grid_row = int(round((y - y0) / cs - 0.5))
+            matrix_row = params.n_rows - 1 - grid_row
+            dem_elev = float(dem.values[matrix_row, col])
+            depth = float(row.get("MaxDepth", 0.0)) if "MaxDepth" in row.index else _t._JUNCTION_DEPTH_M
+            rim = float(row["InvertElev"]) + depth
+            if abs(rim - dem_elev) > 1e-3:
+                raise AssertionError(
+                    f"node {name!r} rim {rim:.3f} != DEM {dem_elev:.3f} at "
+                    f"(col={col}, row_from_bottom={grid_row})"
+                )
+
+
 def _cache_root() -> Path:
     return Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit")) / "synthetic_test_models"
 
@@ -127,6 +160,7 @@ def get_or_build_synthetic_case(
             )
             weather_nc = weather.build_weather(params, cache_dir / "weather.nc")
             cfg = triton_cfg.build_cfg(params, cache_dir / "tritonswmm.cfg")
+            _assert_rim_matches_dem(params, dem, full)
             _ = (dem, landuse_tif, lookup, watershed, boundary, hydraulics,
                  hydrology, full, mapping, weather_nc, cfg)
             sentinel.write_text("ok\n", encoding="utf-8")

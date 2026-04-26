@@ -289,6 +289,58 @@ class SnakemakeWorkflowBuilder:
             return 1
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
+    def _build_plot_rule_block_system_overview(self) -> str:
+        """Generate the Snakemake rule for the 2-panel system-overview plot.
+
+        Left panel is the SWMM model elements view (R5); right panel is the
+        DEM elevation raster. Combined into one figure per iteration-4
+        feedback from the Phase 2 STOP gate.
+        """
+        import os as _os
+
+        conda_env_path = self._get_conda_env_path()
+        config_args = self._get_config_args()
+        analysis_dir = self.analysis.analysis_paths.analysis_dir
+        analysis_root = str(analysis_dir.resolve())
+        cfg_ana = self.analysis.cfg_analysis
+        if getattr(cfg_ana, "toggle_sensitivity_analysis", False):
+            subs = self.analysis.sensitivity.sub_analyses
+            first_sub = subs[next(iter(subs))]
+            repr_inp = first_sub._retrieve_sim_runs(0)._scenario.scen_paths.swmm_hydro_inp
+        else:
+            repr_inp = (
+                self.analysis._retrieve_sim_runs(0)._scenario.scen_paths.swmm_hydro_inp
+            )
+        source_paths = [
+            _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root),
+            _os.path.relpath(str(Path(repr_inp).resolve()), analysis_root),
+        ]
+        if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
+            source_paths.append(
+                _os.path.relpath(
+                    str(Path(cfg_ana.storm_tide_boundary_line_gis).resolve()), analysis_root
+                )
+            )
+        return f'''
+rule plot_system_overview:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        "plots/system_overview.png"
+    params:
+        source_paths = {source_paths!r},
+    log: "logs/plots/system_overview.log"
+    conda: "{conda_env_path}"
+    resources: mem_mb=2000, time_min=10
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli system_overview \\
+            {config_args} \\
+            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+'''
+
     def generate_snakefile_content(
         self,
         process_system_level_inputs: bool = False,
@@ -478,7 +530,9 @@ SIM_IDS = {event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 
 rule all:
-    input: "_status/e_consolidate_complete.flag"
+    input:
+        "_status/e_consolidate_complete.flag",
+        "plots/system_overview.png",
 
 onsuccess:
     shell("""
@@ -662,6 +716,7 @@ rule consolidate:
         touch {{output}}
         """
 '''
+        snakefile_content += self._build_plot_rule_block_system_overview()
         return snakefile_content
 
     def generate_snakemake_config(self, mode: Literal["local", "slurm", "single_job"]) -> dict:
