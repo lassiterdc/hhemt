@@ -12,6 +12,9 @@
     "subanalyses/sa_0/sims/0-event_id.0/log_triton.json",
     "subanalyses/sa_0/sims/1-event_id.1/build/.gitkeep",
     "subanalyses/sa_0/sims/1-event_id.1/log_triton.json",
-    "_status/scenario_0-event_id.0.flag"
+    "_status/scenario_0-event_id.0.flag",
+    "triton_summary.zarr/",
+    "tritonswmm_summary.zarr/",
+    "swmm_summary.zarr/"
   ]
 }
