@@ -12,6 +12,18 @@ Or run a specific test:
 import os
 import sys
 
+import pytest
+
+# These tests require an interactive Globus auth flow (stdin input). They are
+# documented in the module docstring as manual-run-only and fail under pytest's
+# default captured-output mode with `OSError: pytest: reading from stdin while
+# output is captured!`. Skip the whole module when collected by pytest; the
+# documented invocation paths (`python tests/dev/test_globus_transfer.py ...`)
+# are unaffected because they bypass pytest collection entirely.
+pytestmark = pytest.mark.skip(
+    reason="manual interactive Globus auth required; see module docstring for direct-invocation form"
+)
+
 # Use worktree source if available, otherwise fall back to installed package
 WORKTREE_SRC = "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/globus-auto-transfer-and-debug-restructuring/src"
 if os.path.isdir(WORKTREE_SRC):

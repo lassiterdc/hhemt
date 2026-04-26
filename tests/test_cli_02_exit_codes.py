@@ -24,7 +24,7 @@ runner = CliRunner()
 
 def test_exit_code_0_list_testcases():
     """Test --list-testcases exits with code 0."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -33,7 +33,7 @@ def test_exit_code_0_list_testcases():
 
 def test_exit_code_0_list_case_studies():
     """Test --list-case-studies exits with code 0."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -52,7 +52,7 @@ def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -70,7 +70,7 @@ def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "invalid_profile",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -86,7 +86,7 @@ def test_exit_code_2_cli_validation_error_conditional_requirement(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "testcase",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -98,7 +98,7 @@ def test_exit_code_2_cli_validation_error_conditional_requirement(tmp_path):
 
 def test_exit_code_2_missing_required_argument():
     """Test missing required argument exits with code 2."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--system-config", "system.yaml",
         "--analysis-config", "analysis.yaml",
         # Missing --profile
@@ -108,7 +108,7 @@ def test_exit_code_2_missing_required_argument():
 
 def test_exit_code_2_configuration_error_nonexistent_file():
     """Test ConfigurationError (nonexistent file) exits with code 2."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", "/nonexistent/system.yaml",
         "--analysis-config", "/nonexistent/analysis.yaml",
@@ -119,7 +119,7 @@ def test_exit_code_2_configuration_error_nonexistent_file():
 
 def test_exit_code_2_configuration_error_invalid_catalog_path():
     """Test ConfigurationError (invalid catalog) exits with code 2."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "/nonexistent/catalog.yaml",
     ])
