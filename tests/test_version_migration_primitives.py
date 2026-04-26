@@ -272,6 +272,61 @@ def test_zarr_flat_to_datatree_builds_tree(tmp_path: Path) -> None:
     assert "a" in dt["group"].dataset.variables
 
 
+def test_zarr_flat_to_datatree_skips_missing_inputs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Missing input stores produce a WARNING and are skipped, not raised.
+
+    V0003 in production may run against trees missing one or more flat-mode
+    zarrs (e.g., a swmm-only run with no triton output). The primitive must
+    handle this gracefully rather than aborting the whole migration.
+    """
+    import logging
+
+    import numpy as np
+    import xarray as xr
+
+    present = tmp_path / "present.zarr"
+    missing = tmp_path / "absent.zarr"  # never created
+    xr.Dataset({"a": (("t",), np.arange(2))}).to_zarr(
+        present, mode="w", consolidated=False
+    )
+    out = tmp_path / "tree.zarr"
+    caplog.set_level(logging.WARNING, logger="TRITON_SWMM_toolkit.version_migration.context")
+    ctx = _ctx(tmp_path)
+    ctx.zarr_flat_to_datatree(
+        input_stores={"present": present, "missing": missing},
+        output_store=out,
+        tree_spec={"/here": "present", "/gone": "missing"},
+    )
+    ctx.execute()  # must not raise FileNotFoundError
+    dt = xr.open_datatree(out, engine="zarr", consolidated=False)
+    assert "here" in dt.children
+    assert "gone" not in dt.children
+    assert any(
+        r.levelname == "WARNING" and "input store missing" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_zarr_flat_to_datatree_all_missing_no_output(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When every input store is missing, no output store is created."""
+    import logging
+
+    out = tmp_path / "tree.zarr"
+    caplog.set_level(logging.WARNING, logger="TRITON_SWMM_toolkit.version_migration.context")
+    ctx = _ctx(tmp_path)
+    ctx.zarr_flat_to_datatree(
+        input_stores={"a": tmp_path / "absent_a.zarr", "b": tmp_path / "absent_b.zarr"},
+        output_store=out,
+        tree_spec={"/x": "a", "/y": "b"},
+    )
+    ctx.execute()
+    assert not out.exists()
+
+
 # ---- Config: yaml_rename_field ----
 
 

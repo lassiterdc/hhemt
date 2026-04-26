@@ -222,6 +222,13 @@ __marimo__/
 *.zarr
 *.h5
 
+# Negation: golden legacy-layout fixtures must be tracked (master plan
+# version_migration_system Cross-Phase Requirement #9: fixtures frozen
+# once committed). These are tiny synthetic zarrs (1-timestep, 2-cell)
+# bounded by the 5 MB fixture-dir budget.
+!tests/fixtures/legacy_layouts/**/*.zarr
+!tests/fixtures/legacy_layouts/**/*.zarr/**
+
 # TRITON-SWMM toolkit custom
 *_archive*
 *test_data/*/system*

@@ -484,8 +484,16 @@ class MigrationContext:
         nodes: dict[str, xr.Dataset] = {}
         encoding: dict[str, dict[str, dict]] = {}
         for tree_path, input_key in tree_spec.items():
+            input_path = Path(input_stores[input_key])
+            if not input_path.exists():
+                logger.warning(
+                    "[%s] zarr_flat_to_datatree: input store missing, skipping: %s",
+                    self.migration_id,
+                    input_path,
+                )
+                continue
             ds = xr.open_dataset(
-                input_stores[input_key],
+                input_path,
                 engine="zarr",
                 consolidated=False,
                 chunks={},
@@ -525,6 +533,13 @@ class MigrationContext:
                 }
                 for vname, var in ds.variables.items()
             }
+        if not nodes:
+            logger.warning(
+                "[%s] zarr_flat_to_datatree: no input stores present, output not created: %s",
+                self.migration_id,
+                output_store,
+            )
+            return
         dt = xr.DataTree.from_dict(nodes)
         dt.to_zarr(
             output_store, mode="w-", consolidated=False, encoding=encoding

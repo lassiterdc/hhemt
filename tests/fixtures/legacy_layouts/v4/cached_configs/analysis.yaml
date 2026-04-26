@@ -1,0 +1,12 @@
+# Minimal analysis config stub for legacy_layouts/v0 golden fixture.
+# `expected_weather_indexers` is read by the monkeypatched
+# MigrationContext.build_expected_slugs_for_current_version in
+# tests/test_version_migration_golden.py. Each entry is passed verbatim to
+# TRITON_SWMM_toolkit.scenario.compute_event_id_slug, which produces
+# '_'.join(f'{k}.{v}' for k,v in dict.items()).
+#
+# Entry {event_id: 0} -> slug 'event_id.0'
+# Entry {event_id: 1} -> slug 'event_id.1'
+expected_weather_indexers:
+  - event_id: 0
+  - event_id: 1
