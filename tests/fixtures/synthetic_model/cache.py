@@ -53,7 +53,7 @@ class SyntheticModelParams:
     sim_duration_min: int = 10
     triton_timestep_s: float = 1.0
     reporting_timestep_s: float = 10.0
-    rainfall_peak_mm_per_hr: float = 100.0
+    rainfall_peak_mm_per_hr: float = 500.0  # iter-3 conduit_flow feedback: forces all conduits to >= max-over-full
     rainfall_peak_min: int = 3
     stormtide_mean_m: float = 2.0
     stormtide_amplitude_m: float = 0.8

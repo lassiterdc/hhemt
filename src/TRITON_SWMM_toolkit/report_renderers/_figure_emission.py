@@ -119,6 +119,39 @@ def emit_plot_with_sources(
     return output_path
 
 
+def collect_per_sim_source_paths(renderer_kind: str, event_id: str) -> list[str]:
+    """Build `source_paths` for a per-sim plot rule at wildcards-resolution time.
+
+    Called from within the generated master Snakefile via a function-based
+    `params:` (see `workflow.py:_build_plot_rule_block_per_sim`). Reads
+    relative paths so the figure metadata + caption interpolation stay
+    portable across analysis-dir relocations.
+
+    Parameters
+    ----------
+    renderer_kind : {"peak_flood_depth", "conduit_flow"}
+        Which per-sim renderer the caller is rendering for.
+    event_id : str
+        Snakemake wildcards.event_id — typically `event_index.<n>` for the
+        synth fixtures.
+
+    Returns
+    -------
+    list[str]
+        Source-path strings expressed relative to the analysis_dir, suitable
+        for embedding in the figure's PNG metadata at render time.
+    """
+    base = f"sims/{event_id}/processed"
+    swmm_inp = f"sims/{event_id}/swmm/hydraulics.inp"
+    if renderer_kind == "peak_flood_depth":
+        return [f"{base}/TRITONSWMM_TRITON_summary.zarr"]
+    if renderer_kind == "conduit_flow":
+        return [f"{base}/TRITONSWMM_SWMM_link_summary.zarr", swmm_inp]
+    raise ValueError(
+        f"unknown renderer_kind {renderer_kind!r}; expected 'peak_flood_depth' or 'conduit_flow'"
+    )
+
+
 def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
     """Build source_paths list for the sensitivity benchmarking rule at wildcards-resolution time.
 

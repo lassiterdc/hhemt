@@ -533,6 +533,8 @@ rule all:
     input:
         "_status/e_consolidate_complete.flag",
         "plots/system_overview.png",
+        expand("plots/per_sim/{{event_id}}/peak_flood_depth.png", event_id=SIM_IDS),
+        expand("plots/per_sim/{{event_id}}/conduit_flow.png",     event_id=SIM_IDS),
 
 onsuccess:
     shell("""
@@ -717,7 +719,75 @@ rule consolidate:
         """
 '''
         snakefile_content += self._build_plot_rule_block_system_overview()
+        snakefile_content += self._build_plot_rule_block_per_sim()
         return snakefile_content
+
+    def _build_plot_rule_block_per_sim(self) -> str:
+        """Generate two per-sim plot rules wildcarded over event_id (Phase 3, R6).
+
+        `params.source_paths` for each rule is a function-based lookup
+        (`_per_sim_*_sources`) that reads event-scoped paths at rule-schedule
+        time (not Snakefile-emit time) — keeps the generated Snakefile
+        readable even for large scenario counts. The wildcards' `event_id`
+        is mapped to the integer `event_iloc` argument expected by the
+        renderer CLI via the Snakefile-level `ILOC_BY_EVENT_ID` dict (set
+        alongside `SIM_IDS` in `generate_snakefile_content`).
+        """
+        conda_env_path = self._get_conda_env_path()
+        config_args = self._get_config_args()
+        return f'''
+def _per_sim_flood_depth_sources(wildcards):
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        collect_per_sim_source_paths,
+    )
+    return collect_per_sim_source_paths("peak_flood_depth", wildcards.event_id)
+
+def _per_sim_conduit_flow_sources(wildcards):
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        collect_per_sim_source_paths,
+    )
+    return collect_per_sim_source_paths("conduit_flow", wildcards.event_id)
+
+rule plot_per_sim_peak_flood_depth:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        "plots/per_sim/{{event_id}}/peak_flood_depth.png"
+    params:
+        source_paths = _per_sim_flood_depth_sources,
+        event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
+    log: "logs/plots/per_sim_peak_flood_depth_{{event_id}}.log"
+    conda: "{conda_env_path}"
+    resources: mem_mb=4000, time_min=15
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_peak_flood_depth \\
+            {config_args} \\
+            --event-iloc {{params.event_iloc}} \\
+            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+
+rule plot_per_sim_conduit_flow:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        "plots/per_sim/{{event_id}}/conduit_flow.png"
+    params:
+        source_paths = _per_sim_conduit_flow_sources,
+        event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
+    log: "logs/plots/per_sim_conduit_flow_{{event_id}}.log"
+    conda: "{conda_env_path}"
+    resources: mem_mb=4000, time_min=15
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_conduit_flow \\
+            {config_args} \\
+            --event-iloc {{params.event_iloc}} \\
+            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+'''
 
     def generate_snakemake_config(self, mode: Literal["local", "slurm", "single_job"]) -> dict:
         """

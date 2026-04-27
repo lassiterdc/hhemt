@@ -152,8 +152,10 @@ _CONDUITS = [
 
 # Conduit cross-section diameter (m). Intentionally small so runoff from
 # S1/S2/S3 surcharges the network — forces flow into the TRITON 2-D solver
-# via the rim/cell coupling (per iteration-2 scenario constraint).
-_CONDUIT_DIAMETER_M = 0.2
+# via the rim/cell coupling. Iter-3 conduit_flow feedback: 0.2 m kept C4 at
+# only 0.94 max-over-full and C1/C2/C3 well below 1.0 at 500 mm/hr rainfall;
+# 0.1 m cap forces all four conduits to surcharge (max-over-full >= 1.0).
+_CONDUIT_DIAMETER_M = 0.1
 
 # (col_min, row_from_bottom_min, col_max, row_from_bottom_max). Per iteration-2
 # feedback: identically-sized 5×5-cell polygons. S1/S2/S3 only — S4 removed
@@ -326,7 +328,10 @@ def _subcatchments_df(params) -> pd.DataFrame:
     # exercise mixed surface response. Area is derived from the actual polygon
     # bounds so `[SUBCATCHMENTS].Area` matches `[POLYGONS]`. Iter-2: S4 removed
     # (J4 has no subcatchment); S1/S2/S3 polygons are identical 5×5 rectangles.
-    perc_imperv_map = {"S1": 80, "S2": 20, "S3": 60}
+    # iter-3 feedback (conduit_flow): all 100% impervious to max runoff and
+    # ensure every downstream conduit reaches >= max-over-full flow. The earlier
+    # 80/20/60 split was for visual variety, retained as the comment for record.
+    perc_imperv_map = {"S1": 100, "S2": 100, "S3": 100}
     names = [s for s, _ in _SUBCATCHMENTS]
     outlets = [outlet for _, outlet in _SUBCATCHMENTS]
     areas_ha = []
