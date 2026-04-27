@@ -165,7 +165,7 @@ def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
     `subanalyses/sa_{id}/sims/{event_id}/...` prefix for per-sub-analysis artifacts.
     """
     raise NotImplementedError(
-        "Spec only — implementation wired up in Phase 5 via the "
+        "Spec only — implementation wired up in Phase 6 via the "
         "SensitivityAnalysisWorkflowBuilder._collect_sensitivity_source_paths() "
         "bound helper."
     )
