@@ -7,6 +7,7 @@ placeholder figure (R6 / Phase 3).
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -29,10 +30,12 @@ def render(
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog
     from TRITON_SWMM_toolkit.report_renderers.system_overview import _apply_rcparams
 
     _apply_rcparams(report_cfg)
     cfg = report_cfg.per_sim.conduit_flow
+    prov = ProvenanceLog()
 
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
 
@@ -58,9 +61,18 @@ def render(
                 f"per-scenario link summary expected event_iloc=1, got "
                 f"{ds_links.sizes.get('event_iloc')}"
             )
-        max_over_full = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc).values
-        peak_flow = ds_links["max_flow_cms"].sel(event_iloc=event_iloc).values
+        max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
+        peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+        max_over_full = max_over_full_da.values
+        peak_flow = peak_flow_da.values
         link_ids = ds_links["link_id"].values
+        # Cache xarray metadata before the dataset closes — `.attrs`/`.name`
+        # are Python-side metadata so they remain valid post-close, but cache
+        # them now to make the close-or-not invariant explicit.
+        max_over_full_attrs = dict(max_over_full_da.attrs)
+        max_over_full_name = max_over_full_da.name
+        peak_flow_attrs = dict(peak_flow_da.attrs)
+        peak_flow_name = peak_flow_da.name
 
     # Conduit geometry from swmmio. Use the HYDRAULICS .inp (which carries
     # [CONDUITS] + [COORDINATES] sections); the prior version of this code read
@@ -90,6 +102,13 @@ def render(
         1, 2, figsize=cfg.figsize_inches, layout="constrained",
     )
 
+    # Relpaths against analysis_dir for provenance-record portability.
+    analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
+    link_summary_rel = os.path.relpath(
+        str(Path(link_summary_path).resolve()), analysis_root,
+    )
+    inp_rel = os.path.relpath(str(inp_path.resolve()), analysis_root)
+
     # Two-colormap design (iter-2 user feedback): non-overlapping single-color
     # gradations — Blues for utilization (cool / "filling up"), Reds for peak
     # flow magnitude (warm / "intensity"). `cfg.cmap` from report_config is
@@ -97,13 +116,15 @@ def render(
     UTILIZATION_CMAP = "Blues"
     PEAK_FLOW_CMAP = "Reds"
     panels = [
-        (ax1, max_over_full, "max / full flow", 0.0, 1.0, UTILIZATION_CMAP),
-        (ax2, peak_flow, "peak flow (m³/s)",
+        (ax1, max_over_full, max_over_full_name, max_over_full_attrs,
+         "max / full flow", 0.0, 1.0, UTILIZATION_CMAP, "ax_utilization"),
+        (ax2, peak_flow, peak_flow_name, peak_flow_attrs,
+         "peak flow (m³/s)",
          (float(cfg.vmin) if cfg.vmin is not None else 0.0),
          (float(cfg.vmax) if cfg.vmax is not None else float(peak_flow.max() or 1.0)),
-         PEAK_FLOW_CMAP),
+         PEAK_FLOW_CMAP, "ax_peak_flow"),
     ]
-    for ax, values, label, vmin, vmax, cmap_name in panels:
+    for ax, values, var_name, var_attrs, label, vmin, vmax, cmap_name, axes_id in panels:
         cmap = plt.get_cmap(cmap_name)
         norm = plt.Normalize(vmin=vmin, vmax=vmax)
         # Draw EVERY conduit, regardless of whether it has a value in the
@@ -113,12 +134,29 @@ def render(
         values_by_id = dict(zip(link_ids, values, strict=True))
         for lid, ((x1, y1), (x2, y2)) in coords_by_id.items():
             val = float(values_by_id.get(lid, 0.0))
-            # Black boundary underneath (iter-2 user feedback) — slightly
-            # wider than the colored line for a thin black outline.
-            ax.plot([x1, x2], [y1, y2], color="black", linewidth=4.5,
-                    solid_capstyle="round", zorder=2)
-            ax.plot([x1, x2], [y1, y2], color=cmap(norm(val)), linewidth=3.0,
-                    solid_capstyle="round", zorder=3)
+            with prov.artist(
+                axes_id=axes_id, kind="line2d",
+                note=f"conduit {lid}",
+            ) as a:
+                a.add_swmm_channel(
+                    "x", swmm_inp=inp_rel, kind="conduit_coords", link_id=str(lid),
+                )
+                a.add_swmm_channel(
+                    "y", swmm_inp=inp_rel, kind="conduit_coords", link_id=str(lid),
+                )
+                a.add_channel(
+                    "color",
+                    _link_summary_ref(
+                        link_summary_rel, var_name, var_attrs, lid, event_iloc,
+                    ),
+                    cmap=cmap_name, vmin=vmin, vmax=vmax,
+                )
+                # Black boundary underneath (iter-2 user feedback) — slightly
+                # wider than the colored line for a thin black outline.
+                ax.plot([x1, x2], [y1, y2], color="black", linewidth=4.5,
+                        solid_capstyle="round", zorder=2)
+                ax.plot([x1, x2], [y1, y2], color=cmap(norm(val)), linewidth=3.0,
+                        solid_capstyle="round", zorder=3)
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         fig.colorbar(sm, ax=ax, label=label, shrink=0.7, pad=0.02)
@@ -135,6 +173,19 @@ def render(
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=report_cfg.figure_defaults.savefig_dpi,
         output_format="svg" if output_path.suffix == ".svg" else "png",
+        provenance=prov,
+    )
+
+
+def _link_summary_ref(source_rel: str, var_name, var_attrs, link_id, event_iloc):
+    """Build a `ProvenanceRef` for a link-summary variable / link / event row."""
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
+
+    return ProvenanceRef(
+        source_path=source_rel,
+        variable=str(var_name) if var_name is not None else None,
+        attrs=dict(var_attrs),
+        selection={"link_id": str(link_id), "event_iloc": int(event_iloc)},
     )
 
 

@@ -11,9 +11,12 @@ import os
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
+
+if TYPE_CHECKING:
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog
 
 
 def emit_plot_with_sources(
@@ -25,6 +28,7 @@ def emit_plot_with_sources(
     output_format: Literal["png", "svg"] = "png",
     preview_dpi: int = 100,
     manifest_data: dict[str, Any] | None = None,
+    provenance: ProvenanceLog | None = None,
 ) -> Path:
     """Save fig to output_path with source paths embedded as figure metadata.
 
@@ -68,6 +72,12 @@ def emit_plot_with_sources(
         Caller-supplied structural data for the manifest sibling — typically
         per-panel info (title, axis extents, element counts, legend labels).
         Auto-merged with file-system facts under the `renderer_data` key.
+    provenance : ProvenanceLog, optional
+        Per-artist provenance log built up during render via
+        `with prov.artist(...)` context blocks. When non-None, the serialized
+        payload is embedded under `manifest["artists"]` (top-level — system-
+        defined, distinct from caller-supplied `renderer_data`). The PNG
+        `tEXt` chunks and all other manifest schema fields are unchanged.
 
     Returns
     -------
@@ -113,6 +123,8 @@ def emit_plot_with_sources(
         }
         if manifest_data:
             manifest["renderer_data"] = manifest_data
+        if provenance is not None:
+            manifest["artists"] = provenance.serialize()
         manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
     plt.close(fig)
