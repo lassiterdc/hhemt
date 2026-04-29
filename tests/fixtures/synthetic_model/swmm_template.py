@@ -96,35 +96,98 @@ Units      None
 # ---------------------------------------------------------------------------
 # (name, col, row) where (col, row) is the DEM cell index from the bottom-left
 # of the 20x30 default grid. All nodes are placed at cell centers. The two
-# overlap pairs (J1a/J1b and J2a/J2b) share a cell deliberately.
+# overlap pairs (J1a/J1b and J2a/J2b) share a cell deliberately. Intermediate
+# nodes J1bi{N}, J2bi{N}, Jmi{N}, Joi{N} subdivide the long conduits so the
+# model has enough links (19 conduits) to exceed EPA SWMM 5.2's internal
+# OpenMP threshold (Nobjects[LINK] >= 4 * NumThreads).
 _NODES = [
+    # Subcatchment outlets + overlap pairs (unchanged; anchor for hydrology->TRITON coupling)
     ("J1a",     6,  22),
     ("J1b",     6,  22),   # overlap pair 1 with J1a
     ("J2a",     13, 22),
     ("J2b",     13, 22),   # overlap pair 2 with J2a
+    # Intermediate junctions along J1b -> J_merge (4 new; interpolated between (6,22) and (10,12))
+    ("J1bi1",   7,  20),
+    ("J1bi2",   8,  18),
+    ("J1bi3",   8,  16),
+    ("J1bi4",   9,  14),
+    # Intermediate junctions along J2b -> J_merge (4 new; interpolated between (13,22) and (10,12))
+    ("J2bi1",   12, 20),
+    ("J2bi2",   12, 18),
+    ("J2bi3",   11, 16),
+    ("J2bi4",   11, 14),
+    # Merge point (unchanged)
     ("J_merge", 10, 12),
-    ("J_out",   10,  4),
-    ("OUT1",    10,  2),
+    # Intermediate junctions along J_merge -> J_out (4 new; interpolated between (10,12) and (10,4))
+    ("Jmi1",    10, 11),
+    ("Jmi2",    10, 10),
+    ("Jmi3",    10, 8),
+    ("Jmi4",    10, 6),
+    # Outlet junction (unchanged)
+    ("J_out",   10, 4),
+    # Intermediate junction along J_out -> OUT1 (1 new)
+    ("Joi1",    10, 3),
+    # Outfall (unchanged)
+    ("OUT1",    10, 2),
 ]
 
 # Junction invert elevations (metres). Slope downward from upstream to outfall.
+# Upstream (J1b/J2b) elevation 8.0 -> J_merge elevation 5.0 interpolated over
+# 5 conduit segments: 8.0, 7.4, 6.8, 6.2, 5.6, 5.0.
+# J_merge elevation 5.0 -> J_out elevation 2.0 interpolated over 5 segments:
+# 5.0, 4.4, 3.8, 3.2, 2.6, 2.0.
+# J_out elevation 2.0 -> OUT1 elevation 0.0 interpolated over 2 segments:
+# J_out = 2.0, Joi1 = 1.0, OUT1 = 0.0.
 _JUNCTION_INVERTS = {
     "J1a":     8.0,
     "J1b":     8.0,
+    "J1bi1":   7.4,
+    "J1bi2":   6.8,
+    "J1bi3":   6.2,
+    "J1bi4":   5.6,
     "J2a":     8.0,
     "J2b":     8.0,
+    "J2bi1":   7.4,
+    "J2bi2":   6.8,
+    "J2bi3":   6.2,
+    "J2bi4":   5.6,
     "J_merge": 5.0,
+    "Jmi1":    4.4,
+    "Jmi2":    3.8,
+    "Jmi3":    3.2,
+    "Jmi4":    2.6,
     "J_out":   2.0,
+    "Joi1":    1.0,
 }
 
-# (name, from_node, to_node, length_m)
+# (name, from_node, to_node, length_m). 19 conduits total; exceeds the EPA
+# SWMM 5.2 threshold Nobjects[LINK] >= 4 * NumThreads for NumThreads up to 4.
 _CONDUITS = [
-    ("C1a", "J1a",     "J1b",     5.0),
-    ("C1b", "J1b",     "J_merge", 100.0),
-    ("C2a", "J2a",     "J2b",     5.0),
-    ("C2b", "J2b",     "J_merge", 100.0),
-    ("Cm",  "J_merge", "J_out",   80.0),
-    ("Co",  "J_out",   "OUT1",    20.0),
+    # Short overlap-causing conduits (unchanged; preserve the DEM-cell overlap
+    # behavior that exercises scenario_inputs.py's overlap-handling path)
+    ("C1a",    "J1a",     "J1b",     5.0),
+    ("C2a",    "J2a",     "J2b",     5.0),
+    # J1b -> J_merge (5 segments, 20m each, total 100m — unchanged aggregate length)
+    ("C1b_1",  "J1b",     "J1bi1",   20.0),
+    ("C1b_2",  "J1bi1",   "J1bi2",   20.0),
+    ("C1b_3",  "J1bi2",   "J1bi3",   20.0),
+    ("C1b_4",  "J1bi3",   "J1bi4",   20.0),
+    ("C1b_5",  "J1bi4",   "J_merge", 20.0),
+    # J2b -> J_merge (5 segments, 20m each, total 100m)
+    ("C2b_1",  "J2b",     "J2bi1",   20.0),
+    ("C2b_2",  "J2bi1",   "J2bi2",   20.0),
+    ("C2b_3",  "J2bi2",   "J2bi3",   20.0),
+    ("C2b_4",  "J2bi3",   "J2bi4",   20.0),
+    ("C2b_5",  "J2bi4",   "J_merge", 20.0),
+    # J_merge -> J_out (5 segments, 16m each, total 80m — unchanged aggregate length)
+    ("Cm_1",   "J_merge", "Jmi1",    16.0),
+    ("Cm_2",   "Jmi1",    "Jmi2",    16.0),
+    ("Cm_3",   "Jmi2",    "Jmi3",    16.0),
+    ("Cm_4",   "Jmi3",    "Jmi4",    16.0),
+    ("Cm_5",   "Jmi4",    "J_out",   16.0),
+    # J_out -> OUT1 (2 segments, 10m each, total 20m)
+    ("Co_1",   "J_out",   "Joi1",    10.0),
+    ("Co_2",   "Joi1",    "OUT1",    10.0),
 ]
 
 # (subcatchment_id, outlet_node)
