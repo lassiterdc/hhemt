@@ -13,6 +13,7 @@ Each method returns a retrieve_TRITON_SWMM_test_case instance with:
 
 """
 
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,7 @@ from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 import platformdirs
+import pytest
 
 import TRITON_SWMM_toolkit.constants as cnst
 
@@ -32,6 +34,21 @@ from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
+
+
+def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
+    """Skip the current test if the host has fewer than ``min_cores`` CPU cores.
+
+    The synth sensitivity CSV includes a hybrid row (2 MPI x 2 OMP = 4 threads);
+    on machines with fewer cores the honored-thread validator would flag a
+    mismatch only after a full workflow run. Failing fast here costs seconds,
+    not minutes.
+    """
+    n = os.cpu_count() or 1
+    if n < min_cores:
+        pytest.skip(
+            f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}"
+        )
 
 
 @dataclass
@@ -762,7 +779,6 @@ class Local_TestCases:
             toggle_tritonswmm_model=False,
             toggle_triton_model=True,
             toggle_swmm_model=False,
-            toggle_use_swmm_for_hydrology=False,
             start_from_scratch=start_from_scratch,
         )
 
@@ -792,15 +808,11 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
     ):
+        _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity",
             model_subset="all",
         )
-        # Sensitivity workflow requires exactly one enabled model. The "all"
-        # subset picks the coupled TRITON-SWMM model as the representative case
-        # because it exercises both the 2D solver and the SWMM coupling
-        # pathway. Pure TRITON-only and SWMM-only cases are covered by the
-        # dedicated sensitivity variants below.
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_sensitivity",
             toggle_tritonswmm_model=True,
@@ -814,6 +826,7 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case_triton_only(
         start_from_scratch: bool = False,
     ):
+        _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_triton_only",
             model_subset="triton",
@@ -822,7 +835,6 @@ class Local_TestCases:
             analysis_name="synth_sensitivity_triton_only",
             toggle_tritonswmm_model=False,
             toggle_swmm_model=False,
-            toggle_use_swmm_for_hydrology=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
         )
@@ -854,17 +866,37 @@ class Local_TestCases:
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dest_dir / f"{analysis_name}.csv"
-        # Integer sa_ids mirror Norfolk's cpu_benchmarking_analysis.xlsx
-        # convention. The sensitivity workflow composes `consolidate_sa_<sa_id>`
-        # rule names; tests assert on integer-indexed rule names, so strings
-        # like "sa_0" would produce the wrong rule name ("consolidate_sa_sa_0").
-        df = pd.DataFrame(
-            {
-                "sa_id": [0, 1],
-                "run_mode": ["serial", "openmp"],
-                "n_omp_threads": [1, 2],
-            }
-        )
+        # Row structure mirrors Norfolk's cpu_benchmarking_analysis*.xlsx so the
+        # synth sensitivity tier exercises the same run_mode combinations as the
+        # Norfolk tier. Coupled/triton subsets get the 4-row MPI/OMP/HYB/serial
+        # matrix; swmm-only subset gets the 3-row thread-count ladder because
+        # SWMM has no MPI path.
+        if model_subset in ("all", "triton"):
+            df = pd.DataFrame(
+                {
+                    "sa_id":         [0,      1,        2,        3],
+                    "run_mode":      ["mpi",  "openmp", "hybrid", "serial"],
+                    "n_mpi_procs":   [2,      1,        2,        1],
+                    "n_omp_threads": [1,      2,        2,        1],
+                    "n_gpus":        [0,      0,        0,        0],
+                    "n_nodes":       [1,      1,        1,        1],
+                }
+            )
+        elif model_subset == "swmm":
+            df = pd.DataFrame(
+                {
+                    "sa_id":         [0,        1,        2],
+                    "run_mode":      ["openmp", "openmp", "serial"],
+                    "n_mpi_procs":   [1,        1,        1],
+                    "n_omp_threads": [4,        2,        1],
+                    "n_gpus":        [0,        0,        0],
+                    "n_nodes":       [1,        1,        1],
+                }
+            )
+        else:
+            raise ValueError(
+                f"model_subset must be 'all', 'triton', or 'swmm'; got {model_subset!r}"
+            )
         assert all(
             re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]
         ), "sa_id values must match ^[A-Za-z0-9_.]+$"
