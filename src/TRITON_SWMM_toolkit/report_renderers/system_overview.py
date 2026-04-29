@@ -495,16 +495,23 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     dem_squeezed = dem.squeeze()
     arr = dem_squeezed.values
     valid = arr[np.isfinite(arr)]
+    # Iter-10 wall-aware vmin/vmax: walls (DEM `_WALL_ELEV` ≈ 50 m) dominate
+    # the cell count in the synth fixture (~95% of cells are walls), making
+    # the iter-2 percentile-based bimodal detection fail (median ≈ p95 ≈ 50).
+    # Replace with explicit wall detection: cells within 10% of the global
+    # max are walls; vmin/vmax span only the modeled area, so the corridor's
+    # interior gradient + dropoff occupy the full color range. Walls trigger
+    # `cmap.set_over` (grey, "#808080") and the colorbar's `extend="max"`
+    # arrow makes the modeled-area extent unambiguous on the figure.
     if valid.size:
-        median = float(np.median(valid))
-        p5 = float(np.percentile(valid, 5))
-        p95 = float(np.percentile(valid, 95))
-        # Bimodal-wall detection: p95 >> median indicates outlier/wall cluster.
-        if p95 > 5 * median:
-            vmax = max(3.0 * median, p5 + 0.1)
+        arr_max = float(valid.max())
+        wall_threshold = arr_max * 0.9 if arr_max > 0 else 1.0
+        modeled = valid[valid < wall_threshold]
+        if modeled.size > 0:
+            vmin = float(modeled.min())
+            vmax = float(modeled.max())
         else:
-            vmax = p95
-        vmin = p5
+            vmin, vmax = float(valid.min()), arr_max
         if vmax <= vmin:
             vmax = vmin + 1.0
     else:
@@ -517,11 +524,11 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     ) as a:
         a.add_xarray_channel(
             "z", dem_squeezed, source_path=dem_source,
-            transform="bathtub-aware vmin/vmax clipping",
+            transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
         )
         a.add_xarray_channel(
             "color", dem_squeezed, source_path=dem_source,
-            transform="bathtub-aware vmin/vmax clipping",
+            transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
             cmap="terrain", vmin=vmin, vmax=vmax, set_over="#808080",
         )
         im = ax.imshow(

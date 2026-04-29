@@ -1,4 +1,17 @@
-"""Per-sim renderer: peak flood depth raster from `tritonswmm_TRITON_summary['max_wlevel_m']`.
+"""Per-sim renderer: 3-panel peak-flood-depth + WSE + event hydrology figure.
+
+Iter-3 (2026-04-28) of the per-sim flood-depth figure. Iter-2 user feedback:
+
+- WSE colorbar is too similar to depth's YlGnBu — switch WSE to a perceptually
+  distinct colormap (`cividis` — dark-navy → yellow).
+- Depth colorbar must be quantized (true discrete bins) at 0.01 / 0.05 / 0.10 /
+  0.50 / 1.00 m, matching the user reference at scratch line 1977.
+- Move colorbars below each map panel (saves horizontal width and matches the
+  reference visual).
+- Add a third panel showing the event's rainfall + boundary-condition water
+  level as a stacked time-series, matching the "Event hydrology" reference at
+  scratch line 2007. Y-axis label on the lower sub-panel reads "Boundary
+  condition water level (m)" per user terminology.
 
 Dispatches per `_get_enabled_model_types()` (Gotcha 5) — TRITON-SWMM coupled
 fixtures use `output_tritonswmm_triton_summary`; TRITON-only uses
@@ -14,13 +27,133 @@ from typing import TYPE_CHECKING
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
+import numpy as np
+import rioxarray as rxr
+import xarray as xr
+from matplotlib.colors import BoundaryNorm, Normalize  # noqa: F401
 
 from TRITON_SWMM_toolkit import utils
-from TRITON_SWMM_toolkit.plot_utils import plot_continuous_raster
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.config.report import report_config
+
+
+# Discrete boundaries (m) for the depth colorbar, mirroring the reference
+# image at scratch `# Collaborative Figure Design > Flood depth maps`.
+_DEPTH_BOUNDARIES = (0.01, 0.05, 0.10, 0.50, 1.00)
+_DEPTH_CMAP = "YlGnBu"
+# Perceptually-distinct elevation-flavored colormap for the WSE panel
+# (dark-navy → yellow), chosen to read as elevation while staying visually
+# distinct from the YlGnBu depth ramp.
+_WSE_CMAP = "cividis"
+_RAIN_COLOR = "#9ecae1"  # light blue, matches the Event hydrology reference
+_BC_LINE_COLOR = "black"
+
+
+def _shared_depth_max(analysis, target_crs):
+    """Return the global vmax for the peak-flood-depth colorbar across every
+    event_iloc (iter-19 user request — depth colorbar must be the same range
+    on every per-event figure). vmin is hard-pinned at the user-locked 0.01
+    "under" threshold; only the upper bound is computed cross-event. Returns
+    None if no event exposes a usable summary (caller falls back to per-event
+    range).
+    """
+    enabled = analysis._get_enabled_model_types()
+    if "tritonswmm" not in enabled and "triton" not in enabled:
+        return None
+    watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
+    watershed_gdf = gpd.read_file(watershed_shp)
+    g_max = float("-inf")
+    for _ev in analysis.df_sims.index:
+        try:
+            _proc = analysis._retrieve_sim_run_processing_object(int(_ev))
+            if "tritonswmm" in enabled:
+                _path = _proc.scen_paths.output_tritonswmm_triton_summary
+            else:
+                _path = _proc.scen_paths.output_triton_only_summary
+            with _proc._open(_path) as ds:
+                da_ev = ds["max_wlevel_m"].sel(event_iloc=int(_ev))
+                if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
+                    da_ev = da_ev.rio.reproject(target_crs)
+                if (
+                    da_ev.rio.crs is not None
+                    and watershed_gdf.crs is not None
+                    and watershed_gdf.crs != da_ev.rio.crs
+                ):
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
+                        watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
+                        m = utils.create_mask_from_shapefile(da_ev, tmp_path)
+                else:
+                    m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
+                d_ev = da_ev.where(m & (da_ev > 0))
+                d_max_obj = d_ev.max()
+                v_max = float(
+                    d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+                )
+                if np.isfinite(v_max):
+                    g_max = max(g_max, v_max)
+        except (FileNotFoundError, KeyError):
+            continue
+    if not np.isfinite(g_max) or g_max <= 0.01:
+        return None
+    return g_max
+
+
+def _shared_wse_range(analysis, target_crs, dem_da):
+    """Return (vmin, vmax) for the WSE colorbar, computed once across every
+    event_iloc so all per-event figures share a colorbar (iter-15 user
+    request). Walks every event's TRITON summary, masks depth > 0 + watershed,
+    builds WSE = depth + DEM, and accumulates the global min/max. Falls back
+    to per-event range if no events expose a usable summary.
+    """
+    enabled = analysis._get_enabled_model_types()
+    if "tritonswmm" not in enabled and "triton" not in enabled:
+        return None
+    watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
+    watershed_gdf = gpd.read_file(watershed_shp)
+    g_min, g_max = float("inf"), float("-inf")
+    for _ev in analysis.df_sims.index:
+        try:
+            _proc = analysis._retrieve_sim_run_processing_object(int(_ev))
+            if "tritonswmm" in enabled:
+                _path = _proc.scen_paths.output_tritonswmm_triton_summary
+            else:
+                _path = _proc.scen_paths.output_triton_only_summary
+            with _proc._open(_path) as ds:
+                da_ev = ds["max_wlevel_m"].sel(event_iloc=int(_ev))
+                if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
+                    da_ev = da_ev.rio.reproject(target_crs)
+                if (
+                    da_ev.rio.crs is not None
+                    and watershed_gdf.crs is not None
+                    and watershed_gdf.crs != da_ev.rio.crs
+                ):
+                    with tempfile.TemporaryDirectory() as tmp_dir:
+                        tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
+                        watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
+                        m = utils.create_mask_from_shapefile(da_ev, tmp_path)
+                else:
+                    m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
+                wse_ev = (da_ev + dem_da).where(m & (da_ev > 0))
+                wse_min_obj = wse_ev.min()
+                wse_max_obj = wse_ev.max()
+                v_min = float(
+                    wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj,
+                )
+                v_max = float(
+                    wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj,
+                )
+                if np.isfinite(v_min):
+                    g_min = min(g_min, v_min)
+                if np.isfinite(v_max):
+                    g_max = max(g_max, v_max)
+        except (FileNotFoundError, KeyError):
+            continue
+    if not np.isfinite(g_min) or not np.isfinite(g_max) or g_max <= g_min:
+        return None
+    return (g_min, g_max)
 
 
 def render(
@@ -30,7 +163,7 @@ def render(
     *,
     event_iloc: int,
 ) -> Path:
-    """Render peak flood depth raster for one event_iloc."""
+    """Render the 3-panel depth + WSE + hydrology figure for one event_iloc."""
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
@@ -63,7 +196,9 @@ def render(
         )
 
     target_crs = resolve_target_crs(analysis, report_cfg)
+    sys_paths = analysis._system.sys_paths
 
+    # ---- Depth raster from TRITON summary -------------------------------
     with proc._open(triton_summary_path) as ds:
         if ds.sizes.get("event_iloc") != 1:
             raise AssertionError(
@@ -76,11 +211,13 @@ def render(
         wlevel_attrs = dict(da.attrs)
         wlevel_name = da.name
 
-    # Reproject watershed shapefile to the raster's CRS before masking. Use
-    # TemporaryDirectory for exception-safe cleanup (SE F-I Flag 11). When the
-    # raster carries no CRS (e.g., the synth fixture's TRITON summary zarr is
-    # built from a plain numpy raster without rioxarray metadata), assume the
-    # watershed and raster share a coord system and mask without reprojection.
+    # ---- DEM raster -----------------------------------------------------
+    dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
+    if dem_da.rio.crs is not None and dem_da.rio.crs != target_crs:
+        dem_da = dem_da.rio.reproject(target_crs)
+    dem_attrs = dict(dem_da.attrs)
+
+    # ---- Watershed mask -------------------------------------------------
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
     if (
@@ -96,7 +233,25 @@ def render(
         mask = utils.create_mask_from_shapefile(da, watershed_shp)
     da_masked = da.where(mask & (da > 0))
 
-    # Relpaths against analysis_dir for provenance-record portability.
+    try:
+        wse_da = da + dem_da
+    except Exception:
+        wse_da = da + dem_da.interp_like(da, method="nearest")
+    wse_masked = wse_da.where(mask & (da > 0))
+
+    # ---- Per-scenario weather time series for the hydrology panel -------
+    weather_path = proc.scen_paths.weather_timeseries
+    with xr.open_dataset(weather_path, engine="h5netcdf") as ws:
+        times = ws["time"].values
+        rainfall = ws["RG_synth"].values.astype(float)
+        bc_water_level = ws["water_level"].values.astype(float)
+        rain_attrs = dict(ws["RG_synth"].attrs)
+        bc_attrs = dict(ws["water_level"].attrs)
+    times_min = (
+        (times - times[0]).astype("timedelta64[s]").astype(float) / 60.0
+    )
+
+    # ---- Path relpaths --------------------------------------------------
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     triton_summary_rel = os.path.relpath(
         str(Path(triton_summary_path).resolve()), analysis_root,
@@ -104,62 +259,266 @@ def render(
     watershed_rel = os.path.relpath(
         str(Path(watershed_shp).resolve()), analysis_root,
     )
+    dem_rel = os.path.relpath(
+        str(Path(sys_paths.dem_processed).resolve()), analysis_root,
+    )
+    weather_rel = os.path.relpath(
+        str(Path(weather_path).resolve()), analysis_root,
+    )
 
-    fig, ax = plt.subplots(figsize=cfg.figsize_inches, layout="constrained")
-    wlevel_ref = ProvenanceRef(
+    # ---- Figure layout: 1×3 columns, each column with a sub-gridspec ----
+    bounds = da.rio.bounds() if da.rio.crs is not None else (
+        float(da.x.min()), float(da.y.min()),
+        float(da.x.max()), float(da.y.max()),
+    )
+    map_aspect = (bounds[2] - bounds[0]) / max(bounds[3] - bounds[1], 1e-9)
+    h = float(cfg.figsize_inches[1]) if hasattr(cfg, "figsize_inches") else 6.0
+    # iter-5 layout fixes: tighter inter-panel spacing (was 1.05 + 1.4
+    # padding, now 1.02 + 1.0); explicit `wspace=0.10` between outer columns
+    # so the maps + hydro panel sit closer together. Also `layout=None` so we
+    # control gridspec margins directly via `fig.subplots_adjust`.
+    fig_width = h * (2 * map_aspect * 1.02 + 1.0)
+    fig = plt.figure(figsize=(fig_width, h), layout="constrained")
+    outer = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.95], wspace=0.10)
+    # Map columns: outer 2-row split (map + thin colorbar slot).
+    # Inner 1×3 split for the colorbar puts narrow margins on either side so
+    # the colorbar bar itself doesn't span the full panel width (iter-4
+    # feedback: "colorbars are both too wide … should not exceed the width of
+    # the figures").
+    _MAP_TO_CBAR_HEIGHT_RATIO = 28  # iter-4: was 18; bumps cbar thickness down
+    gs_depth = outer[0, 0].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
+    gs_wse = outer[0, 1].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
+    gs_depth_cbar = gs_depth[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
+    gs_wse_cbar = gs_wse[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
+    # Hydro column: outer 2-row split mirrors map columns so the hydro panel's
+    # vertical extent matches the map (not map+colorbar) — iter-4 feedback:
+    # "boundary height of the event hydrology figure should match the height
+    # of the flood figures". Top row holds the rainfall+BC stack; bottom row
+    # is intentionally empty (aligns with the colorbar slot on the map cols).
+    gs_hydro_outer = outer[0, 2].subgridspec(
+        2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1],
+    )
+    gs_hydro_inner = gs_hydro_outer[0, 0].subgridspec(2, 1, height_ratios=[1, 1])
+    ax_depth = fig.add_subplot(gs_depth[0, 0])
+    cax_depth = fig.add_subplot(gs_depth_cbar[0, 1])
+    ax_wse = fig.add_subplot(gs_wse[0, 0], sharex=ax_depth, sharey=ax_depth)
+    cax_wse = fig.add_subplot(gs_wse_cbar[0, 1])
+    ax_rain = fig.add_subplot(gs_hydro_inner[0, 0])
+    ax_bc = fig.add_subplot(gs_hydro_inner[1, 0], sharex=ax_rain)
+
+    # ---- Depth panel: YlGnBu continuous linear --------------------------
+    # Iter-19 (2026-04-29): switched from discrete BoundaryNorm to a continuous
+    # linear Normalize per user request. vmin is pinned at 0.01 m (user-locked
+    # "under" threshold — cells below 0.01 render as white via
+    # `cmap.set_under("white")`). vmax is computed once across every event_iloc
+    # so the depth colorbar shares its range across all per-event figures.
+    depth_ref = ProvenanceRef(
         source_path=triton_summary_rel,
         variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
         attrs=wlevel_attrs,
         selection={"event_iloc": int(event_iloc)},
         transform="masked to watershed and depth>0",
     )
+    depth_vmin = 0.01
+    shared_max = _shared_depth_max(analysis, target_crs)
+    if shared_max is not None:
+        depth_vmax = float(shared_max)
+    else:
+        d_max_obj = da_masked.max()
+        d_max_local = float(
+            d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+        )
+        depth_vmax = d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else 1.0
+    depth_cmap = plt.get_cmap(_DEPTH_CMAP).copy()
+    depth_cmap.set_under("white")
+    depth_norm = Normalize(vmin=depth_vmin, vmax=depth_vmax)
     with prov.artist(
         axes_id="ax_depth", kind="image",
-        note="peak flood depth raster",
+        note=f"peak flood depth raster (continuous linear, event {event_iloc})",
     ) as a:
-        a.add_channel("z", wlevel_ref)
+        a.add_channel("z", depth_ref)
         a.add_channel(
-            "color", wlevel_ref,
-            cmap=cfg.cmap, vmin=cfg.vmin, vmax=cfg.vmax,
+            "color", depth_ref,
+            cmap=_DEPTH_CMAP,
+            vmin=depth_vmin, vmax=depth_vmax,
+            norm="Normalize",
+            extend="min",
+            under_color="white",
         )
-        plot_continuous_raster(
-            da_masked,
-            cbar_lab="peak flood depth (m)",
-            cmap=cfg.cmap,
-            watershed_shapefile=watershed_shp,
-            vmin=cfg.vmin,
-            vmax=cfg.vmax,
-            ax=ax,
+        depth_img = da_masked.plot(  # noqa: F841
+            ax=ax_depth, x="x", y="y",
+            cmap=depth_cmap, norm=depth_norm,
+            add_colorbar=False,
         )
-    # The watershed-overlay polygon artist is drawn inside `plot_continuous_raster`;
-    # record its lineage as a separate `ProvenanceLog.artist(...)` block so the
-    # manifest captures the shapefile source independently of the raster lineage.
+    cbar_d = fig.colorbar(
+        ax_depth.collections[0] if ax_depth.collections else depth_img,
+        cax=cax_depth, orientation="horizontal",
+        extend="min",
+    )
+    cbar_d.set_label("Depth (m)")
+    ax_depth.set_aspect("equal")
+    ax_depth.set_title("Peak flood depth")
+    # iter-5 feedback: restore numeric x/y tick labels on flood maps. Use
+    # small font so the labels don't dominate the panel.
+    ax_depth.tick_params(axis="both", labelsize=7)
+    ax_depth.set_xlabel("")
+    ax_depth.set_ylabel("")
+    watershed_ref = ProvenanceRef(
+        source_path=watershed_rel,
+        variable="watershed_polygon",
+        attrs={},
+    )
     with prov.artist(
         axes_id="ax_depth", kind="patch",
         note="watershed boundary overlay",
     ) as a:
-        a.add_channel(
-            "x",
-            ProvenanceRef(
-                source_path=watershed_rel,
-                variable="watershed_polygon",
-                attrs={},
-            ),
-        )
-        a.add_channel(
-            "y",
-            ProvenanceRef(
-                source_path=watershed_rel,
-                variable="watershed_polygon",
-                attrs={},
-            ),
-        )
+        a.add_channel("x", watershed_ref)
+        a.add_channel("y", watershed_ref)
+        if watershed_gdf.crs is not None:
+            watershed_gdf.to_crs(target_crs).boundary.plot(
+                ax=ax_depth, color="black", linewidth=1.0,
+            )
+        else:
+            watershed_gdf.boundary.plot(
+                ax=ax_depth, color="black", linewidth=1.0,
+            )
 
-    ax.set_title(
-        f"Peak flood depth — {analysis.cfg_analysis.analysis_id} — event_iloc {event_iloc}"
+    # ---- WSE panel: cividis linear --------------------------------------
+    # Iter-15 (2026-04-29): the colorbar range is shared across every event
+    # in the analysis so the user can compare WSE between event_iloc figures
+    # by eye. Falls back to per-event range only if the cross-event scan
+    # failed (no other event has a usable summary).
+    shared = _shared_wse_range(analysis, target_crs, dem_da)
+    if shared is not None:
+        wse_min, wse_max = shared
+    else:
+        wse_min_obj = wse_masked.min()
+        wse_max_obj = wse_masked.max()
+        wse_min = float(wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj)
+        wse_max = float(wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj)
+        if not np.isfinite(wse_min) or not np.isfinite(wse_max) or wse_max <= wse_min:
+            wse_min, wse_max = 0.0, 1.0
+
+    wse_ref_depth = ProvenanceRef(
+        source_path=triton_summary_rel,
+        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
+        attrs=wlevel_attrs,
+        selection={"event_iloc": int(event_iloc)},
+        transform="depth, summed with DEM elevation",
+    )
+    wse_ref_dem = ProvenanceRef(
+        source_path=dem_rel, variable="dem_elev_m",
+        attrs=dem_attrs, transform="reprojected to target_crs",
+    )
+    with prov.artist(
+        axes_id="ax_wse", kind="image",
+        note=f"water surface elevation = depth + DEM (event {event_iloc})",
+    ) as a:
+        a.add_channel("z", wse_ref_depth)
+        a.add_channel("z", wse_ref_dem)
+        a.add_channel(
+            "color", wse_ref_depth,
+            cmap=_WSE_CMAP, vmin=wse_min, vmax=wse_max,
+        )
+        wse_img = wse_masked.plot(  # noqa: F841
+            ax=ax_wse, x="x", y="y",
+            cmap=_WSE_CMAP, vmin=wse_min, vmax=wse_max,
+            add_colorbar=False,
+        )
+    cbar_w = fig.colorbar(
+        ax_wse.collections[0] if ax_wse.collections else wse_img,
+        cax=cax_wse, orientation="horizontal",
+    )
+    cbar_w.set_label("WSE (m)")
+    ax_wse.set_aspect("equal")
+    ax_wse.set_title("Water surface elevation")
+    ax_wse.tick_params(axis="both", labelsize=7)
+    ax_wse.set_xlabel("")
+    ax_wse.set_ylabel("")
+    with prov.artist(
+        axes_id="ax_wse", kind="patch",
+        note="watershed boundary overlay",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        a.add_channel("y", watershed_ref)
+        if watershed_gdf.crs is not None:
+            watershed_gdf.to_crs(target_crs).boundary.plot(
+                ax=ax_wse, color="black", linewidth=1.0,
+            )
+        else:
+            watershed_gdf.boundary.plot(
+                ax=ax_wse, color="black", linewidth=1.0,
+            )
+
+    # ---- Hydrology panel: rainfall (top) + BC water level (bottom) -----
+    rain_ref = ProvenanceRef(
+        source_path=weather_rel, variable="RG_synth",
+        attrs=rain_attrs,
+        selection={"event_iloc": int(event_iloc)},
+    )
+    with prov.artist(
+        axes_id="ax_rain", kind="bar",
+        note="rainfall time series (event hydrology — top sub-panel)",
+    ) as a:
+        a.add_channel("x", rain_ref, units="minutes from event start")
+        a.add_channel("y", rain_ref, units="mm/hr")
+        # Width = 1 minute (the source data is 1-min resolution); align="edge"
+        # so each bar sits between t and t+1.
+        ax_rain.bar(
+            times_min, rainfall, width=1.0, align="edge",
+            color=_RAIN_COLOR, edgecolor="none",
+        )
+    # iter-5 alignment: add a title on the rainfall sub-panel so it consumes
+    # the same title-row vertical budget as the flood maps. Without this, the
+    # rainfall data area starts at the column top while the map data areas
+    # start ~1 line below (under the map title), producing the mis-alignment
+    # the user flagged.
+    ax_rain.set_title("Event hydrology")
+    ax_rain.set_ylabel("Rainfall\n(mm per hour)")
+    ax_rain.set_xlabel("")
+    ax_rain.tick_params(axis="x", labelbottom=False)
+    ax_rain.tick_params(axis="y", labelsize=7)
+    ax_rain.set_xlim(times_min[0], times_min[-1])
+    ax_rain.set_ylim(0, max(float(np.nanmax(rainfall)) * 1.1, 1.0))
+    for spine in ("top", "right"):
+        ax_rain.spines[spine].set_visible(False)
+
+    bc_ref = ProvenanceRef(
+        source_path=weather_rel, variable="water_level",
+        attrs=bc_attrs,
+        selection={"event_iloc": int(event_iloc)},
+    )
+    with prov.artist(
+        axes_id="ax_bc", kind="line2d",
+        note="boundary condition water level (event hydrology — bottom sub-panel)",
+    ) as a:
+        a.add_channel("x", bc_ref, units="minutes from event start")
+        a.add_channel("y", bc_ref, units="m")
+        ax_bc.plot(
+            times_min, bc_water_level,
+            color=_BC_LINE_COLOR, linewidth=1.5,
+        )
+    ax_bc.set_ylabel("Boundary condition\nwater level (m)")
+    ax_bc.set_xlabel("Minutes from event start")
+    ax_bc.tick_params(axis="both", labelsize=7)
+    ax_bc.set_xlim(times_min[0], times_min[-1])
+    bc_min = float(np.nanmin(bc_water_level))
+    bc_max = float(np.nanmax(bc_water_level))
+    pad = max((bc_max - bc_min) * 0.1, 0.02)
+    ax_bc.set_ylim(bc_min - pad, bc_max + pad)
+    for spine in ("top", "right"):
+        ax_bc.spines[spine].set_visible(False)
+
+    fig.suptitle(
+        f"Peak flood — {analysis.cfg_analysis.analysis_id} — event_iloc {event_iloc}"
     )
 
-    source_paths: list[Path] = [Path(triton_summary_path), Path(watershed_shp)]
+    source_paths: list[Path] = [
+        Path(triton_summary_path),
+        Path(watershed_shp),
+        Path(sys_paths.dem_processed),
+        Path(weather_path),
+    ]
     max_obj = da_masked.max()
     wlevel_m_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
     cell_count_obj = da_masked.notnull().sum()
@@ -172,8 +531,14 @@ def render(
         dpi=report_cfg.figure_defaults.savefig_dpi,
         manifest_data={
             "event_iloc": int(event_iloc),
-            "wlevel_m_max": float(wlevel_m_max),
+            "depth_m_max": float(wlevel_m_max),
             "valid_cell_count": int(valid_cell_count),
+            "wse_m_range": [wse_min, wse_max],
+            "rainfall_max_mm_per_hr": float(np.nanmax(rainfall)),
+            "bc_water_level_range_m": [bc_min, bc_max],
+            "depth_boundaries_m": list(_DEPTH_BOUNDARIES),
         },
         provenance=prov,
     )
+
+

@@ -40,7 +40,9 @@ from tests.fixtures.synthetic_model import (
 
 @dataclasses.dataclass(frozen=True)
 class SyntheticModelParams:
-    n_cols: int = 20
+    n_cols: int = 16   # iter-8 peak_flood_depth: 20→16 (narrower DEM so the
+                       # figure has less surrounding wall area and the Y-shaped
+                       # channel reads as the dominant feature).
     n_rows: int = 30
     cell_size_m: float = 10.0
     xllcorner: float = 0.0            # test-case local origin (no real-world geolocation)
@@ -50,15 +52,28 @@ class SyntheticModelParams:
     valley_depth_m: float = 0.5
     impervious_mannings: float = 0.015
     pervious_mannings: float = 0.035
-    sim_duration_min: int = 10
+    sim_duration_min: int = 180  # iter-10 peak_flood_depth: 30→180 (3h)
+                                # constant 5m BC has time to equilibrate
+                                # upstream-junction water surfaces via SWMM
+                                # backwater. Shorter durations (10, 30 min) can
+                                # be swept post-baseline by overriding this
+                                # field; rainfall keeps its early-burst shape
+                                # so the long tail is post-storm/relaxation.
     triton_timestep_s: float = 1.0
     reporting_timestep_s: float = 10.0
-    rainfall_peak_mm_per_hr: float = 500.0  # iter-3 conduit_flow feedback: forces all conduits to >= max-over-full
-    rainfall_peak_min: int = 3
+    rainfall_peak_mm_per_hr: float = 100.0  # iter-9 peak_flood_depth: switched
+                                # to a CONSTANT 100 mm/hr for the entire sim
+                                # duration (was 3000 mm/hr triangular). The
+                                # "peak" name is retained for backward compat
+                                # with the catalog; weather.py now treats it
+                                # as a constant value (no triangular shape).
+    rainfall_peak_min: int = 10  # legacy field; ignored under iter-9 constant rainfall
     stormtide_mean_m: float = 2.0
     stormtide_amplitude_m: float = 0.8
     stormtide_period_h: float = 12.0
-    manhole_diameter_m: float = 1.2
+    manhole_diameter_m: float = 1.2  # iter-18 (2026-04-29): reverted from
+                                     # iter-14's 2.0 m back to the toolkit
+                                     # default 1.2 m per user request.
     manhole_loss_coefficient: float = 0.1
     seed: int = 0
 

@@ -113,18 +113,21 @@ Units      None
 # to TRITON's 2-D surface solver via rim surcharge from this junction. The
 # only SWMM-side OUTFALL element is the disconnected `dummy_outfall` (SWMM
 # requires at least one outfall for parsing semantics).
+# Iter-8 peak_flood_depth (2026-04-28): nodes spread to make the Y branches
+# of the conduit network visibly diagonal in figures. With DEM 16 cols × 30
+# rows (n_cols 20→16 in iter-8), J1 sits 4 cols left of J3 and J2 sits 4
+# cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
+# J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
+# stem of the Y. dummy_outfall stays disconnected at col 7.
 _NODES = [
-    ("J1",             6,  22),   # top-left  (S1 drains here)
-    ("J2",             13, 22),   # top-right (S2 drains here)
-    ("J3",             10, 13),   # middle    (S3 drains here; J1+J2 merge here)
-    ("J4",             10,  4),   # just upstream of sea wall — NO subcatchment;
-                                  # receives J3's flow and forwards via culvert
-                                  # to sewer_outflow on the BC side.
-    ("sewer_outflow",  10,  2),   # JUNCTION in dropoff/BC zone (terminal node;
-                                  # surcharge here exits to TRITON 2-D solver
-                                  # per the iter-2 scenario constraint).
-    ("dummy_outfall",  17, 26),   # disconnected SWMM outfall, required for
-                                  # parsing.
+    ("J1",             3,  22),   # upstream-left  (S1 drains here)
+    ("J2",            11,  22),   # upstream-right (S2 drains here)
+    ("J3",             7,  13),   # middle (S3 drains here; J1+J2 merge here)
+    ("J4",             7,   4),   # just upstream of sea wall — culvert outlet
+    ("sewer_outflow",  7,   2),   # JUNCTION in dropoff/BC zone (terminal node)
+    ("dummy_outfall",  7,  26),   # disconnected SWMM outfall, required for
+                                  # parsing. Same col as the rest so the Y
+                                  # stem extends to the top of the figure.
 ]
 
 # Node-type partition: nodes whose names appear in `_OUTFALL_NAMES` go into
@@ -133,38 +136,118 @@ _NODES = [
 # name-prefix-based filter.
 _OUTFALL_NAMES = {"dummy_outfall"}
 
-# Rim elevation for every node equals the DEM cell-center elevation at that
-# node's (col, row) — enforced by the rim==DEM assertion in cache.py. Invert
-# elevations are pinned to rim - depth. Depth = 0.5 m keeps every invert
-# non-negative (J4 at row_from_bottom=4 sits at gradient elev 1.5 m; the
-# `sewer_outflow` outfall at row 2 sits at dropoff elev 0.5 m).
+# Iter-8 peak_flood_depth (2026-04-28): with the sloped upstream gradient
+# (3.0 m at top → 1.5 m at sea-wall row) and the 0.5 m buffer-lowering on
+# swale cells, swale rims at each junction are:
+#   J1, J2 (matrix_row 7):     2.174  (gradient 2.674 − 0.5)
+#   J3     (matrix_row 16):    1.587  (gradient 2.087 − 0.5)
+#   J4     (matrix_row 25):    1.000  (gradient 1.500 − 0.5)
+#   sewer_outflow (mr 27):     0.000  (dropoff 0.500 − 0.5)
+#   dummy_outfall (matrix_row 3, disconnected): 2.370 (gradient 2.870 − 0.5)
+# Junction depths cascade so all inverts step down across the network;
+# slopes 2.0% on C1/C2/C3, 2.0% on C4. All within the user's 1–3% range.
+#   sewer_outflow rim 0.0,   depth 0.5,   invert −0.5  (iter-7..11)
+#   J4            rim 1.0,   depth 1.1,   invert −0.1
+#   J3            rim 1.587, depth 1.087, invert  0.5
+#   J1, J2        rim 2.174, depth 1.074, invert  1.1
+#   dummy_outfall rim 2.370, depth 0.5,   invert  1.870 (disconnected)
+#
+# Iter-13 (2026-04-28): pipe diameter 0.2 → 1.0 m, inverts cascaded for 2.0 %
+# slopes throughout. (Pre-iter-15 cascade — replaced below.)
+#
+# Iter-17 (2026-04-29): dropoff zone lowered 1.0 → 0.5 m to match the minimum
+# upstream elevation (the buffer-lowered swale at the bottom corridor row).
+# Sewer_outflow now sits in a 0.5 m dropoff zone, so its depth re-cascades.
+# Other junctions' rims unchanged from iter-16; their depths preserved.
+#   J1, J2 rim 0.891, depth 0.500, invert  0.391
+#   J3     rim 0.696, depth 0.800, invert −0.104   C1, C2 (0.391 − −0.104)/30 = 1.65 %
+#   J4     rim 0.500, depth 1.100, invert −0.600   C3     (−0.104 − −0.600)/30 = 1.65 %
+#   sewer  rim 0.500, depth 1.400, invert −0.900   C4     (−0.600 − −0.900)/20 = 1.50 %
+#   dummy_outfall depth 0.500 (disconnected; rim auto-pins to DEM at its cell).
+_NODE_DEPTHS_M = {
+    "sewer_outflow": 1.400,
+    "J4":            1.100,
+    "J3":            0.800,
+    "J1":            0.500,
+    "J2":            0.500,
+    "dummy_outfall": 0.500,
+}
+# Backwards-compat default for any code path that still imports
+# `_JUNCTION_DEPTH_M` (now a fallback for nodes not in `_NODE_DEPTHS_M`).
 _JUNCTION_DEPTH_M = 0.5
+
+
+def _node_depth(name: str) -> float:
+    return _NODE_DEPTHS_M.get(name, _JUNCTION_DEPTH_M)
+
+
+def max_node_rim_elev(params) -> float:
+    """Maximum rim elevation across all SWMM nodes (junctions + outfalls).
+
+    Used by the synthetic weather builder (`weather.py`) to set the BC-only
+    and combined-event water-level forcing as `max_rim + 0.10` per the iter-4
+    user feedback for `per_sim_peak_flood_depth`. Reading from the same
+    `dem_elev_at` source that pins junction rims keeps the value
+    deterministic across fixture rebuilds.
+    """
+    from .geometry import dem_elev_at
+
+    return float(max(
+        dem_elev_at(params, col, row_from_bottom)
+        for _name, col, row_from_bottom in _NODES
+    ))
 
 # (name, from_node, to_node, length_m). C4 is the culvert that crosses the
 # sea wall row to deliver flow from the upstream gradual-slope node J4 to
 # `sewer_outflow` on the BC side.
+# Iter-5 peak_flood_depth (2026-04-28): C1/C2/C3 lengths reduced from
+# 100/100/80 m to 50 m so all conduits maintain ≥1% slope under the
+# rim==DEM invariant. Pre-iter-5 lengths produced 0.59% slope on
+# C1/C2 and 0.73% on C3 — below the 1% threshold the user required for
+# valid backwater hydraulics. Slopes after change:
+#   C1: (2.174 - 1.587) / 50 = 1.174%
+#   C2: (2.174 - 1.587) / 50 = 1.174%
+#   C3: (1.587 - 1.000) / 50 = 1.174%
+#   C4: (1.000 - 0.000) / 20 = 5.000%
+# C4 is already 5% — no change. Lengths are decoupled from the actual
+# (col, row) cell distance in this fixture; they're treated as
+# friction-only parameters by SWMM dynamic-wave routing.
+# Iter-6 peak_flood_depth (2026-04-28): C1/C2/C3 lengths reduced 50→30 m so
+# slopes match the user's 1–3 % range with iter-6's varied-depth inverts.
+# Slopes after change (using inverts from `_NODE_DEPTHS_M`):
+#   C1: (1.30 - 0.85) / 30 = 1.50 %
+#   C2: (1.30 - 0.85) / 30 = 1.50 %
+#   C3: (0.85 - 0.40) / 30 = 1.50 %
+#   C4: (0.40 - 0.00) / 20 = 2.00 %
 _CONDUITS = [
-    ("C1", "J1", "J3",            100.0),
-    ("C2", "J2", "J3",            100.0),
-    ("C3", "J3", "J4",             80.0),
-    ("C4", "J4", "sewer_outflow",  20.0),
+    ("C1", "J1", "J3",            30.0),
+    ("C2", "J2", "J3",            30.0),
+    ("C3", "J3", "J4",            30.0),
+    ("C4", "J4", "sewer_outflow", 20.0),
 ]
 
-# Conduit cross-section diameter (m). Intentionally small so runoff from
-# S1/S2/S3 surcharges the network — forces flow into the TRITON 2-D solver
-# via the rim/cell coupling. Iter-3 conduit_flow feedback: 0.2 m kept C4 at
-# only 0.94 max-over-full and C1/C2/C3 well below 1.0 at 500 mm/hr rainfall;
-# 0.1 m cap forces all four conduits to surcharge (max-over-full >= 1.0).
-_CONDUIT_DIAMETER_M = 0.1
+# Iter-6 peak_flood_depth (2026-04-28): bumped 0.1 → 0.2 m so 30-min sim
+# with BC peak 5 m can deliver enough backwater volume to flood the
+# (now narrow) channel visibly.
+# Iter-13 peak_flood_depth (2026-04-28): bumped 0.2 → 1.0 m so event 1
+# backwater equilibrates within the canonical 180-min sim. At 0.2 m, τ at
+# the upstream Y tips was ~68 h (95 % equilibrium ≈ 8.5 d). Pipe area
+# scales D², so 1.0/0.2 = 25× area; τ should shrink by roughly the same
+# factor → 95 % at J1/J2 in ~8 h sim. The conduit_flow surcharge story
+# stays alive because the rainfall is constant 100 mm/hr — runoff still
+# overwhelms each conduit's max-over-full at the peak.
+_CONDUIT_DIAMETER_M = 1.0
 
-# (col_min, row_from_bottom_min, col_max, row_from_bottom_max). Per iteration-2
-# feedback: identically-sized 5×5-cell polygons. S1/S2/S3 only — S4 removed
-# (J4 has no subcatchment in iteration-2). Positioned so each polygon sits
-# near its outlet without overlapping the connecting conduits.
+# Iter-8 peak_flood_depth (2026-04-28): subcatchments aligned with the
+# spread-Y junction layout. S1 sits along the C1 (left) branch near J1,
+# S2 along the C2 (right) branch near J2, S3 along the C3 stem near J3.
+# Polygons are 5×5 cell rectangles. They overlap the Y corridor (intended)
+# and the side walls (visual artifact, ignored — SWMM routing uses the
+# [SUBCATCHMENTS] Outlet field, not polygon coordinates).
 _SUBCATCHMENT_POLYGON_CELL_BOUNDS = {
-    "S1": (3,  23, 8,  28),   # 5×5, upper-left, near J1 (col 6, row 22)
-    "S2": (12, 23, 17, 28),   # 5×5, upper-right, near J2 (col 13, row 22)
-    "S3": (3,   9, 8,  14),   # 5×5, middle-left of J3 (col 10, row 13)
+    "S1": (1, 21, 5, 25),    # 5×5, upstream-left, drains to J1 (col 3, row 22)
+    "S2": (9, 21, 13, 25),   # 5×5, upstream-right, drains to J2 (col 11, row 22)
+    "S3": (5, 12, 9, 16),    # 5×5, middle (around J3), drains to J3 (col 7, row 13)
 }
 
 _SUBCATCHMENTS = [
@@ -211,20 +294,25 @@ def _options_df() -> pd.DataFrame:
 
 
 def _junctions_df(params) -> pd.DataFrame:
-    """Junction invert = DEM(col, row_from_bottom) - _JUNCTION_DEPTH_M, so rim
+    """Junction invert = DEM(col, row_from_bottom) - per-node depth, so rim
     (= invert + MaxDepth) lands exactly on the DEM surface at the node cell.
-    Junctions = all `_NODES` whose name is NOT in `_OUTFALL_NAMES` (iter-2
-    mid-iteration: `sewer_outflow` is a regular junction)."""
+    Iter-6: depths now vary per-node via `_NODE_DEPTHS_M` so inverts cascade
+    with 1.0–2.5 % conduit slopes under a flat-channel DEM (rim==DEM still
+    holds because each junction's rim is its cell's DEM elevation, regardless
+    of how deep its invert sits below)."""
     from .geometry import dem_elev_at
 
     rows = [(n, c, r) for n, c, r in _NODES if n not in _OUTFALL_NAMES]
-    depth = _JUNCTION_DEPTH_M
-    inverts = [round(dem_elev_at(params, c, r) - depth, 3) for _, c, r in rows]
+    depths = [_node_depth(n) for n, _, _ in rows]
+    inverts = [
+        round(dem_elev_at(params, c, r) - d, 3)
+        for (_, c, r), d in zip(rows, depths, strict=True)
+    ]
     names = [n for n, _, _ in rows]
     return pd.DataFrame(
         {
             "InvertElev": inverts,
-            "MaxDepth":   [depth for _ in names],
+            "MaxDepth":   depths,
             "InitDepth":  [0 for _ in names],
             "SurchargeDepth": [0 for _ in names],
             "PondedArea": [0 for _ in names],
@@ -234,16 +322,16 @@ def _junctions_df(params) -> pd.DataFrame:
 
 
 def _outfalls_df(params) -> pd.DataFrame:
-    """Outfall rim matches DEM at its cell; invert pinned below rim. Iter-2
-    mid-iteration: only `dummy_outfall` is in `_OUTFALL_NAMES`; all other
-    nodes are junctions."""
+    """Outfall rim matches DEM at its cell; invert pinned below rim by the
+    per-node depth (`_NODE_DEPTHS_M`). Iter-2 mid-iteration: only
+    `dummy_outfall` is in `_OUTFALL_NAMES`; all other nodes are junctions."""
     from .geometry import dem_elev_at
 
     rows = [(n, c, r) for n, c, r in _NODES if n in _OUTFALL_NAMES]
     inverts = []
-    for _name, c, r in rows:
+    for name, c, r in rows:
         rim = dem_elev_at(params, c, r)
-        inverts.append(round(rim - _JUNCTION_DEPTH_M, 3))
+        inverts.append(round(rim - _node_depth(name), 3))
     return pd.DataFrame(
         {
             "InvertElev": inverts,
