@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import rioxarray as rxr
 import xarray as xr
-from matplotlib.colors import BoundaryNorm, Normalize  # noqa: F401
+from matplotlib.colors import Normalize
 
 from TRITON_SWMM_toolkit import utils
 
@@ -46,7 +46,7 @@ _DEPTH_CMAP = "YlGnBu"
 # Perceptually-distinct elevation-flavored colormap for the WSE panel
 # (dark-navy → yellow), chosen to read as elevation while staying visually
 # distinct from the YlGnBu depth ramp.
-_WSE_CMAP = "cividis"
+_WSE_CMAP = "plasma"
 _RAIN_COLOR = "#9ecae1"  # light blue, matches the Event hydrology reference
 _BC_LINE_COLOR = "black"
 
@@ -361,8 +361,8 @@ def render(
     # iter-5 feedback: restore numeric x/y tick labels on flood maps. Use
     # small font so the labels don't dominate the panel.
     ax_depth.tick_params(axis="both", labelsize=7)
-    ax_depth.set_xlabel("")
-    ax_depth.set_ylabel("")
+    ax_depth.set_xlabel("Easting (m)", fontsize=8)
+    ax_depth.set_ylabel("Northing (m)", fontsize=8)
     watershed_ref = ProvenanceRef(
         source_path=watershed_rel,
         variable="watershed_polygon",
@@ -433,8 +433,8 @@ def render(
     ax_wse.set_aspect("equal")
     ax_wse.set_title("Water surface elevation")
     ax_wse.tick_params(axis="both", labelsize=7)
-    ax_wse.set_xlabel("")
-    ax_wse.set_ylabel("")
+    ax_wse.set_xlabel("Easting (m)", fontsize=8)
+    ax_wse.set_ylabel("Northing (m)", fontsize=8)
     with prov.artist(
         axes_id="ax_wse", kind="patch",
         note="watershed boundary overlay",
