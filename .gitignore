@@ -246,3 +246,6 @@ external/
 test_data/norfolk_coastal_flooding/triton/*
 # PWI worktree closeout sentinel written by /wrapup-session Step 7b to unblock ExitWorktree
 .wrapup-complete
+# TRITON binary runtime artifact (written to cwd on simulation launch; not referenced by Python code)
+/cid
+/docs/cid
