@@ -63,8 +63,8 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
             "n_successful",
             "n_pending",
             "n_failed",
-            "avg_triton_continuity_error",
-            "avg_swmm_continuity_error",
+            "enabled_model_types",
+            "sensitivity_mode",
         ]
     ] = Field(
         default_factory=lambda: [
@@ -72,8 +72,8 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
             "n_successful",
             "n_pending",
             "n_failed",
-            "avg_triton_continuity_error",
-            "avg_swmm_continuity_error",
+            "enabled_model_types",
+            "sensitivity_mode",
         ]
     )
 

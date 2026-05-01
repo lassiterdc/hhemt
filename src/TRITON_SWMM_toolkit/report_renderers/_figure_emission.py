@@ -39,9 +39,12 @@ def emit_plot_with_sources(
     at report-render time via `{{ snakemake.params.source_paths }}`.
 
     Side effects beyond the primary save:
-    - Writes a preview PNG sibling at `<stem>.preview.png` (always, when output is
-      raster) at `preview_dpi` for cheap subagent visual review per the v1.4 data-viz
-      review algorithm. Source-path metadata embedded identically.
+    - Writes a preview PNG sibling at `<stem>.preview.png` at `preview_dpi` for
+      cheap subagent visual review per the v1.4 data-viz review algorithm.
+      Emitted for ALL full-res formats (PNG and SVG alike) — the preview is
+      always PNG so /design-figure's subagent reads work uniformly regardless
+      of full-res format. PNG-permissive metadata ("Source", "Software") is
+      always used on the preview.
     - Writes a `<stem>.manifest.json` sibling capturing structural facts
       (paths, file sizes, figure dimensions, source paths, optional
       caller-supplied `manifest_data` describing per-panel content).
@@ -62,8 +65,8 @@ def emit_plot_with_sources(
         Figure DPI for the full-resolution raster output.
     output_format : {"png", "svg"}
         Format hint for matplotlib's `savefig`. Determines whether PNG `tEXt`
-        metadata or SVG `<metadata>` is used. Preview + manifest siblings are
-        skipped for SVG output.
+        metadata or SVG `<metadata>` is used for the full-res file. Preview +
+        manifest siblings are emitted regardless of full-res format.
     preview_dpi : int, default 100
         DPI for the preview PNG sibling. The v1.4 data-viz review algorithm
         defaults to 100 dpi as a labels-legible / token-cheap target for the
@@ -86,46 +89,61 @@ def emit_plot_with_sources(
     """
     analysis_root = str(analysis_dir.resolve())
     rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
-    metadata = {
+    # PNG accepts arbitrary tEXt keys; SVG metadata is restricted to the
+    # Dublin Core element set (matplotlib backend_svg validates against it
+    # and ValueErrors on unknown keys). "Source" is in Dublin Core; "Software"
+    # is not — for SVG, fold the "Software" intent into "Creator", which is.
+    # The preview PNG is always PNG-permissive regardless of full-res format.
+    preview_metadata: dict[str, str] = {
         "Source": "; ".join(rel_sources),
         "Software": "TRITON-SWMM_toolkit",
     }
+    full_res_metadata: dict[str, str]
+    if output_format == "svg":
+        full_res_metadata = {
+            "Source": "; ".join(rel_sources),
+            "Creator": "TRITON-SWMM_toolkit",
+        }
+    else:
+        full_res_metadata = preview_metadata
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(
         output_path,
         dpi=dpi,
         bbox_inches="tight",
         format=output_format if output_path.suffix.lstrip(".") != output_format else None,
-        metadata=metadata,
+        metadata=full_res_metadata,
     )
 
-    is_raster = output_format == "png"
-    if is_raster:
-        preview_path = output_path.parent / f"{output_path.stem}.preview.png"
-        fig.savefig(
-            preview_path,
-            dpi=preview_dpi,
-            bbox_inches="tight",
-            format="png",
-            metadata=metadata,
-        )
-        manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
-        manifest = {
-            "full_res_path": str(output_path),
-            "preview_path": str(preview_path),
-            "full_res_dpi": dpi,
-            "preview_dpi": preview_dpi,
-            "figure_size_inches": list(fig.get_size_inches()),
-            "full_res_size_bytes": output_path.stat().st_size,
-            "preview_size_bytes": preview_path.stat().st_size,
-            "source_paths_relative": rel_sources,
-            "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
-        }
-        if manifest_data:
-            manifest["renderer_data"] = manifest_data
-        if provenance is not None:
-            manifest["artists"] = provenance.serialize()
-        manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+    # Preview + manifest siblings emit for ALL output formats so /design-figure's
+    # subagent-read pathway works uniformly regardless of full-res format
+    # (matplotlib's fig is reusable across savefig calls; no rasterization needed).
+    preview_path = output_path.parent / f"{output_path.stem}.preview.png"
+    fig.savefig(
+        preview_path,
+        dpi=preview_dpi,
+        bbox_inches="tight",
+        format="png",
+        metadata=preview_metadata,
+    )
+    manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
+    manifest = {
+        "full_res_path": str(output_path),
+        "preview_path": str(preview_path),
+        "full_res_format": output_format,
+        "full_res_dpi": dpi,
+        "preview_dpi": preview_dpi,
+        "figure_size_inches": list(fig.get_size_inches()),
+        "full_res_size_bytes": output_path.stat().st_size,
+        "preview_size_bytes": preview_path.stat().st_size,
+        "source_paths_relative": rel_sources,
+        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if manifest_data:
+        manifest["renderer_data"] = manifest_data
+    if provenance is not None:
+        manifest["artists"] = provenance.serialize()
+    manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
 
     plt.close(fig)
     return output_path

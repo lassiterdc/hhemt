@@ -535,6 +535,7 @@ rule all:
         "plots/system_overview.png",
         expand("plots/per_sim/{{event_id}}/peak_flood_depth.png", event_id=SIM_IDS),
         expand("plots/per_sim/{{event_id}}/conduit_flow.png",     event_id=SIM_IDS),
+        "plots/per_analysis/summary_table.svg",
 
 onsuccess:
     shell("""
@@ -720,7 +721,87 @@ rule consolidate:
 '''
         snakefile_content += self._build_plot_rule_block_system_overview()
         snakefile_content += self._build_plot_rule_block_per_sim()
+        snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         return snakefile_content
+
+    def _collect_per_analysis_summary_source_paths(self) -> list[str]:
+        """Return analysis-dir-relative .rpt + TRITON-log paths the renderer reads.
+
+        Per Gotcha 5: dispatch on enabled model types — `swmm_hydraulics_rpt`
+        for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only;
+        `log_run_tritonswmm` / `log_run_triton` for TRITON-side logs.
+        """
+        import os as _os
+
+        analysis_dir = self.analysis.analysis_paths.analysis_dir
+        analysis_root = str(Path(analysis_dir).resolve())
+        enabled = self.analysis._get_enabled_model_types()
+        paths: list[str] = []
+        for event_iloc in self.analysis.df_sims.index:
+            scen_paths = (
+                self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths
+            )
+            if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt:
+                paths.append(
+                    _os.path.relpath(
+                        str(Path(scen_paths.swmm_hydraulics_rpt).resolve()),
+                        analysis_root,
+                    )
+                )
+            elif "swmm" in enabled and scen_paths.swmm_full_rpt_file:
+                paths.append(
+                    _os.path.relpath(
+                        str(Path(scen_paths.swmm_full_rpt_file).resolve()),
+                        analysis_root,
+                    )
+                )
+            if "tritonswmm" in enabled and scen_paths.log_run_tritonswmm:
+                paths.append(
+                    _os.path.relpath(
+                        str(Path(scen_paths.log_run_tritonswmm).resolve()),
+                        analysis_root,
+                    )
+                )
+            elif "triton" in enabled and scen_paths.log_run_triton:
+                paths.append(
+                    _os.path.relpath(
+                        str(Path(scen_paths.log_run_triton).resolve()),
+                        analysis_root,
+                    )
+                )
+        return paths
+
+    def _build_plot_rule_block_per_analysis_summary(self) -> str:
+        """Generate the Snakemake rule for the per-analysis summary table (R7).
+
+        Produces `plots/per_analysis/summary_table.svg` — a deterministic
+        metrics table (n sims, n successful/pending/failed, average TRITON +
+        SWMM flow-routing continuity errors). Per Phase 5 plan: SWMM .rpt
+        parsing delegates to swmm_output_parser.return_swmm_system_outputs,
+        not in-renderer regex.
+        """
+        conda_env_path = self._get_conda_env_path()
+        config_args = self._get_config_args()
+        source_paths = self._collect_per_analysis_summary_source_paths()
+        return f'''
+rule plot_per_analysis_summary_table:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        "plots/per_analysis/summary_table.svg"
+    params:
+        source_paths = {source_paths!r},
+    log: "logs/plots/per_analysis_summary_table.log"
+    conda: "{conda_env_path}"
+    resources: mem_mb=2000, time_min=5
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli per_analysis_summary \\
+            {config_args} \\
+            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+'''
 
     def _build_plot_rule_block_per_sim(self) -> str:
         """Generate two per-sim plot rules wildcarded over event_id (Phase 3, R6).
