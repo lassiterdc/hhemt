@@ -88,6 +88,7 @@ testpaths = ["tests"]
 norecursedirs = ["test_data", "docs", ".git", ".venv", "venv"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and TRITON_SWMM_GLOBUS_E2E=1",
 ]
 filterwarnings = [
     "ignore:Support for class-based `config` is deprecated:DeprecationWarning",

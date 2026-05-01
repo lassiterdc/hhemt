@@ -1,9 +1,17 @@
 """E2E Globus transfer tests.
 
-Run interactively:
+These tests require live, user-activated Globus endpoints and a valid OAuth
+session. They are SKIPPED by default under pytest. To opt in:
+
+    TRITON_SWMM_GLOBUS_E2E=1 pytest tests/dev/test_globus_transfer.py -v
+
+They are also marked ``slow`` and ``globus_e2e`` so they are deselected by
+``pytest -m "not slow"``.
+
+Run interactively (outside pytest):
     conda run -n triton_swmm_toolkit ipython -i tests/dev/test_globus_transfer.py
 
-Or run a specific test:
+Or run a specific test via the CLI dispatch at the bottom:
     conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py frontier
     conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py uva
     conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py verify
@@ -11,6 +19,14 @@ Or run a specific test:
 
 import os
 import sys
+
+import pytest
+
+_GLOBUS_E2E_ENABLED = os.environ.get("TRITON_SWMM_GLOBUS_E2E") == "1"
+_globus_e2e = pytest.mark.skipif(
+    not _GLOBUS_E2E_ENABLED,
+    reason="Globus E2E tests require activated endpoints; set TRITON_SWMM_GLOBUS_E2E=1 to opt in",
+)
 
 # Use worktree source if available, otherwise fall back to installed package
 WORKTREE_SRC = "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/globus-auto-transfer-and-debug-restructuring/src"
@@ -25,6 +41,9 @@ from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager  # noqa: E
 # ── Test 1: Frontier → Local ──────────────────────────────────────────
 
 
+@pytest.mark.slow
+@pytest.mark.globus_e2e
+@_globus_e2e
 def test_frontier():
     """Transfer Frontier sensitivity suite results to local machine."""
     # Clear stale tokens to force fresh auth
@@ -70,6 +89,9 @@ def test_frontier():
 # ── Test 2: UVA → Local ──────────────────────────────────────────────
 
 
+@pytest.mark.slow
+@pytest.mark.globus_e2e
+@_globus_e2e
 def test_uva():
     """Transfer UVA results to local machine. Edit paths before running."""
     config = PostRunTransferConfig(
