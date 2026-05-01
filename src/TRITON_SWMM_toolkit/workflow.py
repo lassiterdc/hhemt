@@ -171,7 +171,11 @@ class SnakemakeWorkflowBuilder:
         if verbose:
             print("[Snakemake] Unlock successful. Proceeding.", flush=True)
 
-    def _get_config_args(self, analysis_config_yaml: Path | None = None) -> str:
+    def _get_config_args(
+        self,
+        analysis_config_yaml: Path | None = None,
+        include_report_config: bool = False,
+    ) -> str:
         """
         Generate common config path arguments.
 
@@ -179,6 +183,10 @@ class SnakemakeWorkflowBuilder:
         ----------
         analysis_config_yaml : Path | None
             If provided, use this analysis config instead of self.analysis.analysis_config_yaml
+        include_report_config : bool
+            Emit ``--report-config`` when ``self._report_config_path`` is set. Default False
+            because only renderer rules (the ``_cli`` dispatcher) accept that flag — the
+            setup / prepare / run / process / consolidate runners would error on it.
 
         Returns
         -------
@@ -190,9 +198,10 @@ class SnakemakeWorkflowBuilder:
             f"--system-config {self.system.system_config_yaml} \\\n"
             f"            --analysis-config {analysis_cfg}"
         )
-        report_cfg_path = getattr(self, "_report_config_path", None)
-        if report_cfg_path is not None:
-            args += f" \\\n            --report-config {report_cfg_path}"
+        if include_report_config:
+            report_cfg_path = getattr(self, "_report_config_path", None)
+            if report_cfg_path is not None:
+                args += f" \\\n            --report-config {report_cfg_path}"
         return args
 
     def _build_resource_block(
@@ -299,7 +308,7 @@ class SnakemakeWorkflowBuilder:
         import os as _os
 
         conda_env_path = self._get_conda_env_path()
-        config_args = self._get_config_args()
+        config_args = self._get_config_args(include_report_config=True)
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(analysis_dir.resolve())
         cfg_ana = self.analysis.cfg_analysis
@@ -781,7 +790,7 @@ rule consolidate:
         not in-renderer regex.
         """
         conda_env_path = self._get_conda_env_path()
-        config_args = self._get_config_args()
+        config_args = self._get_config_args(include_report_config=True)
         source_paths = self._collect_per_analysis_summary_source_paths()
         return f'''
 rule plot_per_analysis_summary_table:
@@ -815,7 +824,7 @@ rule plot_per_analysis_summary_table:
         alongside `SIM_IDS` in `generate_snakefile_content`).
         """
         conda_env_path = self._get_conda_env_path()
-        config_args = self._get_config_args()
+        config_args = self._get_config_args(include_report_config=True)
         return f'''
 def _per_sim_flood_depth_sources(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
@@ -3048,12 +3057,26 @@ class SensitivityAnalysisWorkflowBuilder:
         str
             Master Snakefile content
         """
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG, report_config
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
             analysis_config_yaml=self.master_analysis.analysis_config_yaml
+        )
+
+        # Resolve report_config to get the sensitivity benchmarking independent_vars
+        # so the master Snakefile can wildcard the plot rule per independent_var.
+        if report_config_path is not None:
+            _report_cfg = yaml_to_model(report_config_path, report_config)
+        else:
+            _report_cfg = DEFAULT_REPORT_CONFIG
+        _independent_vars: list[str] = (
+            list(_report_cfg.sensitivity.independent_vars)
+            if _report_cfg.sensitivity is not None
+            else []
         )
 
         # Determine the single enabled model type for sensitivity analysis
@@ -3110,10 +3133,17 @@ onerror:
                 f"_status/e_consolidate_sa-{sa_id}_complete.flag"  # type: ignore
             )
 
+        rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
+        rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
+        if _independent_vars:
+            rule_all_inputs.append(
+                'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.svg", '
+                f'independent_var={_independent_vars!r})'
+            )
+
         snakefile_content += f'''rule all:
     input:
-        {", ".join([f'"{flag}"' for flag in consolidation_flags])},
-        "_status/f_consolidate_master_complete.flag"
+        {", ".join(rule_all_inputs)}
 
 rule setup:
     output: "_status/a_setup_complete.flag"
@@ -3375,7 +3405,56 @@ rule setup:
         touch {{output}}
         """
 '''
+
+        if _independent_vars:
+            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(
+                _independent_vars
+            )
+
         return snakefile_content
+
+    def _build_plot_rule_block_sensitivity_benchmarking(
+        self, independent_vars: list[str]
+    ) -> str:
+        """Generate the sensitivity benchmarking plot rule, wildcarded over independent_var.
+
+        Charset validation for independent_var names is upstream, at Phase 1's
+        ``validate_sensitivity_independent_vars()``; names reaching here are guaranteed
+        Snakemake-safe.
+        """
+        conda_env_path = self._base_builder._get_conda_env_path()
+        config_args = self._base_builder._get_config_args(
+            analysis_config_yaml=self.master_analysis.analysis_config_yaml,
+            include_report_config=True,
+        )
+        return f'''
+INDEPENDENT_VARS = {independent_vars!r}
+
+def _sensitivity_source_paths(wildcards):
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        collect_sensitivity_source_paths,
+    )
+    return collect_sensitivity_source_paths(wildcards.independent_var)
+
+rule plot_sensitivity_benchmarking:
+    input:
+        master = "_status/f_consolidate_master_complete.flag",
+    output:
+        "plots/sensitivity/benchmarking/{{independent_var}}_vs_total.svg"
+    params:
+        source_paths = _sensitivity_source_paths,
+    log: "logs/plots/sensitivity_benchmarking_{{independent_var}}.log"
+    conda: "{conda_env_path}"
+    resources: mem_mb=4000, time_min=10
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli sensitivity_benchmarking \\
+            {config_args} \\
+            --independent-var {{wildcards.independent_var}} \\
+            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+'''
 
     def submit_workflow(
         self,

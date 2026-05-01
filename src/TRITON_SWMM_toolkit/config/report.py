@@ -100,6 +100,23 @@ class SensitivityReportConfig(cfgBaseModel):
         ),
     )
     aggregation: Literal["mean", "median", "min", "max"] = Field("mean")
+    group_by_var: str | None = Field(
+        None,
+        description=(
+            "Optional secondary CSV column whose values become a categorical "
+            "grouping (color) on the benchmarking plot — one line/marker series "
+            "per group, x=independent_var, y=dependent_var. Typical value: "
+            "'run_mode'. None → single ungrouped series. Validated at run-entry "
+            "against the actual CSV columns alongside independent_vars."
+        ),
+    )
+    show_gridlines: bool = Field(
+        True,
+        description=(
+            "When True, all panels render light-grey major-axis gridlines on x "
+            "and y. Useful for reading absolute values off the panels."
+        ),
+    )
 
 
 class report_config(cfgBaseModel):

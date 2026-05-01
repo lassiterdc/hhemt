@@ -1,0 +1,49 @@
+# Sensitivity-tier report config for synth_05 / synth_06.
+# Declares the independent variables that the benchmarking renderer wildcards over.
+
+figure_defaults:
+  font_family: "DejaVu Sans"
+  font_size: 10
+  dpi: 100
+  savefig_dpi: 150
+
+system_map:
+  target_epsg: null
+  figsize_inches: [10.0, 8.0]
+  watershed_color: red
+  dem_extent_color: blue
+  bc_marker: o
+  bc_color: orange
+  swmm_node_color: black
+  swmm_node_size: 8.0
+  swmm_link_color: gray
+  swmm_link_width: 0.6
+
+per_sim:
+  peak_flood_depth:
+    figsize_inches: [10.0, 8.0]
+    cmap: viridis
+    vmin: 0.0
+    vmax: null
+  conduit_flow:
+    figsize_inches: [12.0, 5.0]
+    cmap: plasma
+    vmin: 0.0
+    vmax: null
+
+per_analysis_summary:
+  metrics:
+    - n_sims
+    - n_successful
+    - n_pending
+    - n_failed
+    - enabled_model_types
+
+sensitivity:
+  mode: benchmarking
+  independent_vars:
+    - n_devices
+  dependent_var: performance.Total
+  aggregation: mean
+  group_by_var: run_mode
+  show_gridlines: true

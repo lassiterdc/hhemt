@@ -30,6 +30,7 @@ from TRITON_SWMM_toolkit.swmm_output_parser import (
     return_node_time_series_results_from_rpt,
     format_rpt_section_into_dataframe,
     return_data_from_rpt,
+    parse_total_elapsed,
 )
 from TRITON_SWMM_toolkit.constants import (
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
@@ -566,3 +567,33 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
     )
+
+
+# =============================================================================
+# parse_total_elapsed (Phase 6)
+# =============================================================================
+
+
+class TestParseTotalElapsed:
+    """parse_total_elapsed handles SWMM 5.2.x 'Total elapsed time' canonical forms."""
+
+    def test_total_elapsed_hh_mm_ss(self, tmp_path):
+        rpt = tmp_path / "long.rpt"
+        rpt.write_text("preamble\n  Total elapsed time: 01:02:03\nepilogue\n")
+        assert parse_total_elapsed(rpt) == 3723.0
+
+    def test_total_elapsed_short_run(self, tmp_path):
+        rpt = tmp_path / "short.rpt"
+        rpt.write_text("...\n  Total elapsed time: < 1 sec\n...\n")
+        assert parse_total_elapsed(rpt) == 0.5
+
+    def test_total_elapsed_missing_line(self, tmp_path):
+        rpt = tmp_path / "missing.rpt"
+        rpt.write_text("nothing relevant here\n")
+        assert parse_total_elapsed(rpt) is None
+
+    def test_total_elapsed_missing_file(self, tmp_path):
+        assert parse_total_elapsed(tmp_path / "does_not_exist.rpt") is None
+
+    def test_total_elapsed_none_path(self):
+        assert parse_total_elapsed(None) is None  # type: ignore[arg-type]

@@ -191,11 +191,18 @@ def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
     Snakefiles and to make the source-path construction testable in isolation.
 
     The returned list is relative to the master analysis_dir (per R13 — sensitivity
-    reports live in the master dir). Relative paths include the
-    `subanalyses/sa_{id}/sims/{event_id}/...` prefix for per-sub-analysis artifacts.
+    reports live in the master dir).
+
+    The renderer reads the master `sensitivity_datatree.zarr` for TRITON-coupled /
+    TRITON-only sub-analyses (per Phase 6 verification: `/sa_{id}/tritonswmm/performance.Total`
+    is present on the master DataTree, dimensioned by event_iloc). The `independent_var`
+    columns live in the sensitivity CSV. SWMM-only sub-analyses fall back to per-scenario
+    `.rpt` parsing inside the renderer; those `.rpt` paths are not enumerated here
+    because they are SWMM-only-conditional and only the renderer knows the enabled
+    model types.
     """
-    raise NotImplementedError(
-        "Spec only — implementation wired up in Phase 6 via the "
-        "SensitivityAnalysisWorkflowBuilder._collect_sensitivity_source_paths() "
-        "bound helper."
-    )
+    del independent_var  # currently unused; the same source set serves all wildcards
+    return [
+        "sensitivity_datatree.zarr",
+        "sensitivity_analysis_definition.csv",
+    ]
