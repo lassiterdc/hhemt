@@ -29,7 +29,7 @@ def test_from_scratch_and_resume_mutually_exclusive(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -49,7 +49,7 @@ def test_event_ilocs_and_range_mutually_exclusive(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -69,7 +69,7 @@ def test_verbose_and_quiet_mutually_exclusive(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -94,7 +94,7 @@ def test_testcase_profile_requires_testcase_name(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "testcase",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -112,7 +112,7 @@ def test_case_study_profile_requires_case_study_name(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "case-study",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -130,7 +130,7 @@ def test_production_profile_does_not_require_profile_name(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -155,7 +155,7 @@ def test_profile_is_required_for_non_list_actions(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
     ])
@@ -169,7 +169,7 @@ def test_system_config_is_required_for_non_list_actions(tmp_path):
     analysis_config = tmp_path / "analysis.yaml"
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--analysis-config", str(analysis_config),
     ])
@@ -183,7 +183,7 @@ def test_analysis_config_is_required_for_non_list_actions(tmp_path):
     system_config = tmp_path / "system.yaml"
     system_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
     ])
@@ -204,7 +204,7 @@ def test_invalid_profile_value(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "invalid_profile",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -221,7 +221,7 @@ def test_invalid_model_value(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -239,7 +239,7 @@ def test_invalid_which_value(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -257,7 +257,7 @@ def test_invalid_redownload_value(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -275,7 +275,7 @@ def test_invalid_log_level_value(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -298,7 +298,7 @@ def test_invalid_walltime_format_missing_leading_zero(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -317,7 +317,7 @@ def test_invalid_walltime_format_wrong_separator(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -335,7 +335,7 @@ def test_valid_walltime_format(tmp_path):
     system_config.write_text("version: 1\n")
     analysis_config.write_text("version: 1\n")
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
@@ -365,7 +365,7 @@ def test_valid_profile_values(tmp_path):
         elif profile == "case-study":
             extra_args = ["--case-study", "study_name"]
 
-        result = runner.invoke(app, [
+        result = runner.invoke(app, ["run",
             "--profile", profile,
             "--system-config", str(system_config),
             "--analysis-config", str(analysis_config),
@@ -384,7 +384,7 @@ def test_valid_model_values(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     for model in ["auto", "triton", "swmm", "tritonswmm"]:
-        result = runner.invoke(app, [
+        result = runner.invoke(app, ["run",
             "--profile", "production",
             "--system-config", str(system_config),
             "--analysis-config", str(analysis_config),
@@ -403,7 +403,7 @@ def test_valid_which_values(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     for which in ["TRITON", "SWMM", "both"]:
-        result = runner.invoke(app, [
+        result = runner.invoke(app, ["run",
             "--profile", "production",
             "--system-config", str(system_config),
             "--analysis-config", str(analysis_config),
@@ -422,7 +422,7 @@ def test_valid_redownload_values(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     for redownload in ["none", "triton", "swmm", "all"]:
-        result = runner.invoke(app, [
+        result = runner.invoke(app, ["run",
             "--profile", "production",
             "--system-config", str(system_config),
             "--analysis-config", str(analysis_config),
@@ -441,7 +441,7 @@ def test_valid_log_level_values(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     for log_level in ["DEBUG", "INFO", "WARNING", "ERROR"]:
-        result = runner.invoke(app, [
+        result = runner.invoke(app, ["run",
             "--profile", "production",
             "--system-config", str(system_config),
             "--analysis-config", str(analysis_config),

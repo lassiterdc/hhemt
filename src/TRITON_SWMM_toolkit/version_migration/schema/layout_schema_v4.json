@@ -1,0 +1,23 @@
+{
+  "schema_version": 4,
+  "description": "Canonical post-V0004 layout for analysis_dir and system_directory.",
+  "analysis_dir": {
+    "required_files": ["_version.json", "scenario_status.csv"],
+    "required_subdirs": ["sims", "_status"],
+    "optional_subdirs": ["subanalyses"],
+    "consolidated_zarr": {
+      "path": "analysis_datatree.zarr",
+      "required_root_attrs": ["Conventions", "analysis_id"],
+      "expected_conventions_prefix": "CF-1.13"
+    },
+    "sims_entry": {
+      "name_pattern": "^[A-Za-z0-9_.]+$",
+      "required_subdirs": ["build"],
+      "log_files": ["log_triton.json", "log_tritonswmm.json", "log_swmm.json"]
+    }
+  },
+  "system_directory": {
+    "required_files": ["_version.json"],
+    "optional_files": ["dem.tif", "mannings.dem", "system_datatree.zarr"]
+  }
+}

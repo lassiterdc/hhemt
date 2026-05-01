@@ -3,6 +3,13 @@ from pathlib import Path
 
 from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
 
+# Re-exports from version_migration.constants so the CI Check A
+# (Phase 4 scripts/check_layout_version.py) can grep without importing.
+from TRITON_SWMM_toolkit.version_migration.constants import (  # noqa: F401
+    LAYOUT_VERSION,
+    MINIMUM_SUPPORTED_VERSION,
+)
+
 APP_NAME = "TRITON_SWMM_toolkit"
 NORFOLK_EX = "norfolk_coastal_flooding"
 NORFOLK_ANALYSIS_CONFIG = "template_analysis_config.yaml"

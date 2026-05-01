@@ -1596,6 +1596,14 @@ class TRITONSWMM_analysis:
             # remove analysis folder
             fast_rmtree(self.cfg_analysis.analysis_dir)
 
+        # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
+        # stamp per version_migration_system master plan PI-1). Idempotent
+        # under concurrent writers.
+        from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
+        from TRITON_SWMM_toolkit.version_migration.state import stamp_new_target
+
+        stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
         # Translate user-friendly parameters to workflow parameters
         mode_params = translate_mode("resume")  # TODO - hardcoded while troubleshooting
         phase_params = translate_phases(None)  # TODO - hardcoded while troubleshooting
@@ -2002,6 +2010,14 @@ class TRITONSWMM_analysis:
             - job_id: str | None - Job ID (only for slurm mode)
             - message: str - Status message
         """
+        # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
+        # stamp per version_migration_system master plan PI-1). Idempotent
+        # under concurrent writers.
+        from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
+        from TRITON_SWMM_toolkit.version_migration.state import stamp_new_target
+
+        stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
         if self.cfg_analysis.toggle_sensitivity_analysis:
             result = self.sensitivity.submit_workflow(
                 mode=mode,

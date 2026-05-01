@@ -19,7 +19,7 @@ runner = CliRunner()
 
 def test_list_testcases_with_example_catalog():
     """Test --list-testcases prints available testcases from example catalog."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -33,7 +33,7 @@ def test_list_testcases_with_example_catalog():
 def test_list_testcases_without_catalog_path():
     """Test --list-testcases uses default catalog location when path not specified."""
     # This will fail if default location doesn't exist, but exit code should be 2 (not crash)
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
     ])
 
@@ -43,7 +43,7 @@ def test_list_testcases_without_catalog_path():
 
 def test_list_testcases_with_nonexistent_catalog():
     """Test --list-testcases handles nonexistent catalog gracefully."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "/nonexistent/catalog.yaml",
     ])
@@ -54,7 +54,7 @@ def test_list_testcases_with_nonexistent_catalog():
 
 def test_list_testcases_does_not_require_profile():
     """Test --list-testcases works without --profile argument."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -66,7 +66,7 @@ def test_list_testcases_does_not_require_profile():
 
 def test_list_testcases_does_not_require_config_files():
     """Test --list-testcases works without --system-config/--analysis-config."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -84,7 +84,7 @@ def test_list_testcases_does_not_require_config_files():
 
 def test_list_case_studies_with_example_catalog():
     """Test --list-case-studies prints available case studies from example catalog."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -98,7 +98,7 @@ def test_list_case_studies_with_example_catalog():
 def test_list_case_studies_without_catalog_path():
     """Test --list-case-studies uses default catalog location when path not specified."""
     # This will fail if default location doesn't exist, but exit code should be 2 (not crash)
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
     ])
 
@@ -108,7 +108,7 @@ def test_list_case_studies_without_catalog_path():
 
 def test_list_case_studies_with_nonexistent_catalog():
     """Test --list-case-studies handles nonexistent catalog gracefully."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "/nonexistent/catalog.yaml",
     ])
@@ -119,7 +119,7 @@ def test_list_case_studies_with_nonexistent_catalog():
 
 def test_list_case_studies_does_not_require_profile():
     """Test --list-case-studies works without --profile argument."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -131,7 +131,7 @@ def test_list_case_studies_does_not_require_profile():
 
 def test_list_case_studies_does_not_require_config_files():
     """Test --list-case-studies works without --system-config/--analysis-config."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -149,7 +149,7 @@ def test_list_case_studies_does_not_require_config_files():
 
 def test_list_testcases_uses_rich_table_formatting():
     """Test --list-testcases output uses Rich table formatting."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -164,7 +164,7 @@ def test_list_testcases_uses_rich_table_formatting():
 
 def test_list_case_studies_uses_rich_table_formatting():
     """Test --list-case-studies output uses Rich table formatting."""
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
     ])
@@ -197,7 +197,7 @@ testcases: {}
 case_studies: {}
 """)
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-testcases",
         "--tests-case-config", str(catalog_path),
     ])
@@ -221,7 +221,7 @@ testcases: {}
 case_studies: {}
 """)
 
-    result = runner.invoke(app, [
+    result = runner.invoke(app, ["run",
         "--list-case-studies",
         "--tests-case-config", str(catalog_path),
     ])

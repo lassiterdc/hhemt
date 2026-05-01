@@ -1,0 +1,20 @@
+{
+  "layout_version": 0,
+  "sims_pattern": "^\\d+-(?P<slug>.+)$",
+  "expected_files": [
+    "cached_configs/system.yaml",
+    "cached_configs/analysis.yaml",
+    "sims/0-event_id.0/build/.gitkeep",
+    "sims/0-event_id.0/log_triton.json",
+    "sims/0-event_id.0/log_tritonswmm.json",
+    "sims/0-event_id.0/log_swmm.json",
+    "subanalyses/sa_0/sims/0-event_id.0/build/.gitkeep",
+    "subanalyses/sa_0/sims/0-event_id.0/log_triton.json",
+    "subanalyses/sa_0/sims/1-event_id.1/build/.gitkeep",
+    "subanalyses/sa_0/sims/1-event_id.1/log_triton.json",
+    "_status/scenario_0-event_id.0.flag",
+    "triton_summary.zarr/",
+    "tritonswmm_summary.zarr/",
+    "swmm_summary.zarr/"
+  ]
+}

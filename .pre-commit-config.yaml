@@ -10,3 +10,21 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
+
+  # Version-migration discipline (scripts/check_layout_version.py)
+  # Check A: LAYOUT_VERSION bump => migration module + fixtures
+  # Check B: layout-relevant file change => bump or non_breaking_allowlist entry
+  - repo: local
+    hooks:
+      - id: check-layout-version-a
+        name: check LAYOUT_VERSION bump implies migration + fixtures
+        entry: python scripts/check_layout_version.py check-a HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true
+      - id: check-layout-version-b
+        name: check layout-relevant files trigger LAYOUT_VERSION bump
+        entry: python scripts/check_layout_version.py check-b HEAD~1
+        language: system
+        pass_filenames: false
+        always_run: true

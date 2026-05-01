@@ -1,0 +1,17 @@
+# Sentinel list for scripts/check_layout_version.py check-b.
+# A change to any path/glob below WITHOUT a LAYOUT_VERSION bump fails CI.
+# Add a path to non_breaking_allowlist (with a justifying commit message)
+# when the change touches a layout-relevant module but does not break on-disk state.
+layout_relevant:
+  paths:
+    - src/TRITON_SWMM_toolkit/paths.py
+    - src/TRITON_SWMM_toolkit/scenario.py
+    - src/TRITON_SWMM_toolkit/log.py
+    - src/TRITON_SWMM_toolkit/scenario_inputs.py
+    - src/TRITON_SWMM_toolkit/process_simulation.py
+    - src/TRITON_SWMM_toolkit/processing_analysis.py
+    - src/TRITON_SWMM_toolkit/cf_conventions.py
+  globs:
+    - "src/TRITON_SWMM_toolkit/config/**/*.py"
+    - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"
+non_breaking_allowlist: []
