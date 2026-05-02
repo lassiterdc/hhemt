@@ -197,7 +197,14 @@ def validate_sensitivity_independent_vars(
         else pd.read_excel(sensitivity_csv_path)
     )
     csv_columns = set(df.columns)
-    missing = [v for v in cfg.sensitivity.independent_vars if v not in csv_columns]
+    # Derived columns the renderer constructs from CSV columns and accepts as
+    # independent_vars even though they are not literal CSV columns. Keep this
+    # list aligned with sensitivity_benchmarking._ensure_n_devices_column().
+    derived_columns = {"n_devices"}
+    missing = [
+        v for v in cfg.sensitivity.independent_vars
+        if v not in csv_columns and v not in derived_columns
+    ]
     if missing:
         raise ConfigurationError(
             field="sensitivity.independent_vars",

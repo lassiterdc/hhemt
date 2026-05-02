@@ -453,3 +453,70 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
         f"Average concurrent runners ({runner_report['avg_total_runners']:.1f}) "
         f"should not exceed configured cores ({cores})"
     )
+
+
+# ─── Phase 7: Snakemake report integration tests ───────────────────────────────
+
+from pathlib import Path as _Path
+_SYNTH_MULTISIM_REPORT_CONFIG = (
+    _Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_multisim_report_config.yaml"
+)
+
+
+def test_run_and_render_report(synth_multi_sim_analysis_cached):
+    """Full pipeline: run -> render. Exercises the plot rules + report rendering."""
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    out_html = analysis.render_report()
+    assert out_html.exists() and out_html.stat().st_size > 0
+
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    assert (plots_dir / "system_overview.png").exists()
+    assert (plots_dir / "per_analysis" / "summary_table.svg").exists()
+    for event_iloc in analysis.df_sims.index:
+        ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+        event_id = compute_event_id_slug(ev)
+        assert (plots_dir / "per_sim" / event_id / "peak_flood_depth.png").exists()
+        assert (plots_dir / "per_sim" / event_id / "conduit_flow.png").exists()
+
+
+def test_render_report_idempotent(synth_multi_sim_analysis_cached):
+    """render_report() must not re-execute the workflow (R11)."""
+    import time
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    # Ensure plots exist from prior test_run_and_render_report run; harmless if already present.
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    first_html = analysis.render_report()
+    t0 = time.time()
+    second_html = analysis.render_report()
+    elapsed = time.time() - t0
+    assert second_html == first_html
+    assert elapsed < 30  # generous bound for R11 design target
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    for plot in plots_dir.rglob("*.png"):
+        assert plot.stat().st_mtime <= t0 + 1  # 1s clock-skew grace
+
+
+def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
+    """R15: 'Sources:' bullet block appears in rendered HTML report text."""
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    analysis.render_report()
+    html = (analysis.analysis_paths.analysis_dir / "analysis_report.html").read_text()
+    assert "Sources:" in html

@@ -38,50 +38,96 @@ def render(
     _apply_rcparams(report_cfg)
     prov = ProvenanceLog()
 
-    n_sims = len(analysis.df_sims.index)
-    n_successful = sum(
-        1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i)
+    # Detect sensitivity-master scope: the analysis is the master sensitivity
+    # analysis with sub-analyses populated. In that case, render a per-sa-row
+    # table (one row per sub-analysis showing status counts) — Iteration 6
+    # "show all sub-analyses" scope. Otherwise fall back to the regular
+    # multisim single-scope table.
+    is_sensitivity_master = (
+        getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+        and getattr(analysis, "sensitivity", None) is not None
+        and len(analysis.sensitivity.sub_analyses) > 0
     )
-    n_pending = sum(
-        1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i)
-    )
-    n_failed = n_sims - n_successful - n_pending
 
-    rows = []
     metrics = report_cfg.per_analysis_summary.metrics
-    if "n_sims" in metrics:
-        rows.append(("Total simulations", n_sims))
-    if "n_successful" in metrics:
-        rows.append(("Successful", n_successful))
-    if "n_pending" in metrics:
-        rows.append(("Pending", n_pending))
-    if "n_failed" in metrics:
-        rows.append(("Failed", n_failed))
-    if "enabled_model_types" in metrics:
-        enabled = analysis._get_enabled_model_types()
-        rows.append(("Enabled model types", ", ".join(enabled) if enabled else "(none)"))
-    if "sensitivity_mode" in metrics:
-        sensitivity_cfg = getattr(report_cfg, "sensitivity", None)
-        mode = getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
-        if mode is not None:
-            rows.append(("Sensitivity analysis mode", str(mode)))
 
-    df = pd.DataFrame(rows, columns=["Metric", "Value"])
+    if is_sensitivity_master:
+        # Multi-row table: one row per sub-analysis with status counts.
+        per_sa_rows = []
+        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+            n = len(sub.df_sims.index)
+            n_succ = sum(
+                1 for i in sub.df_sims.index if _is_scenario_successful(sub, i)
+            )
+            n_pend = sum(
+                1 for i in sub.df_sims.index if _is_scenario_pending(sub, i)
+            )
+            n_fail = n - n_succ - n_pend
+            per_sa_rows.append({
+                "sub-analysis": sa_id,
+                "n sims": n,
+                "successful": n_succ,
+                "pending": n_pend,
+                "failed": n_fail,
+            })
+        df = pd.DataFrame(per_sa_rows)
+    else:
+        n_sims = len(analysis.df_sims.index)
+        n_successful = sum(
+            1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i)
+        )
+        n_pending = sum(
+            1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i)
+        )
+        n_failed = n_sims - n_successful - n_pending
+
+        rows = []
+        if "n_sims" in metrics:
+            rows.append(("Total simulations", n_sims))
+        if "n_successful" in metrics:
+            rows.append(("Successful", n_successful))
+        if "n_pending" in metrics:
+            rows.append(("Pending", n_pending))
+        if "n_failed" in metrics:
+            rows.append(("Failed", n_failed))
+        if "enabled_model_types" in metrics:
+            enabled = analysis._get_enabled_model_types()
+            rows.append(("Enabled model types", ", ".join(enabled) if enabled else "(none)"))
+        if "sensitivity_mode" in metrics:
+            sensitivity_cfg = getattr(report_cfg, "sensitivity", None)
+            mode = getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
+            if mode is not None:
+                rows.append(("Sensitivity analysis mode", str(mode)))
+
+        df = pd.DataFrame(rows, columns=["Metric", "Value"])
     fig, ax = plt.subplots(
-        figsize=(8, 0.4 * len(rows) + 0.5), layout="constrained"
+        figsize=(8, 0.4 * len(df) + 0.7), layout="constrained"
     )
     ax.axis("off")
 
-    # Source paths the parsers will read — captured first so we can record them
-    # The status counts read each scenario's per-model log JSON.
+    # Source paths the parsers will read — captured first so we can record them.
+    # In sensitivity-master mode iterate every sub-analysis's scenarios; otherwise
+    # iterate the analysis's own df_sims (regular multisim case).
     enabled_model_types = analysis._get_enabled_model_types()
     source_paths: list[Path] = []
-    for event_iloc in analysis.df_sims.index:
-        scen = analysis._retrieve_sim_runs(event_iloc)._scenario
-        for mt in enabled_model_types:
-            log_file = scen.scen_paths.sim_folder / f"log_{mt}.json"
-            if log_file.exists():
-                source_paths.append(log_file)
+    if is_sensitivity_master:
+        for sub in analysis.sensitivity.sub_analyses.values():
+            for event_iloc in sub.df_sims.index:
+                try:
+                    scen = sub._retrieve_sim_runs(event_iloc)._scenario
+                except Exception:
+                    continue
+                for mt in enabled_model_types:
+                    log_file = scen.scen_paths.sim_folder / f"log_{mt}.json"
+                    if log_file.exists():
+                        source_paths.append(log_file)
+    else:
+        for event_iloc in analysis.df_sims.index:
+            scen = analysis._retrieve_sim_runs(event_iloc)._scenario
+            for mt in enabled_model_types:
+                log_file = scen.scen_paths.sim_folder / f"log_{mt}.json"
+                if log_file.exists():
+                    source_paths.append(log_file)
 
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     import os

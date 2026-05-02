@@ -1,0 +1,80 @@
+====================================
+{{ snakemake.config['analysis_id'] }}
+====================================
+
+**Generated:** {{ snakemake.config['report']['generated_at'] }} — **Toolkit version:** {{ snakemake.config['toolkit_version'] }}
+
+Overview
+--------
+
+This report summarizes the {{ snakemake.config['analysis_id'] }} analysis,
+comprising {{ snakemake.config['n_sims'] }} scenarios.
+{% if snakemake.config['is_sensitivity'] %}
+The analysis includes {{ snakemake.config['n_sub_analyses'] }} sub-analyses
+exploring sensitivity to: {{ snakemake.config['independent_vars'] | join(', ') }}{% if snakemake.config.get('group_by_var') %} (grouped by {{ snakemake.config['group_by_var'] }}){% endif %}.
+{% endif %}
+
+{% if snakemake.config.get('rule_completion_summary') %}
+Workflow Status
+---------------
+
+{% for rule, status in snakemake.config['rule_completion_summary'].items() %}
+- **{{ rule }}**: {{ status }}
+{% endfor %}
+{% endif %}
+
+{% if snakemake.config.get('critical_health_issues') %}
+Errors and Warnings
+-------------------
+
+{% for issue in snakemake.config['critical_health_issues'] %}
+- {{ issue.message }}{% if issue.event_id %} (sub-analysis/event: {{ issue.event_id }}){% endif %}
+{% endfor %}
+{% endif %}
+
+Key Results
+-----------
+
+{% if snakemake.config['is_sensitivity'] %}
+Browse the **Sensitivity** sidebar category for benchmarking results across
+{{ snakemake.config['independent_vars'] | join(', ') }}.
+{% else %}
+Browse the **Per-Analysis Summary** sidebar category for the cross-scenario
+summary table (workflow health, enabled model types).
+{% endif %}
+
+System Information
+------------------
+
+Browse the **System** sidebar category for the DEM elevation raster, watershed
+boundary, boundary-condition geometry, and SWMM topology overlay (rendered in
+the system CRS).
+
+{% if snakemake.config.get('simulation_health_aggregated') or snakemake.config.get('simulation_health_per_sim') %}
+Simulation Health
+-----------------
+
+{% if snakemake.config.get('simulation_health_aggregated') %}
+Aggregated metrics (continuity error, instability indicators, dt analysis) are
+surfaced under the **Simulation Health** sidebar category.
+{% endif %}
+{% if snakemake.config.get('simulation_health_per_sim') %}
+Per-simulation QC tables (sorted worst-to-best, shown only when QC metrics
+exceed configured thresholds) are surfaced under the **Simulation Health**
+sidebar category.
+{% endif %}
+{% endif %}
+
+Per-Simulation Results
+----------------------
+
+{% if snakemake.config['is_sensitivity'] %}
+Per-simulation hydraulic and inundation results are surfaced under the
+**Per-Simulation** sidebar category, grouped by sub-analysis.
+{% else %}
+Browse the **Per-Simulation** sidebar category for per-event hydraulic and
+inundation results (peak flood depth raster + SWMM conduit flow panels).
+{% endif %}
+
+Workflow execution metadata, rule code, parameters, and runtime statistics are
+available in the **Statistics** menu item of the navbar.

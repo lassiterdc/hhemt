@@ -1,0 +1,41 @@
+# Used by tests/test_synth_05_sensitivity_analysis_with_snakemake.py.
+# Mirrors tests/fixtures/synthetic_model/report_config_synth_sensitivity.yaml; the
+# Phase 6 synth sensitivity CSV currently exposes a single useful independent_var
+# (n_devices). Add additional independent_vars here when the synth fixture grows
+# additional CSV columns.
+figure_defaults:
+  font_family: "DejaVu Sans"
+  font_size: 9
+  dpi: 100
+  savefig_dpi: 100
+
+system_map:
+  target_epsg: null
+  figsize_inches: [8.0, 6.0]
+  watershed_color: red
+
+per_sim:
+  peak_flood_depth:
+    figsize_inches: [8.0, 6.0]
+    cmap: viridis
+  conduit_flow:
+    figsize_inches: [10.0, 4.0]
+    cmap: plasma
+
+per_analysis_summary:
+  metrics:
+    - n_sims
+    - n_successful
+    - n_pending
+
+sensitivity:
+  mode: benchmarking
+  # n_devices is a derived column (n_mpi_procs * n_omp_threads * n_nodes for CPU runs;
+  # n_gpus for GPU runs) — derived by sensitivity_benchmarking._ensure_n_devices_column.
+  # The validator allow-lists derived columns alongside literal CSV columns.
+  independent_vars:
+    - n_devices
+  dependent_var: performance.Total
+  aggregation: mean
+  group_by_var: run_mode
+  show_gridlines: true

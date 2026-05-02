@@ -149,13 +149,25 @@ def emit_plot_with_sources(
     return output_path
 
 
-def collect_per_sim_source_paths(renderer_kind: str, event_id: str) -> list[str]:
+def collect_per_sim_source_paths(
+    renderer_kind: str,
+    event_id: str,
+    *,
+    dem_rel_path: str | None = None,
+    watershed_rel_path: str | None = None,
+) -> list[dict]:
     """Build `source_paths` for a per-sim plot rule at wildcards-resolution time.
 
     Called from within the generated master Snakefile via a function-based
     `params:` (see `workflow.py:_build_plot_rule_block_per_sim`). Reads
     relative paths so the figure metadata + caption interpolation stay
     portable across analysis-dir relocations.
+
+    Each returned dict has the schema ``{"path": str, "variables": list[str]}``
+    where ``variables`` enumerates the dataset variables the renderer reads
+    from that source. Caption RSTs render the dict as a path bullet with
+    variable sub-bullets (with a backward-compat shim for callers that still
+    return ``list[str]`` — see the caption RST templates).
 
     Parameters
     ----------
@@ -164,25 +176,66 @@ def collect_per_sim_source_paths(renderer_kind: str, event_id: str) -> list[str]
     event_id : str
         Snakemake wildcards.event_id — typically `event_index.<n>` for the
         synth fixtures.
+    dem_rel_path : str, optional
+        Analysis-dir-relative path to the processed DEM raster (read by
+        peak_flood_depth as the ground-elevation underlay). Baked into the
+        Snakefile rule's params closure at emit time by the workflow.py rule
+        builder.
+    watershed_rel_path : str, optional
+        Analysis-dir-relative path to the watershed boundary GIS polygon
+        (read by peak_flood_depth as the masking shape).
 
     Returns
     -------
-    list[str]
-        Source-path strings expressed relative to the analysis_dir, suitable
-        for embedding in the figure's PNG metadata at render time.
+    list[dict]
+        Source descriptors expressed relative to the analysis_dir.
     """
     base = f"sims/{event_id}/processed"
     swmm_inp = f"sims/{event_id}/swmm/hydraulics.inp"
+    weather_nc = f"sims/{event_id}/sim_weather.nc"
     if renderer_kind == "peak_flood_depth":
-        return [f"{base}/TRITONSWMM_TRITON_summary.zarr"]
+        sources: list[dict] = [
+            {
+                "path": f"{base}/TRITONSWMM_TRITON_summary.zarr",
+                "variables": ["max_wlevel_m"],
+            },
+            {
+                "path": weather_nc,
+                "variables": ["time", "RG_synth", "water_level"],
+            },
+        ]
+        if dem_rel_path:
+            sources.append({
+                "path": dem_rel_path,
+                "variables": ["elevation raster (ground surface for WSE underlay)"],
+            })
+        if watershed_rel_path:
+            sources.append({
+                "path": watershed_rel_path,
+                "variables": ["watershed boundary polygon (masking shape)"],
+            })
+        return sources
     if renderer_kind == "conduit_flow":
-        return [f"{base}/TRITONSWMM_SWMM_link_summary.zarr", swmm_inp]
+        return [
+            {
+                "path": f"{base}/TRITONSWMM_SWMM_link_summary.zarr",
+                "variables": ["max_over_full_flow", "max_flow_cms", "link_id"],
+            },
+            {
+                "path": swmm_inp,
+                "variables": ["[CONDUITS] section (link geometry)"],
+            },
+        ]
     raise ValueError(
         f"unknown renderer_kind {renderer_kind!r}; expected 'peak_flood_depth' or 'conduit_flow'"
     )
 
 
-def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
+def collect_sensitivity_source_paths(
+    independent_var: str,
+    *,
+    swmm_only_rpt_rel_paths: list[str] | None = None,
+) -> list[dict]:
     """Build source_paths list for the sensitivity benchmarking rule at wildcards-resolution time.
 
     Called from within the generated master Snakefile via a function-based `params:`
@@ -190,8 +243,8 @@ def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
     rather than inlined in the Snakefile to preserve readability of generated
     Snakefiles and to make the source-path construction testable in isolation.
 
-    The returned list is relative to the master analysis_dir (per R13 — sensitivity
-    reports live in the master dir).
+    Each returned dict has the schema ``{"path": str, "variables": list[str]}`` —
+    see :func:`collect_per_sim_source_paths` for caption-RST rendering details.
 
     The renderer reads the master `sensitivity_datatree.zarr` for TRITON-coupled /
     TRITON-only sub-analyses (per Phase 6 verification: `/sa_{id}/tritonswmm/performance.Total`
@@ -202,7 +255,29 @@ def collect_sensitivity_source_paths(independent_var: str) -> list[str]:
     model types.
     """
     del independent_var  # currently unused; the same source set serves all wildcards
-    return [
-        "sensitivity_datatree.zarr",
-        "sensitivity_analysis_definition.csv",
+    sources: list[dict] = [
+        {
+            "path": "sensitivity_datatree.zarr",
+            "variables": [
+                "/sa_{id}/tritonswmm/performance.Total (per sub-analysis)",
+            ],
+        },
+        {
+            "path": "sensitivity_analysis_definition.csv",
+            "variables": [
+                "sa_id, run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes",
+            ],
+        },
     ]
+    # SWMM-only sub-analyses' .rpt paths (baked into closure at Snakefile-emit
+    # time by `workflow.py:_build_plot_rule_block_sensitivity_benchmarking`).
+    # Each .rpt is parsed via `swmm_output_parser.parse_total_elapsed` to
+    # produce that sub-analysis's wallclock value when the DataTree path
+    # `/sa_{id}/tritonswmm/performance.Total` is unavailable (SWMM-only mode
+    # has no TRITON-SWMM coupled tree branch).
+    for rpt_rel in swmm_only_rpt_rel_paths or []:
+        sources.append({
+            "path": rpt_rel,
+            "variables": ["Total elapsed time (parsed via parse_total_elapsed)"],
+        })
+    return sources

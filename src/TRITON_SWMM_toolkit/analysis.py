@@ -1722,6 +1722,59 @@ class TRITONSWMM_analysis:
             message=result_dict.get("message", ""),
         )
 
+    def render_report(self) -> "Path":
+        """Render the HTML report from already-completed workflow outputs.
+
+        Idempotent: invokes ``snakemake --report`` against the existing Snakefile
+        without re-executing any rules. Requires the workflow to have completed
+        (so the report() outputs exist) and the Snakefile to be on disk.
+
+        Returns
+        -------
+        Path
+            Path to the rendered analysis_report.html.
+        """
+        import subprocess
+        import sys
+
+        from .exceptions import WorkflowError
+
+        snakefile = self.analysis_paths.analysis_dir / "Snakefile"
+        out_html = self.analysis_paths.analysis_dir / "analysis_report.html"
+        css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
+        # --cores 1 is required by Snakemake's CLI even though --report is a
+        # post-execution render that does not execute rules.
+        cmd = [
+            sys.executable, "-m", "snakemake",
+            "--snakefile", str(snakefile),
+            "--directory", str(self.analysis_paths.analysis_dir),
+            "--report", str(out_html),
+            "--report-stylesheet", str(css_path),
+            "--cores", "1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            tail = "\n".join((result.stdout + "\n" + result.stderr).splitlines()[-50:])
+            raise WorkflowError(
+                phase="render_report",
+                return_code=result.returncode,
+                stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
+            )
+        # Snap-confined browsers (Ubuntu Firefox snap) cannot read files under
+        # ~/.cache/. If the rendered report lands there, surface a one-line
+        # workaround so the user does not hit "Access to the file was denied".
+        try:
+            if "/.cache/" in str(out_html):
+                print(
+                    f"[render_report] {out_html}\n"
+                    f"[render_report] Note: snap-confined browsers cannot read ~/.cache; "
+                    f"copy to ~/Downloads to view: cp {out_html} ~/Downloads/",
+                    flush=True,
+                )
+        except Exception:
+            pass
+        return out_html
+
     @property
     def n_scenarios(self):
         sensitivity_scenario = 1
