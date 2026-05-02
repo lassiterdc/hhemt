@@ -10,20 +10,17 @@ Key Components:
 - SensitivityAnalysisWorkflowBuilder: Specialized builder for sensitivity analysis workflows
 """
 
+import datetime
+import math
+import shlex
+import socket
 import subprocess
 import sys
-import math
-import yaml  # type: ignore
-import psutil
-import shutil
-import shlex
-import signal
-import os
 import time
-import datetime
-import socket
 from pathlib import Path
-from typing import Literal, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Literal
+
+import yaml  # type: ignore
 
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 
@@ -251,7 +248,7 @@ class SnakemakeWorkflowBuilder:
         # For GPU jobs: set tasks=1 (1 task per GPU, SLURM executor uses --ntasks-per-gpu)
         # For non-GPU jobs: set tasks=<actual MPI rank count>
         if gpus_total > 0:
-            block += f"\n        tasks=1,"  # 1:1 GPU-to-task mapping
+            block += "\n        tasks=1,"  # 1:1 GPU-to-task mapping
         else:
             block += f"\n        tasks={tasks},"  # Use actual task count
 
@@ -384,17 +381,18 @@ class SnakemakeWorkflowBuilder:
         (log_dir / "sims").mkdir(parents=True, exist_ok=True)
 
         if skip_setup:
-            setup_shell = f'''"""
-        touch {{output}}
+            setup_shell = '''"""
+        touch {output}
         """
         '''
         else:
+            tritonswmm_model = self.system.cfg_system.toggle_tritonswmm_model
             setup_shell = f'''"""
         {self.python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
             {config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {"--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""}\\
+            {"--compile-triton-swmm " if compile_TRITON_SWMM and tritonswmm_model else ""}\\
             {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
@@ -534,7 +532,7 @@ rule prepare_scenario:
 
         if not enabled_models:
             raise ValueError(
-                "No model types enabled! Enable at least one of: toggle_triton_model, toggle_tritonswmm_model, toggle_swmm_model"
+                "No model types enabled! Enable at least one of: toggle_triton_model, toggle_tritonswmm_model, toggle_swmm_model"  # noqa: E501
             )
 
         # Generate separate simulation rule for each enabled model type
@@ -718,9 +716,9 @@ rule consolidate:
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
                     "default-resources": [
-                        f"nodes=1",
-                        f"mem_mb=2000",
-                        f"runtime=30",
+                        "nodes=1",
+                        "mem_mb=2000",
+                        "runtime=30",
                         f"slurm_partition={slurm_partition}",
                         f"slurm_account={self.cfg_analysis.hpc_account}",
                     ],
@@ -802,7 +800,7 @@ rule consolidate:
         sim_resources = self.analysis._resource_manager._get_simulation_resource_requirements()
 
         # Get total nodes — use override if provided, otherwise fall back to config
-        total_nodes = override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes
+        total_nodes = override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes  # noqa: E501
         assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
 
         # Get job duration
@@ -911,7 +909,7 @@ echo ""
             else:
                 gpu_directive = f"#SBATCH --gres=gpu:{gpus_per_node}\n"
             # Calculate total GPUs dynamically in bash script
-            gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"
+            gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"  # noqa: E501
             gpu_cli_arg = " --resources gpu=$TOTAL_GPUS"
 
         script_content = f"""#!/bin/bash
@@ -940,7 +938,9 @@ fi
 TOTAL_CPUS=$((SLURM_CPUS_ON_NODE * SLURM_JOB_NUM_NODES))
 {gpu_calculation}
 # Run Snakemake with dynamic resource limits
-${{CONDA_PREFIX}}/bin/python -m snakemake --profile {config_dir} --snakefile {snakefile_path} --cores $TOTAL_CPUS{gpu_cli_arg} 
+${{CONDA_PREFIX}}/bin/python -m snakemake \\
+    --profile {config_dir} --snakefile {snakefile_path} \\
+    --cores $TOTAL_CPUS{gpu_cli_arg}
 """
 
         script_path = self.analysis_paths.analysis_dir / "run_workflow_1job.sh"
@@ -2014,7 +2014,7 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                 text=True,
             )
             if tmux_check.returncode != 0:
-                raise EnvironmentError(
+                raise OSError(
                     "tmux is required for tmux workflow mode but not found in PATH. "
                     "Please install tmux or use multi_sim_run_method='local'."
                 )
@@ -2054,7 +2054,7 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
 
             # Build module load commands for inside tmux session (reuse the same modules)
             # This ensures the Snakemake process has access to required modules
-            module_load_cmd = module_load_prefix.rstrip(" && ") if module_load_prefix else ""
+            module_load_cmd = module_load_prefix.removesuffix(" && ") if module_load_prefix else ""
 
             # Build the full command that will run inside tmux
             # Write output to a timestamped log file for debugging
@@ -2247,7 +2247,7 @@ exit $snakemake_status
 
             if verbose:
                 print(
-                    f"[Snakemake] Tmux workflow submitted successfully",
+                    "[Snakemake] Tmux workflow submitted successfully",
                     flush=True,
                 )
                 print(f"[Snakemake] Session name: {session_name}", flush=True)
@@ -2262,7 +2262,7 @@ exit $snakemake_status
                     f"[Snakemake]   Attach to session: {reattach_cmd}",
                     flush=True,
                 )
-                print(f"[Snakemake]   Detach from session: Ctrl+B, then D", flush=True)
+                print("[Snakemake]   Detach from session: Ctrl+B, then D", flush=True)
                 print(
                     f"[Snakemake]   Kill this session: {kill_cmd}",
                     flush=True,
@@ -3427,7 +3427,7 @@ rule setup:
 
         if verbose:
             print(
-                f"[Snakemake] Created required directories (_status, {self.master_analysis.analysis_paths.simlog_directory})",
+                f"[Snakemake] Created required directories (_status, {self.master_analysis.analysis_paths.simlog_directory})",  # noqa: E501
                 flush=True,
             )
 
@@ -3471,7 +3471,7 @@ rule setup:
         # Print snakemake log file location if available
         if verbose and result.get("snakemake_logfile") is not None and not wait_for_completion:
             print(
-                f"[Snakemake] Sensitivity analysis workflow submitted in background.",
+                "[Snakemake] Sensitivity analysis workflow submitted in background.",
                 flush=True,
             )
             print(
