@@ -253,3 +253,73 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
     for indep_var in ("n_omp_threads",):
         svg = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"{indep_var}_vs_total.svg"
         assert svg.exists(), f"Expected benchmarking SVG missing: {svg}"
+
+
+# ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
+
+from pathlib import Path as _Path
+_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7 = (
+    _Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
+)
+
+
+@pytest.mark.slow
+def test_run_and_render_report(synth_sensitivity_analysis_cached):
+    """Sensitivity run -> master render. Asserts master report exists; no per-sub-analysis report (R13)."""
+    from pathlib import Path
+
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+    )
+    out_html = analysis.sensitivity.render_report()
+    assert out_html.exists() and out_html.stat().st_size > 0
+
+    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    bench_dir = master_dir / "plots" / "sensitivity" / "benchmarking"
+    assert bench_dir.exists()
+    assert any(bench_dir.glob("*_vs_total.svg"))
+
+    # R13: no per-sub-analysis report
+    for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+        sub_html = sub.analysis_paths.analysis_dir / "analysis_report.html"
+        assert not sub_html.exists(), (
+            f"unexpected per-sub-analysis report at {sub_html} for sa_id={sa_id}"
+        )
+
+
+@pytest.mark.slow
+def test_render_report_idempotent(synth_sensitivity_analysis_cached):
+    """Sensitivity render_report() is idempotent (R11)."""
+    import time
+    from pathlib import Path
+
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+    )
+    first_html = analysis.sensitivity.render_report()
+    t0 = time.time()
+    second_html = analysis.sensitivity.render_report()
+    elapsed = time.time() - t0
+    assert second_html == first_html
+    assert elapsed < 30
+
+
+@pytest.mark.slow
+def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
+    """R15: 'Sources:' bullet block appears in master HTML report."""
+    from pathlib import Path
+
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+    )
+    analysis.sensitivity.render_report()
+
+    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    html = (master_dir / "analysis_report.html").read_text()
+    assert "Sources:" in html

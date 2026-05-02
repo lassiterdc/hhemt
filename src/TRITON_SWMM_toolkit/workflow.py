@@ -298,12 +298,16 @@ class SnakemakeWorkflowBuilder:
             return 1
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
-    def _build_plot_rule_block_system_overview(self) -> str:
+    def _build_plot_rule_block_system_overview(self, input_flag: str = "_status/e_consolidate_complete.flag") -> str:
         """Generate the Snakemake rule for the 2-panel system-overview plot.
 
         Left panel is the SWMM model elements view (R5); right panel is the
         DEM elevation raster. Combined into one figure per iteration-4
         feedback from the Phase 2 STOP gate.
+
+        ``input_flag`` defaults to the regular multisim consolidation flag
+        (`e_consolidate_complete`); the sensitivity master Snakefile passes
+        `f_consolidate_master_complete.flag` instead.
         """
         import os as _os
 
@@ -315,27 +319,53 @@ class SnakemakeWorkflowBuilder:
         if getattr(cfg_ana, "toggle_sensitivity_analysis", False):
             subs = self.analysis.sensitivity.sub_analyses
             first_sub = subs[next(iter(subs))]
-            repr_inp = first_sub._retrieve_sim_runs(0)._scenario.scen_paths.swmm_hydro_inp
+            repr_scen_paths = first_sub._retrieve_sim_runs(0)._scenario.scen_paths
         else:
-            repr_inp = (
-                self.analysis._retrieve_sim_runs(0)._scenario.scen_paths.swmm_hydro_inp
+            repr_scen_paths = (
+                self.analysis._retrieve_sim_runs(0)._scenario.scen_paths
             )
+        # System overview reads: DEM raster + BOTH SWMM .inp files (hydro and
+        # hydraulics — the renderer constructs separate swmmio.Model instances
+        # for each) + optional BC shapefile. Each source enumerates the variables
+        # / sections actually consumed by the renderer.
         source_paths = [
-            _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root),
-            _os.path.relpath(str(Path(repr_inp).resolve()), analysis_root),
+            {
+                "path": _os.path.relpath(
+                    str(self.system.sys_paths.dem_processed.resolve()), analysis_root
+                ),
+                "variables": ["elevation raster"],
+            },
+            {
+                "path": _os.path.relpath(
+                    str(Path(repr_scen_paths.swmm_hydro_inp).resolve()), analysis_root
+                ),
+                "variables": ["[SUBCATCHMENTS], [JUNCTIONS], [OUTFALLS] sections (swmmio.Model)"],
+            },
+            {
+                "path": _os.path.relpath(
+                    str(Path(repr_scen_paths.swmm_hydraulics_inp).resolve()), analysis_root
+                ),
+                "variables": ["[CONDUITS], [JUNCTIONS], [POLYGONS] sections (swmmio.Model)"],
+            },
         ]
         if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
-            source_paths.append(
-                _os.path.relpath(
+            source_paths.append({
+                "path": _os.path.relpath(
                     str(Path(cfg_ana.storm_tide_boundary_line_gis).resolve()), analysis_root
-                )
-            )
+                ),
+                "variables": ["boundary line geometry (LineString features)"],
+            })
         return f'''
 rule plot_system_overview:
     input:
-        consolidated = "_status/e_consolidate_complete.flag",
+        consolidated = "{input_flag}",
     output:
-        "plots/system_overview.png"
+        report(
+            "plots/system_overview.png",
+            caption="report/captions/system_map.rst",
+            category="System",
+            labels={{"figure": "System map"}},
+        )
     params:
         source_paths = {source_paths!r},
     log: "logs/plots/system_overview.log"
@@ -349,6 +379,37 @@ rule plot_system_overview:
             > {{log}} 2>&1
         """
 '''
+
+    def _emit_report_artifacts(self, analysis_dir: Path) -> None:
+        """Copy report_templates/ -> {analysis_dir}/report/.
+
+        Uses importlib.resources for package-resource resolution (robust across
+        editable and site-packages installs). Falls back to Path(__file__) arithmetic
+        only when importlib.resources is unavailable. Requires report_templates/
+        to ship as package data under src/TRITON_SWMM_toolkit/ via pyproject.toml's
+        [tool.setuptools.package-data] entry.
+
+        The Jinja2 workflow_description.rst.j2 template is renamed to
+        workflow_description.rst on copy because Snakemake's report engine
+        renders all .rst files through Jinja2 — the .j2 extension is a
+        repo-side convention, not a Snakemake one.
+        """
+        try:
+            from importlib.resources import files as _resource_files
+            src_templates = Path(str(_resource_files("TRITON_SWMM_toolkit") / "report_templates"))
+        except (ImportError, ModuleNotFoundError):
+            src_templates = Path(__file__).parent / "report_templates"
+
+        dst_report = analysis_dir / "report"
+        dst_report.mkdir(parents=True, exist_ok=True)
+        (dst_report / "report.css").write_text((src_templates / "report.css").read_text())
+        captions_dst = dst_report / "captions"
+        captions_dst.mkdir(exist_ok=True)
+        for cap in (src_templates / "captions").glob("*.rst"):
+            (captions_dst / cap.name).write_text(cap.read_text())
+        (dst_report / "workflow_description.rst").write_text(
+            (src_templates / "workflow_description.rst.j2").read_text()
+        )
 
     def generate_snakefile_content(
         self,
@@ -414,6 +475,11 @@ rule plot_system_overview:
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         self._report_config_path = report_config_path
+
+        # Emit report templates (CSS, captions, Jinja2 workflow description) into
+        # {analysis_dir}/report/ so Snakemake's --report engine can resolve the
+        # caption= / report: paths inside generated rules at report-render time.
+        self._emit_report_artifacts(self.analysis_paths.analysis_dir)
 
         n_sims = len(self.analysis.df_sims)
         event_ids = [
@@ -529,11 +595,28 @@ rule plot_system_overview:
         )
 
         log_dir_str = str(log_dir)
+        analysis_id_str = str(self.cfg_analysis.analysis_id)
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
 
 import os
 import glob
 import subprocess
+from datetime import datetime as _dt
+
+try:
+    from importlib.metadata import version as _pkg_version
+    _toolkit_version = _pkg_version("TRITON_SWMM_toolkit")
+except Exception:
+    _toolkit_version = "unknown"
+
+# Config dict consumed by report_templates/workflow_description.rst.j2
+config["analysis_id"] = {analysis_id_str!r}
+config["toolkit_version"] = _toolkit_version
+config["n_sims"] = {n_sims}
+config["is_sensitivity"] = False
+config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
+
+report: "report/workflow_description.rst"
 
 SIM_IDS = {event_ids!r}
 ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
@@ -733,54 +816,89 @@ rule consolidate:
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         return snakefile_content
 
-    def _collect_per_analysis_summary_source_paths(self) -> list[str]:
-        """Return analysis-dir-relative .rpt + TRITON-log paths the renderer reads.
+    def _collect_per_analysis_summary_source_paths(self) -> list[dict]:
+        """Return analysis-dir-relative .rpt + TRITON-log descriptors the renderer reads.
 
         Per Gotcha 5: dispatch on enabled model types — `swmm_hydraulics_rpt`
         for TRITON-SWMM coupled mode, `swmm_full_rpt_file` for SWMM-only;
         `log_run_tritonswmm` / `log_run_triton` for TRITON-side logs.
+
+        Each returned dict has the schema ``{"path": str, "variables": list[str]}``
+        — the variable list names which fields the renderer parses from each
+        source (e.g., "Flow Routing Continuity error" from SWMM .rpt). Caption
+        RSTs render the dict as a path bullet with variable sub-bullets, with a
+        backward-compat shim for callers still returning ``list[str]``.
+
+        Sensitivity-master detection: if the analysis is a sensitivity master,
+        iterate per-sub-analysis scenarios so the master per_analysis_summary
+        table has provenance for every sub-analysis's status counts (per
+        Iteration 6 "show all sub-analyses" scope).
         """
         import os as _os
 
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(Path(analysis_dir).resolve())
         enabled = self.analysis._get_enabled_model_types()
-        paths: list[str] = []
-        for event_iloc in self.analysis.df_sims.index:
-            scen_paths = (
-                self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths
-            )
+        sources: list[dict] = []
+        # Sensitivity-master scope: iterate every sub-analysis's scenarios.
+        is_sensitivity_master = (
+            getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+            and getattr(self.analysis, "sensitivity", None) is not None
+        )
+        if is_sensitivity_master:
+            scenario_objs = []
+            for sub in self.analysis.sensitivity.sub_analyses.values():
+                for event_iloc in sub.df_sims.index:
+                    try:
+                        scenario_objs.append(
+                            sub._retrieve_sim_run_processing_object(event_iloc).scen_paths
+                        )
+                    except Exception:
+                        continue
+        else:
+            scenario_objs = []
+            for event_iloc in self.analysis.df_sims.index:
+                scenario_objs.append(
+                    self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths
+                )
+        for scen_paths in scenario_objs:
             if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt:
-                paths.append(
-                    _os.path.relpath(
+                sources.append({
+                    "path": _os.path.relpath(
                         str(Path(scen_paths.swmm_hydraulics_rpt).resolve()),
                         analysis_root,
-                    )
-                )
+                    ),
+                    "variables": ["Flow Routing Continuity error (%)"],
+                })
             elif "swmm" in enabled and scen_paths.swmm_full_rpt_file:
-                paths.append(
-                    _os.path.relpath(
+                sources.append({
+                    "path": _os.path.relpath(
                         str(Path(scen_paths.swmm_full_rpt_file).resolve()),
                         analysis_root,
-                    )
-                )
-            if "tritonswmm" in enabled and scen_paths.log_run_tritonswmm:
-                paths.append(
-                    _os.path.relpath(
-                        str(Path(scen_paths.log_run_tritonswmm).resolve()),
-                        analysis_root,
-                    )
-                )
-            elif "triton" in enabled and scen_paths.log_run_triton:
-                paths.append(
-                    _os.path.relpath(
-                        str(Path(scen_paths.log_run_triton).resolve()),
-                        analysis_root,
-                    )
-                )
-        return paths
+                    ),
+                    "variables": ["Flow Routing Continuity error (%)"],
+                })
+            # Per-model-type model-state JSON logs (sim_folder/log_{mt}.json) are
+            # what the renderer's _is_scenario_successful / _is_scenario_pending
+            # actually read for status counts — NOT the simulation execution
+            # logs (log_run_*) that the renderer never opens. Enumerate one entry
+            # per enabled model type per scenario.
+            sim_folder = getattr(scen_paths, "sim_folder", None)
+            if sim_folder is not None:
+                for mt in enabled:
+                    log_file = Path(sim_folder) / f"log_{mt}.json"
+                    if log_file.exists():
+                        sources.append({
+                            "path": _os.path.relpath(
+                                str(log_file.resolve()), analysis_root
+                            ),
+                            "variables": [
+                                f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
+                            ],
+                        })
+        return sources
 
-    def _build_plot_rule_block_per_analysis_summary(self) -> str:
+    def _build_plot_rule_block_per_analysis_summary(self, input_flag: str = "_status/e_consolidate_complete.flag") -> str:
         """Generate the Snakemake rule for the per-analysis summary table (R7).
 
         Produces `plots/per_analysis/summary_table.svg` — a deterministic
@@ -788,6 +906,10 @@ rule consolidate:
         SWMM flow-routing continuity errors). Per Phase 5 plan: SWMM .rpt
         parsing delegates to swmm_output_parser.return_swmm_system_outputs,
         not in-renderer regex.
+
+        ``input_flag`` defaults to the regular multisim consolidation flag
+        (`e_consolidate_complete`); the sensitivity master Snakefile passes
+        `f_consolidate_master_complete.flag` instead.
         """
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args(include_report_config=True)
@@ -795,9 +917,14 @@ rule consolidate:
         return f'''
 rule plot_per_analysis_summary_table:
     input:
-        consolidated = "_status/e_consolidate_complete.flag",
+        consolidated = "{input_flag}",
     output:
-        "plots/per_analysis/summary_table.svg"
+        report(
+            "plots/per_analysis/summary_table.svg",
+            caption="report/captions/per_analysis_summary_table.rst",
+            category="Per-Analysis Summary",
+            labels={{"figure": "Summary table"}},
+        )
     params:
         source_paths = {source_paths!r},
     log: "logs/plots/per_analysis_summary_table.log"
@@ -822,15 +949,34 @@ rule plot_per_analysis_summary_table:
         is mapped to the integer `event_iloc` argument expected by the
         renderer CLI via the Snakefile-level `ILOC_BY_EVENT_ID` dict (set
         alongside `SIM_IDS` in `generate_snakefile_content`).
+
+        System-level paths (DEM, watershed shapefile) used by the
+        peak_flood_depth renderer are computed at emit time and baked into
+        the closure as default kwargs — they are constant per analysis
+        regardless of event wildcard.
         """
+        import os as _os
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args(include_report_config=True)
+        analysis_root = str(self.analysis.analysis_paths.analysis_dir.resolve())
+        dem_rel = _os.path.relpath(
+            str(self.system.sys_paths.dem_processed.resolve()), analysis_root
+        )
+        watershed_path = self.system.cfg_system.watershed_gis_polygon
+        watershed_rel = _os.path.relpath(
+            str(Path(watershed_path).resolve()), analysis_root
+        ) if watershed_path else None
         return f'''
 def _per_sim_flood_depth_sources(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
     )
-    return collect_per_sim_source_paths("peak_flood_depth", wildcards.event_id)
+    return collect_per_sim_source_paths(
+        "peak_flood_depth",
+        wildcards.event_id,
+        dem_rel_path={dem_rel!r},
+        watershed_rel_path={watershed_rel!r},
+    )
 
 def _per_sim_conduit_flow_sources(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
@@ -842,7 +988,13 @@ rule plot_per_sim_peak_flood_depth:
     input:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
-        "plots/per_sim/{{event_id}}/peak_flood_depth.png"
+        report(
+            "plots/per_sim/{{event_id}}/peak_flood_depth.png",
+            caption="report/captions/per_sim_peak_flood_depth.rst",
+            category="Per-Simulation",
+            subcategory="{{event_id}}",
+            labels={{"event_id": "{{event_id}}", "figure": "Peak flood depth"}},
+        )
     params:
         source_paths = _per_sim_flood_depth_sources,
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
@@ -862,7 +1014,13 @@ rule plot_per_sim_conduit_flow:
     input:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
-        "plots/per_sim/{{event_id}}/conduit_flow.png"
+        report(
+            "plots/per_sim/{{event_id}}/conduit_flow.png",
+            caption="report/captions/per_sim_conduit_flow.rst",
+            category="Per-Simulation",
+            subcategory="{{event_id}}",
+            labels={{"event_id": "{{event_id}}", "figure": "Conduit flow"}},
+        )
     params:
         source_paths = _per_sim_conduit_flow_sources,
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
@@ -3061,6 +3219,12 @@ class SensitivityAnalysisWorkflowBuilder:
         from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG, report_config
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
+        # Emit report templates into the master analysis_dir/report/ so the
+        # snakemake --report engine can resolve caption= paths.
+        self._base_builder._emit_report_artifacts(
+            self.master_analysis.analysis_paths.analysis_dir
+        )
+
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
@@ -3077,6 +3241,11 @@ class SensitivityAnalysisWorkflowBuilder:
             list(_report_cfg.sensitivity.independent_vars)
             if _report_cfg.sensitivity is not None
             else []
+        )
+        _group_by_var: str | None = (
+            _report_cfg.sensitivity.group_by_var
+            if _report_cfg.sensitivity is not None
+            else None
         )
 
         # Determine the single enabled model type for sensitivity analysis
@@ -3100,11 +3269,39 @@ class SensitivityAnalysisWorkflowBuilder:
         model_type = enabled_models[0]
 
         log_dir_str = str(self.master_analysis.analysis_paths.analysis_log_directory)
+        master_analysis_id = str(self.master_analysis.cfg_analysis.analysis_id)
+        n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
+        # Total scenarios across all sub-analyses (best-effort; matches per-sub-analysis n_sims sum)
+        try:
+            total_n_sims = sum(
+                len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values()
+            )
+        except Exception:
+            total_n_sims = n_sub_analyses
         # Start building the Snakefile
         snakefile_content = f'''# Auto-generated flattened master Snakefile for sensitivity analysis
 # Each sub-analysis simulation phase gets its own rule with appropriate resources
 
 import os
+from datetime import datetime as _dt
+
+try:
+    from importlib.metadata import version as _pkg_version
+    _toolkit_version = _pkg_version("TRITON_SWMM_toolkit")
+except Exception:
+    _toolkit_version = "unknown"
+
+# Config dict consumed by report_templates/workflow_description.rst.j2
+config["analysis_id"] = {master_analysis_id!r}
+config["toolkit_version"] = _toolkit_version
+config["n_sims"] = {total_n_sims}
+config["is_sensitivity"] = True
+config["n_sub_analyses"] = {n_sub_analyses}
+config["independent_vars"] = {_independent_vars!r}
+config["group_by_var"] = {_group_by_var!r}
+config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
+
+report: "report/workflow_description.rst"
 
 onstart:
     shell("mkdir -p _status {log_dir_str}/sims {log_dir_str}")
@@ -3135,6 +3332,15 @@ onerror:
 
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
+        # System-overview at master scope: the DEM and SWMM topology are shared
+        # across sub-analyses, so a single system_overview.png in the master
+        # report is the natural place to surface them. Per-analysis summary at
+        # master scope renders one row per sub-analysis (Iteration 6 "show all
+        # sub-analyses" scope). Per-sim plots remain sub-analysis-scoped at
+        # the moment — surfacing them at master scope is queued as Iteration 6's
+        # 3b deferred item (per-sa wildcarded plot rules + _cli.py --sa-id flag).
+        rule_all_inputs.append('"plots/system_overview.png"')
+        rule_all_inputs.append('"plots/per_analysis/summary_table.svg"')
         if _independent_vars:
             rule_all_inputs.append(
                 'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.svg", '
@@ -3406,6 +3612,15 @@ rule setup:
         """
 '''
 
+        # Append system_overview + per_analysis_summary rules at master scope (match rule_all above).
+        # Master uses f_consolidate_master_complete.flag (NOT the multisim e_consolidate_complete flag).
+        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+
         if _independent_vars:
             snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(
                 _independent_vars
@@ -3421,12 +3636,36 @@ rule setup:
         Charset validation for independent_var names is upstream, at Phase 1's
         ``validate_sensitivity_independent_vars()``; names reaching here are guaranteed
         Snakemake-safe.
+
+        SWMM-only sub-analyses' .rpt paths are computed at emit time and baked
+        into the closure as a list, so the collector can declare them as
+        provenance even though they are conditional on enabled-model-types.
         """
+        import os as _os
         conda_env_path = self._base_builder._get_conda_env_path()
         config_args = self._base_builder._get_config_args(
             analysis_config_yaml=self.master_analysis.analysis_config_yaml,
             include_report_config=True,
         )
+        # Collect SWMM-only sub-analyses' .rpt paths (relative to master analysis_dir).
+        # These are read by the renderer's parse_total_elapsed fallback for
+        # SWMM-only sub-analyses; declaring them here makes the provenance
+        # surface complete even though the read is conditional at runtime.
+        master_root = str(self.master_analysis.analysis_paths.analysis_dir.resolve())
+        swmm_only_rpt_rels: list[str] = []
+        for sub in self.sensitivity_analysis.sub_analyses.values():
+            sub_enabled = sub._get_enabled_model_types()
+            if sub_enabled == ["swmm"] or sub_enabled == ("swmm",):
+                for event_iloc in sub.df_sims.index:
+                    try:
+                        scen_paths = sub._retrieve_sim_run_processing_object(event_iloc).scen_paths
+                        rpt = getattr(scen_paths, "swmm_full_rpt_file", None)
+                        if rpt:
+                            swmm_only_rpt_rels.append(
+                                _os.path.relpath(str(Path(rpt).resolve()), master_root)
+                            )
+                    except Exception:
+                        continue
         return f'''
 INDEPENDENT_VARS = {independent_vars!r}
 
@@ -3434,13 +3673,22 @@ def _sensitivity_source_paths(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         collect_sensitivity_source_paths,
     )
-    return collect_sensitivity_source_paths(wildcards.independent_var)
+    return collect_sensitivity_source_paths(
+        wildcards.independent_var,
+        swmm_only_rpt_rel_paths={swmm_only_rpt_rels!r},
+    )
 
 rule plot_sensitivity_benchmarking:
     input:
         master = "_status/f_consolidate_master_complete.flag",
     output:
-        "plots/sensitivity/benchmarking/{{independent_var}}_vs_total.svg"
+        report(
+            "plots/sensitivity/benchmarking/{{independent_var}}_vs_total.svg",
+            caption="report/captions/sensitivity_benchmarking.rst",
+            category="Sensitivity",
+            subcategory="Benchmarking",
+            labels={{"independent_var": "{{independent_var}}", "figure": "vs Total runtime"}},
+        )
     params:
         source_paths = _sensitivity_source_paths,
     log: "logs/plots/sensitivity_benchmarking_{{independent_var}}.log"

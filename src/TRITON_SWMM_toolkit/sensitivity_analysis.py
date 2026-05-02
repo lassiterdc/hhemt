@@ -237,6 +237,53 @@ class TRITONSWMM_sensitivity_analysis:
             report_config_path=report_config_path,
         )
 
+    def render_report(self) -> "Path":
+        """Render the master HTML report for the sensitivity analysis.
+
+        Idempotent: invokes ``snakemake --report`` against the master Snakefile
+        without re-executing any rules. Renders only the master-level report;
+        per-sub-analysis reports are not generated (R13).
+        """
+        import subprocess
+        import sys
+
+        from .exceptions import WorkflowError
+
+        master_dir = self.master_analysis.analysis_paths.analysis_dir
+        snakefile = master_dir / "Snakefile"
+        out_html = master_dir / "analysis_report.html"
+        css_path = master_dir / "report" / "report.css"
+        cmd = [
+            sys.executable, "-m", "snakemake",
+            "--snakefile", str(snakefile),
+            "--directory", str(master_dir),
+            "--report", str(out_html),
+            "--report-stylesheet", str(css_path),
+            "--cores", "1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            tail = "\n".join((result.stdout + "\n" + result.stderr).splitlines()[-50:])
+            raise WorkflowError(
+                phase="render_report",
+                return_code=result.returncode,
+                stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
+            )
+        # Snap-confined browsers (Ubuntu Firefox snap) cannot read files under
+        # ~/.cache/. If the rendered report lands there, surface a one-line
+        # workaround so the user does not hit "Access to the file was denied".
+        try:
+            if "/.cache/" in str(out_html):
+                print(
+                    f"[render_report] {out_html}\n"
+                    f"[render_report] Note: snap-confined browsers cannot read ~/.cache; "
+                    f"copy to ~/Downloads to view: cp {out_html} ~/Downloads/",
+                    flush=True,
+                )
+        except Exception:
+            pass
+        return out_html
+
     def run_all_sims(
         self,
         pickup_where_leftoff,
