@@ -878,6 +878,170 @@ class TRITONSWMM_sensitivity_analysis:
             )
         return deleted
 
+    def find_orphan_status_flags(self) -> list[Path]:
+        """Return _status/ flag files whose embedded sa_id is absent from df_setup.index.
+
+        Matches against the four Snakemake rule-output flag families that embed
+        an sa_id (verified against workflow.py rule generation):
+
+        - ``b_prepare_sa-{sa_id}_evt-{event_id}_complete.flag``
+        - ``c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag``
+        - ``d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag``
+        - ``e_consolidate_sa-{sa_id}_complete.flag``
+
+        The sa_id charset is constrained to ``^[A-Za-z0-9_.]+$`` per the
+        project stipulation. Returns an empty list if the ``_status/``
+        directory does not exist.
+        """
+        import re as _re
+
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return []
+        expected_sa_ids = set(self.df_setup.index.astype(str))
+        # Anchored to the four known rule-name prefixes so unrelated 'sa-'
+        # substrings (or future non-sensitivity rules that happen to contain
+        # 'sa-') cannot trigger a false orphan.
+        pat = _re.compile(
+            r"^(?:b_prepare|c_run_[A-Za-z0-9]+|d_process_[A-Za-z0-9]+|e_consolidate)_sa-([A-Za-z0-9_.]+?)(?:_evt-[A-Za-z0-9_.]+|_complete|)\.flag$"
+        )
+        orphans: list[Path] = []
+        for entry in status_dir.glob("*.flag"):
+            m = pat.match(entry.name)
+            if m is None:
+                continue
+            sa_id = m.group(1)
+            if sa_id not in expected_sa_ids:
+                orphans.append(entry)
+        return sorted(orphans)
+
+    def find_orphan_datatree_groups(self) -> list[str]:
+        """Return sa_id strings present as subgroups in sensitivity_datatree.zarr but absent from df_setup.index.
+
+        Inspects on-disk subdirectories of ``sensitivity_datatree.zarr/`` matching
+        ``{prefix}{sa_id}`` where ``prefix`` is ``self.sub_analyses_prefix``. Returns
+        the sa_id strings (without prefix). Returns an empty list if the zarr
+        does not exist.
+        """
+        zarr_path = self.analysis_paths.sensitivity_datatree_zarr
+        if zarr_path is None or not zarr_path.exists():
+            return []
+        expected_sa_ids = set(self.df_setup.index.astype(str))
+        prefix = self.sub_analyses_prefix
+        orphans: list[str] = []
+        for entry in zarr_path.iterdir():
+            if not entry.is_dir():
+                continue
+            if not entry.name.startswith(prefix):
+                continue
+            sa_id = entry.name[len(prefix):]
+            if sa_id and sa_id not in expected_sa_ids:
+                orphans.append(sa_id)
+        return sorted(orphans)
+
+    def cleanup_all_orphans(
+        self,
+        dry_run: bool = True,
+        force: bool = False,
+        verbose: bool = True,
+    ) -> dict[str, list]:
+        """Detect and (optionally) delete orphan subanalysis dirs, status flags, and datatree groups.
+
+        When any orphan is detected and deletion proceeds, the entire
+        ``sensitivity_datatree.zarr`` is removed (rebuild approach — see plan
+        D-SURGICAL) and the master-consolidation status flag is also removed so
+        Snakemake re-runs the master_consolidation rule on the next workflow run.
+
+        Parameters
+        ----------
+        dry_run : bool
+            If True (default), only reports without deleting.
+        force : bool
+            Required when ``dry_run=False``.
+        verbose : bool
+            If True, prints each deletion via ``print(..., flush=True)``.
+
+        Returns
+        -------
+        dict[str, list | bool]
+            Keys: ``"dirs"`` (list[Path]), ``"status_flags"`` (list[Path]),
+            ``"datatree_groups"`` (list[str]), and (after deletion only)
+            ``"sensitivity_datatree_removed"`` (bool) and
+            ``"master_flag_removed"`` (bool) reporting whether the
+            rebuild-trigger artifacts were actually removed.
+
+        Raises
+        ------
+        ValueError
+            If ``dry_run=False`` and ``force=False``.
+        """
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+        result = {
+            "dirs": self.find_orphan_subanalysis_dirs(),
+            "status_flags": self.find_orphan_status_flags(),
+            "datatree_groups": self.find_orphan_datatree_groups(),
+        }
+        any_orphan = bool(result["dirs"] or result["status_flags"] or result["datatree_groups"])
+        if verbose:
+            if any_orphan:
+                print(
+                    f"[cleanup-orphans] dirs={len(result['dirs'])} "
+                    f"status_flags={len(result['status_flags'])} "
+                    f"datatree_groups={len(result['datatree_groups'])}",
+                    flush=True,
+                )
+                for p in result["dirs"]:
+                    print(f"  dir: {p}", flush=True)
+                for p in result["status_flags"]:
+                    print(f"  flag: {p}", flush=True)
+                for sa_id in result["datatree_groups"]:
+                    print(f"  datatree-group: sa_{sa_id}", flush=True)
+            else:
+                print("[cleanup-orphans] No orphans detected.", flush=True)
+        if dry_run:
+            return result
+        if not force:
+            raise ValueError(
+                "cleanup_all_orphans called with dry_run=False but force=False. "
+                "Pass force=True to perform deletion."
+            )
+        for p in result["dirs"]:
+            if verbose:
+                print(f"[cleanup-orphans] Deleting dir {p}", flush=True)
+            fast_rmtree(p)
+        for p in result["status_flags"]:
+            if verbose:
+                print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
+            p.unlink()
+        result["sensitivity_datatree_removed"] = False
+        result["master_flag_removed"] = False
+        if any_orphan:
+            zarr_path = self.analysis_paths.sensitivity_datatree_zarr
+            if zarr_path is not None and zarr_path.exists():
+                if verbose:
+                    print(
+                        f"[cleanup-orphans] Deleting sensitivity_datatree.zarr "
+                        f"(rebuild on next run): {zarr_path}",
+                        flush=True,
+                    )
+                fast_rmtree(zarr_path)
+                result["sensitivity_datatree_removed"] = True
+            master_flag = (
+                self.analysis_paths.analysis_dir
+                / "_status"
+                / "f_consolidate_master_complete.flag"
+            )
+            if master_flag.exists():
+                if verbose:
+                    print(
+                        f"[cleanup-orphans] Unlinking master-consolidation flag {master_flag}",
+                        flush=True,
+                    )
+                master_flag.unlink()
+                result["master_flag_removed"] = True
+        return result
+
     def _create_sub_analyses(self):
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():

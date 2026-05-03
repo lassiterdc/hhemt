@@ -1504,6 +1504,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
+        cleanup_orphans: bool = False,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1626,6 +1627,38 @@ class TRITONSWMM_analysis:
         if from_scratch:
             # remove analysis folder
             fast_rmtree(self.cfg_analysis.analysis_dir)
+
+        # Orphan detection gate (sensitivity-only; non-sensitivity covered by
+        # follow-up plan per D-EVENT-PARITY).
+        if (
+            not from_scratch
+            and self.cfg_analysis.toggle_sensitivity_analysis
+            and not self.cfg_analysis.is_subanalysis
+        ):
+            from TRITON_SWMM_toolkit.exceptions import ConfigurationError as _CfgErr
+
+            _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
+            _flags = self.sensitivity.find_orphan_status_flags()
+            _groups = self.sensitivity.find_orphan_datatree_groups()
+            _has_orphans = bool(_dirs or _flags or _groups)
+            if _has_orphans and not cleanup_orphans:
+                raise _CfgErr(
+                    field="cleanup_orphans",
+                    message=(
+                        "Detected orphan sub-analysis artifacts on disk that are "
+                        "absent from the current sensitivity CSV: "
+                        f"{len(_dirs)} subanalysis dir(s), "
+                        f"{len(_flags)} _status flag(s), "
+                        f"{len(_groups)} datatree group(s). "
+                        "Re-invoke analysis.run(cleanup_orphans=True) to delete them, "
+                        "or run `triton-swmm cleanup-orphans --apply --force` from the CLI."
+                    ),
+                    config_path=str(self.analysis_config_yaml),
+                )
+            if _has_orphans and cleanup_orphans:
+                self.sensitivity.cleanup_all_orphans(
+                    dry_run=False, force=True, verbose=verbose,
+                )
 
         # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
         # stamp per version_migration_system master plan PI-1). Idempotent
