@@ -1817,134 +1817,28 @@ class TRITONSWMM_analysis:
                 return_code=result.returncode,
                 stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
             )
+        # Apply React-bundle post-process surgery (title, navbar, sort order,
+        # placeholder category, showCategory auto-pop, row-click delegate).
+        # Both formats need the surgery:
+        #  - HTML: edit the single rendered file in place.
+        #  - Zip: extract, edit `analysis_report/report.html` inside, re-zip.
+        # Without surgery in zip mode, the eye-icon-hiding CSS in report.css
+        # leaves figure tables with no clickable affordance (the JS click
+        # delegate that makes rows clickable lives only in the surgery).
+        from .report_renderers._react_surgery import (
+            apply_post_process_surgery,
+            apply_post_process_surgery_to_zip,
+        )
+        try:
+            if format == "html":
+                out.write_text(apply_post_process_surgery(out.read_text()))
+            else:
+                apply_post_process_surgery_to_zip(out)
+        except Exception:
+            pass
         if format != "html":
             return out
         out_html = out
-        # Post-process the rendered HTML to strip elements baked into the React
-        # bundle that cannot be addressed via stylesheet:
-        # (a) browser-tab title "Snakemake Report" -> empty
-        # (b) the About menu item (CSS-only hide is infeasible — Workflow /
-        #     Statistics / About share identical DOM with no per-item class;
-        #     see report.css for the verification rationale). Drop the
-        #     getMenuItem("About", ...) call from the embedded JS bundle so
-        #     React never renders the <li>.
-        try:
-            html_text = out_html.read_text()
-            if "<title>Snakemake Report</title>" in html_text:
-                html_text = html_text.replace("<title>Snakemake Report</title>", "<title></title>")
-            html_text = html_text.replace(
-                'this.getMenuItem("About", "information-circle", this.props.app.showReportInfo),',
-                "",
-            )
-            # Replace the bold "Snakemake" span text in the navbar `<h1>` with
-            # "TRITON-SWMM Toolkit". The full header reads
-            # "{img} Snakemake Report" by default; with the leaf `<img>` hidden
-            # via CSS and this replacement, it reads "TRITON-SWMM Toolkit Report".
-            html_text = html_text.replace(
-                'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "Snakemake"\n                    )',
-                'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "TRITON-SWMM Toolkit"\n                    )',
-            )
-            # Patch the JS-bundle's category-sort comparator to use a hardcoded
-            # order map instead of pure alphabetical. The default
-            # `(a, b) => a.localeCompare(b)` comparator is used at TWO sites:
-            # category sort (sidebar Results list) and subcategory sort (within
-            # a category). Both get patched to use the order map for known
-            # category names, falling back to localeCompare for unknown keys.
-            # This lets us drop the numeric-prefix workaround on category names
-            # and use clean human-friendly labels with the user-requested
-            # logical ordering. Unknown keys (e.g., subcategory names) fall
-            # back to alphabetical, so subcategory sort behavior is preserved.
-            _CATEGORY_ORDER = {
-                "Workflow Status": 1,
-                "Errors and Warnings": 2,
-                "Key Results": 3,
-                "System Information": 4,
-                "Simulation Health (placeholder)": 5,
-                "Per Simulation Results": 6,
-            }
-            _ORDER_JS = "{" + ", ".join(f'"{k}": {v}' for k, v in _CATEGORY_ORDER.items()) + "}"
-            html_text = html_text.replace(
-                "(a, b) => a.localeCompare(b)",
-                f"(a, b) => {{const ORDER = {_ORDER_JS}; return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}}",
-            )
-            # Inject placeholder sidebar categories WITHOUT a Snakemake rule
-            # (Option B per /design-recommendation 17:59 — keeps the workflow-page
-            # rulegraph clean while still reserving the sidebar slots). The
-            # report engine initializes `var categories = {...}` from rule
-            # outputs annotated with `report(category=...)`. We append two
-            # extra entries to that dict via string surgery on the literal
-            # initialization. Empty figure list ([]) is intentional — clicking
-            # the placeholder shows an empty FIGURE list signalling "reserved,
-            # not yet populated." When the future Errors-and-Warnings or
-            # Simulation-Health renderer lands, the dedup'd sidebar entry
-            # will appear via the canonical `report()` mechanism with no
-            # change needed here (the injected entry will be replaced by
-            # the rule-emitted one via JS object-literal key collision).
-            _PLACEHOLDER_INJECT = (
-                ', "Simulation Health (placeholder)": {"Reserved": []}'
-            )
-            html_text = html_text.replace(
-                "var categories = {",
-                "var categories = {" + _PLACEHOLDER_INJECT[2:] + ",",
-                1,
-            )
-            # Iteration 10 B5-auto-pop — string-replace the bundled `showCategory`
-            # function body to additionally fire `showResultInfo(firstResultPath)`
-            # after the setView call. The 2-line OLD pattern is unique and not
-            # at risk of false-matching inside a JS string literal.
-            _SHOW_CATEGORY_OLD = (
-                'this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n'
-                '    }'
-            )
-            _SHOW_CATEGORY_NEW = (
-                'this.setView({ navbarMode: mode, category: category, subcategory: subcategory });\n'
-                '        // Subiteration 10.1 — auto-pop the FIGURE (not the info panel).\n'
-                '        // Defer until after React renders the result table, then DOM-click\n'
-                '        // the first row\'s first action button (the hidden eye-icon → opens\n'
-                '        // the figure via ButtonViewManager.handleImg/handleHtml/etc.).\n'
-                '        setTimeout(function(){\n'
-                '            var tbl = document.querySelector("table.table-auto");\n'
-                '            if (!tbl) return;\n'
-                '            var firstRow = tbl.querySelector("tbody tr");\n'
-                '            if (!firstRow) return;\n'
-                '            var actionDiv = firstRow.querySelector("td.text-right > div.inline-flex");\n'
-                '            if (!actionDiv) return;\n'
-                '            var firstBtn = actionDiv.querySelector("a, button");\n'
-                '            if (firstBtn) firstBtn.click();\n'
-                '        }, 80);\n'
-                '    }'
-            )
-            html_text = html_text.replace(_SHOW_CATEGORY_OLD, _SHOW_CATEGORY_NEW, 1)
-            # Iteration 10 B5a — pure-click-event row-click delegate (NO
-            # MutationObserver). MUST inject at the LAST `</body>` (rfind) —
-            # the prior `.replace("</body>", ..., 1)` matched `</body>` inside
-            # a JS string literal in the vega-embed bundle, corrupting the JS.
-            _CLICK_DELEGATE = """
-<script>
-(function(){
-  function init(){
-    document.addEventListener('click', function(e){
-      if (e.target.closest('a, button, summary, input, select, label')) return;
-      var tr = e.target.closest('tr');
-      if (!tr) return;
-      var actionDiv = tr.querySelector('td.text-right > div.inline-flex');
-      if (!actionDiv) return;
-      var firstBtn = actionDiv.querySelector('a, button');
-      if (firstBtn) { e.preventDefault(); firstBtn.click(); }
-    });
-  }
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else { init(); }
-})();
-</script>
-"""
-            _last_body = html_text.rfind("</body>")
-            if _last_body != -1:
-                html_text = html_text[:_last_body] + _CLICK_DELEGATE + html_text[_last_body:]
-            out_html.write_text(html_text)
-        except Exception:
-            pass
         # Snap-confined browsers (Ubuntu Firefox snap) cannot read files under
         # ~/.cache/. If the rendered report lands there, surface a one-line
         # workaround so the user does not hit "Access to the file was denied".
