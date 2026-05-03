@@ -10,7 +10,14 @@ _M = TypeVar("_M")
 
 
 def _load_config(cfg_yaml: Path, model_cls: type[_M]) -> _M:
-    return model_cls.model_validate(yaml.safe_load(cfg_yaml.read_text()))
+    raw = yaml.safe_load(cfg_yaml.read_text())
+    if raw is None:
+        raise ValueError(
+            f"YAML config at {cfg_yaml} parsed to None (file empty or top-level null). "
+            "Under high parallel I/O this can indicate a concurrent-write race; "
+            "see sensitivity_analysis.py::_create_sub_analyses."
+        )
+    return model_cls.model_validate(raw)
 
 
 def yaml_to_model(cfg_yaml: Path, model_cls: type[_M]) -> _M:

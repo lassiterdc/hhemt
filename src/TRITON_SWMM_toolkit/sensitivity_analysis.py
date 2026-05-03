@@ -1072,12 +1072,22 @@ class TRITONSWMM_sensitivity_analysis:
                 self.master_analysis.analysis_config_yaml
             )
 
-            cfg_anlysys_yaml.write_text(
+            # Atomic write via temp-file + rename. `Path.write_text` truncates the
+            # target before writing; concurrent readers in other plot subprocesses
+            # would catch the truncated-empty state and fail with
+            # `model_validate(None)`. POSIX `rename(2)` (Path.replace) is atomic
+            # on the same filesystem, so readers always see a complete file.
+            # Once the deeper fix lands (sub-analysis yaml materialization lifted
+            # out of `__init__` into the setup phase), this temp-file dance can
+            # collapse back to a single `cfg_anlysys_yaml.write_text(...)`.
+            _tmp = cfg_anlysys_yaml.with_suffix(cfg_anlysys_yaml.suffix + ".tmp")
+            _tmp.write_text(
                 yaml.safe_dump(
                     cfg_snstvty_analysis.model_dump(mode="json"),
                     sort_keys=False,
                 )
             )
+            _tmp.replace(cfg_anlysys_yaml)
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=self._system,
