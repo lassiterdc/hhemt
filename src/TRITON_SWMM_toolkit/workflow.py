@@ -4150,6 +4150,7 @@ rule plot_per_sim_per_sa_conduit_flow:
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
+                report_config_path=report_config_path,
             )
 
             master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -4212,6 +4213,7 @@ rule plot_per_sim_per_sa_conduit_flow:
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
+                report_config_path=report_config_path,
             )
 
             master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
