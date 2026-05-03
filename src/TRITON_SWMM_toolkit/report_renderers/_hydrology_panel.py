@@ -2,8 +2,7 @@
 
 Extracted from `per_sim_peak_flood_depth.py` so `per_sim_conduit_flow.py` can
 reuse the same data loading + axes drawing logic for its right-hand
-hydrology column. Eliminates the duplicate-code path the user flagged in
-Subiteration 9.2 user-comment expansion.
+hydrology column.
 """
 
 from __future__ import annotations
@@ -14,59 +13,64 @@ from typing import TYPE_CHECKING
 import numpy as np
 import xarray as xr
 
+from TRITON_SWMM_toolkit import units
+
 if TYPE_CHECKING:
     from matplotlib.axes import Axes
 
+    from TRITON_SWMM_toolkit.config.analysis import analysis_config
+    from TRITON_SWMM_toolkit.config.report import HydrologyPanelConfig
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog
 
 
-_RAIN_COLOR = "#9ecae1"
-_BC_LINE_COLOR = "black"
-
-
-def load_event_hydrology_data(weather_path: str | Path) -> dict:
+def load_event_hydrology_data(
+    weather_path: str | Path,
+    cfg_analysis: "analysis_config",
+) -> dict:
     """Open the per-scenario weather NetCDF and return the hydrology arrays.
 
-    Returns a dict with ``times_min`` (minutes from event start), ``rainfall``,
-    ``bc_water_level`` and the source attrs needed for provenance refs.
+    Variable names are resolved via `cfg_analysis`:
+      - rainfall: `cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar`
+      - bc:       `cfg_analysis.weather_time_series_storm_tide_datavar`
+      - time:     `cfg_analysis.weather_time_series_timestep_dimension_name`
     """
+    rain_var = cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
+    bc_var = cfg_analysis.weather_time_series_storm_tide_datavar
+    time_var = cfg_analysis.weather_time_series_timestep_dimension_name
     with xr.open_dataset(weather_path, engine="h5netcdf") as ws:
-        times = ws["time"].values
-        rainfall = ws["RG_synth"].values.astype(float)
-        bc_water_level = ws["water_level"].values.astype(float)
-        rain_attrs = dict(ws["RG_synth"].attrs)
-        bc_attrs = dict(ws["water_level"].attrs)
-    times_min = (times - times[0]).astype("timedelta64[s]").astype(float) / 60.0
+        times = ws[time_var].values
+        rainfall = ws[rain_var].values.astype(float)
+        bc_water_level = (
+            ws[bc_var].values.astype(float) if bc_var is not None else np.zeros_like(rainfall)
+        )
+        rain_attrs = dict(ws[rain_var].attrs)
+        bc_attrs = dict(ws[bc_var].attrs) if bc_var is not None else {}
+    times_min = (
+        (times - times[0]).astype("timedelta64[s]").astype(float) / units.SECONDS_PER_MINUTE
+    )
     return {
         "times_min": times_min,
         "rainfall": rainfall,
         "bc_water_level": bc_water_level,
         "rain_attrs": rain_attrs,
         "bc_attrs": bc_attrs,
+        "rain_var": rain_var,
+        "bc_var": bc_var,
     }
 
 
 def draw_event_hydrology_panel(
-    ax_rain: Axes,
-    ax_bc: Axes,
+    ax_rain: "Axes",
+    ax_bc: "Axes",
     *,
     hydro_data: dict,
     weather_rel_path: str,
     event_iloc: int,
-    prov: ProvenanceLog | None = None,
-    panel_title: str = "Event hydrology",
+    cfg_analysis: "analysis_config",
+    panel_cfg: "HydrologyPanelConfig",
+    prov: "ProvenanceLog | None" = None,
 ) -> tuple[float, float]:
-    """Render the rainfall (top) + BC water level (bottom) sub-panels.
-
-    Returns ``(bc_min, bc_max)`` for caller-side manifest population.
-    Provenance entries are added via ``prov.artist(...)`` when ``prov`` is
-    provided, mirroring the per_sim_peak_flood_depth.py original.
-
-    C8b (Subiteration 9.2): when the BC water level range is near-zero
-    (constant or trivially varying), use coarse round ticks (-1, 0, 1)
-    instead of fine decimals which wrap the y-axis label and inflate the
-    panel's perceived width.
-    """
+    """Render rainfall (top) + BC water level (bottom). Returns (bc_min, bc_max)."""
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
 
     times_min = hydro_data["times_min"]
@@ -74,72 +78,78 @@ def draw_event_hydrology_panel(
     bc_water_level = hydro_data["bc_water_level"]
     rain_attrs = hydro_data["rain_attrs"]
     bc_attrs = hydro_data["bc_attrs"]
+    rain_var = hydro_data["rain_var"]
+    bc_var = hydro_data["bc_var"]
+
+    rain_units = units.rainfall_provenance_units(cfg_analysis.rainfall_units)
+    bc_units = (
+        units.bc_provenance_units(cfg_analysis.storm_tide_units)
+        if cfg_analysis.storm_tide_units else ""
+    )
 
     rain_ref = ProvenanceRef(
         source_path=weather_rel_path,
-        variable="RG_synth",
+        variable=rain_var,
         attrs=rain_attrs,
         selection={"event_iloc": int(event_iloc)},
     )
     if prov is not None:
         with prov.artist(
-            axes_id="ax_rain",
-            kind="bar",
+            axes_id="ax_rain", kind="bar",
             note="rainfall time series (event hydrology — top sub-panel)",
         ) as a:
-            a.add_channel("x", rain_ref, units="minutes from event start")
-            a.add_channel("y", rain_ref, units="mm/hr")
+            a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+            a.add_channel("y", rain_ref, units=rain_units)
             ax_rain.bar(
                 times_min, rainfall, width=1.0, align="edge",
-                color=_RAIN_COLOR, edgecolor="none",
+                color=panel_cfg.rain_color, edgecolor="none",
             )
     else:
         ax_rain.bar(
             times_min, rainfall, width=1.0, align="edge",
-            color=_RAIN_COLOR, edgecolor="none",
+            color=panel_cfg.rain_color, edgecolor="none",
         )
 
-    ax_rain.set_title(panel_title)
-    ax_rain.set_ylabel("Rainfall\n(mm per hour)")
+    ax_rain.set_title(panel_cfg.panel_title)
+    ax_rain.set_ylabel(units.rainfall_axis_label(cfg_analysis.rainfall_units))
     ax_rain.set_xlabel("")
     ax_rain.tick_params(axis="x", labelbottom=False)
-    ax_rain.tick_params(axis="y", labelsize=7)
+    ax_rain.tick_params(axis="y", labelsize=panel_cfg.tick_labelsize)
     ax_rain.set_xlim(times_min[0], times_min[-1])
-    ax_rain.set_ylim(0, max(float(np.nanmax(rainfall)) * 1.1, 1.0))
+    ax_rain.set_ylim(0, max(float(np.nanmax(rainfall)) * 1.1, panel_cfg.rain_ylim_min_cap))
     for spine in ("top", "right"):
         ax_rain.spines[spine].set_visible(False)
 
     bc_ref = ProvenanceRef(
         source_path=weather_rel_path,
-        variable="water_level",
+        variable=bc_var if bc_var is not None else "",
         attrs=bc_attrs,
         selection={"event_iloc": int(event_iloc)},
     )
     if prov is not None:
         with prov.artist(
-            axes_id="ax_bc",
-            kind="line2d",
+            axes_id="ax_bc", kind="line2d",
             note="boundary condition water level (event hydrology — bottom sub-panel)",
         ) as a:
-            a.add_channel("x", bc_ref, units="minutes from event start")
-            a.add_channel("y", bc_ref, units="m")
+            a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+            a.add_channel("y", bc_ref, units=bc_units)
             ax_bc.plot(
                 times_min, bc_water_level,
-                color=_BC_LINE_COLOR, linewidth=1.5,
+                color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
             )
     else:
         ax_bc.plot(
             times_min, bc_water_level,
-            color=_BC_LINE_COLOR, linewidth=1.5,
+            color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
         )
 
-    ax_bc.set_ylabel("Boundary condition\nwater level (m)")
-    ax_bc.set_xlabel("Minutes from event start")
-    ax_bc.tick_params(axis="both", labelsize=7)
+    ax_bc.set_ylabel(units.bc_water_level_axis_label(cfg_analysis.storm_tide_units or "m"))
+    ax_bc.set_xlabel(units.TIME_AXIS_FROM_EVENT_START)
+    ax_bc.tick_params(axis="both", labelsize=panel_cfg.tick_labelsize)
     ax_bc.set_xlim(times_min[0], times_min[-1])
     bc_min = float(np.nanmin(bc_water_level))
     bc_max = float(np.nanmax(bc_water_level))
-    if (bc_max - bc_min) < 0.05:
+    if (bc_max - bc_min) < panel_cfg.bc_flat_threshold:
         center = round((bc_max + bc_min) / 2.0)
         ax_bc.set_ylim(center - 1.0, center + 1.0)
         ax_bc.set_yticks([center - 1, center, center + 1])

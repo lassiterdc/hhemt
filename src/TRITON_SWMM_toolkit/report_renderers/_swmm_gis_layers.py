@@ -25,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 import geopandas as gpd
 from shapely.geometry import LineString, Point, Polygon
 
+from TRITON_SWMM_toolkit import swmm_schema as _ss
+
 if TYPE_CHECKING:
     import swmmio
 
@@ -92,8 +94,7 @@ def _write_subcatchments(model, path: Path, crs) -> Path:
             props: dict[str, Any] = {"name": str(sc_name)}
             if subcatch_df is not None and sc_name in subcatch_df.index:
                 row = subcatch_df.loc[sc_name]
-                for col in ("Outlet", "Area", "PercImperv", "Width",
-                            "PercSlope", "Raingage"):
+                for col in _ss.SUBCATCHMENT_FEATURE_PROPS:
                     if col in row.index:
                         props[col.lower()] = _coerce(row[col])
             records.append({"geometry": geom, **props})
@@ -145,8 +146,8 @@ def _write_junctions(model, path: Path, crs) -> Path:
             continue
         x = float(coords_df.at[name, "X"])
         y = float(coords_df.at[name, "Y"])
-        invert = _coerce(row.get("InvertElev"))
-        max_depth = _coerce(row.get("MaxDepth"))
+        invert = _coerce(row.get(_ss.JUNC_INVERT_ELEV))
+        max_depth = _coerce(row.get(_ss.JUNC_MAX_DEPTH))
         props: dict[str, Any] = {
             "name": str(name),
             "invert_elev": invert,
@@ -173,10 +174,10 @@ def _write_outfalls(model, path: Path, crs) -> Path:
         y = float(coords_df.at[name, "Y"])
         props: dict[str, Any] = {
             "name": str(name),
-            "invert_elev": _coerce(row.get("InvertElev")),
+            "invert_elev": _coerce(row.get(_ss.OUTFALL_INVERT_ELEV)),
         }
-        if "OutfallType" in row.index:
-            props["outfall_type"] = _coerce(row["OutfallType"])
+        if _ss.OUTFALL_TYPE in row.index:
+            props["outfall_type"] = _coerce(row[_ss.OUTFALL_TYPE])
         records.append({"geometry": Point(x, y), **props})
     _write_geojson(records, path, crs)
     return path
@@ -190,12 +191,12 @@ def _write_conduits(model, path: Path, crs) -> Path:
     inverts: dict[str, float] = {}
     for nm, row in junctions_df.iterrows():
         try:
-            inverts[nm] = float(row["InvertElev"])
+            inverts[nm] = float(row[_ss.JUNC_INVERT_ELEV])
         except (KeyError, TypeError, ValueError):
             pass
     for nm, row in outfalls_df.iterrows():
         try:
-            inverts[nm] = float(row["InvertElev"])
+            inverts[nm] = float(row[_ss.OUTFALL_INVERT_ELEV])
         except (KeyError, TypeError, ValueError):
             pass
     records: list[dict[str, Any]] = []

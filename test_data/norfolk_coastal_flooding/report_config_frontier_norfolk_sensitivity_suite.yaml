@@ -8,7 +8,7 @@ figure_defaults:
   savefig_dpi: 150
 
 system_map:
-  target_epsg: null
+  target_epsg: null  # CRS canonical home is cfg_system.crs_epsg (NAD83/VirginiaSouth ftUS = 32147 for Norfolk)
   figsize_inches: [10.0, 8.0]
   watershed_color: red
 

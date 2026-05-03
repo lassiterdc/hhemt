@@ -28,15 +28,11 @@ import numpy as np
 import rioxarray as rxr
 import swmmio
 
+from TRITON_SWMM_toolkit import swmm_schema as _ss, units
+
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.config.report import report_config
-
-
-_JUNCTION_FILL = "#1f77b4"
-_OUTFALL_FILL = "#d62728"
-_DRAINAGE_LINE_COLOR = _JUNCTION_FILL
-_OUTLET_MARKER_FILL = _JUNCTION_FILL  # small dots on hydrology panel
 
 
 def render(
@@ -70,12 +66,14 @@ def render(
     dem_x_extent = dem_bounds[2] - dem_bounds[0]
     dem_y_extent = dem_bounds[3] - dem_bounds[1]
     panel_aspect = dem_x_extent / dem_y_extent if dem_y_extent else 1.0
-    fig_width = max(3 * h * panel_aspect * 1.1, h * 1.6)
+    fig_width = max(
+        3 * h * panel_aspect * map_cfg.fig_width_panel_pad,
+        h * map_cfg.fig_width_min_factor,
+    )
     fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
         1, 3, figsize=(fig_width, h), sharex=True, sharey=True,
     )
-    fig.subplots_adjust(left=0.04, right=0.97, top=0.92,
-                        bottom=0.20, wspace=0.04)
+    fig.subplots_adjust(**map_cfg.subplots_adjust)
 
     bc_path: Path | None = None
     if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
@@ -121,7 +119,7 @@ def render(
 
     # ---- Panels --------------------------------------------------------
     _draw_hydrology_panel(
-        ax_hydro, hydro_model, hydro_rel, dem_bounds, prov,
+        ax_hydro, hydro_model, hydro_rel, dem_bounds, map_cfg, prov,
     )
     _draw_hydraulics_panel(
         ax_hydraulics, hydraulics_model, hydraulics_rel, dem_bounds, map_cfg, prov,
@@ -219,11 +217,12 @@ def _build_manifest_data(
 
 
 def _draw_hydrology_panel(
-    ax, hydro_model, hydro_rel: str, dem_bounds, prov,
+    ax, hydro_model, hydro_rel: str, dem_bounds, map_cfg, prov,
 ) -> None:
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
 
+    hp = map_cfg.hydrology_panel
     coords_df = hydro_model.inp.coordinates
     subcatch_df = getattr(hydro_model.inp, "subcatchments", None)
     polygons_df = getattr(hydro_model.inp, "polygons", None)
@@ -234,26 +233,24 @@ def _draw_hydrology_panel(
 
     if polygons_df is not None and len(polygons_df) > 0:
         drew_any_subcatchment = _draw_subcatchments_and_drainage_lines(
-            ax, polygons_df, subcatch_df, coords_df, prov,
+            ax, polygons_df, subcatch_df, coords_df, hp, prov,
             axes_id="ax_hydro", swmm_inp_rel=hydro_rel,
             outlets_drawn=outlets_drawn,
         )
     if drew_any_subcatchment:
         legend_handles.append(
-            Patch(facecolor="none", edgecolor="#d62728", hatch="////",
+            Patch(facecolor="none", edgecolor=hp.subcatchment_edge_color, hatch=hp.subcatchment_hatch,
                   label="Subcatchments")
         )
         legend_handles.append(
-            Line2D([], [], color=_DRAINAGE_LINE_COLOR, linestyle="--",
-                   linewidth=1.0, label="Drains to")
+            Line2D([], [], color=hp.drainage_line_color, linestyle=hp.drainage_line_style,
+                   linewidth=hp.drainage_line_width, label="Drains to")
         )
 
-    # Small unlabeled outlet markers — provide visible endpoints for the
-    # drainage lines without duplicating the hydraulics-panel schematic.
     if outlets_drawn:
-        ox = [float(coords_df.at[n, "X"]) for n in sorted(outlets_drawn)
+        ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in sorted(outlets_drawn)
               if n in coords_df.index]
-        oy = [float(coords_df.at[n, "Y"]) for n in sorted(outlets_drawn)
+        oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in sorted(outlets_drawn)
               if n in coords_df.index]
         if ox:
             with prov.artist(
@@ -262,8 +259,9 @@ def _draw_hydrology_panel(
             ) as a:
                 a.add_swmm_channel("x", swmm_inp=hydro_rel, kind="outlet_node_coords")
                 a.add_swmm_channel("y", swmm_inp=hydro_rel, kind="outlet_node_coords")
-                ax.scatter(ox, oy, marker="o", s=22, color=_OUTLET_MARKER_FILL,
-                           edgecolor="black", linewidths=0.5, zorder=6)
+                ax.scatter(ox, oy, marker="o", s=hp.outlet_marker_size,
+                           color=hp.outlet_marker_fill,
+                           edgecolor="black", linewidths=hp.outlet_marker_edgewidth, zorder=6)
 
     ax.set_aspect("equal")
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
@@ -271,12 +269,12 @@ def _draw_hydrology_panel(
     ax.set_title("Hydrology")
     if legend_handles:
         ax.legend(handles=legend_handles,
-                  loc="upper center", bbox_to_anchor=(0.5, -0.10),
-                  ncol=2, fontsize=8, framealpha=0.9)
+                  loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+                  ncol=2, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
 
 
 def _draw_subcatchments_and_drainage_lines(
-    ax, polygons_df, subcatch_df, coords_df, prov,
+    ax, polygons_df, subcatch_df, coords_df, hp, prov,
     *, axes_id: str, swmm_inp_rel: str, outlets_drawn: set[str],
 ) -> bool:
     from matplotlib.patches import Polygon as MplPolygon
@@ -284,7 +282,7 @@ def _draw_subcatchments_and_drainage_lines(
     drew = False
     for sc_name in polygons_df.index.unique():
         rows = polygons_df.loc[[sc_name]]
-        verts = list(zip(rows["X"].astype(float), rows["Y"].astype(float), strict=True))
+        verts = list(zip(rows[_ss.COORDS_X].astype(float), rows[_ss.COORDS_Y].astype(float), strict=True))
         if len(verts) < 3:
             continue
         with prov.artist(
@@ -297,19 +295,19 @@ def _draw_subcatchments_and_drainage_lines(
                                kind="subcatchment_polygon", node_id=str(sc_name))
             ax.add_patch(MplPolygon(
                 verts, closed=True,
-                facecolor="none", edgecolor="#d62728", linewidth=1.0,
-                hatch="////", zorder=2,
+                facecolor="none", edgecolor=hp.subcatchment_edge_color, linewidth=hp.subcatchment_linewidth,
+                hatch=hp.subcatchment_hatch, zorder=2,
             ))
         drew = True
         if subcatch_df is None or sc_name not in subcatch_df.index:
             continue
-        outlet_name = subcatch_df.at[sc_name, "Outlet"]
+        outlet_name = subcatch_df.at[sc_name, _ss.SUBCATCH_OUTLET]
         if outlet_name not in coords_df.index:
             continue
         cx = sum(v[0] for v in verts) / len(verts)
         cy = sum(v[1] for v in verts) / len(verts)
-        ox = float(coords_df.at[outlet_name, "X"])
-        oy = float(coords_df.at[outlet_name, "Y"])
+        ox = float(coords_df.at[outlet_name, _ss.COORDS_X])
+        oy = float(coords_df.at[outlet_name, _ss.COORDS_Y])
         with prov.artist(
             axes_id=axes_id, kind="line2d",
             note=f"drainage line: {sc_name} → {outlet_name}",
@@ -321,7 +319,7 @@ def _draw_subcatchments_and_drainage_lines(
                                kind="subcatchment_outlet",
                                node_id=str(sc_name))
             ax.plot([cx, ox], [cy, oy],
-                    color=_DRAINAGE_LINE_COLOR, linestyle="--", linewidth=1.0,
+                    color=hp.drainage_line_color, linestyle=hp.drainage_line_style, linewidth=hp.drainage_line_width,
                     zorder=3)
         outlets_drawn.add(str(outlet_name))
     return drew
@@ -337,6 +335,7 @@ def _draw_hydraulics_panel(
 ) -> None:
     from matplotlib.lines import Line2D
 
+    hp = map_cfg.hydraulics_panel
     coords_df = hydraulics_model.inp.coordinates
     junctions_df = hydraulics_model.inp.junctions
     outfalls_df = hydraulics_model.inp.outfalls
@@ -345,74 +344,70 @@ def _draw_hydraulics_panel(
     legend_handles: list = []
     connected_nodes = _collect_connected_nodes(conduits_df)
 
-    # Conduits with slope labels
     _draw_conduits_with_slope_labels(
-        ax, conduits_df, junctions_df, outfalls_df, coords_df,
+        ax, conduits_df, junctions_df, outfalls_df, coords_df, hp,
         prov, hydraulics_rel,
     )
     if len(conduits_df) > 0:
         legend_handles.append(
-            Line2D([], [], color=map_cfg.swmm_link_color, linewidth=1.2,
+            Line2D([], [], color=hp.conduit_color, linewidth=hp.conduit_linewidth,
                    label="SWMM conduits")
         )
 
-    # Junctions as filled circles
     if len(junctions_df):
-        jx = [float(coords_df.at[n, "X"]) for n in junctions_df.index]
-        jy = [float(coords_df.at[n, "Y"]) for n in junctions_df.index]
+        jx = [float(coords_df.at[n, _ss.COORDS_X]) for n in junctions_df.index]
+        jy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in junctions_df.index]
         with prov.artist(
             axes_id="ax_hydraulics", kind="scatter",
             note=f"junctions ({len(junctions_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="junction_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="junction_coords")
-            ax.scatter(jx, jy, marker="o", s=70, color=_JUNCTION_FILL,
-                       edgecolor="black", linewidths=0.8, zorder=6)
+            ax.scatter(jx, jy, marker="o", s=hp.junction_marker_size, color=hp.junction_fill,
+                       edgecolor="black", linewidths=hp.junction_marker_edgewidth, zorder=6)
         legend_handles.append(
-            Line2D([], [], color=_JUNCTION_FILL, marker="o", linestyle="None",
+            Line2D([], [], color=hp.junction_fill, marker="o", linestyle="None",
                    markersize=8, markeredgecolor="black", label="SWMM junction")
         )
 
-    # Outfalls: upward triangle, NO legend entry (per iteration-4 historical feedback).
     if len(outfalls_df):
-        ox = [float(coords_df.at[n, "X"]) for n in outfalls_df.index]
-        oy = [float(coords_df.at[n, "Y"]) for n in outfalls_df.index]
+        ox = [float(coords_df.at[n, _ss.COORDS_X]) for n in outfalls_df.index]
+        oy = [float(coords_df.at[n, _ss.COORDS_Y]) for n in outfalls_df.index]
         with prov.artist(
             axes_id="ax_hydraulics", kind="scatter",
             note=f"outfalls ({len(outfalls_df)})",
         ) as a:
             a.add_swmm_channel("x", swmm_inp=hydraulics_rel, kind="outfall_coords")
             a.add_swmm_channel("y", swmm_inp=hydraulics_rel, kind="outfall_coords")
-            ax.scatter(ox, oy, marker="^", s=100, color=_OUTFALL_FILL,
-                       edgecolor="black", linewidths=0.8, zorder=7)
+            ax.scatter(ox, oy, marker=hp.outfall_marker, s=hp.outfall_marker_size, color=hp.outfall_fill,
+                       edgecolor="black", linewidths=hp.outfall_marker_edgewidth, zorder=7)
 
-    # Node labels
-    _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes)
+    _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes, hp)
 
     ax.set_aspect("equal")
     ax.set_xlim(dem_bounds[0], dem_bounds[2])
     ax.set_ylim(dem_bounds[1], dem_bounds[3])
     ax.set_title("Hydraulics")
     ax.legend(handles=legend_handles,
-              loc="upper center", bbox_to_anchor=(0.5, -0.10),
-              ncol=2, fontsize=8, framealpha=0.9)
+              loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+              ncol=2, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
 
 
 def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
-                                     coords_df, prov, swmm_inp_rel: str):
+                                     coords_df, hp, prov, swmm_inp_rel: str):
     inverts: dict[str, float] = {}
     for name, row in junctions_df.iterrows():
-        inverts[name] = float(row["InvertElev"])
+        inverts[name] = float(row[_ss.JUNC_INVERT_ELEV])
     for name, row in outfalls_df.iterrows():
-        inverts[name] = float(row["InvertElev"])
+        inverts[name] = float(row[_ss.OUTFALL_INVERT_ELEV])
 
     for row in conduits_df.itertuples():
         if row.InletNode not in coords_df.index or row.OutletNode not in coords_df.index:
             continue
-        p_in = (float(coords_df.at[row.InletNode, "X"]),
-                float(coords_df.at[row.InletNode, "Y"]))
-        p_out = (float(coords_df.at[row.OutletNode, "X"]),
-                 float(coords_df.at[row.OutletNode, "Y"]))
+        p_in = (float(coords_df.at[row.InletNode, _ss.COORDS_X]),
+                float(coords_df.at[row.InletNode, _ss.COORDS_Y]))
+        p_out = (float(coords_df.at[row.OutletNode, _ss.COORDS_X]),
+                 float(coords_df.at[row.OutletNode, _ss.COORDS_Y]))
         with prov.artist(
             axes_id="ax_hydraulics", kind="line2d",
             note=f"conduit {row.Index}: {row.InletNode} → {row.OutletNode}",
@@ -422,7 +417,7 @@ def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
             a.add_swmm_channel("y", swmm_inp=swmm_inp_rel,
                                kind="conduit_coords", link_id=str(row.Index))
             ax.plot([p_in[0], p_out[0]], [p_in[1], p_out[1]],
-                    color="#555555", linewidth=1.2, zorder=4)
+                    color=hp.conduit_color, linewidth=hp.conduit_linewidth, zorder=4)
         length_m = float(getattr(row, "Length", 0.0))
         inv_in = inverts.get(row.InletNode)
         inv_out = inverts.get(row.OutletNode)
@@ -433,7 +428,7 @@ def _draw_conduits_with_slope_labels(ax, conduits_df, junctions_df, outfalls_df,
             ax.annotate(
                 f"{row.Index}\nSlope: {slope_pct:.2f}%",
                 xy=(mx, my), xytext=(5, 5), textcoords="offset points",
-                fontsize=6, zorder=5,
+                fontsize=hp.slope_label_fontsize, zorder=5,
                 bbox=dict(boxstyle="round,pad=0.15", facecolor="white",
                           edgecolor="none", alpha=0.8),
             )
@@ -447,23 +442,23 @@ def _collect_connected_nodes(conduits_df) -> set[str]:
     return nodes
 
 
-def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes):
-    label_offset = (8, -6)
+def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes, hp):
+    label_offset = hp.node_label_offset
     rows = []
     for name, row in junctions_df.iterrows():
         if name not in coords_df.index:
             continue
-        invert = float(row["InvertElev"])
-        maxd = float(row.get("MaxDepth", 0.0))
+        invert = float(row[_ss.JUNC_INVERT_ELEV])
+        maxd = float(row.get(_ss.JUNC_MAX_DEPTH, 0.0))
         rim = invert + maxd
         rows.append((name, invert, rim, "junction"))
     for name, row in outfalls_df.iterrows():
         if name not in coords_df.index:
             continue
-        rows.append((name, float(row["InvertElev"]), None, "outfall"))
+        rows.append((name, float(row[_ss.OUTFALL_INVERT_ELEV]), None, "outfall"))
     for name, invert, rim, kind in rows:
-        x = float(coords_df.at[name, "X"])
-        y = float(coords_df.at[name, "Y"])
+        x = float(coords_df.at[name, _ss.COORDS_X])
+        y = float(coords_df.at[name, _ss.COORDS_Y])
         dx, dy = label_offset
         if kind == "outfall":
             label_text = f"{name}"
@@ -474,7 +469,7 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes)
         ax.annotate(
             label_text,
             xy=(x, y), xytext=(dx, dy), textcoords="offset points",
-            fontsize=6, zorder=8,
+            fontsize=hp.node_label_fontsize, zorder=8,
             bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
                       edgecolor="none", alpha=0.75),
         )
@@ -501,9 +496,10 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     # interior gradient + dropoff occupy the full color range. Walls trigger
     # `cmap.set_over` (grey, "#808080") and the colorbar's `extend="max"`
     # arrow makes the modeled-area extent unambiguous on the figure.
+    ep = map_cfg.elevation_panel
     if valid.size:
         arr_max = float(valid.max())
-        wall_threshold = arr_max * 0.9 if arr_max > 0 else 1.0
+        wall_threshold = arr_max * ep.wall_threshold_fraction if arr_max > 0 else 1.0
         modeled = valid[valid < wall_threshold]
         if modeled.size > 0:
             vmin = float(modeled.min())
@@ -515,8 +511,8 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     else:
         vmin, vmax = 0.0, 1.0
 
-    cmap = cm.get_cmap("terrain").copy()
-    cmap.set_over("#808080")
+    cmap = cm.get_cmap(ep.cmap).copy()
+    cmap.set_over(ep.over_color)
     with prov.artist(
         axes_id="ax_dem", kind="image", note="DEM elevation raster",
     ) as a:
@@ -527,7 +523,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
         a.add_xarray_channel(
             "color", dem_squeezed, source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
-            cmap="terrain", vmin=vmin, vmax=vmax, set_over="#808080",
+            cmap=ep.cmap, vmin=vmin, vmax=vmax, set_over=ep.over_color,
         )
         im = ax.imshow(
             arr,
@@ -535,8 +531,8 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
             extent=(dem_bounds[0], dem_bounds[2], dem_bounds[1], dem_bounds[3]),
             origin="upper", aspect="equal",
         )
-    cbar = plt.colorbar(im, ax=ax, shrink=0.7, pad=0.02, extend="max")
-    cbar.set_label("Elevation (m)")
+    cbar = plt.colorbar(im, ax=ax, shrink=ep.cbar_shrink, pad=ep.cbar_pad, extend="max")
+    cbar.set_label(units.DEM_ELEV_LABEL)
 
     legend_handles = []
 
@@ -565,18 +561,18 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
                 a.add_channel("x", bc_ref)
                 a.add_channel("y", bc_ref)
                 bc_gdf.to_crs(target_crs).plot(
-                    ax=ax, color=map_cfg.bc_color, linewidth=2.5,
+                    ax=ax, color=map_cfg.bc_color, linewidth=ep.bc_line_width,
                 )
             legend_handles.append(
-                Line2D([], [], color=map_cfg.bc_color, linewidth=2.5,
+                Line2D([], [], color=map_cfg.bc_color, linewidth=ep.bc_line_width,
                        label="Storm tide BC")
             )
 
     ax.set_title("TRITON DEM")
     if legend_handles:
         ax.legend(handles=legend_handles,
-                  loc="upper center", bbox_to_anchor=(0.5, -0.10),
-                  ncol=1, fontsize=8, framealpha=0.9)
+                  loc=map_cfg.legend_loc, bbox_to_anchor=map_cfg.legend_bbox_to_anchor,
+                  ncol=1, fontsize=map_cfg.legend_fontsize, framealpha=map_cfg.legend_framealpha)
 
 
 # ---------------------------------------------------------------------------

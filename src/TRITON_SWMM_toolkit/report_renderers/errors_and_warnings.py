@@ -142,10 +142,10 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
     )
 
 
-def _wrap_html_doc(body: str, analysis_id: str) -> str:
+def _wrap_html_doc(body: str, analysis_id: str, inline_css: str) -> str:
     return (
         "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-        f"<style>{_INLINE_STYLE}</style></head><body>"
+        f"<style>{inline_css}</style></head><body>"
         f"<h2>Errors and Warnings — {analysis_id}</h2>"
         f"{body}"
         "</body></html>"
@@ -170,7 +170,11 @@ def render(
         _render_resource_mismatches_table(by_level.get("resource", [])),
     ]
     analysis_id = str(analysis.cfg_analysis.analysis_id)
-    html = _wrap_html_doc("\n".join(b for b in body_parts if b), analysis_id)
+    html = _wrap_html_doc(
+        "\n".join(b for b in body_parts if b),
+        analysis_id,
+        report_cfg.errors_and_warnings.render_inline_css(),
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html)
     return output_path

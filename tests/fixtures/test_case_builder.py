@@ -195,6 +195,9 @@ class retrieve_TRITON_SWMM_test_case:
         tstep_coord_name = (
             self.analysis.cfg_analysis.weather_time_series_timestep_dimension_name
         )
+        rain_spatial_mean_name = (
+            self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
+        )
         df_raingage_mapping = pd.read_csv(self.system.cfg_system.subcatchment_raingage_mapping)  # type: ignore
         gage_colname = (
             self.system.cfg_system.subcatchment_raingage_mapping_gage_id_colname
@@ -208,10 +211,13 @@ class retrieve_TRITON_SWMM_test_case:
             periods=n_reporting_tsteps_per_sim + 1,
             freq=f"{int(reporting_tstep_sec)}s",
         )
-        columns = list(gages) + [wlevel_name]
+        columns = list(gages) + [wlevel_name, rain_spatial_mean_name]
         df_tseries = pd.DataFrame(index=timesteps, columns=columns)
         df_tseries.loc[:, wlevel_name] = storm_tide  # type: ignore
         df_tseries.loc[:, gages] = rain_intensity
+        # Spatial-mean rainfall variable matches the per-gauge intensity (constant
+        # across gauges in this synthetic fixture).
+        df_tseries.loc[:, rain_spatial_mean_name] = rain_intensity  # type: ignore
         df_tseries.index.name = tstep_coord_name
         df_tseries.columns = df_tseries.columns.astype(str)
         lst_df = []
@@ -374,6 +380,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "open_boundaries": 1,
             "storm_tide_boundary_line_gis": str(self.artifacts.boundary),
             "weather_time_series_storm_tide_datavar": "water_level",
+            "weather_time_series_spatial_mean_rainfall_datavar": "RG_synth",
             "storm_tide_units": "m",
             "multi_sim_run_method": "local",
             "target_processed_output_type": "zarr",

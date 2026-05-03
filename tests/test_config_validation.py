@@ -42,6 +42,7 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "weather_event_indices": ["event_id"],
         "weather_timeseries": str(_touch(tmp_path / "inputs" / "weather.nc")),
         "weather_time_series_timestep_dimension_name": "timestep",
+        "weather_time_series_spatial_mean_rainfall_datavar": "RG_synth",
         "rainfall_units": "mm/hr",
         "run_mode": "serial",
         "multi_sim_run_method": "local",

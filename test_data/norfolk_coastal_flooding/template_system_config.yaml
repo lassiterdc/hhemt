@@ -1,4 +1,5 @@
 # FILEPATHS
+crs_epsg: 32147  # NAD83 / Virginia South (ftUS) — Norfolk coastal area; canonical home for renderer CRS resolution
 watershed_gis_polygon: '${DATA_DIR}/shp_watershed/norfolk_wshed_epsg32147_state_plane_m.shp'
 system_directory: '${PACKAGE_DIR}/system'
 DEM_fullres: '${DATA_DIR}/fullres_dem_m.tif'

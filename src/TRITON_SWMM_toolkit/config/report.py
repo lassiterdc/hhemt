@@ -21,6 +21,136 @@ class FigureDefaults(cfgBaseModel):
     savefig_dpi: int = Field(150, description="matplotlib savefig.dpi rcParam (file output)")
 
 
+class HydrologyPanelConfig(cfgBaseModel):
+    """Event-hydrology side-panel formatting (per_sim_peak_flood_depth +
+    per_sim_conduit_flow share this via `_hydrology_panel`).
+    Defaults match the prior `_RAIN_COLOR` / `_BC_LINE_COLOR` constants in
+    `_hydrology_panel.py` lines 23-24.
+    """
+    rain_color: str = Field("#9ecae1", description="Rainfall bar color (hex).")
+    bc_line_color: str = Field("black", description="BC water-level line color.")
+    bc_line_width: float = Field(1.5, description="BC line width (pt).")
+    rain_ylim_min_cap: float = Field(
+        1.0,
+        description=(
+            "Lower cap applied to the rainfall y-axis upper bound: "
+            "`max(nanmax(rainfall) * 1.1, rain_ylim_min_cap)`. "
+            "Verbatim hardcoded `1.0` in _hydrology_panel.py line 108."
+        ),
+    )
+    bc_flat_threshold: float = Field(
+        0.05,
+        description=(
+            "BC range below this is treated as 'flat' and the y-axis is "
+            "expanded to ±1 around the centered integer. Verbatim hardcoded "
+            "`0.05` in _hydrology_panel.py line 142."
+        ),
+    )
+    panel_title: str = Field(
+        "Event hydrology",
+        description=(
+            "Title for the rainfall sub-panel (also acts as the panel-stack "
+            "title). Verbatim default matches `panel_title` keyword default "
+            "on `draw_event_hydrology_panel`."
+        ),
+    )
+    tick_labelsize: int = Field(7, description="Tick label fontsize (pt).")
+
+
+class PerSimMapConfig(cfgBaseModel):
+    """Shared map formatting across per_sim_peak_flood_depth + per_sim_conduit_flow."""
+    depth_cmap: str = Field("YlGnBu")
+    depth_under_color: str = Field("white")
+    depth_vmin: float = Field(
+        0.01,
+        description="Lower bound for depth colorbar (cells below render as `under_color`).",
+    )
+    depth_vmax_fallback: float = Field(
+        1.0,
+        description="Fallback when no event has a usable summary or local max < depth_vmin.",
+    )
+    depth_boundaries_m: tuple[float, ...] = Field(
+        (0.01, 0.05, 0.10, 0.50, 1.00),
+        description="Discrete legend boundaries cited in the manifest (m).",
+    )
+    wse_cmap: str = Field("plasma")
+    wse_fallback_range: tuple[float, float] = Field((0.0, 1.0))
+    utilization_cmap: str = Field("Blues")
+    peak_flow_cmap: str = Field("Reds")
+    conduit_outline_color: str = Field("black")
+    conduit_outline_width: float = Field(4.5)
+    conduit_value_width: float = Field(3.0)
+    watershed_overlay_color: str = Field("black")
+    watershed_overlay_width: float = Field(1.2)
+    map_to_cbar_height_ratio: int = Field(28)
+    outer_width_ratios: tuple[float, float, float] = Field((1.0, 1.0, 0.95))
+    outer_wspace: float = Field(0.10)
+    cbar_inner_width_ratios: tuple[float, float, float] = Field((1.0, 5.0, 1.0))
+    map_tick_step: float = Field(50.0)
+    axis_label_fontsize: int = Field(8)
+    tick_labelsize: int = Field(7)
+    fig_width_panel_pad: float = Field(
+        1.02,
+        description=(
+            "Per_sim figure width formula: `h * (2 * map_aspect * pad + 1.0)`. "
+            "Verbatim hardcoded `1.02` in per_sim_peak_flood_depth.py line 284 "
+            "and per_sim_conduit_flow.py line 133."
+        ),
+    )
+    fallback_h_inches: float = Field(
+        6.0,
+        description=(
+            "Fallback figure height when `cfg.figsize_inches` is absent. "
+            "Verbatim per_sim_peak_flood_depth.py line 279."
+        ),
+    )
+
+
+class HydraulicsPanelStyle(cfgBaseModel):
+    """system_overview hydraulics panel formatting."""
+    junction_fill: str = Field("#1f77b4")
+    outfall_fill: str = Field("#d62728")
+    junction_marker_size: float = Field(70.0)
+    junction_marker_edgewidth: float = Field(0.8)
+    outfall_marker: str = Field("^")
+    outfall_marker_size: float = Field(100.0)
+    outfall_marker_edgewidth: float = Field(0.8)
+    conduit_color: str = Field("#555555")
+    conduit_linewidth: float = Field(1.2)
+    slope_label_fontsize: int = Field(6)
+    node_label_fontsize: int = Field(6)
+    node_label_offset: tuple[int, int] = Field((8, -6))
+
+
+class HydrologyMapPanelStyle(cfgBaseModel):
+    """system_overview hydrology panel formatting."""
+    subcatchment_edge_color: str = Field("#d62728")
+    subcatchment_hatch: str = Field("////")
+    subcatchment_linewidth: float = Field(1.0)
+    drainage_line_color: str = Field("#1f77b4")
+    drainage_line_style: str = Field("--")
+    drainage_line_width: float = Field(1.0)
+    outlet_marker_fill: str = Field("#1f77b4")
+    outlet_marker_size: float = Field(22.0)
+    outlet_marker_edgewidth: float = Field(0.5)
+
+
+class ElevationPanelStyle(cfgBaseModel):
+    """system_overview DEM panel formatting."""
+    cmap: str = Field("terrain")
+    over_color: str = Field("#808080")
+    wall_threshold_fraction: float = Field(
+        0.9,
+        description=(
+            "Cells within this fraction of the DEM max are walls (recolored "
+            "via `cmap.set_over`). Verbatim `0.9` system_overview.py line 506."
+        ),
+    )
+    bc_line_width: float = Field(2.5)
+    cbar_shrink: float = Field(0.7)
+    cbar_pad: float = Field(0.02)
+
+
 class SystemMapConfig(cfgBaseModel):
     target_epsg: int | None = Field(
         None,
@@ -32,6 +162,29 @@ class SystemMapConfig(cfgBaseModel):
         ),
     )
     figsize_inches: tuple[float, float] = Field((10.0, 8.0))
+    fig_width_panel_pad: float = Field(
+        1.1,
+        description=(
+            "Three-panel width formula: `max(3 * h * panel_aspect * pad, h * 1.6)`. "
+            "Verbatim `1.1` system_overview.py line 73."
+        ),
+    )
+    fig_width_min_factor: float = Field(
+        1.6,
+        description=(
+            "Minimum figure-width multiplier on `h`. Verbatim `1.6` "
+            "system_overview.py line 73."
+        ),
+    )
+    subplots_adjust: dict = Field(
+        default_factory=lambda: {"left": 0.04, "right": 0.97, "top": 0.92,
+                                 "bottom": 0.20, "wspace": 0.04},
+        description="`fig.subplots_adjust` kwargs — verbatim system_overview.py lines 77-78.",
+    )
+    legend_loc: str = Field("upper center")
+    legend_bbox_to_anchor: tuple[float, float] = Field((0.5, -0.10))
+    legend_fontsize: int = Field(8)
+    legend_framealpha: float = Field(0.9)
     watershed_color: str = Field("red")
     dem_extent_color: str = Field("blue")
     bc_marker: str = Field("o")
@@ -40,6 +193,9 @@ class SystemMapConfig(cfgBaseModel):
     swmm_node_size: float = Field(8.0)
     swmm_link_color: str = Field("gray")
     swmm_link_width: float = Field(0.6)
+    hydrology_panel: HydrologyMapPanelStyle = Field(default_factory=HydrologyMapPanelStyle)
+    hydraulics_panel: HydraulicsPanelStyle = Field(default_factory=HydraulicsPanelStyle)
+    elevation_panel: ElevationPanelStyle = Field(default_factory=ElevationPanelStyle)
 
 
 class PerSimFigureSpec(cfgBaseModel):
@@ -50,6 +206,8 @@ class PerSimFigureSpec(cfgBaseModel):
 
 
 class PerSimConfig(cfgBaseModel):
+    map: PerSimMapConfig = Field(default_factory=PerSimMapConfig)
+    hydrology_panel: HydrologyPanelConfig = Field(default_factory=HydrologyPanelConfig)
     peak_flood_depth: PerSimFigureSpec = Field(default_factory=PerSimFigureSpec)
     conduit_flow: PerSimFigureSpec = Field(
         default_factory=lambda: PerSimFigureSpec(cmap="plasma")
@@ -76,6 +234,22 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
             "sensitivity_mode",
         ]
     )
+    table_scale: tuple[float, float] = Field(
+        (1.0, 1.5),
+        description=(
+            "matplotlib `Table.scale(x, y)` arguments — verbatim "
+            "`table.scale(1, 1.5)` per_analysis_summary.py line 208."
+        ),
+    )
+    figure_height_per_row_inches: float = Field(
+        0.4,
+        description="Per-row height contribution. Verbatim `0.4` line 150.",
+    )
+    figure_height_padding_inches: float = Field(
+        0.7,
+        description="Constant additional figure height. Verbatim `0.7` line 150.",
+    )
+    figure_width_inches: float = Field(8.0)
 
 
 class SensitivityReportConfig(cfgBaseModel):
@@ -117,6 +291,121 @@ class SensitivityReportConfig(cfgBaseModel):
             "and y. Useful for reading absolute values off the panels."
         ),
     )
+    # ---- Style knobs (verbatim defaults from sensitivity_benchmarking.py) --
+    cpu_marker: str = Field("o", description="Verbatim `_CPU_MARKER` line 47.")
+    gpu_marker: str = Field("^", description="Verbatim `_GPU_MARKER` line 48.")
+    point_size: float = Field(110.0, description="Verbatim `_POINT_SIZE` line 49.")
+    line_style: str = Field("--")
+    line_width: float = Field(1.0)
+    palette: tuple[str, ...] = Field(
+        (
+            "#0072B2", "#E69F00", "#009E73", "#CC79A7",
+            "#56B4E9", "#D55E00", "#F0E442", "#000000",
+        ),
+        description="Okabe-Ito CVD-safe palette — verbatim `_OKABE_ITO` lines 54-63.",
+    )
+    independent_var_labels: dict[str, str] = Field(
+        default_factory=lambda: {"n_devices": "Number of Devices (CPUs or GPUs)"},
+        description="Verbatim `_INDEP_VAR_LABELS` line 65.",
+    )
+    figsize_inches: tuple[float, float] = Field(
+        (7.0, 14.0),
+        description="Verbatim `figsize=(7, 14)` line 125.",
+    )
+    title: str = Field(
+        "Wall-clock, compute-cost, speedup, and efficiency\nvs. number of devices, by run mode",
+        description="Verbatim title text line 171.",
+    )
+    title_fontsize: int = Field(11)
+    title_pad: float = Field(4.0)
+    annotation_fontsize: int = Field(8)
+    footnote_text: str = Field(
+        "* number next to hybrid scenarios indicates number of MPI processes",
+        description="Verbatim footnote line 182.",
+    )
+    footnote_fontsize: int = Field(7)
+    ideal_line_color: str = Field("red")
+    ideal_line_width: float = Field(1.0)
+    gridline_color: str = Field("lightgrey")
+    gridline_width: float = Field(0.5)
+
+
+_HTML_TABLE_STYLE_TEMPLATE = """\
+body {{ font-family: {font_family};
+       padding: {body_padding_px}px; color: {body_text_color}; margin: 0; }}
+table {{ border-collapse: collapse; width: 100%; font-size: {table_font_size_px}px; }}
+th, td {{ padding: {cell_padding_v_px}px {cell_padding_h_px}px; border: 1px solid {cell_border_color};
+         text-align: left; vertical-align: top; }}
+th {{ background-color: {primary_color}; color: {th_text_color}; font-weight: {th_font_weight}; }}
+tr:nth-child(even) td {{ background-color: {row_alt_bg_color}; }}
+tr:hover td {{ background-color: {row_hover_bg_color}; }}
+"""
+
+
+_HtmlTableStyle_DEFAULT_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+
+
+class _HtmlTableStyleBase(cfgBaseModel):
+    """Shared HTML-table styling fields used by both sidebar/appendix HTML renderers."""
+    font_family: str = Field(_HtmlTableStyle_DEFAULT_FONT_FAMILY)
+    body_padding_px: int = Field(12)
+    body_text_color: str = Field("#333")
+    primary_color: str = Field("#232D4B")
+    th_text_color: str = Field("white")
+    th_font_weight: int = Field(600)
+    cell_border_color: str = Field("#DADADA")
+    cell_padding_v_px: int = Field(6)
+    cell_padding_h_px: int = Field(10)
+    table_font_size_px: int = Field(13)
+    row_alt_bg_color: str = Field("#F1F1EF")
+    row_hover_bg_color: str = Field("#FFE4C4")
+
+
+_ERRORS_AND_WARNINGS_EXTRA_CSS = """\
+h2 {{ color: {primary_color}; border-bottom: {h2_border_width_px}px solid {primary_color}; padding-bottom: {h2_padding_bottom_px}px; margin-top: 0; }}
+h3 {{ color: {primary_color}; margin-top: {h3_margin_top_px}px; margin-bottom: {h3_margin_bottom_px}px; }}
+table {{ margin-bottom: {table_margin_bottom_px}px; }}
+td.pass {{ color: {pass_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: center; width: {passfail_cell_width_px}px; }}
+.banner {{ padding: {banner_padding_v_px}px {banner_padding_h_px}px; border-radius: {banner_border_radius_px}px; margin: 10px 0 18px;
+          font-weight: {th_font_weight}; font-size: {banner_font_size_px}px; }}
+.banner.pass {{ background-color: {pass_bg_color}; color: {pass_text_color}; border: 1px solid {pass_text_color}; }}
+.banner.fail {{ background-color: {fail_bg_color}; color: {fail_text_color}; border: 1px solid {fail_text_color}; }}
+.banner.info {{ background-color: {info_bg_color}; color: {primary_color}; border: 1px solid {primary_color}; }}
+"""
+
+
+class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
+    """HTML inline-style overrides for the errors_and_warnings sidebar."""
+    pass_text_color: str = Field("#1F7A1F")
+    fail_text_color: str = Field("#B11E1E")
+    pass_bg_color: str = Field("#DDEEDD")
+    fail_bg_color: str = Field("#F4D4D4")
+    info_bg_color: str = Field("#E5EBF5")
+    h2_border_width_px: int = Field(2)
+    h2_padding_bottom_px: int = Field(4)
+    h3_margin_top_px: int = Field(24)
+    h3_margin_bottom_px: int = Field(8)
+    table_margin_bottom_px: int = Field(8)
+    passfail_cell_width_px: int = Field(60)
+    banner_padding_v_px: int = Field(10)
+    banner_padding_h_px: int = Field(14)
+    banner_border_radius_px: int = Field(6)
+    banner_font_size_px: int = Field(14)
+
+    def render_inline_css(self) -> str:
+        fields = self.model_dump()
+        return (
+            _HTML_TABLE_STYLE_TEMPLATE.format(**fields)
+            + _ERRORS_AND_WARNINGS_EXTRA_CSS.format(**fields)
+        )
+
+
+class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
+    """HTML inline-style overrides for the scenario_status_appendix renderer."""
+
+    def render_inline_css(self) -> str:
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump())
 
 
 class report_config(cfgBaseModel):
@@ -125,6 +414,12 @@ class report_config(cfgBaseModel):
     per_sim: PerSimConfig = Field(default_factory=PerSimConfig)
     per_analysis_summary: PerAnalysisSummaryConfig = Field(
         default_factory=PerAnalysisSummaryConfig
+    )
+    errors_and_warnings: ErrorsAndWarningsConfig = Field(
+        default_factory=ErrorsAndWarningsConfig
+    )
+    scenario_status_appendix: ScenarioStatusAppendixConfig = Field(
+        default_factory=ScenarioStatusAppendixConfig
     )
     sensitivity: SensitivityReportConfig | None = Field(
         None,
