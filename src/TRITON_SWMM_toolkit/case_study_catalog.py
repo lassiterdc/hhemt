@@ -39,6 +39,7 @@ class CaseStudyBuilder:
         platform_config: Optional["PlatformConfig"] = None,
         analysis_overrides: dict | None = None,
         system_overrides: dict | None = None,
+        report_config_path: Path | None = None,
     ):
 
         #
@@ -118,6 +119,12 @@ class CaseStudyBuilder:
         if cfg_analysis.toggle_sensitivity_analysis:
             self.analysis.sensitivity.export_sensitivity_definition_csv()
 
+        if report_config_path is not None and not report_config_path.exists():
+            raise FileNotFoundError(
+                f"report_config_path does not exist: {report_config_path}"
+            )
+        self.report_config_path = report_config_path
+
 
 class UVACaseStudies:
 
@@ -172,10 +179,8 @@ class UVACaseStudies:
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite"
-        sensitivity = (
-            all_examples.norfolk_irene().test_case_directory
-            / cls.sensitivity_analysis_uva_suite
-        )
+        example_dir = all_examples.norfolk_irene().test_case_directory
+        sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
 
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -205,6 +210,7 @@ class UVACaseStudies:
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
+            report_config_path=example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml",
         )
 
     @classmethod
@@ -302,10 +308,8 @@ class FrontierCaseStudies:
         """Frontier HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "frontier_sensitivity_suite"
-        sensitivity = (
-            all_examples.norfolk_irene().test_case_directory
-            / cls.sensitivity_frontier_suite
-        )
+        example_dir = all_examples.norfolk_irene().test_case_directory
+        sensitivity = example_dir / cls.sensitivity_frontier_suite
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
@@ -328,4 +332,5 @@ class FrontierCaseStudies:
             download_if_exists=download_if_exists,
             platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
+            report_config_path=example_dir / "report_config_frontier_norfolk_sensitivity_suite.yaml",
         )
