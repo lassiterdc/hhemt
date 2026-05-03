@@ -250,7 +250,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)
 
     analysis_dir = analysis.analysis_paths.analysis_dir
-    for indep_var in ("n_omp_threads",):
+    for indep_var in ("n_devices",):
         svg = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"{indep_var}_vs_total.svg"
         assert svg.exists(), f"Expected benchmarking SVG missing: {svg}"
 
