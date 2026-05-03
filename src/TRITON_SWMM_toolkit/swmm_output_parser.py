@@ -1212,3 +1212,29 @@ def isel_first_and_slice_longest(ds, n=5):
     )  # Slice longest dim
     # Apply the `isel` operation using the dictionary
     return ds.isel(isel_dict)
+
+
+def parse_total_elapsed(rpt_path: Path) -> float | None:
+    """Parse 'Total elapsed time' from a SWMM .rpt and return seconds.
+
+    Handles both canonical forms emitted by SWMM 5.2.x:
+      - "Total elapsed time: HH:MM:SS" (long-run form; lowercase, colon-space separator)
+      - "Total elapsed time: < 1 sec"  (short-run form; returns 0.5 by convention)
+
+    Returns None if the file is missing, unreadable, or the line is absent.
+
+    Reference: vendored SWMM solver `text.h` FMT21 = "  Total elapsed time: ".
+    """
+    if not rpt_path or not rpt_path.exists():
+        return None
+    try:
+        text = rpt_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = re.search(r"Total elapsed time:\s*(\d+):(\d+):(\d+)", text)
+    if m:
+        h, mi, s = (int(m.group(i)) for i in (1, 2, 3))
+        return float(h * 3600 + mi * 60 + s)
+    if re.search(r"Total elapsed time:\s*<\s*1\s*sec", text):
+        return 0.5
+    return None

@@ -1,0 +1,390 @@
+"""Pure-Python structured validator for completed analyses.
+
+Mirrors the assertion logic in `tests/utils_for_testing.py` (the
+`assert_analysis_workflow_completed_successfully` chain) but returns
+structured `CheckResult` records instead of raising `pytest.fail`. This lets
+both pytest tests AND the report renderer (`report_renderers/errors_and_warnings.py`)
+share the same validation logic.
+
+Each per-check function returns one `CheckResult` describing pass/fail plus
+optional per-scenario detail rows. The aggregator `validate_analysis()` runs
+all 7 checks and returns a `ValidationReport`. For sensitivity analyses, the
+aggregate per-scenario checks iterate sub-analyses and prefix each detail
+row with the sub-analysis id.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+
+
+CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
+
+
+@dataclass
+class CheckResult:
+    """One pass/fail check result, with optional per-scenario detail rows."""
+
+    name: str
+    level: CheckLevel
+    passed: bool
+    summary: str
+    details: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class ValidationReport:
+    """Aggregated validation result for a single analysis."""
+
+    checks: list[CheckResult] = field(default_factory=list)
+
+    @property
+    def overall_passed(self) -> bool:
+        return all(c.passed for c in self.checks)
+
+    @property
+    def by_level(self) -> dict[str, list[CheckResult]]:
+        out: dict[str, list[CheckResult]] = {"system": [], "aggregate": [], "scenario": [], "resource": []}
+        for c in self.checks:
+            out.setdefault(c.level, []).append(c)
+        return out
+
+    @property
+    def granular_failures(self) -> list[dict]:
+        """Flat list of per-scenario failure rows across all checks.
+
+        Each row carries `{stage, sa_id (optional), scenario, detail}` so the
+        renderer can emit a uniform "scenario × stage × detail" table.
+        """
+        rows: list[dict] = []
+        for c in self.checks:
+            if c.passed:
+                continue
+            if c.level not in ("aggregate", "scenario"):
+                continue
+            for d in c.details:
+                rows.append({"stage": c.name, **d})
+        return rows
+
+
+# ---------------------------------------------------------------------------
+# Per-check functions
+# ---------------------------------------------------------------------------
+
+
+def check_system_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """System-level: compilation success for enabled models + DEM/Mannings present."""
+    cfg_sys = analysis._system.cfg_system
+    issues: list[dict] = []
+    sys = analysis._system
+
+    if cfg_sys.toggle_tritonswmm_model and not sys.compilation_successful:
+        issues.append({"detail": "TRITON-SWMM compilation failed"})
+    if cfg_sys.toggle_triton_model and not sys.compilation_triton_only_successful:
+        issues.append({"detail": "TRITON-only compilation failed"})
+    if cfg_sys.toggle_swmm_model and not sys.compilation_swmm_successful:
+        issues.append({"detail": "SWMM compilation failed"})
+
+    dem = sys.processed_dem_rds
+    manning = sys.mannings_rds
+    if dem is None:
+        issues.append({"detail": "DEM not created"})
+    if manning is None:
+        issues.append({"detail": "Mannings not created"})
+    if dem is not None and manning is not None and dem.shape != manning.shape:
+        issues.append({"detail": f"DEM shape {dem.shape} != Mannings shape {manning.shape}"})
+    if dem is not None and (len(dem.shape) != 3 or dem.shape[0] != 1):
+        issues.append({"detail": f"Expected DEM shape (1, rows, cols), got {dem.shape}"})
+
+    passed = not issues
+    summary = "System setup OK" if passed else f"System setup FAILED ({len(issues)} issue(s))"
+    return CheckResult(name="System setup", level="system", passed=passed, summary=summary, details=issues)
+
+
+def _iter_subanalyses_or_self(analysis: TRITONSWMM_analysis):
+    """Yield (sa_id, sub_analysis) for sensitivity master, else (None, analysis)."""
+    sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+    sens = getattr(analysis, "sensitivity", None)
+    if sensitivity_on and sens is not None:
+        yield from sens.sub_analyses.items()
+    else:
+        yield None, analysis
+
+
+def _detail_rows_for_failed_scenarios(analysis: TRITONSWMM_analysis, failed_paths: list[str]) -> list[dict]:
+    """Convert a list of scenario_dir strings to detail-row dicts (no sa_id)."""
+    return [{"scenario": str(Path(p).name), "scenario_dir": str(p), "detail": "did not complete"} for p in failed_paths]
+
+
+def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Aggregate: all scenarios were created (per-scenario fails surfaced)."""
+    details: list[dict] = []
+    total = 0
+    failed_count = 0
+    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+        n = int(sub.n_scenarios)
+        total += n
+        if not sub.all_scenarios_created:
+            failed = list(sub.scenarios_not_created)
+            failed_count += len(failed)
+            for p in failed:
+                row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "scenario not created"}
+                if sa_id is not None:
+                    row["sa_id"] = f"sa_{sa_id}"
+                details.append(row)
+    passed = failed_count == 0
+    summary = (
+        f"All {total} scenarios set up"
+        if passed
+        else f"Scenario setup failed for {failed_count} of {total} scenarios"
+    )
+    return CheckResult(name="Scenarios setup", level="aggregate", passed=passed, summary=summary, details=details)
+
+
+def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Aggregate: all simulations completed."""
+    details: list[dict] = []
+    total = 0
+    failed_count = 0
+    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+        try:
+            n = len(sub.df_sims)
+        except Exception:
+            n = 0
+        total += n
+        if not sub.all_sims_run:
+            failed = list(sub.scenarios_not_run)
+            failed_count += len(failed)
+            for p in failed:
+                row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "simulation did not complete"}
+                if sa_id is not None:
+                    row["sa_id"] = f"sa_{sa_id}"
+                details.append(row)
+    passed = failed_count == 0
+    summary = (
+        f"All {total} scenarios ran"
+        if passed
+        else f"Simulation failed for {failed_count} of {total} scenarios"
+    )
+    return CheckResult(name="Scenarios ran", level="aggregate", passed=passed, summary=summary, details=details)
+
+
+def check_timeseries_processed(
+    analysis: TRITONSWMM_analysis,
+    which: Literal["both", "TRITON", "SWMM"] = "both",
+) -> CheckResult:
+    """Aggregate: per-model-type timeseries written for every scenario.
+
+    Combines the per-model checks (TRITONSWMM performance + TRITON + SWMM)
+    into one logical "timeseries processed" stage; details distinguish which
+    model-type failed for each scenario.
+
+    The ``which`` parameter mirrors the existing ``assert_timeseries_processed``
+    pytest helper:
+
+    - ``"both"`` (default): TRITONSWMM performance + TRITON + SWMM
+    - ``"TRITON"``: TRITONSWMM performance + TRITON only
+    - ``"SWMM"``: TRITONSWMM performance + SWMM only
+    """
+    all_checks = [
+        (
+            "TRITONSWMM performance ts",
+            "all_TRITONSWMM_performance_timeseries_processed",
+            "TRITONSWMM_performance_time_series_not_processed",
+        ),
+        ("TRITON ts", "all_TRITON_timeseries_processed", "TRITON_time_series_not_processed"),
+        ("SWMM ts", "all_SWMM_timeseries_processed", "SWMM_time_series_not_processed"),
+    ]
+    if which == "TRITON":
+        active_checks = [c for c in all_checks if "SWMM ts" != c[0]]
+    elif which == "SWMM":
+        active_checks = [c for c in all_checks if "TRITON ts" != c[0]]
+    else:
+        active_checks = all_checks
+
+    details: list[dict] = []
+    failed_count = 0
+    total = 0
+    for sa_id, sub in _iter_subanalyses_or_self(analysis):
+        try:
+            total += len(sub.df_sims)
+        except Exception:
+            pass
+        for label, all_done_attr, missing_attr in active_checks:
+            try:
+                if not getattr(sub, all_done_attr):
+                    failed = list(getattr(sub, missing_attr))
+                    failed_count += len(failed)
+                    for p in failed:
+                        row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": f"{label} not processed"}
+                        if sa_id is not None:
+                            row["sa_id"] = f"sa_{sa_id}"
+                        details.append(row)
+            except (AttributeError, Exception):
+                continue
+    passed = failed_count == 0
+    summary = (
+        "All timeseries processed"
+        if passed
+        else f"Timeseries processing failed for {failed_count} per-model entries"
+    )
+    return CheckResult(name="Timeseries processed", level="aggregate", passed=passed, summary=summary, details=details)
+
+
+def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """System-level: per-model summary files exist on disk."""
+    missing: list[dict] = []
+
+    def _enabled_model_types(a) -> set[str]:
+        cfg_sys = a._system.cfg_system
+        out = set()
+        if cfg_sys.toggle_tritonswmm_model:
+            out.add("tritonswmm")
+        if cfg_sys.toggle_triton_model:
+            out.add("triton")
+        if cfg_sys.toggle_swmm_model:
+            out.add("swmm")
+        return out
+
+    def _check_one(a, label_prefix: str = "") -> None:
+        paths = a.analysis_paths
+        enabled = _enabled_model_types(a)
+        if "tritonswmm" in enabled:
+            for desc, path in [
+                ("TRITONSWMM TRITON summary", paths.output_tritonswmm_triton_summary),
+                ("TRITONSWMM SWMM node summary", paths.output_tritonswmm_node_summary),
+                ("TRITONSWMM SWMM link summary", paths.output_tritonswmm_link_summary),
+                ("TRITONSWMM performance summary", paths.output_tritonswmm_performance_summary),
+            ]:
+                if path is None or not path.exists():
+                    missing.append({"detail": f"{label_prefix}{desc} missing"})
+        if "triton" in enabled:
+            if paths.output_triton_only_summary is None or not paths.output_triton_only_summary.exists():
+                missing.append({"detail": f"{label_prefix}TRITON-only summary missing"})
+            triton_perf = paths.output_triton_only_performance_summary
+            if triton_perf is None or not triton_perf.exists():
+                missing.append({"detail": f"{label_prefix}TRITON-only performance summary missing"})
+        if "swmm" in enabled:
+            if paths.output_swmm_only_node_summary is None or not paths.output_swmm_only_node_summary.exists():
+                missing.append({"detail": f"{label_prefix}SWMM-only node summary missing"})
+            if paths.output_swmm_only_link_summary is None or not paths.output_swmm_only_link_summary.exists():
+                missing.append({"detail": f"{label_prefix}SWMM-only link summary missing"})
+
+    sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+    if sensitivity_on and getattr(analysis, "sensitivity", None) is not None:
+        sens_zarr = analysis.analysis_paths.sensitivity_datatree_zarr
+        if sens_zarr is None or not sens_zarr.exists():
+            missing.append({"detail": f"Sensitivity DataTree zarr missing at {sens_zarr}"})
+        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+            _check_one(sub, label_prefix=f"sa_{sa_id}: ")
+    else:
+        _check_one(analysis)
+
+    passed = not missing
+    summary = "Analysis summaries OK" if passed else f"Analysis summaries missing ({len(missing)} item(s))"
+    return CheckResult(
+        name="Analysis summaries created",
+        level="system",
+        passed=passed,
+        summary=summary,
+        details=missing,
+    )
+
+
+def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """System-level: scenario_status.csv exists with required resource columns."""
+    import pandas as pd
+
+    csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+    if not csv_path.exists():
+        return CheckResult(
+            name="scenario_status.csv created",
+            level="system",
+            passed=False,
+            summary="scenario_status.csv missing",
+            details=[{"detail": f"file not found at {csv_path}"}],
+        )
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        return CheckResult(
+            name="scenario_status.csv created",
+            level="system",
+            passed=False,
+            summary="scenario_status.csv unreadable",
+            details=[{"detail": f"read error: {e}"}],
+        )
+    required = [
+        "scenario_setup", "run_completed", "scenario_directory",
+        "actual_nTasks", "actual_omp_threads", "actual_gpus",
+        "actual_total_gpus", "actual_gpu_backend", "actual_build_type", "perf_Total",
+    ]
+    missing_cols = [c for c in required if c not in df.columns]
+    if missing_cols:
+        return CheckResult(
+            name="scenario_status.csv created",
+            level="system",
+            passed=False,
+            summary=f"scenario_status.csv missing required columns: {missing_cols}",
+            details=[{"detail": f"missing columns: {missing_cols}"}],
+        )
+    return CheckResult(
+        name="scenario_status.csv created",
+        level="system",
+        passed=True,
+        summary=f"scenario_status.csv OK ({len(df)} rows)",
+        details=[],
+    )
+
+
+def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Resource: actual MPI/OMP/GPU/backend match intended config per scenario."""
+    from TRITON_SWMM_toolkit.consolidate_workflow import validate_resource_usage
+
+    try:
+        passed, issues = validate_resource_usage(analysis, logger=None)
+    except Exception as e:
+        return CheckResult(
+            name="Resource usage matches config",
+            level="resource",
+            passed=False,
+            summary=f"Resource validation crashed: {e}",
+            details=[],
+        )
+
+    summary = (
+        "All scenarios used expected compute resources"
+        if passed
+        else f"Resource mismatches in {len(issues)} scenario(s)"
+    )
+    return CheckResult(
+        name="Resource usage matches config",
+        level="resource",
+        passed=passed,
+        summary=summary,
+        details=issues,
+    )
+
+
+def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
+    """Run all 7 checks; return aggregated ValidationReport.
+
+    Order matches the existing `assert_analysis_workflow_completed_successfully`
+    chain so the report's check ordering matches what pytest displays.
+    """
+    return ValidationReport(
+        checks=[
+            check_system_setup(analysis),
+            check_scenarios_setup(analysis),
+            check_scenarios_run(analysis),
+            check_timeseries_processed(analysis),
+            check_analysis_summaries_created(analysis),
+            check_scenario_status_csv(analysis),
+            check_resource_usage(analysis),
+        ]
+    )

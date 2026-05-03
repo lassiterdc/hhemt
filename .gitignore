@@ -1,5 +1,10 @@
 # From https://github.com/github/gitignore/blob/main/Python.gitignore 2025-07-30
 
+# Test scaffolding counter files (no tracked-code consumers; incidentally
+# modified by test runs — see commit untracking these)
+/cid
+/docs/cid
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

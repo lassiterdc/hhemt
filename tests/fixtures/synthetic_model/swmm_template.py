@@ -11,16 +11,26 @@ Generation strategy:
        section header (expecting the SWMM-auto-formatted double comment), so
        the post-process restores the format the coupled parser expects.
 
-Topology (6 junctions + 1 outfall, designed for 2 intentional DEM-cell overlaps):
+Topology (iteration-2 mid-iteration revision 2026-04-26 — 5 junctions + 1 dummy outfall):
 
-    S1 (impervious upper) --> J1a --C1a(5m)--> J1b --C1b(~100m)--\\
-                                                                 J_merge --Cm(~80m)--> J_out --Co(~20m)--> OUT1
-    S2 (pervious lower)   --> J2a --C2a(5m)--> J2b --C2b(~100m)--/
+    S1 (upper-left)  --> J1 --C1(100m)--\\
+    S2 (upper-right) --> J2 --C2(100m)---> J3 --C3(80m)--> J4 (no subcatchment;
+    S3 (middle-left) --> J3                                 just upstream of sea
+                                                            wall) --C4(20m,
+                                                            culvert)--> sewer_outflow
 
-    Short C1a and C2a pipes span 5 m at 10 m DEM resolution, so J1a/J1b and
-    J2a/J2b each collapse to one TRITON cell. This exercises the toolkit's
-    `scenario_inputs.py` overlap-handling code path with real data rather
-    than synthesising empty edge cases.
+    `sewer_outflow` is a regular JUNCTION sitting in the dropoff/BC zone
+    (per user feedback 2026-04-26 — was an outfall in the prior iter-2 spec).
+    It is the terminal node of the drainage chain; flow surcharges out of its
+    rim into TRITON's 2-D surface solver per the scenario constraint.
+
+    `dummy_outfall` is the only SWMM-side OUTFALL element — disconnected and
+    placed in an inconspicuous interior cell. SWMM requires at least one
+    outfall for parsing semantics.
+
+    Pipe geometry (Geom1 = 0.2 m circular) is intentionally undersized so
+    runoff from S1/S2/S3 surcharges the network and forces flow into TRITON
+    via the rim/cell coupling — per iteration-2 scenario constraints.
 """
 
 from __future__ import annotations
@@ -94,106 +104,156 @@ Units      None
 # Topology definition — centralized so `build_templates` and coord helpers
 # stay in sync.
 # ---------------------------------------------------------------------------
-# (name, col, row) where (col, row) is the DEM cell index from the bottom-left
-# of the 20x30 default grid. All nodes are placed at cell centers. The two
-# overlap pairs (J1a/J1b and J2a/J2b) share a cell deliberately. Intermediate
-# nodes J1bi{N}, J2bi{N}, Jmi{N}, Joi{N} subdivide the long conduits so the
-# model has enough links (19 conduits) to exceed EPA SWMM 5.2's internal
-# OpenMP threshold (Nobjects[LINK] >= 4 * NumThreads).
+# (name, col, row_from_bottom). DEM is 20×30; walls occupy matrix_rows 0..1
+# (top), cols 0..1 + 18..19 (sides), and matrix_row 26 = sea-wall row (interior
+# peak between gradual slope rows 2..25 and dropoff/BC rows 27..29).
+# Iteration-2 topology (mid-iteration revision 2026-04-26): 5 junctions
+# (J1..J4 + sewer_outflow) + 1 dummy outfall. `sewer_outflow` is a regular
+# junction (per user feedback) sitting in the dropoff/BC zone — flow exits
+# to TRITON's 2-D surface solver via rim surcharge from this junction. The
+# only SWMM-side OUTFALL element is the disconnected `dummy_outfall` (SWMM
+# requires at least one outfall for parsing semantics).
+# Iter-8 peak_flood_depth (2026-04-28): nodes spread to make the Y branches
+# of the conduit network visibly diagonal in figures. With DEM 16 cols × 30
+# rows (n_cols 20→16 in iter-8), J1 sits 4 cols left of J3 and J2 sits 4
+# cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
+# J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
+# stem of the Y. dummy_outfall stays disconnected at col 7.
 _NODES = [
-    # Subcatchment outlets + overlap pairs (unchanged; anchor for hydrology->TRITON coupling)
-    ("J1a",     6,  22),
-    ("J1b",     6,  22),   # overlap pair 1 with J1a
-    ("J2a",     13, 22),
-    ("J2b",     13, 22),   # overlap pair 2 with J2a
-    # Intermediate junctions along J1b -> J_merge (4 new; interpolated between (6,22) and (10,12))
-    ("J1bi1",   7,  20),
-    ("J1bi2",   8,  18),
-    ("J1bi3",   8,  16),
-    ("J1bi4",   9,  14),
-    # Intermediate junctions along J2b -> J_merge (4 new; interpolated between (13,22) and (10,12))
-    ("J2bi1",   12, 20),
-    ("J2bi2",   12, 18),
-    ("J2bi3",   11, 16),
-    ("J2bi4",   11, 14),
-    # Merge point (unchanged)
-    ("J_merge", 10, 12),
-    # Intermediate junctions along J_merge -> J_out (4 new; interpolated between (10,12) and (10,4))
-    ("Jmi1",    10, 11),
-    ("Jmi2",    10, 10),
-    ("Jmi3",    10, 8),
-    ("Jmi4",    10, 6),
-    # Outlet junction (unchanged)
-    ("J_out",   10, 4),
-    # Intermediate junction along J_out -> OUT1 (1 new)
-    ("Joi1",    10, 3),
-    # Outfall (unchanged)
-    ("OUT1",    10, 2),
+    ("J1",             3,  22),   # upstream-left  (S1 drains here)
+    ("J2",            11,  22),   # upstream-right (S2 drains here)
+    ("J3",             7,  13),   # middle (S3 drains here; J1+J2 merge here)
+    ("J4",             7,   4),   # just upstream of sea wall — culvert outlet
+    ("sewer_outflow",  7,   2),   # JUNCTION in dropoff/BC zone (terminal node)
+    ("dummy_outfall",  7,  26),   # disconnected SWMM outfall, required for
+                                  # parsing. Same col as the rest so the Y
+                                  # stem extends to the top of the figure.
 ]
 
-# Junction invert elevations (metres). Slope downward from upstream to outfall.
-# Upstream (J1b/J2b) elevation 8.0 -> J_merge elevation 5.0 interpolated over
-# 5 conduit segments: 8.0, 7.4, 6.8, 6.2, 5.6, 5.0.
-# J_merge elevation 5.0 -> J_out elevation 2.0 interpolated over 5 segments:
-# 5.0, 4.4, 3.8, 3.2, 2.6, 2.0.
-# J_out elevation 2.0 -> OUT1 elevation 0.0 interpolated over 2 segments:
-# J_out = 2.0, Joi1 = 1.0, OUT1 = 0.0.
-_JUNCTION_INVERTS = {
-    "J1a":     8.0,
-    "J1b":     8.0,
-    "J1bi1":   7.4,
-    "J1bi2":   6.8,
-    "J1bi3":   6.2,
-    "J1bi4":   5.6,
-    "J2a":     8.0,
-    "J2b":     8.0,
-    "J2bi1":   7.4,
-    "J2bi2":   6.8,
-    "J2bi3":   6.2,
-    "J2bi4":   5.6,
-    "J_merge": 5.0,
-    "Jmi1":    4.4,
-    "Jmi2":    3.8,
-    "Jmi3":    3.2,
-    "Jmi4":    2.6,
-    "J_out":   2.0,
-    "Joi1":    1.0,
+# Node-type partition: nodes whose names appear in `_OUTFALL_NAMES` go into
+# the [OUTFALLS] section; everything else in `_NODES` is a junction. Allows
+# arbitrary node names (e.g. `sewer_outflow`) without the prior
+# name-prefix-based filter.
+_OUTFALL_NAMES = {"dummy_outfall"}
+
+# Iter-8 peak_flood_depth (2026-04-28): with the sloped upstream gradient
+# (3.0 m at top → 1.5 m at sea-wall row) and the 0.5 m buffer-lowering on
+# swale cells, swale rims at each junction are:
+#   J1, J2 (matrix_row 7):     2.174  (gradient 2.674 − 0.5)
+#   J3     (matrix_row 16):    1.587  (gradient 2.087 − 0.5)
+#   J4     (matrix_row 25):    1.000  (gradient 1.500 − 0.5)
+#   sewer_outflow (mr 27):     0.000  (dropoff 0.500 − 0.5)
+#   dummy_outfall (matrix_row 3, disconnected): 2.370 (gradient 2.870 − 0.5)
+# Junction depths cascade so all inverts step down across the network;
+# slopes 2.0% on C1/C2/C3, 2.0% on C4. All within the user's 1–3% range.
+#   sewer_outflow rim 0.0,   depth 0.5,   invert −0.5  (iter-7..11)
+#   J4            rim 1.0,   depth 1.1,   invert −0.1
+#   J3            rim 1.587, depth 1.087, invert  0.5
+#   J1, J2        rim 2.174, depth 1.074, invert  1.1
+#   dummy_outfall rim 2.370, depth 0.5,   invert  1.870 (disconnected)
+#
+# Iter-13 (2026-04-28): pipe diameter 0.2 → 1.0 m, inverts cascaded for 2.0 %
+# slopes throughout. (Pre-iter-15 cascade — replaced below.)
+#
+# Iter-17 (2026-04-29): dropoff zone lowered 1.0 → 0.5 m to match the minimum
+# upstream elevation (the buffer-lowered swale at the bottom corridor row).
+# Sewer_outflow now sits in a 0.5 m dropoff zone, so its depth re-cascades.
+# Other junctions' rims unchanged from iter-16; their depths preserved.
+#   J1, J2 rim 0.891, depth 0.500, invert  0.391
+#   J3     rim 0.696, depth 0.800, invert −0.104   C1, C2 (0.391 − −0.104)/30 = 1.65 %
+#   J4     rim 0.500, depth 1.100, invert −0.600   C3     (−0.104 − −0.600)/30 = 1.65 %
+#   sewer  rim 0.500, depth 1.400, invert −0.900   C4     (−0.600 − −0.900)/20 = 1.50 %
+#   dummy_outfall depth 0.500 (disconnected; rim auto-pins to DEM at its cell).
+_NODE_DEPTHS_M = {
+    "sewer_outflow": 1.400,
+    "J4":            1.100,
+    "J3":            0.800,
+    "J1":            0.500,
+    "J2":            0.500,
+    "dummy_outfall": 0.500,
+}
+# Backwards-compat default for any code path that still imports
+# `_JUNCTION_DEPTH_M` (now a fallback for nodes not in `_NODE_DEPTHS_M`).
+_JUNCTION_DEPTH_M = 0.5
+
+
+def _node_depth(name: str) -> float:
+    return _NODE_DEPTHS_M.get(name, _JUNCTION_DEPTH_M)
+
+
+def max_node_rim_elev(params) -> float:
+    """Maximum rim elevation across all SWMM nodes (junctions + outfalls).
+
+    Used by the synthetic weather builder (`weather.py`) to set the BC-only
+    and combined-event water-level forcing as `max_rim + 0.10` per the iter-4
+    user feedback for `per_sim_peak_flood_depth`. Reading from the same
+    `dem_elev_at` source that pins junction rims keeps the value
+    deterministic across fixture rebuilds.
+    """
+    from .geometry import dem_elev_at
+
+    return float(max(
+        dem_elev_at(params, col, row_from_bottom)
+        for _name, col, row_from_bottom in _NODES
+    ))
+
+# (name, from_node, to_node, length_m). C4 is the culvert that crosses the
+# sea wall row to deliver flow from the upstream gradual-slope node J4 to
+# `sewer_outflow` on the BC side.
+# Iter-5 peak_flood_depth (2026-04-28): C1/C2/C3 lengths reduced from
+# 100/100/80 m to 50 m so all conduits maintain ≥1% slope under the
+# rim==DEM invariant. Pre-iter-5 lengths produced 0.59% slope on
+# C1/C2 and 0.73% on C3 — below the 1% threshold the user required for
+# valid backwater hydraulics. Slopes after change:
+#   C1: (2.174 - 1.587) / 50 = 1.174%
+#   C2: (2.174 - 1.587) / 50 = 1.174%
+#   C3: (1.587 - 1.000) / 50 = 1.174%
+#   C4: (1.000 - 0.000) / 20 = 5.000%
+# C4 is already 5% — no change. Lengths are decoupled from the actual
+# (col, row) cell distance in this fixture; they're treated as
+# friction-only parameters by SWMM dynamic-wave routing.
+# Iter-6 peak_flood_depth (2026-04-28): C1/C2/C3 lengths reduced 50→30 m so
+# slopes match the user's 1–3 % range with iter-6's varied-depth inverts.
+# Slopes after change (using inverts from `_NODE_DEPTHS_M`):
+#   C1: (1.30 - 0.85) / 30 = 1.50 %
+#   C2: (1.30 - 0.85) / 30 = 1.50 %
+#   C3: (0.85 - 0.40) / 30 = 1.50 %
+#   C4: (0.40 - 0.00) / 20 = 2.00 %
+_CONDUITS = [
+    ("C1", "J1", "J3",            30.0),
+    ("C2", "J2", "J3",            30.0),
+    ("C3", "J3", "J4",            30.0),
+    ("C4", "J4", "sewer_outflow", 20.0),
+]
+
+# Iter-6 peak_flood_depth (2026-04-28): bumped 0.1 → 0.2 m so 30-min sim
+# with BC peak 5 m can deliver enough backwater volume to flood the
+# (now narrow) channel visibly.
+# Iter-13 peak_flood_depth (2026-04-28): bumped 0.2 → 1.0 m so event 1
+# backwater equilibrates within the canonical 180-min sim. At 0.2 m, τ at
+# the upstream Y tips was ~68 h (95 % equilibrium ≈ 8.5 d). Pipe area
+# scales D², so 1.0/0.2 = 25× area; τ should shrink by roughly the same
+# factor → 95 % at J1/J2 in ~8 h sim. The conduit_flow surcharge story
+# stays alive because the rainfall is constant 100 mm/hr — runoff still
+# overwhelms each conduit's max-over-full at the peak.
+_CONDUIT_DIAMETER_M = 1.0
+
+# Iter-8 peak_flood_depth (2026-04-28): subcatchments aligned with the
+# spread-Y junction layout. S1 sits along the C1 (left) branch near J1,
+# S2 along the C2 (right) branch near J2, S3 along the C3 stem near J3.
+# Polygons are 5×5 cell rectangles. They overlap the Y corridor (intended)
+# and the side walls (visual artifact, ignored — SWMM routing uses the
+# [SUBCATCHMENTS] Outlet field, not polygon coordinates).
+_SUBCATCHMENT_POLYGON_CELL_BOUNDS = {
+    "S1": (1, 21, 5, 25),    # 5×5, upstream-left, drains to J1 (col 3, row 22)
+    "S2": (9, 21, 13, 25),   # 5×5, upstream-right, drains to J2 (col 11, row 22)
+    "S3": (5, 12, 9, 16),    # 5×5, middle (around J3), drains to J3 (col 7, row 13)
 }
 
-# (name, from_node, to_node, length_m). 19 conduits total; exceeds the EPA
-# SWMM 5.2 threshold Nobjects[LINK] >= 4 * NumThreads for NumThreads up to 4.
-_CONDUITS = [
-    # Short overlap-causing conduits (unchanged; preserve the DEM-cell overlap
-    # behavior that exercises scenario_inputs.py's overlap-handling path)
-    ("C1a",    "J1a",     "J1b",     5.0),
-    ("C2a",    "J2a",     "J2b",     5.0),
-    # J1b -> J_merge (5 segments, 20m each, total 100m — unchanged aggregate length)
-    ("C1b_1",  "J1b",     "J1bi1",   20.0),
-    ("C1b_2",  "J1bi1",   "J1bi2",   20.0),
-    ("C1b_3",  "J1bi2",   "J1bi3",   20.0),
-    ("C1b_4",  "J1bi3",   "J1bi4",   20.0),
-    ("C1b_5",  "J1bi4",   "J_merge", 20.0),
-    # J2b -> J_merge (5 segments, 20m each, total 100m)
-    ("C2b_1",  "J2b",     "J2bi1",   20.0),
-    ("C2b_2",  "J2bi1",   "J2bi2",   20.0),
-    ("C2b_3",  "J2bi2",   "J2bi3",   20.0),
-    ("C2b_4",  "J2bi3",   "J2bi4",   20.0),
-    ("C2b_5",  "J2bi4",   "J_merge", 20.0),
-    # J_merge -> J_out (5 segments, 16m each, total 80m — unchanged aggregate length)
-    ("Cm_1",   "J_merge", "Jmi1",    16.0),
-    ("Cm_2",   "Jmi1",    "Jmi2",    16.0),
-    ("Cm_3",   "Jmi2",    "Jmi3",    16.0),
-    ("Cm_4",   "Jmi3",    "Jmi4",    16.0),
-    ("Cm_5",   "Jmi4",    "J_out",   16.0),
-    # J_out -> OUT1 (2 segments, 10m each, total 20m)
-    ("Co_1",   "J_out",   "Joi1",    10.0),
-    ("Co_2",   "Joi1",    "OUT1",    10.0),
-]
-
-# (subcatchment_id, outlet_node)
 _SUBCATCHMENTS = [
-    ("S1", "J1a"),
-    ("S2", "J2a"),
+    ("S1", "J1"),
+    ("S2", "J2"),
+    ("S3", "J3"),
 ]
 
 
@@ -233,12 +293,26 @@ def _options_df() -> pd.DataFrame:
     )
 
 
-def _junctions_df() -> pd.DataFrame:
-    names = [n for n, *_ in _NODES if n.startswith("J")]
+def _junctions_df(params) -> pd.DataFrame:
+    """Junction invert = DEM(col, row_from_bottom) - per-node depth, so rim
+    (= invert + MaxDepth) lands exactly on the DEM surface at the node cell.
+    Iter-6: depths now vary per-node via `_NODE_DEPTHS_M` so inverts cascade
+    with 1.0–2.5 % conduit slopes under a flat-channel DEM (rim==DEM still
+    holds because each junction's rim is its cell's DEM elevation, regardless
+    of how deep its invert sits below)."""
+    from .geometry import dem_elev_at
+
+    rows = [(n, c, r) for n, c, r in _NODES if n not in _OUTFALL_NAMES]
+    depths = [_node_depth(n) for n, _, _ in rows]
+    inverts = [
+        round(dem_elev_at(params, c, r) - d, 3)
+        for (_, c, r), d in zip(rows, depths, strict=True)
+    ]
+    names = [n for n, _, _ in rows]
     return pd.DataFrame(
         {
-            "InvertElev": [_JUNCTION_INVERTS[n] for n in names],
-            "MaxDepth":   [2.0 for _ in names],
+            "InvertElev": inverts,
+            "MaxDepth":   depths,
             "InitDepth":  [0 for _ in names],
             "SurchargeDepth": [0 for _ in names],
             "PondedArea": [0 for _ in names],
@@ -247,14 +321,24 @@ def _junctions_df() -> pd.DataFrame:
     )
 
 
-def _outfalls_df() -> pd.DataFrame:
+def _outfalls_df(params) -> pd.DataFrame:
+    """Outfall rim matches DEM at its cell; invert pinned below rim by the
+    per-node depth (`_NODE_DEPTHS_M`). Iter-2 mid-iteration: only
+    `dummy_outfall` is in `_OUTFALL_NAMES`; all other nodes are junctions."""
+    from .geometry import dem_elev_at
+
+    rows = [(n, c, r) for n, c, r in _NODES if n in _OUTFALL_NAMES]
+    inverts = []
+    for name, c, r in rows:
+        rim = dem_elev_at(params, c, r)
+        inverts.append(round(rim - _node_depth(name), 3))
     return pd.DataFrame(
         {
-            "InvertElev": [0.0],
-            "OutfallType": ["FREE"],
-            "StageOrTimeseries": ["NO"],
+            "InvertElev": inverts,
+            "OutfallType": ["FREE" for _ in rows],
+            "StageOrTimeseries": ["NO" for _ in rows],
         },
-        index=pd.Index(["OUT1"], name="Name"),
+        index=pd.Index([n for n, _, _ in rows], name="Name"),
     )
 
 
@@ -278,7 +362,7 @@ def _xsections_df() -> pd.DataFrame:
     return pd.DataFrame(
         {
             "Shape":   ["CIRCULAR" for _ in _CONDUITS],
-            "Geom1":   [1.0 for _ in _CONDUITS],
+            "Geom1":   [_CONDUIT_DIAMETER_M for _ in _CONDUITS],
             "Geom2":   [0 for _ in _CONDUITS],
             "Geom3":   [0 for _ in _CONDUITS],
             "Geom4":   [0 for _ in _CONDUITS],
@@ -290,8 +374,8 @@ def _xsections_df() -> pd.DataFrame:
 
 def _inflows_df() -> pd.DataFrame:
     """One FLOW inflow entry per junction so TRITON-SWMM's coupling layer
-    reads the full set of coupling nodes from [INFLOWS]."""
-    names = [n for n, *_ in _NODES if n.startswith("J")]
+    reads the full set of coupling nodes from [INFLOWS]. Excludes outfalls."""
+    names = [n for n, *_ in _NODES if n not in _OUTFALL_NAMES]
     return pd.DataFrame(
         {
             "Constituent": ["FLOW" for _ in names],
@@ -328,19 +412,37 @@ def _coordinates_df(params) -> pd.DataFrame:
 
 
 def _subcatchments_df(params) -> pd.DataFrame:
-    # S1 occupies the upper (impervious) half; S2 occupies the lower (pervious)
-    # half. Areas are 1.5 ha each — coarse but fine for synthesised flows.
+    # Alternate impervious fraction across the 3 subcatchments so test runs
+    # exercise mixed surface response. Area is derived from the actual polygon
+    # bounds so `[SUBCATCHMENTS].Area` matches `[POLYGONS]`. Iter-2: S4 removed
+    # (J4 has no subcatchment); S1/S2/S3 polygons are identical 5×5 rectangles.
+    # iter-3 feedback (conduit_flow): all 100% impervious to max runoff and
+    # ensure every downstream conduit reaches >= max-over-full flow. The earlier
+    # 80/20/60 split was for visual variety, retained as the comment for record.
+    perc_imperv_map = {"S1": 100, "S2": 100, "S3": 100}
+    names = [s for s, _ in _SUBCATCHMENTS]
+    outlets = [outlet for _, outlet in _SUBCATCHMENTS]
+    areas_ha = []
+    widths_m = []
+    for name in names:
+        x_min, y_min, x_max, y_max = _subcatchment_world_bounds(params, name)
+        width_m = x_max - x_min
+        height_m = y_max - y_min
+        areas_ha.append((width_m * height_m) / 10_000.0)
+        # Use the polygon's long-axis dimension as SWMM `Width` (characteristic
+        # overland flow width).
+        widths_m.append(max(width_m, height_m))
     return pd.DataFrame(
         {
-            "Raingage":   ["RG_synth" for _ in _SUBCATCHMENTS],
-            "Outlet":     [outlet for _, outlet in _SUBCATCHMENTS],
-            "Area":       [1.5 for _ in _SUBCATCHMENTS],
-            "PercImperv": [100, 0],
-            "Width":      [50 for _ in _SUBCATCHMENTS],
-            "PercSlope":  [params.slope_ns * 100.0 for _ in _SUBCATCHMENTS],
-            "CurbLength": [0 for _ in _SUBCATCHMENTS],
+            "Raingage":   ["RG_synth" for _ in names],
+            "Outlet":     outlets,
+            "Area":       [round(a, 3) for a in areas_ha],
+            "PercImperv": [perc_imperv_map[n] for n in names],
+            "Width":      [round(w, 1) for w in widths_m],
+            "PercSlope":  [round(params.slope_ns * 100.0, 3) for _ in names],
+            "CurbLength": [0 for _ in names],
         },
-        index=pd.Index([s for s, _ in _SUBCATCHMENTS], name="Name"),
+        index=pd.Index(names, name="Name"),
     )
 
 
@@ -371,6 +473,38 @@ def _infiltration_df() -> pd.DataFrame:
     )
 
 
+def _subcatchment_world_bounds(params, name: str) -> tuple[float, float, float, float]:
+    """Return (xmin, ymin, xmax, ymax) in world coords for subcatchment `name`.
+
+    Cell-index bounds from `_SUBCATCHMENT_POLYGON_CELL_BOUNDS` are converted
+    using `(xllcorner + col*cs, yllcorner + row*cs)` — so polygons snap to
+    DEM cell boundaries, not cell centers.
+    """
+    cs = params.cell_size_m
+    cmin, rmin, cmax, rmax = _SUBCATCHMENT_POLYGON_CELL_BOUNDS[name]
+    return (
+        params.xllcorner + cmin * cs,
+        params.yllcorner + rmin * cs,
+        params.xllcorner + cmax * cs,
+        params.yllcorner + rmax * cs,
+    )
+
+
+def _polygons_df(params) -> pd.DataFrame:
+    """SWMM `[POLYGONS]` DataFrame: each row is one polygon vertex, indexed
+    by subcatchment name. Rectangles here; swmmio accepts arbitrary counts.
+    """
+    rows: list[dict] = []
+    index: list[str] = []
+    for name, _ in _SUBCATCHMENTS:
+        xmin, ymin, xmax, ymax = _subcatchment_world_bounds(params, name)
+        verts = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
+        for vx, vy in verts:
+            rows.append({"X": round(vx, 3), "Y": round(vy, 3)})
+            index.append(name)
+    return pd.DataFrame(rows, index=pd.Index(index, name="Name"))
+
+
 # ---------------------------------------------------------------------------
 # Post-process: inject `;;---- ----` separator lines
 # ---------------------------------------------------------------------------
@@ -384,7 +518,7 @@ def _infiltration_df() -> pd.DataFrame:
 _SECTIONS_NEEDING_DASHES = {
     "JUNCTIONS", "OUTFALLS", "CONDUITS", "XSECTIONS", "INFLOWS",
     "COORDINATES", "SUBCATCHMENTS", "SUBAREAS", "INFILTRATION",
-    "RAINGAGES", "TIMESERIES", "CURVES",
+    "RAINGAGES", "TIMESERIES", "CURVES", "POLYGONS",
 }
 
 
@@ -450,8 +584,8 @@ def _write_variant(
     m.inp.options = _options_df()
     # JUNCTIONS / OUTFALLS / COORDINATES — always present. Even hydrology-only
     # .inp needs junctions so SUBCATCHMENTS can reference outlet nodes.
-    m.inp.junctions = _junctions_df()
-    m.inp.outfalls = _outfalls_df()
+    m.inp.junctions = _junctions_df(params)
+    m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
     if include_hydraulics:
         m.inp.conduits = _conduits_df()
@@ -461,6 +595,7 @@ def _write_variant(
         m.inp.subcatchments = _subcatchments_df(params)
         m.inp.subareas = _subareas_df(params)
         m.inp.infiltration = _infiltration_df()
+        m.inp.polygons = _polygons_df(params)
     m.inp.save()
     _inject_double_comment_separators(dest)
     return dest

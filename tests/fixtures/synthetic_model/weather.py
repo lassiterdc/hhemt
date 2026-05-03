@@ -10,18 +10,18 @@ import xarray as xr
 
 
 def _triangular_hyetograph(params) -> np.ndarray:
-    """Triangular pulse: 0 at start, peak at rainfall_peak_min, 0 at sim_duration_min.
+    """Iter-9 peak_flood_depth (2026-04-28): now returns a CONSTANT
+    `rainfall_peak_mm_per_hr` value at every minute, not a triangular pulse.
+    Function name retained for backward compat with any callers; the value
+    in `params.rainfall_peak_mm_per_hr` is now treated as the constant
+    intensity (100 mm/hr by default) rather than the peak of a triangle.
+    `params.rainfall_peak_min` is ignored.
 
     Returned in mm/hr at 1-minute resolution.
     """
     dur = params.sim_duration_min
-    peak = params.rainfall_peak_mm_per_hr
-    peak_t = params.rainfall_peak_min
-    t = np.arange(dur + 1, dtype=np.float32)
-    left = (t / max(1, peak_t)) * peak
-    right = ((dur - t) / max(1, dur - peak_t)) * peak
-    arr = np.minimum(left, right).clip(min=0.0)
-    return arr
+    rate = params.rainfall_peak_mm_per_hr
+    return np.full(dur + 1, rate, dtype=np.float32)
 
 
 def _sinusoidal_stormtide(params) -> np.ndarray:
@@ -48,6 +48,29 @@ def build_weather(params, dest: Path) -> Path:
     # ds.sel(event_index=K) indexing picks one event's timeseries cleanly.
     rain_events = np.broadcast_to(rain, (_N_SYNTH_EVENTS, len(rain))).copy()
     tide_events = np.broadcast_to(tide, (_N_SYNTH_EVENTS, len(tide))).copy()
+
+    # Iter-8 of `per_sim_peak_flood_depth` (2026-04-28): user-requested switch
+    # from a triangular BC to a constant BC. Events 0/1/2 still show distinct
+    # flooding mechanisms — hydrology-only vs storm-tide-only vs both — but
+    # the BC is now flat at `bc_active_level` for the full sim duration so
+    # the system has time to equilibrate to its steady-state water surfaces.
+    #
+    # BC water level convention (iter-15, 2026-04-29): peak BC head 3.0 → 2.0 m
+    # to pair with the flattened upstream DEM (post-swale rims now 1.0 m
+    # everywhere upstream). BC = 2 m → equilibrium surface flood depth above
+    # every interior junction = BC − rim = 1.0 m, which sits in the depth
+    # colorbar's [0.50, 1.00] bin.
+    #   event 0 (hydro only)   : water_level = 0.0 (no BC forcing); rain on
+    #   event 1 (BC only)      : water_level = 2.0 m constant; rain = 0
+    #   event 2 (both)         : water_level = 2.0 m constant; rain on
+    bc_active_level_m = 2.0
+    if _N_SYNTH_EVENTS >= 1:
+        tide_events[0, :] = np.zeros_like(tide, dtype=tide.dtype)
+    if _N_SYNTH_EVENTS >= 2:
+        rain_events[1, :] = np.zeros_like(rain, dtype=rain.dtype)
+        tide_events[1, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
+    if _N_SYNTH_EVENTS >= 3:
+        tide_events[2, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
 
     ds = xr.Dataset(
         data_vars={

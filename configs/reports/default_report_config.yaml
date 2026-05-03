@@ -1,0 +1,43 @@
+# Default report config bundled with the toolkit.
+# Copy and customize for analysis-specific reporting.
+
+figure_defaults:
+  font_family: "DejaVu Sans"
+  font_size: 10
+  dpi: 100
+  savefig_dpi: 150
+
+system_map:
+  target_epsg: null  # null -> fall through to system_config.crs_epsg -> DEM CRS
+  figsize_inches: [10.0, 8.0]
+  watershed_color: red
+  dem_extent_color: blue
+  bc_marker: o
+  bc_color: orange
+  swmm_node_color: black
+  swmm_node_size: 8.0
+  swmm_link_color: gray
+  swmm_link_width: 0.6
+
+per_sim:
+  peak_flood_depth:
+    figsize_inches: [10.0, 8.0]
+    cmap: viridis
+    vmin: 0.0
+    vmax: null  # auto-scale
+  conduit_flow:
+    figsize_inches: [12.0, 5.0]  # two-panel
+    cmap: plasma
+    vmin: 0.0
+    vmax: null
+
+per_analysis_summary:
+  metrics:
+    - n_sims
+    - n_successful
+    - n_pending
+    - n_failed
+    - avg_triton_continuity_error
+    - avg_swmm_continuity_error
+
+# sensitivity: omit for main analyses; required for sensitivity analyses

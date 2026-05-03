@@ -3,10 +3,9 @@ Sensitivity Analysis Tests: TRITON-only and SWMM-only Models (synthetic tier).
 
 Mirror of test_PC_06 using synth fixtures. Tests unified n_omp_threads threading
 control across model types in sensitivity analysis workflows.
-
-NOTE: These tests skip consolidation due to pre-existing bug in sensitivity_analysis.py
-where SWMM-only models don't have tritonswmm_node_analysis_summary_created property.
 """
+
+from pathlib import Path
 
 import pytest
 
@@ -16,12 +15,16 @@ pytestmark = pytest.mark.skipif(
     tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
 )
 
+_SYNTH_SENSITIVITY_REPORT_CONFIG = (
+    Path(__file__).parent / "fixtures" / "synthetic_model" / "report_config_synth_sensitivity.yaml"
+)
+
 
 @pytest.mark.slow
 def test_sensitivity_analysis_swmm_only_execution(synth_sensitivity_swmm_only):
     analysis = synth_sensitivity_swmm_only
 
-    analysis.run()
+    analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
 
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)
 
@@ -30,6 +33,6 @@ def test_sensitivity_analysis_swmm_only_execution(synth_sensitivity_swmm_only):
 def test_sensitivity_analysis_triton_only_execution(synth_sensitivity_triton_only):
     analysis = synth_sensitivity_triton_only
 
-    analysis.run()
+    analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
 
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)

@@ -80,7 +80,8 @@ TRITON_SWMM_toolkit = [
     "examples/*.yaml",
     "examples/*.md",
     "examples/*.xlsx",
-    "examples/*.csv"
+    "examples/*.csv",
+    "report_templates/**/*"
 ]
 
 [tool.pytest.ini_options]

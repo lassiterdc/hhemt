@@ -1503,6 +1503,7 @@ class TRITONSWMM_analysis:
         clear_raw_outputs: bool = True,
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
+        report_config: "Path | None" = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1575,6 +1576,36 @@ class TRITONSWMM_analysis:
         import time
 
         from .orchestration import WorkflowResult, translate_mode, translate_phases
+        from .config.report import (
+            DEFAULT_REPORT_CONFIG,
+            report_config as ReportConfigModel,
+            validate_sensitivity_independent_vars,
+        )
+        from .config.loaders import yaml_to_model
+        from .exceptions import ConfigurationError
+
+        # Pre-run report_config validation — fail fast before submitting workflow
+        if report_config is not None:
+            report_config = Path(report_config)
+            try:
+                cfg_report = yaml_to_model(report_config, ReportConfigModel)
+            except Exception as e:
+                raise ConfigurationError(
+                    field="report_config",
+                    message=f"Failed to load/validate {report_config}: {e}",
+                    config_path=report_config,
+                ) from e
+        else:
+            cfg_report = DEFAULT_REPORT_CONFIG
+
+        sa_csv = (
+            self.cfg_analysis.sensitivity_analysis
+            if self.cfg_analysis.toggle_sensitivity_analysis
+            else None
+        )
+        validate_sensitivity_independent_vars(cfg_report, sa_csv)
+        self._cfg_report = cfg_report
+        self._cfg_report_path = report_config
 
         # Pre-run transfer validation — fail fast before submitting the workflow
         if transfer_config is not None:
@@ -1652,6 +1683,7 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
+            "report_config_path": self._cfg_report_path,
         }
 
         if verbose:
@@ -1697,6 +1729,189 @@ class TRITONSWMM_analysis:
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
         )
+
+    def render_report(self) -> "Path":
+        """Render the HTML report from already-completed workflow outputs.
+
+        Idempotent: invokes ``snakemake --report`` against the existing Snakefile
+        without re-executing any rules. Requires the workflow to have completed
+        (so the report() outputs exist) and the Snakefile to be on disk.
+
+        Returns
+        -------
+        Path
+            Path to the rendered analysis_report.html.
+        """
+        import subprocess
+        import sys
+
+        from .exceptions import WorkflowError
+
+        snakefile = self.analysis_paths.analysis_dir / "Snakefile"
+        out_html = self.analysis_paths.analysis_dir / "analysis_report.html"
+        css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
+        # Re-emit report artifacts (report.css + workflow_description template)
+        # from package resources so render_report picks up edits made to the
+        # source-tree report_templates/ since the analysis was last run.
+        from .workflow import SnakemakeWorkflowBuilder
+        SnakemakeWorkflowBuilder(self)._emit_report_artifacts(self.analysis_paths.analysis_dir)
+        # --cores 1 is required by Snakemake's CLI even though --report is a
+        # post-execution render that does not execute rules.
+        cmd = [
+            sys.executable, "-m", "snakemake",
+            "--snakefile", str(snakefile),
+            "--directory", str(self.analysis_paths.analysis_dir),
+            "--report", str(out_html),
+            "--report-stylesheet", str(css_path),
+            "--cores", "1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            tail = "\n".join((result.stdout + "\n" + result.stderr).splitlines()[-50:])
+            raise WorkflowError(
+                phase="render_report",
+                return_code=result.returncode,
+                stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
+            )
+        # Post-process the rendered HTML to strip elements baked into the React
+        # bundle that cannot be addressed via stylesheet:
+        # (a) browser-tab title "Snakemake Report" -> empty
+        # (b) the About menu item (CSS-only hide is infeasible — Workflow /
+        #     Statistics / About share identical DOM with no per-item class;
+        #     see report.css for the verification rationale). Drop the
+        #     getMenuItem("About", ...) call from the embedded JS bundle so
+        #     React never renders the <li>.
+        try:
+            html_text = out_html.read_text()
+            if "<title>Snakemake Report</title>" in html_text:
+                html_text = html_text.replace("<title>Snakemake Report</title>", "<title></title>")
+            html_text = html_text.replace(
+                'this.getMenuItem("About", "information-circle", this.props.app.showReportInfo),',
+                "",
+            )
+            # Replace the bold "Snakemake" span text in the navbar `<h1>` with
+            # "TRITON-SWMM Toolkit". The full header reads
+            # "{img} Snakemake Report" by default; with the leaf `<img>` hidden
+            # via CSS and this replacement, it reads "TRITON-SWMM Toolkit Report".
+            html_text = html_text.replace(
+                'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "Snakemake"\n                    )',
+                'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "TRITON-SWMM Toolkit"\n                    )',
+            )
+            # Patch the JS-bundle's category-sort comparator to use a hardcoded
+            # order map instead of pure alphabetical. The default
+            # `(a, b) => a.localeCompare(b)` comparator is used at TWO sites:
+            # category sort (sidebar Results list) and subcategory sort (within
+            # a category). Both get patched to use the order map for known
+            # category names, falling back to localeCompare for unknown keys.
+            # This lets us drop the numeric-prefix workaround on category names
+            # and use clean human-friendly labels with the user-requested
+            # logical ordering. Unknown keys (e.g., subcategory names) fall
+            # back to alphabetical, so subcategory sort behavior is preserved.
+            _CATEGORY_ORDER = {
+                "Workflow Status": 1,
+                "Errors and Warnings": 2,
+                "Key Results": 3,
+                "System Information": 4,
+                "Simulation Health (placeholder)": 5,
+                "Per Simulation Results": 6,
+            }
+            _ORDER_JS = "{" + ", ".join(f'"{k}": {v}' for k, v in _CATEGORY_ORDER.items()) + "}"
+            html_text = html_text.replace(
+                "(a, b) => a.localeCompare(b)",
+                f"(a, b) => {{const ORDER = {_ORDER_JS}; return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}}",
+            )
+            # Inject placeholder sidebar categories WITHOUT a Snakemake rule
+            # (Option B per /design-recommendation 17:59 — keeps the workflow-page
+            # rulegraph clean while still reserving the sidebar slots). The
+            # report engine initializes `var categories = {...}` from rule
+            # outputs annotated with `report(category=...)`. We append two
+            # extra entries to that dict via string surgery on the literal
+            # initialization. Empty figure list ([]) is intentional — clicking
+            # the placeholder shows an empty FIGURE list signalling "reserved,
+            # not yet populated." When the future Errors-and-Warnings or
+            # Simulation-Health renderer lands, the dedup'd sidebar entry
+            # will appear via the canonical `report()` mechanism with no
+            # change needed here (the injected entry will be replaced by
+            # the rule-emitted one via JS object-literal key collision).
+            _PLACEHOLDER_INJECT = (
+                ', "Simulation Health (placeholder)": {"Reserved": []}'
+            )
+            html_text = html_text.replace(
+                "var categories = {",
+                "var categories = {" + _PLACEHOLDER_INJECT[2:] + ",",
+                1,
+            )
+            # Iteration 10 B5-auto-pop — string-replace the bundled `showCategory`
+            # function body to additionally fire `showResultInfo(firstResultPath)`
+            # after the setView call. The 2-line OLD pattern is unique and not
+            # at risk of false-matching inside a JS string literal.
+            _SHOW_CATEGORY_OLD = (
+                'this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n'
+                '    }'
+            )
+            _SHOW_CATEGORY_NEW = (
+                'this.setView({ navbarMode: mode, category: category, subcategory: subcategory });\n'
+                '        // Subiteration 10.1 — auto-pop the FIGURE (not the info panel).\n'
+                '        // Defer until after React renders the result table, then DOM-click\n'
+                '        // the first row\'s first action button (the hidden eye-icon → opens\n'
+                '        // the figure via ButtonViewManager.handleImg/handleHtml/etc.).\n'
+                '        setTimeout(function(){\n'
+                '            var tbl = document.querySelector("table.table-auto");\n'
+                '            if (!tbl) return;\n'
+                '            var firstRow = tbl.querySelector("tbody tr");\n'
+                '            if (!firstRow) return;\n'
+                '            var actionDiv = firstRow.querySelector("td.text-right > div.inline-flex");\n'
+                '            if (!actionDiv) return;\n'
+                '            var firstBtn = actionDiv.querySelector("a, button");\n'
+                '            if (firstBtn) firstBtn.click();\n'
+                '        }, 80);\n'
+                '    }'
+            )
+            html_text = html_text.replace(_SHOW_CATEGORY_OLD, _SHOW_CATEGORY_NEW, 1)
+            # Iteration 10 B5a — pure-click-event row-click delegate (NO
+            # MutationObserver). MUST inject at the LAST `</body>` (rfind) —
+            # the prior `.replace("</body>", ..., 1)` matched `</body>` inside
+            # a JS string literal in the vega-embed bundle, corrupting the JS.
+            _CLICK_DELEGATE = """
+<script>
+(function(){
+  function init(){
+    document.addEventListener('click', function(e){
+      if (e.target.closest('a, button, summary, input, select, label')) return;
+      var tr = e.target.closest('tr');
+      if (!tr) return;
+      var actionDiv = tr.querySelector('td.text-right > div.inline-flex');
+      if (!actionDiv) return;
+      var firstBtn = actionDiv.querySelector('a, button');
+      if (firstBtn) { e.preventDefault(); firstBtn.click(); }
+    });
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else { init(); }
+})();
+</script>
+"""
+            _last_body = html_text.rfind("</body>")
+            if _last_body != -1:
+                html_text = html_text[:_last_body] + _CLICK_DELEGATE + html_text[_last_body:]
+            out_html.write_text(html_text)
+        except Exception:
+            pass
+        # Snap-confined browsers (Ubuntu Firefox snap) cannot read files under
+        # ~/.cache/. If the rendered report lands there, surface a one-line
+        # workaround so the user does not hit "Access to the file was denied".
+        try:
+            if "/.cache/" in str(out_html):
+                print(
+                    f"[render_report] {out_html}\n"
+                    f"[render_report] Note: snap-confined browsers cannot read ~/.cache; "
+                    f"copy to ~/Downloads to view: cp {out_html} ~/Downloads/",
+                    flush=True,
+                )
+        except Exception:
+            pass
+        return out_html
 
     @property
     def n_scenarios(self):
@@ -1952,6 +2167,7 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        report_config_path: "Path | None" = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2038,6 +2254,7 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                report_config_path=report_config_path,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2059,6 +2276,7 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                report_config_path=report_config_path,
             )
 
         if dry_run and result.get("success"):

@@ -118,6 +118,9 @@ class ScenarioInputGenerator:
                     len(lst_grps_more_than_1_node)
                 )
             )
+        if not lst_grps_more_than_1_node:
+            # No DEM-cell overlap to resolve; nothing to update.
+            return
         df_overlapping_nodes = pd.concat(lst_grps_more_than_1_node)
         model = swmmio.Model(str(self.scenario.scen_paths.swmm_hydraulics_inp))
         links = model.links.dataframe

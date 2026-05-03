@@ -154,6 +154,7 @@ class Toolkit:
         events: Optional[List[int]] = None,
         dry_run: bool = False,
         verbose: bool = True,
+        report_config: Path | None = None,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -244,6 +245,7 @@ class Toolkit:
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
+            report_config=report_config,
         )
 
     def get_status(self) -> WorkflowStatus:
