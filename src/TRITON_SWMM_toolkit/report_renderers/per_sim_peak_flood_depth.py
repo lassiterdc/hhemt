@@ -166,7 +166,9 @@ def render(
     """Render the 3-panel depth + WSE + hydrology figure for one event_iloc."""
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        add_panel_label,
         emit_plot_with_sources,
+        per_sim_map_ticks,
     )
     from TRITON_SWMM_toolkit.report_renderers._provenance import (
         ProvenanceLog,
@@ -240,16 +242,15 @@ def render(
     wse_masked = wse_da.where(mask & (da > 0))
 
     # ---- Per-scenario weather time series for the hydrology panel -------
-    weather_path = proc.scen_paths.weather_timeseries
-    with xr.open_dataset(weather_path, engine="h5netcdf") as ws:
-        times = ws["time"].values
-        rainfall = ws["RG_synth"].values.astype(float)
-        bc_water_level = ws["water_level"].values.astype(float)
-        rain_attrs = dict(ws["RG_synth"].attrs)
-        bc_attrs = dict(ws["water_level"].attrs)
-    times_min = (
-        (times - times[0]).astype("timedelta64[s]").astype(float) / 60.0
+    from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
+        draw_event_hydrology_panel,
+        load_event_hydrology_data,
     )
+    weather_path = proc.scen_paths.weather_timeseries
+    hydro_data = load_event_hydrology_data(weather_path)
+    times_min = hydro_data["times_min"]
+    rainfall = hydro_data["rainfall"]
+    bc_water_level = hydro_data["bc_water_level"]
 
     # ---- Path relpaths --------------------------------------------------
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
@@ -267,9 +268,12 @@ def render(
     )
 
     # ---- Figure layout: 1×3 columns, each column with a sub-gridspec ----
-    bounds = da.rio.bounds() if da.rio.crs is not None else (
-        float(da.x.min()), float(da.y.min()),
-        float(da.x.max()), float(da.y.max()),
+    # Subiteration 9.5 — sourced from DEM (same source conduit_flow uses) so
+    # both per-sim renderers see IDENTICAL bounds + map_aspect, and explicit
+    # set_xlim/set_ylim below produce IDENTICAL tick ranges between toggles.
+    bounds = dem_da.rio.bounds() if dem_da.rio.crs is not None else (
+        float(dem_da.x.min()), float(dem_da.y.min()),
+        float(dem_da.x.max()), float(dem_da.y.max()),
     )
     map_aspect = (bounds[2] - bounds[0]) / max(bounds[3] - bounds[1], 1e-9)
     h = float(cfg.figsize_inches[1]) if hasattr(cfg, "figsize_inches") else 6.0
@@ -357,6 +361,11 @@ def render(
     )
     cbar_d.set_label("Depth (m)")
     ax_depth.set_aspect("equal")
+    # Subiteration 9.5 — explicit lims from DEM bounds (matches conduit_flow's
+    # explicit set_xlim/set_ylim, so toggling between figures shows IDENTICAL
+    # ranges + ticks regardless of the underlying data extent).
+    ax_depth.set_xlim(bounds[0], bounds[2])
+    ax_depth.set_ylim(bounds[1], bounds[3])
     ax_depth.set_title("Peak flood depth")
     # iter-5 feedback: restore numeric x/y tick labels on flood maps. Use
     # small font so the labels don't dominate the panel.
@@ -376,11 +385,11 @@ def render(
         a.add_channel("y", watershed_ref)
         if watershed_gdf.crs is not None:
             watershed_gdf.to_crs(target_crs).boundary.plot(
-                ax=ax_depth, color="black", linewidth=1.0,
+                ax=ax_depth, color="black", linewidth=1.2,
             )
         else:
             watershed_gdf.boundary.plot(
-                ax=ax_depth, color="black", linewidth=1.0,
+                ax=ax_depth, color="black", linewidth=1.2,
             )
 
     # ---- WSE panel: cividis linear --------------------------------------
@@ -432,9 +441,13 @@ def render(
     cbar_w.set_label("WSE (m)")
     ax_wse.set_aspect("equal")
     ax_wse.set_title("Water surface elevation")
+    # C8 — middle panel shares y-axis with ax_depth (sharey=ax_depth above);
+    # hide redundant y-tick labels and drop the ylabel so the gap between
+    # the depth and WSE panels collapses to the bare wspace allocation.
     ax_wse.tick_params(axis="both", labelsize=7)
+    ax_wse.tick_params(axis="y", labelleft=False)
     ax_wse.set_xlabel("Easting (m)", fontsize=8)
-    ax_wse.set_ylabel("Northing (m)", fontsize=8)
+    ax_wse.set_ylabel("")
     with prov.artist(
         axes_id="ax_wse", kind="patch",
         note="watershed boundary overlay",
@@ -443,75 +456,38 @@ def render(
         a.add_channel("y", watershed_ref)
         if watershed_gdf.crs is not None:
             watershed_gdf.to_crs(target_crs).boundary.plot(
-                ax=ax_wse, color="black", linewidth=1.0,
+                ax=ax_wse, color="black", linewidth=1.2,
             )
         else:
             watershed_gdf.boundary.plot(
-                ax=ax_wse, color="black", linewidth=1.0,
+                ax=ax_wse, color="black", linewidth=1.2,
             )
 
-    # ---- Hydrology panel: rainfall (top) + BC water level (bottom) -----
-    rain_ref = ProvenanceRef(
-        source_path=weather_rel, variable="RG_synth",
-        attrs=rain_attrs,
-        selection={"event_iloc": int(event_iloc)},
-    )
-    with prov.artist(
-        axes_id="ax_rain", kind="bar",
-        note="rainfall time series (event hydrology — top sub-panel)",
-    ) as a:
-        a.add_channel("x", rain_ref, units="minutes from event start")
-        a.add_channel("y", rain_ref, units="mm/hr")
-        # Width = 1 minute (the source data is 1-min resolution); align="edge"
-        # so each bar sits between t and t+1.
-        ax_rain.bar(
-            times_min, rainfall, width=1.0, align="edge",
-            color=_RAIN_COLOR, edgecolor="none",
-        )
-    # iter-5 alignment: add a title on the rainfall sub-panel so it consumes
-    # the same title-row vertical budget as the flood maps. Without this, the
-    # rainfall data area starts at the column top while the map data areas
-    # start ~1 line below (under the map title), producing the mis-alignment
-    # the user flagged.
-    ax_rain.set_title("Event hydrology")
-    ax_rain.set_ylabel("Rainfall\n(mm per hour)")
-    ax_rain.set_xlabel("")
-    ax_rain.tick_params(axis="x", labelbottom=False)
-    ax_rain.tick_params(axis="y", labelsize=7)
-    ax_rain.set_xlim(times_min[0], times_min[-1])
-    ax_rain.set_ylim(0, max(float(np.nanmax(rainfall)) * 1.1, 1.0))
-    for spine in ("top", "right"):
-        ax_rain.spines[spine].set_visible(False)
+    # Subiteration 9.5 — explicit identical ticks AFTER both panels render
+    # (xarray's `.plot()` resets the axis ticks via auto-locator, clobbering
+    # any earlier `set_xticks` / `set_yticks` call). Setting on ax_wse here
+    # propagates to ax_depth via the existing `sharex=sharey=ax_depth` link.
+    _xticks, _yticks = per_sim_map_ticks(bounds)
+    ax_wse.set_xticks(_xticks)
+    ax_wse.set_yticks(_yticks)
+    # Re-apply lims AFTER set_xticks (matplotlib expands lims to fit ticks);
+    # ensures both panels stay bounded to the DEM extent.
+    ax_wse.set_xlim(bounds[0], bounds[2])
+    ax_wse.set_ylim(bounds[1], bounds[3])
 
-    bc_ref = ProvenanceRef(
-        source_path=weather_rel, variable="water_level",
-        attrs=bc_attrs,
-        selection={"event_iloc": int(event_iloc)},
+    # ---- Hydrology panel: delegated to shared helper (Subiteration 9.2 C6/C7)
+    bc_min, bc_max = draw_event_hydrology_panel(
+        ax_rain, ax_bc,
+        hydro_data=hydro_data,
+        weather_rel_path=weather_rel,
+        event_iloc=event_iloc,
+        prov=prov,
     )
-    with prov.artist(
-        axes_id="ax_bc", kind="line2d",
-        note="boundary condition water level (event hydrology — bottom sub-panel)",
-    ) as a:
-        a.add_channel("x", bc_ref, units="minutes from event start")
-        a.add_channel("y", bc_ref, units="m")
-        ax_bc.plot(
-            times_min, bc_water_level,
-            color=_BC_LINE_COLOR, linewidth=1.5,
-        )
-    ax_bc.set_ylabel("Boundary condition\nwater level (m)")
-    ax_bc.set_xlabel("Minutes from event start")
-    ax_bc.tick_params(axis="both", labelsize=7)
-    ax_bc.set_xlim(times_min[0], times_min[-1])
-    bc_min = float(np.nanmin(bc_water_level))
-    bc_max = float(np.nanmax(bc_water_level))
-    pad = max((bc_max - bc_min) * 0.1, 0.02)
-    ax_bc.set_ylim(bc_min - pad, bc_max + pad)
-    for spine in ("top", "right"):
-        ax_bc.spines[spine].set_visible(False)
 
-    fig.suptitle(
-        f"Peak flood — {analysis.cfg_analysis.analysis_id} — event_iloc {event_iloc}"
-    )
+    # A4 — panel labels
+    add_panel_label(ax_depth, "(a)")
+    add_panel_label(ax_wse, "(b)")
+    add_panel_label(ax_rain, "(c)")
 
     source_paths: list[Path] = [
         Path(triton_summary_path),

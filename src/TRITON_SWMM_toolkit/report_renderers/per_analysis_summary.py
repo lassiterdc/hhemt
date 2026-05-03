@@ -73,17 +73,63 @@ def render(
         df = pd.DataFrame(per_sa_rows)
     else:
         n_sims = len(analysis.df_sims.index)
-        n_successful = sum(
-            1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i)
+        # Prefer scenario_status.csv (written by export_scenario_status.py as
+        # Snakemake onsuccess/onerror hook) for pending/failed counts —
+        # already aggregates the per-log inference. Fall back to per-log
+        # iteration if the CSV is missing (e.g., workflow killed before the
+        # hook ran).
+        scenario_status_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+        if scenario_status_csv.exists():
+            # CSV schema (per export_scenario_status.py): one row per
+            # (event_iloc, model_type) with `run_completed` boolean column.
+            # No explicit status column — derive: True → success; False with
+            # `scenario_setup=True` → failed; everything else → pending.
+            status_df = pd.read_csv(scenario_status_csv)
+            # Aggregate per scenario (event_iloc): a scenario is successful
+            # when ALL its model_type rows have run_completed=True; failed if
+            # any row has scenario_setup=True but run_completed=False;
+            # pending otherwise.
+            success_per_event = status_df.groupby("event_iloc")["run_completed"].all()
+            n_successful = int(success_per_event.sum())
+            # Failed: at least one model_type row failed (run_completed False
+            # but scenario was set up)
+            failed_mask = (~status_df["run_completed"].fillna(False).astype(bool)) & status_df["scenario_setup"].fillna(False).astype(bool)
+            failed_events = status_df[failed_mask]["event_iloc"].unique()
+            # Exclude events that are otherwise successful (some model_types succeeded)
+            failed_events = [e for e in failed_events if not success_per_event.get(e, False)]
+            n_failed = len(failed_events)
+            n_pending = max(0, n_sims - n_successful - n_failed)
+        else:
+            n_successful = sum(
+                1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i)
+            )
+            n_pending = sum(
+                1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i)
+            )
+            n_failed = n_sims - n_successful - n_pending
+
+        # Derived expected total: n_weather_events × n_sensitivity_rows for
+        # sensitivity analyses; n_weather_events otherwise. `analysis.df_setup`
+        # is NOT a proxy for `analysis.sensitivity.df_setup` — verified by grep
+        # of analysis.py + sensitivity_analysis.py. The renderer dispatches on
+        # `cfg_analysis.toggle_sensitivity_analysis` to pick the right object.
+        n_weather_events = len(analysis.df_sims.index)
+        is_sensitivity = (
+            getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+            and getattr(analysis, "sensitivity", None) is not None
         )
-        n_pending = sum(
-            1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i)
-        )
-        n_failed = n_sims - n_successful - n_pending
+        if is_sensitivity:
+            n_sa_rows = len(analysis.sensitivity.df_setup.index)
+            expected_total = n_weather_events * n_sa_rows
+            expected_label = f"Expected total (derived: {n_weather_events} events × {n_sa_rows} sa rows)"
+        else:
+            expected_total = n_weather_events
+            expected_label = f"Expected total (derived: {n_weather_events} weather events)"
 
         rows = []
         if "n_sims" in metrics:
             rows.append(("Total simulations", n_sims))
+            rows.append((expected_label, expected_total))
         if "n_successful" in metrics:
             rows.append(("Successful", n_successful))
         if "n_pending" in metrics:

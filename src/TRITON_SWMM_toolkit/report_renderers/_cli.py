@@ -34,6 +34,10 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
+    parser.add_argument("--sa-id", type=str, default=None,
+                        help="sub-analysis id (sensitivity master scope only); when present, the renderer "
+                             "receives the resolved sub-analysis instead of the master analysis, so per-sim "
+                             "renderers can operate on per-sa-scoped scenario data.")
     args = parser.parse_args()
 
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
@@ -45,13 +49,32 @@ def main() -> None:
     else:
         report_cfg = DEFAULT_REPORT_CONFIG
 
+    # Sub-analysis routing: when --sa-id is present, resolve the sub-analysis from
+    # the master and pass it as the `analysis` argument to the renderer. Per-sim
+    # renderers then read per-sa-scoped scenario data (sims/, processed/, etc.)
+    # without needing to know they were dispatched from the master scope.
+    target_analysis = analysis
+    if args.sa_id is not None:
+        if not getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+            raise ValueError(
+                f"--sa-id={args.sa_id} requires the analysis to be a sensitivity master, "
+                f"but toggle_sensitivity_analysis is False on {args.analysis_config}."
+            )
+        sub_analyses = analysis.sensitivity.sub_analyses
+        if args.sa_id not in sub_analyses:
+            raise ValueError(
+                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; "
+                f"available: {sorted(sub_analyses.keys())}"
+            )
+        target_analysis = sub_analyses[args.sa_id]
+
     module = importlib.import_module(f"TRITON_SWMM_toolkit.report_renderers.{args.renderer}")
     kwargs: dict = {}
     if args.event_iloc is not None:
         kwargs["event_iloc"] = args.event_iloc
     if args.independent_var is not None:
         kwargs["independent_var"] = args.independent_var
-    module.render(analysis, report_cfg, args.output, **kwargs)
+    module.render(target_analysis, report_cfg, args.output, **kwargs)
 
 
 if __name__ == "__main__":

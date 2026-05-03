@@ -4,15 +4,4 @@ Overlays the watershed polygon (red), TRITON DEM extent (blue dashed), boundary-
 
 **Sources:**
 
-{% for src in snakemake.params.source_paths %}
-{%- if src is mapping %}
-- ``{{ src.path }}``
-{%- if src.variables %}
-{%- for v in src.variables %}
-    - ``{{ v }}``
-{%- endfor %}
-{%- endif %}
-{%- else %}
-- ``{{ src }}``
-{%- endif %}
-{% endfor %}
+{{ snakemake.params.source_paths_rst }}

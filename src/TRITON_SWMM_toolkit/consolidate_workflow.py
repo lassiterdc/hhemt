@@ -56,8 +56,13 @@ def validate_resource_usage(analysis, logger=None):
 
     Returns
     -------
-    bool
-        True if all resources match expected values, False if any mismatches found
+    tuple[bool, list[dict]]
+        ``(passed, issues)`` where ``passed`` is True if all resources match
+        expected values, False if any mismatches found. ``issues`` is the
+        per-scenario flat list of mismatch records (each row carries
+        ``scenario_dir``, ``resource``, ``expected``, ``actual``) so callers
+        that want to render or aggregate the failures don't need to re-parse
+        the log/print stream.
     """
     import pandas as pd
 
@@ -78,12 +83,13 @@ def validate_resource_usage(analysis, logger=None):
             logger.warning(msg)
         else:
             print(f"WARNING: {msg}")
-        return True  # Return True since this is not a validation failure
+        return True, []  # Return True since this is not a validation failure
 
     # Check for mismatches
     # For sensitivity analysis, each row has its own config values (run_mode, n_mpi_procs, etc.)
     # For regular analysis, use the analysis config
     mismatches = []
+    issues_flat: list[dict] = []  # structured per-mismatch records for downstream renderers
 
     for idx, row in df_status.iterrows():
         if not row["run_completed"]:
@@ -121,6 +127,14 @@ def validate_resource_usage(analysis, logger=None):
             issues.append(
                 f"  - MPI tasks: expected {expected_nTasks}, actual {row['actual_nTasks']}"
             )
+            issues_flat.append({
+                "scenario_dir": str(scenario_dir),
+                "scenario": Path(str(scenario_dir)).name,
+                "resource": "MPI tasks",
+                "expected": int(expected_nTasks),
+                "actual": int(row["actual_nTasks"]),
+                "detail": f"MPI tasks: expected {expected_nTasks}, actual {row['actual_nTasks']}",
+            })
 
         # Check OMP threads
         if (
@@ -130,6 +144,14 @@ def validate_resource_usage(analysis, logger=None):
             issues.append(
                 f"  - OMP threads: expected {expected_omp_threads}, actual {row['actual_omp_threads']}"
             )
+            issues_flat.append({
+                "scenario_dir": str(scenario_dir),
+                "scenario": Path(str(scenario_dir)).name,
+                "resource": "OMP threads",
+                "expected": int(expected_omp_threads),
+                "actual": int(row["actual_omp_threads"]),
+                "detail": f"OMP threads: expected {expected_omp_threads}, actual {row['actual_omp_threads']}",
+            })
 
         # Check GPUs (for GPU mode)
         if run_mode == "gpu":
@@ -140,6 +162,14 @@ def validate_resource_usage(analysis, logger=None):
                 issues.append(
                     f"  - Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}"
                 )
+                issues_flat.append({
+                    "scenario_dir": str(scenario_dir),
+                    "scenario": Path(str(scenario_dir)).name,
+                    "resource": "Total GPUs",
+                    "expected": f">={int(expected_gpus)}",
+                    "actual": int(row["actual_total_gpus"]),
+                    "detail": f"Total GPUs: expected >={expected_gpus}, actual {row['actual_total_gpus']}",
+                })
 
         # Check GPU backend
         if pd.notna(row["actual_gpu_backend"]):
@@ -147,10 +177,26 @@ def validate_resource_usage(analysis, logger=None):
                 issues.append(
                     f"  - GPU backend: expected {expected_gpu_backend}, actual {row['actual_gpu_backend']} (GPU not used!)"
                 )
+                issues_flat.append({
+                    "scenario_dir": str(scenario_dir),
+                    "scenario": Path(str(scenario_dir)).name,
+                    "resource": "GPU backend",
+                    "expected": str(expected_gpu_backend),
+                    "actual": str(row["actual_gpu_backend"]),
+                    "detail": f"GPU backend: expected {expected_gpu_backend}, actual {row['actual_gpu_backend']} (GPU not used!)",
+                })
             elif run_mode != "gpu" and row["actual_gpu_backend"] != "none":
                 issues.append(
                     f"  - GPU backend: expected 'none', actual {row['actual_gpu_backend']} (unexpected GPU usage)"
                 )
+                issues_flat.append({
+                    "scenario_dir": str(scenario_dir),
+                    "scenario": Path(str(scenario_dir)).name,
+                    "resource": "GPU backend",
+                    "expected": "none",
+                    "actual": str(row["actual_gpu_backend"]),
+                    "detail": f"GPU backend: expected 'none', actual {row['actual_gpu_backend']} (unexpected GPU usage)",
+                })
 
         if issues:
             mismatch_msg = (
@@ -179,14 +225,14 @@ def validate_resource_usage(analysis, logger=None):
             logger.warning(summary)
         else:
             print(f"WARNING: {summary}")
-        return False  # Validation failed
+        return False, issues_flat  # Validation failed
     else:
         msg = "✓ All scenarios used expected compute resources"
         if logger:
             logger.info(msg)
         else:
             print(msg)
-        return True  # Validation passed
+        return True, []  # Validation passed
 
 
 def main() -> int:

@@ -1,23 +1,28 @@
 /* report/report.css — TRITON-SWMM_toolkit report stylesheet */
 
-/* Navbar brand: rebrand from default "Snakemake Report" to "TRITON-SWMM Toolkit Report".
- * The <div id="brand"> is empty in Snakemake's React; CSS ::after { content: } is the
- * only stylesheet-level mechanism to inject brand text.
+/* UVA brand palette (https://brand.virginia.edu/design-assets/colors).
+ * Primary: UVA Blue (#232D4B); Accent: UVA Orange (#E57200); supporting
+ * neutrals + link blue for tabular and link contexts.
+ */
+:root {
+    --uva-blue: #232D4B;
+    --uva-orange: #E57200;
+    --uva-light-gray: #F1F1EF;
+    --uva-medium-gray: #DADADA;
+    --uva-text-gray: #666666;
+    --uva-link-blue: #495E9D;
+}
+
+/* Navbar brand: keep the colored bar but emit no brand text. The empty
+ * <div id="brand"> from Snakemake's React stays empty; no ::after pseudo
+ * is used (per user request to remove the brand text entirely).
  */
 #brand {
-    background: #2c5282;
+    background: var(--uva-blue);
     height: 60px;
     display: flex;
     align-items: center;
     padding: 0 16px;
-}
-
-#brand::after {
-    content: "TRITON-SWMM Toolkit Report";
-    color: white;
-    font-weight: 600;
-    font-size: 16px;
-    letter-spacing: 0.3px;
 }
 
 body, .navbar, .panel, .table {
@@ -25,15 +30,73 @@ body, .navbar, .panel, .table {
 }
 
 .panel-heading, .navbar-brand {
-    background-color: #2c5282;
+    background-color: var(--uva-blue);
     color: white;
 }
 
-.table tbody tr:hover { background-color: #ebf4ff; }
-.table th { background-color: #f7fafc; }
+/* Link color: UVA Link Blue in the main content panel; keep WHITE inside the
+ * sidebar `<nav>` (which has dark `bg-slate-900/70`) — a dark-blue link on a
+ * dark sidebar is unreadable. UVA orange is the hover state in both contexts.
+ */
+a, a:visited { color: var(--uva-link-blue); }
+a:hover, a:focus { color: var(--uva-orange); }
+nav a, nav a:visited { color: white; }
+/* Subiteration 10.3 — sidebar nav links stay white on hover (was UVA orange);
+ * the dark-slate row-hover background already reads as a button affordance,
+ * orange text on top of that combo is jarring per user feedback. */
+nav a:hover, nav a:focus { color: white; }
 
-.result img, .result iframe {
+/* Nav icon color: Snakemake's React applies `text-emerald-500` (Tailwind green)
+ * to every menu-item icon via the Icon component's iconProps. Override to UVA
+ * orange so brand colors carry through to the sidebar icons.
+ */
+.text-emerald-500, .text-emerald-600 { color: var(--uva-orange) !important; }
+/* Subiteration 10.3 — on hover, switch to white (was UVA orange) so sidebar
+ * nav text + icons read white-on-dark-slate, consistent with the result-row
+ * hover styling from Subiteration 10.2. */
+.hover\:text-emerald-500:hover,
+.hover\:text-emerald-600:hover { color: white !important; }
+
+/* Upper-left navbar header: replace the white "Snakemake Report" bar with a
+ * UVA-Blue branded bar showing "TRITON-SWMM Toolkit Report" (text-only; the
+ * Snakemake leaf `<img>` is hidden, and the "Snakemake" span text is
+ * replaced via post-process in `render_report()` to "TRITON-SWMM Toolkit").
+ * Selector targets the navbar's `<h1>` which uses `sticky` + `bg-white/80`
+ * + `text-slate-700` — verified via JS-bundle inspection of `Navbar.render()`.
+ */
+nav h1 {
+    background: var(--uva-blue) !important;
+    color: white !important;
+}
+nav h1 img { display: none !important; }
+/* Make the entire "TRITON-SWMM Toolkit Report" bold (Snakemake renders the
+ * brand as two spans where only "TRITON-SWMM Toolkit" carries `font-bold`;
+ * "Report" sits in a non-bold `grow mr-5` span). */
+nav h1 span { font-weight: bold; }
+
+.table tbody tr:hover { background-color: var(--uva-light-gray); }
+.table th {
+    background-color: var(--uva-blue);
+    color: white;
+}
+
+/* Allow multi-panel SVGs / images to render at native height with vertical
+ * scroll inside their result panel. The Snakemake report's `ContentDisplay`
+ * wraps results in `<div class="grow flex items-center justify-center
+ * h-screen overflow-auto">` (verified by JS-bundle inspection). The
+ * `items-center` flex alignment vertically centers the content — for tall
+ * figures (e.g., the multi-panel sensitivity benchmarking SVG with
+ * Wall-clock / Compute cost / Speedup / Efficiency rows stacked), this
+ * clips the TOP of the figure equally with the bottom because the
+ * scroll-position-default starts in the middle. Override `align-items` to
+ * `flex-start` so tall figures top-align and the user sees the figure from
+ * the top with `overflow-auto` providing scroll for the rest.
+ */
+.grow.flex.items-center.justify-center.h-screen { align-items: flex-start !important; }
+.result img, .result iframe, .result svg {
     max-width: 100%;
+    max-height: none;
+    height: auto;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
     border-radius: 4px;
 }
@@ -59,10 +122,90 @@ body, .navbar, .panel, .table {
  */
 /* .vega-embed { display: none !important; } */
 
-/* Hide the "About" sidebar menu item (Snakemake-package boilerplate version
- * info). The icon class is `.icon-info-sign` (verified by JS-bundle
- * inspection — NOT `.glyphicon-info-sign` or `.bi-info-circle`).
+/* Strip the duplicated workflow_description prose + the empty brand div from
+ * the dedicated WORKFLOW page (sidebar > Workflow), leaving the rulegraph
+ * chart as the only content (mirrors https://koesterlab.github.io/resources/
+ * report.html). The `case "rulegraph":` render branch in
+ * `ContentDisplay.renderContent()` wraps the prose in
+ * `<div class="py-2"><div class="prose prose-sm max-w-lg">...</div>
+ * <div id="brand"></div></div>` (verified by JS-bundle inspection). The
+ * home page renders the same prose via the `<MetaData>` component INSIDE a
+ * `<ul>` parent, so the `div.py-2 >` parent selector matches only the
+ * workflow-page render path.
  */
-.navbar ul > li:has(> a > .icon-info-sign) {
-    display: none;
+div.py-2 > div.prose.prose-sm.max-w-lg,
+div.py-2 > #brand {
+    display: none !important;
+}
+
+/* Subiteration 9.3 — Sources list bullets render as dark dots on the dark
+ * `bg-slate-800` info-icon panel, making them invisible. The Sources list
+ * lives inside `.prose.prose-invert.prose-sm` (per the className grep). Use
+ * `::marker` so the bullet glyph itself takes the white color rather than
+ * just the text content (which is already white via prose-invert). Targets
+ * both the standard <ul> bullets AND the nested sub-bullets.
+ */
+.prose.prose-invert ul > li::marker,
+.prose.prose-invert ol > li::marker {
+    color: white !important;
+}
+
+/* Iteration 10 B5a/B5b — result-row UX matching the sidebar GENERAL/RESULTS
+ * rows: full-row clickable button + UVA-orange hover highlight + leading
+ * folder icon + hidden eye icon. Scoped via `:has(td.text-right >
+ * div.inline-flex)` so non-result tables (Statistics page) are NOT affected.
+ * Paired with a pure-click-event JS shim injected at the LAST `</body>`
+ * (rfind-based, not the buggy first-`replace` of the prior attempt) for
+ * row-click delegation + showCategory auto-pop.
+ */
+table.table-auto tbody tr:has(td.text-right > div.inline-flex) {
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+/* Subiteration 10.1 — match sidebar hover (hover:bg-slate-800 = #1e293b).
+ * Subiteration 10.2 — force text white on hover (per user: "i prefer the
+ * text to stay white" for result rows, distinct from the sidebar's
+ * orange-on-hover behavior).
+ */
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover {
+    background-color: #1e293b;
+}
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover,
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td,
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover a {
+    color: white !important;
+}
+/* Subiteration 10.4 — info-circle icon stays orange on hover (was getting
+ * forced to white by the rule above which broadly targets `tr:hover a`).
+ * The info-circle button lives inside `td.text-right > div.inline-flex` and
+ * is the visible (not :first-child = hidden eye-icon) action button. Higher
+ * specificity than the white-on-hover rule above so it wins.
+ */
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td.text-right div.inline-flex > a,
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td.text-right div.inline-flex > button,
+table.table-auto tbody tr:has(td.text-right > div.inline-flex):hover td.text-right div.inline-flex svg {
+    color: var(--uva-orange) !important;
+}
+table.table-auto td.text-right div.inline-flex > a:first-child,
+table.table-auto td.text-right div.inline-flex > button:first-child {
+    display: none !important;
+}
+/* Subiteration 10.1 — orange chart-bar icon via SVG mask (so background-color
+ * controls the rendered color; emoji `📁` was always-yellow). Heroicons
+ * "chart-bar" outline path inlined as data-URI mask.
+ */
+table.table-auto tbody tr:has(td.text-right > div.inline-flex) td:first-child::before {
+    content: "";
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    margin-right: 0.5em;
+    vertical-align: -0.15em;
+    background-color: #E57200;
+    -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='black' stroke-width='2'><path stroke-linecap='round' stroke-linejoin='round' d='M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'/></svg>");
+    -webkit-mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='black' stroke-width='2'><path stroke-linecap='round' stroke-linejoin='round' d='M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'/></svg>");
+    mask-size: contain;
+    mask-repeat: no-repeat;
 }

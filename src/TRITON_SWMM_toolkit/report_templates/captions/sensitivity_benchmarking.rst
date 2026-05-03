@@ -4,15 +4,4 @@ The dependent variable (default ``performance.Total`` from the per-scenario perf
 
 **Sources:**
 
-{% for src in snakemake.params.source_paths %}
-{%- if src is mapping %}
-- ``{{ src.path }}``
-{%- if src.variables %}
-{%- for v in src.variables %}
-    - ``{{ v }}``
-{%- endfor %}
-{%- endif %}
-{%- else %}
-- ``{{ src }}``
-{%- endif %}
-{% endfor %}
+{{ snakemake.params.source_paths_rst }}

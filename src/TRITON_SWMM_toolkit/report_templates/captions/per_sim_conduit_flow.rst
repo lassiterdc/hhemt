@@ -4,15 +4,4 @@ Left panel: ratio of maximum flow to full-pipe flow capacity per conduit. Right 
 
 **Sources:**
 
-{% for src in snakemake.params.source_paths %}
-{%- if src is mapping %}
-- ``{{ src.path }}``
-{%- if src.variables %}
-{%- for v in src.variables %}
-    - ``{{ v }}``
-{%- endfor %}
-{%- endif %}
-{%- else %}
-- ``{{ src }}``
-{%- endif %}
-{% endfor %}
+{{ snakemake.params.source_paths_rst }}

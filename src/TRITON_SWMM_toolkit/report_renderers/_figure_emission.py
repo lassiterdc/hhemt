@@ -19,6 +19,121 @@ if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog
 
 
+def format_sources_rst(source_paths: list[dict | str]) -> str:
+    """Render a list of source-path dicts to a multi-line RST bullet block.
+
+    Produces the text that goes under ``**Sources:**`` in caption RSTs:
+
+    .. code-block:: text
+
+        - ``path/to/source1.zarr``
+
+          - ``data array name 1``
+          - ``data array name 2``
+
+        - ``path/to/source2.csv``
+
+    Each main bullet is a data source path; sub-bullets enumerate the
+    array / column / section names the renderer reads from that source.
+    Pre-rendering in Python (at Snakefile rule-emit time) sidesteps Jinja
+    whitespace-control concerns that arise when nested bullets are
+    constructed in Jinja templates: Snakemake's caption template engine
+    strips Jinja blank lines, which collapses RST nested-list structure
+    into a single ``<li>``. Embedding the fully-rendered RST as a single
+    string param keeps the bullet structure intact through to docutils.
+    """
+    lines: list[str] = []
+    for src in source_paths:
+        if isinstance(src, dict):
+            path = src["path"]
+            variables = src.get("variables") or []
+        else:
+            path = str(src)
+            variables = []
+        lines.append(f"- ``{path}``")
+        if variables:
+            lines.append("")
+            for v in variables:
+                lines.append(f"  - ``{v}``")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _validate_source_path(path: str | Path, *, analysis_dir: str | Path | None = None) -> str:
+    """Reject directory-as-source (Iter 8 agenda item 4) — except for zarr stores.
+
+    All plottable data lives in files, with one exception: zarr stores
+    (``.zarr`` directories with ``.zattrs`` / ``.zgroup`` / ``.zarray``
+    markers, or any path whose suffix is ``.zarr``). Zarr is opened via
+    xarray's ``open_zarr`` / ``open_dataset`` as a single logical dataset,
+    so the path-as-directory is an implementation detail rather than an
+    enumerable file collection. All other directory-as-source emissions
+    raise ``ValueError`` so future regressions are caught at render time.
+    Non-existent paths are accepted (the collector may emit a path on a
+    different filesystem or a path the renderer will create).
+    """
+    p = Path(path)
+    if not p.is_absolute() and analysis_dir is not None:
+        p = (Path(analysis_dir) / p).resolve()
+    if not p.is_dir():
+        return str(path)
+    # Allow zarr directories (suffix or marker file present).
+    if p.suffix == ".zarr" or (p / ".zattrs").exists() or (p / ".zgroup").exists() or (p / ".zarray").exists():
+        return str(path)
+    raise ValueError(
+        f"Directory-as-source rejected (Iter 8 agenda item 4): {path!r} resolves "
+        f"to a directory ({p}) that is NOT a zarr store. Source paths must be "
+        f"files (or zarr stores); arbitrary directories are not plottable. "
+        f"Either fix the collector to point at the specific file inside this "
+        f"directory, or expand the directory to its enclosed files."
+    )
+
+
+def per_sim_map_ticks(bounds: tuple[float, float, float, float]) -> tuple[list[float], list[float]]:
+    """Return identical (xticks, yticks) for per-sim map panels at a 50-unit
+    step rounded to the nearest 50 below/above bounds.
+
+    Forces lim/tick parity between per_sim_peak_flood_depth and
+    per_sim_conduit_flow regardless of where the underlying data sits within
+    the DEM extent (matplotlib's auto-locator otherwise picks different
+    starting/ending ticks based on data content, producing visible tick
+    drift between toggles).
+    """
+    import math
+
+    def _ticks(lo, hi, step=50.0):
+        # Constrain ticks WITHIN bounds (round lo UP, hi DOWN) so set_xticks
+        # does not extend xlim past the actual data range.
+        start = math.ceil(lo / step) * step
+        end = math.floor(hi / step) * step
+        if end < start:
+            return []
+        n = int(round((end - start) / step)) + 1
+        return [start + i * step for i in range(n)]
+
+    return _ticks(bounds[0], bounds[2]), _ticks(bounds[1], bounds[3])
+
+
+def add_panel_label(ax, label: str) -> None:
+    """Add a regular-weight lowercase parenthesized panel letter ABOVE-LEFT of the axes.
+
+    Convention (Subiteration 9.4): publication-standard `(a)`, `(b)`, `(c)`
+    overlays placed in axes-fraction coordinates OUTSIDE the data area —
+    `x = -0.02` (slightly left of the y-axis spine), `y = 1.05` (above the
+    axes title). Regular weight (no bold), fontsize 11. Placement avoids
+    overlapping plot data, panel titles, or tick labels regardless of the
+    figure's specific data-extent.
+    """
+    ax.text(
+        -0.02, 1.05, label,
+        transform=ax.transAxes,
+        fontsize=11,
+        va="bottom", ha="right",
+        zorder=10,
+        clip_on=False,
+    )
+
+
 def emit_plot_with_sources(
     fig: plt.Figure,
     output_path: Path,
@@ -88,6 +203,11 @@ def emit_plot_with_sources(
         `output_path` unchanged, for chaining.
     """
     analysis_root = str(analysis_dir.resolve())
+    # Reject directory-as-source per Iter 8 agenda item 4 — all plottable data
+    # lives in files. Catches future regressions where a collector emits a
+    # `.parent` or directory path by mistake.
+    for _p in source_paths:
+        _validate_source_path(_p, analysis_dir=analysis_dir)
     rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
     # PNG accepts arbitrary tEXt keys; SVG metadata is restricted to the
     # Dublin Core element set (matplotlib backend_svg validates against it
@@ -155,13 +275,15 @@ def collect_per_sim_source_paths(
     *,
     dem_rel_path: str | None = None,
     watershed_rel_path: str | None = None,
+    sa_id: str | None = None,
 ) -> list[dict]:
     """Build `source_paths` for a per-sim plot rule at wildcards-resolution time.
 
     Called from within the generated master Snakefile via a function-based
-    `params:` (see `workflow.py:_build_plot_rule_block_per_sim`). Reads
-    relative paths so the figure metadata + caption interpolation stay
-    portable across analysis-dir relocations.
+    `params:` (see `workflow.py:_build_plot_rule_block_per_sim` and
+    `_build_plot_rule_block_per_sim_per_sa`). Reads relative paths so the
+    figure metadata + caption interpolation stay portable across analysis-dir
+    relocations.
 
     Each returned dict has the schema ``{"path": str, "variables": list[str]}``
     where ``variables`` enumerates the dataset variables the renderer reads
@@ -184,15 +306,22 @@ def collect_per_sim_source_paths(
     watershed_rel_path : str, optional
         Analysis-dir-relative path to the watershed boundary GIS polygon
         (read by peak_flood_depth as the masking shape).
+    sa_id : str, optional
+        Sub-analysis id when called at sensitivity-master scope. When present,
+        the per-event source paths are prefixed with ``subanalyses/{sa_id}/``
+        so the caption-rendered paths are master-analysis-dir-relative (the
+        master Snakefile renders captions; per-sa scenarios live under
+        ``master_dir/subanalyses/{sa_id}/sims/{event_id}/...``).
 
     Returns
     -------
     list[dict]
         Source descriptors expressed relative to the analysis_dir.
     """
-    base = f"sims/{event_id}/processed"
-    swmm_inp = f"sims/{event_id}/swmm/hydraulics.inp"
-    weather_nc = f"sims/{event_id}/sim_weather.nc"
+    sa_prefix = f"subanalyses/{sa_id}/" if sa_id else ""
+    base = f"{sa_prefix}sims/{event_id}/processed"
+    swmm_inp = f"{sa_prefix}sims/{event_id}/swmm/hydraulics.inp"
+    weather_nc = f"{sa_prefix}sims/{event_id}/sim_weather.nc"
     if renderer_kind == "peak_flood_depth":
         sources: list[dict] = [
             {
@@ -205,27 +334,41 @@ def collect_per_sim_source_paths(
             },
         ]
         if dem_rel_path:
+            # No sub-bullets: the DEM is read as a single raster (no indexer
+            # enumeration); descriptive prose belongs in the caption body, not
+            # under the source bullet.
             sources.append({
                 "path": dem_rel_path,
-                "variables": ["elevation raster (ground surface for WSE underlay)"],
+                "variables": [],
             })
         if watershed_rel_path:
+            # No sub-bullets: the polygon is a single shape used for masking +
+            # boundary overlay; no enumerable indexers.
             sources.append({
                 "path": watershed_rel_path,
-                "variables": ["watershed boundary polygon (masking shape)"],
+                "variables": [],
             })
         return sources
     if renderer_kind == "conduit_flow":
-        return [
+        sources = [
             {
                 "path": f"{base}/TRITONSWMM_SWMM_link_summary.zarr",
                 "variables": ["max_over_full_flow", "max_flow_cms", "link_id"],
             },
             {
                 "path": swmm_inp,
-                "variables": ["[CONDUITS] section (link geometry)"],
+                "variables": ["[CONDUITS]", "[COORDINATES]"],
+            },
+            {
+                "path": weather_nc,
+                "variables": ["time", "RG_synth", "water_level"],
             },
         ]
+        if dem_rel_path:
+            sources.append({"path": dem_rel_path, "variables": []})
+        if watershed_rel_path:
+            sources.append({"path": watershed_rel_path, "variables": []})
+        return sources
     raise ValueError(
         f"unknown renderer_kind {renderer_kind!r}; expected 'peak_flood_depth' or 'conduit_flow'"
     )

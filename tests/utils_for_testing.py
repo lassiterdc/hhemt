@@ -80,274 +80,157 @@ def assert_snakefile_has_flags(content: str, flags: list[str]):
         pytest.fail(f"Missing flags in Snakefile: {missing}")
 
 
+# ========== Validation assertion helpers (thin wrappers) ==========
+#
+# Each `assert_*` helper below is a thin pytest wrapper around the
+# corresponding `check_*` function in
+# `src/TRITON_SWMM_toolkit/analysis_validation.py`. The validator module is
+# the single source of truth for the analysis-validation logic; the wrappers
+# convert structured `CheckResult` records into `pytest.fail(...)` calls,
+# preserving the existing public signature (positional + keyword args, the
+# `verbose` flag, etc.) so existing test code does not need to change.
+#
+# To add or modify a check's logic, edit the `check_*` function in
+# `analysis_validation.py` — the wrapper does not need editing unless the
+# public test signature changes.
+#
+# The single-model-type helpers further down this file (assert_triton_compiled,
+# assert_swmm_compiled, assert_tritonswmm_compiled, assert_model_simulation_run)
+# are NOT wrappers: they are more granular per-model checks that have no
+# direct counterpart in `analysis_validation.py` and remain as direct attribute
+# checks.
+
+
+def _verbose_detail_block(result, key: str = "scenario_dir") -> str:
+    """Format per-scenario failure details for the `verbose=True` path."""
+    if not result.details:
+        return ""
+    lines = []
+    for d in result.details:
+        if "scenario_dir" in d:
+            lines.append(f"    - {d['scenario_dir']}")
+        elif "detail" in d:
+            lines.append(f"    - {d['detail']}")
+    return "\n  Failed scenarios:\n" + "\n".join(lines) if lines else ""
+
+
 def assert_system_setup(analysis: TRITONSWMM_analysis):
-    """Assert compilation and system-level inputs were created successfully."""
-    cfg_sys = analysis._system.cfg_system
-
-    # Check compilations based on enabled models
-    if cfg_sys.toggle_tritonswmm_model:
-        assert analysis._system.compilation_successful, "TRITON-SWMM compilation failed"
-
-    if cfg_sys.toggle_triton_model:
-        assert analysis._system.compilation_triton_only_successful, "TRITON-only compilation failed"
-
-    if cfg_sys.toggle_swmm_model:
-        assert analysis._system.compilation_swmm_successful, "SWMM compilation failed"
-
-    # Check system inputs (DEM, Mannings) — always required. Shape is test-case
-    # dependent (Norfolk 1x537x551, synth 1x30x20), so we just verify the
-    # arrays exist and have matching non-trivial 2D shape rather than pinning
-    # a specific grid size.
-    dem = analysis._system.processed_dem_rds
-    manning = analysis._system.mannings_rds
-    assert dem is not None, "Problems with DEM creation"
-    assert manning is not None, "Problems with Mannings creation"
-    assert dem.shape == manning.shape, (  # type: ignore
-        f"DEM shape {dem.shape} does not match Mannings shape {manning.shape}"  # type: ignore
-    )
-    assert len(dem.shape) == 3 and dem.shape[0] == 1, (  # type: ignore
-        f"Expected DEM with shape (1, rows, cols), got {dem.shape}"  # type: ignore
-    )
+    """Pytest wrapper around analysis_validation.check_system_setup."""
+    from TRITON_SWMM_toolkit.analysis_validation import check_system_setup
+    result = check_system_setup(analysis)
+    if not result.passed:
+        msg = result.summary
+        if result.details:
+            msg += "\n  " + "\n  ".join(f"- {d.get('detail', '')}" for d in result.details)
+        pytest.fail(msg)
 
 
 def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False):
-    """Assert that all scenarios were created.
+    """Pytest wrapper around analysis_validation.check_scenarios_setup.
 
     Parameters
     ----------
     analysis : TRITONSWMM_analysis
-        The analysis to check
     verbose : bool, optional
-        If True, print list of failed scenarios (default: False, use pytest -v to enable)
+        If True, append per-scenario fail list to the failure message.
     """
-    if not analysis.all_scenarios_created:
+    from TRITON_SWMM_toolkit.analysis_validation import check_scenarios_setup
+    result = check_scenarios_setup(analysis)
+    if not result.passed:
+        msg = result.summary
         if verbose:
-            print("\n  Failed scenarios:\n    - " + "\n    - ".join(analysis.scenarios_not_created))
-        pytest.fail(
-            f"Scenario setup failed for {len(analysis.scenarios_not_created)} "
-            f"of {analysis.n_scenarios} scenarios. Run with pytest -v for details."
-        )
+            msg += _verbose_detail_block(result)
+        else:
+            msg += " Run with pytest -v for details."
+        pytest.fail(msg)
 
 
 def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
-    """Assert that all simulations completed successfully.
-
-    Parameters
-    ----------
-    analysis : TRITONSWMM_analysis
-        The analysis to check
-    verbose : bool, optional
-        If True, print list of failed simulations (default: False, use pytest -v to enable)
-    """
-    if not analysis.all_sims_run:
+    """Pytest wrapper around analysis_validation.check_scenarios_run."""
+    from TRITON_SWMM_toolkit.analysis_validation import check_scenarios_run
+    result = check_scenarios_run(analysis)
+    if not result.passed:
+        msg = result.summary
         if verbose:
-            print("\n  Failed simulations:\n    - " + "\n    - ".join(analysis.scenarios_not_run))
-        pytest.fail(
-            f"Simulation failed for {len(analysis.scenarios_not_run)} "
-            f"of {len(analysis.df_sims)} scenarios. Run with pytest -v for details."
-        )
+            msg += _verbose_detail_block(result)
+        else:
+            msg += " Run with pytest -v for details."
+        pytest.fail(msg)
 
 
 def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "both", verbose: bool = False):
-    """Assert that requested timeseries outputs were processed.
+    """Pytest wrapper around analysis_validation.check_timeseries_processed.
 
     Parameters
     ----------
-    analysis : TRITONSWMM_analysis
-        The analysis to check
     which : str, optional
-        Which timeseries to check: "both", "TRITON", or "SWMM" (default: "both")
-    verbose : bool, optional
-        If True, print list of failed processing (default: False, use pytest -v to enable)
+        Which timeseries model-types to check: "both" (default), "TRITON", or "SWMM".
+        Forwarded to check_timeseries_processed.
     """
-    # performance tseries
-    if not analysis.all_TRITONSWMM_performance_timeseries_processed:
+    from TRITON_SWMM_toolkit.analysis_validation import check_timeseries_processed
+    result = check_timeseries_processed(analysis, which=which)
+    if not result.passed:
+        msg = result.summary
         if verbose:
-            print(
-                "\n  Failed TRITONSWMM performance:\n    - "
-                + "\n    - ".join(analysis.TRITONSWMM_performance_time_series_not_processed)
-            )
-        pytest.fail(
-            f"TRITONSWMM performance timeseries processing failed for "
-            f"{len(analysis.TRITONSWMM_performance_time_series_not_processed)} scenarios. "
-            "Run with pytest -v for details."
-        )
-    # TRITON time series
-    if which in ("both", "TRITON") and not analysis.all_TRITON_timeseries_processed:
-        if verbose:
-            print("\n  Failed TRITON timeseries:\n    - " + "\n    - ".join(analysis.TRITON_time_series_not_processed))
-        pytest.fail(
-            f"TRITON timeseries processing failed for "
-            f"{len(analysis.TRITON_time_series_not_processed)} scenarios. "
-            "Run with pytest -v for details."
-        )
-    # SWMM time series
-    if which in ("both", "SWMM") and not analysis.all_SWMM_timeseries_processed:
-        if verbose:
-            print("\n  Failed SWMM timeseries:\n    - " + "\n    - ".join(analysis.SWMM_time_series_not_processed))
-        pytest.fail(
-            f"SWMM timeseries processing failed for "
-            f"{len(analysis.SWMM_time_series_not_processed)} scenarios. "
-            "Run with pytest -v for details."
-        )
+            msg += _verbose_detail_block(result)
+        else:
+            msg += " Run with pytest -v for details."
+        pytest.fail(msg)
 
 
 def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
-    """
-    Assert that analysis-level consolidated summaries were created for all enabled model types.
-
-    Checks actual file existence on disk, not just log flags, for robust validation.
-
-    For sensitivity analyses, asserts the master-level ``sensitivity_datatree.zarr``
-    exists (flat per-mode concats are no longer written at the master level) and
-    each sub-analysis has its per-mode summaries.
-    """
-    paths = analysis.analysis_paths
-
-    if analysis.cfg_analysis.toggle_sensitivity_analysis:
-        sens_zarr = paths.sensitivity_datatree_zarr
-        if sens_zarr is None or not sens_zarr.exists():
-            pytest.fail(
-                f"Sensitivity DataTree zarr not created at {sens_zarr}"
-            )
-        for sa_id, sub_analysis in analysis.sensitivity.sub_analyses.items():
-            assert_analysis_summaries_created(sub_analysis)
-        return
-
-    enabled = get_enabled_model_types(analysis)
-    missing = []
-
-    if "tritonswmm" in enabled:
-        for desc, path in [
-            ("TRITONSWMM TRITON summary", paths.output_tritonswmm_triton_summary),
-            ("TRITONSWMM SWMM node summary", paths.output_tritonswmm_node_summary),
-            ("TRITONSWMM SWMM link summary", paths.output_tritonswmm_link_summary),
-            (
-                "TRITONSWMM performance summary",
-                paths.output_tritonswmm_performance_summary,
-            ),
-        ]:
-            if path is None or not path.exists():
-                missing.append(desc)
-
-    if "triton" in enabled:
-        path = paths.output_triton_only_summary
-        if path is None or not path.exists():
-            missing.append("TRITON-only summary")
-
-        for desc, path in [
-            (
-                "TRITON-only performance summary",
-                paths.output_triton_only_performance_summary,
-            ),
-        ]:
-            if path is None or not path.exists():
-                missing.append(desc)
-
-    if "swmm" in enabled:
-        for desc, path in [
-            ("SWMM-only node summary", paths.output_swmm_only_node_summary),
-            ("SWMM-only link summary", paths.output_swmm_only_link_summary),
-        ]:
-            if path is None or not path.exists():
-                missing.append(desc)
-
-    if missing:
-        pytest.fail(f"Missing analysis-level consolidated summaries:\n" + "\n".join(f"  - {m}" for m in missing))
+    """Pytest wrapper around analysis_validation.check_analysis_summaries_created."""
+    from TRITON_SWMM_toolkit.analysis_validation import check_analysis_summaries_created
+    result = check_analysis_summaries_created(analysis)
+    if not result.passed:
+        msg = result.summary
+        if result.details:
+            msg += "\n" + "\n".join(f"  - {d.get('detail', '')}" for d in result.details)
+        pytest.fail(msg)
 
 
 def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
-    """
-    Assert that actual resource usage matches expected configuration.
-
-    Uses the validate_resource_usage function from consolidate_workflow to check
-    that simulations used the expected compute resources (MPI tasks, OMP threads,
-    GPUs, backend).
-
-    Parameters
-    ----------
-    analysis : TRITONSWMM_analysis
-        The analysis object containing scenario status
-
-    Raises
-    ------
-    AssertionError
-        If resource usage doesn't match expected configuration
-    """
-    from TRITON_SWMM_toolkit.consolidate_workflow import validate_resource_usage
-
-    # Use the validation function without a logger (prints to stdout instead)
-    validation_passed = validate_resource_usage(analysis, logger=None)
-
-    if not validation_passed:
+    """Pytest wrapper around analysis_validation.check_resource_usage."""
+    from TRITON_SWMM_toolkit.analysis_validation import check_resource_usage
+    result = check_resource_usage(analysis)
+    if not result.passed:
         pytest.fail(
-            "Resource usage validation failed: actual compute resources did not match "
-            "expected configuration. See output above for details."
+            f"{result.summary}: actual compute resources did not match expected configuration. "
+            "See output above for details."
         )
 
 
 def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
-    """
-    Assert that scenario_status.csv was created with required resource usage columns.
-
-    Validates:
-    - CSV file exists in analysis directory
-    - CSV can be read successfully
-    - All expected resource usage columns are present
-    - Basic data integrity (matching number of model runs)
-    """
-    csv_path = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
-
-    # Check file exists
-    if not csv_path.exists():
-        pytest.fail(f"scenario_status.csv not found at {csv_path}")
-
-    # Read CSV
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception as e:
-        pytest.fail(f"Failed to read scenario_status.csv: {e}")
-
-    # Check for required resource usage columns
-    required_columns = [
-        "scenario_setup",
-        "run_completed",
-        "scenario_directory",
-        "actual_nTasks",
-        "actual_omp_threads",
-        "actual_gpus",
-        "actual_total_gpus",
-        "actual_gpu_backend",
-        "actual_build_type",
-        "perf_Total",
-    ]
-
-    missing_columns = [col for col in required_columns if col not in df.columns]
-    if missing_columns:
-        pytest.fail(
-            f"scenario_status.csv missing required columns: {missing_columns}\nAvailable columns: {list(df.columns)}"
-        )
-
-    # Verify row count matches number of model runs (long-format df_status)
-    expected_rows = analysis.n_sims
-
-    if len(df) != expected_rows:
-        pytest.fail(
-            f"scenario_status.csv has {len(df)} rows, expected {expected_rows} (one per model run row in df_status)"
-        )
+    """Pytest wrapper around analysis_validation.check_scenario_status_csv."""
+    from TRITON_SWMM_toolkit.analysis_validation import check_scenario_status_csv
+    result = check_scenario_status_csv(analysis)
+    if not result.passed:
+        msg = result.summary
+        if result.details:
+            msg += "\n" + "\n".join(f"  - {d.get('detail', '')}" for d in result.details)
+        pytest.fail(msg)
 
 
 def assert_analysis_workflow_completed_successfully(
     analysis: TRITONSWMM_analysis,
 ):
-    """Assert that an end-to-end workflow completed successfully."""
-    assert_system_setup(analysis)
-    assert_scenarios_setup(analysis)
-    assert_scenarios_run(analysis)
-    assert_timeseries_processed(analysis)
-    assert_analysis_summaries_created(analysis)
-    assert_scenario_status_csv_created(analysis)
-    assert_resource_usage_matches_config(analysis)
+    """Pytest wrapper around analysis_validation.validate_analysis aggregator.
+
+    Runs all 7 checks; if any failed, fails with a multi-line summary listing
+    each failed check's headline message. Per-scenario detail rows are
+    available via the structured CheckResult records but are NOT printed here
+    (use individual assert_* helpers with verbose=True for that).
+    """
+    from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    report = validate_analysis(analysis)
+    if not report.overall_passed:
+        failed = [c for c in report.checks if not c.passed]
+        lines = [f"  ✗ {c.name}: {c.summary}" for c in failed]
+        msg = (
+            f"Analysis workflow validation failed ({len(failed)} of {len(report.checks)} checks failed):\n"
+            + "\n".join(lines)
+        )
+        pytest.fail(msg)
 
 
 # ========== Multi-Model Assertion Helpers ==========

@@ -131,8 +131,6 @@ def render(
         prov, dem_source=dem_rel,
     )
 
-    fig.suptitle(f"System overview — {analysis.cfg_analysis.analysis_id}")
-
     source_paths: list[Path] = [
         sys_paths.dem_processed,
         Path(hydro_inp),
