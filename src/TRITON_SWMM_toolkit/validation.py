@@ -730,6 +730,48 @@ def _validate_storm_tide_data(cfg: analysis_config, result: ValidationResult):
     loading the NetCDF, which is expensive. That verification happens at
     runtime in the Analysis class.
     """
+    # Check spatial-mean rainfall datavar exists in the weather NetCDF.
+    # Renderers (per_sim_peak_flood_depth / per_sim_conduit_flow event-hydrology
+    # panels) read this variable; configuration drift here would surface as
+    # KeyError deep in HPC.
+    if cfg.weather_timeseries and Path(cfg.weather_timeseries).exists():
+        try:
+            import xarray as xr
+            with xr.open_dataset(cfg.weather_timeseries, engine="h5netcdf") as ds:
+                avail = list(ds.data_vars)
+                rain_name = cfg.weather_time_series_spatial_mean_rainfall_datavar
+                if rain_name not in ds.data_vars:
+                    result.add_error(
+                        field="analysis.weather_time_series_spatial_mean_rainfall_datavar",
+                        message=(
+                            f"Rainfall data variable '{rain_name}' not found in "
+                            f"weather_timeseries NetCDF. Available: {avail}"
+                        ),
+                        current_value=rain_name,
+                        fix_hint=(
+                            f"Set weather_time_series_spatial_mean_rainfall_datavar to "
+                            f"one of: {avail}"
+                        ),
+                    )
+                if (
+                    cfg.toggle_storm_tide_boundary
+                    and cfg.weather_time_series_storm_tide_datavar is not None
+                    and cfg.weather_time_series_storm_tide_datavar not in ds.data_vars
+                ):
+                    result.add_error(
+                        field="analysis.weather_time_series_storm_tide_datavar",
+                        message=(
+                            f"Storm tide data variable "
+                            f"'{cfg.weather_time_series_storm_tide_datavar}' "
+                            f"not found in weather_timeseries NetCDF. Available: {avail}"
+                        ),
+                        current_value=cfg.weather_time_series_storm_tide_datavar,
+                        fix_hint=f"Set weather_time_series_storm_tide_datavar to one of: {avail}",
+                    )
+        except Exception:
+            # NetCDF open failures are caught by other checks; don't surface here.
+            pass
+
     if cfg.toggle_storm_tide_boundary:
         # Boundary GIS file already checked in toggle dependencies
         # Check storm tide data variable name

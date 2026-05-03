@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING
 import matplotlib.pyplot as plt
 import swmmio
 
+from TRITON_SWMM_toolkit import units
+
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.config.report import report_config
@@ -110,7 +112,7 @@ def render(
     )
 
     weather_path = proc.scen_paths.weather_timeseries
-    hydro_data = load_event_hydrology_data(weather_path)
+    hydro_data = load_event_hydrology_data(weather_path, analysis.cfg_analysis)
 
     # Subiteration 9.4 C7-parity-2 — load DEM bounds (same source peak_flood_depth
     # uses) so map_aspect, fig_width, set_xlim, set_ylim, and ticks all match.
@@ -129,15 +131,16 @@ def render(
     map_aspect = (map_bounds[2] - map_bounds[0]) / max(map_bounds[3] - map_bounds[1], 1e-9)
     # Subiteration 9.4 — pin h to peak_flood_depth's value (cfg.figsize_inches
     # diverges between the two renderers; using cfg here would break parity).
+    map_cfg = report_cfg.per_sim.map
     h = float(report_cfg.per_sim.peak_flood_depth.figsize_inches[1])
-    fig_width = h * (2 * map_aspect * 1.02 + 1.0)  # exactly matches peak_flood_depth
+    fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)  # exactly matches peak_flood_depth
     fig = plt.figure(figsize=(fig_width, h), layout="constrained")
-    outer = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.95], wspace=0.10)
-    _MAP_TO_CBAR_HEIGHT_RATIO = 28
+    outer = fig.add_gridspec(1, 3, width_ratios=list(map_cfg.outer_width_ratios), wspace=map_cfg.outer_wspace)
+    _MAP_TO_CBAR_HEIGHT_RATIO = map_cfg.map_to_cbar_height_ratio
     gs_util = outer[0, 0].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
     gs_peak = outer[0, 1].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
-    gs_util_cbar = gs_util[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
-    gs_peak_cbar = gs_peak[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
+    gs_util_cbar = gs_util[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
+    gs_peak_cbar = gs_peak[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     gs_hydro_outer = outer[0, 2].subgridspec(
         2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1],
     )
@@ -163,13 +166,13 @@ def render(
     # gradations — Blues for utilization (cool / "filling up"), Reds for peak
     # flow magnitude (warm / "intensity"). `cfg.cmap` from report_config is
     # used as a fallback if user has overridden via YAML.
-    UTILIZATION_CMAP = "Blues"
-    PEAK_FLOW_CMAP = "Reds"
+    UTILIZATION_CMAP = map_cfg.utilization_cmap
+    PEAK_FLOW_CMAP = map_cfg.peak_flow_cmap
     panels = [
         (ax1, cax_util, max_over_full, max_over_full_name, max_over_full_attrs,
          "max / full flow", 0.0, 1.0, UTILIZATION_CMAP, "ax_utilization"),
         (ax2, cax_peak, peak_flow, peak_flow_name, peak_flow_attrs,
-         "peak flow (m³/s)",
+         units.flow_axis_label(),
          (float(cfg.vmin) if cfg.vmin is not None else 0.0),
          (float(cfg.vmax) if cfg.vmax is not None else float(peak_flow.max() or 1.0)),
          PEAK_FLOW_CMAP, "ax_peak_flow"),
@@ -203,9 +206,11 @@ def render(
                 )
                 # Black boundary underneath (iter-2 user feedback) — slightly
                 # wider than the colored line for a thin black outline.
-                ax.plot([x1, x2], [y1, y2], color="black", linewidth=4.5,
+                ax.plot([x1, x2], [y1, y2], color=map_cfg.conduit_outline_color,
+                        linewidth=map_cfg.conduit_outline_width,
                         solid_capstyle="round", zorder=2)
-                ax.plot([x1, x2], [y1, y2], color=cmap(norm(val)), linewidth=3.0,
+                ax.plot([x1, x2], [y1, y2], color=cmap(norm(val)),
+                        linewidth=map_cfg.conduit_value_width,
                         solid_capstyle="round", zorder=3)
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
@@ -219,11 +224,12 @@ def render(
     # peak_flood_depth.py C8 fix).
     ax2.tick_params(axis="y", labelleft=False)
     ax2.set_ylabel("")
-    ax1.set_xlabel("Easting (m)", fontsize=8)
-    ax1.set_ylabel("Northing (m)", fontsize=8)
-    ax2.set_xlabel("Easting (m)", fontsize=8)
-    ax1.tick_params(axis="both", labelsize=7)
-    ax2.tick_params(axis="both", labelsize=7)
+    crs = report_cfg.system_map.target_epsg or analysis._system.cfg_system.crs_epsg
+    ax1.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
+    ax1.set_ylabel(units.northing_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
+    ax2.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
+    ax1.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
+    ax2.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
     # Subiteration 9.4 — explicit shared lims (matches peak_flood_depth's
     # da.rio.bounds()-derived auto-range so x/y ticks align between toggles).
     _xticks, _yticks = per_sim_map_ticks(map_bounds)
@@ -243,11 +249,11 @@ def render(
     for ax in (ax1, ax2):
         if watershed_gdf.crs is not None and _dem_bounds_da.rio.crs is not None:
             watershed_gdf.to_crs(_dem_bounds_da.rio.crs).boundary.plot(
-                ax=ax, color="black", linewidth=1.2,
+                ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
         else:
             watershed_gdf.boundary.plot(
-                ax=ax, color="black", linewidth=1.2,
+                ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
 
     # C6 — Event hydrology panel on the right (delegated to shared helper).
@@ -256,6 +262,8 @@ def render(
         hydro_data=hydro_data,
         weather_rel_path=weather_rel,
         event_iloc=event_iloc,
+        cfg_analysis=analysis.cfg_analysis,
+        panel_cfg=report_cfg.per_sim.hydrology_panel,
         prov=prov,
     )
 

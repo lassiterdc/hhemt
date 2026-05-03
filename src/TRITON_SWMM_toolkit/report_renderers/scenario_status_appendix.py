@@ -61,7 +61,7 @@ def render(
 
     html = (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
-        f"<style>{_INLINE_STYLE}</style></head><body>"
+        f"<style>{report_cfg.scenario_status_appendix.render_inline_css()}</style></head><body>"
         f"{body}"
         "</body></html>"
     )

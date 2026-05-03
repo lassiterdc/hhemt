@@ -28,6 +28,15 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Dimension in weather_timeseries corresponding to timestep.",
     )
+    weather_time_series_spatial_mean_rainfall_datavar: str = Field(
+        ...,
+        description=(
+            "Data variable in weather_timeseries corresponding to the "
+            "spatially-averaged rainfall time series the report renderers "
+            "(per_sim_peak_flood_depth / per_sim_conduit_flow event-hydrology "
+            "panels) read for the rainfall sub-panel. Required."
+        ),
+    )
     rainfall_units: Literal["mm", "mm/hr"] = Field(
         ...,
         description="Rainfall units in weather_timeseries mm or mm/hr.",

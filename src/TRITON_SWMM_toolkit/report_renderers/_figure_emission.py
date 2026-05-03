@@ -273,6 +273,8 @@ def collect_per_sim_source_paths(
     renderer_kind: str,
     event_id: str,
     *,
+    rainfall_datavar: str,
+    storm_tide_datavar: str | None,
     dem_rel_path: str | None = None,
     watershed_rel_path: str | None = None,
     sa_id: str | None = None,
@@ -330,7 +332,9 @@ def collect_per_sim_source_paths(
             },
             {
                 "path": weather_nc,
-                "variables": ["time", "RG_synth", "water_level"],
+                "variables": ["time", rainfall_datavar] + (
+                    [storm_tide_datavar] if storm_tide_datavar else []
+                ),
             },
         ]
         if dem_rel_path:
@@ -361,7 +365,9 @@ def collect_per_sim_source_paths(
             },
             {
                 "path": weather_nc,
-                "variables": ["time", "RG_synth", "water_level"],
+                "variables": ["time", rainfall_datavar] + (
+                    [storm_tide_datavar] if storm_tide_datavar else []
+                ),
             },
         ]
         if dem_rel_path:

@@ -2,6 +2,7 @@ analysis_id: 'single_sim' # analysis folder name; will be created if it doesn't 
 weather_event_indices: ['year', 'event_type', 'event_id']
 weather_time_series_storm_tide_datavar: 'waterlevel_m'
 weather_time_series_timestep_dimension_name: 'timestep'
+weather_time_series_spatial_mean_rainfall_datavar: 'mm_per_hr'  # Step-0 TBD: confirm via Rivanna weather NetCDF schema dump
 weather_timeseries: '${DATA_DIR}/obs_event_tseries_from_yrs_with_complete_coverage.nc'
 # weather_event_summary_csv: '${DATA_DIR}/obs_event_summaries_from_yrs_with_complete_coverage.csv'
 storm_tide_boundary_line_gis: '${DATA_DIR}/shp_boundary_condition/variable_bc.shp'

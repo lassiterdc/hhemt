@@ -32,23 +32,11 @@ import rioxarray as rxr
 import xarray as xr
 from matplotlib.colors import Normalize
 
-from TRITON_SWMM_toolkit import utils
+from TRITON_SWMM_toolkit import units, utils
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.config.report import report_config
-
-
-# Discrete boundaries (m) for the depth colorbar, mirroring the reference
-# image at scratch `# Collaborative Figure Design > Flood depth maps`.
-_DEPTH_BOUNDARIES = (0.01, 0.05, 0.10, 0.50, 1.00)
-_DEPTH_CMAP = "YlGnBu"
-# Perceptually-distinct elevation-flavored colormap for the WSE panel
-# (dark-navy → yellow), chosen to read as elevation while staying visually
-# distinct from the YlGnBu depth ramp.
-_WSE_CMAP = "plasma"
-_RAIN_COLOR = "#9ecae1"  # light blue, matches the Event hydrology reference
-_BC_LINE_COLOR = "black"
 
 
 def _shared_depth_max(analysis, target_crs):
@@ -247,7 +235,7 @@ def render(
         load_event_hydrology_data,
     )
     weather_path = proc.scen_paths.weather_timeseries
-    hydro_data = load_event_hydrology_data(weather_path)
+    hydro_data = load_event_hydrology_data(weather_path, analysis.cfg_analysis)
     times_min = hydro_data["times_min"]
     rainfall = hydro_data["rainfall"]
     bc_water_level = hydro_data["bc_water_level"]
@@ -276,24 +264,19 @@ def render(
         float(dem_da.x.max()), float(dem_da.y.max()),
     )
     map_aspect = (bounds[2] - bounds[0]) / max(bounds[3] - bounds[1], 1e-9)
-    h = float(cfg.figsize_inches[1]) if hasattr(cfg, "figsize_inches") else 6.0
-    # iter-5 layout fixes: tighter inter-panel spacing (was 1.05 + 1.4
-    # padding, now 1.02 + 1.0); explicit `wspace=0.10` between outer columns
-    # so the maps + hydro panel sit closer together. Also `layout=None` so we
-    # control gridspec margins directly via `fig.subplots_adjust`.
-    fig_width = h * (2 * map_aspect * 1.02 + 1.0)
+    map_cfg = report_cfg.per_sim.map
+    h = (
+        float(cfg.figsize_inches[1])
+        if hasattr(cfg, "figsize_inches") else map_cfg.fallback_h_inches
+    )
+    fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)
     fig = plt.figure(figsize=(fig_width, h), layout="constrained")
-    outer = fig.add_gridspec(1, 3, width_ratios=[1, 1, 0.95], wspace=0.10)
-    # Map columns: outer 2-row split (map + thin colorbar slot).
-    # Inner 1×3 split for the colorbar puts narrow margins on either side so
-    # the colorbar bar itself doesn't span the full panel width (iter-4
-    # feedback: "colorbars are both too wide … should not exceed the width of
-    # the figures").
-    _MAP_TO_CBAR_HEIGHT_RATIO = 28  # iter-4: was 18; bumps cbar thickness down
+    outer = fig.add_gridspec(1, 3, width_ratios=list(map_cfg.outer_width_ratios), wspace=map_cfg.outer_wspace)
+    _MAP_TO_CBAR_HEIGHT_RATIO = map_cfg.map_to_cbar_height_ratio
     gs_depth = outer[0, 0].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
     gs_wse = outer[0, 1].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
-    gs_depth_cbar = gs_depth[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
-    gs_wse_cbar = gs_wse[1, 0].subgridspec(1, 3, width_ratios=[1, 5, 1])
+    gs_depth_cbar = gs_depth[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
+    gs_wse_cbar = gs_wse[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     # Hydro column: outer 2-row split mirrors map columns so the hydro panel's
     # vertical extent matches the map (not map+colorbar) — iter-4 feedback:
     # "boundary height of the event hydrology figure should match the height
@@ -323,7 +306,7 @@ def render(
         selection={"event_iloc": int(event_iloc)},
         transform="masked to watershed and depth>0",
     )
-    depth_vmin = 0.01
+    depth_vmin = map_cfg.depth_vmin
     shared_max = _shared_depth_max(analysis, target_crs)
     if shared_max is not None:
         depth_vmax = float(shared_max)
@@ -332,9 +315,13 @@ def render(
         d_max_local = float(
             d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
         )
-        depth_vmax = d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else 1.0
-    depth_cmap = plt.get_cmap(_DEPTH_CMAP).copy()
-    depth_cmap.set_under("white")
+        depth_vmax = (
+            d_max_local
+            if (np.isfinite(d_max_local) and d_max_local > depth_vmin)
+            else map_cfg.depth_vmax_fallback
+        )
+    depth_cmap = plt.get_cmap(map_cfg.depth_cmap).copy()
+    depth_cmap.set_under(map_cfg.depth_under_color)
     depth_norm = Normalize(vmin=depth_vmin, vmax=depth_vmax)
     with prov.artist(
         axes_id="ax_depth", kind="image",
@@ -343,11 +330,11 @@ def render(
         a.add_channel("z", depth_ref)
         a.add_channel(
             "color", depth_ref,
-            cmap=_DEPTH_CMAP,
+            cmap=map_cfg.depth_cmap,
             vmin=depth_vmin, vmax=depth_vmax,
             norm="Normalize",
             extend="min",
-            under_color="white",
+            under_color=map_cfg.depth_under_color,
         )
         depth_img = da_masked.plot(  # noqa: F841
             ax=ax_depth, x="x", y="y",
@@ -359,19 +346,15 @@ def render(
         cax=cax_depth, orientation="horizontal",
         extend="min",
     )
-    cbar_d.set_label("Depth (m)")
+    cbar_d.set_label(units.DEPTH_LABEL)
     ax_depth.set_aspect("equal")
-    # Subiteration 9.5 — explicit lims from DEM bounds (matches conduit_flow's
-    # explicit set_xlim/set_ylim, so toggling between figures shows IDENTICAL
-    # ranges + ticks regardless of the underlying data extent).
     ax_depth.set_xlim(bounds[0], bounds[2])
     ax_depth.set_ylim(bounds[1], bounds[3])
     ax_depth.set_title("Peak flood depth")
-    # iter-5 feedback: restore numeric x/y tick labels on flood maps. Use
-    # small font so the labels don't dominate the panel.
-    ax_depth.tick_params(axis="both", labelsize=7)
-    ax_depth.set_xlabel("Easting (m)", fontsize=8)
-    ax_depth.set_ylabel("Northing (m)", fontsize=8)
+    crs_for_labels = report_cfg.system_map.target_epsg or analysis._system.cfg_system.crs_epsg
+    ax_depth.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
+    ax_depth.set_xlabel(units.easting_axis_label(crs_for_labels), fontsize=map_cfg.axis_label_fontsize)
+    ax_depth.set_ylabel(units.northing_axis_label(crs_for_labels), fontsize=map_cfg.axis_label_fontsize)
     watershed_ref = ProvenanceRef(
         source_path=watershed_rel,
         variable="watershed_polygon",
@@ -385,11 +368,11 @@ def render(
         a.add_channel("y", watershed_ref)
         if watershed_gdf.crs is not None:
             watershed_gdf.to_crs(target_crs).boundary.plot(
-                ax=ax_depth, color="black", linewidth=1.2,
+                ax=ax_depth, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
         else:
             watershed_gdf.boundary.plot(
-                ax=ax_depth, color="black", linewidth=1.2,
+                ax=ax_depth, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
 
     # ---- WSE panel: cividis linear --------------------------------------
@@ -406,7 +389,7 @@ def render(
         wse_min = float(wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj)
         wse_max = float(wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj)
         if not np.isfinite(wse_min) or not np.isfinite(wse_max) or wse_max <= wse_min:
-            wse_min, wse_max = 0.0, 1.0
+            wse_min, wse_max = map_cfg.wse_fallback_range
 
     wse_ref_depth = ProvenanceRef(
         source_path=triton_summary_rel,
@@ -427,26 +410,26 @@ def render(
         a.add_channel("z", wse_ref_dem)
         a.add_channel(
             "color", wse_ref_depth,
-            cmap=_WSE_CMAP, vmin=wse_min, vmax=wse_max,
+            cmap=map_cfg.wse_cmap, vmin=wse_min, vmax=wse_max,
         )
         wse_img = wse_masked.plot(  # noqa: F841
             ax=ax_wse, x="x", y="y",
-            cmap=_WSE_CMAP, vmin=wse_min, vmax=wse_max,
+            cmap=map_cfg.wse_cmap, vmin=wse_min, vmax=wse_max,
             add_colorbar=False,
         )
     cbar_w = fig.colorbar(
         ax_wse.collections[0] if ax_wse.collections else wse_img,
         cax=cax_wse, orientation="horizontal",
     )
-    cbar_w.set_label("WSE (m)")
+    cbar_w.set_label(units.WSE_LABEL)
     ax_wse.set_aspect("equal")
     ax_wse.set_title("Water surface elevation")
     # C8 — middle panel shares y-axis with ax_depth (sharey=ax_depth above);
     # hide redundant y-tick labels and drop the ylabel so the gap between
     # the depth and WSE panels collapses to the bare wspace allocation.
-    ax_wse.tick_params(axis="both", labelsize=7)
+    ax_wse.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
     ax_wse.tick_params(axis="y", labelleft=False)
-    ax_wse.set_xlabel("Easting (m)", fontsize=8)
+    ax_wse.set_xlabel(units.easting_axis_label(crs_for_labels), fontsize=map_cfg.axis_label_fontsize)
     ax_wse.set_ylabel("")
     with prov.artist(
         axes_id="ax_wse", kind="patch",
@@ -456,11 +439,11 @@ def render(
         a.add_channel("y", watershed_ref)
         if watershed_gdf.crs is not None:
             watershed_gdf.to_crs(target_crs).boundary.plot(
-                ax=ax_wse, color="black", linewidth=1.2,
+                ax=ax_wse, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
         else:
             watershed_gdf.boundary.plot(
-                ax=ax_wse, color="black", linewidth=1.2,
+                ax=ax_wse, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
             )
 
     # Subiteration 9.5 — explicit identical ticks AFTER both panels render
@@ -481,6 +464,8 @@ def render(
         hydro_data=hydro_data,
         weather_rel_path=weather_rel,
         event_iloc=event_iloc,
+        cfg_analysis=analysis.cfg_analysis,
+        panel_cfg=report_cfg.per_sim.hydrology_panel,
         prov=prov,
     )
 
@@ -512,7 +497,7 @@ def render(
             "wse_m_range": [wse_min, wse_max],
             "rainfall_max_mm_per_hr": float(np.nanmax(rainfall)),
             "bc_water_level_range_m": [bc_min, bc_max],
-            "depth_boundaries_m": list(_DEPTH_BOUNDARIES),
+            "depth_boundaries_m": list(map_cfg.depth_boundaries_m),
         },
         provenance=prov,
     )

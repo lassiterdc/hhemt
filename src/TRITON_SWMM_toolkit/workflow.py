@@ -1093,6 +1093,8 @@ rule plot_errors_and_warnings:
         watershed_rel = _os.path.relpath(
             str(Path(watershed_path).resolve()), analysis_root
         ) if watershed_path else None
+        rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
+        storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
         return f'''
 def _per_sim_flood_depth_sources(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
@@ -1101,6 +1103,8 @@ def _per_sim_flood_depth_sources(wildcards):
     return collect_per_sim_source_paths(
         "peak_flood_depth",
         wildcards.event_id,
+        rainfall_datavar={rainfall_datavar!r},
+        storm_tide_datavar={storm_tide_datavar!r},
         dem_rel_path={dem_rel!r},
         watershed_rel_path={watershed_rel!r},
     )
@@ -1112,6 +1116,8 @@ def _per_sim_conduit_flow_sources(wildcards):
     return collect_per_sim_source_paths(
         "conduit_flow",
         wildcards.event_id,
+        rainfall_datavar={rainfall_datavar!r},
+        storm_tide_datavar={storm_tide_datavar!r},
         dem_rel_path={dem_rel!r},
         watershed_rel_path={watershed_rel!r},
     )
@@ -3927,6 +3933,9 @@ rule plot_sensitivity_benchmarking:
                 event_id = compute_event_id_slug(ev)
                 iloc_by_event_id_by_sa[str(sa_id)][event_id] = int(event_iloc)
 
+        rainfall_datavar = self.master_analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
+        storm_tide_datavar = self.master_analysis.cfg_analysis.weather_time_series_storm_tide_datavar
+
         return f'''
 ILOC_BY_EVENT_ID_BY_SA = {iloc_by_event_id_by_sa!r}
 
@@ -3937,6 +3946,8 @@ def _per_sim_per_sa_flood_depth_sources(wildcards):
     return collect_per_sim_source_paths(
         "peak_flood_depth",
         wildcards.event_id,
+        rainfall_datavar={rainfall_datavar!r},
+        storm_tide_datavar={storm_tide_datavar!r},
         sa_id=wildcards.sa_id,
     )
 
@@ -3947,6 +3958,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
     return collect_per_sim_source_paths(
         "conduit_flow",
         wildcards.event_id,
+        rainfall_datavar={rainfall_datavar!r},
+        storm_tide_datavar={storm_tide_datavar!r},
         sa_id=wildcards.sa_id,
     )
 

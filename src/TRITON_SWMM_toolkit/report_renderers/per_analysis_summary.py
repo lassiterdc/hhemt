@@ -146,8 +146,13 @@ def render(
                 rows.append(("Sensitivity analysis mode", str(mode)))
 
         df = pd.DataFrame(rows, columns=["Metric", "Value"])
+    pas_cfg = report_cfg.per_analysis_summary
     fig, ax = plt.subplots(
-        figsize=(8, 0.4 * len(df) + 0.7), layout="constrained"
+        figsize=(
+            pas_cfg.figure_width_inches,
+            pas_cfg.figure_height_per_row_inches * len(df) + pas_cfg.figure_height_padding_inches,
+        ),
+        layout="constrained",
     )
     ax.axis("off")
 
@@ -205,7 +210,7 @@ def render(
         )
     table.auto_set_font_size(False)
     table.set_fontsize(report_cfg.figure_defaults.font_size)
-    table.scale(1, 1.5)
+    table.scale(*report_cfg.per_analysis_summary.table_scale)
 
     return emit_plot_with_sources(
         fig,

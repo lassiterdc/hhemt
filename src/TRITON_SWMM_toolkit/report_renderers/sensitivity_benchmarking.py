@@ -44,25 +44,11 @@ if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.config.report import report_config
 
 
-_CPU_MARKER = "o"
-_GPU_MARKER = "^"
-_POINT_SIZE = 110  # Uniform across all 4 panels.
-_LINE_KWARGS = dict(linestyle="--", linewidth=1.0)
-
-# Okabe-Ito CVD-safe qualitative palette (Wilke 2019 Ch. 19; Moreland 2016).
-# Order matches Okabe & Ito (2008) Fig. 16; deuteranopia/protanopia/tritanopia tested.
-_OKABE_ITO = (
-    "#0072B2",  # blue
-    "#E69F00",  # orange
-    "#009E73",  # bluish-green
-    "#CC79A7",  # reddish-purple
-    "#56B4E9",  # sky-blue
-    "#D55E00",  # vermillion
-    "#F0E442",  # yellow
-    "#000000",  # black
-)
-
-_INDEP_VAR_LABELS = {"n_devices": "Number of Devices (CPUs or GPUs)"}
+# Module-level styling constants moved to `report_cfg.sensitivity` per the
+# config-driven refactor (see plan: full sweep — eliminate hardcoded params).
+# Per-call: `sens_cfg = report_cfg.sensitivity` and read `sens_cfg.cpu_marker`,
+# `sens_cfg.gpu_marker`, `sens_cfg.point_size`, `sens_cfg.line_style`,
+# `sens_cfg.line_width`, `sens_cfg.palette`, `sens_cfg.independent_var_labels`.
 
 
 def render(
@@ -121,11 +107,12 @@ def render(
     df["wallclock_disp"] = df["wallclock_hr"] * wall_factor
     df["compute_disp"] = df["compute_hr"] * cost_factor
 
+    sens_cfg = report_cfg.sensitivity
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
-        4, 1, figsize=(7, 14), sharex=True
+        4, 1, figsize=tuple(sens_cfg.figsize_inches), sharex=True
     )
-    _draw_panel(ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var)
-    _draw_panel(ax_cost, df, y_col="compute_disp", group_by_var=group_by_var)
+    _draw_panel(ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var, sens_cfg=sens_cfg)
+    _draw_panel(ax_cost, df, y_col="compute_disp", group_by_var=group_by_var, sens_cfg=sens_cfg)
 
     speedup_per_group = _compute_speedup_per_group(
         df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
@@ -139,14 +126,16 @@ def render(
         ax_speedup, speedup_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="linear", ideal_label="Ideal speedup (S=N)",
+        sens_cfg=sens_cfg,
     )
     _draw_metric_panel(
         ax_eff, strong_eff_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="constant", ideal_value=1.0, ideal_label="Ideal efficiency (=1.0)",
+        sens_cfg=sens_cfg,
     )
 
-    xlabel_text = _INDEP_VAR_LABELS.get(independent_var, independent_var)
+    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
     ax_eff.set_xlabel(xlabel_text)  # bottom panel only under sharex=True
     ax_wall.set_ylabel(f"Wall-clock time ({wall_unit})")
     ax_cost.set_ylabel(f"Compute cost ({cost_unit} × devices)")
@@ -155,7 +144,7 @@ def render(
     for ax in (ax_wall, ax_cost, ax_speedup, ax_eff):
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
         if report_cfg.sensitivity.show_gridlines:
-            ax.grid(True, which="major", axis="both", color="lightgrey", linewidth=0.5, zorder=0)
+            ax.grid(True, which="major", axis="both", color=sens_cfg.gridline_color, linewidth=sens_cfg.gridline_width, zorder=0)
 
     if group_by_var is not None:
         # Asterisk after groups that get per-point n_mpi_procs annotations
@@ -168,10 +157,9 @@ def render(
     # area (truly plot-centered horizontally, not figure-centered) and matplotlib
     # auto-reserves space for it. pad=4 keeps it close to the panel edge.
     ax_wall.set_title(
-        "Wall-clock, compute-cost, speedup, and efficiency\n"
-        "vs. number of devices, by run mode",
-        fontsize=11,
-        pad=4,
+        sens_cfg.title,
+        fontsize=sens_cfg.title_fontsize,
+        pad=sens_cfg.title_pad,
     )
     fig.tight_layout(rect=[0, 0.02, 1, 1.0])
     # Footnote uses axes-fraction coords on the bottom panel so it's truly centered
@@ -179,9 +167,9 @@ def render(
     # the left y-axis labels offset the plot area rightward of figure-center).
     ax_eff.text(
         0.5, -0.18,
-        "* number next to hybrid scenarios indicates number of MPI processes",
+        sens_cfg.footnote_text,
         transform=ax_eff.transAxes,
-        ha="center", va="top", fontsize=7, style="italic",
+        ha="center", va="top", fontsize=sens_cfg.footnote_fontsize, style="italic",
     )
 
     if analysis.cfg_analysis.sensitivity_analysis is not None:
@@ -340,6 +328,7 @@ def _draw_metric_panel(
     df: pd.DataFrame,
     x_max: float,
     ideal_kind: str,
+    sens_cfg,
     ideal_value: float = 1.0,
     ideal_label: str = "Ideal",
 ) -> None:
@@ -374,10 +363,10 @@ def _draw_metric_panel(
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = _OKABE_ITO[i % len(_OKABE_ITO)]
-        ax.plot(xs, ys, color=color, linestyle="--", linewidth=1.0, zorder=2)
+        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
         ax.scatter(
-            xs, ys, color=color, marker=_CPU_MARKER, s=_POINT_SIZE,
+            xs, ys, color=color, marker=sens_cfg.cpu_marker, s=sens_cfg.point_size,
             edgecolor="black", linewidth=1.0, zorder=3,
         )
         if str(gv).lower() == "hybrid":
@@ -390,9 +379,9 @@ def _draw_metric_panel(
                         fontsize=8, color=color,
                     )
     if ideal_kind == "linear":
-        ax.plot([1, x_max], [1, x_max], color="red", linewidth=1.0, zorder=2, label=ideal_label)
+        ax.plot([1, x_max], [1, x_max], color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
     elif ideal_kind == "constant":
-        ax.axhline(ideal_value, color="red", linewidth=1.0, zorder=2, label=ideal_label)
+        ax.axhline(ideal_value, color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
     else:
         raise ValueError(f"ideal_kind must be 'linear' or 'constant'; got {ideal_kind!r}")
 
@@ -409,20 +398,20 @@ def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
     return "hrs", 1.0
 
 
-def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None) -> None:
+def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg) -> None:
     """Draw one panel of the dual-panel benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = _OKABE_ITO[i % len(_OKABE_ITO)]
+        color = sens_cfg.palette[i % len(sens_cfg.palette)]
         is_gpu_group = str(gv).lower() == "gpu"
         is_hybrid_group = str(gv).lower() == "hybrid"
-        marker = _GPU_MARKER if is_gpu_group else _CPU_MARKER
+        marker = sens_cfg.gpu_marker if is_gpu_group else sens_cfg.cpu_marker
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             ax.scatter(
                 sub["indep_value"], sub[y_col],
-                color=color, marker=marker, s=_POINT_SIZE,
+                color=color, marker=marker, s=sens_cfg.point_size,
                 edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
             )
             if is_hybrid_group:
@@ -438,11 +427,11 @@ def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None) -
         per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
         ax.plot(
             per_x_min.index, per_x_min.values,
-            color=color, **_LINE_KWARGS, zorder=2,
+            color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2,
         )
         ax.scatter(
             sub["indep_value"], sub[y_col],
-            color=color, marker=marker, s=_POINT_SIZE,
+            color=color, marker=marker, s=sens_cfg.point_size,
             edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
         )
         # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
