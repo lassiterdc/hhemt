@@ -34,6 +34,10 @@ dem_outside_watershed_height: 9999 # meters
 dem_building_height: 80 # meters
 # PARAMETERS
 target_dem_resolution: 3.5 # meters
+# CRS — Norfolk state plane (NAD83 / Virginia South, meters); matches watershed polygon
+# and the auto-derived value from the source DEM. Required by report_renderers' CRS
+# resolution path because the processed .dem artifact carries no CRS metadata.
+crs_epsg: 32147
 
 # TODO
 # - use an actually unprocessed DEM with a 'bathtub' shapefile that contains the watershed

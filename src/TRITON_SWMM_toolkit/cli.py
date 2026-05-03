@@ -536,22 +536,41 @@ def cleanup_orphans_command(
             )
             raise typer.Exit(2)
 
-        orphans = analysis.sensitivity.cleanup_orphan_subanalysis_dirs(
+        result = analysis.sensitivity.cleanup_all_orphans(
             dry_run=dry_run,
             force=force,
             verbose=verbose,
         )
+        n_dirs = len(result["dirs"])
+        n_flags = len(result["status_flags"])
+        n_groups = len(result["datatree_groups"])
+        total = n_dirs + n_flags + n_groups
 
-        if not orphans:
-            console.print("[green]No orphan sub-analysis directories found.[/green]")
+        if total == 0:
+            console.print("[green]No orphan sub-analysis artifacts found.[/green]")
         elif dry_run:
-            console.print(f"[yellow]Found {len(orphans)} orphan(s) (dry-run; nothing deleted):[/yellow]")
-            for p in orphans:
-                console.print(f"  {p}")
-        else:
-            suffix = "y" if len(orphans) == 1 else "ies"
             console.print(
-                f"[green]Deleted {len(orphans)} orphan sub-analysis director{suffix}.[/green]"
+                f"[yellow]Found orphans (dry-run; nothing deleted): "
+                f"{n_dirs} dir(s), {n_flags} status flag(s), {n_groups} datatree group(s).[/yellow]"
+            )
+            for p in result["dirs"]:
+                console.print(f"  dir: {p}")
+            for p in result["status_flags"]:
+                console.print(f"  flag: {p}")
+            for sa_id in result["datatree_groups"]:
+                console.print(f"  datatree-group: sa_{sa_id}")
+        else:
+            zarr_removed = result.get("sensitivity_datatree_removed", False)
+            master_flag_removed = result.get("master_flag_removed", False)
+            extras = []
+            if zarr_removed:
+                extras.append("sensitivity_datatree.zarr")
+            if master_flag_removed:
+                extras.append("f_consolidate_master_complete.flag")
+            extras_msg = f" plus {' and '.join(extras)}" if extras else ""
+            console.print(
+                f"[green]Deleted {n_dirs} orphan dir(s), {n_flags} status flag(s), "
+                f"and {n_groups} datatree group(s){extras_msg}.[/green]"
             )
 
         raise typer.Exit(0)
