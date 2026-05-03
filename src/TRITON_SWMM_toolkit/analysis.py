@@ -1504,6 +1504,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
+        report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
     ) -> "WorkflowResult":
         """
@@ -1717,6 +1718,7 @@ class TRITONSWMM_analysis:
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
             "report_config_path": self._cfg_report_path,
+            "report_formats": report_formats,
         }
 
         if verbose:
@@ -1763,17 +1765,26 @@ class TRITONSWMM_analysis:
             message=result_dict.get("message", ""),
         )
 
-    def render_report(self) -> "Path":
-        """Render the HTML report from already-completed workflow outputs.
+    def render_report(self, format: "Literal['html','zip']" = "zip") -> "Path":
+        """Render the report from already-completed workflow outputs.
 
         Idempotent: invokes ``snakemake --report`` against the existing Snakefile
         without re-executing any rules. Requires the workflow to have completed
         (so the report() outputs exist) and the Snakefile to be on disk.
 
+        Parameters
+        ----------
+        format : Literal["html", "zip"], default "zip"
+            Output format. ``"html"`` produces a single self-contained
+            ``analysis_report.html`` with all figures inlined as base64, plus
+            React-bundle post-process surgery. ``"zip"`` produces
+            ``analysis_report.zip`` containing the unbundled report tree;
+            no post-process surgery is applied.
+
         Returns
         -------
         Path
-            Path to the rendered analysis_report.html.
+            Path to the rendered ``analysis_report.{format}``.
         """
         import subprocess
         import sys
@@ -1781,7 +1792,7 @@ class TRITONSWMM_analysis:
         from .exceptions import WorkflowError
 
         snakefile = self.analysis_paths.analysis_dir / "Snakefile"
-        out_html = self.analysis_paths.analysis_dir / "analysis_report.html"
+        out = self.analysis_paths.analysis_dir / f"analysis_report.{format}"
         css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
         # Re-emit report artifacts (report.css + workflow_description template)
         # from package resources so render_report picks up edits made to the
@@ -1794,7 +1805,7 @@ class TRITONSWMM_analysis:
             sys.executable, "-m", "snakemake",
             "--snakefile", str(snakefile),
             "--directory", str(self.analysis_paths.analysis_dir),
-            "--report", str(out_html),
+            "--report", str(out),
             "--report-stylesheet", str(css_path),
             "--cores", "1",
         ]
@@ -1806,6 +1817,9 @@ class TRITONSWMM_analysis:
                 return_code=result.returncode,
                 stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
             )
+        if format != "html":
+            return out
+        out_html = out
         # Post-process the rendered HTML to strip elements baked into the React
         # bundle that cannot be addressed via stylesheet:
         # (a) browser-tab title "Snakemake Report" -> empty
@@ -2201,6 +2215,7 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
         report_config_path: "Path | None" = None,
+        report_formats: list[str] | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2288,6 +2303,7 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_config_path=report_config_path,
+                report_formats=report_formats,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2310,6 +2326,7 @@ class TRITONSWMM_analysis:
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_config_path=report_config_path,
+                report_formats=report_formats,
             )
 
         if dry_run and result.get("success"):

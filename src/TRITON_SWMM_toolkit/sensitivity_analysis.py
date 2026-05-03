@@ -162,6 +162,7 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
         report_config_path: "Path | None" = None,
+        report_formats: list[str] | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -236,14 +237,26 @@ class TRITONSWMM_sensitivity_analysis:
             verbose=verbose,
             override_hpc_total_nodes=override_hpc_total_nodes,
             report_config_path=report_config_path,
+            report_formats=report_formats,
         )
 
-    def render_report(self) -> "Path":
-        """Render the master HTML report for the sensitivity analysis.
+    def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
+        """Render the master report for the sensitivity analysis.
 
         Idempotent: invokes ``snakemake --report`` against the master Snakefile
         without re-executing any rules. Renders only the master-level report;
         per-sub-analysis reports are not generated (R13).
+
+        Parameters
+        ----------
+        format : Literal["html", "zip"], default "zip"
+            Output format. ``"html"`` produces a single self-contained
+            ``analysis_report.html`` with all figures inlined as base64, plus
+            React-bundle post-process surgery (title, navbar, sidebar order,
+            click-to-figure shim). ``"zip"`` produces ``analysis_report.zip``
+            containing the unbundled report tree (separate HTML + assets);
+            no post-process surgery is applied (the zip layout differs from
+            the single-file HTML).
         """
         import subprocess
         import sys
@@ -252,7 +265,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         master_dir = self.master_analysis.analysis_paths.analysis_dir
         snakefile = master_dir / "Snakefile"
-        out_html = master_dir / "analysis_report.html"
+        out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
         # Re-emit report artifacts from package resources so render_report
         # picks up edits made to the source-tree report_templates/.
@@ -262,7 +275,7 @@ class TRITONSWMM_sensitivity_analysis:
             sys.executable, "-m", "snakemake",
             "--snakefile", str(snakefile),
             "--directory", str(master_dir),
-            "--report", str(out_html),
+            "--report", str(out),
             "--report-stylesheet", str(css_path),
             "--cores", "1",
         ]
@@ -274,6 +287,11 @@ class TRITONSWMM_sensitivity_analysis:
                 return_code=result.returncode,
                 stderr=f"snakemake --report exit {result.returncode}; last 50 lines:\n{tail}",
             )
+        if format != "html":
+            # Zip output is delivered as Snakemake produces it — no surgery.
+            # Snap-confined browser warning is HTML-only too.
+            return out
+        out_html = out
         # Post-process the rendered HTML to strip elements baked into the React
         # bundle that cannot be addressed via stylesheet:
         # (a) browser-tab title "Snakemake Report" -> empty

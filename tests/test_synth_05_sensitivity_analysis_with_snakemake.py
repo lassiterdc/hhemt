@@ -273,7 +273,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
     )
-    out_html = analysis.sensitivity.render_report()
+    out_html = analysis.sensitivity.render_report(format="html")
     assert out_html.exists() and out_html.stat().st_size > 0
 
     master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
@@ -300,9 +300,9 @@ def test_render_report_idempotent(synth_sensitivity_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
     )
-    first_html = analysis.sensitivity.render_report()
+    first_html = analysis.sensitivity.render_report(format="html")
     t0 = time.time()
-    second_html = analysis.sensitivity.render_report()
+    second_html = analysis.sensitivity.render_report(format="html")
     elapsed = time.time() - t0
     assert second_html == first_html
     assert elapsed < 30
@@ -318,7 +318,7 @@ def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
     )
-    analysis.sensitivity.render_report()
+    analysis.sensitivity.render_report(format="html")
 
     master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
     html = (master_dir / "analysis_report.html").read_text()

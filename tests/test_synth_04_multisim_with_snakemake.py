@@ -472,7 +472,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
     )
-    out_html = analysis.render_report()
+    out_html = analysis.render_report(format="html")
     assert out_html.exists() and out_html.stat().st_size > 0
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
@@ -497,9 +497,9 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
     )
-    first_html = analysis.render_report()
+    first_html = analysis.render_report(format="html")
     t0 = time.time()
-    second_html = analysis.render_report()
+    second_html = analysis.render_report(format="html")
     elapsed = time.time() - t0
     assert second_html == first_html
     assert elapsed < 30  # generous bound for R11 design target
@@ -517,6 +517,6 @@ def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
         from_scratch=False,
         report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
     )
-    analysis.render_report()
+    analysis.render_report(format="html")
     html = (analysis.analysis_paths.analysis_dir / "analysis_report.html").read_text()
     assert "Sources:" in html
