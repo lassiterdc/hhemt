@@ -156,29 +156,17 @@ def render(
     )
     ax.axis("off")
 
-    # Source paths the parsers will read — captured first so we can record them.
-    # In sensitivity-master mode iterate every sub-analysis's scenarios; otherwise
-    # iterate the analysis's own df_sims (regular multisim case).
-    enabled_model_types = analysis._get_enabled_model_types()
+    # Source paths the parsers will read. The renderer's actual read in regular
+    # multisim mode is `scenario_status.csv` (line 87 above) and the fallback
+    # `_is_scenario_successful` reads `run_{model}.log` text files via
+    # `scen.model_run_completed(mt)` — NOT `log_{mt}.json`. The prior version
+    # of this block enumerated `log_{mt}.json` paths into the manifest, but
+    # those files are never opened. Drop the fabricated enumeration and
+    # declare `scenario_status.csv` as the actual source.
     source_paths: list[Path] = []
-    if is_sensitivity_master:
-        for sub in analysis.sensitivity.sub_analyses.values():
-            for event_iloc in sub.df_sims.index:
-                try:
-                    scen = sub._retrieve_sim_runs(event_iloc)._scenario
-                except Exception:
-                    continue
-                for mt in enabled_model_types:
-                    log_file = scen.scen_paths.sim_folder / f"log_{mt}.json"
-                    if log_file.exists():
-                        source_paths.append(log_file)
-    else:
-        for event_iloc in analysis.df_sims.index:
-            scen = analysis._retrieve_sim_runs(event_iloc)._scenario
-            for mt in enabled_model_types:
-                log_file = scen.scen_paths.sim_folder / f"log_{mt}.json"
-                if log_file.exists():
-                    source_paths.append(log_file)
+    scenario_status_csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+    if scenario_status_csv_path.exists():
+        source_paths.append(scenario_status_csv_path)
 
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     import os
@@ -197,9 +185,9 @@ def render(
                 "other",
                 ProvenanceRef(
                     source_path=rel,
-                    variable="run_complete",
+                    variable="run_completed",
                     attrs={},
-                    transform="counted across event_iloc by status",
+                    transform="aggregated by event_iloc to derive successful/pending/failed counts",
                 ),
             )
         table = ax.table(
