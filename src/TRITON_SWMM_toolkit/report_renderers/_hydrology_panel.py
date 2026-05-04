@@ -26,8 +26,15 @@ if TYPE_CHECKING:
 def load_event_hydrology_data(
     weather_path: str | Path,
     cfg_analysis: "analysis_config",
+    weather_event_indexers: dict,
 ) -> dict:
-    """Open the per-scenario weather NetCDF and return the hydrology arrays.
+    """Open the master weather NetCDF, slice the event row, and return hydrology arrays.
+
+    `weather_path` is the master file at `cfg_analysis.weather_timeseries`
+    (multi-event NetCDF with per-event coords from `cfg_analysis.weather_event_indices`).
+    `weather_event_indexers` is the dict returned by
+    `analysis._retrieve_weather_indexer_using_integer_index(event_iloc)` —
+    e.g., `{"year": 9, "event_type": "compound", "event_id": 1}`.
 
     Variable names are resolved via `cfg_analysis`:
       - rainfall: `cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar`
@@ -37,7 +44,8 @@ def load_event_hydrology_data(
     rain_var = cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
     bc_var = cfg_analysis.weather_time_series_storm_tide_datavar
     time_var = cfg_analysis.weather_time_series_timestep_dimension_name
-    with xr.open_dataset(weather_path, engine="h5netcdf") as ws:
+    with xr.open_dataset(weather_path, engine="h5netcdf") as master:
+        ws = master.sel(**weather_event_indexers)
         times = ws[time_var].values
         rainfall = ws[rain_var].values.astype(float)
         bc_water_level = (

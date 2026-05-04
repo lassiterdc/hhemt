@@ -53,36 +53,38 @@ def _shared_depth_max(analysis, target_crs):
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
     g_max = float("-inf")
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return None
+    group = "/tritonswmm/triton" if "tritonswmm" in enabled else "/triton_only/triton"
+    if group not in tree.groups:
+        return None
+    ds_all = tree[group].to_dataset()
     for _ev in analysis.df_sims.index:
         try:
-            _proc = analysis._retrieve_sim_run_processing_object(int(_ev))
-            if "tritonswmm" in enabled:
-                _path = _proc.scen_paths.output_tritonswmm_triton_summary
+            da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
+            if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
+                da_ev = da_ev.rio.reproject(target_crs)
+            if (
+                da_ev.rio.crs is not None
+                and watershed_gdf.crs is not None
+                and watershed_gdf.crs != da_ev.rio.crs
+            ):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
+                    watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
+                    m = utils.create_mask_from_shapefile(da_ev, tmp_path)
             else:
-                _path = _proc.scen_paths.output_triton_only_summary
-            with _proc._open(_path) as ds:
-                da_ev = ds["max_wlevel_m"].sel(event_iloc=int(_ev))
-                if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
-                    da_ev = da_ev.rio.reproject(target_crs)
-                if (
-                    da_ev.rio.crs is not None
-                    and watershed_gdf.crs is not None
-                    and watershed_gdf.crs != da_ev.rio.crs
-                ):
-                    with tempfile.TemporaryDirectory() as tmp_dir:
-                        tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
-                        watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
-                        m = utils.create_mask_from_shapefile(da_ev, tmp_path)
-                else:
-                    m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
-                d_ev = da_ev.where(m & (da_ev > 0))
-                d_max_obj = d_ev.max()
-                v_max = float(
-                    d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
-                )
-                if np.isfinite(v_max):
-                    g_max = max(g_max, v_max)
-        except (FileNotFoundError, KeyError):
+                m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
+            d_ev = da_ev.where(m & (da_ev > 0))
+            d_max_obj = d_ev.max()
+            v_max = float(
+                d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+            )
+            if np.isfinite(v_max):
+                g_max = max(g_max, v_max)
+        except KeyError:
             continue
     if not np.isfinite(g_max) or g_max <= 0.01:
         return None
@@ -102,42 +104,44 @@ def _shared_wse_range(analysis, target_crs, dem_da):
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
     g_min, g_max = float("inf"), float("-inf")
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return None
+    group = "/tritonswmm/triton" if "tritonswmm" in enabled else "/triton_only/triton"
+    if group not in tree.groups:
+        return None
+    ds_all = tree[group].to_dataset()
     for _ev in analysis.df_sims.index:
         try:
-            _proc = analysis._retrieve_sim_run_processing_object(int(_ev))
-            if "tritonswmm" in enabled:
-                _path = _proc.scen_paths.output_tritonswmm_triton_summary
+            da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
+            if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
+                da_ev = da_ev.rio.reproject(target_crs)
+            if (
+                da_ev.rio.crs is not None
+                and watershed_gdf.crs is not None
+                and watershed_gdf.crs != da_ev.rio.crs
+            ):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
+                    watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
+                    m = utils.create_mask_from_shapefile(da_ev, tmp_path)
             else:
-                _path = _proc.scen_paths.output_triton_only_summary
-            with _proc._open(_path) as ds:
-                da_ev = ds["max_wlevel_m"].sel(event_iloc=int(_ev))
-                if da_ev.rio.crs is not None and da_ev.rio.crs != target_crs:
-                    da_ev = da_ev.rio.reproject(target_crs)
-                if (
-                    da_ev.rio.crs is not None
-                    and watershed_gdf.crs is not None
-                    and watershed_gdf.crs != da_ev.rio.crs
-                ):
-                    with tempfile.TemporaryDirectory() as tmp_dir:
-                        tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
-                        watershed_gdf.to_crs(da_ev.rio.crs).to_file(tmp_path, driver="GeoJSON")
-                        m = utils.create_mask_from_shapefile(da_ev, tmp_path)
-                else:
-                    m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
-                wse_ev = (da_ev + dem_da).where(m & (da_ev > 0))
-                wse_min_obj = wse_ev.min()
-                wse_max_obj = wse_ev.max()
-                v_min = float(
-                    wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj,
-                )
-                v_max = float(
-                    wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj,
-                )
-                if np.isfinite(v_min):
-                    g_min = min(g_min, v_min)
-                if np.isfinite(v_max):
-                    g_max = max(g_max, v_max)
-        except (FileNotFoundError, KeyError):
+                m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
+            wse_ev = (da_ev + dem_da).where(m & (da_ev > 0))
+            wse_min_obj = wse_ev.min()
+            wse_max_obj = wse_ev.max()
+            v_min = float(
+                wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj,
+            )
+            v_max = float(
+                wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj,
+            )
+            if np.isfinite(v_min):
+                g_min = min(g_min, v_min)
+            if np.isfinite(v_max):
+                g_max = max(g_max, v_max)
+        except KeyError:
             continue
     if not np.isfinite(g_min) or not np.isfinite(g_max) or g_max <= g_min:
         return None
@@ -171,13 +175,11 @@ def render(
     cfg = report_cfg.per_sim.peak_flood_depth
     prov = ProvenanceLog()
 
-    proc = analysis._retrieve_sim_run_processing_object(event_iloc)
-
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" in enabled:
-        triton_summary_path = proc.scen_paths.output_tritonswmm_triton_summary
+        triton_group = "/tritonswmm/triton"
     elif "triton" in enabled:
-        triton_summary_path = proc.scen_paths.output_triton_only_summary
+        triton_group = "/triton_only/triton"
     else:
         return _emit_model_type_skip_placeholder(
             output_path,
@@ -187,19 +189,21 @@ def render(
 
     target_crs = resolve_target_crs(analysis, report_cfg)
     sys_paths = analysis._system.sys_paths
+    triton_summary_path = analysis.analysis_paths.analysis_datatree_zarr
 
-    # ---- Depth raster from TRITON summary -------------------------------
-    with proc._open(triton_summary_path) as ds:
-        if ds.sizes.get("event_iloc") != 1:
-            raise AssertionError(
-                f"per-scenario triton summary expected event_iloc=1, got "
-                f"{ds.sizes.get('event_iloc')}"
-            )
-        da = ds["max_wlevel_m"].sel(event_iloc=event_iloc)
-        if da.rio.crs is not None and da.rio.crs != target_crs:
-            da = da.rio.reproject(target_crs)
-        wlevel_attrs = dict(da.attrs)
-        wlevel_name = da.name
+    # ---- Depth raster from consolidated DataTree ------------------------
+    tree = analysis.process.open_datatree()
+    if triton_group not in tree.groups:
+        raise AssertionError(
+            f"consolidated tree missing expected group {triton_group}; available: "
+            f"{sorted(tree.groups)}"
+        )
+    ds = tree[triton_group].to_dataset()
+    da = ds["max_wlevel_m"].sel(event_iloc=event_iloc)
+    if da.rio.crs is not None and da.rio.crs != target_crs:
+        da = da.rio.reproject(target_crs)
+    wlevel_attrs = dict(da.attrs)
+    wlevel_name = da.name
 
     # ---- DEM raster -----------------------------------------------------
     dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
@@ -234,8 +238,11 @@ def render(
         draw_event_hydrology_panel,
         load_event_hydrology_data,
     )
-    weather_path = proc.scen_paths.weather_timeseries
-    hydro_data = load_event_hydrology_data(weather_path, analysis.cfg_analysis)
+    weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    hydro_data = load_event_hydrology_data(
+        weather_path, analysis.cfg_analysis, weather_event_indexers,
+    )
     times_min = hydro_data["times_min"]
     rainfall = hydro_data["rainfall"]
     bc_water_level = hydro_data["bc_water_level"]

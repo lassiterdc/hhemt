@@ -46,9 +46,9 @@ def render(
     # Model-type dispatch (Gotcha 5 from the master plan).
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" in enabled:
-        link_summary_path = proc.scen_paths.output_tritonswmm_link_summary
+        link_group = "/tritonswmm/swmm_link"
     elif "swmm" in enabled:
-        link_summary_path = proc.scen_paths.output_swmm_only_link_summary
+        link_group = "/swmm_only/swmm_link"
     else:
         return _emit_model_type_skip_placeholder(
             output_path,
@@ -56,27 +56,25 @@ def render(
             report_cfg.figure_defaults.savefig_dpi,
         )
 
-    # Delegate to proc._open() so engine selection + zarr consolidated=False +
-    # decode_timedelta=False are applied uniformly. Wrapped in `with` so file
-    # handles release between Hard-STOP iteration renders (gis-specialist note).
-    with proc._open(link_summary_path) as ds_links:
-        if ds_links.sizes.get("event_iloc") != 1:
-            raise AssertionError(
-                f"per-scenario link summary expected event_iloc=1, got "
-                f"{ds_links.sizes.get('event_iloc')}"
-            )
-        max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
-        peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
-        max_over_full = max_over_full_da.values
-        peak_flow = peak_flow_da.values
-        link_ids = ds_links["link_id"].values
-        # Cache xarray metadata before the dataset closes — `.attrs`/`.name`
-        # are Python-side metadata so they remain valid post-close, but cache
-        # them now to make the close-or-not invariant explicit.
-        max_over_full_attrs = dict(max_over_full_da.attrs)
-        max_over_full_name = max_over_full_da.name
-        peak_flow_attrs = dict(peak_flow_da.attrs)
-        peak_flow_name = peak_flow_da.name
+    # Read from the consolidated analysis DataTree. The link group carries
+    # `max_over_full_flow`, `max_flow_cms`, and `link_id` for every event_iloc.
+    link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
+    tree = analysis.process.open_datatree()
+    if link_group not in tree.groups:
+        raise AssertionError(
+            f"consolidated tree missing expected group {link_group}; available: "
+            f"{sorted(tree.groups)}"
+        )
+    ds_links = tree[link_group].to_dataset()
+    max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
+    peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
+    max_over_full = max_over_full_da.values
+    peak_flow = peak_flow_da.values
+    link_ids = ds_links["link_id"].values
+    max_over_full_attrs = dict(max_over_full_da.attrs)
+    max_over_full_name = max_over_full_da.name
+    peak_flow_attrs = dict(peak_flow_da.attrs)
+    peak_flow_name = peak_flow_da.name
 
     # Conduit geometry from swmmio. Use the HYDRAULICS .inp (which carries
     # [CONDUITS] + [COORDINATES] sections); the prior version of this code read
@@ -111,8 +109,11 @@ def render(
         load_event_hydrology_data,
     )
 
-    weather_path = proc.scen_paths.weather_timeseries
-    hydro_data = load_event_hydrology_data(weather_path, analysis.cfg_analysis)
+    weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    hydro_data = load_event_hydrology_data(
+        weather_path, analysis.cfg_analysis, weather_event_indexers,
+    )
 
     # Subiteration 9.4 C7-parity-2 — load DEM bounds (same source peak_flood_depth
     # uses) so map_aspect, fig_width, set_xlim, set_ylim, and ticks all match.
