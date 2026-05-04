@@ -516,6 +516,34 @@ class TRITONSWMM_analysis:
 
         return task_id
 
+    def bundle_report_data(
+        self,
+        output_path: "Path | None" = None,
+    ) -> "Path":
+        """Emit a portable render bundle for local renderer iteration.
+
+        Opt-in only — NEVER invoked from analysis.run() or
+        submit_workflow(). The bundle is a self-contained tar including
+        every source path declared via prov.artist().add_channel(...)
+        during the most recent render_report() execution, plus configs
+        with relative paths, the Snakefile, and the HPC-baseline
+        analysis_report.{html,zip} under bundle_baseline/.
+
+        Args:
+            output_path: Optional target path for the bundle tar.
+                Defaults to
+                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar.
+
+        Returns:
+            Path to the emitted bundle tar.
+
+        Raises:
+            FileNotFoundError: If render_report() has not been invoked
+                on this analysis (no *.manifest.json sidecars exist).
+        """
+        from TRITON_SWMM_toolkit.bundle import emit_bundle
+        return emit_bundle(self, output_path)
+
     @staticmethod
     def _handle_destination_conflict(
         dest_dir: Path,
