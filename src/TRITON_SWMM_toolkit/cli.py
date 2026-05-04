@@ -784,5 +784,151 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[yellow]Note: Dry-run mode - no execution performed.[/yellow]\n")
 
 
+@app.command(name="bundle")
+def bundle_command(
+    system_config: Path = typer.Option(
+        ..., "--system-config",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Path to system configuration YAML file",
+    ),
+    analysis_config: Path = typer.Option(
+        ..., "--analysis-config",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help="Path to analysis configuration YAML file",
+    ),
+    output: Path = typer.Option(
+        None, "--output",
+        help=(
+            "Target path for the bundle tar. Defaults to "
+            "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar."
+        ),
+    ),
+) -> None:
+    """Emit a portable render bundle for local renderer iteration.
+
+    Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
+    and copies the union of declared source paths into a self-contained
+    tar with relative-path configs and the HPC-baseline
+    analysis_report.{html,zip} under bundle_baseline/.
+
+    Requires render_report() to have been invoked at least once on the
+    target analysis (so manifest sidecars exist). Raises FileNotFoundError
+    if no manifests are found.
+    """
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+
+    system = TRITONSWMM_system(system_config)
+    analysis = TRITONSWMM_analysis(analysis_config, system)
+    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        bundle_path = analysis.sensitivity.bundle_report_data(output)
+    else:
+        bundle_path = analysis.bundle_report_data(output)
+    console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+
+
+@app.command(name="report-from-bundle")
+def report_from_bundle_command(
+    bundle_path: Path = typer.Argument(
+        ..., exists=True, file_okay=True, dir_okay=True, readable=True,
+        help="Path to the bundle tar (or unpacked bundle directory).",
+    ),
+    format: str = typer.Option(
+        "html", "--format",
+        help="Output format: 'html' (single-file) or 'zip' (unbundled tree).",
+    ),
+) -> None:
+    """Render a fresh analysis_report from a portable render bundle.
+
+    Unpacks the bundle (if a tar was given), validates bundle_schema_version
+    compatibility, deletes any prior analysis_report.{html,zip} at the
+    unpacked-bundle root (preserving the HPC-baseline copies under
+    bundle_baseline/), and invokes Analysis.render_report() against the
+    unpacked tree.
+    """
+    import json
+    import tarfile
+
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+    from TRITON_SWMM_toolkit.version_migration.constants import (
+        BUNDLE_SCHEMA_VERSION,
+    )
+
+    if bundle_path.is_file() and bundle_path.suffix == ".tar":
+        unpack_dir = bundle_path.parent / bundle_path.stem
+        unpack_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(bundle_path) as tar:
+            tar.extractall(unpack_dir, filter="data")
+        bundle_root = unpack_dir
+    elif bundle_path.is_dir():
+        bundle_root = bundle_path
+    else:
+        raise CLIValidationError(
+            argument="bundle_path",
+            message=f"{bundle_path} is neither a .tar file nor a directory",
+            fix_hint=(
+                "Pass a path to a bundle.tar produced by "
+                "`TRITON_SWMM_toolkit bundle`, or to an unpacked bundle directory."
+            ),
+        )
+
+    manifest_path = bundle_root / "bundle_manifest.json"
+    if not manifest_path.exists():
+        raise CLIValidationError(
+            argument="bundle_path",
+            message=f"No bundle_manifest.json under {bundle_root}",
+            fix_hint="The bundle is malformed or this is not a render bundle.",
+        )
+    manifest = json.loads(manifest_path.read_text())
+    if manifest["bundle_schema_version"] > BUNDLE_SCHEMA_VERSION:
+        raise CLIValidationError(
+            argument="bundle_path",
+            message=(
+                f"Bundle schema version {manifest['bundle_schema_version']} "
+                f"exceeds locally installed BUNDLE_SCHEMA_VERSION="
+                f"{BUNDLE_SCHEMA_VERSION}."
+            ),
+            fix_hint="Upgrade the local toolkit installation to render this bundle.",
+        )
+
+    from TRITON_SWMM_toolkit.bundle import _get_toolkit_git_sha
+    local_sha = _get_toolkit_git_sha(strict=False)
+    bundle_sha = manifest.get("toolkit_git_sha", "unknown")
+    if (
+        bundle_sha != "unknown"
+        and local_sha != "unknown"
+        and bundle_sha != local_sha
+    ):
+        console.print(
+            f"[yellow]Toolkit git SHA divergence:[/yellow] bundle={bundle_sha}, "
+            f"local={local_sha}. The local re-render uses the locally installed "
+            f"toolkit's report templates and post-process surgery; wrapper "
+            f"sections may differ from HPC. Compare against bundle_baseline/."
+        )
+
+    for fmt in ("html", "zip"):
+        prior = bundle_root / f"analysis_report.{fmt}"
+        if prior.exists():
+            prior.unlink()
+
+    locks_dir = bundle_root / ".snakemake" / "locks"
+    if locks_dir.exists() and any(locks_dir.iterdir()):
+        console.print(
+            f"[yellow]Stale Snakemake locks found at[/yellow] {locks_dir} — "
+            f"removing (left behind by an interrupted prior render)."
+        )
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
+        fast_rmtree(locks_dir)
+        locks_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg_system = bundle_root / "cfg_system.yaml"
+    cfg_analysis = bundle_root / "cfg_analysis.yaml"
+    system = TRITONSWMM_system(cfg_system)
+    analysis = TRITONSWMM_analysis(cfg_analysis, system)
+    rendered = analysis.render_report(format=format)
+    console.print(f"[green]Report rendered:[/green] {rendered}")
+
+
 if __name__ == "__main__":
     app()
