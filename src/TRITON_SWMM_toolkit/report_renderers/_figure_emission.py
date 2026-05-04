@@ -430,3 +430,43 @@ def collect_sensitivity_source_paths(
             "variables": ["Total elapsed time (parsed via parse_total_elapsed)"],
         })
     return sources
+
+
+def harvest_source_paths(
+    plots_dir: Path, analysis_dir: Path
+) -> dict[str, list[Path]]:
+    """Walk ``*.manifest.json`` sidecars under ``plots_dir``; return source
+    paths keyed by output figure stem.
+
+    Source-of-truth: the top-level ``source_paths_relative`` field written by
+    :func:`emit_plot_with_sources` (paths are relative to ``analysis_dir``;
+    resolved here back to absolute paths). Per-artist
+    ``channels[].ref.source_path`` entries from the provenance log are unioned
+    in as a secondary channel so renderer-internal data sources declared via
+    ``prov.artist().add_channel(...)`` are not silently dropped.
+
+    Downstream consumers (the bundle-emit step) union and deduplicate paths
+    across all keys before bundle copy, so figure-stem keying is sufficient
+    even when multiple per-sim subdirectories emit the same bare filename
+    (e.g., ``peak_flood_depth.manifest.json``).
+    """
+    sources_by_renderer: dict[str, list[Path]] = {}
+    for manifest_path in sorted(plots_dir.rglob("*.manifest.json")):
+        figure_stem = manifest_path.stem.removesuffix(".manifest")
+        manifest = json.loads(manifest_path.read_text())
+        rel_paths = manifest.get("source_paths_relative", [])
+        paths = [(analysis_dir / Path(rp)).resolve() for rp in rel_paths]
+        for artist in manifest.get("artists", []):
+            for channel in artist.get("channels", []):
+                ref = channel.get("ref", {}) or {}
+                src = ref.get("source_path")
+                if src:
+                    p = Path(src)
+                    if not p.is_absolute():
+                        p = (analysis_dir / p).resolve()
+                    paths.append(p)
+        sources_by_renderer.setdefault(figure_stem, []).extend(paths)
+    return {
+        name: list(dict.fromkeys(paths))
+        for name, paths in sources_by_renderer.items()
+    }
