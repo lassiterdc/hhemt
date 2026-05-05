@@ -5,6 +5,8 @@ last_sync_hashes:
   '### Phase Audit History': ca148f98cf69f8a8465d664c90de057aae281e039cc8fcbe0e6b7b95bca30e4a
   '# Follow-up Ideas': 1e37c6c057de06ae08c94342cf470e48915be6437c3bf9240c98bfde8deb03d1
 harness: claude-code
+custom_instructions:
+  - "Since the sidecar files and planning documents are sufficient for a fresh agent to resume implementation, the workspace is moving towards a system of clearing instead of compacting at PWI heaviness gates. Updating instructional content is happening in a concurrent session, but we are applying clear instead of compact here even though the instructions say compact, and we wanted you to be aware to avoid any confusion about your state after being cleared and resuming implementation."
 next_phase: '5.5'
 next_phase_title: baseline failure remediation (Option B consolidation collapse + Phase 4 audit)
 next_phase_doc: /home/dcl3nd/dev/agentic-workspace/library/docs/planning/projects/TRITON-SWMM_toolkit/features/render_bundle/5.5 baseline failure remediation.md
@@ -30,6 +32,10 @@ baseline_writable_content:
 - Sync integrity is verified via
   `scripts/generate/write_compaction_sidecar.py --mode verify`. Do not
   compute hashes yourself.
+
+## Session Custom Instructions
+
+- Since the sidecar files and planning documents are sufficient for a fresh agent to resume implementation, the workspace is moving towards a system of clearing instead of compacting at PWI heaviness gates. Updating instructional content is happening in a concurrent session, but we are applying clear instead of compact here even though the instructions say compact, and we wanted you to be aware to avoid any confusion about your state after being cleared and resuming implementation.
 
 ## Compaction Checkpoint (latest)
 
