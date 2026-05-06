@@ -37,6 +37,7 @@ import pandas as pd
 import xarray as xr
 
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import emit_plot_with_sources
+from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 from TRITON_SWMM_toolkit.swmm_output_parser import parse_total_elapsed
 
 if TYPE_CHECKING:
@@ -107,12 +108,14 @@ def render(
     df["wallclock_disp"] = df["wallclock_hr"] * wall_factor
     df["compute_disp"] = df["compute_hr"] * cost_factor
 
+    prov = ProvenanceLog()
+
     sens_cfg = report_cfg.sensitivity
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
         4, 1, figsize=tuple(sens_cfg.figsize_inches), sharex=True
     )
-    _draw_panel(ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var, sens_cfg=sens_cfg)
-    _draw_panel(ax_cost, df, y_col="compute_disp", group_by_var=group_by_var, sens_cfg=sens_cfg)
+    _draw_panel(ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov)
+    _draw_panel(ax_cost, df, y_col="compute_disp", group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov)
 
     speedup_per_group = _compute_speedup_per_group(
         df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
@@ -126,13 +129,13 @@ def render(
         ax_speedup, speedup_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="linear", ideal_label="Ideal speedup (S=N)",
-        sens_cfg=sens_cfg,
+        sens_cfg=sens_cfg, prov=prov,
     )
     _draw_metric_panel(
         ax_eff, strong_eff_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="constant", ideal_value=1.0, ideal_label="Ideal efficiency (=1.0)",
-        sens_cfg=sens_cfg,
+        sens_cfg=sens_cfg, prov=prov,
     )
 
     xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
@@ -182,6 +185,7 @@ def render(
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=report_cfg.figure_defaults.savefig_dpi,
         output_format="svg",
+        provenance=prov,
     )
 
 
@@ -329,6 +333,7 @@ def _draw_metric_panel(
     x_max: float,
     ideal_kind: str,
     sens_cfg,
+    prov: ProvenanceLog,
     ideal_value: float = 1.0,
     ideal_label: str = "Ideal",
 ) -> None:
@@ -364,11 +369,21 @@ def _draw_metric_panel(
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
         color = sens_cfg.palette[i % len(sens_cfg.palette)]
-        ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
-        ax.scatter(
-            xs, ys, color=color, marker=sens_cfg.cpu_marker, s=sens_cfg.point_size,
-            edgecolor="black", linewidth=1.0, zorder=3,
-        )
+        with prov.artist(
+            axes_id="ax_metric", kind="line",
+            note=f"metric group {gv}",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            ax.plot(xs, ys, color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2)
+        with prov.artist(
+            axes_id="ax_metric", kind="scatter",
+            note=f"metric points {gv}",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            ax.scatter(
+                xs, ys, color=color, marker=sens_cfg.cpu_marker, s=sens_cfg.point_size,
+                edgecolor="black", linewidth=1.0, zorder=3,
+            )
         if str(gv).lower() == "hybrid":
             for x, y in zip(xs, ys, strict=True):
                 n_mpi = annotation_lookup.get((str(gv), int(x)))
@@ -379,7 +394,12 @@ def _draw_metric_panel(
                         fontsize=8, color=color,
                     )
     if ideal_kind == "linear":
-        ax.plot([1, x_max], [1, x_max], color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
+        with prov.artist(
+            axes_id="ax_metric", kind="line",
+            note="ideal-reference line",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            ax.plot([1, x_max], [1, x_max], color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
     elif ideal_kind == "constant":
         ax.axhline(ideal_value, color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
     else:
@@ -398,7 +418,7 @@ def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
     return "hrs", 1.0
 
 
-def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg) -> None:
+def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg, prov: ProvenanceLog) -> None:
     """Draw one panel of the dual-panel benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
     for i, gv in enumerate(groups):
@@ -409,11 +429,16 @@ def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, s
         marker = sens_cfg.gpu_marker if is_gpu_group else sens_cfg.cpu_marker
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
-            ax.scatter(
-                sub["indep_value"], sub[y_col],
-                color=color, marker=marker, s=sens_cfg.point_size,
-                edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
-            )
+            with prov.artist(
+                axes_id="ax_panel", kind="scatter",
+                note=f"single-point group {gv}",
+            ) as a:
+                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                ax.scatter(
+                    sub["indep_value"], sub[y_col],
+                    color=color, marker=marker, s=sens_cfg.point_size,
+                    edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+                )
             if is_hybrid_group:
                 for _, r in sub.iterrows():
                     ax.annotate(
@@ -425,15 +450,25 @@ def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, s
             continue
         # Multi-point group: line through MIN-y at each x-value, all points as markers.
         per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
-        ax.plot(
-            per_x_min.index, per_x_min.values,
-            color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2,
-        )
-        ax.scatter(
-            sub["indep_value"], sub[y_col],
-            color=color, marker=marker, s=sens_cfg.point_size,
-            edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
-        )
+        with prov.artist(
+            axes_id="ax_panel", kind="line",
+            note=f"multi-point line {gv}",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            ax.plot(
+                per_x_min.index, per_x_min.values,
+                color=color, linestyle=sens_cfg.line_style, linewidth=sens_cfg.line_width, zorder=2,
+            )
+        with prov.artist(
+            axes_id="ax_panel", kind="scatter",
+            note=f"multi-point markers {gv}",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            ax.scatter(
+                sub["indep_value"], sub[y_col],
+                color=color, marker=marker, s=sens_cfg.point_size,
+                edgecolor="black", linewidth=1.0, zorder=3, label=str(gv),
+            )
         # Hybrid: annotate every point with its n_mpi_procs value (per user spec).
         # Other groups: annotate only when duplicate x-values exist (helps disambiguate).
         if is_hybrid_group or sub["indep_value"].duplicated().any():

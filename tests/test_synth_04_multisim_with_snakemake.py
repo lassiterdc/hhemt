@@ -185,6 +185,7 @@ def test_snakemake_workflow_dry_run(synth_multi_sim_analysis):
     assert "snakemake_allocated_total_cpus" in df_status.columns
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
     """
     End-to-end Snakemake workflow test.
@@ -463,6 +464,7 @@ _SYNTH_MULTISIM_REPORT_CONFIG = (
 )
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_run_and_render_report(synth_multi_sim_analysis_cached):
     """Full pipeline: run -> render. Exercises the plot rules + report rendering."""
     from pathlib import Path
@@ -486,6 +488,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
         assert (plots_dir / "per_sim" / event_id / "conduit_flow.png").exists()
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_render_report_idempotent(synth_multi_sim_analysis_cached):
     """render_report() must not re-execute the workflow (R11)."""
     import time
@@ -508,6 +511,7 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
         assert plot.stat().st_mtime <= t0 + 1  # 1s clock-skew grace
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     """R15: 'Sources:' bullet block appears in rendered HTML report text."""
     from pathlib import Path

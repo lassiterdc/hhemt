@@ -553,33 +553,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     )
     all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
-    # TRITON-SWMM coupled model consolidated summaries
-    tritonswmm_triton_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    tritonswmm_node_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    tritonswmm_link_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    tritonswmm_performance_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    # TRITON-only consolidated summaries
-    triton_only_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    triton_only_performance_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    # SWMM-only consolidated summaries
-    swmm_only_node_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    swmm_only_link_analysis_summary_created: LogField[bool] = Field(
-        default_factory=LogField
-    )
     # Hierarchical DataTree consolidation (Phase 2)
     datatree_consolidation_complete: LogField[bool] = Field(
         default_factory=LogField
@@ -614,14 +587,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
-        "tritonswmm_triton_analysis_summary_created",
-        "tritonswmm_node_analysis_summary_created",
-        "tritonswmm_link_analysis_summary_created",
-        "tritonswmm_performance_analysis_summary_created",
-        "triton_only_analysis_summary_created",
-        "triton_only_performance_analysis_summary_created",
-        "swmm_only_node_analysis_summary_created",
-        "swmm_only_link_analysis_summary_created",
         "datatree_consolidation_complete",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
@@ -656,14 +621,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "all_TRITONSWMM_performance_timeseries_processed",
         "all_raw_TRITON_outputs_cleared",
         "all_raw_SWMM_outputs_cleared",
-        "tritonswmm_triton_analysis_summary_created",
-        "tritonswmm_node_analysis_summary_created",
-        "tritonswmm_link_analysis_summary_created",
-        "tritonswmm_performance_analysis_summary_created",
-        "triton_only_analysis_summary_created",
-        "triton_only_performance_analysis_summary_created",
-        "swmm_only_node_analysis_summary_created",
-        "swmm_only_link_analysis_summary_created",
         "datatree_consolidation_complete",
         "consolidation_version",
         "sensitivity_datatree_consolidation_complete",

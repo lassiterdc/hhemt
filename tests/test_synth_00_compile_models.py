@@ -9,18 +9,23 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_create_dem_for_TRITON(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.create_dem_for_TRITON()
     rds = analysis._system.processed_dem_rds
-    assert rds.shape == (1, 30, 20)  # type: ignore
+    # synth fixture iter-8 narrowed n_cols 20→16 (cache.py:43); test assertion
+    # was missed in that change and the failure was masked by the pre-Phase-5.5
+    # CompilationError fired earlier in prepare_scenario.
+    assert rds.shape == (1, 30, 16)  # type: ignore
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_create_mannings_file_for_TRITON(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.create_mannings_file_for_TRITON()
     rds = analysis._system.mannings_rds
-    assert rds.shape == (1, 30, 20)  # type: ignore
+    assert rds.shape == (1, 30, 16)  # type: ignore
 
 
 def test_compile_swmm(synth_all_models_analysis):

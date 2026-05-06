@@ -321,17 +321,17 @@ def collect_per_sim_source_paths(
         Source descriptors expressed relative to the analysis_dir.
     """
     sa_prefix = f"subanalyses/{sa_id}/" if sa_id else ""
-    base = f"{sa_prefix}sims/{event_id}/processed"
+    analysis_datatree = f"{sa_prefix}analysis_datatree.zarr"
+    master_weather = "weather_timeseries.nc"
     swmm_inp = f"{sa_prefix}sims/{event_id}/swmm/hydraulics.inp"
-    weather_nc = f"{sa_prefix}sims/{event_id}/sim_weather.nc"
     if renderer_kind == "peak_flood_depth":
         sources: list[dict] = [
             {
-                "path": f"{base}/TRITONSWMM_TRITON_summary.zarr",
+                "path": analysis_datatree,
                 "variables": ["max_wlevel_m"],
             },
             {
-                "path": weather_nc,
+                "path": master_weather,
                 "variables": ["time", rainfall_datavar] + (
                     [storm_tide_datavar] if storm_tide_datavar else []
                 ),
@@ -356,7 +356,7 @@ def collect_per_sim_source_paths(
     if renderer_kind == "conduit_flow":
         sources = [
             {
-                "path": f"{base}/TRITONSWMM_SWMM_link_summary.zarr",
+                "path": analysis_datatree,
                 "variables": ["max_over_full_flow", "max_flow_cms", "link_id"],
             },
             {
@@ -364,7 +364,7 @@ def collect_per_sim_source_paths(
                 "variables": ["[CONDUITS]", "[COORDINATES]"],
             },
             {
-                "path": weather_nc,
+                "path": master_weather,
                 "variables": ["time", rainfall_datavar] + (
                     [storm_tide_datavar] if storm_tide_datavar else []
                 ),
@@ -439,11 +439,23 @@ def harvest_source_paths(
     paths keyed by output figure stem.
 
     Source-of-truth: the top-level ``source_paths_relative`` field written by
-    :func:`emit_plot_with_sources` (paths are relative to ``analysis_dir``;
-    resolved here back to absolute paths). Per-artist
+    :func:`emit_plot_with_sources` (paths are relative to the analysis_dir
+    that was active at the renderer's emit time). Per-artist
     ``channels[].ref.source_path`` entries from the provenance log are unioned
     in as a secondary channel so renderer-internal data sources declared via
     ``prov.artist().add_channel(...)`` are not silently dropped.
+
+    For sensitivity master bundles, the per-sub renderers (``analysis`` arg
+    is the sub-analysis) emit manifests at master-relative locations like
+    ``master_dir/plots/sensitivity/per_sim/sa-{N}/{event_id}/x.manifest.json``
+    but with ``source_paths_relative`` rooted at ``sub_analysis_dir =
+    master_dir/subanalyses/sa_{N}``. This function detects the
+    ``plots/sensitivity/per_sim/sa-{N}/`` segment in the manifest's
+    master-relative position and resolves that manifest's paths against
+    the corresponding sub_analysis_dir; manifests at master-only locations
+    (``plots/system_overview.*``, ``plots/per_analysis/*``,
+    ``plots/sensitivity/benchmarking/*``) resolve against the master
+    analysis_dir as before.
 
     Downstream consumers (the bundle-emit step) union and deduplicate paths
     across all keys before bundle copy, so figure-stem keying is sufficient
@@ -451,11 +463,27 @@ def harvest_source_paths(
     (e.g., ``peak_flood_depth.manifest.json``).
     """
     sources_by_renderer: dict[str, list[Path]] = {}
+    plots_root = plots_dir.resolve()
+    master_root = analysis_dir.resolve()
     for manifest_path in sorted(plots_dir.rglob("*.manifest.json")):
         figure_stem = manifest_path.stem.removesuffix(".manifest")
         manifest = json.loads(manifest_path.read_text())
+        # Detect sensitivity per-sub manifest position:
+        # plots/sensitivity/per_sim/sa-{N}/{event_id}/<stem>.manifest.json
+        rel_from_plots = manifest_path.parent.resolve().relative_to(plots_root)
+        emit_analysis_dir = master_root
+        rel_parts = rel_from_plots.parts
+        if (
+            len(rel_parts) >= 3
+            and rel_parts[0] == "sensitivity"
+            and rel_parts[1] == "per_sim"
+            and rel_parts[2].startswith("sa-")
+        ):
+            sa_wildcard = rel_parts[2][len("sa-"):]
+            sa_id_rule = sa_wildcard.replace(".", "_").replace("-", "_")
+            emit_analysis_dir = master_root / "subanalyses" / f"sa_{sa_id_rule}"
         rel_paths = manifest.get("source_paths_relative", [])
-        paths = [(analysis_dir / Path(rp)).resolve() for rp in rel_paths]
+        paths = [(emit_analysis_dir / Path(rp)).resolve() for rp in rel_paths]
         for artist in manifest.get("artists", []):
             for channel in artist.get("channels", []):
                 ref = channel.get("ref", {}) or {}
@@ -463,7 +491,7 @@ def harvest_source_paths(
                 if src:
                     p = Path(src)
                     if not p.is_absolute():
-                        p = (analysis_dir / p).resolve()
+                        p = (emit_analysis_dir / p).resolve()
                     paths.append(p)
         sources_by_renderer.setdefault(figure_stem, []).extend(paths)
     return {

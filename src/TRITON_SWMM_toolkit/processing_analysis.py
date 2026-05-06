@@ -21,54 +21,46 @@ if TYPE_CHECKING:
 
 
 class TRITONSWMM_analysis_post_processing:
-    # Maps consolidation mode to: (scenario_path_attr, analysis_path_attr, log_field, spatial_coords)
+    # Maps consolidation mode to: (scenario_path_attr, analysis_path_attr, spatial_coords)
     _MODE_CONFIG = {
         "tritonswmm_triton": (
             "output_tritonswmm_triton_summary",
             "output_tritonswmm_triton_summary",
-            "tritonswmm_triton_analysis_summary_created",
             ["x", "y"],
         ),
         "tritonswmm_swmm_node": (
             "output_tritonswmm_node_summary",
             "output_tritonswmm_node_summary",
-            "tritonswmm_node_analysis_summary_created",
             "node_id",
         ),
         "tritonswmm_swmm_link": (
             "output_tritonswmm_link_summary",
             "output_tritonswmm_link_summary",
-            "tritonswmm_link_analysis_summary_created",
             "link_id",
         ),
         "triton_only": (
             "output_triton_only_summary",
             "output_triton_only_summary",
-            "triton_only_analysis_summary_created",
             ["x", "y"],
         ),
         "triton_only_performance": (
             "output_triton_only_performance_summary",
             "output_triton_only_performance_summary",
-            "triton_only_performance_analysis_summary_created",
             None,
         ),
         "tritonswmm_performance": (
             "output_tritonswmm_performance_summary",
             "output_tritonswmm_performance_summary",
-            "tritonswmm_performance_analysis_summary_created",
             None,
         ),
         "swmm_only_node": (
             "output_swmm_only_node_summary",
             "output_swmm_only_node_summary",
-            "swmm_only_node_analysis_summary_created",
             "node_id",
         ),
         "swmm_only_link": (
             "output_swmm_only_link_summary",
             "output_swmm_only_link_summary",
-            "swmm_only_link_analysis_summary_created",
             "link_id",
         ),
     }
@@ -108,7 +100,13 @@ class TRITONSWMM_analysis_post_processing:
         compression_level: int = 5,
         verbose: bool = False,
     ) -> Path:
-        """Assemble enabled consolidation modes into a hierarchical DataTree zarr."""
+        """Assemble per-scenario summaries directly into a hierarchical DataTree zarr.
+
+        Per Option B (render_bundle plan, 2026-05-05): no intermediate
+        master-level per-mode flat zarrs are produced. The DataTree IS the
+        canonical master-level artifact; per-scenario summaries are its
+        only inputs.
+        """
         fname_out = self._analysis.analysis_paths.analysis_datatree_zarr
         if fname_out is None:
             raise ValueError(
@@ -123,11 +121,13 @@ class TRITONSWMM_analysis_post_processing:
         start_time = time.time()
         tree_dict: dict[str, xr.Dataset] = {}
         for mode, tree_path in self._MODE_TO_TREE_PATH.items():
-            analysis_path_attr = self._MODE_CONFIG[mode][1]
-            f = getattr(self._analysis.analysis_paths, analysis_path_attr)
-            if f is None or not f.exists():
+            scen_path_attr = self._MODE_CONFIG[mode][0]
+            first_scen = TRITONSWMM_scenario(
+                self._analysis.df_sims.index[0], self._analysis
+            )
+            if getattr(first_scen.scen_paths, scen_path_attr) is None:
                 continue
-            ds = self._open(f)
+            ds = self._retrieve_combined_output(mode)
             apply_cf_attributes(ds, mode)
             tree_dict[tree_path] = ds
 
@@ -159,11 +159,28 @@ class TRITONSWMM_analysis_post_processing:
         return fname_out
 
     def open_datatree(self) -> "xr.DataTree":
-        """Open the consolidated hierarchical DataTree zarr lazily."""
+        """Open the consolidated hierarchical DataTree zarr lazily.
+
+        Per Option B (render_bundle plan): the canonical signal that the
+        DataTree is present and complete is
+        `log.datatree_consolidation_complete`. File existence is a weaker
+        signal (a corrupt-but-on-disk zarr would `.exists()` as True);
+        the log marker is set only on successful write completion in
+        `consolidate_to_datatree()`.
+        """
         path = self._analysis.analysis_paths.analysis_datatree_zarr
-        if path is None or not path.exists():
+        if path is None:
             raise ValueError(
-                "DataTree zarr not found. Run consolidate_to_datatree() first."
+                "analysis_datatree_zarr path is not configured on AnalysisPaths."
+            )
+        consolidated = (
+            hasattr(self._analysis.log, "datatree_consolidation_complete")
+            and self._analysis.log.datatree_consolidation_complete.get() is True
+        )
+        if not consolidated:
+            raise ValueError(
+                "DataTree zarr not present (log.datatree_consolidation_complete is "
+                "False or unset). Run consolidate_to_datatree() first."
             )
         return xr.open_datatree(
             path, engine="zarr", chunks="auto", consolidated=False
@@ -279,33 +296,6 @@ class TRITONSWMM_analysis_post_processing:
             verbose=verbose,
         )
 
-    def consolidate_outputs_for_mode(
-        self,
-        mode: str,
-        overwrite_outputs_if_already_created: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate scenario-level summaries into a single analysis-level file.
-
-        Parameters
-        ----------
-        mode : str
-            One of the keys in _MODE_CONFIG:
-            "tritonswmm_triton", "tritonswmm_swmm_node", "tritonswmm_swmm_link",
-            "triton_only", "swmm_only_node", "swmm_only_link"
-        """
-        ds_combined_outputs = self._retrieve_combined_output(mode)
-        self._consolidate_outputs(
-            ds_combined_outputs,
-            mode=mode,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-            verbose=verbose,
-            compression_level=compression_level,
-        )
-        return
-
     def _open_engine(self):
         processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
         if processed_out_type == "zarr":
@@ -379,109 +369,6 @@ class TRITONSWMM_analysis_post_processing:
             if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
-
-    def _consolidate_outputs(
-        self,
-        ds_combined_outputs: xr.Dataset | xr.DataArray,
-        mode: str,
-        overwrite_outputs_if_already_created: bool = False,
-        verbose: bool = False,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate combined scenario summaries into an analysis-level output file.
-
-        Parameters
-        ----------
-        mode : str
-            One of the keys in _MODE_CONFIG.
-        """
-        if mode not in self._MODE_CONFIG:
-            raise ValueError(
-                f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}"
-            )
-
-        scen_path_attr, analysis_path_attr, log_field_name, spatial_coords = (
-            self._MODE_CONFIG[mode]
-        )
-
-        start_time = time.time()
-        self._analysis._refresh_log()
-
-        proc_log = getattr(self._analysis.log, log_field_name)
-        fname_out = getattr(self._analysis.analysis_paths, analysis_path_attr)
-
-        if fname_out is None:
-            raise ValueError(
-                f"Analysis path '{analysis_path_attr}' is None for mode '{mode}'. "
-                f"Check that the appropriate model type is enabled in system config."
-            )
-
-        if (
-            self._already_written(fname_out)
-            and (not overwrite_outputs_if_already_created)
-            and fname_out.exists()
-        ):
-            if verbose:
-                print(
-                    f"File already written and overwrite_outputs_if_already_created is set to False. "
-                    f"Not overwriting:\n{fname_out}"
-                )
-            return
-
-        chunks = self._chunk_for_writing(ds_combined_outputs, spatial_coords)  # type: ignore
-
-        self._write_output(
-            ds_combined_outputs, fname_out, compression_level, chunks, verbose, mode  # type: ignore
-        )
-
-        # Validate output was actually created before setting success flag
-        if fname_out.suffix == ".zarr":
-            # Check for zarr v2 (.zgroup) or zarr v3 (zarr.json) markers
-            has_zgroup = (fname_out / ".zgroup").exists()
-            has_zarr_json = (fname_out / "zarr.json").exists()
-            if not fname_out.exists() or not (has_zgroup or has_zarr_json):
-                raise RuntimeError(
-                    f"Zarr consolidation failed for mode '{mode}': "
-                    f"output missing or incomplete at {fname_out}"
-                )
-        elif not fname_out.exists():
-            raise RuntimeError(
-                f"Consolidation failed for mode '{mode}': "
-                f"output not created at {fname_out}"
-            )
-
-        proc_log.set(True)
-        elapsed_s = time.time() - start_time
-        self._analysis.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
-        return
-
-    def _write_output(
-        self,
-        ds: xr.Dataset | xr.DataArray,
-        fname_out: Path,
-        compression_level: int,
-        chunks: str | dict,
-        verbose: bool,
-        mode: str,
-    ):
-        processed_out_type = self._analysis.cfg_analysis.target_processed_output_type
-
-        if isinstance(ds, xr.Dataset):
-            apply_cf_attributes(ds, mode)
-
-        ds.attrs["output_creation_date"] = current_datetime_string()
-
-        if processed_out_type == "nc":
-            write_netcdf(ds, fname_out, compression_level, chunks)
-        else:
-            write_zarr(ds, fname_out, compression_level, chunks)
-        if verbose:
-            print(f"finished writing {fname_out}")
-        return
-
 
 def prev_power_of_two(n: int | float) -> int:
     n = int(n)
