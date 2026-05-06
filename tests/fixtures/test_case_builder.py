@@ -394,3 +394,8 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.analysis_yaml = self.system_directory / "analysis_config.yaml"
         self.system_yaml.write_text(yaml.safe_dump(system_cfg, sort_keys=False))
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
+
+        if kwargs["sensitivity_csv"] is not None:
+            import shutil
+            src = Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
+            shutil.copy(src, self.system_directory / "report_config.yaml")

@@ -775,23 +775,40 @@ class TRITONSWMM_scenario:
             )
             return
 
-        # Validate backend is available
-        if self.backend == "gpu" and not self._system.compilation_gpu_successful:
-            logfile = self._system.sys_paths.compilation_logfile_gpu
-            raise CompilationError(
-                model_type="tritonswmm",
-                backend="gpu",
-                logfile=logfile if logfile else Path("missing"),
-                return_code=1,
+        # Validate backend is available. The compilation marker depends on
+        # whether the coupled TRITONSWMM model is enabled — TRITON-only mode
+        # compiles into build_triton_cpu/ (no swmm5 target) and must not be
+        # gated on the TRITONSWMM-coupled markers.
+        is_tritonswmm = self._system.cfg_system.toggle_tritonswmm_model
+        model_label = "tritonswmm" if is_tritonswmm else "triton_only"
+        if self.backend == "gpu":
+            gpu_ok = (
+                self._system.compilation_gpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_gpu_successful
             )
+            if not gpu_ok:
+                logfile = self._system.sys_paths.compilation_logfile_gpu
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="gpu",
+                    logfile=logfile if logfile else Path("missing"),
+                    return_code=1,
+                )
 
-        if self.backend == "cpu" and not self._system.compilation_cpu_successful:
-            raise CompilationError(
-                model_type="tritonswmm",
-                backend="cpu",
-                logfile=self._system.sys_paths.compilation_logfile_cpu,
-                return_code=1,
+        if self.backend == "cpu":
+            cpu_ok = (
+                self._system.compilation_cpu_successful
+                if is_tritonswmm
+                else self._system.compilation_triton_only_cpu_successful
             )
+            if not cpu_ok:
+                raise CompilationError(
+                    model_type=model_label,
+                    backend="cpu",
+                    logfile=self._system.sys_paths.compilation_logfile_cpu,
+                    return_code=1,
+                )
 
         print(
             f"[Scenario {self.event_iloc}] Using {self.backend.upper()} backend",

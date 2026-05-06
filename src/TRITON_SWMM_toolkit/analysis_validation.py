@@ -237,43 +237,13 @@ def check_timeseries_processed(
 
 
 def check_analysis_summaries_created(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """System-level: per-model summary files exist on disk."""
+    """System-level: master DataTree exists on disk (Option B canonical artifact)."""
     missing: list[dict] = []
 
-    def _enabled_model_types(a) -> set[str]:
-        cfg_sys = a._system.cfg_system
-        out = set()
-        if cfg_sys.toggle_tritonswmm_model:
-            out.add("tritonswmm")
-        if cfg_sys.toggle_triton_model:
-            out.add("triton")
-        if cfg_sys.toggle_swmm_model:
-            out.add("swmm")
-        return out
-
     def _check_one(a, label_prefix: str = "") -> None:
-        paths = a.analysis_paths
-        enabled = _enabled_model_types(a)
-        if "tritonswmm" in enabled:
-            for desc, path in [
-                ("TRITONSWMM TRITON summary", paths.output_tritonswmm_triton_summary),
-                ("TRITONSWMM SWMM node summary", paths.output_tritonswmm_node_summary),
-                ("TRITONSWMM SWMM link summary", paths.output_tritonswmm_link_summary),
-                ("TRITONSWMM performance summary", paths.output_tritonswmm_performance_summary),
-            ]:
-                if path is None or not path.exists():
-                    missing.append({"detail": f"{label_prefix}{desc} missing"})
-        if "triton" in enabled:
-            if paths.output_triton_only_summary is None or not paths.output_triton_only_summary.exists():
-                missing.append({"detail": f"{label_prefix}TRITON-only summary missing"})
-            triton_perf = paths.output_triton_only_performance_summary
-            if triton_perf is None or not triton_perf.exists():
-                missing.append({"detail": f"{label_prefix}TRITON-only performance summary missing"})
-        if "swmm" in enabled:
-            if paths.output_swmm_only_node_summary is None or not paths.output_swmm_only_node_summary.exists():
-                missing.append({"detail": f"{label_prefix}SWMM-only node summary missing"})
-            if paths.output_swmm_only_link_summary is None or not paths.output_swmm_only_link_summary.exists():
-                missing.append({"detail": f"{label_prefix}SWMM-only link summary missing"})
+        dt = a.analysis_paths.analysis_datatree_zarr
+        if dt is None or not dt.exists():
+            missing.append({"detail": f"{label_prefix}analysis_datatree.zarr missing"})
 
     sensitivity_on = getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
     if sensitivity_on and getattr(analysis, "sensitivity", None) is not None:

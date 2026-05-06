@@ -13,6 +13,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_swmm_threads_updated_in_inp_files():
     """
     Test that n_omp_threads configuration dynamically updates THREADS parameter.
@@ -71,6 +72,7 @@ def test_swmm_threads_updated_in_inp_files():
                 )
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_swmm_threads_different_values():
     """
     Test that different n_omp_threads values are correctly applied.
