@@ -73,8 +73,10 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
     for model_type in enabled_models:
         tst_ut.assert_model_outputs_processed(analysis, model_type)
 
-    analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-        overwrite_outputs_if_already_created=True,
+    analysis.process.consolidate_to_datatree(
+        overwrite_if_already_created=True,
     )
 
-    tst_ut.assert_analysis_summaries_created(analysis)
+    assert analysis.analysis_paths.analysis_datatree_zarr.exists(), (
+        "analysis_datatree.zarr was not produced by consolidate_to_datatree()"
+    )

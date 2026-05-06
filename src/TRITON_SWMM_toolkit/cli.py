@@ -924,9 +924,19 @@ def report_from_bundle_command(
 
     cfg_system = bundle_root / "cfg_system.yaml"
     cfg_analysis = bundle_root / "cfg_analysis.yaml"
-    system = TRITONSWMM_system(cfg_system)
-    analysis = TRITONSWMM_analysis(cfg_analysis, system)
-    rendered = analysis.render_report(format=format)
+    # Bundle-relative paths in the rewritten configs (e.g.
+    # cfg_analysis.weather_events_to_simulate) are resolved against CWD
+    # by Pydantic Path fields and downstream pd.read_csv calls. Bundle
+    # consume time means CWD must be bundle_root for those reads to land.
+    import os
+    prev_cwd = Path.cwd()
+    os.chdir(bundle_root)
+    try:
+        system = TRITONSWMM_system(cfg_system)
+        analysis = TRITONSWMM_analysis(cfg_analysis, system)
+        rendered = analysis.render_report(format=format)
+    finally:
+        os.chdir(prev_cwd)
     console.print(f"[green]Report rendered:[/green] {rendered}")
 
 

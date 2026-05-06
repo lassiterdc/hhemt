@@ -341,55 +341,6 @@ class TRITONSWMM_analysis:
             # Default to serial execution for safety
             return SerialExecutor(self)
 
-    def consolidate_TRITON_and_SWMM_simulation_summaries(
-        self,
-        overwrite_outputs_if_already_created: bool = False,
-        verbose: bool = True,
-        compression_level: int = 5,
-    ):
-        """
-        Consolidate simulation outputs from all scenarios into analysis-level summaries.
-
-        Automatically consolidates outputs for all enabled model types:
-        - TRITON-SWMM coupled: TRITON spatial, SWMM nodes, SWMM links, performance
-        - TRITON-only: TRITON spatial
-        - SWMM-only: SWMM nodes, SWMM links
-        """
-        cfg_sys = self._system.cfg_system
-
-        def _consolidate(mode: str):
-            self.process.consolidate_outputs_for_mode(
-                mode,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
-                verbose=verbose,
-                compression_level=compression_level,
-            )
-
-        # TRITON-SWMM coupled model
-        if cfg_sys.toggle_tritonswmm_model:
-            if verbose:
-                print("Consolidating TRITON-SWMM coupled model outputs...", flush=True)
-            _consolidate("tritonswmm_triton")
-            _consolidate("tritonswmm_swmm_node")
-            _consolidate("tritonswmm_swmm_link")
-            _consolidate("tritonswmm_performance")
-
-        # TRITON-only model
-        if cfg_sys.toggle_triton_model:
-            if verbose:
-                print("Consolidating TRITON-only model outputs...", flush=True)
-            _consolidate("triton_only")
-            _consolidate("triton_only_performance")
-
-        # SWMM-only model
-        if cfg_sys.toggle_swmm_model:
-            if verbose:
-                print("Consolidating SWMM-only model outputs...", flush=True)
-            _consolidate("swmm_only_node")
-            _consolidate("swmm_only_link")
-
-        return
-
     def print_cfg(self, which: Literal["system", "analysis", "both"] = "both"):
         """
         Print configuration settings in tabular format.
@@ -1356,8 +1307,8 @@ class TRITONSWMM_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        self.consolidate_TRITON_and_SWMM_simulation_summaries(
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+        self.process.consolidate_to_datatree(
+            overwrite_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -2030,41 +1981,22 @@ class TRITONSWMM_analysis:
             },
         )
 
-        # Check consolidation
-        # Check if analysis-level summary files exist for all enabled models
-        enabled_models = self._get_enabled_model_types()
+        # Check consolidation: under Option B (render_bundle plan), the
+        # canonical master-level artifact is analysis_datatree.zarr; the
+        # per-mode flat zarrs no longer exist. The log marker
+        # `datatree_consolidation_complete` is the single canonical signal
+        # for "consolidation has completed."
+        summaries_exist = (
+            hasattr(self.log, "datatree_consolidation_complete")
+            and self.log.datatree_consolidation_complete.get() is True
+        )
 
-        # Determine which summary files to check based on enabled models
-        summary_checks = {}
-
-        if "tritonswmm" in enabled_models:
-            summary_checks["tritonswmm"] = (
-                self.analysis_paths.output_tritonswmm_triton_summary
-                and self.analysis_paths.output_tritonswmm_triton_summary.exists()
+        consol_details = {
+            "datatree": (
+                f"{'✓' if summaries_exist else '✗'} analysis_datatree.zarr "
+                f"({'present' if summaries_exist else 'not yet built'})"
             )
-
-        if "triton" in enabled_models:
-            summary_checks["triton"] = (
-                self.analysis_paths.output_triton_only_summary
-                and self.analysis_paths.output_triton_only_summary.exists()
-            )
-
-        if "swmm" in enabled_models:
-            summary_checks["swmm"] = (
-                self.analysis_paths.output_swmm_only_node_summary
-                and self.analysis_paths.output_swmm_only_node_summary.exists()
-            )
-
-        # All enabled models must have their summaries
-        summaries_exist = all(summary_checks.values()) if summary_checks else False
-
-        # Build detailed status message
-        consol_details = {}
-        if summary_checks:
-            for model, exists in summary_checks.items():
-                consol_details[model] = f"{'✓' if exists else '✗'} {model.upper()} summaries created"
-        else:
-            consol_details["summaries"] = "✗ No models enabled"
+        }
 
         consol_phase = PhaseStatus(
             name="consolidation",

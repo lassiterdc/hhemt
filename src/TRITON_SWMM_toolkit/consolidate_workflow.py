@@ -277,17 +277,6 @@ def main() -> int:
         default=False,
         help="If True, consolidate subanalysis-level outputs into master analysis outputs (for sensitivity analysis)",
     )
-    parser.add_argument(
-        "--consolidate-datatree",
-        action="store_true",
-        default=False,
-        help=(
-            "If True, assemble per-mode consolidated outputs into a single "
-            "hierarchical DataTree zarr store (analysis_datatree.zarr) instead "
-            "of running the per-mode flat consolidation path."
-        ),
-    )
-
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -368,8 +357,8 @@ def main() -> int:
                 logger.error(f"Failed to consolidate sensitivity analysis outputs: {e}")
                 logger.error(traceback.format_exc())
                 return 1
-        elif args.consolidate_datatree:
-            logger.info("Assembling DataTree zarr from enabled consolidation modes...")
+        else:
+            logger.info("Assembling per-scenario summaries into master DataTree...")
             try:
                 analysis.process.consolidate_to_datatree(
                     overwrite_if_already_created=args.overwrite_outputs_if_already_created,
@@ -379,19 +368,6 @@ def main() -> int:
                 logger.info("DataTree consolidation completed successfully")
             except Exception as e:
                 logger.error(f"Failed to consolidate to DataTree: {e}")
-                logger.error(traceback.format_exc())
-                return 1
-        else:
-            logger.info("Consolidating TRITON and SWMM simulation summaries...")
-            try:
-                analysis.consolidate_TRITON_and_SWMM_simulation_summaries(
-                    overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
-                    verbose=True,
-                    compression_level=args.compression_level,
-                )
-                logger.info("Consolidation completed successfully")
-            except Exception as e:
-                logger.error(f"Failed to consolidate outputs: {e}")
                 logger.error(traceback.format_exc())
                 return 1
 

@@ -37,8 +37,14 @@ from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
     harvest_source_paths,
 )
 from TRITON_SWMM_toolkit.version_migration.constants import (
+    BUNDLE_BASELINE_SUBDIR,
+    BUNDLE_MANIFEST_FILENAME,
+    BUNDLE_OUTPUT_SUBDIR,
+    BUNDLE_PLOTS_SUBDIR,
     BUNDLE_SCHEMA_VERSION,
+    BUNDLE_STATUS_SUBDIR,
     LAYOUT_VERSION,
+    VERSION_FILE_NAME,
 )
 
 if TYPE_CHECKING:
@@ -59,7 +65,7 @@ def emit_bundle(
     bundle_baseline/.
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
-    plots_dir = analysis_dir / "plots"
+    plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if not plots_dir.exists() or not list(plots_dir.rglob("*.manifest.json")):
         raise FileNotFoundError(
             f"No *.manifest.json sidecars found under {plots_dir}. "
@@ -73,7 +79,7 @@ def emit_bundle(
 
     if output_path is None:
         output_path = (
-            analysis_dir / "render_bundle"
+            analysis_dir / BUNDLE_OUTPUT_SUBDIR
             / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.tar"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,7 +88,7 @@ def emit_bundle(
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
         _copy_configs_with_relative_paths(analysis, staging)
-        _copy_supporting_files(analysis_dir, staging)
+        _copy_supporting_files(analysis, staging)
         _write_bundle_manifest(
             staging,
             sources_by_renderer=sources_by_renderer,
@@ -110,7 +116,13 @@ def _harvest_and_copy_sources(
             dest = staging / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             if not src.exists():
-                continue
+                raise FileNotFoundError(
+                    f"Bundle harvest declared source path {src} but the file does "
+                    f"not exist. The renderer's manifest sidecar declared this "
+                    f"source via emit_plot_with_sources; data corruption between "
+                    f"render_report() completion and bundle emission is the most "
+                    f"likely cause."
+                )
             if src.is_dir():
                 shutil.copytree(src, dest, dirs_exist_ok=True)
             else:
@@ -118,7 +130,7 @@ def _harvest_and_copy_sources(
 
 
 def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
-    baseline = staging / "bundle_baseline"
+    baseline = staging / BUNDLE_BASELINE_SUBDIR
     baseline.mkdir(parents=True, exist_ok=True)
     for fmt in ("html", "zip"):
         src = analysis_dir / f"analysis_report.{fmt}"
@@ -148,6 +160,17 @@ def _copy_configs_with_relative_paths(
             analysis_dir=analysis.analysis_paths.analysis_dir,
             system_directory=analysis._system.cfg_system.system_directory,
         )
+        # Bundle directory-model invariant: bundle_root IS analysis_dir at
+        # consume time. Force "." so consume's cwd=bundle_root resolves
+        # analysis_paths consistently with where _copy_supporting_files /
+        # _harvest_and_copy_sources placed files. The rewriter already
+        # produces "." for these fields when the source cfg has them set
+        # absolute; this override covers source cfgs where the field is
+        # None (e.g., synth fixture's cfg_analysis omits analysis_dir).
+        if cfg_attr == "cfg_analysis":
+            cfg_dict["analysis_dir"] = "."
+        else:
+            cfg_dict["system_directory"] = "."
         (staging / filename).write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
 
 
@@ -184,22 +207,37 @@ def _rewrite_paths_to_relative(
     return _rewrite_one(cfg_dict)
 
 
-def _copy_supporting_files(analysis_dir: Path, staging: Path) -> None:
+def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:
+    analysis_dir = analysis.analysis_paths.analysis_dir
     for fname in (
         "Snakefile",
-        "_version.json",
+        VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",
     ):
         src = analysis_dir / fname
         if src.exists():
             shutil.copy2(src, staging / fname)
-    status_dir = analysis_dir / "_status"
+    # Copy the weather-events CSV referenced by cfg_analysis.weather_events_to_simulate.
+    # The cfg rewrite preserves its relative position (typically directly under
+    # analysis_dir for synth fixtures); the file itself must travel with the bundle
+    # so analysis.py:164's pd.read_csv resolves at consume time.
+    weather_events_csv = analysis.cfg_analysis.weather_events_to_simulate
+    if weather_events_csv is not None and Path(weather_events_csv).exists():
+        src = Path(weather_events_csv).resolve()
+        try:
+            rel = src.relative_to(analysis_dir.resolve())
+        except ValueError:
+            rel = Path(src.name)
+        dest = staging / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dest)
+    status_dir = analysis_dir / BUNDLE_STATUS_SUBDIR
     if status_dir.exists():
-        shutil.copytree(status_dir, staging / "_status", dirs_exist_ok=True)
-    plots_dir = analysis_dir / "plots"
+        shutil.copytree(status_dir, staging / BUNDLE_STATUS_SUBDIR, dirs_exist_ok=True)
+    plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if plots_dir.exists():
-        shutil.copytree(plots_dir, staging / "plots", dirs_exist_ok=True)
+        shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
 
 
 def _write_bundle_manifest(
@@ -219,7 +257,7 @@ def _write_bundle_manifest(
             for name, paths in sources_by_renderer.items()
         },
     }
-    (staging / "bundle_manifest.json").write_text(
+    (staging / BUNDLE_MANIFEST_FILENAME).write_text(
         json.dumps(manifest, indent=2)
     )
 

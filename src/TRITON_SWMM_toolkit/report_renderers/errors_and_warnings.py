@@ -159,8 +159,19 @@ def render(
 ) -> Path:
     """Render the analysis-validation report to output_path (HTML)."""
     from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
-    report = validate_analysis(analysis)
+    prov = ProvenanceLog()
+    with prov.artist(
+        axes_id="html_section",
+        kind="table",
+        note="validation report (HTML-rendered, no matplotlib artist)",
+    ) as a:
+        a.add_channel(
+            "data",
+            ProvenanceRef(source_path="scenario_status.csv"),
+        )
+        report = validate_analysis(analysis)
     by_level = report.by_level
     body_parts = [
         _render_overall_banner(report),

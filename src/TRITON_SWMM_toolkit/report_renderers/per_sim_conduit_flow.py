@@ -245,17 +245,25 @@ def render(
     # matching peak_flood_depth's overlay so both per-sim figures show the
     # same domain context.
     import geopandas as gpd  # noqa: PLC0415
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
+    watershed_rel = os.path.relpath(str(Path(watershed_shp).resolve()), analysis_root)
     watershed_gdf = gpd.read_file(watershed_shp)
-    for ax in (ax1, ax2):
-        if watershed_gdf.crs is not None and _dem_bounds_da.rio.crs is not None:
-            watershed_gdf.to_crs(_dem_bounds_da.rio.crs).boundary.plot(
-                ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
-            )
-        else:
-            watershed_gdf.boundary.plot(
-                ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
-            )
+    with prov.artist(
+        axes_id="ax_overview",
+        kind="line",
+        note="watershed boundary overlay",
+    ) as a:
+        a.add_channel("geometry", ProvenanceRef(source_path=watershed_rel))
+        for ax in (ax1, ax2):
+            if watershed_gdf.crs is not None and _dem_bounds_da.rio.crs is not None:
+                watershed_gdf.to_crs(_dem_bounds_da.rio.crs).boundary.plot(
+                    ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
+                )
+            else:
+                watershed_gdf.boundary.plot(
+                    ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
+                )
 
     # C6 — Event hydrology panel on the right (delegated to shared helper).
     draw_event_hydrology_panel(
