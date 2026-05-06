@@ -408,3 +408,38 @@ def synth_sensitivity_swmm_only():
         start_from_scratch=True
     )
     return case.analysis
+
+
+@pytest.fixture(scope="session")
+def tritonswmm_cpu_compiled():
+    """Pre-compile TRITON-SWMM CPU once per test session for each test-case
+    family used by the coupled-mode tests.
+
+    Required by coupled-mode tests whose `prepare_scenario` gate at
+    scenario.py:800-811 checks `_system.compilation_cpu_successful`.
+    The property reads the in-memory system log; a fresh system init
+    shows compile-not-yet-done even when a valid build artifact exists
+    on disk. Each test-case family has its own `_software_root`, so the
+    fixture iterates over the 3 families touched by the marked tests
+    (synth_all_models, synth_multi_sim, norfolk_multi_sim).
+
+    Process-safety note: this fixture writes to ~/.cache/.../_software/
+    or test_data/.../triton/ and assumes no concurrent test sessions are
+    running an actual compile against the same cache dir.
+    """
+    from tests.fixtures.test_case_catalog import Local_TestCases
+    for retrieve in (
+        Local_TestCases.retrieve_synth_all_models_test_case,
+        Local_TestCases.retrieve_synth_multi_sim_test_case,
+        Local_TestCases.retrieve_norfolk_multi_sim_test_case,
+        Local_TestCases.retrieve_norfolk_single_sim_test_case,
+    ):
+        case = retrieve(start_from_scratch=False)
+        case.analysis._system.compile_TRITON_SWMM(
+            backends=["cpu"],
+            recompile_if_already_done_successfully=False,
+        )
+        if case.analysis._system.cfg_system.toggle_swmm_model:
+            case.analysis._system.compile_SWMM(
+                recompile_if_already_done_successfully=False,
+            )

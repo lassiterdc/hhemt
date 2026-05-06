@@ -45,19 +45,30 @@ def render(
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         _validate_source_path,
     )
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
     csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
-    if csv_path.exists():
-        _validate_source_path(csv_path)
-        df = pd.read_csv(csv_path)
-        table_html = df.to_html(index=False, escape=True, na_rep="—", border=0)
-        body = f"<h2>Scenario Status</h2>\n{table_html}"
-    else:
-        body = (
-            "<h2>Scenario Status</h2>\n"
-            "<p><em>scenario_status.csv not yet written — workflow may have "
-            "been killed before the onsuccess/onerror Snakemake hook ran.</em></p>"
+    prov = ProvenanceLog()
+    with prov.artist(
+        axes_id="html_section",
+        kind="table",
+        note="scenario_status table (HTML-rendered, no matplotlib artist)",
+    ) as a:
+        a.add_channel(
+            "data",
+            ProvenanceRef(source_path="scenario_status.csv"),
         )
+        if csv_path.exists():
+            _validate_source_path(csv_path)
+            df = pd.read_csv(csv_path)
+            table_html = df.to_html(index=False, escape=True, na_rep="—", border=0)
+            body = f"<h2>Scenario Status</h2>\n{table_html}"
+        else:
+            body = (
+                "<h2>Scenario Status</h2>\n"
+                "<p><em>scenario_status.csv not yet written — workflow may have "
+                "been killed before the onsuccess/onerror Snakemake hook ran.</em></p>"
+            )
 
     html = (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'

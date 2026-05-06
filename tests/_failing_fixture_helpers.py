@@ -233,15 +233,12 @@ def inject_multi_sim_failures_at_paths(paths: dict) -> None:
     sys_log = system_dir / "system_log.json"
     if sys_log.exists():
         _mutate_log_field(sys_log, "compilation_successful", False)
-    # Delete an analysis-summary file (TRITONSWMM TRITON summary zarr)
-    candidate_summaries = [
-        analysis_dir / "TRITONSWMM_TRITON.zarr",
-        analysis_dir / "TRITONSWMM_performance.zarr",
-    ]
-    for cand in candidate_summaries:
-        if cand.exists():
-            inject_summary_file_missing(cand)
-            break
+    # Delete the master DataTree (Option B's canonical artifact). Under
+    # the legacy two-tier consolidation this helper deleted per-mode
+    # flat zarrs; those no longer exist post-Option-B.
+    target = analysis_dir / "analysis_datatree.zarr"
+    if target.exists():
+        inject_summary_file_missing(target)
 
 
 def inject_sensitivity_failures_at_paths(paths: dict) -> None:

@@ -91,6 +91,7 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis = analysis
         self._system = analysis._system
         self.analysis_paths = analysis.analysis_paths
+        self.cfg_analysis = analysis.cfg_analysis
         self.sub_analyses_prefix = "sa_"
         self.subanalysis_dir = (
             self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
@@ -323,6 +324,27 @@ class TRITONSWMM_sensitivity_analysis:
         except Exception:
             pass
         return out_html
+
+    def bundle_report_data(
+        self,
+        output_path: "Path | None" = None,
+    ) -> "Path":
+        """Emit a portable render bundle for the sensitivity master analysis.
+
+        Opt-in only — NEVER invoked from analysis.run() or
+        submit_workflow(). The bundle includes the sensitivity master's
+        consolidated outputs plus the union of source paths declared by
+        every renderer in the master's render_report(), including per-sim
+        renderers wildcarded over (sa_id, event_id).
+
+        Args:
+            output_path: Optional target path for the bundle tar.
+
+        Returns:
+            Path to the emitted bundle tar.
+        """
+        from TRITON_SWMM_toolkit.bundle import emit_bundle
+        return emit_bundle(self, output_path)
 
     def run_all_sims(
         self,
