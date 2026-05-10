@@ -159,6 +159,7 @@ def render(
 ) -> Path:
     """Render the analysis-validation report to output_path (HTML)."""
     from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import emit_plot_with_sources
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
     prov = ProvenanceLog()
@@ -186,6 +187,16 @@ def render(
         analysis_id,
         report_cfg.errors_and_warnings.render_inline_css(),
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html)
-    return output_path
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    return emit_plot_with_sources(
+        html,
+        output_path,
+        [analysis_dir / "scenario_status.csv"],
+        analysis_dir=analysis_dir,
+        output_format="html",
+        manifest_data={
+            "renderer": "errors_and_warnings",
+            "section_count": sum(1 for b in body_parts if b),
+        },
+        provenance=prov,
+    )

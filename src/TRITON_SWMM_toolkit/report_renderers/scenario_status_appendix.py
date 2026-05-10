@@ -44,10 +44,12 @@ def render(
     """
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         _validate_source_path,
+        emit_plot_with_sources,
     )
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
-    csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    csv_path = analysis_dir / "scenario_status.csv"
     prov = ProvenanceLog()
     with prov.artist(
         axes_id="html_section",
@@ -63,12 +65,14 @@ def render(
             df = pd.read_csv(csv_path)
             table_html = df.to_html(index=False, escape=True, na_rep="—", border=0)
             body = f"<h2>Scenario Status</h2>\n{table_html}"
+            row_count = int(len(df))
         else:
             body = (
                 "<h2>Scenario Status</h2>\n"
                 "<p><em>scenario_status.csv not yet written — workflow may have "
                 "been killed before the onsuccess/onerror Snakemake hook ran.</em></p>"
             )
+            row_count = 0
 
     html = (
         '<!DOCTYPE html><html><head><meta charset="utf-8">'
@@ -76,6 +80,17 @@ def render(
         f"{body}"
         "</body></html>"
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html)
-    return output_path
+    return emit_plot_with_sources(
+        html,
+        output_path,
+        [csv_path],
+        analysis_dir=analysis_dir,
+        output_format="html",
+        manifest_data={
+            "renderer": "scenario_status_appendix",
+            "table_format": "inline-css",
+            "row_count": row_count,
+            "csv_present": csv_path.exists(),
+        },
+        provenance=prov,
+    )
