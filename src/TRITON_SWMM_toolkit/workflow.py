@@ -1343,6 +1343,7 @@ rule plot_per_sim_conduit_flow:
         snakefile_path: Path,
         config_dir: Path,
         override_hpc_total_nodes: int | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> Path:
         """
         Generate SLURM batch script that runs Snakemake.
@@ -1388,10 +1389,8 @@ rule plot_per_sim_conduit_flow:
         minutes = job_time % 60
         estimated_time = f"{hours:02d}:{minutes:02d}:00"
 
-        additional_sbatch_args = ""
-        if self.cfg_analysis.additional_SBATCH_params:
-            additional_sbatch_args = "#SBATCH "
-            additional_sbatch_args += "\n#SBATCH ".join(self.cfg_analysis.additional_SBATCH_params)
+        # additional_sbatch_args is computed below after gpu_directive is set
+        # (it needs gpu_directive for the override-detection map).
 
         modules = self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
         module_load_cmd = ""
@@ -1485,6 +1484,83 @@ echo ""
             # Calculate total GPUs dynamically in bash script
             gpu_calculation = f"\n# Calculate total GPUs from SLURM allocation\nTOTAL_GPUS=$((SLURM_JOB_NUM_NODES * {gpus_per_node}))\n"  # noqa: E501
             gpu_cli_arg = " --resources gpu=$TOTAL_GPUS"
+
+        # Combine cfg_analysis.additional_SBATCH_params (config-level baseline)
+        # with extra_sbatch_args (runtime override). Runtime args are appended
+        # AFTER config args so SLURM's last-directive-wins semantics let
+        # runtime values shadow config values per flag without parser logic
+        # for the actual override mechanism.
+        #
+        # Override detection (transparency side-channel): when extra_sbatch_args
+        # contains a flag that matches a config-derived directive — either an
+        # always-emitted directive (--partition / --account / --nodes / --gres /
+        # --time / --output / --error / --job-name / --exclusive) emitted in
+        # the script template below, or a flag in
+        # cfg_analysis.additional_SBATCH_params — an INFO
+        # "[extra_sbatch_args] OVERRIDE" message is printed naming the flag,
+        # the origin of the original value, and the new runtime value. The
+        # merge itself remains a plain append; the print is a side-channel
+        # surfacing that lets users confirm what their runtime override
+        # actually does. Emitted only when `extra_sbatch_args` is non-empty.
+        combined_sbatch_params: list[str] = []
+        if self.cfg_analysis.additional_SBATCH_params:
+            combined_sbatch_params.extend(self.cfg_analysis.additional_SBATCH_params)
+        if extra_sbatch_args:
+            config_emitted_directives: dict[str, tuple[str, str]] = {
+                "--job-name": ("hardcoded in script template", "triton_workflow"),
+                "--partition": (
+                    "cfg_analysis.hpc_ensemble_partition",
+                    str(self.cfg_analysis.hpc_ensemble_partition),
+                ),
+                "--account": (
+                    "cfg_analysis.hpc_account",
+                    str(self.cfg_analysis.hpc_account),
+                ),
+                "--nodes": (
+                    "cfg_analysis.hpc_total_nodes (or override_hpc_total_nodes runtime kwarg)",
+                    str(total_nodes),
+                ),
+                "--exclusive": ("hardcoded in script template", ""),
+                "--time": (
+                    "cfg_analysis.hpc_total_job_duration_min",
+                    estimated_time,
+                ),
+                "--output": (
+                    "computed from analysis_paths.analysis_log_directory",
+                    f"{batch_log_path}/workflow_*_%j.out",
+                ),
+                "--error": (
+                    "computed from analysis_paths.analysis_log_directory",
+                    f"{batch_log_path}/workflow_*_%j.out",
+                ),
+            }
+            if gpu_directive:
+                gres_value = gpu_directive.replace("#SBATCH ", "").strip()
+                config_emitted_directives["--gres"] = (
+                    "cfg_analysis.hpc_gpus_per_node + cfg_system.gpu_hardware",
+                    gres_value,
+                )
+            for cfg_arg in (self.cfg_analysis.additional_SBATCH_params or []):
+                cfg_flag = cfg_arg.split("=", 1)[0].split(" ", 1)[0].strip()
+                config_emitted_directives[cfg_flag] = (
+                    "cfg_analysis.additional_SBATCH_params",
+                    cfg_arg,
+                )
+            for runtime_arg in extra_sbatch_args:
+                runtime_flag = runtime_arg.split("=", 1)[0].split(" ", 1)[0].strip()
+                if runtime_flag in config_emitted_directives:
+                    origin, original = config_emitted_directives[runtime_flag]
+                    print(
+                        f"[extra_sbatch_args] OVERRIDE: '{runtime_flag}' "
+                        f"was '{original}' (from {origin}), "
+                        f"now '{runtime_arg}' (from extra_sbatch_args runtime kwarg)",
+                        flush=True,
+                    )
+            combined_sbatch_params.extend(extra_sbatch_args)
+        additional_sbatch_args = ""
+        if combined_sbatch_params:
+            additional_sbatch_args = "#SBATCH "
+            additional_sbatch_args += "\n#SBATCH ".join(combined_sbatch_params)
 
         script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_workflow
@@ -2128,6 +2204,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         wait_for_completion: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit workflow as a single SLURM batch job.
@@ -2147,6 +2224,19 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
         override_hpc_total_nodes : int | None
             If provided, overrides cfg_analysis.hpc_total_nodes for this submission
             without mutating the config object. Only valid for 1_job_many_srun_tasks mode.
+        extra_sbatch_args : list[str] | None
+            Optional list of additional SBATCH directive strings appended to the
+            generated run_workflow_1job.sh script after every other source of
+            #SBATCH directives — both the always-emitted directives derived from
+            cfg_analysis fields (--partition, --account, --nodes, --gres, --time,
+            --output, --error) and the directives in
+            cfg_analysis.additional_SBATCH_params. Any flag in extra_sbatch_args
+            that matches a flag emitted earlier in the script WILL OVERRIDE the
+            config-derived value via SLURM's last-directive-wins parser
+            semantics. When such an override is detected, an informational
+            "[extra_sbatch_args] OVERRIDE: ..." message is printed naming the
+            flag, the origin of the original value (e.g.
+            cfg_analysis.hpc_ensemble_partition), and the new runtime value.
 
         Returns
         -------
@@ -2177,7 +2267,10 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
 
             # Generate submission script
             script_path = self._generate_single_job_submission_script(
-                snakefile_path, config_dir, override_hpc_total_nodes=override_hpc_total_nodes
+                snakefile_path,
+                config_dir,
+                override_hpc_total_nodes=override_hpc_total_nodes,
+                extra_sbatch_args=extra_sbatch_args,
             )
 
             if verbose:
@@ -3056,6 +3149,7 @@ exit $snakemake_status
         override_hpc_total_nodes: int | None = None,
         report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake.
@@ -3125,6 +3219,17 @@ exit $snakemake_status
                 config_path=None,
             )
 
+        if extra_sbatch_args is not None and multi_sim_method != "1_job_many_srun_tasks":
+            raise ConfigurationError(
+                field="extra_sbatch_args",
+                message=(
+                    f"extra_sbatch_args is only valid when multi_sim_run_method='1_job_many_srun_tasks' "
+                    f"(it appends #SBATCH lines to the generated run_workflow_1job.sh), "
+                    f"but current method is '{multi_sim_method}'."
+                ),
+                config_path=None,
+            )
+
         if multi_sim_method == "1_job_many_srun_tasks":
             # Always submit a batch job for 1-job mode
             if verbose:
@@ -3178,6 +3283,7 @@ exit $snakemake_status
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                extra_sbatch_args=extra_sbatch_args,
             )
 
             self.analysis._refresh_log()
@@ -4152,6 +4258,7 @@ rule plot_per_sim_per_sa_conduit_flow:
         override_hpc_total_nodes: int | None = None,
         report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -4238,6 +4345,17 @@ rule plot_per_sim_per_sa_conduit_flow:
                 config_path=None,
             )
 
+        if extra_sbatch_args is not None and multi_sim_method != "1_job_many_srun_tasks":
+            raise ConfigurationError(
+                field="extra_sbatch_args",
+                message=(
+                    f"extra_sbatch_args is only valid when multi_sim_run_method='1_job_many_srun_tasks' "
+                    f"(it appends #SBATCH lines to the generated run_workflow_1job.sh), "
+                    f"but current method is '{multi_sim_method}'."
+                ),
+                config_path=None,
+            )
+
         if multi_sim_method == "1_job_many_srun_tasks":
             # Always submit a batch job for 1-job mode
             if verbose:
@@ -4299,6 +4417,7 @@ rule plot_per_sim_per_sa_conduit_flow:
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
                 override_hpc_total_nodes=override_hpc_total_nodes,
+                extra_sbatch_args=extra_sbatch_args,
             )
 
             self.sensitivity_analysis._update_master_analysis_log()

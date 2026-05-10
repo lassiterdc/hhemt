@@ -1485,6 +1485,7 @@ class TRITONSWMM_analysis:
         report_config: "Path | None" = None,
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
+        extra_sbatch_args: list[str] | None = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1513,6 +1514,42 @@ class TRITONSWMM_analysis:
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
+        extra_sbatch_args : list[str] | None
+            Optional list of additional SBATCH directive strings (e.g.,
+            ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
+            append to the generated ``run_workflow_1job.sh`` script. Each list
+            element is emitted as one ``#SBATCH <element>`` line, after every
+            other source of ``#SBATCH`` directives in the script — both the
+            always-emitted directives derived from config fields
+            (``--job-name``, ``--partition`` from
+            ``cfg_analysis.hpc_ensemble_partition``, ``--account`` from
+            ``cfg_analysis.hpc_account``, ``--nodes`` from
+            ``cfg_analysis.hpc_total_nodes`` (or the
+            ``override_hpc_total_nodes`` runtime kwarg), ``--exclusive``,
+            ``--gres`` from ``cfg_analysis.hpc_gpus_per_node`` +
+            ``cfg_system.gpu_hardware``, ``--time`` from
+            ``cfg_analysis.hpc_total_job_duration_min``, ``--output``,
+            ``--error``) AND the directives in the
+            ``cfg_analysis.additional_SBATCH_params`` config list.
+
+            **Override behavior**: any flag in ``extra_sbatch_args`` that
+            matches a flag emitted earlier in the script — whether that earlier
+            directive came from a top-level ``cfg_analysis`` field
+            (``hpc_ensemble_partition``, ``hpc_account``, ``hpc_total_nodes``,
+            ``hpc_total_job_duration_min``, ``hpc_gpus_per_node``, etc.) or
+            from the ``cfg_analysis.additional_SBATCH_params`` list — WILL
+            OVERRIDE the config-derived value via SLURM's last-directive-wins
+            parser semantics. When such an override is detected, an
+            informational ``[extra_sbatch_args] OVERRIDE: ...`` message is
+            printed naming the flag, the origin of the original value
+            (e.g. ``cfg_analysis.hpc_ensemble_partition``), and the new
+            runtime value, so the user can confirm the override took effect
+            as intended.
+
+            Only valid for ``multi_sim_run_method="1_job_many_srun_tasks"``;
+            raises ``ConfigurationError`` otherwise (a fail-fast guard
+            preventing the user from believing they are controlling the
+            experiment when the kwarg would silently no-op in another mode).
 
         Returns
         -------
@@ -1698,6 +1735,7 @@ class TRITONSWMM_analysis:
             "override_hpc_total_nodes": override_hpc_total_nodes,
             "report_config_path": self._cfg_report_path,
             "report_formats": report_formats,
+            "extra_sbatch_args": extra_sbatch_args,
         }
 
         if verbose:
@@ -2070,6 +2108,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2158,6 +2197,7 @@ class TRITONSWMM_analysis:
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_config_path=report_config_path,
                 report_formats=report_formats,
+                extra_sbatch_args=extra_sbatch_args,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2181,6 +2221,7 @@ class TRITONSWMM_analysis:
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_config_path=report_config_path,
                 report_formats=report_formats,
+                extra_sbatch_args=extra_sbatch_args,
             )
 
         if dry_run and result.get("success"):
