@@ -135,12 +135,12 @@ def add_panel_label(ax, label: str) -> None:
 
 
 def emit_plot_with_sources(
-    fig: plt.Figure,
+    fig: plt.Figure | str,
     output_path: Path,
     source_paths: Iterable[Path],
     analysis_dir: Path,
-    dpi: int,
-    output_format: Literal["png", "svg"] = "png",
+    dpi: int | None = None,
+    output_format: Literal["png", "svg", "html"] = "png",
     preview_dpi: int = 100,
     manifest_data: dict[str, Any] | None = None,
     provenance: ProvenanceLog | None = None,
@@ -201,7 +201,30 @@ def emit_plot_with_sources(
     -------
     Path
         `output_path` unchanged, for chaining.
+
+    Notes
+    -----
+    The first argument may be either a ``matplotlib.figure.Figure`` (legacy
+    matplotlib branch) or a ``str`` (HTML branch — for renderers that emit
+    interactive HTML via Plotly, Tabulator, etc.). Branch selection is on
+    ``isinstance(fig, str)``. The HTML branch writes ``fig`` verbatim to
+    ``output_path``, emits a uniform ``<stem>.manifest.json`` sidecar with
+    ``output_format: "html"``, skips preview-PNG emission (Snakemake renders
+    HTML in iframes directly), and does not call ``plt.close``.
     """
+    # Branch on figure type. The HTML-string branch writes the HTML verbatim
+    # and emits a manifest sidecar; no preview-PNG sibling, no matplotlib
+    # state to close. The matplotlib-Figure branch is the legacy path.
+    if isinstance(fig, str):
+        return _emit_html_with_sources(
+            html_text=fig,
+            output_path=output_path,
+            source_paths=source_paths,
+            analysis_dir=analysis_dir,
+            manifest_data=manifest_data,
+            provenance=provenance,
+        )
+    # Fall-through: matplotlib Figure branch (existing behavior unchanged below).
     analysis_root = str(analysis_dir.resolve())
     # Reject directory-as-source per Iter 8 agenda item 4 — all plottable data
     # lives in files. Catches future regressions where a collector emits a
@@ -246,10 +269,10 @@ def emit_plot_with_sources(
         format="png",
         metadata=preview_metadata,
     )
-    manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
-    manifest = {
+    manifest_payload: dict[str, Any] = {
         "full_res_path": str(output_path),
         "preview_path": str(preview_path),
+        "output_format": output_format,
         "full_res_format": output_format,
         "full_res_dpi": dpi,
         "preview_dpi": preview_dpi,
@@ -260,12 +283,82 @@ def emit_plot_with_sources(
         "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
     }
     if manifest_data:
-        manifest["renderer_data"] = manifest_data
+        manifest_payload["renderer_data"] = manifest_data
     if provenance is not None:
-        manifest["artists"] = provenance.serialize()
-    manifest_path.write_text(json.dumps(manifest, indent=2, default=str))
+        manifest_payload["artists"] = provenance.serialize()
+    _emit_manifest_sidecar(output_path, manifest_payload)
 
     plt.close(fig)
+    return output_path
+
+
+def _emit_manifest_sidecar(output_path: Path, manifest_payload: dict[str, Any]) -> Path:
+    """Single-source-of-truth writer for ``<stem>.manifest.json`` siblings.
+
+    Both the matplotlib branch and the HTML-string branch of
+    :func:`emit_plot_with_sources` call this helper after constructing
+    their own ``manifest_payload`` dict. Centralizing the JSON-encoding
+    + indent + filename-derivation logic here keeps the schema and
+    formatting conventions in a single place.
+    """
+    manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest_payload, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return manifest_path
+
+
+def _emit_html_with_sources(
+    html_text: str,
+    output_path: Path,
+    source_paths: Iterable[Path],
+    analysis_dir: Path,
+    manifest_data: dict[str, Any] | None,
+    provenance: "ProvenanceLog | None",
+) -> Path:
+    """HTML-branch counterpart to :func:`emit_plot_with_sources`.
+
+    Writes ``html_text`` verbatim to ``output_path`` (UTF-8). Emits a
+    ``<stem>.manifest.json`` sidecar with the same top-level field set as
+    the matplotlib branch plus ``output_format: "html"``. No preview-PNG
+    sibling — Snakemake's report engine renders HTML in ``<iframe>``
+    directly; preview-rendering for subagent visual review is a separate
+    (out-of-scope here) Selenium/Playwright pass.
+
+    Matplotlib-only fields (preview_path, full_res_dpi, preview_dpi,
+    figure_size_inches, preview_size_bytes) are explicitly ``None`` so
+    consumers see a uniform key set across branches.
+    """
+    analysis_root = str(analysis_dir.resolve())
+    for _p in source_paths:
+        _validate_source_path(_p, analysis_dir=analysis_dir)
+    rel_sources = [
+        os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html_text, encoding="utf-8")
+    manifest_payload: dict[str, Any] = {
+        # Shared schema: keys present on both branches.
+        "full_res_path": str(output_path),
+        "output_format": "html",
+        "source_paths_relative": rel_sources,
+        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "full_res_size_bytes": output_path.stat().st_size,
+        # HTML-branch: explicit None for matplotlib-only fields so consumers
+        # see a uniform key set across branches.
+        "preview_path": None,
+        "full_res_format": "html",
+        "full_res_dpi": None,
+        "preview_dpi": None,
+        "figure_size_inches": None,
+        "preview_size_bytes": None,
+    }
+    if manifest_data is not None:
+        manifest_payload["renderer_data"] = manifest_data
+    if provenance is not None:
+        manifest_payload["artists"] = provenance.serialize()
+    _emit_manifest_sidecar(output_path, manifest_payload)
     return output_path
 
 

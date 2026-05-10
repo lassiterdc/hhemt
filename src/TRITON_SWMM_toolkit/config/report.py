@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
@@ -205,12 +205,221 @@ class PerSimFigureSpec(cfgBaseModel):
     vmax: float | None = Field(None)
 
 
+class InteractiveBackendConfig(cfgBaseModel):
+    """Top-level interactive-output toggles. Applies to ALL renderers that
+    emit HTML; matplotlib-PNG renderers ignore this block."""
+
+    enabled: bool = Field(
+        False,
+        description=(
+            "Master switch. When False, renderers emit static PNG via the "
+            "matplotlib branch of emit_plot_with_sources (legacy behavior). "
+            "When True, renderers with an HTML emit-path emit HTML via the "
+            "str branch of emit_plot_with_sources. Defaults to False during "
+            "Phases 2-7 (per-renderer migrations); flipped to True at Phase 9 "
+            "so main remains shippable mid-migration."
+        ),
+    )
+    plotly_js_mode: Literal["cdn", "inline"] = Field(
+        "cdn",
+        description=(
+            "Plotly JS bundling. 'cdn' writes a SHA-256-SRI-hashed <script> "
+            "tag pointing at https://cdn.plot.ly/plotly-<version>.min.js — "
+            "tiny HTML files, requires online viewer. 'inline' embeds the "
+            "full ~3 MB bundle into every HTML file — works offline, large files."
+        ),
+    )
+    tabulator_js_mode: Literal["cdn", "inline"] = Field(
+        "cdn",
+        description=(
+            "Tabulator JS bundling. 'cdn' references "
+            "https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js. "
+            "'inline' embeds the ~420 KB TabulatorFull bundle."
+        ),
+    )
+    report_html_mode: Literal["html", "zip", "auto"] = Field(
+        "auto",
+        description=(
+            "Pass-through for analysis.render_report(format=...). 'auto' picks "
+            "'html' when total report-flagged size < 15 MB else 'zip'. "
+            "Snakemake's stated ceiling is ~10-20 MB total report-flagged "
+            "size; base64 encoding inflates by ~33%."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _check_interactive_consistency(self) -> "InteractiveBackendConfig":
+        """Cross-field rules for InteractiveBackendConfig.
+
+        Rule 1 (CDN-inside-ZIP orphan): if `report_html_mode == "zip"`, a CDN
+        js mode produces a ZIP that, once extracted on a viewer's machine,
+        requires online access for the JS bundle. The ZIP fallback exists
+        specifically because Snakemake's report ceiling is ~10–20 MB; in that
+        regime the user is choosing self-contained portability, so CDN-mode
+        JS is incoherent with ZIP output. Reject the combination.
+
+        Rule 2 (auto -> zip promotion when both bundles inline): retired.
+        The auto→zip eager-promotion rule mutated the validated model
+        post-construction, conflicting with the Pydantic field-immutability
+        contract. The 15 MB auto-picker at render time in
+        `analysis.render_report()` handles the inline-bundles-blow-budget
+        case naturally without requiring construction-time coercion.
+
+        Rule 3 (orphan-config when disabled): if `enabled is False`, the
+        three mode fields are inert (matplotlib-PNG branch ignores them).
+        We do not error — leaving non-default mode values when disabled is a
+        legitimate "pre-set my preferred interactive config; flip enabled
+        later" workflow.
+        """
+        if self.enabled and self.report_html_mode == "zip":
+            if self.plotly_js_mode == "cdn":
+                raise ValueError(
+                    "InteractiveBackendConfig: report_html_mode='zip' is "
+                    "incompatible with plotly_js_mode='cdn' — a ZIP "
+                    "fallback is chosen for self-contained portability, "
+                    "but CDN-mode JS requires online access at view time. "
+                    "Set plotly_js_mode='inline' or report_html_mode='html'/'auto'."
+                )
+            if self.tabulator_js_mode == "cdn":
+                raise ValueError(
+                    "InteractiveBackendConfig: report_html_mode='zip' is "
+                    "incompatible with tabulator_js_mode='cdn' — see above."
+                )
+        return self
+
+
+class PerSimMapInteractiveConfig(cfgBaseModel):
+    """Interactive overrides for per_sim_peak_flood_depth + per_sim_conduit_flow."""
+
+    time_animation: bool = Field(
+        True,
+        description=(
+            "Render flood-depth raster as a Plotly animation with frames over "
+            "the time dim of max_wlevel_m + slider/play. False preserves the "
+            "legacy 'max-over-time' single-frame static map."
+        ),
+    )
+    datashader_threshold_cells: int = Field(
+        1_000_000,
+        description=(
+            "Pre-rasterize via Datashader Canvas.raster() when per-frame cell "
+            "count exceeds this. Below the threshold, frames go directly to "
+            "go.Heatmap. Tuned to keep per-frame JSON < ~5 MB."
+        ),
+    )
+    visible_layers_default: list[
+        Literal[
+            "depth_raster",
+            "watershed_boundary",
+            "swmm_conduits",
+            "swmm_nodes",
+            "rainfall_inset",
+        ]
+    ] = Field(
+        default_factory=lambda: [
+            "depth_raster",
+            "watershed_boundary",
+            "swmm_conduits",
+            "swmm_nodes",
+        ],
+        description=(
+            "Trace layers visible on initial render. User toggles via Plotly "
+            "legend (click hides, double-click isolates)."
+        ),
+    )
+    colorbar_range_lock: bool = Field(
+        False,
+        description=(
+            "When True, colorbar range is fixed at [depth_vmin, depth_vmax_fallback] "
+            "(existing PerSimMapConfig fields). When False, a Plotly RangeSlider "
+            "widget under the colorbar lets the user adjust [vmin, vmax] live "
+            "via Plotly.restyle."
+        ),
+    )
+
+
+class TableInteractiveConfig(cfgBaseModel):
+    """Tabulator defaults for per_analysis_summary + scenario_status_appendix."""
+
+    pagination_size: int = Field(
+        50,
+        description=(
+            "Rows per page (Tabulator option `paginationSize`). Set to 0 to "
+            "disable pagination and use virtual-scroll over full dataset "
+            "(requires height/minHeight/maxHeight to engage virtual DOM)."
+        ),
+    )
+    visible_columns_default: list[str] | None = Field(
+        None,
+        description=(
+            "Column slugs to mark visible:true initially. None means all "
+            "visible. User toggles via headerMenu."
+        ),
+    )
+    header_filter: bool = Field(
+        True,
+        description=(
+            "Per-column header-filter input. Built-in match types =, !=, like, "
+            "keywords, starts, ends, <, <=, >, >=, in, regex."
+        ),
+    )
+    table_height: str = Field(
+        "70vh",
+        description=(
+            "Tabulator `height` option (CSS length string). Required for the "
+            "virtual DOM to engage — per tabulator-architecture: 'tables MUST "
+            "have height set or virtual DOM disengages and rendering becomes "
+            "slow at scale'. RowManager.initializeRenderer reads "
+            "options.height once at construction; iframe-external CSS height "
+            "is not seen by Tabulator. Use a CSS viewport-height ('70vh') so "
+            "the iframe scales naturally."
+        ),
+    )
+    persistence_id: str | None = Field(
+        None,
+        description=(
+            "Tabulator localStorage key. When set, user's filter/sort/"
+            "column-visibility state persists across browser reloads."
+        ),
+    )
+
+    @field_validator("persistence_id")
+    @classmethod
+    def _persistence_id_charset(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not re.fullmatch(r"[A-Za-z0-9_.\-]+", v):
+            raise ValueError(
+                f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ "
+                f"(Tabulator localStorage-key safe)."
+            )
+        return v
+
+    @field_validator("visible_columns_default")
+    @classmethod
+    def _visible_columns_charset(
+        cls, v: list[str] | None
+    ) -> list[str] | None:
+        if v is None:
+            return v
+        for col in v:
+            if not re.fullmatch(r"[A-Za-z0-9_.\-]+", col):
+                raise ValueError(
+                    f"visible_columns_default contains {col!r} which must "
+                    f"match ^[A-Za-z0-9_.\\-]+$ (Tabulator column-id safe)."
+                )
+        return v
+
+
 class PerSimConfig(cfgBaseModel):
     map: PerSimMapConfig = Field(default_factory=PerSimMapConfig)
     hydrology_panel: HydrologyPanelConfig = Field(default_factory=HydrologyPanelConfig)
     peak_flood_depth: PerSimFigureSpec = Field(default_factory=PerSimFigureSpec)
     conduit_flow: PerSimFigureSpec = Field(
         default_factory=lambda: PerSimFigureSpec(cmap="plasma")
+    )
+    interactive: PerSimMapInteractiveConfig = Field(
+        default_factory=PerSimMapInteractiveConfig
     )
 
 
@@ -250,6 +459,9 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
         description="Constant additional figure height. Verbatim `0.7` line 150.",
     )
     figure_width_inches: float = Field(8.0)
+    interactive: TableInteractiveConfig = Field(
+        default_factory=TableInteractiveConfig
+    )
 
 
 class SensitivityReportConfig(cfgBaseModel):
@@ -404,8 +616,12 @@ class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
 class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     """HTML inline-style overrides for the scenario_status_appendix renderer."""
 
+    interactive: TableInteractiveConfig = Field(
+        default_factory=TableInteractiveConfig
+    )
+
     def render_inline_css(self) -> str:
-        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump())
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive"}))
 
 
 class report_config(cfgBaseModel):
@@ -427,6 +643,9 @@ class report_config(cfgBaseModel):
             "Required when the analysis is a sensitivity analysis; ignored for "
             "main analyses. Cross-field validation occurs at analysis.run() entry."
         ),
+    )
+    interactive: InteractiveBackendConfig = Field(
+        default_factory=InteractiveBackendConfig
     )
 
 

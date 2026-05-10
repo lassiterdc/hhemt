@@ -524,3 +524,51 @@ def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     analysis.render_report(format="html")
     html = (analysis.analysis_paths.analysis_dir / "analysis_report.html").read_text()
     assert "Sources:" in html
+
+
+def test_emit_plot_with_sources_html_branch(tmp_path):
+    """The HTML-string branch writes verbatim and emits a uniform manifest sidecar.
+
+    Phase 1 substrate: ``emit_plot_with_sources(fig: str, ...)`` routes to
+    ``_emit_html_with_sources``, writing the HTML text to ``output_path``
+    UTF-8 and a ``<stem>.manifest.json`` sidecar with ``output_format: 'html'``
+    and explicit ``None`` for matplotlib-only manifest fields.
+    """
+    import json
+
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+
+    output_path = tmp_path / "fig.html"
+    analysis_dir = tmp_path
+    source_file = tmp_path / "src.csv"
+    source_file.write_text("a,b\n1,2\n", encoding="utf-8")
+
+    html_text = "<html><body><div id='x'>example</div></body></html>"
+    returned_path = emit_plot_with_sources(
+        html_text,
+        output_path,
+        [source_file],
+        analysis_dir=analysis_dir,
+        output_format="html",
+        manifest_data={"renderer": "test", "panel_count": 1},
+    )
+
+    assert returned_path == output_path
+    assert output_path.read_text(encoding="utf-8") == html_text
+    manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["output_format"] == "html"
+    assert manifest["full_res_path"] == str(output_path)
+    assert manifest["source_paths_relative"] == ["src.csv"]
+    assert manifest["renderer_data"]["renderer"] == "test"
+    # No preview-PNG sibling on the HTML branch
+    preview_path = output_path.parent / f"{output_path.stem}.preview.png"
+    assert not preview_path.exists()
+    # Matplotlib-only fields explicitly None for uniform consumer surface
+    assert manifest["preview_path"] is None
+    assert manifest["full_res_dpi"] is None
+    assert manifest["preview_dpi"] is None
+    assert manifest["figure_size_inches"] is None
+    assert manifest["preview_size_bytes"] is None
