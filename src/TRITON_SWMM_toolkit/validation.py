@@ -841,6 +841,44 @@ def _validate_units(cfg: analysis_config, result: ValidationResult):
 
 
 # ============================================================================
+# Interactive-Output Runtime-Dependency Check
+# ============================================================================
+
+
+def _check_interactive_dependencies(report_cfg, result: ValidationResult) -> None:
+    """Warn when interactive.enabled=True but runtime imports fail.
+
+    Cross-field rules (CDN-with-ZIP) are enforced authoritatively in
+    ``InteractiveBackendConfig._check_interactive_consistency``. This
+    preflight helper is responsible only for runtime import availability;
+    it does NOT duplicate cross-field rule enforcement.
+    """
+    if not report_cfg.interactive.enabled:
+        return
+    try:
+        import plotly  # noqa: F401
+    except ImportError:
+        result.add_warning(
+            field="report_config.interactive.enabled",
+            message=(
+                "interactive.enabled=True but `plotly` is not importable. "
+                "Run `pip install -e .` to install Phase 1 deps."
+            ),
+        )
+    try:
+        import datashader  # noqa: F401
+    except ImportError:
+        result.add_warning(
+            field="report_config.interactive.enabled",
+            message=(
+                "interactive.enabled=True but `datashader` is not importable. "
+                "per_sim_peak_flood_depth above the cell-count threshold "
+                "will fail at render time."
+            ),
+        )
+
+
+# ============================================================================
 # Combined Preflight Validation
 # ============================================================================
 
@@ -848,6 +886,7 @@ def _validate_units(cfg: analysis_config, result: ValidationResult):
 def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
+    report_cfg: Optional[Any] = None,
 ) -> ValidationResult:
     """Run full preflight validation on system and analysis configs.
 
@@ -857,6 +896,11 @@ def preflight_validate(
     Args:
         cfg_system: System configuration
         cfg_analysis: Analysis configuration
+        report_cfg: Optional report configuration. When provided, the
+            interactive-output runtime-dependency check runs (warns when
+            ``interactive.enabled=True`` but ``plotly`` / ``datashader``
+            fail to import). Typed as ``Any`` to avoid a circular import
+            from ``config.report``.
 
     Returns:
         ValidationResult with all errors and warnings
@@ -880,5 +924,11 @@ def preflight_validate(
     # Validate data cross-consistency
     data_result = validate_data_consistency(cfg_system, cfg_analysis)
     result.merge(data_result)
+
+    # Interactive-output runtime-dependency check (Phase 1 substrate).
+    # Warns only — does not fail-fast — because the matplotlib branch
+    # remains the default until Phase 9 flips ``interactive.enabled`` to True.
+    if report_cfg is not None:
+        _check_interactive_dependencies(report_cfg, result)
 
     return result
