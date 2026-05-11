@@ -137,7 +137,17 @@ class HydrologyMapPanelStyle(cfgBaseModel):
 
 class ElevationPanelStyle(cfgBaseModel):
     """system_overview DEM panel formatting."""
-    cmap: str = Field("terrain")
+    cmap: str = Field(
+        "cividis",
+        description=(
+            "Perceptually-uniform CVD-safe sequential colormap for DEM "
+            "elevation. Previous default 'terrain' is a cartographic-mimic "
+            "palette with green-brown luminance non-monotonicity and fails "
+            "deuteranope/protanope CVD simulation (per Moreland 2016 / "
+            "Wilke 2019 Ch. 19). 'cividis' is the CVD-optimized viridis-"
+            "family variant. Overridable per-deployment via report_config.yaml."
+        ),
+    )
     over_color: str = Field("#808080")
     wall_threshold_fraction: float = Field(
         0.9,
@@ -223,10 +233,14 @@ class InteractiveBackendConfig(cfgBaseModel):
     plotly_js_mode: Literal["cdn", "inline"] = Field(
         "cdn",
         description=(
-            "Plotly JS bundling. 'cdn' writes a SHA-256-SRI-hashed <script> "
-            "tag pointing at https://cdn.plot.ly/plotly-<version>.min.js — "
-            "tiny HTML files, requires online viewer. 'inline' embeds the "
-            "full ~3 MB bundle into every HTML file — works offline, large files."
+            "Plotly JS bundling. 'cdn' writes a plain <script src=\"https://"
+            "cdn.plot.ly/plotly-<version>.min.js\"> tag (no SRI integrity "
+            "attribute — plotly.py 6.x does NOT emit SRI by default, and the "
+            "per-version SHA-256 maintenance is out of scope for this "
+            "renderer; see follow-up idea in scratch). Tiny HTML files, "
+            "requires online viewer at view time. 'inline' embeds the full "
+            "~3 MB bundle into every HTML file — works offline, large files, "
+            "archival-safe."
         ),
     )
     tabulator_js_mode: Literal["cdn", "inline"] = Field(
