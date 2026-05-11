@@ -3748,6 +3748,20 @@ rule setup:
 
 '''
 
+        # Write per-sa_id input fingerprint files (compare-and-write).
+        # Per-sa_id input fingerprint files declared as `input:` of every
+        # sub-analysis rule. When a row in the parent sensitivity CSV/Excel
+        # changes (any independent_vars column value), the corresponding
+        # fingerprint file's content changes → its mtime bumps → Snakemake's
+        # mtime trigger re-runs only that sa_id's rule chain.
+        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        status_dir.mkdir(parents=True, exist_ok=True)
+        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
+            fingerprint_path = status_dir / f"sa-{sa_id}_inputs.json"
+            self.sensitivity_analysis._write_sa_id_fingerprint(
+                sub_analysis, fingerprint_path
+            )
+
         # Generate simulation rules for each sub-analysis
         subanalysis_flags = []
         for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
@@ -3827,7 +3841,9 @@ rule setup:
                     prep_outflag = f"_status/b_prepare_sa-{sa_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {prep_rule_name}:
-    input: "_status/a_setup_complete.flag"
+    input:
+        "_status/a_setup_complete.flag",
+        "_status/sa-{sa_id}_inputs.json"
     output: "{prep_outflag}"
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
     conda: "{conda_env_path}"
@@ -3850,10 +3866,12 @@ rule setup:
                 # Phase 2: Simulation execution
                 sim_rule_name = f"simulation_sa_{sa_id_rule}_evt_{event_id_rule}"
                 sim_outflag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
-                sim_input = f'"{prep_outflag}"' if prepare_scenarios else '"_status/a_setup_complete.flag"'
+                upstream_flag = prep_outflag if prepare_scenarios else "_status/a_setup_complete.flag"
 
                 snakefile_content += f'''rule {sim_rule_name}:
-    input: {sim_input}
+    input:
+        "{upstream_flag}",
+        "_status/sa-{sa_id}_inputs.json"
     output: "{sim_outflag}"
     log: "{log_dir_str}/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
@@ -3880,7 +3898,9 @@ rule setup:
                     process_outflag = f"_status/d_process_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
 
                     snakefile_content += f'''rule {process_rule_name}:
-    input: "{sim_outflag}"
+    input:
+        "{sim_outflag}",
+        "_status/sa-{sa_id}_inputs.json"
     output: "{process_outflag}"
     log: "{log_dir_str}/sims/{process_rule_name}.log"
     conda: "{conda_env_path}"
@@ -3914,8 +3934,10 @@ rule setup:
             # Consolidate outputs after all sims have been run. Sanitize for
             # use as a Snakemake rule identifier.
             prefix = self.sensitivity_analysis.sub_analyses_prefix  # type: ignore
+            consolidate_inputs = [f'"{flag}"' for flag in sub_analysis_sim_flags]
+            consolidate_inputs.append(f'"_status/sa-{sa_id}_inputs.json"')
             snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
-    input: {", ".join([f'"{flag}"' for flag in sub_analysis_sim_flags])}
+    input: {", ".join(consolidate_inputs)}
     output: "{subanalysis_flag}"
     log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"
     conda: "{conda_env_path}"
