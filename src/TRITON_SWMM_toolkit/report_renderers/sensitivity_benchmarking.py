@@ -34,7 +34,10 @@ from typing import TYPE_CHECKING, Any
 import matplotlib.pyplot as plt
 import matplotlib.ticker as mticker
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.io as pio
 import xarray as xr
+from plotly.subplots import make_subplots
 
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import emit_plot_with_sources
 from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
@@ -109,8 +112,31 @@ def render(
     df["compute_disp"] = df["compute_hr"] * cost_factor
 
     prov = ProvenanceLog()
-
     sens_cfg = report_cfg.sensitivity
+
+    if report_cfg.interactive.enabled:
+        # Pre-compute speedup + efficiency (same call sites as matplotlib branch).
+        speedup_pg = _compute_speedup_per_group(
+            df, t_col="wallclock_s", indep_col="n_devices",
+            group_col="group_value", baseline_mode="global",
+        )
+        strong_eff_pg = _compute_efficiency_per_group(
+            df, t_col="wallclock_s", indep_col="n_devices",
+            group_col="group_value", mode="strong", baseline_mode="global",
+        )
+        if analysis.cfg_analysis.sensitivity_analysis is not None:
+            source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
+        return _render_plotly_branch(
+            df, speedup_pg, strong_eff_pg,
+            wall_unit=wall_unit, cost_unit=cost_unit,
+            independent_var=independent_var, group_by_var=group_by_var,
+            sens_cfg=sens_cfg,
+            output_path=output_path, source_paths=source_paths,
+            analysis_dir=analysis.analysis_paths.analysis_dir,
+            plotly_js_mode=report_cfg.interactive.plotly_js_mode,
+            prov=prov,
+        )
+
     fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
         4, 1, figsize=tuple(sens_cfg.figsize_inches), sharex=True
     )
@@ -547,3 +573,277 @@ def _scalar_at_event(da: xr.DataArray, event_iloc: int) -> float | None:
         return float(da.values.item())
     except (TypeError, ValueError):
         return None
+
+
+def _render_plotly_branch(
+    df: pd.DataFrame,
+    speedup_per_group: dict,
+    strong_eff_per_group: dict,
+    *,
+    wall_unit: str,
+    cost_unit: str,
+    independent_var: str,
+    group_by_var: str | None,
+    sens_cfg,
+    output_path: Path,
+    source_paths: list,
+    analysis_dir,
+    plotly_js_mode: str,
+    prov: ProvenanceLog,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
+    Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
+    stacked rows=4, cols=1 with shared x-axis. One trace per group_by_var value
+    per panel, sharing the Okabe-Ito palette (sens_cfg.palette) as Plotly's
+    colorway. Informationally congruent with the matplotlib branch — no hover
+    refinement, no line-toggle UX, no per-panel zoom/pan customization.
+    """
+    # Side-effect import: registers `triton_journal` Plotly template.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
+
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True,
+        vertical_spacing=0.045,
+        subplot_titles=(
+            sens_cfg.title or "Sensitivity benchmarking",
+            "Compute cost",
+            "Strong-scaling speedup",
+            "Parallel efficiency",
+        ),
+    )
+    fig.update_layout(
+        template="plotly_white",
+        colorway=list(sens_cfg.palette),
+        showlegend=True,
+        legend=dict(
+            title=group_by_var if group_by_var is not None else "",
+            orientation="v", yanchor="top", y=1.0, xanchor="left", x=1.02,
+        ),
+        margin=dict(l=10, r=120, t=80, b=80),
+    )
+
+    # ---- Panels 1 + 2: wallclock + compute-cost -------------------------
+    for row, y_col, panel_id in (
+        (1, "wallclock_disp", "ax_wall_plotly"),
+        (2, "compute_disp", "ax_cost_plotly"),
+    ):
+        _plotly_metric_panel(
+            fig, df, y_col=y_col, row=row, panel_id=panel_id,
+            group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov,
+            show_in_legend=(row == 1),
+        )
+
+    # ---- Panels 3 + 4: speedup + efficiency -----------------------------
+    _plotly_metric_panel_precomputed(
+        fig, speedup_per_group, df_for_groups=df, row=3,
+        panel_id="ax_speedup_plotly",
+        ideal_kind="linear", x_max=float(df["n_devices"].max()),
+        ideal_label="Ideal speedup (S=N)",
+        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+    )
+    _plotly_metric_panel_precomputed(
+        fig, strong_eff_per_group, df_for_groups=df, row=4,
+        panel_id="ax_efficiency_plotly",
+        ideal_kind="constant", ideal_value=1.0, x_max=float(df["n_devices"].max()),
+        ideal_label="Ideal efficiency (=1.0)",
+        sens_cfg=sens_cfg, prov=prov, show_in_legend=False,
+    )
+
+    # ---- Axis labels + tickers ------------------------------------------
+    xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
+    fig.update_xaxes(title_text="", row=1, col=1)
+    fig.update_xaxes(title_text="", row=2, col=1)
+    fig.update_xaxes(title_text="", row=3, col=1)
+    fig.update_xaxes(title_text=xlabel_text, row=4, col=1)
+    fig.update_yaxes(title_text=f"Wall-clock ({wall_unit})", row=1, col=1)
+    fig.update_yaxes(title_text=f"Compute cost ({cost_unit} × devices)", row=2, col=1)
+    fig.update_yaxes(title_text="Strong-scaling speedup S(N) = t(1) / t(N)", row=3, col=1)
+    fig.update_yaxes(title_text="Strong-scaling efficiency Es(N) = t(1) / (N · t(N))", row=4, col=1)
+    if sens_cfg.show_gridlines:
+        for r in range(1, 5):
+            fig.update_xaxes(
+                showgrid=True, gridcolor=sens_cfg.gridline_color,
+                gridwidth=sens_cfg.gridline_width, row=r, col=1,
+            )
+            fig.update_yaxes(
+                showgrid=True, gridcolor=sens_cfg.gridline_color,
+                gridwidth=sens_cfg.gridline_width, row=r, col=1,
+            )
+
+    # ---- Emit -----------------------------------------------------------
+    plotly_config = {
+        "displayModeBar": True,
+        "displaylogo": False,
+        "modeBarButtonsToRemove": [
+            "lasso2d", "select2d", "autoScale2d",
+            "hoverCompareCartesian", "hoverClosestCartesian",
+            "toggleSpikelines",
+        ],
+        "toImageButtonOptions": {
+            "format": "svg", "filename": "sensitivity_benchmarking", "scale": 2,
+        },
+    }
+    html_text = pio.to_html(
+        fig, include_plotlyjs=plotly_js_mode,
+        full_html=True, config=plotly_config,
+    )
+
+    return emit_plot_with_sources(
+        html_text, output_path, source_paths,
+        analysis_dir=analysis_dir,
+        output_format="html",
+        manifest_data={
+            "independent_var": independent_var,
+            "group_by_var": group_by_var,
+            "group_count": int(df["group_value"].nunique()),
+            "data_point_count": int(len(df)),
+            "wall_unit": wall_unit,
+            "cost_unit": cost_unit,
+        },
+        provenance=prov,
+    )
+
+
+def _plotly_metric_panel(
+    fig,
+    df: pd.DataFrame,
+    *,
+    y_col: str,
+    row: int,
+    panel_id: str,
+    group_by_var: str | None,
+    sens_cfg,
+    prov: ProvenanceLog,
+    show_in_legend: bool,
+) -> None:
+    """Plot one of the wallclock/compute-cost panels (raw data per group)."""
+    groups = sorted(df["group_value"].dropna().unique(), key=str)
+    for i, gv in enumerate(groups):
+        sub = df[df["group_value"] == gv].sort_values("indep_value")
+        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        is_gpu_group = str(gv).lower() == "gpu"
+        is_single_point_group = (
+            str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
+            or len(sub) == 1
+        )
+        marker_symbol = "diamond" if is_gpu_group else "circle"
+        if not is_single_point_group:
+            per_x_min = sub.groupby("indep_value", as_index=True)[y_col].min().sort_index()
+            with prov.artist(
+                axes_id=panel_id, kind="line",
+                note=f"multi-point line {gv} (panel {panel_id})",
+            ) as a:
+                a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+                fig.add_trace(
+                    go.Scatter(
+                        x=per_x_min.index, y=per_x_min.values,
+                        mode="lines",
+                        line=dict(color=color, dash="dash",
+                                  width=sens_cfg.line_width),
+                        legendgroup=str(gv), name=str(gv),
+                        showlegend=False, hoverinfo="skip",
+                    ),
+                    row=row, col=1,
+                )
+        with prov.artist(
+            axes_id=panel_id, kind="scatter",
+            note=f"markers {gv} (panel {panel_id})",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            fig.add_trace(
+                go.Scatter(
+                    x=sub["indep_value"], y=sub[y_col],
+                    mode="markers",
+                    marker=dict(
+                        symbol=marker_symbol,
+                        size=max(int(sens_cfg.point_size ** 0.5), 6),
+                        color=color, line=dict(color="black", width=1.0),
+                    ),
+                    legendgroup=str(gv), name=str(gv),
+                    showlegend=show_in_legend,
+                    hovertemplate=(
+                        f"<b>{gv}</b><br>"
+                        "x: %{x}<br>y: %{y:.3f}<extra></extra>"
+                    ),
+                ),
+                row=row, col=1,
+            )
+
+
+def _plotly_metric_panel_precomputed(
+    fig,
+    per_group_data: dict,
+    *,
+    df_for_groups: pd.DataFrame,
+    row: int,
+    panel_id: str,
+    ideal_kind: str,
+    x_max: float,
+    ideal_label: str,
+    sens_cfg,
+    prov: ProvenanceLog,
+    show_in_legend: bool,
+    ideal_value: float = 1.0,
+) -> None:
+    """Plot speedup / efficiency panel from precomputed per-group data."""
+    groups = sorted(df_for_groups["group_value"].dropna().unique(), key=str)
+    for i, gv in enumerate(groups):
+        if gv not in per_group_data:
+            continue
+        data = per_group_data[gv]
+        xs = data.get("xs") if isinstance(data, dict) else None
+        ys = data.get("ys") if isinstance(data, dict) else None
+        if xs is None or ys is None:
+            continue
+        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        is_gpu_group = str(gv).lower() == "gpu"
+        marker_symbol = "diamond" if is_gpu_group else "circle"
+        with prov.artist(
+            axes_id=panel_id, kind="line",
+            note=f"metric line {gv} (panel {panel_id})",
+        ) as a:
+            a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
+            fig.add_trace(
+                go.Scatter(
+                    x=xs, y=ys, mode="lines+markers",
+                    line=dict(color=color, dash="dash",
+                              width=sens_cfg.line_width),
+                    marker=dict(
+                        symbol=marker_symbol,
+                        size=max(int(sens_cfg.point_size ** 0.5), 6),
+                        color=color, line=dict(color="black", width=1.0),
+                    ),
+                    legendgroup=str(gv), name=str(gv),
+                    showlegend=show_in_legend,
+                    hovertemplate=(
+                        f"<b>{gv}</b><br>"
+                        "x: %{x}<br>y: %{y:.3f}<extra></extra>"
+                    ),
+                ),
+                row=row, col=1,
+            )
+    # Ideal reference line: linear (S=N) or constant (E=1.0).
+    if ideal_kind == "linear":
+        ideal_x = [1.0, x_max]
+        ideal_y = [1.0, x_max]
+    elif ideal_kind == "constant":
+        ideal_x = [1.0, x_max]
+        ideal_y = [ideal_value, ideal_value]
+    else:
+        ideal_x = []
+        ideal_y = []
+    if ideal_x:
+        with prov.artist(
+            axes_id=panel_id, kind="line",
+            note=f"ideal-reference line ({ideal_kind})",
+        ):
+            fig.add_trace(
+                go.Scatter(
+                    x=ideal_x, y=ideal_y, mode="lines",
+                    line=dict(color=sens_cfg.ideal_line_color,
+                              width=sens_cfg.ideal_line_width),
+                    name=ideal_label, showlegend=False,
+                    hoverinfo="skip",
+                ),
+                row=row, col=1,
+            )
