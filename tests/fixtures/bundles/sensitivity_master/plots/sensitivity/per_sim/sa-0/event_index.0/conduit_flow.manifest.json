@@ -1,0 +1,559 @@
+{
+  "full_res_path": "plots/sensitivity/per_sim/sa-0/event_index.0/conduit_flow.png",
+  "preview_path": "plots/sensitivity/per_sim/sa-0/event_index.0/conduit_flow.preview.png",
+  "full_res_format": "png",
+  "full_res_dpi": 100,
+  "preview_dpi": 100,
+  "figure_size_inches": [
+    12.331034482758621,
+    6.0
+  ],
+  "full_res_size_bytes": 44465,
+  "preview_size_bytes": 44465,
+  "source_paths_relative": [
+    "analysis_datatree.zarr",
+    "sims/event_index.0/swmm/hydraulics.inp",
+    "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+    "../../../elevation_10.00m.dem",
+    "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson"
+  ],
+  "emitted_at_utc": "2026-05-11T19:08:32.795630+00:00",
+  "artists": [
+    {
+      "axes_id": "ax_utilization",
+      "kind": "line2d",
+      "note": "conduit C1",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_over_full_flow",
+            "attrs": {
+              "long_name": "Max over full flow"
+            },
+            "selection": {
+              "link_id": "C1",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Blues",
+            "vmin": 0.0,
+            "vmax": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_utilization",
+      "kind": "line2d",
+      "note": "conduit C2",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_over_full_flow",
+            "attrs": {
+              "long_name": "Max over full flow"
+            },
+            "selection": {
+              "link_id": "C2",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Blues",
+            "vmin": 0.0,
+            "vmax": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_utilization",
+      "kind": "line2d",
+      "note": "conduit C3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_over_full_flow",
+            "attrs": {
+              "long_name": "Max over full flow"
+            },
+            "selection": {
+              "link_id": "C3",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Blues",
+            "vmin": 0.0,
+            "vmax": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_utilization",
+      "kind": "line2d",
+      "note": "conduit C4",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_over_full_flow",
+            "attrs": {
+              "long_name": "Max over full flow"
+            },
+            "selection": {
+              "link_id": "C4",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Blues",
+            "vmin": 0.0,
+            "vmax": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_peak_flow",
+      "kind": "line2d",
+      "note": "conduit C1",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_flow_cms",
+            "attrs": {
+              "long_name": "Maximum flow rate",
+              "units": "m3 s-1",
+              "cell_methods": "time: maximum"
+            },
+            "selection": {
+              "link_id": "C1",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Reds",
+            "vmin": 0.0,
+            "vmax": 0.131
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_peak_flow",
+      "kind": "line2d",
+      "note": "conduit C2",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_flow_cms",
+            "attrs": {
+              "long_name": "Maximum flow rate",
+              "units": "m3 s-1",
+              "cell_methods": "time: maximum"
+            },
+            "selection": {
+              "link_id": "C2",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Reds",
+            "vmin": 0.0,
+            "vmax": 0.131
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_peak_flow",
+      "kind": "line2d",
+      "note": "conduit C3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_flow_cms",
+            "attrs": {
+              "long_name": "Maximum flow rate",
+              "units": "m3 s-1",
+              "cell_methods": "time: maximum"
+            },
+            "selection": {
+              "link_id": "C3",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Reds",
+            "vmin": 0.0,
+            "vmax": 0.131
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_peak_flow",
+      "kind": "line2d",
+      "note": "conduit C4",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_flow_cms",
+            "attrs": {
+              "long_name": "Maximum flow rate",
+              "units": "m3 s-1",
+              "cell_methods": "time: maximum"
+            },
+            "selection": {
+              "link_id": "C4",
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "cmap": "Reds",
+            "vmin": 0.0,
+            "vmax": 0.131
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_overview",
+      "kind": "line",
+      "note": "watershed boundary overlay",
+      "channels": [
+        {
+          "channel": "geometry",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+            "variable": null,
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_rain",
+      "kind": "bar",
+      "note": "rainfall time series (event hydrology \u2014 top sub-panel)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "RG_synth",
+            "attrs": {
+              "units": "mm/hr",
+              "long_name": "rainfall intensity"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "minutes from event start"
+          }
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "RG_synth",
+            "attrs": {
+              "units": "mm/hr",
+              "long_name": "rainfall intensity"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "mm/hr"
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_bc",
+      "kind": "line2d",
+      "note": "boundary condition water level (event hydrology \u2014 bottom sub-panel)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "water_level",
+            "attrs": {
+              "units": "m",
+              "long_name": "storm tide water level"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "minutes from event start"
+          }
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "water_level",
+            "attrs": {
+              "units": "m",
+              "long_name": "storm tide water level"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "m"
+          }
+        }
+      ]
+    }
+  ]
+}

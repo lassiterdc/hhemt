@@ -33,6 +33,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from TRITON_SWMM_toolkit.bundle._path_policy import (
+    _PATH_FIELD_POLICY,
+    PathPolicy,
+    RewriteResult,
+    enumerate_path_fields,
+)
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
     harvest_source_paths,
 )
@@ -49,6 +55,7 @@ from TRITON_SWMM_toolkit.version_migration.constants import (
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 
 
 def emit_bundle(
@@ -141,8 +148,9 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
 def _copy_configs_with_relative_paths(
     analysis: TRITONSWMM_analysis, staging: Path
 ) -> None:
-    """Copy cfg_system.yaml and cfg_analysis.yaml with all path-typed
-    fields rewritten to be relative to the bundle root."""
+    """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
+    ``Path``-typed fields rewritten per the per-field policy table in
+    ``_path_policy._PATH_FIELD_POLICY``."""
     import yaml
 
     for cfg_attr, filename in (
@@ -155,56 +163,128 @@ def _copy_configs_with_relative_paths(
             else analysis.cfg_analysis
         )
         cfg_dict = cfg.model_dump(mode="json")
-        cfg_dict = _rewrite_paths_to_relative(
+        result = _rewrite_paths_to_relative(
             cfg_dict,
+            cfg_model=type(cfg),
             analysis_dir=analysis.analysis_paths.analysis_dir,
             system_directory=analysis._system.cfg_system.system_directory,
         )
-        # Bundle directory-model invariant: bundle_root IS analysis_dir at
-        # consume time. Force "." so consume's cwd=bundle_root resolves
-        # analysis_paths consistently with where _copy_supporting_files /
-        # _harvest_and_copy_sources placed files. The rewriter already
-        # produces "." for these fields when the source cfg has them set
-        # absolute; this override covers source cfgs where the field is
-        # None (e.g., synth fixture's cfg_analysis omits analysis_dir).
-        if cfg_attr == "cfg_analysis":
-            cfg_dict["analysis_dir"] = "."
-        else:
-            cfg_dict["system_directory"] = "."
-        (staging / filename).write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
+        # `result.invariants` is consumed by the Phase 3 manifest extension
+        # (bundle_root_invariants). Phase 1 discards it — the rewriter's
+        # in-place application of the policy table is the load-bearing
+        # behavior here.
+        (staging / filename).write_text(
+            yaml.safe_dump(result.cfg_dict, sort_keys=False)
+        )
 
 
 def _rewrite_paths_to_relative(
-    cfg_dict: Any,
+    cfg_dict: dict,
+    cfg_model: type[cfgBaseModel],
     analysis_dir: Path,
     system_directory: Path,
-) -> Any:
-    """Recursively walk the config dict; rewrite absolute paths under
-    analysis_dir or system_directory as relative to the corresponding root."""
+) -> RewriteResult:
+    """Rewrite absolute Path fields in ``cfg_dict`` per the per-field
+    policy table.
+
+    Uses Pydantic v2 model introspection (``model_fields``) to enumerate
+    Path-typed field names; each is then routed through its
+    ``PathPolicy`` entry in ``_PATH_FIELD_POLICY``. Fields not declared
+    on ``cfg_model`` as ``Path`` / ``Optional[Path]`` are passed through
+    unchanged.
+
+    Returns:
+        ``RewriteResult`` with the rewritten ``cfg_dict`` and a
+        per-policy ``invariants`` dict suitable for inclusion in the
+        Phase 3 ``bundle_manifest.json`` ``bundle_root_invariants`` key.
+    """
     analysis_root = analysis_dir.resolve()
     system_root = system_directory.resolve()
+    path_fields = enumerate_path_fields(cfg_model)
+    invariants: dict[str, list[str]] = {policy.value: [] for policy in PathPolicy}
+    out = dict(cfg_dict)
 
-    def _rewrite_one(value: Any) -> Any:
-        if isinstance(value, str):
-            try:
-                p = Path(value)
-                if not p.is_absolute():
-                    return value
-                pr = p.resolve()
-                if pr.is_relative_to(analysis_root):
-                    return str(pr.relative_to(analysis_root))
-                if pr.is_relative_to(system_root):
-                    return str(pr.relative_to(system_root))
-            except (ValueError, OSError):
-                pass
-            return value
-        if isinstance(value, dict):
-            return {k: _rewrite_one(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_rewrite_one(v) for v in value]
+    for name in path_fields:
+        if name not in _PATH_FIELD_POLICY:
+            raise KeyError(
+                f"Pydantic field '{name}' on {cfg_model.__name__} is typed "
+                f"as Path/Optional[Path] but has no entry in "
+                f"_PATH_FIELD_POLICY. Add a policy entry in "
+                f"bundle/_path_policy.py."
+            )
+        policy = _PATH_FIELD_POLICY[name]
+        value = out.get(name)
+        new_value = _apply_policy(
+            value,
+            policy=policy,
+            analysis_root=analysis_root,
+            system_root=system_root,
+        )
+        out[name] = new_value
+        invariants[policy.value].append(name)
+
+    return RewriteResult(cfg_dict=out, invariants=invariants)
+
+
+def _apply_policy(
+    value: Any,
+    *,
+    policy: PathPolicy,
+    analysis_root: Path,
+    system_root: Path,
+) -> Any:
+    """Apply a single ``PathPolicy`` to a cfg field value."""
+    if policy is PathPolicy.FORCED_DOT:
+        return "."
+    if policy is PathPolicy.IS_NONE_ACCEPTABLE:
+        return None
+    if policy is PathPolicy.HELPER_RESOLVED:
+        # Reserved for future runtime-derived fields. Pass through
+        # unchanged in Phase 1.
         return value
+    if value is None:
+        if policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE:
+            return None
+        # BUNDLE_RELATIVE on a None value is a misconfiguration — the
+        # field is declared required (Path, not Optional[Path]) yet
+        # serialized as None. Pass through; Pydantic load-side will
+        # reject it at consume time.
+        return value
+    return _rewrite_absolute_to_relative(
+        value,
+        analysis_root=analysis_root,
+        system_root=system_root,
+    )
 
-    return _rewrite_one(cfg_dict)
+
+def _rewrite_absolute_to_relative(
+    value: Any,
+    *,
+    analysis_root: Path,
+    system_root: Path,
+) -> Any:
+    """Rewrite an absolute path string to its bundle-relative form.
+
+    Resolution order: ``analysis_root`` first, then ``system_root``, then
+    ``external/{filename}`` fallback. Mirrors the
+    ``_harvest_and_copy_sources`` fallback at the file-copy layer so the
+    cfg and the staging-dir layout agree on where the file lives.
+    Non-string values are passed through unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        p = Path(value)
+        if not p.is_absolute():
+            return value
+        pr = p.resolve()
+        if pr.is_relative_to(analysis_root):
+            return str(pr.relative_to(analysis_root))
+        if pr.is_relative_to(system_root):
+            return str(pr.relative_to(system_root))
+        return str(Path("external") / pr.name)
+    except (ValueError, OSError):
+        return value
 
 
 def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:

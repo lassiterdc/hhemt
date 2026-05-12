@@ -327,6 +327,9 @@ class TRITONSWMM_sensitivity_analysis:
             pass
         return out_html
 
+    # Conforms to TRITON_SWMM_toolkit.bundle._protocol.BundleableAnalysis
+    # via duck typing — attributes delegated to self.master_analysis in
+    # __init__ (lines 91-94).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,

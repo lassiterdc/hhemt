@@ -467,6 +467,8 @@ class TRITONSWMM_analysis:
 
         return task_id
 
+    # Conforms to TRITON_SWMM_toolkit.bundle._protocol.BundleableAnalysis
+    # via duck typing (Protocol is structural; no registration needed).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
