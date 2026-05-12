@@ -28,9 +28,12 @@ from typing import TYPE_CHECKING
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
+import plotly.io as pio
 import rioxarray as rxr
 import xarray as xr
 from matplotlib.colors import Normalize
+from plotly.subplots import make_subplots
 
 from TRITON_SWMM_toolkit import units, utils
 
@@ -185,6 +188,12 @@ def render(
             output_path,
             "peak_flood_depth not applicable for swmm-only analyses",
             report_cfg.figure_defaults.savefig_dpi,
+        )
+
+    if report_cfg.interactive.enabled:
+        return _render_plotly_branch(
+            analysis, report_cfg, output_path,
+            event_iloc=event_iloc, triton_group=triton_group, prov=prov,
         )
 
     target_crs = resolve_target_crs(analysis, report_cfg)
@@ -510,3 +519,444 @@ def render(
     )
 
 
+
+
+def _render_plotly_branch(
+    analysis,
+    report_cfg,
+    output_path: Path,
+    *,
+    event_iloc: int,
+    triton_group: str,
+    prov,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
+    WSE raster + event hydrology (rainfall bars + BC water level line).
+    Informationally congruent with the matplotlib branch — no animation,
+    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
+    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+    """
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+    from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
+        load_event_hydrology_data,
+    )
+    # Side-effect import: registers `triton_journal` Plotly template at import time.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
+
+    cfg = report_cfg.per_sim.peak_flood_depth  # noqa: F841 — parity with mpl branch
+    map_cfg = report_cfg.per_sim.map
+    interactive_cfg = report_cfg.per_sim.interactive
+
+    target_crs = resolve_target_crs(analysis, report_cfg)
+    sys_paths = analysis._system.sys_paths
+    triton_summary_path = analysis.analysis_paths.analysis_datatree_zarr
+
+    # ---- Data prep (mirror of matplotlib branch) ------------------------
+    tree = analysis.process.open_datatree()
+    if triton_group not in tree.groups:
+        raise AssertionError(
+            f"consolidated tree missing expected group {triton_group}; available: "
+            f"{sorted(tree.groups)}"
+        )
+    ds = tree[triton_group].to_dataset()
+    da = ds["max_wlevel_m"].sel(event_iloc=event_iloc)
+    if da.rio.crs is not None and da.rio.crs != target_crs:
+        da = da.rio.reproject(target_crs)
+    wlevel_attrs = dict(da.attrs)
+    wlevel_name = da.name
+
+    dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
+    if dem_da.rio.crs is not None and dem_da.rio.crs != target_crs:
+        dem_da = dem_da.rio.reproject(target_crs)
+    dem_attrs = dict(dem_da.attrs)
+
+    watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
+    watershed_gdf = gpd.read_file(watershed_shp)
+    if (
+        da.rio.crs is not None
+        and watershed_gdf.crs is not None
+        and watershed_gdf.crs != da.rio.crs
+    ):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir) / "watershed_reprojected.geojson"
+            watershed_gdf.to_crs(da.rio.crs).to_file(tmp_path, driver="GeoJSON")
+            mask = utils.create_mask_from_shapefile(da, tmp_path)
+    else:
+        mask = utils.create_mask_from_shapefile(da, watershed_shp)
+    da_masked = da.where(mask & (da > 0))
+
+    try:
+        wse_da = da + dem_da
+    except Exception:
+        wse_da = da + dem_da.interp_like(da, method="nearest")
+    wse_masked = wse_da.where(mask & (da > 0))
+
+    weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+    weather_path = Path(analysis.cfg_analysis.weather_timeseries)
+    hydro_data = load_event_hydrology_data(
+        weather_path, analysis.cfg_analysis, weather_event_indexers,
+    )
+    times_min = hydro_data["times_min"]
+    rainfall = hydro_data["rainfall"]
+    bc_water_level = hydro_data["bc_water_level"]
+    rain_attrs = hydro_data["rain_attrs"]
+    bc_attrs = hydro_data["bc_attrs"]
+    rain_var = hydro_data["rain_var"]
+    bc_var = hydro_data["bc_var"]
+
+    analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
+    triton_summary_rel = os.path.relpath(
+        str(Path(triton_summary_path).resolve()), analysis_root,
+    )
+    watershed_rel = os.path.relpath(
+        str(Path(watershed_shp).resolve()), analysis_root,
+    )
+    dem_rel = os.path.relpath(
+        str(Path(sys_paths.dem_processed).resolve()), analysis_root,
+    )
+    weather_rel = os.path.relpath(
+        str(Path(weather_path).resolve()), analysis_root,
+    )
+
+    # ---- Color scale and range setup ------------------------------------
+    depth_vmin = map_cfg.depth_vmin
+    shared_max = _shared_depth_max(analysis, target_crs)
+    if shared_max is not None:
+        depth_vmax = float(shared_max)
+    else:
+        d_max_obj = da_masked.max()
+        d_max_local = float(
+            d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+        )
+        depth_vmax = (
+            d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin)
+            else map_cfg.depth_vmax_fallback
+        )
+    shared_wse = _shared_wse_range(analysis, target_crs, dem_da)
+    if shared_wse is not None:
+        wse_min, wse_max = shared_wse
+    else:
+        wse_min_obj = wse_masked.min()
+        wse_max_obj = wse_masked.max()
+        wse_min = float(wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj)
+        wse_max = float(wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj)
+        if not np.isfinite(wse_min) or not np.isfinite(wse_max) or wse_max <= wse_min:
+            wse_min, wse_max = map_cfg.wse_fallback_range
+
+    bounds = dem_da.rio.bounds() if dem_da.rio.crs is not None else (
+        float(dem_da.x.min()), float(dem_da.y.min()),
+        float(dem_da.x.max()), float(dem_da.y.max()),
+    )
+
+    # ---- Datashader pre-raster gate -------------------------------------
+    # MV scope: single-frame pre-aggregation when depth cell count exceeds threshold.
+    cell_count = int(da_masked.notnull().sum().compute()
+                     if hasattr(da_masked.notnull().sum(), "compute")
+                     else da_masked.notnull().sum())
+    use_datashader = cell_count > interactive_cfg.datashader_threshold_cells
+    if use_datashader:
+        import datashader as ds_lib
+        import datashader.reductions as ds_reductions
+        canvas = ds_lib.Canvas(plot_width=512, plot_height=512)
+        depth_agg = canvas.raster(
+            da_masked, agg=ds_reductions.max("max_wlevel_m"),
+        )
+        wse_agg = canvas.raster(
+            wse_masked, agg=ds_reductions.max(),
+        )
+        depth_x = depth_agg.x.values
+        depth_y = depth_agg.y.values
+        depth_z = depth_agg.values
+        wse_x = wse_agg.x.values
+        wse_y = wse_agg.y.values
+        wse_z = wse_agg.values
+    else:
+        depth_x = da_masked.x.values
+        depth_y = da_masked.y.values
+        depth_z = da_masked.values
+        wse_x = wse_masked.x.values
+        wse_y = wse_masked.y.values
+        wse_z = wse_masked.values
+
+    # ---- Build figure ---------------------------------------------------
+    # 2x3 layout: depth + WSE span 2 rows (cols 1, 2); hydro col splits into
+    # rainfall (row 1, col 3) + BC water level (row 2, col 3).
+    fig = make_subplots(
+        rows=2, cols=3,
+        specs=[
+            [{"rowspan": 2}, {"rowspan": 2}, {}],
+            [None, None, {}],
+        ],
+        row_heights=[1, 1],
+        column_widths=[1, 1, 0.8],
+        horizontal_spacing=0.06,
+        vertical_spacing=0.06,
+        subplot_titles=("Peak flood depth", "Water surface elevation", "Rainfall"),
+    )
+    fig.update_layout(
+        template="plotly_white",
+        title=f"Per-sim peak flood depth — event_iloc {event_iloc}",
+        showlegend=False,
+        margin=dict(l=10, r=10, t=80, b=60),
+    )
+
+    # ---- Depth panel ----------------------------------------------------
+    depth_ref = ProvenanceRef(
+        source_path=triton_summary_rel,
+        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
+        attrs=wlevel_attrs,
+        selection={"event_iloc": int(event_iloc)},
+        transform=(
+            "masked to watershed and depth>0"
+            + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
+        ),
+    )
+    with prov.artist(
+        axes_id="ax_depth_plotly", kind="image",
+        note=f"peak flood depth raster (event {event_iloc})"
+             + (f"; datashader pre-raster (cell_count={cell_count})" if use_datashader else ""),
+    ) as a:
+        a.add_channel("z", depth_ref)
+        a.add_channel(
+            "color", depth_ref,
+            cmap=map_cfg.depth_cmap, vmin=depth_vmin, vmax=depth_vmax,
+        )
+        fig.add_trace(
+            go.Heatmap(
+                z=depth_z, x=depth_x, y=depth_y,
+                colorscale="YlGnBu", zmin=depth_vmin, zmax=depth_vmax,
+                colorbar=dict(
+                    title=units.DEPTH_LABEL, orientation="h",
+                    y=-0.10, len=0.30, x=0.16, thickness=12,
+                ),
+                hovertemplate="Depth: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
+                name="depth",
+            ),
+            row=1, col=1,
+        )
+
+    # ---- WSE panel ------------------------------------------------------
+    wse_ref_depth = ProvenanceRef(
+        source_path=triton_summary_rel,
+        variable=str(wlevel_name) if wlevel_name is not None else "max_wlevel_m",
+        attrs=wlevel_attrs,
+        selection={"event_iloc": int(event_iloc)},
+        transform=(
+            "depth, summed with DEM elevation"
+            + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
+        ),
+    )
+    wse_ref_dem = ProvenanceRef(
+        source_path=dem_rel, variable="dem_elev_m",
+        attrs=dem_attrs, transform="reprojected to target_crs",
+    )
+    with prov.artist(
+        axes_id="ax_wse_plotly", kind="image",
+        note=f"water surface elevation = depth + DEM (event {event_iloc})"
+             + (f"; datashader pre-raster (cell_count={cell_count})" if use_datashader else ""),
+    ) as a:
+        a.add_channel("z", wse_ref_depth)
+        a.add_channel("z", wse_ref_dem)
+        a.add_channel(
+            "color", wse_ref_depth,
+            cmap=map_cfg.wse_cmap, vmin=wse_min, vmax=wse_max,
+        )
+        fig.add_trace(
+            go.Heatmap(
+                z=wse_z, x=wse_x, y=wse_y,
+                colorscale="cividis", zmin=wse_min, zmax=wse_max,
+                colorbar=dict(
+                    title=units.WSE_LABEL, orientation="h",
+                    y=-0.10, len=0.30, x=0.52, thickness=12,
+                ),
+                hovertemplate="WSE: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
+                name="wse",
+            ),
+            row=1, col=2,
+        )
+
+    # ---- Watershed boundary overlay on both maps ------------------------
+    watershed_ref = ProvenanceRef(
+        source_path=watershed_rel, variable="watershed_polygon", attrs={},
+    )
+    if watershed_gdf.crs is not None:
+        ws_proj = watershed_gdf.to_crs(target_crs)
+    else:
+        ws_proj = watershed_gdf
+    ws_x, ws_y = [], []
+    for geom in ws_proj.boundary.values:
+        if geom is None:
+            continue
+        # Single LineString or MultiLineString
+        geoms = geom.geoms if hasattr(geom, "geoms") else [geom]
+        for line in geoms:
+            xs, ys = line.coords.xy
+            ws_x.extend(list(xs) + [None])
+            ws_y.extend(list(ys) + [None])
+    with prov.artist(
+        axes_id="ax_depth_plotly", kind="patch",
+        note="watershed boundary overlay (depth panel)",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        a.add_channel("y", watershed_ref)
+        fig.add_trace(
+            go.Scatter(
+                x=ws_x, y=ws_y, mode="lines",
+                line=dict(color=map_cfg.watershed_overlay_color,
+                          width=map_cfg.watershed_overlay_width),
+                hoverinfo="skip", showlegend=False, name="watershed",
+            ),
+            row=1, col=1,
+        )
+    with prov.artist(
+        axes_id="ax_wse_plotly", kind="patch",
+        note="watershed boundary overlay (WSE panel)",
+    ) as a:
+        a.add_channel("x", watershed_ref)
+        a.add_channel("y", watershed_ref)
+        fig.add_trace(
+            go.Scatter(
+                x=ws_x, y=ws_y, mode="lines",
+                line=dict(color=map_cfg.watershed_overlay_color,
+                          width=map_cfg.watershed_overlay_width),
+                hoverinfo="skip", showlegend=False, name="watershed",
+            ),
+            row=1, col=2,
+        )
+
+    # ---- Hydrology panel: rainfall (row 1, col 3) -----------------------
+    rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)
+    bc_units = (
+        units.bc_provenance_units(analysis.cfg_analysis.storm_tide_units)
+        if analysis.cfg_analysis.storm_tide_units else ""
+    )
+    rain_ref = ProvenanceRef(
+        source_path=weather_rel, variable=rain_var,
+        attrs=rain_attrs, selection={"event_iloc": int(event_iloc)},
+    )
+    panel_cfg = report_cfg.per_sim.hydrology_panel
+    with prov.artist(
+        axes_id="ax_rain_plotly", kind="bar",
+        note="rainfall time series (event hydrology — top sub-panel)",
+    ) as a:
+        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("y", rain_ref, units=rain_units)
+        fig.add_trace(
+            go.Bar(
+                x=times_min, y=rainfall,
+                marker=dict(color=panel_cfg.rain_color),
+                name="rainfall", showlegend=False,
+                hovertemplate="t: %{x} min<br>rain: %{y:.2f}<extra></extra>",
+            ),
+            row=1, col=3,
+        )
+
+    # ---- Hydrology panel: BC water level (row 2, col 3) -----------------
+    bc_ref = ProvenanceRef(
+        source_path=weather_rel,
+        variable=bc_var if bc_var is not None else "",
+        attrs=bc_attrs, selection={"event_iloc": int(event_iloc)},
+    )
+    with prov.artist(
+        axes_id="ax_bc_plotly", kind="line2d",
+        note="boundary condition water level (event hydrology — bottom sub-panel)",
+    ) as a:
+        a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("y", bc_ref, units=bc_units)
+        fig.add_trace(
+            go.Scatter(
+                x=times_min, y=bc_water_level, mode="lines",
+                line=dict(color=panel_cfg.bc_line_color,
+                          width=panel_cfg.bc_line_width),
+                name="bc_water_level", showlegend=False,
+                hovertemplate="t: %{x} min<br>BC: %{y:.3f} m<extra></extra>",
+            ),
+            row=2, col=3,
+        )
+
+    # ---- Axes setup -----------------------------------------------------
+    crs_for_labels = (
+        report_cfg.system_map.target_epsg
+        or analysis._system.cfg_system.crs_epsg
+    )
+    for col in (1, 2):
+        fig.update_xaxes(
+            range=[bounds[0], bounds[2]],
+            title_text=units.easting_axis_label(crs_for_labels),
+            row=1, col=col,
+        )
+        fig.update_yaxes(
+            range=[bounds[1], bounds[3]],
+            scaleanchor=f"x{col}", scaleratio=1.0,
+            title_text=units.northing_axis_label(crs_for_labels) if col == 1 else None,
+            row=1, col=col,
+        )
+    fig.update_xaxes(
+        range=[float(times_min[0]), float(times_min[-1])],
+        title_text="", row=1, col=3,
+    )
+    fig.update_yaxes(
+        title_text=units.rainfall_axis_label(analysis.cfg_analysis.rainfall_units),
+        row=1, col=3,
+    )
+    fig.update_xaxes(
+        range=[float(times_min[0]), float(times_min[-1])],
+        title_text=units.TIME_AXIS_FROM_EVENT_START, row=2, col=3,
+    )
+    fig.update_yaxes(
+        title_text=units.bc_water_level_axis_label(
+            analysis.cfg_analysis.storm_tide_units or "m",
+        ),
+        row=2, col=3,
+    )
+
+    # ---- Emit -----------------------------------------------------------
+    plotly_config = {
+        "displayModeBar": True,
+        "displaylogo": False,
+        "modeBarButtonsToRemove": [
+            "lasso2d", "select2d", "autoScale2d",
+            "hoverCompareCartesian", "hoverClosestCartesian",
+            "toggleSpikelines",
+        ],
+        "toImageButtonOptions": {
+            "format": "svg", "filename": "peak_flood_depth", "scale": 2,
+        },
+    }
+    html_text = pio.to_html(
+        fig, include_plotlyjs=report_cfg.interactive.plotly_js_mode,
+        full_html=True, config=plotly_config,
+    )
+
+    source_paths: list[Path] = [
+        Path(triton_summary_path),
+        Path(watershed_shp),
+        Path(sys_paths.dem_processed),
+        Path(weather_path),
+    ]
+    max_obj = da_masked.max()
+    wlevel_m_max = max_obj.compute() if hasattr(max_obj, "compute") else max_obj
+    valid_cell_count = cell_count
+    bc_min = float(np.nanmin(bc_water_level))
+    bc_max = float(np.nanmax(bc_water_level))
+
+    return emit_plot_with_sources(
+        html_text, output_path, source_paths,
+        analysis_dir=analysis.analysis_paths.analysis_dir,
+        output_format="html",
+        manifest_data={
+            "event_iloc": int(event_iloc),
+            "depth_m_max": float(wlevel_m_max),
+            "valid_cell_count": int(valid_cell_count),
+            "wse_m_range": [wse_min, wse_max],
+            "rainfall_max_mm_per_hr": float(np.nanmax(rainfall)),
+            "bc_water_level_range_m": [bc_min, bc_max],
+            "depth_boundaries_m": list(map_cfg.depth_boundaries_m),
+            "datashader_used": bool(use_datashader),
+        },
+        provenance=prov,
+    )
