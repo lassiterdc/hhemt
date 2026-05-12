@@ -3761,6 +3761,11 @@ rule setup:
             self.sensitivity_analysis._write_sa_id_fingerprint(
                 sub_analysis, fingerprint_path
             )
+        if len(self.sensitivity_analysis.independent_vars) == 0:
+            print(
+                "[Sensitivity] WARNING: independent_vars is empty; sensitivity-row-edit rerun trigger is a no-op",
+                flush=True,
+            )
 
         # Generate simulation rules for each sub-analysis
         subanalysis_flags = []
