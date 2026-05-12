@@ -11,8 +11,7 @@ worktree_path: /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05
 created: '2026-05-11T15:43:04'
 smoke_test: false
 ---
-- [ ] in progress
-
+- [x] in progress
 ## Harness Discipline — Claude Code
 
 - Treat the first post-compaction message as a rehydration trigger, not a
