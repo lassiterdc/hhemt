@@ -116,15 +116,24 @@ class Bundle:
         return (self._root / rel).resolve()
 
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
-        # Derive the static-figure rendering backend from the bundle's
-        # cfg files. Reads
-        # cfg_analysis.yaml::report::interactive::static_backend.
-        # If absent in YAML, fall back to the Pydantic model's
-        # cfg-level default ("plotly" per Plan Phase 2 D3 + Decision 4).
+        # Resolution order:
+        #   1. cfg_report.yaml::interactive::static_backend — the
+        #      F1-introduced canonical snapshot written by emit_bundle.
+        #   2. cfg_analysis.yaml::report::interactive::static_backend —
+        #      retained for forward compatibility with the future F2
+        #      schema canonicalization.
+        #   3. InteractiveBackendConfig().static_backend — Pydantic
+        #      default ("plotly" per Plan Phase 2 D3 + Decision 4).
         # Private (leading underscore) but kept on the public Bundle
         # class so test code can monkey-patch for backend-override
         # coverage.
         import yaml
+        cfg_report_path = self._root / "cfg_report.yaml"
+        if cfg_report_path.exists():
+            cfg_report_data = yaml.safe_load(cfg_report_path.read_text())
+            interactive_section = cfg_report_data.get("interactive", {})
+            if "static_backend" in interactive_section:
+                return interactive_section["static_backend"]
         cfg_analysis_path = self._root / "cfg_analysis.yaml"
         if not cfg_analysis_path.exists():
             raise FileNotFoundError(

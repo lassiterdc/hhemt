@@ -473,6 +473,8 @@ class TRITONSWMM_analysis:
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
+        *,
+        report_config_path: "Path | None" = None,
     ) -> "Path":
         """Emit a portable render bundle for local renderer iteration.
 
@@ -496,7 +498,7 @@ class TRITONSWMM_analysis:
                 on this analysis (no *.manifest.json sidecars exist).
         """
         from TRITON_SWMM_toolkit.bundle import emit_bundle
-        return emit_bundle(self, output_path)
+        return emit_bundle(self, output_path, report_config_path=report_config_path)
 
     @staticmethod
     def _handle_destination_conflict(

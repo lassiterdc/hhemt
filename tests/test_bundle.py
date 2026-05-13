@@ -380,3 +380,73 @@ def test_zip_emit_no_tar_artifact(tmp_path):
     assert ".tar" not in src, (
         "Plan Phase 4 removes the .tar suffix from emit_bundle default path"
     )
+
+
+# ============================================================================
+# F1 tests — cfg_report.yaml snapshot + _read_static_backend resolution order.
+# ============================================================================
+
+
+def test_copy_report_config_default(tmp_path):
+    # _copy_report_config writes DEFAULT_REPORT_CONFIG as cfg_report.yaml
+    # when no report_config_path is supplied. Snapshot's
+    # interactive.static_backend matches InteractiveBackendConfig's default.
+    import yaml
+    from TRITON_SWMM_toolkit.bundle._emit import _copy_report_config
+
+    _copy_report_config(None, tmp_path)
+    out = tmp_path / "cfg_report.yaml"
+    assert out.exists(), "Default fallback must still write cfg_report.yaml"
+    data = yaml.safe_load(out.read_text())
+    assert data["interactive"]["static_backend"] == "plotly"
+
+
+def test_copy_report_config_explicit_matplotlib(tmp_path):
+    # When report_config_path is supplied and pins static_backend=matplotlib,
+    # the snapshot reflects that pin (not the Pydantic default).
+    import yaml
+    from TRITON_SWMM_toolkit.bundle._emit import _copy_report_config
+
+    user_cfg = tmp_path / "user_report_config.yaml"
+    user_cfg.write_text("interactive:\n  static_backend: matplotlib\n")
+    _copy_report_config(user_cfg, tmp_path)
+    out = tmp_path / "cfg_report.yaml"
+    data = yaml.safe_load(out.read_text())
+    assert data["interactive"]["static_backend"] == "matplotlib"
+
+
+def test_read_static_backend_prefers_cfg_report(tmp_path):
+    # Bundle._read_static_backend reads from cfg_report.yaml when present,
+    # ignoring any cfg_analysis.yaml::report section. This is the F1
+    # resolution-order contract.
+    from TRITON_SWMM_toolkit.bundle import Bundle
+
+    (tmp_path / "cfg_report.yaml").write_text(
+        "interactive:\n  static_backend: matplotlib\n"
+    )
+    # cfg_analysis.yaml conflicting value — cfg_report should still win.
+    (tmp_path / "cfg_analysis.yaml").write_text(
+        "report:\n  interactive:\n    static_backend: plotly\n"
+    )
+    # Minimal manifest so Bundle.from_directory's schema check passes.
+    (tmp_path / "bundle_manifest.json").write_text(
+        '{"bundle_schema_version": 1, "bundle_root_invariants": {}}'
+    )
+    bundle = Bundle.from_directory(tmp_path)
+    assert bundle._read_static_backend() == "matplotlib"
+
+
+def test_read_static_backend_falls_through_when_no_cfg_report(tmp_path):
+    # When cfg_report.yaml is absent, _read_static_backend falls back to
+    # cfg_analysis.yaml::report::interactive::static_backend (F2 forward
+    # compat).
+    from TRITON_SWMM_toolkit.bundle import Bundle
+
+    (tmp_path / "cfg_analysis.yaml").write_text(
+        "report:\n  interactive:\n    static_backend: matplotlib\n"
+    )
+    (tmp_path / "bundle_manifest.json").write_text(
+        '{"bundle_schema_version": 1, "bundle_root_invariants": {}}'
+    )
+    bundle = Bundle.from_directory(tmp_path)
+    assert bundle._read_static_backend() == "matplotlib"
