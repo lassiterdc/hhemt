@@ -13,7 +13,10 @@ import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
-from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
+from TRITON_SWMM_toolkit.workflow import (
+    SensitivityAnalysisWorkflowBuilder,
+    _emit_report_artifacts,
+)
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -273,8 +276,7 @@ class TRITONSWMM_sensitivity_analysis:
         css_path = master_dir / "report" / "report.css"
         # Re-emit report artifacts from package resources so render_report
         # picks up edits made to the source-tree report_templates/.
-        from .workflow import SnakemakeWorkflowBuilder
-        SnakemakeWorkflowBuilder(self.master_analysis)._emit_report_artifacts(master_dir)
+        _emit_report_artifacts(master_dir)
         cmd = [
             sys.executable, "-m", "snakemake",
             "--snakefile", str(snakefile),
@@ -328,6 +330,9 @@ class TRITONSWMM_sensitivity_analysis:
             pass
         return out_html
 
+    # Conforms to TRITON_SWMM_toolkit.bundle._protocol.BundleableAnalysis
+    # via duck typing — attributes delegated to self.master_analysis in
+    # __init__ (lines 91-94).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,

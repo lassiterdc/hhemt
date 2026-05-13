@@ -45,7 +45,12 @@ def render(
     cfg = report_cfg.per_sim.conduit_flow
     prov = ProvenanceLog()
 
-    if report_cfg.interactive.enabled:
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
+    )
+    if static_backend == "plotly":
         return _render_plotly_branch(
             analysis, report_cfg, output_path,
             event_iloc=event_iloc, prov=prov,
@@ -733,6 +738,19 @@ def _render_plotly_branch(
         Path(link_summary_path), inp_path, Path(weather_path),
         Path(sys_paths.dem_processed), Path(watershed_shp),
     ]
+
+    try:
+        fig.write_image(
+            output_path.with_suffix(".svg"),
+            engine="kaleido", width=1400, height=600, scale=1,
+        )
+    except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
+        import logging
+        logging.getLogger(__name__).warning(
+            "Kaleido SVG export skipped for %s: %s",
+            output_path.with_suffix(".svg"), exc,
+        )
+
     return emit_plot_with_sources(
         html_text, output_path, source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,

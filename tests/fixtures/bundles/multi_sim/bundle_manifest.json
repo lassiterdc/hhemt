@@ -1,0 +1,52 @@
+{
+  "analysis_id": "synth_multi_sim",
+  "bundle_root_invariants": {
+    "cfg_analysis": {
+      "bundle_relative": [
+        "weather_timeseries",
+        "weather_events_to_simulate"
+      ],
+      "bundle_relative_or_None": [
+        "storm_tide_boundary_line_gis",
+        "weather_event_summary_csv",
+        "sensitivity_analysis",
+        "master_analysis_cfg_yaml"
+      ],
+      "forced_dot": [
+        "analysis_dir"
+      ],
+      "helper_resolved": [],
+      "is_None_acceptable": [
+        "python_path"
+      ]
+    },
+    "cfg_system": {
+      "bundle_relative": [
+        "watershed_gis_polygon",
+        "DEM_fullres",
+        "SWMM_hydraulics",
+        "triton_swmm_configuration_template"
+      ],
+      "bundle_relative_or_None": [
+        "landuse_lookup_file",
+        "SWMM_hydrology",
+        "SWMM_full",
+        "landuse_raster",
+        "subcatchment_raingage_mapping"
+      ],
+      "forced_dot": [
+        "system_directory"
+      ],
+      "helper_resolved": [],
+      "is_None_acceptable": [
+        "SWMM_software_directory",
+        "TRITONSWMM_software_directory"
+      ]
+    }
+  },
+  "bundle_schema_version": 1,
+  "created_at_utc": "2026-05-11T00:00:00+00:00",
+  "layout_version": 4,
+  "source_paths_by_renderer": {},
+  "toolkit_git_sha": "fixture"
+}

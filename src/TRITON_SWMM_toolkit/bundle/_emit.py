@@ -11,7 +11,7 @@ Helpers (private to this module):
   _harvest_and_copy_sources(...)
   _rewrite_paths_to_relative(...)
   _write_bundle_manifest(...)
-  _emit_bundle_tar(...)
+  _emit_bundle_zip(...)
 
 This module is opt-in only. Importing it does not trigger any side
 effects; the only entry point is emit_bundle(). The method is invoked
@@ -27,12 +27,18 @@ import contextlib
 import json
 import shutil
 import subprocess
-import tarfile
+import zipfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from TRITON_SWMM_toolkit.bundle._path_policy import (
+    _PATH_FIELD_POLICY,
+    PathPolicy,
+    RewriteResult,
+    enumerate_path_fields,
+)
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
     harvest_source_paths,
 )
@@ -49,6 +55,7 @@ from TRITON_SWMM_toolkit.version_migration.constants import (
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 
 
 def emit_bundle(
@@ -80,22 +87,23 @@ def emit_bundle(
     if output_path is None:
         output_path = (
             analysis_dir / BUNDLE_OUTPUT_SUBDIR
-            / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.tar"
+            / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _staging_dir(output_path.parent) as staging:
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
-        _copy_configs_with_relative_paths(analysis, staging)
+        aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _copy_supporting_files(analysis, staging)
         _write_bundle_manifest(
             staging,
             sources_by_renderer=sources_by_renderer,
             analysis_id=analysis_id,
             git_sha=git_sha,
+            bundle_root_invariants=aggregated_invariants,
         )
-        _emit_bundle_tar(staging, output_path)
+        _emit_bundle_zip(staging, output_path)
 
     return output_path
 
@@ -140,11 +148,16 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
 
 def _copy_configs_with_relative_paths(
     analysis: TRITONSWMM_analysis, staging: Path
-) -> None:
-    """Copy cfg_system.yaml and cfg_analysis.yaml with all path-typed
-    fields rewritten to be relative to the bundle root."""
+) -> dict[str, dict]:
+    """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
+    ``Path``-typed fields rewritten per the per-field policy table in
+    ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
+    attribute (``cfg_system`` / ``cfg_analysis``) mapping to the
+    ``RewriteResult.invariants`` dict from that cfg's rewrite — consumed
+    by the Phase 3 manifest extension (``bundle_root_invariants``)."""
     import yaml
 
+    aggregated: dict[str, dict] = {}
     for cfg_attr, filename in (
         ("cfg_system", "cfg_system.yaml"),
         ("cfg_analysis", "cfg_analysis.yaml"),
@@ -155,62 +168,140 @@ def _copy_configs_with_relative_paths(
             else analysis.cfg_analysis
         )
         cfg_dict = cfg.model_dump(mode="json")
-        cfg_dict = _rewrite_paths_to_relative(
+        result = _rewrite_paths_to_relative(
             cfg_dict,
+            cfg_model=type(cfg),
             analysis_dir=analysis.analysis_paths.analysis_dir,
             system_directory=analysis._system.cfg_system.system_directory,
         )
-        # Bundle directory-model invariant: bundle_root IS analysis_dir at
-        # consume time. Force "." so consume's cwd=bundle_root resolves
-        # analysis_paths consistently with where _copy_supporting_files /
-        # _harvest_and_copy_sources placed files. The rewriter already
-        # produces "." for these fields when the source cfg has them set
-        # absolute; this override covers source cfgs where the field is
-        # None (e.g., synth fixture's cfg_analysis omits analysis_dir).
-        if cfg_attr == "cfg_analysis":
-            cfg_dict["analysis_dir"] = "."
-        else:
-            cfg_dict["system_directory"] = "."
-        (staging / filename).write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
+        # `result.invariants` is consumed by the Phase 3 manifest extension
+        # (bundle_root_invariants). Plan Phase 3 captures it per-cfg.
+        aggregated[cfg_attr] = result.invariants
+        (staging / filename).write_text(
+            yaml.safe_dump(result.cfg_dict, sort_keys=False)
+        )
+    return aggregated
 
 
 def _rewrite_paths_to_relative(
-    cfg_dict: Any,
+    cfg_dict: dict,
+    cfg_model: type[cfgBaseModel],
     analysis_dir: Path,
     system_directory: Path,
-) -> Any:
-    """Recursively walk the config dict; rewrite absolute paths under
-    analysis_dir or system_directory as relative to the corresponding root."""
+) -> RewriteResult:
+    """Rewrite absolute Path fields in ``cfg_dict`` per the per-field
+    policy table.
+
+    Uses Pydantic v2 model introspection (``model_fields``) to enumerate
+    Path-typed field names; each is then routed through its
+    ``PathPolicy`` entry in ``_PATH_FIELD_POLICY``. Fields not declared
+    on ``cfg_model`` as ``Path`` / ``Optional[Path]`` are passed through
+    unchanged.
+
+    Returns:
+        ``RewriteResult`` with the rewritten ``cfg_dict`` and a
+        per-policy ``invariants`` dict suitable for inclusion in the
+        Phase 3 ``bundle_manifest.json`` ``bundle_root_invariants`` key.
+    """
     analysis_root = analysis_dir.resolve()
     system_root = system_directory.resolve()
+    path_fields = enumerate_path_fields(cfg_model)
+    invariants: dict[str, list[str]] = {policy.value: [] for policy in PathPolicy}
+    out = dict(cfg_dict)
 
-    def _rewrite_one(value: Any) -> Any:
-        if isinstance(value, str):
-            try:
-                p = Path(value)
-                if not p.is_absolute():
-                    return value
-                pr = p.resolve()
-                if pr.is_relative_to(analysis_root):
-                    return str(pr.relative_to(analysis_root))
-                if pr.is_relative_to(system_root):
-                    return str(pr.relative_to(system_root))
-            except (ValueError, OSError):
-                pass
-            return value
-        if isinstance(value, dict):
-            return {k: _rewrite_one(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_rewrite_one(v) for v in value]
+    for name in path_fields:
+        if name not in _PATH_FIELD_POLICY:
+            raise KeyError(
+                f"Pydantic field '{name}' on {cfg_model.__name__} is typed "
+                f"as Path/Optional[Path] but has no entry in "
+                f"_PATH_FIELD_POLICY. Add a policy entry in "
+                f"bundle/_path_policy.py."
+            )
+        policy = _PATH_FIELD_POLICY[name]
+        value = out.get(name)
+        new_value = _apply_policy(
+            value,
+            policy=policy,
+            analysis_root=analysis_root,
+            system_root=system_root,
+        )
+        out[name] = new_value
+        invariants[policy.value].append(name)
+
+    return RewriteResult(cfg_dict=out, invariants=invariants)
+
+
+def _apply_policy(
+    value: Any,
+    *,
+    policy: PathPolicy,
+    analysis_root: Path,
+    system_root: Path,
+) -> Any:
+    """Apply a single ``PathPolicy`` to a cfg field value."""
+    if policy is PathPolicy.FORCED_DOT:
+        return "."
+    if policy is PathPolicy.IS_NONE_ACCEPTABLE:
+        return None
+    if policy is PathPolicy.HELPER_RESOLVED:
+        # Reserved for future runtime-derived fields. Pass through
+        # unchanged in Phase 1.
         return value
+    if value is None:
+        if policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE:
+            return None
+        # BUNDLE_RELATIVE on a None value is a misconfiguration — the
+        # field is declared required (Path, not Optional[Path]) yet
+        # serialized as None. Pass through; Pydantic load-side will
+        # reject it at consume time.
+        return value
+    return _rewrite_absolute_to_relative(
+        value,
+        analysis_root=analysis_root,
+        system_root=system_root,
+    )
 
-    return _rewrite_one(cfg_dict)
+
+def _rewrite_absolute_to_relative(
+    value: Any,
+    *,
+    analysis_root: Path,
+    system_root: Path,
+) -> Any:
+    """Rewrite an absolute path string to its bundle-relative form.
+
+    Resolution order: ``analysis_root`` first, then ``system_root``, then
+    ``external/{filename}`` fallback. Mirrors the
+    ``_harvest_and_copy_sources`` fallback at the file-copy layer so the
+    cfg and the staging-dir layout agree on where the file lives.
+    Non-string values are passed through unchanged.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        p = Path(value)
+        if not p.is_absolute():
+            return value
+        pr = p.resolve()
+        if pr.is_relative_to(analysis_root):
+            return str(pr.relative_to(analysis_root))
+        if pr.is_relative_to(system_root):
+            return str(pr.relative_to(system_root))
+        return str(Path("external") / pr.name)
+    except (ValueError, OSError):
+        return value
 
 
 def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     analysis_dir = analysis.analysis_paths.analysis_dir
+    # Snakefile is renamed to Snakefile.source so the bundle's regen-only
+    # generated Snakefile (written by bundle/snakefile_generator.py at consume
+    # time) can take the canonical "Snakefile" filename. The .source variant is
+    # preserved for debugging value per the Phase 2 D1 resolution.
+    snakefile_src = analysis_dir / "Snakefile"
+    if snakefile_src.exists():
+        shutil.copy2(snakefile_src, staging / "Snakefile.source")
     for fname in (
-        "Snakefile",
         VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",
@@ -245,6 +336,7 @@ def _write_bundle_manifest(
     sources_by_renderer: dict[str, list[Path]],
     analysis_id: str,
     git_sha: str,
+    bundle_root_invariants: dict | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -257,17 +349,44 @@ def _write_bundle_manifest(
             for name, paths in sources_by_renderer.items()
         },
     }
+    if bundle_root_invariants is not None:
+        manifest["bundle_root_invariants"] = bundle_root_invariants
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(
         json.dumps(manifest, indent=2)
     )
 
 
-def _emit_bundle_tar(staging: Path, output_path: Path) -> None:
-    """Emit a deterministic uncompressed tar from staging."""
-    with tarfile.open(output_path, "w") as tar:
+def _emit_bundle_zip(staging: Path, output_path: Path) -> None:
+    # Emit a deterministic uncompressed zip from staging.
+    #
+    # Determinism is achieved via two mechanisms applied jointly:
+    # (1) sorted file ordering (rglob output is sorted so the same
+    #     staging tree always produces the same archive entry order);
+    # (2) fixed date_time on every ZipInfo entry — the value
+    #     (1980, 1, 1, 0, 0, 0) is the zipfile module's minimum
+    #     valid date, eliminating mtime variability from real
+    #     filesystem timestamps.
+    #
+    # Compression: ZIP_STORED (uncompressed at the file-byte level).
+    # Same rationale as the prior tar format: zarr is the bulk of
+    # bundle size and is internally chunked-compressed; external zip
+    # compression adds CPU cost without size win.
+    fixed_date_time = (1980, 1, 1, 0, 0, 0)
+    with zipfile.ZipFile(
+        output_path, "w", compression=zipfile.ZIP_STORED
+    ) as zf:
         for entry in sorted(staging.rglob("*")):
+            if entry.is_dir():
+                # Skip directory entries; zipfile reconstructs directory
+                # structure from file paths at extraction time.
+                continue
             arcname = entry.relative_to(staging)
-            tar.add(entry, arcname=str(arcname), recursive=False)
+            info = zipfile.ZipInfo(
+                filename=str(arcname), date_time=fixed_date_time
+            )
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = 0o644 << 16  # rw-r--r-- file mode
+            zf.writestr(info, entry.read_bytes())
 
 
 def _get_toolkit_git_sha(strict: bool = True) -> str:
