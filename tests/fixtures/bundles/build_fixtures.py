@@ -76,17 +76,9 @@ def _build_one(case_name: str, fixture_subdir: str, analysis) -> Path:
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
-    _copy_configs_with_relative_paths(analysis, out)
-
-    # Compute bundle_root_invariants by walking both cfg models.
-    invariants: dict[str, list[str]] = {}
-    for cfg in (
-        analysis._system.cfg_system,
-        analysis.cfg_analysis,
-    ):
-        for name in enumerate_path_fields(type(cfg)):
-            policy = _PATH_FIELD_POLICY[name]
-            invariants.setdefault(policy.value, []).append(name)
+    # _copy_configs_with_relative_paths returns the per-cfg invariants
+    # dict (Plan Phase 3 VMS-8 shape: {"cfg_system": {...}, "cfg_analysis": {...}}).
+    invariants = _copy_configs_with_relative_paths(analysis, out)
 
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,

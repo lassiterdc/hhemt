@@ -94,13 +94,14 @@ def emit_bundle(
     with _staging_dir(output_path.parent) as staging:
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
-        _copy_configs_with_relative_paths(analysis, staging)
+        aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _copy_supporting_files(analysis, staging)
         _write_bundle_manifest(
             staging,
             sources_by_renderer=sources_by_renderer,
             analysis_id=analysis_id,
             git_sha=git_sha,
+            bundle_root_invariants=aggregated_invariants,
         )
         _emit_bundle_tar(staging, output_path)
 
@@ -147,12 +148,16 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
 
 def _copy_configs_with_relative_paths(
     analysis: TRITONSWMM_analysis, staging: Path
-) -> None:
+) -> dict[str, dict]:
     """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
     ``Path``-typed fields rewritten per the per-field policy table in
-    ``_path_policy._PATH_FIELD_POLICY``."""
+    ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
+    attribute (``cfg_system`` / ``cfg_analysis``) mapping to the
+    ``RewriteResult.invariants`` dict from that cfg's rewrite — consumed
+    by the Phase 3 manifest extension (``bundle_root_invariants``)."""
     import yaml
 
+    aggregated: dict[str, dict] = {}
     for cfg_attr, filename in (
         ("cfg_system", "cfg_system.yaml"),
         ("cfg_analysis", "cfg_analysis.yaml"),
@@ -170,12 +175,12 @@ def _copy_configs_with_relative_paths(
             system_directory=analysis._system.cfg_system.system_directory,
         )
         # `result.invariants` is consumed by the Phase 3 manifest extension
-        # (bundle_root_invariants). Phase 1 discards it — the rewriter's
-        # in-place application of the policy table is the load-bearing
-        # behavior here.
+        # (bundle_root_invariants). Plan Phase 3 captures it per-cfg.
+        aggregated[cfg_attr] = result.invariants
         (staging / filename).write_text(
             yaml.safe_dump(result.cfg_dict, sort_keys=False)
         )
+    return aggregated
 
 
 def _rewrite_paths_to_relative(
@@ -331,6 +336,7 @@ def _write_bundle_manifest(
     sources_by_renderer: dict[str, list[Path]],
     analysis_id: str,
     git_sha: str,
+    bundle_root_invariants: dict | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -343,6 +349,8 @@ def _write_bundle_manifest(
             for name, paths in sources_by_renderer.items()
         },
     }
+    if bundle_root_invariants is not None:
+        manifest["bundle_root_invariants"] = bundle_root_invariants
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(
         json.dumps(manifest, indent=2)
     )

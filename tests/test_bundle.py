@@ -172,14 +172,6 @@ def test_bundle_class_is_not_analysis_subclass() -> None:
     assert Bundle.__mro__ == (Bundle, object)
 
 
-def test_regenerate_report_stub_raises(multi_sim_bundle: Path) -> None:
-    """Phase 1 stub: regenerate_report raises NotImplementedError with
-    a forward-pointer to Phase 2/3 implementation."""
-    bundle = Bundle.from_directory(multi_sim_bundle)
-    with pytest.raises(NotImplementedError, match="Phase 2.*Phase 3"):
-        bundle.regenerate_report()
-
-
 def test_from_directory_missing_manifest(tmp_path: Path) -> None:
     """from_directory raises FileNotFoundError when the directory has
     no bundle_manifest.json."""
@@ -187,3 +179,158 @@ def test_from_directory_missing_manifest(tmp_path: Path) -> None:
     empty.mkdir()
     with pytest.raises(FileNotFoundError, match="bundle_manifest.json"):
         Bundle.from_directory(empty)
+
+
+# ============================================================================
+# Plan Phase 3 tests — manifest extension, regenerate_report subprocess wiring,
+# static_backend cfg substrate (absorbed from Plan Phase 5 per Decision 3.3D).
+# ============================================================================
+
+def test_manifest_invariants_object(multi_sim_bundle):
+    # bundle_manifest.json carries bundle_root_invariants with cfg_system
+    # and cfg_analysis sub-dicts; each enumerates path-field policies.
+    import json
+    manifest = json.loads(
+        (multi_sim_bundle / "bundle_manifest.json").read_text()
+    )
+    assert "bundle_root_invariants" in manifest, (
+        "Plan Phase 3 requires bundle_root_invariants in the manifest"
+    )
+    invariants = manifest["bundle_root_invariants"]
+    assert "cfg_system" in invariants
+    assert "cfg_analysis" in invariants
+
+def test_regenerate_report_no_chdir(multi_sim_bundle, monkeypatch):
+    # Bundle.regenerate_report must not modify the parent-process cwd.
+    import os
+    from TRITON_SWMM_toolkit.bundle import Bundle
+
+    class FakeProc:
+        returncode = 0
+    def fake_run(cmd, logfile, env=None, cwd=None, echo_to_stdout=True):
+        return FakeProc()
+    # Patch the binding site (bundle.__init__) rather than the
+    # source module (subprocess_utils), so the patch intercepts the
+    # local-import-inside-method that VMS-1 uses. If a future refactor
+    # moves the import to module-level, this patch still works because
+    # it targets the binding site, not the source.
+    import TRITON_SWMM_toolkit.bundle as bundle_mod
+    monkeypatch.setattr(
+        bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
+    )
+
+    bundle = Bundle.from_directory(multi_sim_bundle)
+    cwd_before = os.getcwd()
+    try:
+        bundle.regenerate_report(format="html")
+    except (RuntimeError, FileNotFoundError):
+        # Subprocess stubbed; downstream output-path assertions don't
+        # matter — this test only asserts cwd invariance.
+        pass
+    assert os.getcwd() == cwd_before, (
+        "Bundle.regenerate_report leaked an os.chdir to the parent process"
+    )
+
+def test_regenerate_report_subprocess_cwd_is_bundle_root(
+    multi_sim_bundle, monkeypatch
+):
+    # The snakemake subprocess receives cwd=bundle.root via Popen kwarg.
+    from TRITON_SWMM_toolkit.bundle import Bundle
+
+    captured = {}
+    class FakeProc:
+        returncode = 0
+    def fake_run(cmd, logfile, env=None, cwd=None, echo_to_stdout=True):
+        captured["cwd"] = cwd
+        return FakeProc()
+    # Patch the binding site (bundle.__init__) rather than the
+    # source module (subprocess_utils), so the patch intercepts the
+    # local-import-inside-method that VMS-1 uses. If a future refactor
+    # moves the import to module-level, this patch still works because
+    # it targets the binding site, not the source.
+    import TRITON_SWMM_toolkit.bundle as bundle_mod
+    monkeypatch.setattr(
+        bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
+    )
+
+    bundle = Bundle.from_directory(multi_sim_bundle)
+    try:
+        bundle.regenerate_report(format="html")
+    except (RuntimeError, FileNotFoundError):
+        pass
+    assert captured["cwd"] == bundle.root, (
+        f"Expected subprocess cwd={bundle.root}, got {captured['cwd']}"
+    )
+
+def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
+    # Bundle.regenerate_report fails loud when stale locks exist
+    # (Decision 3.1A defense-in-depth check).
+    import pytest
+    from TRITON_SWMM_toolkit.bundle import Bundle
+
+    locks_dir = multi_sim_bundle / ".snakemake" / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    (locks_dir / "fake.lock").write_text("")
+
+    bundle = Bundle.from_directory(multi_sim_bundle)
+    with pytest.raises(RuntimeError, match="--unlock"):
+        bundle.regenerate_report(format="html")
+
+def test_legacy_manifest_no_invariants_key(tmp_path):
+    # Bundle.from_directory loads pre-Plan-Phase-3 bundles that lack
+    # the bundle_root_invariants key (SE F-I Flag 7 backward compat).
+    import json
+    from TRITON_SWMM_toolkit.bundle import Bundle
+    from TRITON_SWMM_toolkit.version_migration.constants import (
+        BUNDLE_SCHEMA_VERSION,
+    )
+
+    bundle_dir = tmp_path / "legacy_bundle"
+    bundle_dir.mkdir()
+    legacy_manifest = {
+        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
+        "layout_version": 1,
+        "toolkit_git_sha": "deadbeefcafe",
+        "analysis_id": "legacy_test",
+        "created_at_utc": "2026-01-01T00:00:00+00:00",
+        "source_paths_by_renderer": {},
+        # NOTE: no bundle_root_invariants key — pre-Plan-Phase-3 shape.
+    }
+    (bundle_dir / "bundle_manifest.json").write_text(
+        json.dumps(legacy_manifest)
+    )
+    bundle = Bundle.from_directory(bundle_dir)
+    assert (
+        bundle.manifest.get("bundle_root_invariants", "MISSING")
+        == "MISSING"
+    ), "Legacy bundle should load without the key"
+
+def test_static_backend_field_default_is_plotly():
+    # cfg_report's InteractiveBackendConfig.static_backend defaults to
+    # 'plotly' per Plan Phase 2 D3 + Decision 4.
+    from TRITON_SWMM_toolkit.config.report import InteractiveBackendConfig
+    cfg = InteractiveBackendConfig()
+    assert cfg.static_backend == "plotly"
+
+def test_preflight_raises_without_kaleido(monkeypatch):
+    # preflight_validate with static_backend='plotly' adds an ERROR
+    # issue when kaleido is not importable.
+    import sys
+    from TRITON_SWMM_toolkit.validation import (
+        _check_static_backend_kaleido_available,
+        ValidationResult,
+    )
+
+    class FakeInteractive:
+        static_backend = "plotly"
+    class FakeReport:
+        interactive = FakeInteractive()
+
+    monkeypatch.setitem(sys.modules, "kaleido", None)
+
+    result = ValidationResult(context="test")
+    _check_static_backend_kaleido_available(FakeReport(), result)
+    assert any(
+        "viz-export" in (issue.fix_hint or "")
+        for issue in result.errors
+    ), "Expected preflight error naming the viz-export extra"

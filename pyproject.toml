@@ -46,6 +46,7 @@ requires-python = ">= 3.10"
 [project.optional-dependencies]
 test = [
 ]
+viz-export = ["kaleido>=0.2.1,<1.0"]
 
 [project.urls]
 bugs = "https://github.com/lassiterdc/TRITON_SWMM_toolkit/issues"
