@@ -878,6 +878,65 @@ def _check_interactive_dependencies(report_cfg, result: ValidationResult) -> Non
         )
 
 
+def _check_static_backend_kaleido_available(
+    report_cfg, result: ValidationResult
+) -> None:
+    # Error when static_backend='plotly' but kaleido is not importable.
+    #
+    # Runtime kaleido availability is the load-bearing precondition
+    # for SVG export via fig.write_image(engine='kaleido'). cfg-load-time
+    # type validation (Pydantic Literal) cannot catch import failures;
+    # this preflight check is the runtime gate that fires before any
+    # render attempt.
+    #
+    # Per Decision 3.3D + Decision 4, cfg_report.interactive.static_backend
+    # defaults to 'plotly', so the common case is: users without the
+    # viz-export extra installed will hit this check at preflight time
+    # and learn how to install kaleido.
+    if report_cfg.interactive.static_backend != "plotly":
+        return
+    try:
+        import kaleido  # noqa: F401
+    except ImportError:
+        result.add_error(
+            field="report_config.interactive.static_backend",
+            message=(
+                "static_backend='plotly' requires kaleido, but kaleido "
+                "is not importable in the current environment."
+            ),
+            current_value="plotly",
+            fix_hint=(
+                "Install the viz-export extra: "
+                "`pip install -e '.[viz-export]'`. "
+                "Alternatively, set "
+                "`report.interactive.static_backend: matplotlib` in "
+                "cfg_analysis.yaml to opt out of plotly export."
+            ),
+        )
+        return
+    # Kaleido v1+ requires a separate plotly_get_chrome post-install
+    # step; v0 ships with a pre-bundled renderer. Detect v1+ and error.
+    kaleido_version = getattr(kaleido, "__version__", "unknown")
+    if kaleido_version != "unknown" and kaleido_version.split(".")[0] != "0":
+        result.add_error(
+            field="report_config.interactive.static_backend",
+            message=(
+                f"static_backend='plotly' detected kaleido "
+                f"version={kaleido_version}. Kaleido v1+ requires a "
+                f"separate Chrome runtime via plotly_get_chrome; the "
+                f"viz-export extra pins kaleido<1.0 which ships a "
+                f"pre-bundled renderer."
+            ),
+            current_value=kaleido_version,
+            fix_hint=(
+                "Reinstall via the viz-export extra to pin "
+                "kaleido<1.0: `pip install -e '.[viz-export]'`. "
+                "Or follow the Kaleido v1+ post-install instructions "
+                "for plotly_get_chrome."
+            ),
+        )
+
+
 # ============================================================================
 # Combined Preflight Validation
 # ============================================================================
@@ -930,5 +989,6 @@ def preflight_validate(
     # remains the default until Phase 9 flips ``interactive.enabled`` to True.
     if report_cfg is not None:
         _check_interactive_dependencies(report_cfg, result)
+        _check_static_backend_kaleido_available(report_cfg, result)
 
     return result
