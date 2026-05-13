@@ -72,7 +72,11 @@ def generate_regeneration_snakefile(
     report_directive = 'report: "report/workflow_description.rst"\n'
 
     plot_output_paths = tuple(
-        f'"{_resolve_output_path(spec, ctx)}"' for spec in rule_specs
+        f'"{p}"'
+        for spec in rule_specs
+        for p in _expand_wildcards_to_existing_files(
+            _resolve_output_path(spec, ctx), bundle_root
+        )
     )
     render_report_targets = ('"analysis_report.html"', '"analysis_report.zip"')
     status_flags = _status_flags_for(is_sensitivity, cfg_analysis)
@@ -166,7 +170,7 @@ def _harvest_rule_specs(
     specs.append(RuleSpec(
         rule_name="plot_system_overview",
         renderer_module="system_overview",
-        input_flags=("",),  # bundle-side regen-only: no status flag input
+        input_flags=(),  # bundle-side regen-only: no status flag input
         output_path_template="plots/system_overview__OUTPUT_EXT__",
         source_paths=tuple(so_sources),
         wildcards=(),
@@ -181,10 +185,11 @@ def _harvest_rule_specs(
         log_path_template="_logs/plots/system_overview.log",
     ))
 
-    # per_sim rules (wildcarded on event_id; require manifest sidecars per
-    # event under plots/per_sim/{event_id}/{conduit_flow,peak_flood_depth}.manifest.json
-    # — sources unused in the function-source-paths path, so we pass through
-    # an empty function-mode spec).
+    # per_sim rules (wildcarded on event_id). Regen-mode: plot files
+    # already exist in the bundle; the rules exist only as metadata for
+    # `snakemake --report` to discover output paths. No upstream inputs,
+    # no event_iloc lookups, no helper functions — keep the rules
+    # parseable and stub-shaped.
     if not is_sensitivity:
         for renderer, figname in [
             ("per_sim_peak_flood_depth", "peak_flood_depth"),
@@ -193,12 +198,12 @@ def _harvest_rule_specs(
             specs.append(RuleSpec(
                 rule_name=f"plot_{renderer}",
                 renderer_module=renderer,
-                input_flags=("",),
+                input_flags=(),
                 output_path_template=f"plots/per_sim/{{event_id}}/{figname}__OUTPUT_EXT__",
                 source_paths=(),
                 wildcards=("event_id",),
-                extra_cli_flags=("--event-iloc {params.event_iloc}",),
-                extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID[w.event_id]"),),
+                extra_cli_flags=(),
+                extra_params=(),
                 report_kwargs={
                     "caption": f"report/captions/per_sim_{figname}.rst",
                     "category": "Per Simulation Results",
@@ -209,7 +214,6 @@ def _harvest_rule_specs(
                 },
                 resources_yaml="mem_mb=4000, time_min=15",
                 log_path_template=f"_logs/plots/per_sim_{figname}_{{event_id}}.log",
-                source_paths_fn_name=f"_per_sim_{figname}_sources",
             ))
 
     # per_analysis_summary (always emitted)
@@ -218,7 +222,7 @@ def _harvest_rule_specs(
     specs.append(RuleSpec(
         rule_name="plot_per_analysis_summary_table",
         renderer_module="per_analysis_summary",
-        input_flags=("",),
+        input_flags=(),
         output_path_template="plots/per_analysis/summary_table__OUTPUT_EXT__",
         source_paths=tuple(pa_sources),
         wildcards=(),
@@ -255,7 +259,7 @@ def _harvest_rule_specs(
         specs.append(RuleSpec(
             rule_name=f"plot_{renderer}",
             renderer_module=renderer,
-            input_flags=("",),
+            input_flags=(),
             output_path_template=f"{output_subpath}__OUTPUT_EXT__",
             source_paths=tuple(sources),
             wildcards=(),
@@ -270,16 +274,17 @@ def _harvest_rule_specs(
             log_path_template=f"_logs/plots/{renderer}.log",
         ))
 
-    # Sensitivity-master additional rules
+    # Sensitivity-master additional rules (stub-shaped — see per_sim
+    # rationale: plots exist on disk, rules are metadata only).
     if is_sensitivity:
         specs.append(RuleSpec(
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
-            input_flags=("",),
+            input_flags=(),
             output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total.svg",
             source_paths=(),
             wildcards=("independent_var",),
-            extra_cli_flags=("--independent-var {wildcards.independent_var}",),
+            extra_cli_flags=(),
             extra_params=(),
             report_kwargs={
                 "caption": "report/captions/sensitivity_benchmarking.rst",
@@ -289,7 +294,6 @@ def _harvest_rule_specs(
             },
             resources_yaml="mem_mb=4000, time_min=10",
             log_path_template="_logs/plots/sensitivity_benchmarking_{independent_var}.log",
-            source_paths_fn_name="_sensitivity_source_paths",
         ))
         for renderer_local, figname in [
             ("per_sim_per_sa_peak_flood_depth", "peak_flood_depth"),
@@ -298,17 +302,14 @@ def _harvest_rule_specs(
             specs.append(RuleSpec(
                 rule_name=f"plot_{renderer_local}",
                 renderer_module=renderer_local,
-                input_flags=("",),
+                input_flags=(),
                 output_path_template=(
                     f"plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/{figname}__OUTPUT_EXT__"
                 ),
                 source_paths=(),
                 wildcards=("sa_id", "event_id"),
-                extra_cli_flags=(
-                    "--sa-id {wildcards.sa_id}",
-                    "--event-iloc {params.event_iloc}",
-                ),
-                extra_params=(("event_iloc", "lambda w: ILOC_BY_EVENT_ID_BY_SA[w.sa_id][w.event_id]"),),
+                extra_cli_flags=(),
+                extra_params=(),
                 report_kwargs={
                     "caption": f"report/captions/per_sim_{figname}.rst",
                     "category": "Per Simulation Results",
@@ -321,7 +322,6 @@ def _harvest_rule_specs(
                 log_path_template=(
                     f"_logs/plots/per_sim_per_sa_{figname}_sa-{{sa_id}}_{{event_id}}.log"
                 ),
-                source_paths_fn_name=f"_per_sim_per_sa_{figname}_sources",
             ))
 
     return tuple(specs)
@@ -387,6 +387,47 @@ def _resolve_output_path(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     """Substitute __OUTPUT_EXT__ in the spec's output_path_template."""
     ext = _output_ext_for(ctx.static_backend, spec.renderer_module)
     return spec.output_path_template.replace("__OUTPUT_EXT__", ext)
+
+
+def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tuple[str, ...]:
+    """Glob-expand Snakemake wildcards in a path template against the
+    bundle filesystem.
+
+    rule_all and render_report inputs cannot be wildcarded (Snakemake
+    needs concrete file paths to materialize the DAG). The
+    regeneration-scoped Snakefile lists each existing plot file
+    explicitly.
+
+    Discovery strategy: substitute wildcards with ``*`` and glob first
+    against the plot artifact itself; if no matches, fall back to
+    globbing against the corresponding ``.manifest.json`` sidecar
+    (since bundle fixtures may carry only the manifest sidecars, not
+    the rendered plot files). Each wildcard match yields one expanded
+    path. If neither matches, return the template verbatim so the
+    Snakefile remains parseable for empty plot subsets.
+    """
+    import re as _re
+
+    glob_pat = _re.sub(r"\{[^{}]+\}", "*", template)
+    if glob_pat == template:
+        return (template,)
+    matches = sorted(str(p.relative_to(bundle_root)) for p in bundle_root.glob(glob_pat))
+    if matches:
+        return tuple(matches)
+    # Fallback: glob for the manifest sidecar; the plot path is the manifest
+    # stem with the originally-templated extension.
+    ext_match = _re.search(r"\.[^./{}]+$", template)
+    if not ext_match:
+        return (template,)
+    ext = ext_match.group(0)
+    manifest_glob = glob_pat[: -len(ext)] + ".manifest.json"
+    sidecars = sorted(bundle_root.glob(manifest_glob))
+    if not sidecars:
+        return (template,)
+    return tuple(
+        str(s.relative_to(bundle_root)).removesuffix(".manifest.json") + ext
+        for s in sidecars
+    )
 
 
 def _status_flags_for(is_sensitivity: bool, cfg_analysis: dict) -> tuple[str, ...]:
