@@ -131,6 +131,174 @@ class RuleSpec:
     report_kwargs: dict[str, str] | None
     resources_yaml: str
     log_path_template: str
+    source_paths_fn_name: str | None = None
+
+
+_OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
+    "system_overview":               {"matplotlib": ".png",  "plotly": ".svg"},
+    "per_sim_peak_flood_depth":      {"matplotlib": ".png",  "plotly": ".svg"},
+    "per_sim_conduit_flow":          {"matplotlib": ".png",  "plotly": ".svg"},
+    "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
+    "per_sim_per_sa_conduit_flow":   {"matplotlib": ".png",  "plotly": ".svg"},
+    "sensitivity_benchmarking":      {"matplotlib": ".png",  "plotly": ".svg"},
+    "per_analysis_summary":          {"matplotlib": ".svg",  "plotly": ".svg"},
+    "scenario_status_appendix":      {"matplotlib": ".html", "plotly": ".html"},
+    "errors_and_warnings":           {"matplotlib": ".html", "plotly": ".html"},
+}
+
+
+def _output_ext_for(static_backend: Literal["matplotlib", "plotly"], renderer_module: str) -> str:
+    """Return the output extension for a renderer under the given static backend.
+
+    See VMS-5 in the Phase 2 plan doc. Three-place output_ext coupling:
+    rule output path, rule report() first arg, and rule_all / render_report
+    input lists must all use this same extension.
+    """
+    return _OUTPUT_EXT_BY_RENDERER[renderer_module][static_backend]
+
+
+def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
+    """Emit a single Snakemake plot rule as a string.
+
+    Single-f-string-template assembly per VMS-5. Per-spec variability
+    (literal vs function source_paths, optional event_iloc param,
+    optional --event-iloc shell flag, report-kwargs shape) is encoded
+    as pre-computed sub-strings consumed by the template. No
+    per-renderer branching.
+    """
+    output_ext = _output_ext_for(ctx.static_backend, spec.renderer_module)
+    # NB: use plain string replacement (not .format) so Snakemake's
+    # {wildcard} braces in the output_path_template survive unescaped.
+    output_path = spec.output_path_template.replace("__OUTPUT_EXT__", output_ext)
+
+    # input: block — uniformly `consolidated = "<flag>",` for plot rules
+    # (single entry; the master Snakefile passes a different flag value
+    # for sensitivity-master rules but the shape is identical).
+    input_block = "\n        ".join(
+        f'consolidated = "{f}",' for f in spec.input_flags
+    )
+
+    # output: report(...) wrapper. report_kwargs carries caption,
+    # category, optional subcategory, and labels as pre-formatted dict.
+    rk = spec.report_kwargs or {}
+    labels_str = rk.get("labels", '{"figure": "?"}')
+    subcategory_line = (
+        f'\n            subcategory="{rk["subcategory"]}",'
+        if "subcategory" in rk else ""
+    )
+    output_block = (
+        f'report(\n'
+        f'            "{output_path}",\n'
+        f'            caption="{rk.get("caption", "")}",\n'
+        f'            category="{rk.get("category", "")}",'
+        f'{subcategory_line}\n'
+        f'            labels={labels_str},\n'
+        f'        )'
+    )
+
+    # params: block — either literal source_paths or function reference,
+    # plus any extra_params entries (e.g. event_iloc lambdas).
+    if spec.source_paths_fn_name is not None:
+        fn = spec.source_paths_fn_name
+        params_lines = [
+            f"        source_paths = {fn},",
+            f"        source_paths_rst = lambda w: _fmt_sources_rst({fn}(w)),",
+        ]
+    else:
+        sp = list(spec.source_paths)
+        params_lines = [
+            f"        source_paths = {sp!r},",
+            f"        source_paths_rst = {format_sources_rst(sp)!r},",
+        ]
+    for name, value in spec.extra_params:
+        params_lines.append(f"        {name} = {value},")
+    params_block = "\n".join(params_lines)
+
+    # shell: block — optional extra CLI flags appear between config_args
+    # and --output. Each emitted on its own indented continuation line.
+    extra_flags_block = "".join(
+        f"            {flag} \\\n" for flag in spec.extra_cli_flags
+    )
+
+    # Plot-rule shell uses literal "python" (the rule's conda: env
+    # provides the interpreter); only setup / run / process / consolidate
+    # / render_report rules use ctx.python_executable's full path.
+    return f'''
+rule {spec.rule_name}:
+    input:
+        {input_block}
+    output:
+        {output_block}
+    params:
+{params_block}
+    log: "{spec.log_path_template}"
+    conda: "{ctx.conda_env_path}"
+    resources: {spec.resources_yaml}
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli {spec.renderer_module} \\
+            {ctx.config_args_str} \\
+{extra_flags_block}            --output {{output}} \\
+            > {{log}} 2>&1
+        """
+'''
+
+
+def _emit_render_report_rule(
+    plot_output_paths: tuple[str, ...],
+    ctx: RuleEmissionContext,
+    resources_yaml: str,
+) -> str:
+    """Emit the ``rule render_report`` block.
+
+    ``plot_output_paths`` is the list of (output_ext-resolved) plot
+    paths this rule depends on. Each entry is either a literal path or
+    a bare `expand("...", ...)` invocation string (for wildcarded
+    per-sim/per-sa rules); the helper inserts each verbatim into the
+    input: block.
+    """
+    input_lines = "\n        ".join(f"{p}," for p in plot_output_paths)
+    return f'''
+rule render_report:
+    input:
+        {input_lines}
+    output:
+        "analysis_report.{{format}}"
+    wildcard_constraints:
+        format="zip|html"
+    log: "{ctx.log_dir_rel}/render_report_{{format}}.log"
+    resources:
+{resources_yaml}
+    shell:
+        """
+        {ctx.python_executable} -m TRITON_SWMM_toolkit.render_report_runner \\
+            {ctx.config_args_str} \\
+            --format {{wildcards.format}} \\
+            > {{log}} 2>&1
+        """
+'''
+
+
+def _emit_rule_all(
+    *,
+    status_flags: tuple[str, ...],
+    plot_output_paths: tuple[str, ...],
+    render_report_targets: tuple[str, ...],
+    ctx: RuleEmissionContext,
+) -> str:
+    """Emit the ``rule all`` block.
+
+    Each tuple's entries are written verbatim into ``input:`` (already
+    quote-wrapped or `expand(...)`-wrapped by caller, per the
+    source-side emission conventions).
+    """
+    lines = list(status_flags) + list(plot_output_paths) + list(render_report_targets)
+    input_block = "\n        ".join(f"{e}," for e in lines)
+    return f'''
+rule all:
+    input:
+        {input_block}
+'''
 
 
 def _emit_report_artifacts(dest_root: Path) -> None:
