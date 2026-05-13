@@ -47,6 +47,16 @@ requires-python = ">= 3.10"
 test = [
 ]
 viz-export = ["kaleido>=0.2.1,<1.0"]
+# HPC orchestration extras required by SnakemakeWorkflowBuilder when
+# multi_sim_run_method='batch_job' or '1_job_many_srun_tasks'. The
+# _validate_batch_job_dry_run path in workflow.py:2274 unconditionally invokes
+# `snakemake --executor slurm`, which requires the slurm executor plugin even
+# for dry runs. Pin to current Snakemake 9.x line; jobstep plugin is required
+# for the SLURM-job-step model the toolkit uses for per-rule resource control.
+hpc = [
+    "snakemake-executor-plugin-slurm>=0.10",
+    "snakemake-executor-plugin-slurm-jobstep>=0.2",
+]
 
 [project.urls]
 bugs = "https://github.com/lassiterdc/TRITON_SWMM_toolkit/issues"
