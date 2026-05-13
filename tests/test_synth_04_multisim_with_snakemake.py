@@ -478,14 +478,22 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
     assert out_html.exists() and out_html.stat().st_size > 0
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
-    assert (plots_dir / "system_overview.png").exists()
-    assert (plots_dir / "per_analysis" / "summary_table.svg").exists()
+    # Resolve backend-dependent extensions via the canonical helper so the
+    # assertions match the per-rule emission regardless of static_backend.
+    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    backend = analysis._workflow_builder._get_report_cfg_static_backend()
+    so_ext = _output_ext_for(backend, "system_overview")
+    pfd_ext = _output_ext_for(backend, "per_sim_peak_flood_depth")
+    cf_ext = _output_ext_for(backend, "per_sim_conduit_flow")
+    pas_ext = _output_ext_for(backend, "per_analysis_summary")
+    assert (plots_dir / f"system_overview{so_ext}").exists()
+    assert (plots_dir / "per_analysis" / f"summary_table{pas_ext}").exists()
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
         event_id = compute_event_id_slug(ev)
-        assert (plots_dir / "per_sim" / event_id / "peak_flood_depth.png").exists()
-        assert (plots_dir / "per_sim" / event_id / "conduit_flow.png").exists()
+        assert (plots_dir / "per_sim" / event_id / f"peak_flood_depth{pfd_ext}").exists()
+        assert (plots_dir / "per_sim" / event_id / f"conduit_flow{cf_ext}").exists()
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
