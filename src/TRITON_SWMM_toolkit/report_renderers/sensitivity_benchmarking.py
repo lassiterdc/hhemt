@@ -114,7 +114,12 @@ def render(
     prov = ProvenanceLog()
     sens_cfg = report_cfg.sensitivity
 
-    if report_cfg.interactive.enabled:
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
+    )
+    if static_backend == "plotly":
         # Pre-compute speedup + efficiency (same call sites as matplotlib branch).
         speedup_pg = _compute_speedup_per_group(
             df, t_col="wallclock_s", indep_col="n_devices",
@@ -687,6 +692,18 @@ def _render_plotly_branch(
         fig, include_plotlyjs=plotly_js_mode,
         full_html=True, config=plotly_config,
     )
+
+    try:
+        fig.write_image(
+            output_path.with_suffix(".svg"),
+            engine="kaleido", width=1400, height=700, scale=1,
+        )
+    except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
+        import logging
+        logging.getLogger(__name__).warning(
+            "Kaleido SVG export skipped for %s: %s",
+            output_path.with_suffix(".svg"), exc,
+        )
 
     return emit_plot_with_sources(
         html_text, output_path, source_paths,

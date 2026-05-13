@@ -1,18 +1,16 @@
-"""Master-Snakefile byte-identity test (Plan Phase 2 Validation Plan item 4).
+"""Master-Snakefile byte-identity test.
 
 Asserts that the source-side ``SnakemakeWorkflowBuilder.generate_snakefile_content``
 and ``SensitivityAnalysisWorkflowBuilder.generate_master_snakefile_content``
-emit byte-identical Snakefile output to the captured pre-refactor goldens
-when ``static_backend="matplotlib"`` (the pre-Phase-5 default behavior).
+emit byte-identical Snakefile output to the captured goldens. The goldens
+were re-baselined at Plan Phase 5 to reflect the cfg-controlled
+``static_backend`` default (``"plotly"`` per Decision 4); the builders read
+the report-cfg field via ``_get_report_cfg_static_backend()`` and emit
+plotly-branch rules when no ``--report-config`` overrides the default.
 
-If byte-identity fails, the Plan Phase 2 refactor (VMS-5 module-level
-helpers + VMS-6 plot-rule wrapper rewrites) introduced silent drift and
-must be fixed before merge — NOT papered over by regenerating the
-golden.
-
-Note: VMS-6's static_backend kwarg is not yet threaded through
-generate_*_content's signature; the methods' internal default of
-"matplotlib" is what matches the goldens.
+If byte-identity fails, the source-side Snakefile generation introduced
+silent drift and must be fixed before merge — NOT papered over by
+regenerating the golden.
 """
 
 from __future__ import annotations

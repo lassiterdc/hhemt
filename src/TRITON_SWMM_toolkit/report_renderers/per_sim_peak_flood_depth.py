@@ -190,7 +190,12 @@ def render(
             report_cfg.figure_defaults.savefig_dpi,
         )
 
-    if report_cfg.interactive.enabled:
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
+    )
+    if static_backend == "plotly":
         return _render_plotly_branch(
             analysis, report_cfg, output_path,
             event_iloc=event_iloc, triton_group=triton_group, prov=prov,
@@ -943,6 +948,18 @@ def _render_plotly_branch(
     valid_cell_count = cell_count
     bc_min = float(np.nanmin(bc_water_level))
     bc_max = float(np.nanmax(bc_water_level))
+
+    try:
+        fig.write_image(
+            output_path.with_suffix(".svg"),
+            engine="kaleido", width=1400, height=600, scale=1,
+        )
+    except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
+        import logging
+        logging.getLogger(__name__).warning(
+            "Kaleido SVG export skipped for %s: %s",
+            output_path.with_suffix(".svg"), exc,
+        )
 
     return emit_plot_with_sources(
         html_text, output_path, source_paths,

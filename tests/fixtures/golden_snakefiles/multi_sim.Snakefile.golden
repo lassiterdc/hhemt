@@ -300,7 +300,7 @@ rule plot_system_overview:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/system_overview.png",
+            "plots/system_overview.svg",
             caption="report/captions/system_map.rst",
             category="System Information",
             labels={"figure": "System map"},
@@ -351,7 +351,7 @@ rule plot_per_sim_peak_flood_depth:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/per_sim/{event_id}/peak_flood_depth.png",
+            "plots/per_sim/{event_id}/peak_flood_depth.svg",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
             labels={"event_id": "{event_id}", "figure": "Peak flood depth"},
@@ -378,7 +378,7 @@ rule plot_per_sim_conduit_flow:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/per_sim/{event_id}/conduit_flow.png",
+            "plots/per_sim/{event_id}/conduit_flow.svg",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
             labels={"event_id": "{event_id}", "figure": "Conduit flow"},
@@ -412,8 +412,8 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}],
-        source_paths_rst = '- ``sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n',
+        source_paths = [{'path': 'sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_id.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
+        source_paths_rst = '- ``sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_id.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-11_1503_bundle-portable-report-regen-pwi/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=2000, time_min=5
