@@ -803,6 +803,17 @@ def bundle_command(
             "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
+    report_config: Path | None = typer.Option(
+        None, "--report-config",
+        exists=True, file_okay=True, dir_okay=False, readable=True,
+        help=(
+            "Path to the report_config.yaml that was used at analysis.run() "
+            "time. The resolved report cfg is snapshotted into the bundle as "
+            "cfg_report.yaml so Bundle.regenerate_report() reproduces the "
+            "static_backend the analysis was rendered under. When omitted, "
+            "DEFAULT_REPORT_CONFIG is snapshotted."
+        ),
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
@@ -821,9 +832,13 @@ def bundle_command(
     system = TRITONSWMM_system(system_config)
     analysis = TRITONSWMM_analysis(analysis_config, system)
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        bundle_path = analysis.sensitivity.bundle_report_data(output)
+        bundle_path = analysis.sensitivity.bundle_report_data(
+            output, report_config_path=report_config,
+        )
     else:
-        bundle_path = analysis.bundle_report_data(output)
+        bundle_path = analysis.bundle_report_data(
+            output, report_config_path=report_config,
+        )
     console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
 
 
