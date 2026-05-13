@@ -799,8 +799,8 @@ def bundle_command(
     output: Path = typer.Option(
         None, "--output",
         help=(
-            "Target path for the bundle tar. Defaults to "
-            "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar."
+            "Target path for the bundle zip. Defaults to "
+            "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
 ) -> None:
@@ -808,7 +808,7 @@ def bundle_command(
 
     Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
     and copies the union of declared source paths into a self-contained
-    tar with relative-path configs and the HPC-baseline
+    zip with relative-path configs and the HPC-baseline
     analysis_report.{html,zip} under bundle_baseline/.
 
     Requires render_report() to have been invoked at least once on the
@@ -831,7 +831,7 @@ def bundle_command(
 def report_from_bundle_command(
     bundle_path: Path = typer.Argument(
         ..., exists=True, file_okay=True, dir_okay=True, readable=True,
-        help="Path to the bundle tar (or unpacked bundle directory).",
+        help="Path to the bundle zip (or unpacked bundle directory).",
     ),
     format: str = typer.Option(
         "html", "--format",
@@ -847,27 +847,24 @@ def report_from_bundle_command(
     # Phase 2 D3 + Decision 4); no static_backend kwarg is threaded
     # through the CLI per Decision 3.3D.
     #
-    # Tar unpacking is retained for legacy bundle support per
-    # Decision 3.2A; Plan Phase 4 replaces tar with zip and may
-    # collapse the unpack branch.
-    import tarfile
+    import zipfile
 
     from TRITON_SWMM_toolkit.bundle import Bundle, _get_toolkit_git_sha
 
-    if bundle_path.is_file() and bundle_path.suffix == ".tar":
+    if bundle_path.is_file() and bundle_path.suffix == ".zip":
         unpack_dir = bundle_path.parent / bundle_path.stem
         unpack_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(bundle_path) as tar:
-            tar.extractall(unpack_dir, filter="data")
+        with zipfile.ZipFile(bundle_path) as zf:
+            zf.extractall(unpack_dir)
         bundle_root = unpack_dir
     elif bundle_path.is_dir():
         bundle_root = bundle_path
     else:
         raise CLIValidationError(
             argument="bundle_path",
-            message=f"{bundle_path} is neither a .tar file nor a directory",
+            message=f"{bundle_path} is neither a .zip file nor a directory",
             fix_hint=(
-                "Pass a path to a bundle.tar produced by "
+                "Pass a path to a bundle.zip produced by "
                 "`TRITON_SWMM_toolkit bundle`, or to an unpacked bundle directory."
             ),
         )

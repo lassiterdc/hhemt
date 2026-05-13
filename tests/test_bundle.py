@@ -334,3 +334,49 @@ def test_preflight_raises_without_kaleido(monkeypatch):
         "viz-export" in (issue.fix_hint or "")
         for issue in result.errors
     ), "Expected preflight error naming the viz-export extra"
+
+# ============================================================================
+# Plan Phase 4 tests — zip emit determinism.
+# ============================================================================
+
+def test_zip_determinism(tmp_path):
+    # _emit_bundle_zip produces byte-identical archives on repeat
+    # invocations against the same staging tree (fixed mtime + sorted
+    # order).
+    import hashlib
+    from TRITON_SWMM_toolkit.bundle._emit import _emit_bundle_zip
+
+    # Construct a synthetic staging tree with a few files at varying
+    # depths. Real fixture bundles include zarr stores and CSVs which
+    # are heavier — this minimal tree exercises the determinism
+    # mechanism (sorted iteration + fixed date_time).
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "cfg_system.yaml").write_text("key: value\n")
+    (staging / "cfg_analysis.yaml").write_text("foo: bar\n")
+    (staging / "plots").mkdir()
+    (staging / "plots" / "system_overview.png").write_bytes(b"\x89PNG fake")
+    (staging / "plots" / "system_overview.manifest.json").write_text("{}")
+
+    zip_a = tmp_path / "bundle_a.zip"
+    zip_b = tmp_path / "bundle_b.zip"
+    _emit_bundle_zip(staging, zip_a)
+    _emit_bundle_zip(staging, zip_b)
+
+    sha_a = hashlib.sha256(zip_a.read_bytes()).hexdigest()
+    sha_b = hashlib.sha256(zip_b.read_bytes()).hexdigest()
+    assert sha_a == sha_b, (
+        f"Emit not deterministic: bundle_a SHA={sha_a}, bundle_b SHA={sha_b}"
+    )
+
+def test_zip_emit_no_tar_artifact(tmp_path):
+    # After Plan Phase 4, the emit-side produces .zip, not .tar.
+    # The default output_path in emit_bundle uses the .zip suffix.
+    import inspect
+    from TRITON_SWMM_toolkit.bundle._emit import emit_bundle
+
+    src = inspect.getsource(emit_bundle)
+    assert ".zip" in src, "emit_bundle default output path must use .zip suffix"
+    assert ".tar" not in src, (
+        "Plan Phase 4 removes the .tar suffix from emit_bundle default path"
+    )

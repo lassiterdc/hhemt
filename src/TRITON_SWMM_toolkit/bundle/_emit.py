@@ -11,7 +11,7 @@ Helpers (private to this module):
   _harvest_and_copy_sources(...)
   _rewrite_paths_to_relative(...)
   _write_bundle_manifest(...)
-  _emit_bundle_tar(...)
+  _emit_bundle_zip(...)
 
 This module is opt-in only. Importing it does not trigger any side
 effects; the only entry point is emit_bundle(). The method is invoked
@@ -27,7 +27,7 @@ import contextlib
 import json
 import shutil
 import subprocess
-import tarfile
+import zipfile
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,7 +87,7 @@ def emit_bundle(
     if output_path is None:
         output_path = (
             analysis_dir / BUNDLE_OUTPUT_SUBDIR
-            / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.tar"
+            / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -103,7 +103,7 @@ def emit_bundle(
             git_sha=git_sha,
             bundle_root_invariants=aggregated_invariants,
         )
-        _emit_bundle_tar(staging, output_path)
+        _emit_bundle_zip(staging, output_path)
 
     return output_path
 
@@ -356,12 +356,37 @@ def _write_bundle_manifest(
     )
 
 
-def _emit_bundle_tar(staging: Path, output_path: Path) -> None:
-    """Emit a deterministic uncompressed tar from staging."""
-    with tarfile.open(output_path, "w") as tar:
+def _emit_bundle_zip(staging: Path, output_path: Path) -> None:
+    # Emit a deterministic uncompressed zip from staging.
+    #
+    # Determinism is achieved via two mechanisms applied jointly:
+    # (1) sorted file ordering (rglob output is sorted so the same
+    #     staging tree always produces the same archive entry order);
+    # (2) fixed date_time on every ZipInfo entry — the value
+    #     (1980, 1, 1, 0, 0, 0) is the zipfile module's minimum
+    #     valid date, eliminating mtime variability from real
+    #     filesystem timestamps.
+    #
+    # Compression: ZIP_STORED (uncompressed at the file-byte level).
+    # Same rationale as the prior tar format: zarr is the bulk of
+    # bundle size and is internally chunked-compressed; external zip
+    # compression adds CPU cost without size win.
+    fixed_date_time = (1980, 1, 1, 0, 0, 0)
+    with zipfile.ZipFile(
+        output_path, "w", compression=zipfile.ZIP_STORED
+    ) as zf:
         for entry in sorted(staging.rglob("*")):
+            if entry.is_dir():
+                # Skip directory entries; zipfile reconstructs directory
+                # structure from file paths at extraction time.
+                continue
             arcname = entry.relative_to(staging)
-            tar.add(entry, arcname=str(arcname), recursive=False)
+            info = zipfile.ZipInfo(
+                filename=str(arcname), date_time=fixed_date_time
+            )
+            info.compress_type = zipfile.ZIP_STORED
+            info.external_attr = 0o644 << 16  # rw-r--r-- file mode
+            zf.writestr(info, entry.read_bytes())
 
 
 def _get_toolkit_git_sha(strict: bool = True) -> str:
