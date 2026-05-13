@@ -70,6 +70,6 @@ dependencies:
       - jupyter_server
       - ipywidgets
       - snakemake==9.15.0
-      - snakemake-executor-plugin-slurm==2.0.3
+      - snakemake-executor-plugin-slurm==2.1.0
       - snakemake-executor-plugin-slurm-jobstep==0.4.0
       - snakemake-storage-plugin-fs==1.1.3
