@@ -553,7 +553,7 @@ rule plot_system_overview:
         consolidated = "_status/f_consolidate_master_complete.flag",
     output:
         report(
-            "plots/system_overview.png",
+            "plots/system_overview.svg",
             caption="report/captions/system_map.rst",
             category="System Information",
             labels={"figure": "System map"},
@@ -682,7 +682,7 @@ rule plot_per_sim_per_sa_peak_flood_depth:
         master = "_status/f_consolidate_master_complete.flag",
     output:
         report(
-            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth.png",
+            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth.svg",
             caption="report/captions/per_sim_peak_flood_depth.rst",
             category="Per Simulation Results",
             labels={"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Peak flood depth"},
@@ -710,7 +710,7 @@ rule plot_per_sim_per_sa_conduit_flow:
         master = "_status/f_consolidate_master_complete.flag",
     output:
         report(
-            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow.png",
+            "plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow.svg",
             caption="report/captions/per_sim_conduit_flow.rst",
             category="Per Simulation Results",
             labels={"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "Conduit flow"},

@@ -609,6 +609,19 @@ class SnakemakeWorkflowBuilder:
             return 1
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
+    def _get_report_cfg_static_backend(self) -> Literal["matplotlib", "plotly"]:
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        from TRITON_SWMM_toolkit.config.report import (
+            DEFAULT_REPORT_CONFIG,
+            report_config,
+        )
+        report_cfg_path = getattr(self, "_report_config_path", None)
+        if report_cfg_path is not None:
+            _report_cfg = yaml_to_model(report_cfg_path, report_config)
+        else:
+            _report_cfg = DEFAULT_REPORT_CONFIG
+        return _report_cfg.interactive.static_backend
+
     def _make_rule_emission_context(
         self, *, static_backend: Literal["matplotlib", "plotly"]
     ) -> RuleEmissionContext:
@@ -653,7 +666,7 @@ class SnakemakeWorkflowBuilder:
         import os as _os
 
         if ctx is None:
-            ctx = self._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
 
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(analysis_dir.resolve())
@@ -1276,7 +1289,7 @@ rule render_report:
         `f_consolidate_master_complete.flag` instead.
         """
         if ctx is None:
-            ctx = self._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
         source_paths = self._collect_per_analysis_summary_source_paths()
         spec = RuleSpec(
             rule_name="plot_per_analysis_summary_table",
@@ -1319,7 +1332,7 @@ rule render_report:
         import os as _os
 
         if ctx is None:
-            ctx = self._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(analysis_dir.resolve())
         csv_rel = _os.path.relpath(str((analysis_dir / "scenario_status.csv").resolve()), analysis_root)
@@ -1368,7 +1381,7 @@ rule render_report:
         import os as _os
 
         if ctx is None:
-            ctx = self._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(analysis_dir.resolve())
         csv_rel = _os.path.relpath(str((analysis_dir / "scenario_status.csv").resolve()), analysis_root)
@@ -1428,7 +1441,7 @@ rule render_report:
         import os as _os
 
         if ctx is None:
-            ctx = self._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
         analysis_root = str(self.analysis.analysis_paths.analysis_dir.resolve())
         dem_rel = _os.path.relpath(
             str(self.system.sys_paths.dem_processed.resolve()), analysis_root
@@ -4355,7 +4368,7 @@ rule render_report:
         import os as _os
 
         if ctx is None:
-            ctx = self._base_builder._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._base_builder._make_rule_emission_context(static_backend=self._base_builder._get_report_cfg_static_backend())
         master_root = str(self.master_analysis.analysis_paths.analysis_dir.resolve())
         swmm_only_rpt_rels: list[str] = []
         for sub in self.sensitivity_analysis.sub_analyses.values():
@@ -4426,7 +4439,7 @@ def _sensitivity_source_paths(wildcards):
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         if ctx is None:
-            ctx = self._base_builder._make_rule_emission_context(static_backend="matplotlib")
+            ctx = self._base_builder._make_rule_emission_context(static_backend=self._base_builder._get_report_cfg_static_backend())
 
         iloc_by_event_id_by_sa: dict[str, dict[str, int]] = {}
         for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():

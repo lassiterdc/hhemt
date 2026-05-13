@@ -52,11 +52,14 @@ def render(
     cfg_ana = analysis.cfg_analysis
     sys_paths = analysis._system.sys_paths
     map_cfg = report_cfg.system_map
-    interactive_enabled = bool(
-        getattr(getattr(report_cfg, "interactive", None), "enabled", False)
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
     )
+    use_plotly = (static_backend == "plotly")
 
-    if not interactive_enabled:
+    if not use_plotly:
         _apply_rcparams(report_cfg)
     target_crs = resolve_target_crs(analysis, report_cfg)
     prov = ProvenanceLog()
@@ -126,7 +129,7 @@ def render(
         bc_present=bc_path is not None,
     )
 
-    if interactive_enabled:
+    if use_plotly:
         # Pull the optional `dem_building_height` from cfg_system. The static
         # `plot_system.py::create_dem_plot` masks DEM cells equal to this
         # value before plotting (per the docstring on `SystemConfig`); the
