@@ -98,16 +98,39 @@ class Bundle:
         return "plotly"
 
     def regenerate_report(
-        self, format: Literal["html", "zip"] = "html"
+        self, *, format: Literal["html", "zip"] = "html"
     ) -> Path:
         """Regenerate the analysis report from bundled data.
 
-        Stubbed in Phase 1. Phase 2 wires the regeneration-scoped
-        Snakefile generator; Phase 3 wires the actual subprocess call
-        and CLI integration.
+        Phase 2 wires (a) the regeneration-scoped Snakefile generator
+        and (b) the report-templates staging step. Phase 3 wires the
+        subprocess invocation, CLI integration, and the
+        ``_read_static_backend()`` cfg-read that derives the static
+        backend from ``cfg_report.yaml``'s ``static_backend`` field
+        (default ``"plotly"`` per Decision 4 / Plan Phase 2 D3).
+
+        Parameters
+        ----------
+        format : {"html", "zip"}
+            Final report format. Default ``"html"`` is the user-facing
+            default at the Python API surface — distinct from an
+            internal in-code default. The static backend is NOT a
+            caller-facing parameter; it is derived from the bundle's
+            cfg files via ``self._read_static_backend()`` so the
+            user-visible default is config-controlled (per the
+            project's no-in-code-defaults principle).
         """
+        from TRITON_SWMM_toolkit.bundle.snakefile_generator import (
+            write_regeneration_snakefile,
+        )
+        from TRITON_SWMM_toolkit.workflow import _emit_report_artifacts
+
+        static_backend = self._read_static_backend()
+        _emit_report_artifacts(self._root)
+        write_regeneration_snakefile(self._root, static_backend=static_backend)
+
         raise NotImplementedError(
-            "Bundle.regenerate_report() will be implemented in Phase 3 "
-            "after the regeneration-scoped Snakefile generator (Phase 2) "
-            "and the CLI rewire (Phase 3) land."
+            "Bundle.regenerate_report() Snakefile emission and template "
+            "staging are wired (Phase 2). Phase 3 wires the snakemake "
+            "subprocess invocation and CLI integration."
         )
