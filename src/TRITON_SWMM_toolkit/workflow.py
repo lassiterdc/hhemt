@@ -30,6 +30,145 @@ if TYPE_CHECKING:
     from .sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 
 
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class RuleEmissionContext:
+    """Per-Snakefile-emission state shared across plot-rule, render-report, and
+    rule-all helpers.
+
+    Constructed by ``SnakemakeWorkflowBuilder._make_rule_emission_context()``
+    (source-side) and ``bundle.snakefile_generator._make_rule_emission_context()``
+    (consume-side). The two sites differ only in which path prefixes they
+    supply: source-side passes absolute HPC paths; consume-side passes
+    bundle-root-relative paths.
+
+    Attributes
+    ----------
+    python_executable : str
+        Interpreter for shell-block commands.
+    log_dir_rel : str
+        Snakefile-relative log dir (e.g. ``"logs/plots"`` source-side,
+        ``"_logs/plots"`` consume-side).
+    conda_env_path : str
+        Path to the conda env yaml referenced by rules' ``conda:`` directive.
+        Source-side: absolute path under the toolkit checkout. Consume-side:
+        empty string (consume-side does not invoke ``--use-conda``).
+    config_args_str : str
+        Pre-formatted ``--system-config X --analysis-config Y`` shell-arg
+        substring. Source-side absolute; consume-side bundle-relative
+        (``--system-config cfg_system.yaml --analysis-config cfg_analysis.yaml``).
+    is_sensitivity : bool
+        Selects multi-sim vs. sensitivity-master rule-set shape.
+    static_backend : Literal["matplotlib", "plotly"]
+        Per D3 — selects ``output_ext`` per renderer (".png" for matplotlib,
+        ".svg" for plotly). Required; no in-code default.
+    """
+
+    python_executable: str
+    log_dir_rel: str
+    conda_env_path: str
+    config_args_str: str
+    is_sensitivity: bool
+    static_backend: Literal["matplotlib", "plotly"]
+
+
+@dataclass(frozen=True)
+class RuleSpec:
+    """Per-figure rule descriptor consumed by ``_emit_plot_rule``.
+
+    Source-side ``_build_plot_rule_block_*`` methods construct this from
+    analysis-instance state. Consume-side ``bundle.snakefile_generator``
+    constructs it from bundle data (manifest sidecars + cfg files).
+
+    Attributes
+    ----------
+    rule_name : str
+        Snakemake rule name (e.g. ``"plot_system_overview"``).
+    renderer_module : str
+        First positional arg to ``python -m TRITON_SWMM_toolkit.report_renderers._cli``
+        (e.g. ``"system_overview"``, ``"per_sim_peak_flood_depth"``).
+    input_flags : tuple[str, ...]
+        Snakefile ``input:`` entries (e.g. ``("_status/e_consolidate_complete.flag",)``).
+    output_path_template : str
+        Snakefile-relative output path with optional ``{output_ext}`` placeholder
+        (resolved by ``_emit_plot_rule`` against ``ctx.static_backend``).
+    source_paths : tuple[dict | str, ...]
+        Rich form (``{"path": str, "variables": list[str]}``) when available;
+        bare ``str`` accepted (``format_sources_rst`` degrades gracefully). The
+        consume-side bundle generator passes ``list[str]`` from sidecar
+        ``source_paths_relative``.
+    wildcards : tuple[str, ...]
+        Snakemake wildcards on the output path (e.g. ``("event_id",)`` for
+        per-sim rules). Empty tuple for fixed-output rules.
+    extra_cli_flags : tuple[str, ...]
+        Extra shell-arg substrings (e.g. ``("--event-iloc {params.event_iloc}",)``).
+    extra_params : tuple[tuple[str, str], ...]
+        Extra ``params:`` block entries as ``(name, value_expr)`` pairs (e.g.
+        ``(("event_iloc", "lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id]"),)``).
+    report_kwargs : dict[str, str] | None
+        When non-None, wraps the first output in ``report(...)`` with these
+        kwargs (``caption``, ``category``, ``labels``). None for rules that
+        do not contribute to Snakemake's report engine.
+    resources_yaml : str
+        Pre-formatted YAML block for ``resources:`` (output of
+        ``_build_resource_block`` on the source side; a small fixed block on
+        the consume side).
+    log_path_template : str
+        Snakefile-relative log path with optional wildcards (e.g.
+        ``"logs/plots/per_sim_{event_id}_peak_flood_depth.log"``).
+    """
+
+    rule_name: str
+    renderer_module: str
+    input_flags: tuple[str, ...]
+    output_path_template: str
+    source_paths: tuple
+    wildcards: tuple[str, ...]
+    extra_cli_flags: tuple[str, ...]
+    extra_params: tuple[tuple[str, str], ...]
+    report_kwargs: dict[str, str] | None
+    resources_yaml: str
+    log_path_template: str
+
+
+def _emit_report_artifacts(dest_root: Path) -> None:
+    """Copy report_templates/ -> {dest_root}/report/.
+
+    Uses importlib.resources for package-resource resolution (robust across
+    editable and site-packages installs). Falls back to Path(__file__) arithmetic
+    only when importlib.resources is unavailable. Requires report_templates/
+    to ship as package data under src/TRITON_SWMM_toolkit/ via pyproject.toml's
+    [tool.setuptools.package-data] entry.
+
+    The Jinja2 workflow_description.rst.j2 template is renamed to
+    workflow_description.rst on copy because Snakemake's report engine
+    renders all .rst files through Jinja2 — the .j2 extension is a
+    repo-side convention, not a Snakemake one.
+
+    Lifted to module scope at Plan Phase 2 (per VMS-1 + F-I3 resolution) so
+    the bundle-side consume path (Bundle.regenerate_report) can call it
+    without an analysis-instance dependency.
+    """
+    try:
+        from importlib.resources import files as _resource_files
+        src_templates = Path(str(_resource_files("TRITON_SWMM_toolkit") / "report_templates"))
+    except (ImportError, ModuleNotFoundError):
+        src_templates = Path(__file__).parent / "report_templates"
+
+    dst_report = dest_root / "report"
+    dst_report.mkdir(parents=True, exist_ok=True)
+    (dst_report / "report.css").write_text((src_templates / "report.css").read_text())
+    captions_dst = dst_report / "captions"
+    captions_dst.mkdir(exist_ok=True)
+    for cap in (src_templates / "captions").glob("*.rst"):
+        (captions_dst / cap.name).write_text(cap.read_text())
+    (dst_report / "workflow_description.rst").write_text(
+        (src_templates / "workflow_description.rst.j2").read_text()
+    )
+
+
 class SnakemakeWorkflowBuilder:
     """
     Builder class for generating and executing Snakemake workflows.
@@ -379,37 +518,6 @@ rule plot_system_overview:
         """
 '''
 
-    def _emit_report_artifacts(self, analysis_dir: Path) -> None:
-        """Copy report_templates/ -> {analysis_dir}/report/.
-
-        Uses importlib.resources for package-resource resolution (robust across
-        editable and site-packages installs). Falls back to Path(__file__) arithmetic
-        only when importlib.resources is unavailable. Requires report_templates/
-        to ship as package data under src/TRITON_SWMM_toolkit/ via pyproject.toml's
-        [tool.setuptools.package-data] entry.
-
-        The Jinja2 workflow_description.rst.j2 template is renamed to
-        workflow_description.rst on copy because Snakemake's report engine
-        renders all .rst files through Jinja2 — the .j2 extension is a
-        repo-side convention, not a Snakemake one.
-        """
-        try:
-            from importlib.resources import files as _resource_files
-            src_templates = Path(str(_resource_files("TRITON_SWMM_toolkit") / "report_templates"))
-        except (ImportError, ModuleNotFoundError):
-            src_templates = Path(__file__).parent / "report_templates"
-
-        dst_report = analysis_dir / "report"
-        dst_report.mkdir(parents=True, exist_ok=True)
-        (dst_report / "report.css").write_text((src_templates / "report.css").read_text())
-        captions_dst = dst_report / "captions"
-        captions_dst.mkdir(exist_ok=True)
-        for cap in (src_templates / "captions").glob("*.rst"):
-            (captions_dst / cap.name).write_text(cap.read_text())
-        (dst_report / "workflow_description.rst").write_text(
-            (src_templates / "workflow_description.rst.j2").read_text()
-        )
-
     def generate_snakefile_content(
         self,
         process_system_level_inputs: bool = False,
@@ -479,7 +587,7 @@ rule plot_system_overview:
         # Emit report templates (CSS, captions, Jinja2 workflow description) into
         # {analysis_dir}/report/ so Snakemake's --report engine can resolve the
         # caption= / report: paths inside generated rules at report-render time.
-        self._emit_report_artifacts(self.analysis_paths.analysis_dir)
+        _emit_report_artifacts(self.analysis_paths.analysis_dir)
 
         n_sims = len(self.analysis.df_sims)
         event_ids = [
@@ -3523,9 +3631,7 @@ class SensitivityAnalysisWorkflowBuilder:
 
         # Emit report templates into the master analysis_dir/report/ so the
         # snakemake --report engine can resolve caption= paths.
-        self._base_builder._emit_report_artifacts(
-            self.master_analysis.analysis_paths.analysis_dir
-        )
+        _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()

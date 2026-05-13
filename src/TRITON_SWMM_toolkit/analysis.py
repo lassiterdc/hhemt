@@ -26,6 +26,7 @@ from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.resource_management import ResourceManager
+from TRITON_SWMM_toolkit.workflow import _emit_report_artifacts
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
@@ -1816,8 +1817,7 @@ class TRITONSWMM_analysis:
         # Re-emit report artifacts (report.css + workflow_description template)
         # from package resources so render_report picks up edits made to the
         # source-tree report_templates/ since the analysis was last run.
-        from .workflow import SnakemakeWorkflowBuilder
-        SnakemakeWorkflowBuilder(self)._emit_report_artifacts(self.analysis_paths.analysis_dir)
+        _emit_report_artifacts(self.analysis_paths.analysis_dir)
         # --cores 1 is required by Snakemake's CLI even though --report is a
         # post-execution render that does not execute rules.
         cmd = [

@@ -289,8 +289,14 @@ def _rewrite_absolute_to_relative(
 
 def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     analysis_dir = analysis.analysis_paths.analysis_dir
+    # Snakefile is renamed to Snakefile.source so the bundle's regen-only
+    # generated Snakefile (written by bundle/snakefile_generator.py at consume
+    # time) can take the canonical "Snakefile" filename. The .source variant is
+    # preserved for debugging value per the Phase 2 D1 resolution.
+    snakefile_src = analysis_dir / "Snakefile"
+    if snakefile_src.exists():
+        shutil.copy2(snakefile_src, staging / "Snakefile.source")
     for fname in (
-        "Snakefile",
         VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",

@@ -80,6 +80,23 @@ class Bundle:
         ``bundle.root``."""
         return (self._root / rel).resolve()
 
+    def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
+        """Phase 2 stub — returns the cfg-level default ``"plotly"``
+        per Plan Phase 2 D3 + Decision 4. Plan Phase 3 (VMS-2 of
+        ``3 cli rewire and manifest schema extension.md``) replaces
+        this stub with the real implementation that reads
+        ``cfg_analysis.yaml::report::interactive::static_backend``
+        with a Pydantic-default fallback.
+
+        The stub exists at Phase 2 commit time so
+        ``Bundle.regenerate_report()`` (VMS-8) has a resolvable
+        callee, preserving Phase 1's
+        ``test_regenerate_report_stub_raises`` regression test (the
+        body reaches its ``NotImplementedError`` raise without
+        firing an earlier ``AttributeError``).
+        """
+        return "plotly"
+
     def regenerate_report(
         self, format: Literal["html", "zip"] = "html"
     ) -> Path:
