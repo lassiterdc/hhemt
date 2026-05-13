@@ -172,14 +172,18 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # {wildcard} braces in the output_path_template survive unescaped.
     output_path = spec.output_path_template.replace("__OUTPUT_EXT__", output_ext)
 
-    # input: block — `{label} = "<flag>",` for each input_flag. Label is
-    # "consolidated" for multi-sim and sensitivity-sub-analysis plot rules,
-    # "master" for sensitivity-master rules (sensitivity_benchmarking +
-    # per_sim_per_sa). The label is part of RuleSpec, not derived from flag
-    # name, so the spec stays declarative.
-    input_block = "\n        ".join(
-        f'{spec.input_label} = "{f}",' for f in spec.input_flags
-    )
+    # input: block — `{label} = "<flag>",` for each non-empty input_flag.
+    # Label is "consolidated" for multi-sim and sensitivity-sub-analysis plot
+    # rules, "master" for sensitivity-master rules. Empty / missing flags emit
+    # `input: []` (regen-only bundle Snakefile: plot files exist on disk via
+    # the bundle, rules need no upstream status-flag inputs).
+    nonempty_flags = tuple(f for f in spec.input_flags if f)
+    if nonempty_flags:
+        input_block = "input:\n        " + "\n        ".join(
+            f'{spec.input_label} = "{f}",' for f in nonempty_flags
+        )
+    else:
+        input_block = "input: []"
 
     # output: report(...) wrapper. report_kwargs carries caption,
     # category, optional subcategory, and labels as pre-formatted dict.
@@ -228,8 +232,7 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # / render_report rules use ctx.python_executable's full path.
     return f'''
 rule {spec.rule_name}:
-    input:
-        {input_block}
+    {input_block}
     output:
         {output_block}
     params:
