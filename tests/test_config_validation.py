@@ -54,6 +54,7 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "hydraulic_timestep_s": 1.0,
         "TRITON_reporting_timestep_s": 60,
         "open_boundaries": 1,
+        "report": {},
     }
 
 
