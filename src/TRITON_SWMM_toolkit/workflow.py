@@ -133,6 +133,11 @@ class RuleSpec:
     log_path_template: str
     source_paths_fn_name: str | None = None
     input_label: str = "consolidated"
+    # Additional positional inputs emitted alongside the labeled `input_flags`.
+    # Positional entries are emitted BEFORE labeled entries because Snakemake
+    # parses the input: block as a Python function-call argument list and
+    # "positional after keyword" is a SyntaxError.
+    additional_inputs: tuple[str, ...] = ()
 
 
 _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
@@ -192,8 +197,13 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # `input: []` (regen-only bundle Snakefile: plot files exist on disk via
     # the bundle, rules need no upstream status-flag inputs).
     nonempty_flags = tuple(f for f in spec.input_flags if f)
-    if nonempty_flags:
-        input_block = "input:\n        " + "\n        ".join(f'{spec.input_label} = "{f}",' for f in nonempty_flags)
+    additional = tuple(p for p in spec.additional_inputs if p)
+    if nonempty_flags or additional:
+        # Snakemake parses input: as a Python argument list — positional
+        # entries must precede keyword entries.
+        positional_lines = [f'"{p}",' for p in additional]
+        labeled_lines = [f'{spec.input_label} = "{f}",' for f in nonempty_flags]
+        input_block = "input:\n        " + "\n        ".join(positional_lines + labeled_lines)
     else:
         input_block = "input: []"
 
@@ -941,6 +951,8 @@ ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 rule all:
     input:
         "_status/e_consolidate_complete.flag",
+        "scenario_status.csv",
+        "workflow_summary.md",
         "plots/system_overview{_ext["system_overview"]}",
         expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
         expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
@@ -948,14 +960,16 @@ rule all:
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
 
-onsuccess:
-    shell("""
-        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {config_args} \\
-            > {log_dir_str}/export_scenario_status.log 2>&1
-    """)
+# onsuccess: removed — `rule export_scenario_status` (added below) now produces
+# scenario_status.csv and workflow_summary.md on the success path via the
+# Snakemake DAG. The previous `onsuccess:` hook fired AFTER all rules
+# completed, which is too late for the renderer rules that consume the CSV.
 
 onerror:
+    # Partial-run debugging fallback: when a rule earlier in the DAG fails,
+    # the export rule never fires (its input flag is absent), so this hook
+    # is the only path to a diagnostic CSV. Snakemake treats `onerror:` exit
+    # codes as informational — the workflow has already failed.
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
             {config_args} \\
@@ -1135,6 +1149,9 @@ rule consolidate:
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
         snakefile_content += self._build_plot_rule_block_errors_and_warnings()
+        snakefile_content += self._build_export_scenario_status_rule(
+            input_flag="_status/e_consolidate_complete.flag",
+        )
 
         # Render-report rule (replaces the broken onsuccess auto-render).
         # Wildcarded on `format` — fires once per `analysis_report.{fmt}` target
@@ -1150,6 +1167,7 @@ rule render_report:
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "scenario_status.csv",
     output:
         "analysis_report.{{format}}"
     wildcard_constraints:
@@ -1309,9 +1327,10 @@ rule render_report:
 
         Iter 8 agenda item 3: produces `plots/appendix/scenario_status.html` —
         an inline-styled HTML table rendered from `analysis_dir / scenario_status.csv`
-        (written by `export_scenario_status.py` as a Snakemake onsuccess/onerror
-        hook). Sidebar category is "Appendix"; the comparator-fallback in the
-        category-order post-process places it after all known categories
+        (written by the `export_scenario_status` Snakemake rule on the success
+        path; the `onerror:` hook is retained as a partial-run debugging
+        fallback). Sidebar category is "Appendix"; the comparator-fallback in
+        the category-order post-process places it after all known categories
         alphabetically.
 
         ``input_flag`` defaults to the regular multisim consolidation flag;
@@ -1347,6 +1366,7 @@ rule render_report:
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/scenario_status_appendix.log",
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -1417,8 +1437,63 @@ rule render_report:
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/errors_and_warnings.log",
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
+
+    def _build_export_scenario_status_rule(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+    ) -> str:
+        """Emit a Snakemake rule that writes scenario_status.csv and workflow_summary.md.
+
+        Replaces the previous onsuccess/onerror hook mechanism on the success
+        path. The hook fired AFTER all rules — including the rules that read
+        the CSV — completed, producing a false-positive 'CSV missing' warning
+        in the rendered Errors and Warnings page. Promoting the export to a
+        regular rule lets Snakemake's DAG scheduler order the CSV write before
+        any rule that consumes it. The onerror: hook is retained separately as
+        a partial-run debugging fallback.
+
+        Listed under `localrules:` so it runs on the local executor — the rule
+        is a sub-second CSV write against in-memory log JSON; dispatching it
+        as a separate sbatch job under multi_sim_run_method='batch_job' would
+        add ~10-30s of queue latency for zero work.
+
+        ``input_flag`` defaults to the regular multisim consolidation flag;
+        the sensitivity-master Snakefile passes the master flag instead.
+        """
+        log_dir = self.analysis.analysis_paths.analysis_dir / "logs"
+        log_dir_str = str(log_dir)
+        config_args = self._get_config_args()
+        conda_env_path = str(self._get_conda_env_path())
+        resources_block = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=10,
+            mem_mb=1000,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=1,
+        )
+        return f'''
+localrules: export_scenario_status
+
+rule export_scenario_status:
+    input: "{input_flag}"
+    output:
+        csv = "scenario_status.csv",
+        md  = "workflow_summary.md",
+    log: "{log_dir_str}/export_scenario_status.log"
+    conda: "{conda_env_path}"
+    resources:
+{resources_block}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            {config_args} \\
+            > {{log}} 2>&1
+        """
+'''
 
     def _build_plot_rule_block_per_sim(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate two per-sim plot rules wildcarded over event_id (Phase 3, R6).
@@ -3925,12 +4000,9 @@ report: "report/workflow_description.rst"
 onstart:
     shell("mkdir -p _status {log_dir_str}/sims {log_dir_str}")
 
-onsuccess:
-    shell("""
-        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {master_config_args} \\
-            > {log_dir_str}/export_scenario_status.log 2>&1
-    """)
+# onsuccess: removed — `rule export_scenario_status` (added below) now produces
+# scenario_status.csv and workflow_summary.md on the success path via the
+# Snakemake DAG.
 
 onerror:
     shell("""
@@ -3972,6 +4044,8 @@ onerror:
         rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append('"scenario_status.csv"')
+        rule_all_inputs.append('"workflow_summary.md"')
 
         if sa_event_pairs_sa:
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
@@ -4298,6 +4372,9 @@ rule setup:
         )
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
             input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+            input_flag="_status/f_consolidate_master_complete.flag",
         )
         # Per-sa per-event plot rules (Iteration 7 Change 3b — "show all" parity).
         # Only emit when sa_event_pairs are populated (best-effort guarded above).
