@@ -1,0 +1,6 @@
+# Test fixture Snakefile for V0005 v5 idempotency case.
+# Only the report-config flag in the shell line below is meaningful to V0005's grep.
+rule analysis_report:
+    output: "analysis_report/index.html"
+    shell:
+        "TRITON_SWMM_toolkit render --report-config /tmp/v0005_fixture_source_cfg.yaml"

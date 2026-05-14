@@ -12,12 +12,12 @@ in the master plan.
 
 from __future__ import annotations
 
-LAYOUT_VERSION: int = 4
+LAYOUT_VERSION: int = 5
 MINIMUM_SUPPORTED_VERSION: int = 0
 
 #: Render-bundle manifest schema version. Stamped into bundle_manifest.json
 #: at emit time and validated at consume time (report-from-bundle CLI).
-BUNDLE_SCHEMA_VERSION: int = 1
+BUNDLE_SCHEMA_VERSION: int = 2
 
 #: Default _version.json filename (used by both analysis and system stamps).
 VERSION_FILE_NAME: str = "_version.json"
