@@ -61,8 +61,6 @@ if TYPE_CHECKING:
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
-    *,
-    report_config_path: Path | None = None,
 ) -> Path:
     """Emit a portable render bundle from a completed HPC analysis.
 
@@ -97,7 +95,6 @@ def emit_bundle(
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
-        _copy_report_config(report_config_path, staging)
         _copy_supporting_files(analysis, staging)
         _write_bundle_manifest(
             staging,
@@ -184,38 +181,6 @@ def _copy_configs_with_relative_paths(
             yaml.safe_dump(result.cfg_dict, sort_keys=False)
         )
     return aggregated
-
-
-def _copy_report_config(
-    report_config_path: Path | None, staging: Path
-) -> None:
-    """Snapshot the resolved report-cfg model as cfg_report.yaml in the
-    bundle staging dir. When report_config_path is None, DEFAULT_REPORT_CONFIG
-    is snapshotted — the same fallback path Bundle._read_static_backend and
-    SnakemakeWorkflowBuilder._get_report_cfg_static_backend use.
-
-    This is the load-bearing substrate Bundle.regenerate_report() reads to
-    decide which static_backend the regenerate-Snakefile should emit
-    outputs for. Without this snapshot, the regenerate-side reader has no
-    way to recover the source-side resolution and falls through to the
-    Pydantic default ("plotly"), producing a Snakefile whose output
-    extensions don't match the bundle's actual plot files when the source
-    side used a non-default report config.
-    """
-    import yaml
-    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-    from TRITON_SWMM_toolkit.config.report import (
-        DEFAULT_REPORT_CONFIG,
-        report_config,
-    )
-    if report_config_path is not None:
-        cfg = yaml_to_model(report_config_path, report_config)
-    else:
-        cfg = DEFAULT_REPORT_CONFIG
-    cfg_dict = cfg.model_dump(mode="json")
-    (staging / "cfg_report.yaml").write_text(
-        yaml.safe_dump(cfg_dict, sort_keys=False)
-    )
 
 
 def _rewrite_paths_to_relative(

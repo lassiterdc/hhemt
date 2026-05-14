@@ -135,7 +135,6 @@ def _generate_sensitivity_master_snakefile_text(
         compile_TRITON_SWMM=False,
         prepare_scenarios=True,
         process_timeseries=True,
-        report_config_path=None,
     )
 
 

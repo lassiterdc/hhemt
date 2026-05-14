@@ -809,6 +809,20 @@ class Local_TestCases:
         )
 
     @staticmethod
+    def _load_synth_sensitivity_report_dict() -> dict:
+        """Load tests/fixtures/synthetic_model/report_config_synth_sensitivity.yaml
+        as a dict so it can be injected inline into cfg_analysis.report (post-F2,
+        R1 — required field). Pre-F2, this file was passed via the legacy
+        `report_config_path` kwarg that Phase 3 deleted."""
+        import yaml
+        peer_path = (
+            Path(__file__).parent
+            / "synthetic_model"
+            / "report_config_synth_sensitivity.yaml"
+        )
+        return yaml.safe_load(peer_path.read_text())
+
+    @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
     ):
@@ -824,6 +838,9 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
         )
 
     @staticmethod
@@ -841,6 +858,9 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
         )
 
     @staticmethod
@@ -857,6 +877,9 @@ class Local_TestCases:
             toggle_triton_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
         )
 
     @staticmethod
