@@ -281,7 +281,7 @@ def _harvest_rule_specs(
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
             input_flags=(),
-            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total.svg",
+            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total__OUTPUT_EXT__",
             source_paths=(),
             wildcards=("independent_var",),
             extra_cli_flags=(),

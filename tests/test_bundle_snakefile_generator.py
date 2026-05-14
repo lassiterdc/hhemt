@@ -109,7 +109,7 @@ def test_no_absolute_paths_in_rule_shells(
     "static_backend,expected_ext_for_system_overview",
     [
         ("matplotlib", ".png"),
-        ("plotly", ".svg"),
+        ("plotly", ".html"),
     ],
 )
 def test_static_backend_controls_output_ext(
@@ -139,20 +139,31 @@ def test_writes_to_bundle_root_snakefile(multi_sim_bundle: Path) -> None:
     assert out.read_text().strip()
 
 
-def test_output_ext_propagates_to_all_three_sites(multi_sim_bundle: Path) -> None:
-    """Three-place output_ext coupling under static_backend='plotly'."""
-    text = generate_regeneration_snakefile(multi_sim_bundle, static_backend="plotly")
+@pytest.mark.parametrize(
+    "static_backend,ext",
+    [
+        ("matplotlib", ".png"),
+        ("plotly", ".html"),
+    ],
+)
+def test_output_ext_propagates_to_all_three_sites(
+    multi_sim_bundle: Path,
+    static_backend: Literal["matplotlib", "plotly"],
+    ext: str,
+) -> None:
+    """Three-place output_ext coupling: rule output, report() first arg, rule_all + render_report inputs."""
+    text = generate_regeneration_snakefile(multi_sim_bundle, static_backend=static_backend)
     # Site 1: rule output:
     assert re.search(
-        r"rule\s+plot_system_overview:.*?output:.*?\"plots/system_overview\.svg\"",
+        rf"rule\s+plot_system_overview:.*?output:.*?\"plots/system_overview{re.escape(ext)}\"",
         text,
         re.DOTALL,
-    ), "system_overview output not .svg under plotly"
+    ), f"system_overview output not {ext} under {static_backend}"
     # Site 2: rule report(...) first arg (output is wrapped in report)
     assert re.search(
-        r"report\(\s*\n\s*\"plots/system_overview\.svg\"",
+        rf"report\(\s*\n\s*\"plots/system_overview{re.escape(ext)}\"",
         text,
-    ), "report() first arg not .svg under plotly"
+    ), f"report() first arg not {ext} under {static_backend}"
     # Site 3a: rule all input list
     rule_all_match = re.search(
         r"rule\s+all:\s*\n\s*input:(.*?)(?=\nrule\s)",
@@ -160,8 +171,8 @@ def test_output_ext_propagates_to_all_three_sites(multi_sim_bundle: Path) -> Non
         re.DOTALL,
     )
     assert rule_all_match and (
-        "plots/system_overview.svg" in rule_all_match.group(1)
-    ), "rule all does not reference .svg system_overview"
+        f"plots/system_overview{ext}" in rule_all_match.group(1)
+    ), f"rule all does not reference {ext} system_overview"
     # Site 3b: render_report input list
     render_match = re.search(
         r"rule\s+render_report:\s*\n\s*input:(.*?)(?=\n\s*output:)",
@@ -169,8 +180,8 @@ def test_output_ext_propagates_to_all_three_sites(multi_sim_bundle: Path) -> Non
         re.DOTALL,
     )
     assert render_match and (
-        "plots/system_overview.svg" in render_match.group(1)
-    ), "render_report does not reference .svg system_overview"
+        f"plots/system_overview{ext}" in render_match.group(1)
+    ), f"render_report does not reference {ext} system_overview"
 
 
 def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> None:
