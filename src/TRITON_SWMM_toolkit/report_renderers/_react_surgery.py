@@ -75,7 +75,10 @@ _CLICK_DELEGATE = """
 """
 
 
-def apply_post_process_surgery(html_text: str) -> str:
+def apply_post_process_surgery(
+    html_text: str,
+    bundle_mode: bool = False,
+) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
 
     Idempotent: each replace is conditional on the OLD pattern still being
@@ -91,6 +94,21 @@ def apply_post_process_surgery(html_text: str) -> str:
       7. Inject row-click delegate at LAST `</body>` so clicks anywhere on a
          result row fire the hidden eye-icon button (paired with CSS in
          report.css that hides the eye-icon and styles rows as clickable)
+      8. Force the App's initial ``content`` to ``"metadata"`` (the
+         workflow_description landing page) rather than ``"rulegraph"`` (the
+         DAG). The home-icon click handler already targets this view; the
+         change makes the default-open match. Unconditional — applies to both
+         source-side and bundle-side reports.
+      9. If ``bundle_mode=True``: drop the Workflow menu item, the Statistics
+         menu item, and the "General" ``ListHeading`` from the bundled JS.
+         Used by ``Bundle.regenerate_report`` because a bundle's regeneration
+         Snakefile only describes plot rules + render_report — the Workflow
+         and Statistics panels in a bundle-regenerated report describe only
+         the regeneration DAG (no production-analysis DAG), which is "useless"
+         per user feedback; and the "General" heading is empty once Workflow
+         + Statistics + About are gone. About-drop (step 2) is unconditional
+         and applies to source-side too. NOT applied to source-side reports
+         where Workflow + Statistics describe real workflow content + runtime.
     """
     # 1. Browser-tab title
     if "<title>Snakemake Report</title>" in html_text:
@@ -136,10 +154,44 @@ def apply_post_process_surgery(html_text: str) -> str:
                 html_text[:_last_body] + _CLICK_DELEGATE + html_text[_last_body:]
             )
 
+    # 8. Force initial App view to "metadata" (workflow_description landing).
+    # App.constructor's original logic: default "rulegraph", promote to
+    # "metadata" only when the metadata global is non-empty. The metadata
+    # global is empty under the regeneration path (snakemake --report does
+    # not repopulate it from workflow_description.rst.j2 the same way it
+    # does on a full report run), so the conditional never fires and the
+    # default-open lands on the DAG. Force the constructor's default to
+    # "metadata" — the metadata view itself is rendered from a different
+    # data source than the metadata global, so its content still surfaces.
+    html_text = html_text.replace(
+        'this.content = "rulegraph";',
+        'this.content = "metadata";',
+    )
+
+    # 9. Bundle-mode: drop Workflow + Statistics menu items, drop "General"
+    # ListHeading (which would otherwise be an empty heading after the
+    # menu-item drops).
+    if bundle_mode:
+        html_text = html_text.replace(
+            'this.getMenuItem("Workflow", "share", this.showWorkflow),',
+            "",
+        )
+        html_text = html_text.replace(
+            'this.getMenuItem("Statistics", "chart", this.showStatistics),',
+            "",
+        )
+        html_text = html_text.replace(
+            'return e(\n                ListHeading,\n                { text: "General" }\n            )',
+            "return null",
+        )
+
     return html_text
 
 
-def apply_post_process_surgery_to_zip(zip_path) -> None:
+def apply_post_process_surgery_to_zip(
+    zip_path,
+    bundle_mode: bool = False,
+) -> None:
     """Apply post-process surgery to `analysis_report/report.html` inside a zip.
 
     Extracts the zip to a tempdir, modifies the inner HTML in place, then
@@ -173,7 +225,10 @@ def apply_post_process_surgery_to_zip(zip_path) -> None:
         if not candidates:
             return
         inner_html = candidates[0]
-        modified = apply_post_process_surgery(inner_html.read_text())
+        modified = apply_post_process_surgery(
+            inner_html.read_text(),
+            bundle_mode=bundle_mode,
+        )
         inner_html.write_text(modified)
         # Re-zip. shutil.make_archive writes `<base>.zip` from `root_dir`.
         # Use a tempfile alongside zip_path then atomic-rename to avoid
