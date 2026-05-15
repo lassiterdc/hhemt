@@ -97,6 +97,43 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     assert len(master_snakefile_path.read_text()) > 100
 
 
+def test_phase3_master_snakefile_emits_per_target_setup_rules(
+    synth_sensitivity_analysis,
+):
+    """Phase 3: master Snakefile emits one `rule setup_target_{N}` per unique system target.
+
+    The synth fixture has no per-SA `system_config_yaml` column, so all sub-analyses
+    collapse to a single UniqueSystemTarget. The Snakefile must emit exactly one
+    `rule setup_target_0` and zero standalone `rule setup:` blocks.
+    """
+    analysis = synth_sensitivity_analysis
+    sensitivity = analysis.sensitivity
+    n_targets = len(sensitivity.unique_system_targets)
+    assert n_targets == 1, "synth fixture is single-target (no system_config_yaml column)"
+
+    content = sensitivity._workflow_builder.generate_master_snakefile_content(
+        which="both",
+        overwrite_outputs_if_already_created=False,
+        compression_level=5,
+    )
+
+    assert "rule setup_target_0:" in content
+    assert "_status/a_setup_target_0_complete.flag" in content
+    # The legacy single-target rule name and flag must not appear.
+    assert "rule setup:\n" not in content
+    assert "_status/a_setup_complete.flag" not in content
+    # Per-SA prepare rules must depend on the new flag.
+    for sa_id in sensitivity.sub_analyses.keys():
+        assert (
+            f"rule prepare_sa_{str(sa_id).replace('.', '_').replace('-', '_')}_evt_"
+            in content
+        )
+    # The setup-target flag must surface in rule all so the DAG planner reaches it
+    # even for sub-analyses whose df_sims is empty.
+    rule_all_block = content.split("rule all:")[1].split("rule setup_target_0:")[0]
+    assert "_status/a_setup_target_0_complete.flag" in rule_all_block
+
+
 @pytest.mark.parametrize(
     "config,expected_flags",
     [
