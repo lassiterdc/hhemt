@@ -63,7 +63,8 @@ class RuleEmissionContext:
         Selects multi-sim vs. sensitivity-master rule-set shape.
     static_backend : Literal["matplotlib", "plotly"]
         Per D3 — selects ``output_ext`` per renderer (".png" for matplotlib,
-        ".svg" for plotly). Required; no in-code default.
+        ".html" for plotly chart figures so Snakemake's report engine
+        dispatches via iframe instead of <img>). Required; no in-code default.
     """
 
     python_executable: str
@@ -141,15 +142,17 @@ class RuleSpec:
 
 
 _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
-    "system_overview": {"matplotlib": ".png", "plotly": ".svg"},
-    "per_sim_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
-    "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
-    "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
-    "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
-    # plot_sensitivity_benchmarking always emits .svg regardless of backend
-    # (its output_path_template is literal ".svg"); keep the EXT mapping
-    # symmetric so rule_all + render_report inputs match the producing rule.
-    "sensitivity_benchmarking": {"matplotlib": ".svg", "plotly": ".svg"},
+    # Plotly chart-renderer outputs are interactive HTML emitted via pio.to_html;
+    # extension must be .html so Snakemake's report engine sets mime_type=text/html
+    # and dispatches each figure via <iframe> (which loads HTML correctly under
+    # both HTTP and file:// double-click). A .svg extension here triggers
+    # mime_type=image/svg+xml and an <img> dispatch that fails to parse HTML.
+    "system_overview": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
+    "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
+    "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".html"},
     "per_analysis_summary": {"matplotlib": ".svg", "plotly": ".svg"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
     "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
@@ -4438,7 +4441,7 @@ def _sensitivity_source_paths(wildcards):
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
             input_flags=("_status/f_consolidate_master_complete.flag",),
-            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total.svg",
+            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total__OUTPUT_EXT__",
             source_paths=(),
             wildcards=("independent_var",),
             extra_cli_flags=("--independent-var {wildcards.independent_var}",),
@@ -4453,8 +4456,9 @@ def _sensitivity_source_paths(wildcards):
             log_path_template="logs/plots/sensitivity_benchmarking_{independent_var}.log",
             source_paths_fn_name="_sensitivity_source_paths",
         )
-        # plot_sensitivity_benchmarking always emits .svg regardless of backend
-        # (output_path_template is literal ".svg" so __OUTPUT_EXT__ slot is unused).
+        # plot_sensitivity_benchmarking honors the backend-resolved extension via
+        # __OUTPUT_EXT__ substitution in _emit_plot_rule, matching the pattern
+        # used by every other chart-renderer rule.
         spec_with_label = RuleSpec(**{**spec.__dict__, "input_label": "master"})
         return helpers + _emit_plot_rule(spec_with_label, ctx)
 

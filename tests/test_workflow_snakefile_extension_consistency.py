@@ -164,3 +164,22 @@ def test_sensitivity_master_render_report_input_symmetry(synth_sensitivity_analy
     """render_report inputs in the sensitivity-master Snakefile must be produced by some rule output."""
     text = _generate_sensitivity_master_snakefile_text(synth_sensitivity_analysis, static_backend, monkeypatch)
     _assert_symmetry(text, consumer_rule="render_report")
+
+
+def test_plotly_chart_renderers_emit_html_extension():
+    # Every renderer whose Plotly column differs from its matplotlib column
+    # is a chart figure emitted via pio.to_html and must resolve to .html so
+    # Snakemake's report engine dispatches via <iframe> (text/html). A .svg
+    # extension here would dispatch via <img> (image/svg+xml) and fail to
+    # parse the Plotly HTML content as SVG XML.
+    from TRITON_SWMM_toolkit.workflow import _OUTPUT_EXT_BY_RENDERER
+    for renderer, exts in _OUTPUT_EXT_BY_RENDERER.items():
+        mpl_ext = exts["matplotlib"]
+        plotly_ext = exts["plotly"]
+        if mpl_ext == plotly_ext:
+            continue
+        assert plotly_ext == ".html", (
+            f"chart renderer {renderer!r} maps plotly -> {plotly_ext!r}; "
+            f"expected '.html' so Snakemake's mime detection dispatches to "
+            f"<iframe> via text/html."
+        )

@@ -534,6 +534,47 @@ def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     assert "Sources:" in html
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_no_html_content_in_svg_file_references(synth_multi_sim_analysis_cached, tmp_path):
+    # Rendered report.html must not reference any .svg file whose content is
+    # not valid SVG XML. Snakemake's report engine dispatches by mime_type
+    # derived from the file extension — a .svg path containing HTML triggers
+    # an <img> dispatch that fails to parse and renders a broken-image icon.
+    import re
+    import xml.etree.ElementTree as ET
+    import zipfile
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    out_zip = analysis.render_report(format="zip")
+    extract_dir = tmp_path / "report_extract"
+    with zipfile.ZipFile(out_zip) as zf:
+        zf.extractall(extract_dir)
+    report_html = next(extract_dir.rglob("report.html"), None)
+    assert report_html is not None, f"report.html not found under {extract_dir}"
+    refs = re.findall(r'"data_uri":\s*"([^"]+\.svg)"', report_html.read_text())
+    bad = []
+    for rel in refs:
+        target = (report_html.parent / rel).resolve()
+        if not target.exists():
+            continue
+        try:
+            root = ET.fromstring(target.read_bytes())
+            local_name = root.tag.rsplit("}", 1)[-1]
+            if local_name != "svg":
+                bad.append((rel, f"root tag is {local_name!r}, expected 'svg'"))
+        except ET.ParseError as exc:
+            bad.append((rel, f"not valid XML: {exc}"))
+    assert not bad, (
+        f"{len(bad)} .svg file(s) referenced by report.html are not valid SVG "
+        f"(would render as broken-image icons): {bad}"
+    )
+
+
 def test_emit_plot_with_sources_html_branch(tmp_path):
     """The HTML-string branch writes verbatim and emits a uniform manifest sidecar.
 
