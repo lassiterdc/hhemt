@@ -11,8 +11,7 @@ worktree_path: /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/too
 created: '2026-05-14T20:01:01'
 smoke_test: false
 ---
-- [ ] in progress
-
+- [x] in progress
 ## Harness Discipline — Claude Code
 
 - Treat the first post-compaction message as a rehydration trigger, not a
@@ -29,6 +28,10 @@ smoke_test: false
 - Sync integrity is verified via
   `scripts/generate/write_compaction_sidecar.py --mode verify`. Do not
   compute hashes yourself.
+
+## Atomic Wrapup Compaction Gate
+
+Model recommendation: Sonnet — atomic wrapup work is mechanical: sidecar GO gate (read-coverage + checkpoint-match + sync-integrity via `--mode verify`), worktree closeout via `/wrapup-session` Step 7b, Verdict check via Step 8a. Implementation commit (Step 8b) is skipped for atomic. The 4 captured follow-ups (synth_08 stale `bundle.tar`, PWI worktree pip install, per-worktree synth cache, flaky synth_04 e2e) are orthogonal-cleanup items with concrete pointers — no nuanced-judgment triage needed. Directive will recommend /model claude-sonnet-4-6.
 
 ## Wrapup Entry Point
 
