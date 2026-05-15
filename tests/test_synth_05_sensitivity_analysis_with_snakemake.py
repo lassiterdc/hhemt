@@ -75,9 +75,9 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         ],
     )
     assert (
-        'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.svg"'
+        'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.html"'
         in master_snakefile_content
-    ), "rule all must wildcard-expand benchmarking SVGs over independent_var"
+    ), "rule all must wildcard-expand benchmarking HTML figures over independent_var (plotly backend default)"
     tst_ut.assert_snakefile_has_flags(
         master_snakefile_content,
         [
@@ -243,8 +243,8 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
     analysis_dir = analysis.analysis_paths.analysis_dir
     for indep_var in ("n_devices",):
-        svg = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"{indep_var}_vs_total.svg"
-        assert svg.exists(), f"Expected benchmarking SVG missing: {svg}"
+        figure = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"{indep_var}_vs_total.html"
+        assert figure.exists(), f"Expected benchmarking figure missing: {figure}"
 
 
 # ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
@@ -271,7 +271,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
     bench_dir = master_dir / "plots" / "sensitivity" / "benchmarking"
     assert bench_dir.exists()
-    assert any(bench_dir.glob("*_vs_total.svg"))
+    assert any(bench_dir.glob("*_vs_total.html"))
 
     # R13: no per-sub-analysis report
     for sa_id, sub in analysis.sensitivity.sub_analyses.items():
@@ -315,3 +315,42 @@ def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
     master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
     html = (master_dir / "analysis_report.html").read_text()
     assert "Sources:" in html
+
+
+@pytest.mark.slow
+def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cached, tmp_path):
+    # Rendered report.html must not reference any .svg file whose content is
+    # not valid SVG XML. See test_synth_04 mirror for the failure-mode rationale.
+    import re
+    import xml.etree.ElementTree as ET
+    import zipfile
+    from pathlib import Path
+
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+    )
+    out_zip = analysis.sensitivity.render_report(format="zip")
+    extract_dir = tmp_path / "report_extract"
+    with zipfile.ZipFile(out_zip) as zf:
+        zf.extractall(extract_dir)
+    report_html = next(extract_dir.rglob("report.html"), None)
+    assert report_html is not None, f"report.html not found under {extract_dir}"
+    refs = re.findall(r'"data_uri":\s*"([^"]+\.svg)"', report_html.read_text())
+    bad = []
+    for rel in refs:
+        target = (report_html.parent / rel).resolve()
+        if not target.exists():
+            continue
+        try:
+            root = ET.fromstring(target.read_bytes())
+            local_name = root.tag.rsplit("}", 1)[-1]
+            if local_name != "svg":
+                bad.append((rel, f"root tag is {local_name!r}, expected 'svg'"))
+        except ET.ParseError as exc:
+            bad.append((rel, f"not valid XML: {exc}"))
+    assert not bad, (
+        f"{len(bad)} .svg file(s) referenced by report.html are not valid SVG "
+        f"(would render as broken-image icons): {bad}"
+    )
