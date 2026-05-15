@@ -13,8 +13,7 @@ smoke_test: false
 baseline_writable_content:
   '# Follow-up Ideas': "\n%%\n\"#\" + \"followup\" tag: When the user tags an inline comment with `#` + `followup`, cut the tagged text from its original location, paste it here as a bullet, and add context sub-bullets if the original text does not stand alone without its surrounding context. The agent judges whether sub-bullets are needed — if the comment makes sense on its own, no sub-bullets are required. Change the tag in the original location to `#followup-moved`.\n\nSpecialist findings routed here by /invoke-specialist Step 6 appear under:\n  ### Specialist-identified follow-up items\n  #### {specialist-name}\nThese are appended via append_scratch_section.py and are automatically picked up by /review-followup-ideas.\n\nAgents must never recommend action items for followup unless they are orthogonal to the objectives and target outcomes of a session.\n%%\n\n"
 ---
-- [ ] in progress
-
+- [x] in progress
 ## Harness Discipline — Claude Code
 
 - Treat the first post-compaction message as a rehydration trigger, not a
