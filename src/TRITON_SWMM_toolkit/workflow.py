@@ -133,18 +133,26 @@ class RuleSpec:
     log_path_template: str
     source_paths_fn_name: str | None = None
     input_label: str = "consolidated"
+    # Additional positional inputs emitted alongside the labeled `input_flags`.
+    # Positional entries are emitted BEFORE labeled entries because Snakemake
+    # parses the input: block as a Python function-call argument list and
+    # "positional after keyword" is a SyntaxError.
+    additional_inputs: tuple[str, ...] = ()
 
 
 _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
-    "system_overview":               {"matplotlib": ".png",  "plotly": ".svg"},
-    "per_sim_peak_flood_depth":      {"matplotlib": ".png",  "plotly": ".svg"},
-    "per_sim_conduit_flow":          {"matplotlib": ".png",  "plotly": ".svg"},
+    "system_overview": {"matplotlib": ".png", "plotly": ".svg"},
+    "per_sim_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
+    "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
     "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
-    "per_sim_per_sa_conduit_flow":   {"matplotlib": ".png",  "plotly": ".svg"},
-    "sensitivity_benchmarking":      {"matplotlib": ".png",  "plotly": ".svg"},
-    "per_analysis_summary":          {"matplotlib": ".svg",  "plotly": ".svg"},
-    "scenario_status_appendix":      {"matplotlib": ".html", "plotly": ".html"},
-    "errors_and_warnings":           {"matplotlib": ".html", "plotly": ".html"},
+    "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
+    # plot_sensitivity_benchmarking always emits .svg regardless of backend
+    # (its output_path_template is literal ".svg"); keep the EXT mapping
+    # symmetric so rule_all + render_report inputs match the producing rule.
+    "sensitivity_benchmarking": {"matplotlib": ".svg", "plotly": ".svg"},
+    "per_analysis_summary": {"matplotlib": ".svg", "plotly": ".svg"},
+    "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
+    "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 
@@ -156,6 +164,20 @@ def _output_ext_for(static_backend: Literal["matplotlib", "plotly"], renderer_mo
     input lists must all use this same extension.
     """
     return _OUTPUT_EXT_BY_RENDERER[renderer_module][static_backend]
+
+
+def _resolve_rule_all_extensions(
+    static_backend: Literal["matplotlib", "plotly"],
+) -> dict[str, str]:
+    """Return per-renderer extensions for rule_all / render_report inputs.
+
+    `_emit_plot_rule` already resolves ext per-rule via `__OUTPUT_EXT__`
+    substitution. The rule_all + render_report `input:` declarations must
+    list the same backend-resolved extensions so Snakemake's DAG planner
+    can match rule outputs to their consumers. Hardcoding `.png` here
+    (the legacy state) breaks DAG-build when static_backend != matplotlib.
+    """
+    return {key: _output_ext_for(static_backend, key) for key in _OUTPUT_EXT_BY_RENDERER}
 
 
 def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
@@ -178,10 +200,13 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # `input: []` (regen-only bundle Snakefile: plot files exist on disk via
     # the bundle, rules need no upstream status-flag inputs).
     nonempty_flags = tuple(f for f in spec.input_flags if f)
-    if nonempty_flags:
-        input_block = "input:\n        " + "\n        ".join(
-            f'{spec.input_label} = "{f}",' for f in nonempty_flags
-        )
+    additional = tuple(p for p in spec.additional_inputs if p)
+    if nonempty_flags or additional:
+        # Snakemake parses input: as a Python argument list — positional
+        # entries must precede keyword entries.
+        positional_lines = [f'"{p}",' for p in additional]
+        labeled_lines = [f'{spec.input_label} = "{f}",' for f in nonempty_flags]
+        input_block = "input:\n        " + "\n        ".join(positional_lines + labeled_lines)
     else:
         input_block = "input: []"
 
@@ -189,18 +214,15 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # category, optional subcategory, and labels as pre-formatted dict.
     rk = spec.report_kwargs or {}
     labels_str = rk.get("labels", '{"figure": "?"}')
-    subcategory_line = (
-        f'\n            subcategory="{rk["subcategory"]}",'
-        if "subcategory" in rk else ""
-    )
+    subcategory_line = f'\n            subcategory="{rk["subcategory"]}",' if "subcategory" in rk else ""
     output_block = (
-        f'report(\n'
+        f"report(\n"
         f'            "{output_path}",\n'
         f'            caption="{rk.get("caption", "")}",\n'
         f'            category="{rk.get("category", "")}",'
-        f'{subcategory_line}\n'
-        f'            labels={labels_str},\n'
-        f'        )'
+        f"{subcategory_line}\n"
+        f"            labels={labels_str},\n"
+        f"        )"
     )
 
     # params: block — either literal source_paths or function reference,
@@ -223,9 +245,7 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
 
     # shell: block — optional extra CLI flags appear between config_args
     # and --output. Each emitted on its own indented continuation line.
-    extra_flags_block = "".join(
-        f"            {flag} \\\n" for flag in spec.extra_cli_flags
-    )
+    extra_flags_block = "".join(f"            {flag} \\\n" for flag in spec.extra_cli_flags)
 
     # Plot-rule shell uses literal "python" (the rule's conda: env
     # provides the interpreter); only setup / run / process / consolidate
@@ -300,11 +320,11 @@ def _emit_rule_all(
     """
     lines = list(status_flags) + list(plot_output_paths) + list(render_report_targets)
     input_block = "\n        ".join(f"{e}," for e in lines)
-    return f'''
+    return f"""
 rule all:
     input:
         {input_block}
-'''
+"""
 
 
 def _emit_report_artifacts(dest_root: Path) -> None:
@@ -327,6 +347,7 @@ def _emit_report_artifacts(dest_root: Path) -> None:
     """
     try:
         from importlib.resources import files as _resource_files
+
         src_templates = Path(str(_resource_files("TRITON_SWMM_toolkit") / "report_templates"))
     except (ImportError, ModuleNotFoundError):
         src_templates = Path(__file__).parent / "report_templates"
@@ -338,9 +359,7 @@ def _emit_report_artifacts(dest_root: Path) -> None:
     captions_dst.mkdir(exist_ok=True)
     for cap in (src_templates / "captions").glob("*.rst"):
         (captions_dst / cap.name).write_text(cap.read_text())
-    (dst_report / "workflow_description.rst").write_text(
-        (src_templates / "workflow_description.rst.j2").read_text()
-    )
+    (dst_report / "workflow_description.rst").write_text((src_templates / "workflow_description.rst.j2").read_text())
 
 
 class SnakemakeWorkflowBuilder:
@@ -485,7 +504,6 @@ class SnakemakeWorkflowBuilder:
     def _get_config_args(
         self,
         analysis_config_yaml: Path | None = None,
-        include_report_config: bool = False,
     ) -> str:
         """
         Generate common config path arguments.
@@ -494,10 +512,6 @@ class SnakemakeWorkflowBuilder:
         ----------
         analysis_config_yaml : Path | None
             If provided, use this analysis config instead of self.analysis.analysis_config_yaml
-        include_report_config : bool
-            Emit ``--report-config`` when ``self._report_config_path`` is set. Default False
-            because only renderer rules (the ``_cli`` dispatcher) accept that flag — the
-            setup / prepare / run / process / consolidate runners would error on it.
 
         Returns
         -------
@@ -505,15 +519,7 @@ class SnakemakeWorkflowBuilder:
             Config arguments string
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
-        args = (
-            f"--system-config {self.system.system_config_yaml} \\\n"
-            f"            --analysis-config {analysis_cfg}"
-        )
-        if include_report_config:
-            report_cfg_path = getattr(self, "_report_config_path", None)
-            if report_cfg_path is not None:
-                args += f" \\\n            --report-config {report_cfg_path}"
-        return args
+        return f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
 
     def _build_resource_block(
         self,
@@ -610,40 +616,25 @@ class SnakemakeWorkflowBuilder:
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
     def _get_report_cfg_static_backend(self) -> Literal["matplotlib", "plotly"]:
-        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-        from TRITON_SWMM_toolkit.config.report import (
-            DEFAULT_REPORT_CONFIG,
-            report_config,
-        )
-        report_cfg_path = getattr(self, "_report_config_path", None)
-        if report_cfg_path is not None:
-            _report_cfg = yaml_to_model(report_cfg_path, report_config)
-        else:
-            _report_cfg = DEFAULT_REPORT_CONFIG
-        return _report_cfg.interactive.static_backend
+        # Post-F2 (R1): cfg_analysis.report is required by analysis_config
+        # Pydantic schema; sourcing static_backend inline removes the need
+        # for the legacy peer-file path resolution.
+        return self.cfg_analysis.report.interactive.static_backend
 
-    def _make_rule_emission_context(
-        self, *, static_backend: Literal["matplotlib", "plotly"]
-    ) -> RuleEmissionContext:
+    def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
         module-level rule helpers (_emit_plot_rule, _emit_render_report_rule,
-        _emit_rule_all) consume. Plot rules use include_report_config=True
-        because the renderer's _cli dispatcher accepts --report-config; other
-        runners would error on it.
+        _emit_rule_all) consume. Post-F2: all renderer + runner rules read
+        their report cfg inline from cfg_analysis.report, so a single
+        config-args string suffices.
         """
-        log_dir_rel = str(
-            self.analysis_paths.analysis_log_directory.relative_to(
-                self.analysis_paths.analysis_dir
-            )
-        )
+        log_dir_rel = str(self.analysis_paths.analysis_log_directory.relative_to(self.analysis_paths.analysis_dir))
         return RuleEmissionContext(
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
             conda_env_path=str(self._get_conda_env_path()),
-            config_args_str=self._get_config_args(include_report_config=True),
-            is_sensitivity=bool(
-                getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)
-            ),
+            config_args_str=self._get_config_args(),
+            is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
         )
 
@@ -676,36 +667,28 @@ class SnakemakeWorkflowBuilder:
             first_sub = subs[next(iter(subs))]
             repr_scen_paths = first_sub._retrieve_sim_runs(0)._scenario.scen_paths
         else:
-            repr_scen_paths = (
-                self.analysis._retrieve_sim_runs(0)._scenario.scen_paths
-            )
+            repr_scen_paths = self.analysis._retrieve_sim_runs(0)._scenario.scen_paths
         source_paths: list[dict] = [
             {
-                "path": _os.path.relpath(
-                    str(self.system.sys_paths.dem_processed.resolve()), analysis_root
-                ),
+                "path": _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root),
                 "variables": [],
             },
             {
-                "path": _os.path.relpath(
-                    str(Path(repr_scen_paths.swmm_hydro_inp).resolve()), analysis_root
-                ),
+                "path": _os.path.relpath(str(Path(repr_scen_paths.swmm_hydro_inp).resolve()), analysis_root),
                 "variables": ["[SUBCATCHMENTS]", "[JUNCTIONS]", "[OUTFALLS]"],
             },
             {
-                "path": _os.path.relpath(
-                    str(Path(repr_scen_paths.swmm_hydraulics_inp).resolve()), analysis_root
-                ),
+                "path": _os.path.relpath(str(Path(repr_scen_paths.swmm_hydraulics_inp).resolve()), analysis_root),
                 "variables": ["[CONDUITS]", "[JUNCTIONS]", "[POLYGONS]"],
             },
         ]
         if cfg_ana.toggle_storm_tide_boundary and cfg_ana.storm_tide_boundary_line_gis:
-            source_paths.append({
-                "path": _os.path.relpath(
-                    str(Path(cfg_ana.storm_tide_boundary_line_gis).resolve()), analysis_root
-                ),
-                "variables": [],
-            })
+            source_paths.append(
+                {
+                    "path": _os.path.relpath(str(Path(cfg_ana.storm_tide_boundary_line_gis).resolve()), analysis_root),
+                    "variables": [],
+                }
+            )
 
         spec = RuleSpec(
             rule_name="plot_system_overview",
@@ -741,7 +724,6 @@ class SnakemakeWorkflowBuilder:
         overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
     ) -> str:
         """
@@ -790,8 +772,6 @@ class SnakemakeWorkflowBuilder:
         """
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
-        self._report_config_path = report_config_path
-
         # Emit report templates (CSS, captions, Jinja2 workflow description) into
         # {analysis_dir}/report/ so Snakemake's --report engine can resolve the
         # caption= / report: paths inside generated rules at report-render time.
@@ -799,10 +779,7 @@ class SnakemakeWorkflowBuilder:
 
         n_sims = len(self.analysis.df_sims)
         event_ids = [
-            compute_event_id_slug(
-                self.analysis._retrieve_weather_indexer_using_integer_index(i)
-            )
-            for i in range(n_sims)
+            compute_event_id_slug(self.analysis._retrieve_weather_indexer_using_integer_index(i)) for i in range(n_sims)
         ]
         iloc_by_event_id = {event_ids[i]: i for i in range(n_sims)}
         hpc_time_min = self.cfg_analysis.hpc_time_min_per_sim or 30
@@ -920,10 +897,13 @@ class SnakemakeWorkflowBuilder:
         # rule (appended below) consumes plot outputs and emits
         # `analysis_report.{fmt}`; rule all lists those outputs as targets so the
         # DAG planner always considers them.
+        # Backend-aware extension resolution. The per-rule emission already uses
+        # _output_ext_for via __OUTPUT_EXT__ substitution; rule_all + render_report
+        # inputs MUST match or Snakemake's DAG planner cannot resolve the wildcards.
+        _ext = _resolve_rule_all_extensions(self._get_report_cfg_static_backend())
+
         _formats = report_formats if report_formats is not None else ["zip"]
-        render_targets_in_rule_all = "".join(
-            f',\n        "analysis_report.{fmt}"' for fmt in _formats
-        )
+        render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
 
 import os
@@ -953,21 +933,25 @@ ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 rule all:
     input:
         "_status/e_consolidate_complete.flag",
-        "plots/system_overview.png",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth.png", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow.png",     event_id=SIM_IDS),
-        "plots/per_analysis/summary_table.svg",
-        "plots/appendix/scenario_status.html",
-        "plots/errors_and_warnings/validation_report.html"{render_targets_in_rule_all},
+        "scenario_status.csv",
+        "workflow_summary.md",
+        "plots/system_overview{_ext["system_overview"]}",
+        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
+        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
+        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
+        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
 
-onsuccess:
-    shell("""
-        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {config_args} \\
-            > {log_dir_str}/export_scenario_status.log 2>&1
-    """)
+# onsuccess: removed — `rule export_scenario_status` (added below) now produces
+# scenario_status.csv and workflow_summary.md on the success path via the
+# Snakemake DAG. The previous `onsuccess:` hook fired AFTER all rules
+# completed, which is too late for the renderer rules that consume the CSV.
 
 onerror:
+    # Partial-run debugging fallback: when a rule earlier in the DAG fails,
+    # the export rule never fires (its input flag is absent), so this hook
+    # is the only path to a diagnostic CSV. Snakemake treats `onerror:` exit
+    # codes as informational — the workflow has already failed.
     shell("""
         {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
             {config_args} \\
@@ -1147,6 +1131,9 @@ rule consolidate:
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
         snakefile_content += self._build_plot_rule_block_errors_and_warnings()
+        snakefile_content += self._build_export_scenario_status_rule(
+            input_flag="_status/e_consolidate_complete.flag",
+        )
 
         # Render-report rule (replaces the broken onsuccess auto-render).
         # Wildcarded on `format` — fires once per `analysis_report.{fmt}` target
@@ -1156,12 +1143,13 @@ rule consolidate:
         snakefile_content += f'''
 rule render_report:
     input:
-        "plots/system_overview.png",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth.png", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow.png",     event_id=SIM_IDS),
-        "plots/per_analysis/summary_table.svg",
-        "plots/appendix/scenario_status.html",
-        "plots/errors_and_warnings/validation_report.html",
+        "plots/system_overview{_ext["system_overview"]}",
+        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
+        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
+        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
+        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "scenario_status.csv",
     output:
         "analysis_report.{{format}}"
     wildcard_constraints:
@@ -1222,34 +1210,34 @@ rule render_report:
             for sub in self.analysis.sensitivity.sub_analyses.values():
                 for event_iloc in sub.df_sims.index:
                     try:
-                        scenario_objs.append(
-                            sub._retrieve_sim_run_processing_object(event_iloc).scen_paths
-                        )
+                        scenario_objs.append(sub._retrieve_sim_run_processing_object(event_iloc).scen_paths)
                     except Exception:
                         continue
         else:
             scenario_objs = []
             for event_iloc in self.analysis.df_sims.index:
-                scenario_objs.append(
-                    self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths
-                )
+                scenario_objs.append(self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths)
         for scen_paths in scenario_objs:
             if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt:
-                sources.append({
-                    "path": _os.path.relpath(
-                        str(Path(scen_paths.swmm_hydraulics_rpt).resolve()),
-                        analysis_root,
-                    ),
-                    "variables": ["Flow Routing Continuity error (%)"],
-                })
+                sources.append(
+                    {
+                        "path": _os.path.relpath(
+                            str(Path(scen_paths.swmm_hydraulics_rpt).resolve()),
+                            analysis_root,
+                        ),
+                        "variables": ["Flow Routing Continuity error (%)"],
+                    }
+                )
             elif "swmm" in enabled and scen_paths.swmm_full_rpt_file:
-                sources.append({
-                    "path": _os.path.relpath(
-                        str(Path(scen_paths.swmm_full_rpt_file).resolve()),
-                        analysis_root,
-                    ),
-                    "variables": ["Flow Routing Continuity error (%)"],
-                })
+                sources.append(
+                    {
+                        "path": _os.path.relpath(
+                            str(Path(scen_paths.swmm_full_rpt_file).resolve()),
+                            analysis_root,
+                        ),
+                        "variables": ["Flow Routing Continuity error (%)"],
+                    }
+                )
             # Per-model-type model-state JSON logs (sim_folder/log_{mt}.json) are
             # what the renderer's _is_scenario_successful / _is_scenario_pending
             # actually read for status counts — NOT the simulation execution
@@ -1260,14 +1248,14 @@ rule render_report:
                 for mt in enabled:
                     log_file = Path(sim_folder) / f"log_{mt}.json"
                     if log_file.exists():
-                        sources.append({
-                            "path": _os.path.relpath(
-                                str(log_file.resolve()), analysis_root
-                            ),
-                            "variables": [
-                                f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
-                            ],
-                        })
+                        sources.append(
+                            {
+                                "path": _os.path.relpath(str(log_file.resolve()), analysis_root),
+                                "variables": [
+                                    f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
+                                ],
+                            }
+                        )
         return sources
 
     def _build_plot_rule_block_per_analysis_summary(
@@ -1321,9 +1309,10 @@ rule render_report:
 
         Iter 8 agenda item 3: produces `plots/appendix/scenario_status.html` —
         an inline-styled HTML table rendered from `analysis_dir / scenario_status.csv`
-        (written by `export_scenario_status.py` as a Snakemake onsuccess/onerror
-        hook). Sidebar category is "Appendix"; the comparator-fallback in the
-        category-order post-process places it after all known categories
+        (written by the `export_scenario_status` Snakemake rule on the success
+        path; the `onerror:` hook is retained as a partial-run debugging
+        fallback). Sidebar category is "Appendix"; the comparator-fallback in
+        the category-order post-process places it after all known categories
         alphabetically.
 
         ``input_flag`` defaults to the regular multisim consolidation flag;
@@ -1336,10 +1325,12 @@ rule render_report:
         analysis_dir = self.analysis.analysis_paths.analysis_dir
         analysis_root = str(analysis_dir.resolve())
         csv_rel = _os.path.relpath(str((analysis_dir / "scenario_status.csv").resolve()), analysis_root)
-        source_paths = [{
-            "path": csv_rel,
-            "variables": ["event_id", "model_type", "status", "runtime_s", "continuity_error_pct", "notes"],
-        }]
+        source_paths = [
+            {
+                "path": csv_rel,
+                "variables": ["event_id", "model_type", "status", "runtime_s", "continuity_error_pct", "notes"],
+            }
+        ]
         spec = RuleSpec(
             rule_name="plot_scenario_status_appendix",
             renderer_module="scenario_status_appendix",
@@ -1357,6 +1348,7 @@ rule render_report:
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/scenario_status_appendix.log",
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -1389,8 +1381,12 @@ rule render_report:
             {
                 "path": csv_rel,
                 "variables": [
-                    "scenario_setup", "run_completed",
-                    "actual_nTasks", "actual_omp_threads", "actual_total_gpus", "actual_gpu_backend",
+                    "scenario_setup",
+                    "run_completed",
+                    "actual_nTasks",
+                    "actual_omp_threads",
+                    "actual_total_gpus",
+                    "actual_gpu_backend",
                 ],
             },
             {
@@ -1399,7 +1395,11 @@ rule render_report:
             },
             {
                 "path": "../system_log.json",
-                "variables": ["compilation_successful", "compilation_triton_only_successful", "compilation_swmm_successful"],
+                "variables": [
+                    "compilation_successful",
+                    "compilation_triton_only_successful",
+                    "compilation_swmm_successful",
+                ],
             },
         ]
         spec = RuleSpec(
@@ -1419,8 +1419,63 @@ rule render_report:
             },
             resources_yaml="mem_mb=1000, time_min=5",
             log_path_template="logs/plots/errors_and_warnings.log",
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
+
+    def _build_export_scenario_status_rule(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+    ) -> str:
+        """Emit a Snakemake rule that writes scenario_status.csv and workflow_summary.md.
+
+        Replaces the previous onsuccess/onerror hook mechanism on the success
+        path. The hook fired AFTER all rules — including the rules that read
+        the CSV — completed, producing a false-positive 'CSV missing' warning
+        in the rendered Errors and Warnings page. Promoting the export to a
+        regular rule lets Snakemake's DAG scheduler order the CSV write before
+        any rule that consumes it. The onerror: hook is retained separately as
+        a partial-run debugging fallback.
+
+        Listed under `localrules:` so it runs on the local executor — the rule
+        is a sub-second CSV write against in-memory log JSON; dispatching it
+        as a separate sbatch job under multi_sim_run_method='batch_job' would
+        add ~10-30s of queue latency for zero work.
+
+        ``input_flag`` defaults to the regular multisim consolidation flag;
+        the sensitivity-master Snakefile passes the master flag instead.
+        """
+        log_dir = self.analysis.analysis_paths.analysis_dir / "logs"
+        log_dir_str = str(log_dir)
+        config_args = self._get_config_args()
+        conda_env_path = str(self._get_conda_env_path())
+        resources_block = self._build_resource_block(
+            partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+            runtime_min=10,
+            mem_mb=1000,
+            nodes=1,
+            tasks=1,
+            cpus_per_task=1,
+        )
+        return f'''
+localrules: export_scenario_status
+
+rule export_scenario_status:
+    input: "{input_flag}"
+    output:
+        csv = "scenario_status.csv",
+        md  = "workflow_summary.md",
+    log: "{log_dir_str}/export_scenario_status.log"
+    conda: "{conda_env_path}"
+    resources:
+{resources_block}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            {config_args} \\
+            > {{log}} 2>&1
+        """
+'''
 
     def _build_plot_rule_block_per_sim(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate two per-sim plot rules wildcarded over event_id (Phase 3, R6).
@@ -1443,17 +1498,13 @@ rule render_report:
         if ctx is None:
             ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
         analysis_root = str(self.analysis.analysis_paths.analysis_dir.resolve())
-        dem_rel = _os.path.relpath(
-            str(self.system.sys_paths.dem_processed.resolve()), analysis_root
-        )
+        dem_rel = _os.path.relpath(str(self.system.sys_paths.dem_processed.resolve()), analysis_root)
         watershed_path = self.system.cfg_system.watershed_gis_polygon
-        watershed_rel = _os.path.relpath(
-            str(Path(watershed_path).resolve()), analysis_root
-        ) if watershed_path else None
+        watershed_rel = _os.path.relpath(str(Path(watershed_path).resolve()), analysis_root) if watershed_path else None
         rainfall_datavar = self.analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         storm_tide_datavar = self.analysis.cfg_analysis.weather_time_series_storm_tide_datavar
 
-        helpers = f'''
+        helpers = f"""
 def _per_sim_flood_depth_sources(wildcards):
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         collect_per_sim_source_paths,
@@ -1479,7 +1530,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         dem_rel_path={dem_rel!r},
         watershed_rel_path={watershed_rel!r},
     )
-'''
+"""
 
         flood_spec = RuleSpec(
             rule_name="plot_per_sim_peak_flood_depth",
@@ -1668,7 +1719,9 @@ def _per_sim_conduit_flow_sources(wildcards):
         sim_resources = self.analysis._resource_manager._get_simulation_resource_requirements()
 
         # Get total nodes — use override if provided, otherwise fall back to config
-        total_nodes = override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes  # noqa: E501
+        total_nodes = (
+            override_hpc_total_nodes if override_hpc_total_nodes is not None else self.cfg_analysis.hpc_total_nodes
+        )  # noqa: E501
         assert isinstance(total_nodes, int), "hpc_total_nodes required for 1_job_many_srun_tasks mode"
 
         # Get job duration
@@ -1833,7 +1886,7 @@ echo ""
                     "cfg_analysis.hpc_gpus_per_node + cfg_system.gpu_hardware",
                     gres_value,
                 )
-            for cfg_arg in (self.cfg_analysis.additional_SBATCH_params or []):
+            for cfg_arg in self.cfg_analysis.additional_SBATCH_params or []:
                 cfg_flag = cfg_arg.split("=", 1)[0].split(" ", 1)[0].strip()
                 config_emitted_directives[cfg_flag] = (
                     "cfg_analysis.additional_SBATCH_params",
@@ -3440,7 +3493,6 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -3497,8 +3549,6 @@ exit $snakemake_status
         dict
             Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
         """
-        self._report_config_path = report_config_path
-
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
 
@@ -3546,7 +3596,6 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -3603,7 +3652,6 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -3657,7 +3705,6 @@ exit $snakemake_status
             overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
-            report_config_path=report_config_path,
             report_formats=report_formats,
         )
 
@@ -3761,7 +3808,6 @@ class SensitivityAnalysisWorkflowBuilder:
         process_timeseries: bool = True,
         clear_raw_outputs: bool = True,
         pickup_where_leftoff: bool = True,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
     ) -> str:
         """
@@ -3810,8 +3856,6 @@ class SensitivityAnalysisWorkflowBuilder:
         str
             Master Snakefile content
         """
-        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-        from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG, report_config
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         # Emit report templates into the master analysis_dir/report/ so the
@@ -3824,21 +3868,15 @@ class SensitivityAnalysisWorkflowBuilder:
             analysis_config_yaml=self.master_analysis.analysis_config_yaml
         )
 
-        # Resolve report_config to get the sensitivity benchmarking independent_vars
-        # so the master Snakefile can wildcard the plot rule per independent_var.
-        if report_config_path is not None:
-            _report_cfg = yaml_to_model(report_config_path, report_config)
-        else:
-            _report_cfg = DEFAULT_REPORT_CONFIG
+        # Post-F2 (R1): report cfg is inline on cfg_analysis; source the
+        # sensitivity benchmarking independent_vars directly from there so
+        # the master Snakefile can wildcard the plot rule per independent_var.
+        _report_cfg = self.master_analysis.cfg_analysis.report
         _independent_vars: list[str] = (
-            list(_report_cfg.sensitivity.independent_vars)
-            if _report_cfg.sensitivity is not None
-            else []
+            list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
         _group_by_var: str | None = (
-            _report_cfg.sensitivity.group_by_var
-            if _report_cfg.sensitivity is not None
-            else None
+            _report_cfg.sensitivity.group_by_var if _report_cfg.sensitivity is not None else None
         )
 
         # Determine the single enabled model type for sensitivity analysis
@@ -3866,9 +3904,7 @@ class SensitivityAnalysisWorkflowBuilder:
         n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
         # Total scenarios across all sub-analyses (best-effort; matches per-sub-analysis n_sims sum)
         try:
-            total_n_sims = sum(
-                len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values()
-            )
+            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
         except Exception:
             total_n_sims = n_sub_analyses
 
@@ -3935,12 +3971,9 @@ report: "report/workflow_description.rst"
 onstart:
     shell("mkdir -p _status {log_dir_str}/sims {log_dir_str}")
 
-onsuccess:
-    shell("""
-        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
-            {master_config_args} \\
-            > {log_dir_str}/export_scenario_status.log 2>&1
-    """)
+# onsuccess: removed — `rule export_scenario_status` (added below) now produces
+# scenario_status.csv and workflow_summary.md on the success path via the
+# Snakemake DAG.
 
 onerror:
     shell("""
@@ -3951,6 +3984,15 @@ onerror:
 
 
 '''
+
+        # Backend-aware extension resolution. The per-rule emission already uses
+        # _output_ext_for via __OUTPUT_EXT__ substitution; rule_all (and the
+        # render_report subset derived from it below) MUST match or the DAG
+        # planner cannot resolve the wildcards. `_ext` is in scope for every
+        # subsequent `rule_all_inputs.append(...)` site below, including those
+        # nested inside the `if sa_event_pairs_sa:` and `if _independent_vars:`
+        # blocks (Python's nested-block scoping rules).
+        _ext = _resolve_rule_all_extensions(self._base_builder._get_report_cfg_static_backend())
 
         # Build the rule all with all dependencies
         consolidation_flags = []
@@ -3969,32 +4011,35 @@ onerror:
         # pairs (Iteration 7 Change 3b — "show all" panel parity per the user's
         # scope expansion: identical-looking panels across sub-analyses are a QC
         # signal; expected variation is also visible).
-        rule_all_inputs.append('"plots/system_overview.png"')
-        rule_all_inputs.append('"plots/per_analysis/summary_table.svg"')
-        rule_all_inputs.append('"plots/appendix/scenario_status.html"')
-        rule_all_inputs.append('"plots/errors_and_warnings/validation_report.html"')
+        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append('"scenario_status.csv"')
+        rule_all_inputs.append('"workflow_summary.md"')
 
         if sa_event_pairs_sa:
+            _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
+            _e_cf = _ext["per_sim_per_sa_conduit_flow"]
             rule_all_inputs.append(
-                'expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth.png", '
-                'zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/peak_flood_depth{_e_pfd}", '
+                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
             )
             rule_all_inputs.append(
-                'expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow.png", '
-                'zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
+                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/conduit_flow{_e_cf}", '
+                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
             )
         if _independent_vars:
+            _e_bench = _ext["sensitivity_benchmarking"]
             rule_all_inputs.append(
-                'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.svg", '
-                f'independent_var={_independent_vars!r})'
+                f'expand("plots/sensitivity/benchmarking/{{independent_var}}_vs_total{_e_bench}", '
+                f"independent_var={_independent_vars!r})"
             )
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
         # planner re-fires the render whenever any plot output is newer than
         # the existing report.
-        render_rule_input_items = [
-            item for item in rule_all_inputs if not item.startswith('"_status/')
-        ]
+        render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         # Auto-render: every requested format is a top-level target. Snakemake's
         # DAG planning then always considers each report output and skips iff
         # the output is current relative to its plot inputs.
@@ -4049,9 +4094,7 @@ rule setup:
         status_dir.mkdir(parents=True, exist_ok=True)
         for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():  # type: ignore
             fingerprint_path = status_dir / f"sa-{sa_id}_inputs.json"
-            self.sensitivity_analysis._write_sa_id_fingerprint(
-                sub_analysis, fingerprint_path
-            )
+            self.sensitivity_analysis._write_sa_id_fingerprint(sub_analysis, fingerprint_path)
         if len(self.sensitivity_analysis.independent_vars) == 0:
             print(
                 "[Sensitivity] WARNING: independent_vars is empty; sensitivity-row-edit rerun trigger is a no-op",
@@ -4092,9 +4135,7 @@ rule setup:
             # Always set threads = total CPUs to ensure correct SLURM --ntasks value
             snakemake_threads = cpus_per_sim
 
-            gpu_hw_override = getattr(
-                sub_analysis.cfg_analysis, "gpu_hardware_override", None
-            )
+            gpu_hw_override = getattr(sub_analysis.cfg_analysis, "gpu_hardware_override", None)
             gpu_hw = gpu_hw_override or self.system.cfg_system.gpu_hardware
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
@@ -4122,11 +4163,7 @@ rule setup:
             # For each simulation in this sub-analysis
             sub_analysis_sim_flags = []
             for event_iloc in sub_analysis.df_sims.index:
-                event_id = compute_event_id_slug(
-                    sub_analysis._retrieve_weather_indexer_using_integer_index(
-                        event_iloc
-                    )
-                )
+                event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
                 # Rule names must be valid Python identifiers (no `.`, `-`).
                 # Flag paths keep the hyphen-delimited format for wildcard parsing.
                 sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
@@ -4307,15 +4344,16 @@ rule setup:
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
             input_flag="_status/f_consolidate_master_complete.flag"
         )
+        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+            input_flag="_status/f_consolidate_master_complete.flag",
+        )
         # Per-sa per-event plot rules (Iteration 7 Change 3b — "show all" parity).
         # Only emit when sa_event_pairs are populated (best-effort guarded above).
         if sa_event_pairs_sa:
             snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
 
         if _independent_vars:
-            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(
-                _independent_vars
-            )
+            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
 
         # Render-report rule (replaces the broken onsuccess auto-render approach).
         # Single rule wildcarded on `format` — Snakemake fires it once per
@@ -4368,7 +4406,9 @@ rule render_report:
         import os as _os
 
         if ctx is None:
-            ctx = self._base_builder._make_rule_emission_context(static_backend=self._base_builder._get_report_cfg_static_backend())
+            ctx = self._base_builder._make_rule_emission_context(
+                static_backend=self._base_builder._get_report_cfg_static_backend()
+            )
         master_root = str(self.master_analysis.analysis_paths.analysis_dir.resolve())
         swmm_only_rpt_rels: list[str] = []
         for sub in self.sensitivity_analysis.sub_analyses.values():
@@ -4379,12 +4419,10 @@ rule render_report:
                         scen_paths = sub._retrieve_sim_run_processing_object(event_iloc).scen_paths
                         rpt = getattr(scen_paths, "swmm_full_rpt_file", None)
                         if rpt:
-                            swmm_only_rpt_rels.append(
-                                _os.path.relpath(str(Path(rpt).resolve()), master_root)
-                            )
+                            swmm_only_rpt_rels.append(_os.path.relpath(str(Path(rpt).resolve()), master_root))
                     except Exception:
                         continue
-        helpers = f'''
+        helpers = f"""
 INDEPENDENT_VARS = {independent_vars!r}
 
 def _sensitivity_source_paths(wildcards):
@@ -4395,7 +4433,7 @@ def _sensitivity_source_paths(wildcards):
         wildcards.independent_var,
         swmm_only_rpt_rel_paths={swmm_only_rpt_rels!r},
     )
-'''
+"""
         spec = RuleSpec(
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
@@ -4420,9 +4458,7 @@ def _sensitivity_source_paths(wildcards):
         spec_with_label = RuleSpec(**{**spec.__dict__, "input_label": "master"})
         return helpers + _emit_plot_rule(spec_with_label, ctx)
 
-    def _build_plot_rule_block_per_sim_per_sa(
-        self, *, ctx: RuleEmissionContext | None = None
-    ) -> str:
+    def _build_plot_rule_block_per_sim_per_sa(self, *, ctx: RuleEmissionContext | None = None) -> str:
         """Generate per-sa per-event plot rules for the sensitivity master Snakefile.
 
         Realizes Iteration 7 Change 3b ("show all sub-analyses" panel parity per
@@ -4439,7 +4475,9 @@ def _sensitivity_source_paths(wildcards):
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         if ctx is None:
-            ctx = self._base_builder._make_rule_emission_context(static_backend=self._base_builder._get_report_cfg_static_backend())
+            ctx = self._base_builder._make_rule_emission_context(
+                static_backend=self._base_builder._get_report_cfg_static_backend()
+            )
 
         iloc_by_event_id_by_sa: dict[str, dict[str, int]] = {}
         for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():
@@ -4452,7 +4490,7 @@ def _sensitivity_source_paths(wildcards):
         rainfall_datavar = self.master_analysis.cfg_analysis.weather_time_series_spatial_mean_rainfall_datavar
         storm_tide_datavar = self.master_analysis.cfg_analysis.weather_time_series_storm_tide_datavar
 
-        helpers = f'''
+        helpers = f"""
 ILOC_BY_EVENT_ID_BY_SA = {iloc_by_event_id_by_sa!r}
 
 def _per_sim_per_sa_flood_depth_sources(wildcards):
@@ -4478,7 +4516,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         storm_tide_datavar={storm_tide_datavar!r},
         sa_id=wildcards.sa_id,
     )
-'''
+"""
         flood_spec = RuleSpec(
             rule_name="plot_per_sim_per_sa_peak_flood_depth",
             renderer_module="per_sim_per_sa_peak_flood_depth",
@@ -4554,7 +4592,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -4614,9 +4651,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             - snakefile_path: Path
             - message: str
         """
-        self._report_config_path = report_config_path
-        self._base_builder._report_config_path = report_config_path
-
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
 
@@ -4677,7 +4711,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -4742,7 +4775,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -4808,7 +4840,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             process_timeseries=process_timeseries,
             clear_raw_outputs=clear_raw_outputs,
             pickup_where_leftoff=pickup_where_leftoff,
-            report_config_path=report_config_path,
             report_formats=report_formats,
         )
 

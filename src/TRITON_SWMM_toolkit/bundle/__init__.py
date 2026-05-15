@@ -36,6 +36,7 @@ from TRITON_SWMM_toolkit.version_migration.constants import (
 
 __all__ = [
     "Bundle",
+    "BundleSchemaError",
     "emit_bundle",
     "_get_toolkit_git_sha",
     "BUNDLE_MANIFEST_FILENAME",
@@ -43,12 +44,24 @@ __all__ = [
 ]
 
 
+class BundleSchemaError(ValueError):
+    """A bundle's bundle_schema_version does not match the locally-installed
+    toolkit's BUNDLE_SCHEMA_VERSION. Distinct from generic malformed-manifest
+    errors so callers can branch on schema-version mismatch specifically."""
+
+
 class Bundle:
     """A portable render bundle, ready for local report regeneration."""
 
-    def __init__(self, root: Path, manifest: dict) -> None:
+    def __init__(
+        self,
+        root: Path,
+        manifest: dict,
+        cfg_analysis: "analysis_config | None" = None,  # noqa: F821 — forward ref
+    ) -> None:
         self._root = root.resolve()
         self._manifest = manifest
+        self._cfg_analysis = cfg_analysis
 
     @classmethod
     def from_directory(cls, path: Path | str) -> "Bundle":
@@ -89,10 +102,22 @@ class Bundle:
                 f"version of the toolkit's bundle emitter."
             ) from exc
         if bundle_version > BUNDLE_SCHEMA_VERSION:
-            raise ValueError(
-                f"Bundle schema version {bundle_version} exceeds locally "
-                f"installed BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}. "
-                f"Upgrade the local toolkit installation to read this bundle."
+            raise BundleSchemaError(
+                f"Bundle {root} has bundle_schema_version="
+                f"{bundle_version} which exceeds local "
+                f"BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}. "
+                f"Upgrade the toolkit."
+            )
+        if bundle_version < BUNDLE_SCHEMA_VERSION:
+            raise BundleSchemaError(
+                f"Bundle {root} has bundle_schema_version="
+                f"{bundle_version} which is below local "
+                f"BUNDLE_SCHEMA_VERSION={BUNDLE_SCHEMA_VERSION}. "
+                f"Pre-F2 bundles (v1) cannot load under post-F2 toolkit (v2) "
+                f"because the bundle layout dropped its legacy peer-file for "
+                f"report config and cfg_analysis.yaml gained a required "
+                f"`report:` field. Re-emit the bundle from its source "
+                f"analysis after running V0005 migration on the source dir."
             )
         invariants = manifest.get("bundle_root_invariants", {})
         if not isinstance(invariants, dict):
@@ -100,7 +125,22 @@ class Bundle:
                 f"bundle_root_invariants in {manifest_path} must be a "
                 f"dict, got {type(invariants).__name__}."
             )
-        return cls(root=root, manifest=manifest)
+        # Load and Pydantic-validate the bundle's cfg_analysis.yaml at
+        # construction time so downstream attribute access
+        # (_read_static_backend reading
+        # self._cfg_analysis.report.interactive.static_backend) is
+        # guaranteed safe by R1's required-field contract.
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        cfg_analysis_path = root / "cfg_analysis.yaml"
+        if not cfg_analysis_path.exists():
+            raise FileNotFoundError(
+                f"Bundle at {root} is missing cfg_analysis.yaml — "
+                f"required by R1 (analysis_config.report "
+                f"load-time-required)."
+            )
+        cfg_analysis = yaml_to_model(cfg_analysis_path, analysis_config)
+        return cls(root=root, manifest=manifest, cfg_analysis=cfg_analysis)
 
     @property
     def root(self) -> Path:
@@ -116,39 +156,16 @@ class Bundle:
         return (self._root / rel).resolve()
 
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
-        # Resolution order:
-        #   1. cfg_report.yaml::interactive::static_backend — the
-        #      F1-introduced canonical snapshot written by emit_bundle.
-        #   2. cfg_analysis.yaml::report::interactive::static_backend —
-        #      retained for forward compatibility with the future F2
-        #      schema canonicalization.
-        #   3. InteractiveBackendConfig().static_backend — Pydantic
-        #      default ("plotly" per Plan Phase 2 D3 + Decision 4).
-        # Private (leading underscore) but kept on the public Bundle
-        # class so test code can monkey-patch for backend-override
-        # coverage.
-        import yaml
-        cfg_report_path = self._root / "cfg_report.yaml"
-        if cfg_report_path.exists():
-            cfg_report_data = yaml.safe_load(cfg_report_path.read_text())
-            interactive_section = cfg_report_data.get("interactive", {})
-            if "static_backend" in interactive_section:
-                return interactive_section["static_backend"]
-        cfg_analysis_path = self._root / "cfg_analysis.yaml"
-        if not cfg_analysis_path.exists():
-            raise FileNotFoundError(
-                f"No cfg_analysis.yaml under {self._root}. Bundle is "
-                f"malformed or this is not a render bundle."
-            )
-        cfg_analysis_data = yaml.safe_load(cfg_analysis_path.read_text())
-        report_section = cfg_analysis_data.get("report", {})
-        interactive_section = report_section.get("interactive", {})
-        if "static_backend" in interactive_section:
-            return interactive_section["static_backend"]
-        from TRITON_SWMM_toolkit.config.report import (
-            InteractiveBackendConfig,
-        )
-        return InteractiveBackendConfig().static_backend
+        # Resolution (post-F2 rev v2): cfg_analysis.report is required by
+        # analysis_config Pydantic schema (Phase 1, R1). The 3-step F1
+        # resolution order is deleted along with the legacy report-config
+        # peer file (Phase 3). Loading the bundle via Bundle.from_directory(...)
+        # already validated cfg_analysis.yaml against analysis_config and
+        # would have raised ValidationError if `report:` was absent — so
+        # the attribute access below is guaranteed safe at this point.
+        # Private (leading underscore) but kept on the public Bundle class
+        # so test code can monkey-patch for backend-override coverage.
+        return self._cfg_analysis.report.interactive.static_backend
 
     def regenerate_report(
         self, *, format: Literal["html", "zip"] = "html"
@@ -159,8 +176,9 @@ class Bundle:
         and (b) the report-templates staging step. Phase 3 wires the
         subprocess invocation, CLI integration, and the
         ``_read_static_backend()`` cfg-read that derives the static
-        backend from ``cfg_report.yaml``'s ``static_backend`` field
-        (default ``"plotly"`` per Decision 4 / Plan Phase 2 D3).
+        backend from ``cfg_analysis.yaml``'s
+        ``report.interactive.static_backend`` field (default ``"plotly"``
+        per Decision 4 / Plan Phase 2 D3).
 
         Parameters
         ----------

@@ -277,8 +277,12 @@ def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
         bundle.regenerate_report(format="html")
 
 def test_legacy_manifest_no_invariants_key(tmp_path):
-    # Bundle.from_directory loads pre-Plan-Phase-3 bundles that lack
-    # the bundle_root_invariants key (SE F-I Flag 7 backward compat).
+    # Bundle.from_directory loads bundles that lack the
+    # bundle_root_invariants key (SE F-I Flag 7 backward compat —
+    # absence of the key is permitted; the key is enforced as a dict
+    # only when present). Post-F2 (R1), the bundle must still ship a
+    # Pydantic-valid cfg_analysis.yaml; the legacy-bundle compat axis
+    # under test is solely the optional invariants key.
     import json
     from TRITON_SWMM_toolkit.bundle import Bundle
     from TRITON_SWMM_toolkit.version_migration.constants import (
@@ -289,16 +293,17 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
     bundle_dir.mkdir()
     legacy_manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
-        "layout_version": 1,
+        "layout_version": 5,
         "toolkit_git_sha": "deadbeefcafe",
         "analysis_id": "legacy_test",
         "created_at_utc": "2026-01-01T00:00:00+00:00",
         "source_paths_by_renderer": {},
-        # NOTE: no bundle_root_invariants key — pre-Plan-Phase-3 shape.
+        # NOTE: no bundle_root_invariants key — backward-compat axis under test.
     }
     (bundle_dir / "bundle_manifest.json").write_text(
         json.dumps(legacy_manifest)
     )
+    _write_minimal_cfg_analysis(bundle_dir / "cfg_analysis.yaml")
     bundle = Bundle.from_directory(bundle_dir)
     assert (
         bundle.manifest.get("bundle_root_invariants", "MISSING")
@@ -387,66 +392,72 @@ def test_zip_emit_no_tar_artifact(tmp_path):
 # ============================================================================
 
 
-def test_copy_report_config_default(tmp_path):
-    # _copy_report_config writes DEFAULT_REPORT_CONFIG as cfg_report.yaml
-    # when no report_config_path is supplied. Snapshot's
-    # interactive.static_backend matches InteractiveBackendConfig's default.
+def _write_minimal_cfg_analysis(path, *, static_backend="plotly", with_report=True):
+    """Write a cfg_analysis.yaml that satisfies analysis_config's required
+    fields (R1) so Bundle.from_directory's Pydantic load succeeds. When
+    `with_report=False`, omit the `report:` block to exercise the
+    Pydantic-validation-fails contract.
+
+    Sources the schema-valid base from
+    tests/fixtures/bundles/multi_sim/cfg_analysis.yaml (already kept in
+    sync with the current analysis_config schema by Phase 1), then strips
+    or pins the `report:` block per the with_report toggle.
+    """
     import yaml
-    from TRITON_SWMM_toolkit.bundle._emit import _copy_report_config
-
-    _copy_report_config(None, tmp_path)
-    out = tmp_path / "cfg_report.yaml"
-    assert out.exists(), "Default fallback must still write cfg_report.yaml"
-    data = yaml.safe_load(out.read_text())
-    assert data["interactive"]["static_backend"] == "plotly"
-
-
-def test_copy_report_config_explicit_matplotlib(tmp_path):
-    # When report_config_path is supplied and pins static_backend=matplotlib,
-    # the snapshot reflects that pin (not the Pydantic default).
-    import yaml
-    from TRITON_SWMM_toolkit.bundle._emit import _copy_report_config
-
-    user_cfg = tmp_path / "user_report_config.yaml"
-    user_cfg.write_text("interactive:\n  static_backend: matplotlib\n")
-    _copy_report_config(user_cfg, tmp_path)
-    out = tmp_path / "cfg_report.yaml"
-    data = yaml.safe_load(out.read_text())
-    assert data["interactive"]["static_backend"] == "matplotlib"
+    from pathlib import Path
+    fixture_path = Path(__file__).parent / "fixtures" / "bundles" / "multi_sim" / "cfg_analysis.yaml"
+    cfg = yaml.safe_load(fixture_path.read_text())
+    if with_report:
+        cfg["report"] = {"interactive": {"static_backend": static_backend}}
+    else:
+        cfg.pop("report", None)
+    path.write_text(yaml.safe_dump(cfg, sort_keys=False))
 
 
-def test_read_static_backend_prefers_cfg_report(tmp_path):
-    # Bundle._read_static_backend reads from cfg_report.yaml when present,
-    # ignoring any cfg_analysis.yaml::report section. This is the F1
-    # resolution-order contract.
+def test_read_static_backend_one_step(tmp_path):
+    """R8 v2 (case 1): cfg_analysis.yaml carries `report.interactive.static_backend`;
+    `_read_static_backend` returns that value as the sole resolution path."""
     from TRITON_SWMM_toolkit.bundle import Bundle
 
-    (tmp_path / "cfg_report.yaml").write_text(
-        "interactive:\n  static_backend: matplotlib\n"
+    _write_minimal_cfg_analysis(
+        tmp_path / "cfg_analysis.yaml", static_backend="matplotlib"
     )
-    # cfg_analysis.yaml conflicting value — cfg_report should still win.
-    (tmp_path / "cfg_analysis.yaml").write_text(
-        "report:\n  interactive:\n    static_backend: plotly\n"
-    )
-    # Minimal manifest so Bundle.from_directory's schema check passes.
     (tmp_path / "bundle_manifest.json").write_text(
-        '{"bundle_schema_version": 1, "bundle_root_invariants": {}}'
+        '{"bundle_schema_version": 2, "bundle_root_invariants": {}}'
     )
     bundle = Bundle.from_directory(tmp_path)
     assert bundle._read_static_backend() == "matplotlib"
 
 
-def test_read_static_backend_falls_through_when_no_cfg_report(tmp_path):
-    # When cfg_report.yaml is absent, _read_static_backend falls back to
-    # cfg_analysis.yaml::report::interactive::static_backend (F2 forward
-    # compat).
+def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_path):
+    """R8 v2 (case 2): a bundle whose cfg_analysis.yaml lacks `report:` fails
+    Pydantic validation at `Bundle.from_directory(...)` — `_read_static_backend`
+    is never reached. Pins the R1 load-time-required contract."""
+    import pytest
     from TRITON_SWMM_toolkit.bundle import Bundle
 
-    (tmp_path / "cfg_analysis.yaml").write_text(
-        "report:\n  interactive:\n    static_backend: matplotlib\n"
+    _write_minimal_cfg_analysis(
+        tmp_path / "cfg_analysis.yaml", with_report=False
     )
+    (tmp_path / "bundle_manifest.json").write_text(
+        '{"bundle_schema_version": 2, "bundle_root_invariants": {}}'
+    )
+    with pytest.raises(Exception):  # pydantic.ValidationError via from_directory
+        Bundle.from_directory(tmp_path)
+
+
+def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
+    """R15: a bundle stamped `bundle_schema_version=1` (pre-F2) fails the
+    schema-version gate in `Bundle.from_directory` under post-F2 toolkit
+    (`BUNDLE_SCHEMA_VERSION=2`). The error message names the version mismatch."""
+    import pytest
+    from TRITON_SWMM_toolkit.bundle import Bundle, BundleSchemaError
+
+    _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml")
     (tmp_path / "bundle_manifest.json").write_text(
         '{"bundle_schema_version": 1, "bundle_root_invariants": {}}'
     )
-    bundle = Bundle.from_directory(tmp_path)
-    assert bundle._read_static_backend() == "matplotlib"
+    with pytest.raises(BundleSchemaError) as excinfo:
+        Bundle.from_directory(tmp_path)
+    assert "Pre-F2" in str(excinfo.value)
+    assert "Re-emit" in str(excinfo.value)

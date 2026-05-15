@@ -4,6 +4,9 @@ from pathlib import Path
 import re
 import math
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
+# One-way import: config/analysis.py imports report_config; config/report.py
+# must not import from config/analysis.py to avoid circular import.
+from TRITON_SWMM_toolkit.config.report import report_config as _report_config_model
 
 
 class analysis_config(cfgBaseModel):
@@ -244,6 +247,18 @@ class analysis_config(cfgBaseModel):
             "Free-form string — SLURM rejects invalid values at submission "
             "time, which is the appropriate failure site. Only honored when "
             "is_subanalysis=True; ignored otherwise with a preflight warning."
+        ),
+    )
+    report: _report_config_model = Field(
+        ...,
+        description=(
+            "Required inline report-rendering config (formerly a separate "
+            "report_config.yaml referenced by absolute path in Snakefile shell "
+            "lines, eliminated post-F2). The canonical source of truth for "
+            "renderer parameters including `interactive.static_backend`. A "
+            "cfg_analysis.yaml file without a `report:` block raises pydantic "
+            "ValidationError at load time. Callers may still pass an explicit "
+            "`report_config=` argument to `analysis.run()` to override."
         ),
     )
 
