@@ -280,3 +280,55 @@ def test_attributes_varied_filters_system_config_yaml(monkeypatch):
     assert "system_config_yaml" not in keys
     assert "run_mode" in keys
     assert "n_omp_threads" in keys
+
+
+# =========================================================================
+# Phase 3: Snakemake workflow generation
+# =========================================================================
+
+
+def test_phase3_get_config_args_accepts_system_config_override():
+    """SnakemakeWorkflowBuilder._get_config_args(system_config_yaml=...) overrides self.system."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
+    builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
+    builder.system = SimpleNamespace(system_config_yaml=Path("/default/system.yaml"))
+
+    args = builder._get_config_args(system_config_yaml=Path("/override/system.yaml"))
+
+    assert "--system-config /override/system.yaml" in args
+    assert "--analysis-config /default/analysis.yaml" in args
+    assert "/default/system.yaml" not in args
+
+
+def test_phase3_get_config_args_falls_back_to_self_system():
+    """Without override, _get_config_args uses self.system.system_config_yaml."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
+    builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
+    builder.system = SimpleNamespace(system_config_yaml=Path("/default/system.yaml"))
+
+    args = builder._get_config_args()
+
+    assert "--system-config /default/system.yaml" in args
+    assert "--analysis-config /default/analysis.yaml" in args
+
+
+def test_phase3_sa_id_to_target_id_map_reverses_target_membership():
+    """The sa_id→target_id reverse map mirrors target.sub_analysis_ids membership.
+
+    Locks the design invariant used inside generate_master_snakefile_content: each
+    sub_analysis's setup-target dependency derives from this map.
+    """
+    targets = [
+        UniqueSystemTarget(0, Path("/a.yaml"), object(), ["0", "1"]),
+        UniqueSystemTarget(1, Path("/c.yaml"), object(), ["2"]),
+    ]
+    sa_id_to_target_id = {
+        str(sa_id): target.target_id
+        for target in targets
+        for sa_id in target.sub_analysis_ids
+    }
+    assert sa_id_to_target_id == {"0": 0, "1": 0, "2": 1}
