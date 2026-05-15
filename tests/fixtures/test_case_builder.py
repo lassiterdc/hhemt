@@ -385,6 +385,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "multi_sim_run_method": "local",
             "target_processed_output_type": "zarr",
             "local_cpu_cores_for_workflow": 2,
+            "report": {},
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])

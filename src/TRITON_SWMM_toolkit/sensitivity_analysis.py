@@ -166,7 +166,6 @@ class TRITONSWMM_sensitivity_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -242,7 +241,6 @@ class TRITONSWMM_sensitivity_analysis:
             dry_run=dry_run,
             verbose=verbose,
             override_hpc_total_nodes=override_hpc_total_nodes,
-            report_config_path=report_config_path,
             report_formats=report_formats,
             extra_sbatch_args=extra_sbatch_args,
         )
@@ -336,8 +334,6 @@ class TRITONSWMM_sensitivity_analysis:
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
-        *,
-        report_config_path: "Path | None" = None,
     ) -> "Path":
         """Emit a portable render bundle for the sensitivity master analysis.
 
@@ -349,17 +345,12 @@ class TRITONSWMM_sensitivity_analysis:
 
         Args:
             output_path: Optional target path for the bundle tar.
-            report_config_path: Optional path to the report_config.yaml
-                used at analysis.run() time. Snapshotted into the bundle
-                as cfg_report.yaml so Bundle.regenerate_report()
-                reproduces the static_backend the analysis was rendered
-                under. When None, DEFAULT_REPORT_CONFIG is snapshotted.
 
         Returns:
             Path to the emitted bundle tar.
         """
         from TRITON_SWMM_toolkit.bundle import emit_bundle
-        return emit_bundle(self, output_path, report_config_path=report_config_path)
+        return emit_bundle(self, output_path)
 
     def run_all_sims(
         self,

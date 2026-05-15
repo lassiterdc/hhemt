@@ -473,8 +473,6 @@ class TRITONSWMM_analysis:
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
-        *,
-        report_config_path: "Path | None" = None,
     ) -> "Path":
         """Emit a portable render bundle for local renderer iteration.
 
@@ -498,7 +496,7 @@ class TRITONSWMM_analysis:
                 on this analysis (no *.manifest.json sidecars exist).
         """
         from TRITON_SWMM_toolkit.bundle import emit_bundle
-        return emit_bundle(self, output_path, report_config_path=report_config_path)
+        return emit_bundle(self, output_path)
 
     @staticmethod
     def _handle_destination_conflict(
@@ -1600,14 +1598,19 @@ class TRITONSWMM_analysis:
 
         from .orchestration import WorkflowResult, translate_mode, translate_phases
         from .config.report import (
-            DEFAULT_REPORT_CONFIG,
             report_config as ReportConfigModel,
             validate_sensitivity_independent_vars,
         )
         from .config.loaders import yaml_to_model
         from .exceptions import ConfigurationError
 
-        # Pre-run report_config validation — fail fast before submitting workflow
+        # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
+        # Resolution order:
+        #   (a) explicit `report_config=` argument → load and use
+        #   (b) self.cfg_analysis.report (guaranteed non-None by R1 — required
+        #       Pydantic field; loading a cfg_analysis.yaml without `report:`
+        #       raises ValidationError before this code is reached)
+        # No DEFAULT_REPORT_CONFIG fallback — the field is required.
         if report_config is not None:
             report_config = Path(report_config)
             try:
@@ -1619,7 +1622,7 @@ class TRITONSWMM_analysis:
                     config_path=report_config,
                 ) from e
         else:
-            cfg_report = DEFAULT_REPORT_CONFIG
+            cfg_report = self.cfg_analysis.report
 
         sa_csv = (
             self.cfg_analysis.sensitivity_analysis
@@ -1628,7 +1631,6 @@ class TRITONSWMM_analysis:
         )
         validate_sensitivity_independent_vars(cfg_report, sa_csv)
         self._cfg_report = cfg_report
-        self._cfg_report_path = report_config
 
         # Pre-run transfer validation — fail fast before submitting the workflow
         if transfer_config is not None:
@@ -1738,7 +1740,6 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
-            "report_config_path": self._cfg_report_path,
             "report_formats": report_formats,
             "extra_sbatch_args": extra_sbatch_args,
         }
@@ -2110,7 +2111,6 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -2199,7 +2199,6 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
                 extra_sbatch_args=extra_sbatch_args,
             )
@@ -2223,7 +2222,6 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
                 extra_sbatch_args=extra_sbatch_args,
             )

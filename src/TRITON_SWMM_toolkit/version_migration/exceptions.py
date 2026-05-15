@@ -69,3 +69,10 @@ class RegistryError(MigrationError):
         self.reason = reason
         self.paths = paths or []
         super().__init__(f"registry error: {reason}; paths={self.paths}")
+
+
+class MigrationBlockedError(MigrationError):
+    """Raised when a migration's upgrade() cannot proceed without operator
+    remediation. The message names the analysis path and the minimum edit
+    the operator must apply before re-running. Mapped to validation exit
+    code (2) by the CLI."""

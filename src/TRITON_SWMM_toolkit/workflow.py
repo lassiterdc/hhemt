@@ -146,7 +146,10 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
     "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".svg"},
     "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".svg"},
-    "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".svg"},
+    # plot_sensitivity_benchmarking always emits .svg regardless of backend
+    # (its output_path_template is literal ".svg"); keep the EXT mapping
+    # symmetric so rule_all + render_report inputs match the producing rule.
+    "sensitivity_benchmarking": {"matplotlib": ".svg", "plotly": ".svg"},
     "per_analysis_summary": {"matplotlib": ".svg", "plotly": ".svg"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
     "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
@@ -501,7 +504,6 @@ class SnakemakeWorkflowBuilder:
     def _get_config_args(
         self,
         analysis_config_yaml: Path | None = None,
-        include_report_config: bool = False,
     ) -> str:
         """
         Generate common config path arguments.
@@ -510,10 +512,6 @@ class SnakemakeWorkflowBuilder:
         ----------
         analysis_config_yaml : Path | None
             If provided, use this analysis config instead of self.analysis.analysis_config_yaml
-        include_report_config : bool
-            Emit ``--report-config`` when ``self._report_config_path`` is set. Default False
-            because only renderer rules (the ``_cli`` dispatcher) accept that flag — the
-            setup / prepare / run / process / consolidate runners would error on it.
 
         Returns
         -------
@@ -521,12 +519,7 @@ class SnakemakeWorkflowBuilder:
             Config arguments string
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
-        args = f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
-        if include_report_config:
-            report_cfg_path = getattr(self, "_report_config_path", None)
-            if report_cfg_path is not None:
-                args += f" \\\n            --report-config {report_cfg_path}"
-        return args
+        return f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
 
     def _build_resource_block(
         self,
@@ -623,32 +616,24 @@ class SnakemakeWorkflowBuilder:
         return max(1, math.ceil(total_gpus / gpus_per_node))
 
     def _get_report_cfg_static_backend(self) -> Literal["matplotlib", "plotly"]:
-        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-        from TRITON_SWMM_toolkit.config.report import (
-            DEFAULT_REPORT_CONFIG,
-            report_config,
-        )
-
-        report_cfg_path = getattr(self, "_report_config_path", None)
-        if report_cfg_path is not None:
-            _report_cfg = yaml_to_model(report_cfg_path, report_config)
-        else:
-            _report_cfg = DEFAULT_REPORT_CONFIG
-        return _report_cfg.interactive.static_backend
+        # Post-F2 (R1): cfg_analysis.report is required by analysis_config
+        # Pydantic schema; sourcing static_backend inline removes the need
+        # for the legacy peer-file path resolution.
+        return self.cfg_analysis.report.interactive.static_backend
 
     def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
         module-level rule helpers (_emit_plot_rule, _emit_render_report_rule,
-        _emit_rule_all) consume. Plot rules use include_report_config=True
-        because the renderer's _cli dispatcher accepts --report-config; other
-        runners would error on it.
+        _emit_rule_all) consume. Post-F2: all renderer + runner rules read
+        their report cfg inline from cfg_analysis.report, so a single
+        config-args string suffices.
         """
         log_dir_rel = str(self.analysis_paths.analysis_log_directory.relative_to(self.analysis_paths.analysis_dir))
         return RuleEmissionContext(
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
             conda_env_path=str(self._get_conda_env_path()),
-            config_args_str=self._get_config_args(include_report_config=True),
+            config_args_str=self._get_config_args(),
             is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
         )
@@ -739,7 +724,6 @@ class SnakemakeWorkflowBuilder:
         overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
     ) -> str:
         """
@@ -787,8 +771,6 @@ class SnakemakeWorkflowBuilder:
             Complete Snakefile content as a string
         """
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
-
-        self._report_config_path = report_config_path
 
         # Emit report templates (CSS, captions, Jinja2 workflow description) into
         # {analysis_dir}/report/ so Snakemake's --report engine can resolve the
@@ -3511,7 +3493,6 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -3568,8 +3549,6 @@ exit $snakemake_status
         dict
             Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
         """
-        self._report_config_path = report_config_path
-
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
 
@@ -3617,7 +3596,6 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -3674,7 +3652,6 @@ exit $snakemake_status
                 overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -3728,7 +3705,6 @@ exit $snakemake_status
             overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
-            report_config_path=report_config_path,
             report_formats=report_formats,
         )
 
@@ -3832,7 +3808,6 @@ class SensitivityAnalysisWorkflowBuilder:
         process_timeseries: bool = True,
         clear_raw_outputs: bool = True,
         pickup_where_leftoff: bool = True,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
     ) -> str:
         """
@@ -3881,8 +3856,6 @@ class SensitivityAnalysisWorkflowBuilder:
         str
             Master Snakefile content
         """
-        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-        from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG, report_config
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
         # Emit report templates into the master analysis_dir/report/ so the
@@ -3895,12 +3868,10 @@ class SensitivityAnalysisWorkflowBuilder:
             analysis_config_yaml=self.master_analysis.analysis_config_yaml
         )
 
-        # Resolve report_config to get the sensitivity benchmarking independent_vars
-        # so the master Snakefile can wildcard the plot rule per independent_var.
-        if report_config_path is not None:
-            _report_cfg = yaml_to_model(report_config_path, report_config)
-        else:
-            _report_cfg = DEFAULT_REPORT_CONFIG
+        # Post-F2 (R1): report cfg is inline on cfg_analysis; source the
+        # sensitivity benchmarking independent_vars directly from there so
+        # the master Snakefile can wildcard the plot rule per independent_var.
+        _report_cfg = self.master_analysis.cfg_analysis.report
         _independent_vars: list[str] = (
             list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
         )
@@ -4621,7 +4592,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
     ) -> dict:
@@ -4681,9 +4651,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             - snakefile_path: Path
             - message: str
         """
-        self._report_config_path = report_config_path
-        self._base_builder._report_config_path = report_config_path
-
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
 
@@ -4744,7 +4711,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -4809,7 +4775,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 process_timeseries=process_timeseries,
                 clear_raw_outputs=clear_raw_outputs,
                 pickup_where_leftoff=pickup_where_leftoff,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
             )
 
@@ -4875,7 +4840,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             process_timeseries=process_timeseries,
             clear_raw_outputs=clear_raw_outputs,
             pickup_where_leftoff=pickup_where_leftoff,
-            report_config_path=report_config_path,
             report_formats=report_formats,
         )
 
