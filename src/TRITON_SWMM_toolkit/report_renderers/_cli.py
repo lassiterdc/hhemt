@@ -18,8 +18,6 @@ import importlib
 from pathlib import Path
 
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG, report_config
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
 
@@ -28,9 +26,6 @@ def main() -> None:
     parser.add_argument("renderer", help="renderer module name under report_renderers/")
     parser.add_argument("--analysis-config", required=True, type=Path)
     parser.add_argument("--system-config", required=True, type=Path)
-    parser.add_argument("--report-config", type=Path, default=None,
-                        help="report_config.yaml path; falls back to DEFAULT_REPORT_CONFIG when omitted "
-                             "(matches Phase 1 analysis.run() default behavior).")
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
@@ -44,10 +39,8 @@ def main() -> None:
     # (system.py:25-27, analysis.py:108-109) — pass Paths, not pre-loaded models.
     system = TRITONSWMM_system(args.system_config)
     analysis = TRITONSWMM_analysis(args.analysis_config, system)
-    if args.report_config is not None:
-        report_cfg = yaml_to_model(args.report_config, report_config)
-    else:
-        report_cfg = DEFAULT_REPORT_CONFIG
+    # Post-F2: report cfg lives inline on cfg_analysis (R1, load-time-required).
+    report_cfg = analysis.cfg_analysis.report
 
     # Sub-analysis routing: when --sa-id is present, resolve the sub-analysis from
     # the master and pass it as the `analysis` argument to the renderer. Per-sim

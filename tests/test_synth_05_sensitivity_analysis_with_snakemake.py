@@ -10,11 +10,6 @@ pytestmark = pytest.mark.skipif(
     tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
 )
 
-_SYNTH_SENSITIVITY_REPORT_CONFIG = (
-    Path(__file__).parent / "fixtures" / "synthetic_model" / "report_config_synth_sensitivity.yaml"
-)
-
-
 def test_snakemake_sensitivity_workflow_generation_and_write(
     synth_sensitivity_analysis,
 ):
@@ -64,7 +59,6 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
             which="both",
             overwrite_outputs_if_already_created=False,
             compression_level=5,
-            report_config_path=_SYNTH_SENSITIVITY_REPORT_CONFIG,
         )
     )
 
@@ -191,7 +185,6 @@ def test_snakemake_sensitivity_workflow_dry_run(
         pickup_where_leftoff=False,
         dry_run=True,
         verbose=True,
-        report_config_path=_SYNTH_SENSITIVITY_REPORT_CONFIG,
     )
 
     assert result.get(
@@ -242,7 +235,6 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,
-        report_config_path=_SYNTH_SENSITIVITY_REPORT_CONFIG,
     )
 
     assert result["success"], f"Workflow submission failed: {result.get('message', '')}"

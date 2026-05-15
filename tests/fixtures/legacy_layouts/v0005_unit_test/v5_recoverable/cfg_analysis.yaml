@@ -1,0 +1,4 @@
+analysis_id: v0005_recoverable_fixture
+report:
+  interactive:
+    static_backend: matplotlib
