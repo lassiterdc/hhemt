@@ -168,7 +168,7 @@ class Bundle:
         return self._cfg_analysis.report.interactive.static_backend
 
     def regenerate_report(
-        self, *, format: Literal["html", "zip"] = "html"
+        self, *, format: Literal["html", "zip"] = "zip"
     ) -> Path:
         """Regenerate the analysis report from bundled data.
 
@@ -251,14 +251,19 @@ class Bundle:
                 f"{touch_proc.returncode}. See log: "
                 f"{logs_dir / 'regenerate_touch.log'}"
             )
+        # Pass the actual output_path to --report regardless of format.
+        # Snakemake auto-detects format from extension: ".html" → single-file
+        # HTML; ".zip" → multi-file directory tree zip (small index report.html
+        # + sibling data/ folder). The native zip shape matches user
+        # expectation of "extracts to a folder with a small html + subfolders
+        # with the plotting content."
         cmd = [
             "snakemake",
             "--snakefile", str(self._root / "Snakefile"),
             "--directory", str(self._root),
             "--cores", "1",
-            "--report",
-            str(output_path) if format == "html"
-            else str(self._root / "analysis_report.html"),
+            "--report", str(output_path),
+            "--report-stylesheet", str(self._root / "report" / "report.css"),
             "--quiet",
         ]
         proc = run_subprocess_with_tee(
@@ -273,14 +278,32 @@ class Bundle:
                 f"{proc.returncode}. See log: {logs_dir / 'regenerate.log'}"
             )
 
-        # Handle format='zip': snakemake emitted analysis_report.html;
-        # bundle it into a zip with any supporting files (per Plan Phase 4
-        # `analysis_report.zip` shape — pre-Plan-Phase-4 this just zips
-        # the HTML).
-        if format == "zip":
-            output_path = self._zip_html(
-                self._root / "analysis_report.html"
-            )
+        # Apply React-bundle post-process surgery. ``bundle_mode=True`` drops
+        # the bundle-irrelevant chrome (Workflow + Statistics menu items, the
+        # empty-after-drops "General" ListHeading). Unconditional surgery
+        # steps (initial-view to "metadata", navbar text, category order,
+        # placeholder category, showCategory auto-pop, click delegate, About
+        # drop, title clear) apply to both formats via either branch.
+        from ..report_renderers._react_surgery import (
+            apply_post_process_surgery,
+            apply_post_process_surgery_to_zip,
+        )
+        try:
+            if format == "html":
+                output_path.write_text(
+                    apply_post_process_surgery(
+                        output_path.read_text(),
+                        bundle_mode=True,
+                    )
+                )
+            else:
+                apply_post_process_surgery_to_zip(
+                    output_path,
+                    bundle_mode=True,
+                )
+        except Exception:
+            pass
+
         return output_path
 
     def _zip_html(self, html_path: Path) -> Path:
