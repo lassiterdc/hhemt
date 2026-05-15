@@ -1246,15 +1246,47 @@ class TRITONSWMM_sensitivity_analysis:
         fingerprint_path.write_text(new_text)
         return True
 
+    def compile_and_preprocess_all_targets(
+        self,
+        overwrite_system_inputs: bool = False,
+        recompile_if_already_done_successfully: bool = False,
+        verbose: bool = True,
+    ):
+        """Process system-level inputs and compile TRITON-SWMM for each unique target.
+
+        Iterates ``self.unique_system_targets`` (populated in ``__init__``) and runs
+        ``process_system_level_inputs()`` + ``compile_TRITON_SWMM()`` once per target.
+        In the no-per-sub-analysis-config case the list contains a single target
+        wrapping the master system, so this method is the unified entry point for
+        non-Snakemake direct execution regardless of whether per-sa configs are used.
+        """
+        for target in self.unique_system_targets:
+            if verbose:
+                print(
+                    f"[Setup] Processing target {target.target_id} "
+                    f"({len(target.sub_analysis_ids)} sub-analyses)",
+                    flush=True,
+                )
+            target.system.process_system_level_inputs(
+                overwrite_outputs_if_already_created=overwrite_system_inputs,
+                verbose=verbose,
+            )
+            target.system.compile_TRITON_SWMM(
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                verbose=verbose,
+            )
+        self._update_master_analysis_log()
+
     def compile_TRITON_SWMM_for_sensitivity_analysis(
         self,
         verbose: bool = False,
         recompile_if_already_done_successfully: bool = False,
     ):
-        self._system.compile_TRITON_SWMM(
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            verbose=verbose,
-        )
+        for target in self.unique_system_targets:
+            target.system.compile_TRITON_SWMM(
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                verbose=verbose,
+            )
         self._update_master_analysis_log()
         return
 
