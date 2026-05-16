@@ -148,7 +148,26 @@ class ElevationPanelStyle(cfgBaseModel):
             "family variant. Overridable per-deployment via report_config.yaml."
         ),
     )
-    over_color: str = Field("#808080")
+    over_color: str = Field(
+        "white",
+        description=(
+            "Color applied to DEM cells exceeding `wall_threshold_fraction` (buildings) "
+            "AND used implicitly via `plot_bgcolor` for out-of-watershed cells (which are "
+            "NaN-masked). White unifies the two non-modeled-area cell classes visually."
+        ),
+    )
+    wall_threshold_buffer_m: float = Field(
+        40.0,
+        description=(
+            "Subtractive buffer in meters applied to the cfg-derived wall threshold "
+            "(`min(dem_building_height, dem_outside_watershed_height) - buffer`). "
+            "Catches DEM cells whose coarsened elevation falls below the building "
+            "sentinel but is still building-dominated due to resampling. With Norfolk's "
+            "default `dem_building_height=80.0` and a 40 m buffer, threshold = 40 m, "
+            "which empirically catches coarsened-but-still-building cells (Round 4 "
+            "feedback: 50 m still left yellow-rendered building cells; 40 m clears them)."
+        ),
+    )
     wall_threshold_fraction: float = Field(
         0.9,
         description=(
