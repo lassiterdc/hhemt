@@ -129,6 +129,7 @@ def main() -> int:
             analysis_config_yaml=args.analysis_config,
             system=system,
             skip_log_update=False,
+            is_main_orchestrator=False,
         )
         any_compile = (
             args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm

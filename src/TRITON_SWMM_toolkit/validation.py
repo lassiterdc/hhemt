@@ -374,24 +374,6 @@ def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
     # HPC sanity checks (section 5)
     _validate_hpc_configuration(cfg, result)
 
-    # gpu_hardware_override is only honored for sub-analyses
-    if (
-        getattr(cfg, "gpu_hardware_override", None) is not None
-        and not cfg.is_subanalysis
-    ):
-        result.add_warning(
-            field="analysis.gpu_hardware_override",
-            message=(
-                "gpu_hardware_override is set on a non-subanalysis config; "
-                "this field is only honored for sensitivity sub-analyses and "
-                "will be ignored."
-            ),
-            current_value=cfg.gpu_hardware_override,
-            fix_hint=(
-                "Remove gpu_hardware_override from the master analysis yaml, "
-                "or add it as a per-row column in the sensitivity CSV."
-            ),
-        )
 
     return result
 
@@ -640,6 +622,71 @@ def _validate_per_sa_system_configs(
             df = pd.read_csv(sensitivity_csv)
     except Exception:
         return
+
+    # Phase 1 gates fire regardless of system_config_yaml column presence.
+    from TRITON_SWMM_toolkit.sensitivity_analysis import (
+        _is_system_overlay_column,
+        _strip_system_prefix,
+    )
+
+    overlay_columns_present = sorted(
+        c for c in df.columns
+        if c.startswith("system.") and _is_system_overlay_column(c)
+    )
+    for sa_id, row in df.iterrows():
+        sa_id_str = str(sa_id)
+        yaml_cell = row.get("system_config_yaml") if "system_config_yaml" in df.columns else None
+        yaml_specified = (
+            "system_config_yaml" in df.columns
+            and not pd.isna(yaml_cell)
+            and str(yaml_cell).strip() != ""
+        )
+        overlay_cells = {
+            _strip_system_prefix(c): row[c]
+            for c in overlay_columns_present
+            if not pd.isna(row[c])
+        }
+        if overlay_cells and yaml_specified:
+            result.add_error(
+                field=f"sensitivity_analysis.row[{sa_id_str}]",
+                message=(
+                    f"sa_id={sa_id_str}: row specifies both system_config_yaml "
+                    f"({yaml_cell}) and system.* overlay column(s) {sorted(overlay_cells)}; "
+                    f"mutually exclusive — choose one mechanism per row."
+                ),
+                current_value=None,
+                fix_hint="Pick one mechanism per row.",
+            )
+            continue
+        if overlay_cells:
+            import pydantic
+            try:
+                system_config.model_validate({
+                    **cfg_system.model_dump(),
+                    **overlay_cells,
+                })
+            except pydantic.ValidationError as exc:
+                result.add_error(
+                    field=f"sensitivity_analysis.row[{sa_id_str}]",
+                    message=(
+                        f"sa_id={sa_id_str}: system.* overlay-column values failed "
+                        f"SystemConfig validation: {exc}"
+                    ),
+                    current_value=None,
+                    fix_hint="Correct the overlay-column value(s).",
+                )
+
+    if "gpu_hardware_override" in df.columns:
+        result.add_error(
+            field="sensitivity_analysis.gpu_hardware_override",
+            message=(
+                "Column `gpu_hardware_override` is retired in this toolkit version. "
+                "Replace with `system.gpu_hardware` (prefixed-column convention)."
+            ),
+            current_value=None,
+            fix_hint="Rename the column to `system.gpu_hardware`.",
+        )
+
     if "system_config_yaml" not in df.columns:
         return
 

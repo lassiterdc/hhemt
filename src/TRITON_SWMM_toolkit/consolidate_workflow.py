@@ -309,6 +309,7 @@ def main() -> int:
             analysis_config_yaml=args.analysis_config,
             system=system,
             skip_log_update=False,
+            is_main_orchestrator=False,
         )
 
         # Phase 3a: Verify all simulations completed successfully
