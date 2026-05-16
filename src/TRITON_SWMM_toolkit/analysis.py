@@ -84,6 +84,7 @@ class TRITONSWMM_analysis:
         system: "TRITONSWMM_system",
         skip_log_update: bool = False,
         verbose: bool = True,
+        is_main_orchestrator: bool = True,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -185,7 +186,9 @@ class TRITONSWMM_analysis:
         self.nsims = len(self.df_sims)
 
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            self.sensitivity = TRITONSWMM_sensitivity_analysis(self)
+            self.sensitivity = TRITONSWMM_sensitivity_analysis(
+                self, is_main_orchestrator=is_main_orchestrator
+            )
             self.nsims *= len(self.sensitivity.df_setup)
         if not skip_log_update:
             # self._add_all_scenarios()

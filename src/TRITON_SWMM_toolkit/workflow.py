@@ -4190,8 +4190,10 @@ onerror:
             # Always set threads = total CPUs to ensure correct SLURM --ntasks value
             snakemake_threads = cpus_per_sim
 
-            gpu_hw_override = getattr(sub_analysis.cfg_analysis, "gpu_hardware_override", None)
-            gpu_hw = gpu_hw_override or sub_analysis._system.cfg_system.gpu_hardware
+            # gpu_hardware comes directly from the per-target cfg_system. Under the
+            # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
+            # already populated this field via the synthesized per-target YAML.
+            gpu_hw = sub_analysis._system.cfg_system.gpu_hardware
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,

@@ -104,6 +104,7 @@ def main():
             analysis_config_yaml=args.analysis_config,
             system=system,
             skip_log_update=True,
+            is_main_orchestrator=False,
         )
 
         logger.info(f"Preparing scenario {args.event_iloc}")

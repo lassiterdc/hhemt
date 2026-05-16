@@ -34,6 +34,40 @@ class UniqueSystemTarget:
     sub_analysis_ids: list[str] = field(default_factory=list)
 
 
+_SYSTEM_COLUMN_PREFIX = "system."
+_ANALYSIS_COLUMN_PREFIX = "analysis."
+
+
+def _is_system_overlay_column(col: str) -> bool:
+    """True if `col` is `system.{field}` where field is in system_config.model_fields."""
+    if not col.startswith(_SYSTEM_COLUMN_PREFIX):
+        return False
+    from TRITON_SWMM_toolkit.config.system import system_config
+    field_name = col[len(_SYSTEM_COLUMN_PREFIX):]
+    return field_name in system_config.model_fields
+
+
+def _is_analysis_overlay_column(col: str) -> bool:
+    """True if `col` is `analysis.{field}` where field is in analysis_config.model_fields."""
+    if not col.startswith(_ANALYSIS_COLUMN_PREFIX):
+        return False
+    from TRITON_SWMM_toolkit.config.analysis import analysis_config
+    field_name = col[len(_ANALYSIS_COLUMN_PREFIX):]
+    return field_name in analysis_config.model_fields
+
+
+def _strip_system_prefix(col: str) -> str:
+    """Return the system_config field name from a `system.{field}` column."""
+    assert col.startswith(_SYSTEM_COLUMN_PREFIX), f"expected system.* column, got {col!r}"
+    return col[len(_SYSTEM_COLUMN_PREFIX):]
+
+
+def _strip_analysis_prefix(col: str) -> str:
+    """Return the analysis_config field name from an `analysis.{field}` column."""
+    assert col.startswith(_ANALYSIS_COLUMN_PREFIX), f"expected analysis.* column, got {col!r}"
+    return col[len(_ANALYSIS_COLUMN_PREFIX):]
+
+
 def _to_native_attr(value):
     """Cast pandas / numpy scalars to JSON-safe native Python types for zarr attrs."""
     if pd.isna(value):
@@ -87,6 +121,7 @@ class TRITONSWMM_sensitivity_analysis:
     def __init__(
         self,
         analysis: "TRITONSWMM_analysis",
+        is_main_orchestrator: bool = True,
     ) -> None:
         """
         Initialize a sensitivity analysis orchestrator.
@@ -114,10 +149,18 @@ class TRITONSWMM_sensitivity_analysis:
         )
         self.independent_vars = self._attributes_varied_for_analysis()
         df_setup_full = self._retrieve_df_setup()
+        self._df_setup_full = df_setup_full
         self._has_per_sa_system_configs = "system_config_yaml" in df_setup_full.columns
-        if self._has_per_sa_system_configs:
-            self.unique_system_targets = self._build_unique_system_targets(df_setup_full)
+        self._has_per_sa_system_overlay_columns = any(
+            _is_system_overlay_column(c) for c in df_setup_full.columns
+        )
+        if self._has_per_sa_system_overlay_columns or self._has_per_sa_system_configs:
+            self.unique_system_targets = self._build_unique_system_targets(
+                df_setup_full,
+                is_main_orchestrator=is_main_orchestrator,
+            )
         else:
+            # Fast path: no row varies system_config; reuse master self._system.
             self.unique_system_targets = [
                 UniqueSystemTarget(
                     target_id=0,
@@ -729,6 +772,29 @@ class TRITONSWMM_sensitivity_analysis:
                 f"Offending values: {bad}"
             )
         df_setup = df_setup.set_index("sa_id")
+        # Phase 1 — column allowlist enforcement (post-set_index so sa_id excluded).
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+        from TRITON_SWMM_toolkit.config.system import system_config
+        KNOWN_BARE_COLS = {"system_config_yaml"}
+        valid_columns = (
+            KNOWN_BARE_COLS
+            | set(analysis_config.model_fields)
+            | {_SYSTEM_COLUMN_PREFIX + f for f in system_config.model_fields}
+            | {_ANALYSIS_COLUMN_PREFIX + f for f in analysis_config.model_fields}
+        )
+        unknown = set(df_setup.columns) - valid_columns
+        if unknown:
+            raise ConfigurationError(
+                field="sensitivity_analysis.csv_columns",
+                message=(
+                    f"Unknown sensitivity-CSV columns: {sorted(unknown)}. "
+                    f"Valid columns: sa_id (required, becomes index), system_config_yaml, "
+                    f"bare analysis_config field names, `system.{{field}}` for system_config fields, "
+                    f"`analysis.{{field}}` for analysis_config fields. "
+                    f"If you previously used `gpu_hardware_override`, replace with `system.gpu_hardware`."
+                ),
+                config_path=snstivity_definition,
+            )
         return df_setup
 
     def export_sensitivity_definition_csv(self) -> Path:
@@ -1017,47 +1083,88 @@ class TRITONSWMM_sensitivity_analysis:
         return result
 
     def _build_unique_system_targets(
-        self, df_setup_full: pd.DataFrame
+        self,
+        df_setup_full: pd.DataFrame,
+        is_main_orchestrator: bool = True,
     ) -> list[UniqueSystemTarget]:
-        """Materialize per-sa_id ``TRITONSWMM_system`` objects and dedup by compile target.
+        """Resolve per-sa_id system targets and materialize per-target synthesized YAMLs.
 
-        Cell validation (per Phase 1 doc § File-by-File Changes item 3):
-        each non-null ``system_config_yaml`` cell is cast to ``Path``, resolved to
-        absolute, and confirmed to exist on disk. Any failure raises
-        ``ConfigurationError`` so the failure surfaces through the structured
-        exit-code-2 pathway, not as a raw ``FileNotFoundError``.
+        Handles three per-row mechanisms:
 
-        Null cells fall back to the master system's ``system_config_yaml`` so
-        the master participates in dedup as if it were a row.
+        1. ``system_config_yaml`` column (path to a per-sa system YAML).
+        2. ``system.{field}`` overlay columns (Phase 1 prefixed-column mechanism).
+        3. Neither — fall back to master ``self._system``.
 
-        Dedup key is the tuple ``(target_dem_resolution, gpu_hardware,
-        gpu_compilation_backend)`` from ``cfg_system`` (Cross-Phase Decision 2,
-        revised 2026-05-15). YAMLs whose tuple matches collapse to a single
-        ``UniqueSystemTarget`` whose canonical ``system_config_yaml`` is the
-        lexicographically-first YAML path in the collapsing set (deterministic).
+        Mutual exclusion: a single row may use mechanism 1 OR mechanism 2, never both;
+        violation raises ``ConfigurationError``.
+
+        ``is_main_orchestrator=True`` purges ``_generated/`` before emission.
+        Runner subprocesses pass ``False`` to skip the purge.
         """
+        import pydantic
+
+        from TRITON_SWMM_toolkit.config.system import system_config
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
 
         sensitivity_csv = self.master_analysis.cfg_analysis.sensitivity_analysis
-        # First pass: validate each non-null cell and instantiate per-sa_id system.
-        sa_systems: dict[str, "TRITONSWMM_system"] = {}
-        sa_paths: dict[str, Path] = {}
-        for sa_id, raw_path in df_setup_full["system_config_yaml"].items():
+        analysis_dir = self.analysis_paths.analysis_dir
+        generated_dir = analysis_dir / "_generated"
+
+        if is_main_orchestrator:
+            fast_rmtree(generated_dir, missing_ok=True)
+            generated_dir.mkdir(parents=True, exist_ok=True)
+
+        has_yaml_col = "system_config_yaml" in df_setup_full.columns
+        overlay_col_names = sorted(
+            c for c in df_setup_full.columns if _is_system_overlay_column(c)
+        )
+
+        # Group sub-analyses by their compile-key tuple.
+        groups: dict[tuple, dict] = {}
+
+        for sa_id, row in df_setup_full.iterrows():
             sa_id_str = str(sa_id)
-            if pd.isna(raw_path) or (isinstance(raw_path, str) and raw_path == ""):
-                yaml_path = Path(self._system.system_config_yaml).resolve()
-            else:
+            yaml_cell = row.get("system_config_yaml") if has_yaml_col else None
+            yaml_specified = (
+                yaml_cell is not None
+                and not pd.isna(yaml_cell)
+                and str(yaml_cell).strip() != ""
+            )
+            overlay_cells = {
+                _strip_system_prefix(c): row[c]
+                for c in overlay_col_names
+                if not pd.isna(row[c])
+            }
+            if overlay_cells and yaml_specified:
+                raise ConfigurationError(
+                    field=f"sensitivity_analysis.row[{sa_id_str}]",
+                    message=(
+                        f"sa_id={sa_id_str}: row specifies both system_config_yaml "
+                        f"({yaml_cell}) and system.* overlay column(s) "
+                        f"{sorted(overlay_cells)}; mutually exclusive — "
+                        f"use one mechanism per row."
+                    ),
+                    config_path=sensitivity_csv,
+                )
+
+            if overlay_cells:
                 try:
-                    yaml_path = Path(raw_path).resolve()
-                except (TypeError, ValueError) as exc:
+                    cfg = system_config.model_validate({
+                        **self._system.cfg_system.model_dump(),
+                        **overlay_cells,
+                    })
+                except pydantic.ValidationError as exc:
                     raise ConfigurationError(
-                        field="sensitivity_analysis.system_config_yaml",
+                        field=f"sensitivity_analysis.row[{sa_id_str}]",
                         message=(
-                            f"sa_id={sa_id_str}: value {raw_path!r} is not a valid path "
-                            f"({exc})."
+                            f"sa_id={sa_id_str}: system.* overlay-column values failed "
+                            f"SystemConfig validation: {exc}"
                         ),
                         config_path=sensitivity_csv,
                     ) from exc
+            elif yaml_specified:
+                yaml_path = Path(yaml_cell).resolve()
                 if not yaml_path.is_file():
                     raise ConfigurationError(
                         field="sensitivity_analysis.system_config_yaml",
@@ -1067,39 +1174,43 @@ class TRITONSWMM_sensitivity_analysis:
                         ),
                         config_path=sensitivity_csv,
                     )
-            sa_paths[sa_id_str] = yaml_path
-            # Instantiate to materialize cfg_system (Pydantic validation runs here).
-            sa_systems[sa_id_str] = TRITONSWMM_system(yaml_path)
+                cfg = TRITONSWMM_system(yaml_path).cfg_system
+            else:
+                cfg = self._system.cfg_system
 
-        # Second pass: group by compile-relevant tuple. Canonical YAML per group is
-        # the lexicographically-first path; canonical system is the one instantiated
-        # from that canonical path so downstream consumers see consistent state.
-        groups: dict[tuple, dict] = {}
-        for sa_id_str, sys_obj in sa_systems.items():
             key = (
-                sys_obj.cfg_system.target_dem_resolution,
-                sys_obj.cfg_system.gpu_hardware,
-                sys_obj.cfg_system.gpu_compilation_backend,
+                cfg.target_dem_resolution,
+                cfg.gpu_hardware,
+                cfg.gpu_compilation_backend,
             )
-            groups.setdefault(
-                key, {"systems_by_path": {}, "sub_analysis_ids": []}
-            )
-            groups[key]["systems_by_path"][str(sa_paths[sa_id_str])] = sys_obj
-            groups[key]["sub_analysis_ids"].append(sa_id_str)
+            if key not in groups:
+                groups[key] = {"cfg": cfg, "sa_ids": []}
+            groups[key]["sa_ids"].append(sa_id_str)
 
         targets: list[UniqueSystemTarget] = []
-        for target_id, key in enumerate(sorted(groups.keys(), key=lambda k: (str(k[0]), str(k[1]), str(k[2])))):
-            entry = groups[key]
-            canonical_path_str = min(entry["systems_by_path"].keys())
-            canonical_system = entry["systems_by_path"][canonical_path_str]
-            targets.append(
-                UniqueSystemTarget(
-                    target_id=target_id,
-                    system_config_yaml=Path(canonical_path_str),
-                    system=canonical_system,
-                    sub_analysis_ids=sorted(entry["sub_analysis_ids"]),
-                )
-            )
+        for target_id, group in enumerate(groups.values()):
+            cfg = group["cfg"]
+            sa_ids = group["sa_ids"]
+            generated_yaml = generated_dir / f"target_{target_id}.yaml"
+            if is_main_orchestrator:
+                # Temp-file-rename for atomicity (PID-keyed per Gotcha 17 pattern).
+                tmp_yaml = generated_dir / f"target_{target_id}.{os.getpid()}.tmp.yaml"
+                with tmp_yaml.open("w") as fh:
+                    yaml.safe_dump(cfg.model_dump(mode="json"), fh, sort_keys=False)
+                tmp_yaml.rename(generated_yaml)
+            # Reuse master self._system when the resolved cfg matches; avoids re-running
+            # _check_paths_exist against possibly-HPC paths in the synthesized YAML.
+            if cfg.model_dump_json() == self._system.cfg_system.model_dump_json():
+                target_system = self._system
+            else:
+                target_system = TRITONSWMM_system(generated_yaml)
+            targets.append(UniqueSystemTarget(
+                target_id=target_id,
+                system_config_yaml=generated_yaml,
+                system=target_system,
+                sub_analysis_ids=sa_ids,
+            ))
+
         return targets
 
     def _create_sub_analyses(self):
@@ -1108,18 +1219,20 @@ class TRITONSWMM_sensitivity_analysis:
             for sa_id in target.sub_analysis_ids:
                 sa_id_to_system[sa_id] = target.system
 
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():
             sa_id = str(idx)
-            cfg_snstvty_analysis = self.master_analysis.cfg_analysis.model_copy()
-
-            for key, val in row.items():
-                if key == "gpu_hardware_override":
-                    if pd.isna(val) or val == "":
-                        continue
-                    setattr(cfg_snstvty_analysis, key, str(val))
-                    continue
-                setattr(cfg_snstvty_analysis, key, val)  # type: ignore
+            overlay_cells = {
+                (_strip_analysis_prefix(k) if k.startswith(_ANALYSIS_COLUMN_PREFIX) else k): v
+                for k, v in row.items()
+                if not pd.isna(v)
+            }
+            cfg_snstvty_analysis = analysis_config.model_validate({
+                **self.master_analysis.cfg_analysis.model_dump(),
+                **overlay_cells,
+            })
             analysis_id = f"{self.sub_analyses_prefix}{sa_id}"
             cfg_snstvty_analysis.analysis_id = analysis_id  # type: ignore
             sub_analysis_directory = self.subanalysis_dir / str(
@@ -1213,6 +1326,33 @@ class TRITONSWMM_sensitivity_analysis:
             payload["system_cfg_hash"] = hashlib.sha1(
                 cfg_system_json.encode("utf-8")
             ).hexdigest()
+
+        # Phase 1 — attach system_overlay key when any system.* overlay columns
+        # are declared on the master sensitivity df (un-projected).
+        from TRITON_SWMM_toolkit.config.system import system_config
+        df = self.master_analysis.sensitivity._df_setup_full
+        overlay_col_names = [c for c in df.columns if _is_system_overlay_column(c)]
+        if overlay_col_names:
+            sa_id_str = sub_analysis.cfg_analysis.analysis_id.removeprefix(
+                self.master_analysis.sensitivity.sub_analyses_prefix
+            )
+            overlay_cells = {
+                _strip_system_prefix(c): df.loc[sa_id_str, c]
+                for c in overlay_col_names
+                if not pd.isna(df.loc[sa_id_str, c])
+            }
+            if overlay_cells:
+                resolved = system_config.model_validate({
+                    **self.master_analysis._system.cfg_system.model_dump(),
+                    **overlay_cells,
+                })
+                resolved_overlay = {
+                    k: resolved.model_dump(mode="json")[k] for k in overlay_cells
+                }
+            else:
+                resolved_overlay = {}
+            payload["__schema_version__"] = 3
+            payload["system_overlay"] = resolved_overlay
         return payload
 
     def _write_sa_id_fingerprint(

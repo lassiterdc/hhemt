@@ -391,3 +391,90 @@ def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cache
         f"{len(bad)} .svg file(s) referenced by report.html are not valid SVG "
         f"(would render as broken-image icons): {bad}"
     )
+
+
+# ============================================================================
+# Phase 1 of prefixed_column_config_variation — tests
+# ============================================================================
+
+import yaml as _yaml
+from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+import tests.fixtures.test_case_catalog as _cases
+
+
+def test_system_overlay_mutual_exclusion_with_system_config_yaml():
+    """Phase 1 R3 — row with both system_config_yaml and system.* raises ConfigurationError."""
+    with pytest.raises(ConfigurationError, match="mutually exclusive"):
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_mutex_violation(
+            start_from_scratch=True
+        )
+
+
+def test_system_overlay_validator_re_fire_invalid_value():
+    """Phase 1 R4 — invalid overlay value raises ConfigurationError via Pydantic."""
+    with pytest.raises(ConfigurationError, match="SystemConfig validation"):
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(
+            start_from_scratch=True
+        )
+
+
+def test_gpu_hardware_override_column_raises_migration_error():
+    """Phase 1 R8, R-X-2 — legacy column raises ConfigurationError naming migration path."""
+    with pytest.raises(ConfigurationError, match=r"gpu_hardware_override.*system\.gpu_hardware"):
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_legacy_gpu_hardware_override(
+            start_from_scratch=True
+        )
+
+
+def test_unknown_column_rejected_with_nearest_match_hint():
+    """Phase 1 R9 — unknown column (typo) raises ConfigurationError."""
+    with pytest.raises(ConfigurationError, match="Unknown sensitivity-CSV columns"):
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_typo_in_prefixed_column(
+            start_from_scratch=True
+        )
+
+
+def test_system_dot_prefix_column_recognized_and_synthesizes_yaml(
+    synth_sensitivity_with_system_overlay,
+):
+    """Phase 1 R1, R5, R6 — system.target_dem_resolution synthesizes two per-target YAMLs."""
+    analysis = synth_sensitivity_with_system_overlay
+    generated_dir = analysis.analysis_paths.analysis_dir / "_generated"
+    assert generated_dir.exists()
+    target_yamls = sorted(generated_dir.glob("target_*.yaml"))
+    assert len(target_yamls) == 2  # two distinct overlay values, two targets
+    cfgs = [_yaml.safe_load(p.read_text()) for p in target_yamls]
+    assert {c["target_dem_resolution"] for c in cfgs} == {1.0, 2.0}
+
+
+def test_fingerprint_payload_includes_system_overlay(
+    synth_sensitivity_with_system_overlay,
+):
+    """Phase 1 R7 — fingerprint payload attaches system_overlay key + schema 3."""
+    analysis = synth_sensitivity_with_system_overlay
+    sub_analysis = analysis.sensitivity.sub_analyses["0"]
+    payload = analysis.sensitivity._compute_sa_id_fingerprint_payload(sub_analysis)
+    assert payload["__schema_version__"] == 3
+    assert "system_overlay" in payload
+    assert payload["system_overlay"].get("target_dem_resolution") in {1.0, 2.0}
+
+
+def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
+    synth_sensitivity_with_system_overlay, monkeypatch,
+):
+    """Phase 1 R-P1-4 — is_main_orchestrator=False skips fast_rmtree of _generated/."""
+    from TRITON_SWMM_toolkit import utils as _utils_mod
+    analysis = synth_sensitivity_with_system_overlay
+    generated_dir = analysis.analysis_paths.analysis_dir / "_generated"
+    assert generated_dir.exists()
+    called: list[Path] = []
+    def fake_rmtree(p, *args, **kwargs):
+        called.append(Path(p))
+    monkeypatch.setattr(_utils_mod, "fast_rmtree", fake_rmtree)
+    analysis.sensitivity._build_unique_system_targets(
+        analysis.sensitivity._df_setup_full,
+        is_main_orchestrator=False,
+    )
+    assert generated_dir not in called, (
+        f"fast_rmtree was called on _generated/ in runner-subprocess mode: {called}"
+    )
