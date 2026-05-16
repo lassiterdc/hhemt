@@ -1,6 +1,8 @@
 # %%
+import hashlib
 import json
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -11,6 +13,7 @@ import yaml  # type: ignore
 
 import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
+from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
 from TRITON_SWMM_toolkit.workflow import (
@@ -20,6 +23,15 @@ from TRITON_SWMM_toolkit.workflow import (
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+    from .system import TRITONSWMM_system
+
+
+@dataclass
+class UniqueSystemTarget:
+    target_id: int
+    system_config_yaml: Path
+    system: "TRITONSWMM_system"
+    sub_analysis_ids: list[str] = field(default_factory=list)
 
 
 def _to_native_attr(value):
@@ -101,7 +113,20 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         )
         self.independent_vars = self._attributes_varied_for_analysis()
-        self.df_setup = self._retrieve_df_setup().loc[:, self.independent_vars]  # type: ignore
+        df_setup_full = self._retrieve_df_setup()
+        self._has_per_sa_system_configs = "system_config_yaml" in df_setup_full.columns
+        if self._has_per_sa_system_configs:
+            self.unique_system_targets = self._build_unique_system_targets(df_setup_full)
+        else:
+            self.unique_system_targets = [
+                UniqueSystemTarget(
+                    target_id=0,
+                    system_config_yaml=self._system.system_config_yaml,
+                    system=self._system,
+                    sub_analysis_ids=list(df_setup_full.index.astype(str)),
+                )
+            ]
+        self.df_setup = df_setup_full.loc[:, self.independent_vars]  # type: ignore
         self.sub_analyses = self._create_sub_analyses()
 
         # Initialize workflow builder for sensitivity analysis
@@ -671,7 +696,7 @@ class TRITONSWMM_sensitivity_analysis:
             # print(key)
             if key in df_setup.columns:
                 keys_targeted_for_sensitivity.append(key)
-        return keys_targeted_for_sensitivity
+        return [k for k in keys_targeted_for_sensitivity if k != "system_config_yaml"]
 
     def _retrieve_df_setup(self) -> pd.DataFrame:
         import re as _re
@@ -991,7 +1016,98 @@ class TRITONSWMM_sensitivity_analysis:
                 result["master_flag_removed"] = True
         return result
 
+    def _build_unique_system_targets(
+        self, df_setup_full: pd.DataFrame
+    ) -> list[UniqueSystemTarget]:
+        """Materialize per-sa_id ``TRITONSWMM_system`` objects and dedup by compile target.
+
+        Cell validation (per Phase 1 doc § File-by-File Changes item 3):
+        each non-null ``system_config_yaml`` cell is cast to ``Path``, resolved to
+        absolute, and confirmed to exist on disk. Any failure raises
+        ``ConfigurationError`` so the failure surfaces through the structured
+        exit-code-2 pathway, not as a raw ``FileNotFoundError``.
+
+        Null cells fall back to the master system's ``system_config_yaml`` so
+        the master participates in dedup as if it were a row.
+
+        Dedup key is the tuple ``(target_dem_resolution, gpu_hardware,
+        gpu_compilation_backend)`` from ``cfg_system`` (Cross-Phase Decision 2,
+        revised 2026-05-15). YAMLs whose tuple matches collapse to a single
+        ``UniqueSystemTarget`` whose canonical ``system_config_yaml`` is the
+        lexicographically-first YAML path in the collapsing set (deterministic).
+        """
+        from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+
+        sensitivity_csv = self.master_analysis.cfg_analysis.sensitivity_analysis
+        # First pass: validate each non-null cell and instantiate per-sa_id system.
+        sa_systems: dict[str, "TRITONSWMM_system"] = {}
+        sa_paths: dict[str, Path] = {}
+        for sa_id, raw_path in df_setup_full["system_config_yaml"].items():
+            sa_id_str = str(sa_id)
+            if pd.isna(raw_path) or (isinstance(raw_path, str) and raw_path == ""):
+                yaml_path = Path(self._system.system_config_yaml).resolve()
+            else:
+                try:
+                    yaml_path = Path(raw_path).resolve()
+                except (TypeError, ValueError) as exc:
+                    raise ConfigurationError(
+                        field="sensitivity_analysis.system_config_yaml",
+                        message=(
+                            f"sa_id={sa_id_str}: value {raw_path!r} is not a valid path "
+                            f"({exc})."
+                        ),
+                        config_path=sensitivity_csv,
+                    ) from exc
+                if not yaml_path.is_file():
+                    raise ConfigurationError(
+                        field="sensitivity_analysis.system_config_yaml",
+                        message=(
+                            f"sa_id={sa_id_str}: system_config_yaml does not exist "
+                            f"at {yaml_path}."
+                        ),
+                        config_path=sensitivity_csv,
+                    )
+            sa_paths[sa_id_str] = yaml_path
+            # Instantiate to materialize cfg_system (Pydantic validation runs here).
+            sa_systems[sa_id_str] = TRITONSWMM_system(yaml_path)
+
+        # Second pass: group by compile-relevant tuple. Canonical YAML per group is
+        # the lexicographically-first path; canonical system is the one instantiated
+        # from that canonical path so downstream consumers see consistent state.
+        groups: dict[tuple, dict] = {}
+        for sa_id_str, sys_obj in sa_systems.items():
+            key = (
+                sys_obj.cfg_system.target_dem_resolution,
+                sys_obj.cfg_system.gpu_hardware,
+                sys_obj.cfg_system.gpu_compilation_backend,
+            )
+            groups.setdefault(
+                key, {"systems_by_path": {}, "sub_analysis_ids": []}
+            )
+            groups[key]["systems_by_path"][str(sa_paths[sa_id_str])] = sys_obj
+            groups[key]["sub_analysis_ids"].append(sa_id_str)
+
+        targets: list[UniqueSystemTarget] = []
+        for target_id, key in enumerate(sorted(groups.keys(), key=lambda k: (str(k[0]), str(k[1]), str(k[2])))):
+            entry = groups[key]
+            canonical_path_str = min(entry["systems_by_path"].keys())
+            canonical_system = entry["systems_by_path"][canonical_path_str]
+            targets.append(
+                UniqueSystemTarget(
+                    target_id=target_id,
+                    system_config_yaml=Path(canonical_path_str),
+                    system=canonical_system,
+                    sub_analysis_ids=sorted(entry["sub_analysis_ids"]),
+                )
+            )
+        return targets
+
     def _create_sub_analyses(self):
+        sa_id_to_system: dict = {}
+        for target in self.unique_system_targets:
+            for sa_id in target.sub_analysis_ids:
+                sa_id_to_system[sa_id] = target.system
+
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():
             sa_id = str(idx)
@@ -1049,7 +1165,7 @@ class TRITONSWMM_sensitivity_analysis:
             _tmp.replace(cfg_anlysys_yaml)
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
-                system=self._system,
+                system=sa_id_to_system[sa_id],
             )
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
@@ -1084,6 +1200,19 @@ class TRITONSWMM_sensitivity_analysis:
             "__schema_version__": 1,
             "fields": {k: cfg_dump[k] for k in sorted(self.independent_vars)},
         }
+        # When the sensitivity CSV declares a `system_config_yaml` column, bump the
+        # schema and attach a SHA-1 of the sub-analysis's resolved cfg_system. This
+        # invalidates any sa_id whose system config changes between runs. The
+        # schema bump intentionally invalidates every sa_id on the first run that
+        # introduces per-sa system configs (Gotcha 17 cascade — see Phase 1 doc).
+        if self._has_per_sa_system_configs:
+            payload["__schema_version__"] = 2
+            cfg_system_json = sub_analysis._system.cfg_system.model_dump_json(
+                by_alias=False, exclude_none=False
+            )
+            payload["system_cfg_hash"] = hashlib.sha1(
+                cfg_system_json.encode("utf-8")
+            ).hexdigest()
         return payload
 
     def _write_sa_id_fingerprint(
@@ -1117,15 +1246,47 @@ class TRITONSWMM_sensitivity_analysis:
         fingerprint_path.write_text(new_text)
         return True
 
+    def compile_and_preprocess_all_targets(
+        self,
+        overwrite_system_inputs: bool = False,
+        recompile_if_already_done_successfully: bool = False,
+        verbose: bool = True,
+    ):
+        """Process system-level inputs and compile TRITON-SWMM for each unique target.
+
+        Iterates ``self.unique_system_targets`` (populated in ``__init__``) and runs
+        ``process_system_level_inputs()`` + ``compile_TRITON_SWMM()`` once per target.
+        In the no-per-sub-analysis-config case the list contains a single target
+        wrapping the master system, so this method is the unified entry point for
+        non-Snakemake direct execution regardless of whether per-sa configs are used.
+        """
+        for target in self.unique_system_targets:
+            if verbose:
+                print(
+                    f"[Setup] Processing target {target.target_id} "
+                    f"({len(target.sub_analysis_ids)} sub-analyses)",
+                    flush=True,
+                )
+            target.system.process_system_level_inputs(
+                overwrite_outputs_if_already_created=overwrite_system_inputs,
+                verbose=verbose,
+            )
+            target.system.compile_TRITON_SWMM(
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                verbose=verbose,
+            )
+        self._update_master_analysis_log()
+
     def compile_TRITON_SWMM_for_sensitivity_analysis(
         self,
         verbose: bool = False,
         recompile_if_already_done_successfully: bool = False,
     ):
-        self._system.compile_TRITON_SWMM(
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            verbose=verbose,
-        )
+        for target in self.unique_system_targets:
+            target.system.compile_TRITON_SWMM(
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                verbose=verbose,
+            )
         self._update_master_analysis_log()
         return
 

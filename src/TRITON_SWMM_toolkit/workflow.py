@@ -507,6 +507,7 @@ class SnakemakeWorkflowBuilder:
     def _get_config_args(
         self,
         analysis_config_yaml: Path | None = None,
+        system_config_yaml: Path | None = None,
     ) -> str:
         """
         Generate common config path arguments.
@@ -515,6 +516,10 @@ class SnakemakeWorkflowBuilder:
         ----------
         analysis_config_yaml : Path | None
             If provided, use this analysis config instead of self.analysis.analysis_config_yaml
+        system_config_yaml : Path | None
+            If provided, use this system config instead of self.system.system_config_yaml.
+            Threaded by SensitivityAnalysisWorkflowBuilder so each sub-analysis rule
+            invokes its runner script with the correct per-SA system config (Phase 3).
 
         Returns
         -------
@@ -522,7 +527,8 @@ class SnakemakeWorkflowBuilder:
             Config arguments string
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
-        return f"--system-config {self.system.system_config_yaml} \\\n            --analysis-config {analysis_cfg}"
+        system_cfg = system_config_yaml or self.system.system_config_yaml
+        return f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
 
     def _build_resource_block(
         self,
@@ -3792,6 +3798,11 @@ class SensitivityAnalysisWorkflowBuilder:
         self.system = self.master_analysis._system
         self.analysis_paths = self.master_analysis.analysis_paths
         self.python_executable = self.master_analysis._python_executable
+        # Phase 3: unique compile targets (deduplicated by compile-relevant tuple
+        # in Phase 1). One Snakemake `rule setup_target_{N}` is emitted per entry
+        # so a sensitivity study spanning different gpu_hardware / DEM resolution
+        # values compiles once per target rather than once per sub-analysis.
+        self.unique_system_targets = sensitivity_analysis.unique_system_targets
 
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
@@ -4004,7 +4015,25 @@ onerror:
                 f"_status/e_consolidate_sa-{sa_id}_complete.flag"  # type: ignore
             )
 
-        rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
+        # Phase 3: per-target setup flags. Listed explicitly in rule_all_inputs so
+        # the DAG planner can reach setup_target rules even for sub-analyses whose
+        # df_sims is empty (otherwise only reachable via transitive deps through
+        # prepare_sa rules).
+        setup_target_flags = [
+            f"_status/a_setup_target_{target.target_id}_complete.flag"
+            for target in self.unique_system_targets
+        ]
+        # sa_id (str) → target_id reverse lookup used when emitting per-SA rule
+        # dependencies. Built once per Snakefile generation. Keys are coerced to
+        # str to match sub_analyses dict iteration keys regardless of source type.
+        sa_id_to_target_id: dict[str, int] = {
+            str(sa_id): target.target_id
+            for target in self.unique_system_targets
+            for sa_id in target.sub_analysis_ids
+        }
+
+        rule_all_inputs = [f'"{flag}"' for flag in setup_target_flags]
+        rule_all_inputs.extend(f'"{flag}"' for flag in consolidation_flags)
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
         # System-overview at master scope: the DEM and SWMM topology are shared
         # across sub-analyses, so a single system_overview.png in the master
@@ -4053,33 +4082,46 @@ onerror:
     input:
         {", ".join(rule_all_inputs)}
 
-rule setup:
-    output: "_status/a_setup_complete.flag"
-    log: "{log_dir_str}/setup.log"
+'''
+
+        # Phase 3: emit one setup rule per unique compile target. For a sensitivity
+        # study that varies gpu_hardware or target_dem_resolution across sub-analyses,
+        # this materializes the per-target compile DAG without redundant compilation.
+        # Backward-compat: a study with no `system_config_yaml` column (or all rows
+        # collapsing to one target) yields exactly one rule (`setup_target_0`).
+        for target in self.unique_system_targets:
+            target_config_args = self._base_builder._get_config_args(
+                analysis_config_yaml=self.master_analysis.analysis_config_yaml,
+                system_config_yaml=target.system_config_yaml,
+            )
+            target_cfg_system = target.system.cfg_system
+            snakefile_content += f'''rule setup_target_{target.target_id}:
+    output: "_status/a_setup_target_{target.target_id}_complete.flag"
+    log: "{log_dir_str}/setup_target_{target.target_id}.log"
     conda: "{conda_env_path}"
     resources:
 {
-            self._base_builder._build_resource_block(
-                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                runtime_min=30,
-                mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
-                nodes=1,
-                tasks=1,
-                cpus_per_task=1,
-            )
-        }
+                self._base_builder._build_resource_block(
+                    partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    runtime_min=30,
+                    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                    nodes=1,
+                    tasks=1,
+                    cpus_per_task=1,
+                )
+            }
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
         {self.python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
-            {master_config_args} \\
+            {target_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
             {
-            "--compile-triton-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_tritonswmm_model else ""
-        }\\
-            {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
-            {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
+                "--compile-triton-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_tritonswmm_model else ""
+            }\\
+            {"--compile-triton-only " if compile_TRITON_SWMM and target_cfg_system.toggle_triton_model else ""}\\
+            {"--compile-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
             > {{log}} 2>&1
         touch {{output}}
@@ -4119,10 +4161,20 @@ rule setup:
             run_mode = sub_analysis.cfg_analysis.run_mode
 
             sub_config_args = self._base_builder._get_config_args(
-                analysis_config_yaml=sub_analysis.analysis_config_yaml
+                analysis_config_yaml=sub_analysis.analysis_config_yaml,
+                system_config_yaml=sub_analysis._system.system_config_yaml,
             )
 
-            gpu_alloc_mode = self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+            # Phase 3: per-SA system config sources gpu_alloc_mode + gpu_hw so a
+            # sensitivity study spanning UVA (gres) and Frontier (gpus) emits the
+            # correct SLURM directive per sub-analysis.
+            gpu_alloc_mode = sub_analysis._system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+
+            # Setup-target flag this sub-analysis depends on (Phase 3). Keyed by
+            # str(sa_id) to match the map built before the rule_all section.
+            setup_target_flag = (
+                f"_status/a_setup_target_{sa_id_to_target_id[str(sa_id)]}_complete.flag"
+            )
 
             # Build resource blocks for this sub-analysis
             prep_resources_sa = self._base_builder._build_resource_block(
@@ -4139,7 +4191,7 @@ rule setup:
             snakemake_threads = cpus_per_sim
 
             gpu_hw_override = getattr(sub_analysis.cfg_analysis, "gpu_hardware_override", None)
-            gpu_hw = gpu_hw_override or self.system.cfg_system.gpu_hardware
+            gpu_hw = gpu_hw_override or sub_analysis._system.cfg_system.gpu_hardware
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
@@ -4178,7 +4230,7 @@ rule setup:
 
                     snakefile_content += f'''rule {prep_rule_name}:
     input:
-        "_status/a_setup_complete.flag",
+        "{setup_target_flag}",
         "_status/sa-{sa_id}_inputs.json"
     output: "{prep_outflag}"
     log: "{log_dir_str}/sims/{prep_rule_name}.log"
@@ -4202,7 +4254,7 @@ rule setup:
                 # Phase 2: Simulation execution
                 sim_rule_name = f"simulation_sa_{sa_id_rule}_evt_{event_id_rule}"
                 sim_outflag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
-                upstream_flag = prep_outflag if prepare_scenarios else "_status/a_setup_complete.flag"
+                upstream_flag = prep_outflag if prepare_scenarios else setup_target_flag
 
                 snakefile_content += f'''rule {sim_rule_name}:
     input:
