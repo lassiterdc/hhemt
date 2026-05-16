@@ -3,8 +3,11 @@
 Usage:
     python -m scripts.profile.profile_routine_tests
 
-Refreshes library/knowledge/TRITON-SWMM_toolkit/routine test profile results.md
-from a clean checkout with zero required arguments. See --help for flags.
+Refreshes $AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md
+from a clean checkout with zero required arguments. The output doc lives in the
+agentic-workspace library so it is reachable from the Obsidian vault and indexed
+by `knowledge MOC.md` Dataview queries; placing it under a project repo's tree
+would be invisible to both. See --help for flags.
 
 Architecture: orchestrator + pytest plugin + Snakemake harvest module + Markdown
 emitter. The orchestrator spawns pytest subprocesses with an isolated env (per-pid
@@ -35,7 +38,19 @@ from pathlib import Path
 from statistics import median
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_OUTPUT = REPO_ROOT / "library/knowledge/TRITON-SWMM_toolkit/routine test profile results.md"
+
+
+def _resolve_default_output() -> Path:
+    """Resolve DEFAULT_OUTPUT lazily so unit tests can import this module without AGENTIC_WORKSPACE set."""
+    aw = os.environ.get("AGENTIC_WORKSPACE")
+    if not aw:
+        raise RuntimeError(
+            "profile_routine_tests: $AGENTIC_WORKSPACE is not set. The profile-results "
+            "doc must land in the agentic-workspace library to be reachable from the "
+            "Obsidian vault and indexed by `knowledge MOC.md`. Export AGENTIC_WORKSPACE "
+            "to your agentic-workspace repo root and retry, or pass --output explicitly."
+        )
+    return Path(aw) / "library/knowledge/triton-swmm-toolkit/routine test profile results.md"
 DEFAULT_TOP_N = 20
 DEFAULT_FINDINGS_TOP_K = 10
 DEFAULT_REPETITIONS = 1
@@ -380,8 +395,8 @@ def _parse_args() -> argparse.Namespace:
                         help="Top-K findings to surface")
     parser.add_argument("--repetitions", type=int, default=DEFAULT_REPETITIONS,
                         help="Profile runs (median across kept reps when >=2; first discarded as warmup when >=3)")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
-                        help="Output doc path (overwritten)")
+    parser.add_argument("--output", type=Path, default=None,
+                        help="Output doc path (overwritten); default = $AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md")
     parser.add_argument("--cprofile", dest="cprofile", action="store_true", default=True)
     parser.add_argument("--no-cprofile", dest="cprofile", action="store_false")
     parser.add_argument("--pyspy", dest="pyspy", action="store_true", default=True)
@@ -395,6 +410,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    if args.output is None:
+        args.output = _resolve_default_output()
     from scripts.profile._snakemake_harvest import harvest as snakemake_harvest
     from scripts.profile._emitter import emit
 
