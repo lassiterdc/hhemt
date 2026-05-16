@@ -13,10 +13,11 @@ class CRSConfig(cfgBaseModel):
     `vertical_datum` stamping on consolidated outputs.
 
     `vertical_epsg` defaults to EPSG:5703 (NAVD88 height, m), which is
-    the dominant North American vertical datum and matches the prior
-    hardcoded `"(m)"` suffix in `units.DEM_ELEV_LABEL`/`WSE_LABEL`/
-    `DEPTH_LABEL`. Override with EPSG:6360 (NAVD88 ftUS) or EPSG:8228
-    (NAVD88 ft) when the DEM is in non-metric vertical units.
+    the dominant North American vertical datum. The datum-aware
+    `units.dem_elev_label`/`wse_label`/`depth_label` functions consume
+    this field to render colorbar suffixes like `"(m, NAVD88)"`.
+    Override with EPSG:6360 (NAVD88 ftUS) or EPSG:8228 (NAVD88 ft) when
+    the DEM is in non-metric vertical units.
     """
 
     horizontal_epsg: int = Field(
