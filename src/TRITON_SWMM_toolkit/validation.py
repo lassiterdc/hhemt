@@ -592,6 +592,171 @@ def _validate_toggle_dependencies_analysis(
             )
 
 
+def _validate_per_sa_system_configs(
+    cfg_system: system_config,
+    cfg_analysis: analysis_config,
+    result: ValidationResult,
+):
+    """Validate per-sub-analysis system configs declared in the sensitivity CSV.
+
+    Runs only when ``toggle_sensitivity_analysis=True`` AND the sensitivity CSV
+    contains a ``system_config_yaml`` column. Implements the four Phase 4 checks:
+
+    1. **Existence** — each non-null cell points to a YAML file on disk.
+    2. **Validity** — each unique YAML loads cleanly through
+       :func:`load_system_config` (Pydantic validation runs).
+    3. **Model-toggle consistency** — every sub-analysis system config enables
+       the same model-type toggles as the master ``cfg_system``. The Snakefile
+       is generated against the master's enabled model; a mismatch would
+       silently route the wrong runner script.
+    4. **Canonical-YAML correctness (post-dedup)** — YAMLs whose
+       compile-relevant tuple ``(target_dem_resolution, gpu_hardware,
+       gpu_compilation_backend)`` matches must agree on every other
+       ``cfg_system`` field. The dedup picks one canonical YAML
+       lexicographically; divergent non-key fields would silently disappear.
+
+    Skipped silently when the gate conditions don't apply (no sensitivity
+    analysis, no CSV path, missing CSV file, no ``system_config_yaml`` column,
+    or unreadable CSV). Other validators surface those upstream issues.
+    """
+    import pandas as pd
+
+    if not cfg_analysis.toggle_sensitivity_analysis:
+        return
+    sensitivity_csv = cfg_analysis.sensitivity_analysis
+    if sensitivity_csv is None:
+        return
+    sensitivity_csv = Path(sensitivity_csv)
+    if not sensitivity_csv.is_file():
+        return
+
+    try:
+        # The sensitivity setup may be .csv or .xlsx; both branches in
+        # downstream code use pandas. Read header-only to detect the column,
+        # then full payload only when the column is present.
+        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
+            df = pd.read_excel(sensitivity_csv)
+        else:
+            df = pd.read_csv(sensitivity_csv)
+    except Exception:
+        return
+    if "system_config_yaml" not in df.columns:
+        return
+
+    from TRITON_SWMM_toolkit.config.loaders import load_system_config
+
+    master_toggles = (
+        cfg_system.toggle_triton_model,
+        cfg_system.toggle_tritonswmm_model,
+        cfg_system.toggle_swmm_model,
+    )
+    loaded_by_path: dict[Path, system_config] = {}
+
+    for raw_path in df["system_config_yaml"]:
+        if pd.isna(raw_path) or (isinstance(raw_path, str) and raw_path == ""):
+            continue  # Null cell → falls back to master; out of scope here.
+        try:
+            yaml_path = Path(raw_path).resolve()
+        except (TypeError, ValueError):
+            result.add_error(
+                field="sensitivity_analysis.system_config_yaml",
+                message=f"Value {raw_path!r} is not a valid path.",
+                current_value=raw_path,
+                fix_hint="Provide a path string pointing to a system config YAML.",
+            )
+            continue
+        if yaml_path in loaded_by_path:
+            continue
+        if not yaml_path.is_file():
+            result.add_error(
+                field="sensitivity_analysis.system_config_yaml",
+                message=f"Referenced system config YAML does not exist: {yaml_path}",
+                current_value=str(yaml_path),
+                fix_hint="Create the YAML or correct the path in the sensitivity CSV.",
+            )
+            continue
+        try:
+            loaded = load_system_config(yaml_path)
+        except Exception as exc:
+            result.add_error(
+                field="sensitivity_analysis.system_config_yaml",
+                message=f"Failed to load {yaml_path}: {exc}",
+                current_value=str(yaml_path),
+                fix_hint="Fix the system config YAML to satisfy the system_config schema.",
+            )
+            continue
+        loaded_by_path[yaml_path] = loaded
+        sub_toggles = (
+            loaded.toggle_triton_model,
+            loaded.toggle_tritonswmm_model,
+            loaded.toggle_swmm_model,
+        )
+        if sub_toggles != master_toggles:
+            result.add_error(
+                field="sensitivity_analysis.system_config_yaml",
+                message=(
+                    f"{yaml_path}: model toggles "
+                    f"(triton={sub_toggles[0]}, tritonswmm={sub_toggles[1]}, "
+                    f"swmm={sub_toggles[2]}) do not match master "
+                    f"(triton={master_toggles[0]}, tritonswmm={master_toggles[1]}, "
+                    f"swmm={master_toggles[2]}). Sub-analysis system configs "
+                    "must enable the same model type as the master."
+                ),
+                current_value=str(yaml_path),
+                fix_hint=(
+                    "Align toggle_triton_model / toggle_tritonswmm_model / "
+                    "toggle_swmm_model with the master system config."
+                ),
+            )
+
+    # Post-dedup canonical-YAML correctness: group by compile-relevant tuple,
+    # require agreement on every non-dedup-key cfg_system field within a group.
+    if not loaded_by_path:
+        return
+    groups: dict[tuple, list[tuple[Path, system_config]]] = {}
+    for path, loaded in loaded_by_path.items():
+        key = (
+            loaded.target_dem_resolution,
+            loaded.gpu_hardware,
+            loaded.gpu_compilation_backend,
+        )
+        groups.setdefault(key, []).append((path, loaded))
+    dedup_key_fields = {
+        "target_dem_resolution",
+        "gpu_hardware",
+        "gpu_compilation_backend",
+    }
+    for entries in groups.values():
+        if len(entries) < 2:
+            continue
+        base_path, base = entries[0]
+        base_dump = base.model_dump()
+        for other_path, other in entries[1:]:
+            other_dump = other.model_dump()
+            for field_name in base_dump:
+                if field_name in dedup_key_fields:
+                    continue
+                if base_dump.get(field_name) != other_dump.get(field_name):
+                    result.add_error(
+                        field="sensitivity_analysis.system_config_yaml",
+                        message=(
+                            f"YAMLs collapse to the same compile target but differ "
+                            f"on non-compile-relevant field {field_name!r}: "
+                            f"{base_path} has {base_dump[field_name]!r}, "
+                            f"{other_path} has {other_dump[field_name]!r}. "
+                            "Reconcile the YAMLs or split the sub-analyses into "
+                            "different compile targets."
+                        ),
+                        current_value=None,
+                        fix_hint=(
+                            "Either align the divergent field across the collapsing "
+                            "YAMLs, or differentiate the dedup-key fields so the "
+                            "sub-analyses no longer collapse."
+                        ),
+                    )
+                    break  # First divergence per pair is enough.
+
+
 def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
     """Validate HPC configuration sanity."""
     method = cfg.multi_sim_run_method
@@ -983,6 +1148,15 @@ def preflight_validate(
     # Validate data cross-consistency
     data_result = validate_data_consistency(cfg_system, cfg_analysis)
     result.merge(data_result)
+
+    # Per-sub-analysis system config validation (Phase 4): runs only when the
+    # sensitivity CSV declares a `system_config_yaml` column. Surfaces existence,
+    # validity, model-toggle-consistency, and canonical-YAML-correctness errors
+    # before TRITONSWMM_sensitivity_analysis.__init__ would otherwise raise them
+    # at instantiation time. Needs cfg_system (for master toggles) — invoked
+    # here at the preflight_validate level rather than from inside
+    # _validate_toggle_dependencies_analysis (which lacks cfg_system).
+    _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
 
     # Interactive-output runtime-dependency check (Phase 1 substrate).
     # Warns only — does not fail-fast — because the matplotlib branch
