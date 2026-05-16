@@ -240,7 +240,9 @@ def render(
     # peak_flood_depth.py C8 fix).
     ax2.tick_params(axis="y", labelleft=False)
     ax2.set_ylabel("")
-    crs = report_cfg.system_map.target_epsg or analysis._system.cfg_system.crs_epsg
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs = resolve_target_crs(analysis, report_cfg)
+    crs = target_crs.to_epsg()
     ax1.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
     ax1.set_ylabel(units.northing_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
     ax2.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
@@ -681,10 +683,9 @@ def _render_plotly_branch(
         )
 
     # ---- Axes setup -----------------------------------------------------
-    crs_for_labels = (
-        report_cfg.system_map.target_epsg
-        or analysis._system.cfg_system.crs_epsg
-    )
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs = resolve_target_crs(analysis, report_cfg)
+    crs_for_labels = target_crs.to_epsg()
     for col in (1, 2):
         fig.update_xaxes(
             range=[map_bounds[0], map_bounds[2]],

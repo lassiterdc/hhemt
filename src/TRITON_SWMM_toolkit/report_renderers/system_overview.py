@@ -149,6 +149,7 @@ def render(
             map_cfg=map_cfg, manifest_data=manifest_data, prov=prov,
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             dem_building_height=building_height,
+            vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
         )
 
     # Matplotlib branch (legacy / interactive.enabled=False default).
@@ -174,6 +175,7 @@ def render(
     _draw_elevation_panel(
         ax_dem, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel,
+        vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
     )
 
     return emit_plot_with_sources(
@@ -505,7 +507,8 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 
 
 def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-                          prov, dem_source: str):
+                          prov, dem_source: str,
+                          vertical_crs_epsg: int | None = None):
     import matplotlib.cm as cm
     from matplotlib.lines import Line2D
 
@@ -556,7 +559,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
             origin="upper", aspect="equal",
         )
     cbar = plt.colorbar(im, ax=ax, shrink=ep.cbar_shrink, pad=ep.cbar_pad, extend="max")
-    cbar.set_label(units.DEM_ELEV_LABEL)
+    cbar.set_label(units.dem_elev_label(vertical_crs_epsg))
 
     legend_handles = []
 
@@ -683,6 +686,7 @@ def _render_plotly_branch(
     prov,
     plotly_js_mode: str,
     dem_building_height: float | None = None,
+    vertical_crs_epsg: int | None = None,
 ) -> Path:
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
@@ -736,6 +740,7 @@ def _render_plotly_branch(
         fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel, col=3,
         dem_building_height=dem_building_height,
+        vertical_crs_epsg=vertical_crs_epsg,
     )
 
     # Filter the default Plotly modebar to the buttons that map onto the
@@ -1207,6 +1212,7 @@ def _draw_elevation_panel_plotly(
     fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
     prov, *, dem_source: str, col: int,
     dem_building_height: float | None = None,
+    vertical_crs_epsg: int | None = None,
 ) -> None:
     ep = map_cfg.elevation_panel
     dem_squeezed = dem.squeeze()
@@ -1265,7 +1271,7 @@ def _draw_elevation_panel_plotly(
                 zmin=vmin, zmax=vmax, zauto=False,
                 showscale=True,
                 colorbar=dict(
-                    title=units.DEM_ELEV_LABEL,
+                    title=units.dem_elev_label(vertical_crs_epsg),
                     len=ep.cbar_shrink, x=1.005,
                 ),
                 name="DEM elevation (modeled area)",
