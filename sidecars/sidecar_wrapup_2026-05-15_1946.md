@@ -17,8 +17,7 @@ custom_instructions:
   - 'FOLLOW-UP IDEAS accumulated -- route via /capture-idea at /wrapup-session in the resuming session: (1) port_h1_sections.py script + /cleanup-scratch SKILL Step 4 dispatch rewrite; (2) V0005 + CaseStudyBuilder Optional[dict] field drop -- DURABLE FIX HAS PROMOTED PLAN (sensitivity-block-population-in-cfg-write-sites); (3) Snakemake tmux-mode swallowing per-rule failures and returning success=True to orchestrator despite missing outputs; (4) cross-repo write-block hook gap (decisions/knowledge/prompts) -- has smell entry with intervention specs; (5) project-wide Plotly-template audit; (6) kaleido failure-mode unit test; (7) sidecar-machinery dirty-worktree pattern at --mode create time. Full bullets at scratch # Follow-up Ideas. Strongly recommend /wrapup-session as the first action of the resuming session to triage these before going deeper into figure-quality work.'
 smoke_test: false
 ---
-- [ ] in progress
-
+- [x] in progress
 ## Harness Discipline — Claude Code
 
 - Treat the first post-compaction message as a rehydration trigger, not a
