@@ -1264,6 +1264,8 @@ def _draw_elevation_panel_plotly(
     dem_outside_watershed_height: float | None = None,
     vertical_crs_epsg: int | None = None,
 ) -> None:
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
+
     ep = map_cfg.elevation_panel
     dem_squeezed = dem.squeeze()
     arr = dem_squeezed.values
@@ -1376,18 +1378,28 @@ def _draw_elevation_panel_plotly(
     # user feedback): a 5-point Scatter path tracing dem_bounds. Sits ON TOP of
     # the Heatmaps but BELOW the BC line + watershed polygon so the user can
     # always see where the gridded modeled region begins/ends.
-    fig.add_trace(
-        go.Scatter(
-            x=[dem_bounds[0], dem_bounds[2], dem_bounds[2], dem_bounds[0], dem_bounds[0]],
-            y=[dem_bounds[1], dem_bounds[1], dem_bounds[3], dem_bounds[3], dem_bounds[1]],
-            mode="lines",
-            line=dict(color="black", width=1.5),
-            name="TRITON DEM extent",
-            showlegend=False,
-            hoverinfo="skip",
-        ),
-        row=1, col=col,
-    )
+    with prov.artist(
+        axes_id="ax_dem_plotly", kind="scatter_path",
+        note="TRITON DEM modeled-extent bounding box",
+    ) as a:
+        a.add_channel("x", ref=ProvenanceRef(
+            source_path=dem_source, transform="rio.bounds[xmin..xmax]",
+        ))
+        a.add_channel("y", ref=ProvenanceRef(
+            source_path=dem_source, transform="rio.bounds[ymin..ymax]",
+        ))
+        fig.add_trace(
+            go.Scatter(
+                x=[dem_bounds[0], dem_bounds[2], dem_bounds[2], dem_bounds[0], dem_bounds[0]],
+                y=[dem_bounds[1], dem_bounds[1], dem_bounds[3], dem_bounds[3], dem_bounds[1]],
+                mode="lines",
+                line=dict(color="black", width=1.5),
+                name="TRITON DEM extent",
+                showlegend=False,
+                hoverinfo="skip",
+            ),
+            row=1, col=col,
+        )
 
     if bc_path is not None:
         from TRITON_SWMM_toolkit.report_renderers._provenance import (
