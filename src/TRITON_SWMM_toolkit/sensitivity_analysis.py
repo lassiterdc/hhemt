@@ -1,4 +1,5 @@
 # %%
+import json
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -12,7 +13,10 @@ import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
-from TRITON_SWMM_toolkit.workflow import SensitivityAnalysisWorkflowBuilder
+from TRITON_SWMM_toolkit.workflow import (
+    SensitivityAnalysisWorkflowBuilder,
+    _emit_report_artifacts,
+)
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -162,8 +166,8 @@ class TRITONSWMM_sensitivity_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -237,8 +241,8 @@ class TRITONSWMM_sensitivity_analysis:
             dry_run=dry_run,
             verbose=verbose,
             override_hpc_total_nodes=override_hpc_total_nodes,
-            report_config_path=report_config_path,
             report_formats=report_formats,
+            extra_sbatch_args=extra_sbatch_args,
         )
 
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
@@ -270,8 +274,7 @@ class TRITONSWMM_sensitivity_analysis:
         css_path = master_dir / "report" / "report.css"
         # Re-emit report artifacts from package resources so render_report
         # picks up edits made to the source-tree report_templates/.
-        from .workflow import SnakemakeWorkflowBuilder
-        SnakemakeWorkflowBuilder(self.master_analysis)._emit_report_artifacts(master_dir)
+        _emit_report_artifacts(master_dir)
         cmd = [
             sys.executable, "-m", "snakemake",
             "--snakefile", str(snakefile),
@@ -325,6 +328,9 @@ class TRITONSWMM_sensitivity_analysis:
             pass
         return out_html
 
+    # Conforms to TRITON_SWMM_toolkit.bundle._protocol.BundleableAnalysis
+    # via duck typing — attributes delegated to self.master_analysis in
+    # __init__ (lines 91-94).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
@@ -1047,6 +1053,69 @@ class TRITONSWMM_sensitivity_analysis:
             )
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
+
+    def _compute_sa_id_fingerprint_payload(
+        self, sub_analysis: "anlysis.TRITONSWMM_analysis"
+    ) -> dict[str, object]:
+        """Compute the deterministic fingerprint payload for one sub-analysis.
+
+        Projects the sub-analysis's post-Pydantic ``analysis_config.model_dump(mode="json")``
+        onto the columns named by ``self.independent_vars`` (sorted). Adds a
+        ``__schema_version__`` sentinel so future serializer-format changes are
+        themselves observable. Excludes ``sa_id`` (the path already disambiguates).
+
+        Stability contract: every ``analysis_config`` field that may appear in
+        ``self.independent_vars`` must be JSON-stable under ``model_dump(mode="json")``
+        — that is, two invocations on the same sub_analysis instance must produce
+        byte-identical ``json.dumps(..., sort_keys=True)`` output. The currently-known
+        sensitivity-CSV columns (``cpus_per_sim``, ``n_omp_threads``, ``hpc_total_nodes``,
+        ``hpc_max_simultaneous_sims``, ``hpc_total_job_duration_min``, ``run_mode``) are
+        all native Python int/str/Literal types and meet the contract. Adding a
+        new ``analysis_config`` field that may legitimately become a sensitivity-CSV
+        column requires re-checking JSON stability and may require bumping
+        ``__schema_version__``.
+
+        Returns a plain dict suitable for ``json.dumps`` with ``sort_keys=True``.
+        """
+        cfg_dump = sub_analysis.cfg_analysis.model_dump(mode="json")
+        # KeyError on missing key — surfaces config-schema drift loudly rather than
+        # producing fingerprints that silently project None for an absent field.
+        payload: dict[str, object] = {
+            "__schema_version__": 1,
+            "fields": {k: cfg_dump[k] for k in sorted(self.independent_vars)},
+        }
+        return payload
+
+    def _write_sa_id_fingerprint(
+        self,
+        sub_analysis: "anlysis.TRITONSWMM_analysis",
+        fingerprint_path: Path,
+    ) -> bool:
+        """Write the per-sa_id fingerprint file via compare-and-write.
+
+        Reads ``fingerprint_path`` if it exists, serializes the new payload with
+        ``sort_keys=True`` and stable separators, and only rewrites the file when
+        content differs. This preserves mtime when content is unchanged — the
+        mechanism on which Snakemake's per-rule rerun gating depends.
+
+        Returns ``True`` if the file was (re)written, ``False`` if skipped because
+        content matched the existing file.
+        """
+        payload = self._compute_sa_id_fingerprint_payload(sub_analysis)
+        new_text = json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+        # Treat unreadable existing content (zero-byte, corrupted, encoding error
+        # from a crashed prior workflow) as "not equal to new content" and proceed
+        # to overwrite. This preserves the compare-and-write contract under the
+        # one failure mode the contract cannot otherwise diagnose.
+        try:
+            existing = fingerprint_path.read_text() if fingerprint_path.exists() else None
+        except (OSError, UnicodeDecodeError):
+            existing = None
+        if existing == new_text:
+            return False
+        fingerprint_path.parent.mkdir(parents=True, exist_ok=True)
+        fingerprint_path.write_text(new_text)
+        return True
 
     def compile_TRITON_SWMM_for_sensitivity_analysis(
         self,

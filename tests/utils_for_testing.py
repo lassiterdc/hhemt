@@ -837,7 +837,8 @@ def assert_datasets_equal(
         # Now shapes should match after transpose and reindex
         if ref_values.shape != actual_values.shape:
             mismatched_vars.append(
-                f"{var}: shape mismatch even after transpose and reindex (ref={ref_values.shape}, actual={actual_values.shape})"
+                f"{var}: shape mismatch even after transpose and reindex "
+                f"(ref={ref_values.shape}, actual={actual_values.shape})"
             )
             continue
 
@@ -1033,3 +1034,295 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
             f"event {event_iloc} {model_type}: TRITON {depth_var} non-zero "
             f"at only {nonzero_ts} timesteps"
         )
+
+
+# ---------------------------------------------------------------------------
+# Rerun-trigger empirical test helpers
+# ---------------------------------------------------------------------------
+
+
+def snapshot_scenario_output_mtimes(
+    analysis, *, kind: str
+) -> dict[tuple[str | None, str], dict[Path, float]]:
+    """Return {(sa_id, event_id): {output_file: mtime_float}} for every per-scenario output.
+
+    Scenario id is the stable event-slug computed by scenario.compute_event_id_slug
+    (e.g., "year.9_event_type.compound_event_id.1") — NOT the row label of df_sims.
+    The slug is exposed as TRITONSWMM_scenario.event_id (scenario.py:60: event_id = sim_id_str).
+
+    Computes the slug + sim_folder directly via compute_event_id_slug — does NOT
+    instantiate TRITONSWMM_scenario. Instantiation triggers a side-effect chain
+    (TRITONSWMM_scenario → TRITONSWMM_run → TRITONSWMM_sim_post_processing →
+    _log_write_status → LogField.set → log.write) that rewrites log_tritonswmm.json
+    and would corrupt this snapshot.
+
+    Excludes per-model JSON logs (log_triton.json, log_tritonswmm.json, log_swmm.json)
+    from the walked file set: these files are touched on every scenario instantiation
+    via the side-effect chain above. The same chain runs during the post-workflow
+    `_update_master_analysis_log` step that fires after every submit_workflow call
+    (including for untouched scenarios). That bookkeeping write makes the per-model
+    JSON log mtime drift between baseline and rerun even when Snakemake correctly
+    skips the simulation rule — which would be a false positive for the assertion.
+    The simulation/processing output zarrs and raw outputs remain in scope; those
+    only change when Snakemake's simulation/process/consolidate rules actually run.
+
+    Keys are typed tuples to avoid substring-collision pitfalls with string-concat
+    namespacing (e.g., sa_id="sa_1" vs sa_id="extra_sa_1" both endswith "::sa_1"):
+
+      - kind='multi_sim': key is (None, event_id).
+      - kind='sensitivity': key is (str(sa_id), event_id), disambiguating identical
+        event_ids across sub-analyses.
+    """
+    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+    snapshot: dict[tuple[str | None, str], dict[Path, float]] = {}
+    excluded_log_files = {"log_triton.json", "log_tritonswmm.json", "log_swmm.json"}
+
+    def _walk(sim_dir: Path) -> dict[Path, float]:
+        return {
+            p: p.stat().st_mtime
+            for p in sim_dir.rglob("*")
+            if p.is_file() and p.name not in excluded_log_files
+        }
+
+    def _slug_and_sim_folder(ana, iloc):
+        indexers = ana._retrieve_weather_indexer_using_integer_index(iloc)
+        slug = compute_event_id_slug(indexers)
+        sim_folder = ana.analysis_paths.simulation_directory / slug
+        return slug, sim_folder
+
+    if kind == "multi_sim":
+        for iloc in analysis.df_sims.index:
+            slug, sim_folder = _slug_and_sim_folder(analysis, iloc)
+            snapshot[(None, slug)] = _walk(sim_folder)
+    elif kind == "sensitivity":
+        for sa_id, sub in analysis.sensitivity.sub_analyses.items():
+            sa_id_str = str(sa_id)
+            for iloc in sub.df_sims.index:
+                slug, sim_folder = _slug_and_sim_folder(sub, iloc)
+                snapshot[(sa_id_str, slug)] = _walk(sim_folder)
+    else:
+        raise ValueError(f"unknown kind: {kind!r}")
+
+    return snapshot
+
+
+def mutate_scenario_csv(
+    analysis,
+    *,
+    kind: str,
+    donor_key: tuple[str | None, str],
+    remove_key: tuple[str | None, str],
+) -> tuple[Path, tuple[str | None, str]]:
+    """Copy the source scenario CSV to a tmp path, drop the row whose scenario
+    identifier == remove_key, append a fresh row cloned from donor_key with a
+    synthetic identifier guaranteed not to collide. Return (tmp_csv_path, new_key).
+    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    sa_id=None for multi_sim, sa_id=str for sensitivity.
+
+    multi_sim:
+      - Source CSV: analysis.cfg_analysis.weather_events_to_simulate (analysis.py:164-166).
+      - Indexer columns are listed in cfg_analysis.weather_event_indices.
+      - Scenario id is the stable slug built by scenario.compute_event_id_slug
+        from a row's indexer-column values (scenario.py:30-38, 60).
+      - There is NO `event_id` column in the source CSV; its presence in the test
+        fixture (`test_data/.../weather_indices.csv` with values 0,1,...) is
+        incidental and not used by the toolkit.
+      - Mutation: drop rows whose slug == remove_id; clone donor row, bump the
+        last indexer column to a synthetic integer that produces a fresh slug.
+
+    sensitivity:
+      - Source CSV (or XLSX): analysis.cfg_analysis.sensitivity_analysis.
+      - The `sa_id` column is required by stipulation
+        `library/docs/stipulations/TRITON-SWMM_toolkit/sensitivity csvs require sa_id column.md`.
+      - Mutation: drop the row whose sa_id == remove_id; clone donor row with a
+        new synthetic sa_id matching `^[A-Za-z0-9_.]+$`.
+    """
+    if kind == "multi_sim":
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        donor_event_id = donor_key[1]  # sa_id is None for multi_sim
+        remove_event_id = remove_key[1]
+        src = Path(analysis.cfg_analysis.weather_events_to_simulate)
+        df = pd.read_csv(src)
+        indexer_cols = list(analysis.cfg_analysis.weather_event_indices)
+
+        def _row_slug(row) -> str:
+            return compute_event_id_slug({c: row[c] for c in indexer_cols})
+
+        slugs = df.apply(_row_slug, axis=1)
+        donor_row = df[slugs == donor_event_id].iloc[0].copy()
+        # Capture victim's iloc positions BEFORE removal so we can delete stale model logs.
+        # The toolkit's completion check uses iloc-indexed log names (model_triton_evt{N}.log),
+        # NOT slug-based names. After removing the victim and appending a new scenario, the new
+        # scenario inherits the victim's iloc, causing the completion check to read the victim's
+        # log and declare the new scenario "already done" before running.
+        victim_ilocs = df.index[slugs == remove_event_id].tolist()
+        df = df[slugs != remove_event_id].copy()
+        bumped_col = indexer_cols[-1]
+        donor_orig_bumped_val = donor_row[bumped_col]  # save before overwrite in loop below
+        existing_slugs = set(df.apply(_row_slug, axis=1).tolist())
+        n = 9000
+        while True:
+            donor_row[bumped_col] = n
+            candidate_slug = compute_event_id_slug({c: donor_row[c] for c in indexer_cols})
+            if candidate_slug not in existing_slugs:
+                break
+            n += 1
+        new_key: tuple[str | None, str] = (None, candidate_slug)
+        df = pd.concat([df, donor_row.to_frame().T], ignore_index=True)
+
+        # Expand the weather NetCDF so that ds.sel({bumped_col: n}) succeeds for the new
+        # synthetic scenario. The bumped indexer column is the weather-dataset dimension, so
+        # bumping to a value not in the NetCDF would fail scenario preparation. We clone the
+        # donor's slice with the new coordinate value.
+        import xarray as xr
+        weather_nc_src = Path(analysis.cfg_analysis.weather_timeseries)
+        with xr.open_dataset(weather_nc_src) as ds_weather:
+            ds_weather = ds_weather.load()  # into memory so we can close file and write new one
+            donor_slice = ds_weather.sel({bumped_col: [donor_orig_bumped_val]})
+            new_slice = donor_slice.assign_coords({bumped_col: [n]})
+            ds_expanded = xr.concat([ds_weather, new_slice], dim=bumped_col)
+        new_weather_nc = analysis.analysis_paths.analysis_dir / f"_rerun_test_input_{kind}_weather.nc"
+        ds_expanded.to_netcdf(new_weather_nc)
+
+        # Delete stale iloc-indexed model logs for the victim's row positions. Without this,
+        # the new scenario at victim_iloc passes the log-based completion check (reading the
+        # victim's old log) and the model run is skipped, leaving outputs missing.
+        simlog_dir = analysis.analysis_paths.simlog_directory
+        for model_type in ("triton", "tritonswmm", "swmm"):
+            for vic_iloc in victim_ilocs:
+                stale_log = simlog_dir / f"model_{model_type}_evt{vic_iloc}.log"
+                stale_log.unlink(missing_ok=True)
+    elif kind == "sensitivity":
+        donor_sa_id = donor_key[0]
+        remove_sa_id = remove_key[0]
+        src = Path(analysis.cfg_analysis.sensitivity_analysis)
+        if src.suffix.lower() in (".xlsx", ".xls"):
+            df = pd.read_excel(src)
+        else:
+            df = pd.read_csv(src)
+        donor_row = df[df["sa_id"].astype(str) == str(donor_sa_id)].iloc[0].copy()
+        used_sa_ids = set(df["sa_id"].astype(str).tolist())
+        n = 9000
+        while f"rerun_test_{n}" in used_sa_ids:
+            n += 1
+        new_sa_id = f"rerun_test_{n}"
+        donor_row["sa_id"] = new_sa_id
+        df = df[df["sa_id"].astype(str) != str(remove_sa_id)].copy()
+        df = pd.concat([df, donor_row.to_frame().T], ignore_index=True)
+        # Cloned-row event_id slug is identical to the donor row's event_id (only sa_id changed).
+        new_key = (new_sa_id, donor_key[1])
+    else:
+        raise ValueError(f"unknown kind: {kind!r}")
+
+    out = analysis.analysis_paths.analysis_dir / f"_rerun_test_input_{kind}.csv"
+    df.to_csv(out, index=False)
+    # Preserve the original CSV's mtime on the mutated copy so Snakemake's mtime trigger
+    # does not fire for untouched scenarios. The trigger should only fire for the new/removed
+    # scenario (via the input trigger on the expanded scenario set), not for unchanged ones.
+    import os
+    src_stat = os.stat(src)
+    os.utime(out, (src_stat.st_atime, src_stat.st_mtime))
+    return out, new_key
+
+
+def reinstantiate_analysis_pointing_at_csv(analysis, *, kind: str, mutated_csv_path: Path):
+    """Re-instantiate a TRITONSWMM_analysis from the same configs but with the
+    weather/sensitivity CSV path swapped to mutated_csv_path.
+
+    Implementation: write a modified copy of the analysis YAML to a tmp path with
+    the relevant field updated, then call Toolkit.from_configs (toolkit.py:96-148).
+    Returns the public .analysis attribute (toolkit.py:94).
+    """
+    import yaml
+
+    from TRITON_SWMM_toolkit.toolkit import Toolkit
+
+    sys_yaml = analysis._system.system_config_yaml
+    ana_yaml = analysis.analysis_config_yaml
+
+    with open(ana_yaml) as fp:
+        ana_dict = yaml.safe_load(fp)
+
+    if kind == "multi_sim":
+        ana_dict["weather_events_to_simulate"] = str(mutated_csv_path)
+        # Point at the expanded weather NetCDF if mutate_scenario_csv created one alongside the CSV
+        expanded_weather_nc = mutated_csv_path.parent / f"_rerun_test_input_{kind}_weather.nc"
+        if expanded_weather_nc.exists():
+            ana_dict["weather_timeseries"] = str(expanded_weather_nc)
+    elif kind == "sensitivity":
+        ana_dict["sensitivity_analysis"] = str(mutated_csv_path)
+    else:
+        raise ValueError(f"unknown kind: {kind!r}")
+
+    new_ana_yaml = mutated_csv_path.with_suffix(".analysis.yaml")
+    with open(new_ana_yaml, "w") as fp:
+        yaml.safe_dump(ana_dict, fp)
+
+    # Preserve the original YAML's mtime on the new YAML so Snakemake's mtime trigger
+    # does not fire for untouched scenarios. Without this, the freshly-written YAML is
+    # newer than all baseline output files, causing mtime-triggered reruns for every scenario.
+    import os
+    orig_stat = os.stat(ana_yaml)
+    os.utime(new_ana_yaml, (orig_stat.st_atime, orig_stat.st_mtime))
+
+    return Toolkit.from_configs(sys_yaml, new_ana_yaml).analysis
+
+
+def assert_rerun_trigger_correctness(
+    *,
+    before: dict[tuple[str | None, str], dict[Path, float]],
+    after: dict[tuple[str | None, str], dict[Path, float]],
+    added_key: tuple[str | None, str],
+    removed_key: tuple[str | None, str],
+    baseline_scenario_keys: list[tuple[str | None, str]],
+) -> None:
+    """Validate the four-part rerun-trigger contract.
+
+    Keys are typed (sa_id, event_id) tuples matching snapshot_scenario_output_mtimes;
+    sa_id=None for multi_sim, sa_id=str for sensitivity. Tuple-equality eliminates
+    the substring-suffix collision class that string-concat namespacing would carry.
+    """
+    # (a) added scenario has outputs in 'after' with at least one file
+    assert added_key in after, (
+        f"added scenario {added_key!r} produced no outputs after rerun; "
+        f"after keys={list(after)}"
+    )
+
+    # (b) untouched scenarios have IDENTICAL mtimes
+    untouched = [k for k in baseline_scenario_keys if k != removed_key and k != added_key]
+    for key in untouched:
+        if key not in after:
+            raise AssertionError(
+                f"untouched scenario {key!r} disappeared from rerun analysis state"
+            )
+        before_files = before[key]
+        after_files = after[key]
+        for path, before_mtime in before_files.items():
+            after_mtime = after_files.get(path)
+            if after_mtime is None:
+                raise AssertionError(
+                    f"untouched scenario {key!r}: file {path} disappeared after rerun"
+                )
+            if after_mtime != before_mtime:
+                raise AssertionError(
+                    f"untouched scenario {key!r}: file {path} mtime changed "
+                    f"({before_mtime} -> {after_mtime}); rerun-triggers misfired"
+                )
+
+    # (c) removed scenario is no longer in 'after' analysis state
+    assert removed_key not in after, (
+        f"removed scenario {removed_key!r} still present in rerun analysis state"
+    )
+
+    # (d) removed scenario's old output mtimes (orphans on disk) are unchanged
+    before_removed_files = before[removed_key]
+    for path, before_mtime in before_removed_files.items():
+        if not path.exists():
+            continue  # acceptable: file was deleted
+        if path.stat().st_mtime != before_mtime:
+            raise AssertionError(
+                f"removed scenario {removed_key!r}: orphan file {path} was re-touched "
+                f"by rerun (mtime {before_mtime} -> {path.stat().st_mtime})"
+            )

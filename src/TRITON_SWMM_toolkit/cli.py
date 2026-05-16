@@ -62,15 +62,6 @@ def run_command(
         dir_okay=False,
         readable=True,
     ),
-    report_config: Path | None = typer.Option(
-        None,
-        "--report-config",
-        help="Path to a report_config.yaml. When omitted, uses the built-in default.",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
     # ═══════════════════════════════════════════════════════════════
     # Execution Control
     # ═══════════════════════════════════════════════════════════════
@@ -410,7 +401,6 @@ def run_command(
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
-            report_config=report_config,
         )
 
         # Check workflow result
@@ -799,8 +789,8 @@ def bundle_command(
     output: Path = typer.Option(
         None, "--output",
         help=(
-            "Target path for the bundle tar. Defaults to "
-            "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar."
+            "Target path for the bundle zip. Defaults to "
+            "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
 ) -> None:
@@ -808,7 +798,7 @@ def bundle_command(
 
     Walks *.manifest.json provenance sidecars under {analysis_dir}/plots/
     and copies the union of declared source paths into a self-contained
-    tar with relative-path configs and the HPC-baseline
+    zip with relative-path configs and the HPC-baseline
     analysis_report.{html,zip} under bundle_baseline/.
 
     Requires render_report() to have been invoked at least once on the
@@ -831,70 +821,48 @@ def bundle_command(
 def report_from_bundle_command(
     bundle_path: Path = typer.Argument(
         ..., exists=True, file_okay=True, dir_okay=True, readable=True,
-        help="Path to the bundle tar (or unpacked bundle directory).",
+        help="Path to the bundle zip (or unpacked bundle directory).",
     ),
     format: str = typer.Option(
-        "html", "--format",
-        help="Output format: 'html' (single-file) or 'zip' (unbundled tree).",
+        "zip", "--format",
+        help="Output format: 'zip' (single-HTML wrapped in a zip — default) or 'html' (uncompressed single-file).",
     ),
 ) -> None:
-    """Render a fresh analysis_report from a portable render bundle.
+    # Render a fresh analysis_report from a portable render bundle.
+    #
+    # Per Plan Phase 3's rewire, this is a thin wrapper over
+    # Bundle.from_directory(bundle_root).regenerate_report(format=format).
+    # The Bundle class derives the static_backend from the bundle's
+    # cfg_analysis.yaml (cfg-controlled default 'plotly' per Plan
+    # Phase 2 D3 + Decision 4); no static_backend kwarg is threaded
+    # through the CLI per Decision 3.3D.
+    #
+    import zipfile
 
-    Unpacks the bundle (if a tar was given), validates bundle_schema_version
-    compatibility, deletes any prior analysis_report.{html,zip} at the
-    unpacked-bundle root (preserving the HPC-baseline copies under
-    bundle_baseline/), and invokes Analysis.render_report() against the
-    unpacked tree.
-    """
-    import json
-    import tarfile
+    from TRITON_SWMM_toolkit.bundle import Bundle, _get_toolkit_git_sha
 
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-    from TRITON_SWMM_toolkit.version_migration.constants import (
-        BUNDLE_SCHEMA_VERSION,
-    )
-
-    if bundle_path.is_file() and bundle_path.suffix == ".tar":
+    if bundle_path.is_file() and bundle_path.suffix == ".zip":
         unpack_dir = bundle_path.parent / bundle_path.stem
         unpack_dir.mkdir(parents=True, exist_ok=True)
-        with tarfile.open(bundle_path) as tar:
-            tar.extractall(unpack_dir, filter="data")
+        with zipfile.ZipFile(bundle_path) as zf:
+            zf.extractall(unpack_dir)
         bundle_root = unpack_dir
     elif bundle_path.is_dir():
         bundle_root = bundle_path
     else:
         raise CLIValidationError(
             argument="bundle_path",
-            message=f"{bundle_path} is neither a .tar file nor a directory",
+            message=f"{bundle_path} is neither a .zip file nor a directory",
             fix_hint=(
-                "Pass a path to a bundle.tar produced by "
+                "Pass a path to a bundle.zip produced by "
                 "`TRITON_SWMM_toolkit bundle`, or to an unpacked bundle directory."
             ),
         )
 
-    manifest_path = bundle_root / "bundle_manifest.json"
-    if not manifest_path.exists():
-        raise CLIValidationError(
-            argument="bundle_path",
-            message=f"No bundle_manifest.json under {bundle_root}",
-            fix_hint="The bundle is malformed or this is not a render bundle.",
-        )
-    manifest = json.loads(manifest_path.read_text())
-    if manifest["bundle_schema_version"] > BUNDLE_SCHEMA_VERSION:
-        raise CLIValidationError(
-            argument="bundle_path",
-            message=(
-                f"Bundle schema version {manifest['bundle_schema_version']} "
-                f"exceeds locally installed BUNDLE_SCHEMA_VERSION="
-                f"{BUNDLE_SCHEMA_VERSION}."
-            ),
-            fix_hint="Upgrade the local toolkit installation to render this bundle.",
-        )
+    bundle = Bundle.from_directory(bundle_root)
 
-    from TRITON_SWMM_toolkit.bundle import _get_toolkit_git_sha
     local_sha = _get_toolkit_git_sha(strict=False)
-    bundle_sha = manifest.get("toolkit_git_sha", "unknown")
+    bundle_sha = bundle.manifest.get("toolkit_git_sha", "unknown")
     if (
         bundle_sha != "unknown"
         and local_sha != "unknown"
@@ -922,21 +890,7 @@ def report_from_bundle_command(
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 
-    cfg_system = bundle_root / "cfg_system.yaml"
-    cfg_analysis = bundle_root / "cfg_analysis.yaml"
-    # Bundle-relative paths in the rewritten configs (e.g.
-    # cfg_analysis.weather_events_to_simulate) are resolved against CWD
-    # by Pydantic Path fields and downstream pd.read_csv calls. Bundle
-    # consume time means CWD must be bundle_root for those reads to land.
-    import os
-    prev_cwd = Path.cwd()
-    os.chdir(bundle_root)
-    try:
-        system = TRITONSWMM_system(cfg_system)
-        analysis = TRITONSWMM_analysis(cfg_analysis, system)
-        rendered = analysis.render_report(format=format)
-    finally:
-        os.chdir(prev_cwd)
+    rendered = bundle.regenerate_report(format=format)
     console.print(f"[green]Report rendered:[/green] {rendered}")
 
 

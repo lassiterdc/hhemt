@@ -230,6 +230,27 @@ class InteractiveBackendConfig(cfgBaseModel):
             "so main remains shippable mid-migration."
         ),
     )
+    static_backend: Literal["matplotlib", "plotly"] = Field(
+        "plotly",
+        description=(
+            "Static-figure rendering backend for renderers that have "
+            "BOTH a matplotlib branch and a Plotly branch. When "
+            "'plotly', renderers emit SVG via "
+            "fig.write_image(engine='kaleido') as their static artifact "
+            "and the matplotlib branch is bypassed. When 'matplotlib', "
+            "current behavior. Renderers without a Plotly branch fall "
+            "back to matplotlib regardless of this flag (with a "
+            "one-time warning per renderer per process — see "
+            "report_renderers/_static_backend_warning.py, introduced "
+            "in Plan Phase 5). Default 'plotly' per Plan Phase 2 D3 + "
+            "Decision 4: the bundle workflow's headline use case is "
+            "interactive Plotly reports, so the default matches the "
+            "headline experience. Users on environments without "
+            "kaleido installed should either install the viz-export "
+            "extra (`pip install -e '.[viz-export]'`) or set this "
+            "field to 'matplotlib' in cfg_analysis.yaml."
+        ),
+    )
     plotly_js_mode: Literal["cdn", "inline"] = Field(
         "cdn",
         description=(

@@ -1,0 +1,583 @@
+{
+  "full_res_path": "plots/system_overview.png",
+  "preview_path": "plots/system_overview.preview.png",
+  "full_res_format": "png",
+  "full_res_dpi": 150,
+  "preview_dpi": 100,
+  "figure_size_inches": [
+    14.080000000000002,
+    8.0
+  ],
+  "full_res_size_bytes": 78549,
+  "preview_size_bytes": 48912,
+  "source_paths_relative": [
+    "../elevation_10.00m.dem",
+    "sims/event_index.0/swmm/hydro.inp",
+    "sims/event_index.0/swmm/hydraulics.inp",
+    "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson"
+  ],
+  "emitted_at_utc": "2026-05-11T19:09:26.839390+00:00",
+  "renderer_data": {
+    "analysis_id": "synth_multi_sim",
+    "panels": [
+      {
+        "name": "hydrology",
+        "title": "Hydrology",
+        "axis_extents": {
+          "xlim": [
+            0.0,
+            160.0
+          ],
+          "ylim": [
+            0.0,
+            300.0
+          ]
+        },
+        "element_counts": {
+          "subcatchments_with_polygons": 3,
+          "subcatchment_rows": 3
+        },
+        "legend_labels": [
+          "Subcatchments",
+          "Drains to"
+        ]
+      },
+      {
+        "name": "hydraulics",
+        "title": "Hydraulics",
+        "axis_extents": {
+          "xlim": [
+            0.0,
+            160.0
+          ],
+          "ylim": [
+            0.0,
+            300.0
+          ]
+        },
+        "element_counts": {
+          "junctions": 5,
+          "outfalls": 1,
+          "conduits": 4
+        },
+        "legend_labels": [
+          "SWMM conduits",
+          "SWMM junction"
+        ]
+      },
+      {
+        "name": "triton_dem",
+        "title": "TRITON DEM",
+        "axis_extents": {
+          "xlim": [
+            0.0,
+            160.0
+          ],
+          "ylim": [
+            0.0,
+            300.0
+          ]
+        },
+        "dem_bounds": [
+          0.0,
+          0.0,
+          160.0,
+          300.0
+        ],
+        "legend_labels": [
+          "Storm tide BC"
+        ]
+      }
+    ]
+  },
+  "artists": [
+    {
+      "axes_id": "ax_hydro",
+      "kind": "patch",
+      "note": "subcatchment polygon S1",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "line2d",
+      "note": "drainage line: S1 \u2192 J1",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "patch",
+      "note": "subcatchment polygon S2",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "line2d",
+      "note": "drainage line: S2 \u2192 J2",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "patch",
+      "note": "subcatchment polygon S3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_polygon",
+            "attrs": {},
+            "selection": {
+              "node_id": "S3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "line2d",
+      "note": "drainage line: S3 \u2192 J3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "subcatchment_outlet",
+            "attrs": {},
+            "selection": {
+              "node_id": "S3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydro",
+      "kind": "scatter",
+      "note": "subcatchment outlet markers (3)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "outlet_node_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydro.inp",
+            "variable": "outlet_node_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "line2d",
+      "note": "conduit C1: J1 \u2192 J3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C1"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "line2d",
+      "note": "conduit C2: J2 \u2192 J3",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C2"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "line2d",
+      "note": "conduit C3: J3 \u2192 J4",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C3"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "line2d",
+      "note": "conduit C4: J4 \u2192 sewer_outflow",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "conduit_coords",
+            "attrs": {},
+            "selection": {
+              "link_id": "C4"
+            },
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "scatter",
+      "note": "junctions (5)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "junction_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "junction_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_hydraulics",
+      "kind": "scatter",
+      "note": "outfalls (1)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "outfall_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "sims/event_index.0/swmm/hydraulics.inp",
+            "variable": "outfall_coords",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_dem",
+      "kind": "image",
+      "note": "DEM elevation raster",
+      "channels": [
+        {
+          "channel": "z",
+          "ref": {
+            "source_path": "../elevation_10.00m.dem",
+            "variable": null,
+            "attrs": {
+              "_FillValue": "-9999.0",
+              "scale_factor": 1.0,
+              "add_offset": 0.0
+            },
+            "selection": null,
+            "transform": "modeled-area vmin/vmax clipping (walls \u2192 set_over grey)"
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "../elevation_10.00m.dem",
+            "variable": null,
+            "attrs": {
+              "_FillValue": "-9999.0",
+              "scale_factor": 1.0,
+              "add_offset": 0.0
+            },
+            "selection": null,
+            "transform": "modeled-area vmin/vmax clipping (walls \u2192 set_over grey)"
+          },
+          "encoding": {
+            "cmap": "terrain",
+            "vmin": 0.5,
+            "vmax": 1.413040041923523,
+            "set_over": "#808080"
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_dem",
+      "kind": "line2d",
+      "note": "storm tide boundary line",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson",
+            "variable": "storm_tide_boundary",
+            "attrs": {},
+            "selection": null,
+            "transform": "reproject to EPSG:3857"
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson",
+            "variable": "storm_tide_boundary",
+            "attrs": {},
+            "selection": null,
+            "transform": "reproject to EPSG:3857"
+          },
+          "encoding": {}
+        }
+      ]
+    }
+  ]
+}

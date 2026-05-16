@@ -478,14 +478,22 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
     assert out_html.exists() and out_html.stat().st_size > 0
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
-    assert (plots_dir / "system_overview.png").exists()
-    assert (plots_dir / "per_analysis" / "summary_table.svg").exists()
+    # Resolve backend-dependent extensions via the canonical helper so the
+    # assertions match the per-rule emission regardless of static_backend.
+    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    backend = analysis._workflow_builder._get_report_cfg_static_backend()
+    so_ext = _output_ext_for(backend, "system_overview")
+    pfd_ext = _output_ext_for(backend, "per_sim_peak_flood_depth")
+    cf_ext = _output_ext_for(backend, "per_sim_conduit_flow")
+    pas_ext = _output_ext_for(backend, "per_analysis_summary")
+    assert (plots_dir / f"system_overview{so_ext}").exists()
+    assert (plots_dir / "per_analysis" / f"summary_table{pas_ext}").exists()
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
         event_id = compute_event_id_slug(ev)
-        assert (plots_dir / "per_sim" / event_id / "peak_flood_depth.png").exists()
-        assert (plots_dir / "per_sim" / event_id / "conduit_flow.png").exists()
+        assert (plots_dir / "per_sim" / event_id / f"peak_flood_depth{pfd_ext}").exists()
+        assert (plots_dir / "per_sim" / event_id / f"conduit_flow{cf_ext}").exists()
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
@@ -524,6 +532,47 @@ def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     analysis.render_report(format="html")
     html = (analysis.analysis_paths.analysis_dir / "analysis_report.html").read_text()
     assert "Sources:" in html
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_no_html_content_in_svg_file_references(synth_multi_sim_analysis_cached, tmp_path):
+    # Rendered report.html must not reference any .svg file whose content is
+    # not valid SVG XML. Snakemake's report engine dispatches by mime_type
+    # derived from the file extension — a .svg path containing HTML triggers
+    # an <img> dispatch that fails to parse and renders a broken-image icon.
+    import re
+    import xml.etree.ElementTree as ET
+    import zipfile
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    out_zip = analysis.render_report(format="zip")
+    extract_dir = tmp_path / "report_extract"
+    with zipfile.ZipFile(out_zip) as zf:
+        zf.extractall(extract_dir)
+    report_html = next(extract_dir.rglob("report.html"), None)
+    assert report_html is not None, f"report.html not found under {extract_dir}"
+    refs = re.findall(r'"data_uri":\s*"([^"]+\.svg)"', report_html.read_text())
+    bad = []
+    for rel in refs:
+        target = (report_html.parent / rel).resolve()
+        if not target.exists():
+            continue
+        try:
+            root = ET.fromstring(target.read_bytes())
+            local_name = root.tag.rsplit("}", 1)[-1]
+            if local_name != "svg":
+                bad.append((rel, f"root tag is {local_name!r}, expected 'svg'"))
+        except ET.ParseError as exc:
+            bad.append((rel, f"not valid XML: {exc}"))
+    assert not bad, (
+        f"{len(bad)} .svg file(s) referenced by report.html are not valid SVG "
+        f"(would render as broken-image icons): {bad}"
+    )
 
 
 def test_emit_plot_with_sources_html_branch(tmp_path):
