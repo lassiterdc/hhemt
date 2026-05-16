@@ -289,7 +289,7 @@ the plan-closeout commit both ran in the pre-compaction session. Step 8a
 
 ## Follow-up Ideas
 
-
+- All project work should be merged to main in the pre-wrapup first-merge step, not just the agentic workspace. The current worktree-closeout / merge-1 contract operates on the agentic-workspace primary tree only; downstream managed-project repos (TRITON-SWMM_toolkit, ss-fha, etc.) with session-attributable commits should also be merged to main as part of that pre-wrapup merge gate so wrapup runs against a fully-merged ecosystem state. Today the Step 7c session-end push gate walks managed repos for unpushed commits but does not drive a merge to main on feature branches inside those projects — captured by user during wrapup First Action gate.
 
 %%
 "#" + "followup" tag: When the user tags an inline comment with `#` + `followup`, cut the tagged text from its original location, paste it here as a bullet, and add context sub-bullets if the original text does not stand alone without its surrounding context. The agent judges whether sub-bullets are needed — if the comment makes sense on its own, no sub-bullets are required. Change the tag in the original location to `#followup-moved`.
