@@ -824,8 +824,8 @@ def report_from_bundle_command(
         help="Path to the bundle zip (or unpacked bundle directory).",
     ),
     format: str = typer.Option(
-        "html", "--format",
-        help="Output format: 'html' (single-file) or 'zip' (unbundled tree).",
+        "zip", "--format",
+        help="Output format: 'zip' (single-HTML wrapped in a zip — default) or 'html' (uncompressed single-file).",
     ),
 ) -> None:
     # Render a fresh analysis_report from a portable render bundle.
