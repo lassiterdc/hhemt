@@ -81,13 +81,13 @@ def _assert_report_exists_with_figures(report_path: Path) -> None:
 def test_bundle_round_trip(request, tmp_path, fixture_name):
     """Bundle emit -> unpack -> report-from-bundle -> render assertion."""
     analysis = request.getfixturevalue(fixture_name)
-    bundle_tar = tmp_path / "bundle.tar"
+    bundle_zip = tmp_path / "bundle.zip"
     bundle_path = (
-        analysis.sensitivity.bundle_report_data(bundle_tar)
+        analysis.sensitivity.bundle_report_data(bundle_zip)
         if hasattr(analysis, "sensitivity") and analysis.sensitivity is not None
-        else analysis.bundle_report_data(bundle_tar)
+        else analysis.bundle_report_data(bundle_zip)
     )
-    assert bundle_path.exists(), "bundle tar not emitted"
+    assert bundle_path.exists(), "bundle zip not emitted"
 
     result = subprocess.run(
         ["TRITON_SWMM_toolkit", "report-from-bundle", str(bundle_path),
@@ -143,11 +143,11 @@ def test_bundle_baseline_wrapper_section_matches(
     before this assertion is loosened.
     """
     analysis = request.getfixturevalue(fixture_name)
-    bundle_tar = tmp_path / "bundle.tar"
+    bundle_zip = tmp_path / "bundle.zip"
     bundle_path = (
-        analysis.sensitivity.bundle_report_data(bundle_tar)
+        analysis.sensitivity.bundle_report_data(bundle_zip)
         if hasattr(analysis, "sensitivity") and analysis.sensitivity is not None
-        else analysis.bundle_report_data(bundle_tar)
+        else analysis.bundle_report_data(bundle_zip)
     )
 
     result = subprocess.run(

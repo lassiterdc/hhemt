@@ -316,3 +316,89 @@ def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
 
     with pytest.raises(ConfigurationError, match="override_hpc_total_nodes"):
         workflow_builder.submit_workflow(override_hpc_total_nodes=3)
+
+
+def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
+    """Runtime extra_sbatch_args appears as #SBATCH lines in the generated script."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path,
+        config_dir,
+        extra_sbatch_args=["--qos=debug"],
+    )
+    script_content = script_path.read_text()
+
+    assert "#SBATCH --qos=debug" in script_content
+
+
+def test_extra_sbatch_args_appends_after_config(norfolk_1job_cpu_only):
+    """Runtime extra_sbatch_args lines appear AFTER cfg_analysis.additional_SBATCH_params lines."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    analysis.cfg_analysis.additional_SBATCH_params = ["--qos=normal", "--mail-type=END"]
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path,
+        config_dir,
+        extra_sbatch_args=["--qos=debug"],
+    )
+    script_content = script_path.read_text()
+
+    cfg_qos_idx = script_content.index("#SBATCH --qos=normal")
+    runtime_qos_idx = script_content.index("#SBATCH --qos=debug")
+    assert cfg_qos_idx < runtime_qos_idx, (
+        "Runtime extra_sbatch_args must appear AFTER cfg_analysis.additional_SBATCH_params "
+        "so SLURM's last-directive-wins semantics let runtime values shadow config values."
+    )
+
+
+def test_extra_sbatch_args_prints_override_info(norfolk_1job_cpu_only, capsys):
+    """When extra_sbatch_args overrides a config-derived directive, an INFO message is printed naming
+    the flag, the origin of the original value, and the new runtime value."""
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    original_partition = str(analysis.cfg_analysis.hpc_ensemble_partition)
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+
+    workflow_builder._generate_single_job_submission_script(
+        snakefile_path,
+        config_dir,
+        extra_sbatch_args=["--partition=debug"],
+    )
+    captured = capsys.readouterr()
+
+    assert "[extra_sbatch_args] OVERRIDE" in captured.out
+    assert "'--partition'" in captured.out
+    assert original_partition in captured.out
+    assert "--partition=debug" in captured.out
+    assert "cfg_analysis.hpc_ensemble_partition" in captured.out
+
+
+def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
+    """extra_sbatch_args raises ConfigurationError when multi_sim_run_method != '1_job_many_srun_tasks'."""
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    analysis.cfg_analysis.multi_sim_run_method = "local"
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+
+    with pytest.raises(ConfigurationError, match="extra_sbatch_args is only valid"):
+        workflow_builder.submit_workflow(extra_sbatch_args=["--qos=debug"])

@@ -26,6 +26,7 @@ from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.resource_management import ResourceManager
+from TRITON_SWMM_toolkit.workflow import _emit_report_artifacts
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
@@ -467,6 +468,8 @@ class TRITONSWMM_analysis:
 
         return task_id
 
+    # Conforms to TRITON_SWMM_toolkit.bundle._protocol.BundleableAnalysis
+    # via duck typing (Protocol is structural; no registration needed).
     def bundle_report_data(
         self,
         output_path: "Path | None" = None,
@@ -1485,6 +1488,7 @@ class TRITONSWMM_analysis:
         report_config: "Path | None" = None,
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
+        extra_sbatch_args: list[str] | None = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1513,6 +1517,42 @@ class TRITONSWMM_analysis:
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
+        extra_sbatch_args : list[str] | None
+            Optional list of additional SBATCH directive strings (e.g.,
+            ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
+            append to the generated ``run_workflow_1job.sh`` script. Each list
+            element is emitted as one ``#SBATCH <element>`` line, after every
+            other source of ``#SBATCH`` directives in the script — both the
+            always-emitted directives derived from config fields
+            (``--job-name``, ``--partition`` from
+            ``cfg_analysis.hpc_ensemble_partition``, ``--account`` from
+            ``cfg_analysis.hpc_account``, ``--nodes`` from
+            ``cfg_analysis.hpc_total_nodes`` (or the
+            ``override_hpc_total_nodes`` runtime kwarg), ``--exclusive``,
+            ``--gres`` from ``cfg_analysis.hpc_gpus_per_node`` +
+            ``cfg_system.gpu_hardware``, ``--time`` from
+            ``cfg_analysis.hpc_total_job_duration_min``, ``--output``,
+            ``--error``) AND the directives in the
+            ``cfg_analysis.additional_SBATCH_params`` config list.
+
+            **Override behavior**: any flag in ``extra_sbatch_args`` that
+            matches a flag emitted earlier in the script — whether that earlier
+            directive came from a top-level ``cfg_analysis`` field
+            (``hpc_ensemble_partition``, ``hpc_account``, ``hpc_total_nodes``,
+            ``hpc_total_job_duration_min``, ``hpc_gpus_per_node``, etc.) or
+            from the ``cfg_analysis.additional_SBATCH_params`` list — WILL
+            OVERRIDE the config-derived value via SLURM's last-directive-wins
+            parser semantics. When such an override is detected, an
+            informational ``[extra_sbatch_args] OVERRIDE: ...`` message is
+            printed naming the flag, the origin of the original value
+            (e.g. ``cfg_analysis.hpc_ensemble_partition``), and the new
+            runtime value, so the user can confirm the override took effect
+            as intended.
+
+            Only valid for ``multi_sim_run_method="1_job_many_srun_tasks"``;
+            raises ``ConfigurationError`` otherwise (a fail-fast guard
+            preventing the user from believing they are controlling the
+            experiment when the kwarg would silently no-op in another mode).
 
         Returns
         -------
@@ -1558,14 +1598,19 @@ class TRITONSWMM_analysis:
 
         from .orchestration import WorkflowResult, translate_mode, translate_phases
         from .config.report import (
-            DEFAULT_REPORT_CONFIG,
             report_config as ReportConfigModel,
             validate_sensitivity_independent_vars,
         )
         from .config.loaders import yaml_to_model
         from .exceptions import ConfigurationError
 
-        # Pre-run report_config validation — fail fast before submitting workflow
+        # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
+        # Resolution order:
+        #   (a) explicit `report_config=` argument → load and use
+        #   (b) self.cfg_analysis.report (guaranteed non-None by R1 — required
+        #       Pydantic field; loading a cfg_analysis.yaml without `report:`
+        #       raises ValidationError before this code is reached)
+        # No DEFAULT_REPORT_CONFIG fallback — the field is required.
         if report_config is not None:
             report_config = Path(report_config)
             try:
@@ -1577,7 +1622,7 @@ class TRITONSWMM_analysis:
                     config_path=report_config,
                 ) from e
         else:
-            cfg_report = DEFAULT_REPORT_CONFIG
+            cfg_report = self.cfg_analysis.report
 
         sa_csv = (
             self.cfg_analysis.sensitivity_analysis
@@ -1586,7 +1631,6 @@ class TRITONSWMM_analysis:
         )
         validate_sensitivity_independent_vars(cfg_report, sa_csv)
         self._cfg_report = cfg_report
-        self._cfg_report_path = report_config
 
         # Pre-run transfer validation — fail fast before submitting the workflow
         if transfer_config is not None:
@@ -1696,8 +1740,8 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
-            "report_config_path": self._cfg_report_path,
             "report_formats": report_formats,
+            "extra_sbatch_args": extra_sbatch_args,
         }
 
         if verbose:
@@ -1776,8 +1820,7 @@ class TRITONSWMM_analysis:
         # Re-emit report artifacts (report.css + workflow_description template)
         # from package resources so render_report picks up edits made to the
         # source-tree report_templates/ since the analysis was last run.
-        from .workflow import SnakemakeWorkflowBuilder
-        SnakemakeWorkflowBuilder(self)._emit_report_artifacts(self.analysis_paths.analysis_dir)
+        _emit_report_artifacts(self.analysis_paths.analysis_dir)
         # --cores 1 is required by Snakemake's CLI even though --report is a
         # post-execution render that does not execute rules.
         cmd = [
@@ -2068,8 +2111,8 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
-        report_config_path: "Path | None" = None,
         report_formats: list[str] | None = None,
+        extra_sbatch_args: list[str] | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2156,8 +2199,8 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
+                extra_sbatch_args=extra_sbatch_args,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2179,8 +2222,8 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
                 verbose=verbose,
                 override_hpc_total_nodes=override_hpc_total_nodes,
-                report_config_path=report_config_path,
                 report_formats=report_formats,
+                extra_sbatch_args=extra_sbatch_args,
             )
 
         if dry_run and result.get("success"):

@@ -1,0 +1,307 @@
+{
+  "full_res_path": "plots/sensitivity/per_sim/sa-1/event_index.0/peak_flood_depth.png",
+  "preview_path": "plots/sensitivity/per_sim/sa-1/event_index.0/peak_flood_depth.preview.png",
+  "full_res_format": "png",
+  "full_res_dpi": 100,
+  "preview_dpi": 100,
+  "figure_size_inches": [
+    12.331034482758621,
+    6.0
+  ],
+  "full_res_size_bytes": 33878,
+  "preview_size_bytes": 33878,
+  "source_paths_relative": [
+    "analysis_datatree.zarr",
+    "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+    "../../../elevation_10.00m.dem",
+    "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc"
+  ],
+  "emitted_at_utc": "2026-05-11T19:08:34.112893+00:00",
+  "renderer_data": {
+    "event_iloc": 0,
+    "depth_m_max": 0.15718239669937087,
+    "valid_cell_count": 96,
+    "wse_m_range": [
+      0.5033975709462929,
+      0.9104276012521174
+    ],
+    "rainfall_max_mm_per_hr": 100.0,
+    "bc_water_level_range_m": [
+      0.0,
+      0.0
+    ],
+    "depth_boundaries_m": [
+      0.01,
+      0.05,
+      0.1,
+      0.5,
+      1.0
+    ]
+  },
+  "artists": [
+    {
+      "axes_id": "ax_depth",
+      "kind": "image",
+      "note": "peak flood depth raster (continuous linear, event 0)",
+      "channels": [
+        {
+          "channel": "z",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_wlevel_m",
+            "attrs": {
+              "source_file": "/home/dcl3nd/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sims/event_index.0/out_tritonswmm/bin/MH_01_00.out",
+              "format": "bin",
+              "standard_name": "sea_surface_height_above_geoid",
+              "long_name": "Maximum water level over simulation",
+              "units": "m",
+              "cell_methods": "timestep_min: maximum"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": "masked to watershed and depth>0"
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_wlevel_m",
+            "attrs": {
+              "source_file": "/home/dcl3nd/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sims/event_index.0/out_tritonswmm/bin/MH_01_00.out",
+              "format": "bin",
+              "standard_name": "sea_surface_height_above_geoid",
+              "long_name": "Maximum water level over simulation",
+              "units": "m",
+              "cell_methods": "timestep_min: maximum"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": "masked to watershed and depth>0"
+          },
+          "encoding": {
+            "cmap": "YlGnBu",
+            "vmin": 0.01,
+            "vmax": 0.15718239669937087,
+            "norm": "Normalize",
+            "extend": "min",
+            "under_color": "white"
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_depth",
+      "kind": "patch",
+      "note": "watershed boundary overlay",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+            "variable": "watershed_polygon",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+            "variable": "watershed_polygon",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_wse",
+      "kind": "image",
+      "note": "water surface elevation = depth + DEM (event 0)",
+      "channels": [
+        {
+          "channel": "z",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_wlevel_m",
+            "attrs": {
+              "source_file": "/home/dcl3nd/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sims/event_index.0/out_tritonswmm/bin/MH_01_00.out",
+              "format": "bin",
+              "standard_name": "sea_surface_height_above_geoid",
+              "long_name": "Maximum water level over simulation",
+              "units": "m",
+              "cell_methods": "timestep_min: maximum"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": "depth, summed with DEM elevation"
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "z",
+          "ref": {
+            "source_path": "../../../elevation_10.00m.dem",
+            "variable": "dem_elev_m",
+            "attrs": {
+              "_FillValue": "-9999.0",
+              "scale_factor": 1.0,
+              "add_offset": 0.0
+            },
+            "selection": null,
+            "transform": "reprojected to target_crs"
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "color",
+          "ref": {
+            "source_path": "analysis_datatree.zarr",
+            "variable": "max_wlevel_m",
+            "attrs": {
+              "source_file": "/home/dcl3nd/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/synth_sensitivity/synth_sensitivity/subanalyses/sa_1/sims/event_index.0/out_tritonswmm/bin/MH_01_00.out",
+              "format": "bin",
+              "standard_name": "sea_surface_height_above_geoid",
+              "long_name": "Maximum water level over simulation",
+              "units": "m",
+              "cell_methods": "timestep_min: maximum"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": "depth, summed with DEM elevation"
+          },
+          "encoding": {
+            "cmap": "plasma",
+            "vmin": 0.5033975709462929,
+            "vmax": 0.9104276012521174
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_wse",
+      "kind": "patch",
+      "note": "watershed boundary overlay",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+            "variable": "watershed_polygon",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson",
+            "variable": "watershed_polygon",
+            "attrs": {},
+            "selection": null,
+            "transform": null
+          },
+          "encoding": {}
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_rain",
+      "kind": "bar",
+      "note": "rainfall time series (event hydrology \u2014 top sub-panel)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "RG_synth",
+            "attrs": {
+              "units": "mm/hr",
+              "long_name": "rainfall intensity"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "minutes from event start"
+          }
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "RG_synth",
+            "attrs": {
+              "units": "mm/hr",
+              "long_name": "rainfall intensity"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "mm/hr"
+          }
+        }
+      ]
+    },
+    {
+      "axes_id": "ax_bc",
+      "kind": "line2d",
+      "note": "boundary condition water level (event hydrology \u2014 bottom sub-panel)",
+      "channels": [
+        {
+          "channel": "x",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "water_level",
+            "attrs": {
+              "units": "m",
+              "long_name": "storm tide water level"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "minutes from event start"
+          }
+        },
+        {
+          "channel": "y",
+          "ref": {
+            "source_path": "../../../../../synthetic_test_models/23e859ea50fa19b1/weather.nc",
+            "variable": "water_level",
+            "attrs": {
+              "units": "m",
+              "long_name": "storm tide water level"
+            },
+            "selection": {
+              "event_iloc": 0
+            },
+            "transform": null
+          },
+          "encoding": {
+            "units": "m"
+          }
+        }
+      ]
+    }
+  ]
+}

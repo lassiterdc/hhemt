@@ -1,0 +1,23 @@
+{
+  "full_res_path": "plots/per_analysis/summary_table.svg",
+  "preview_path": "plots/per_analysis/summary_table.preview.png",
+  "full_res_format": "svg",
+  "full_res_dpi": 100,
+  "preview_dpi": 100,
+  "figure_size_inches": [
+    8.0,
+    2.3
+  ],
+  "full_res_size_bytes": 22256,
+  "preview_size_bytes": 7290,
+  "source_paths_relative": [],
+  "emitted_at_utc": "2026-05-11T19:08:16.984495+00:00",
+  "artists": [
+    {
+      "axes_id": "ax_summary",
+      "kind": "table",
+      "note": "per-analysis workflow-health table (status counts + enabled model types)",
+      "channels": []
+    }
+  ]
+}

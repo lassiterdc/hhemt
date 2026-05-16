@@ -42,6 +42,17 @@ def render(
     hook). When the CSV is missing, emits a placeholder HTML noting the absence
     so the appendix entry is never blank.
     """
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
+    )
+    if static_backend == "plotly":
+        from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
+            warn_no_plotly_branch,
+        )
+        warn_no_plotly_branch("scenario_status_appendix")
+
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         _validate_source_path,
         emit_plot_with_sources,

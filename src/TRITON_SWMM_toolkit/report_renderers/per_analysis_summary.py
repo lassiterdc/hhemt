@@ -26,6 +26,17 @@ def render(
     output_path: Path,
 ) -> Path:
     """Render the analysis summary table to output_path."""
+    static_backend = getattr(
+        getattr(report_cfg, "interactive", None),
+        "static_backend",
+        "plotly",
+    )
+    if static_backend == "plotly":
+        from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
+            warn_no_plotly_branch,
+        )
+        warn_no_plotly_branch("per_analysis_summary")
+
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
