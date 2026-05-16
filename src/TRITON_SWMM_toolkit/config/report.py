@@ -167,7 +167,7 @@ class SystemMapConfig(cfgBaseModel):
         description=(
             "Target CRS for the system map and downstream per-sim renderers. "
             "Resolved via `resolve_target_crs()` precedence: this field -> "
-            "system_config.crs_epsg -> DEM .rio.crs. When None, falls through to "
+            "system_config.crs.horizontal_epsg -> DEM .rio.crs. When None, falls through to "
             "the next precedence level."
         ),
     )
@@ -773,9 +773,11 @@ def resolve_target_crs(analysis, report_cfg: report_config):
     """Resolve the target CRS for renderers.
 
     Precedence (first non-None wins):
-      1. report_cfg.system_map.target_epsg
-      2. analysis._system.cfg_system.crs_epsg
-      3. analysis._system.sys_paths.dem_processed's .rio.crs
+      1. report_cfg.system_map.target_epsg [DEPRECATED — removal scheduled in
+         the FOLLOW-UP plan; retained one cycle for back-compat with existing
+         report_config.yaml files that explicitly set this override.]
+      2. analysis._system.cfg_system.crs.horizontal_epsg (canonical)
+      3. analysis._system.sys_paths.dem_processed's .rio.crs (last-resort)
     """
     import pyproj
     import rioxarray as rxr
@@ -784,8 +786,9 @@ def resolve_target_crs(analysis, report_cfg: report_config):
         return pyproj.CRS.from_epsg(report_cfg.system_map.target_epsg)
 
     cfg_sys = analysis._system.cfg_system
-    if getattr(cfg_sys, "crs_epsg", None) is not None:
-        return pyproj.CRS.from_epsg(cfg_sys.crs_epsg)
+    horizontal = cfg_sys.crs.horizontal_epsg
+    if horizontal is not None:
+        return pyproj.CRS.from_epsg(horizontal)
 
     dem_path = analysis._system.sys_paths.dem_processed
     dem = rxr.open_rasterio(dem_path)
@@ -796,7 +799,7 @@ def resolve_target_crs(analysis, report_cfg: report_config):
         field="report_cfg.system_map.target_epsg",
         message=(
             "Cannot resolve target CRS: report_cfg.system_map.target_epsg is None, "
-            "system_config.crs_epsg is None, and the processed DEM at "
+            "system_config.crs.horizontal_epsg is None, and the processed DEM at "
             f"{dem_path} has no CRS metadata."
         ),
         config_path=None,

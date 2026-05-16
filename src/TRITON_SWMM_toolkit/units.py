@@ -61,9 +61,9 @@ TIME_AXIS_PROVENANCE_UNITS: str = "minutes from event start"
 
 
 # ---- Map / spatial labels --------------------------------------------------
-# CRS-keyed spatial axis labels. Norfolk's crs_epsg=32147 is NAD83 / Virginia
-# South (ftUS) — rendering "Easting (m)" against ftUS coordinates is a
-# semantic regression the helper prevents.
+# CRS-keyed spatial axis labels. Norfolk's horizontal_epsg=32147 is
+# NAD83 / Virginia South (ftUS) — rendering "Easting (m)" against ftUS
+# coordinates is a semantic regression the helper prevents.
 
 _EPSG_TO_HORIZONTAL_UNIT: dict[int, str] = {
     32147: "ft",   # NAD83 / Virginia South (ftUS)
@@ -86,13 +86,45 @@ def northing_axis_label(crs_epsg: int | None) -> str:
     return f"Northing ({_crs_horizontal_unit_label(crs_epsg)})"
 
 
-# Vertical-unit labels — separate from horizontal because DEM elevation can be
-# meters even when horizontal CRS is ftUS. The DEM unit is a property of the
-# DEM file itself, not its CRS — keep these as constants until a vertical-unit
-# config field is introduced.
-DEM_ELEV_LABEL: str = "Elevation (m)"
-WSE_LABEL: str = "WSE (m)"
-DEPTH_LABEL: str = "Depth (m)"
+# Vertical-CRS-keyed elevation/WSE/depth labels. The vertical CRS encodes
+# both the elevation unit (m / ftUS / ft) and the datum (NAVD88, etc.).
+# Add rows here when a new vertical CRS appears in production configs.
+_EPSG_TO_VERTICAL_UNIT_AND_DATUM: dict[int, tuple[str, str]] = {
+    5703: ("m", "NAVD88"),       # NAVD88 height (meters)
+    6360: ("ftUS", "NAVD88"),    # NAVD88 height (US survey feet)
+    8228: ("ft", "NAVD88"),      # NAVD88 height (international feet)
+}
+
+
+def _vertical_label(noun: str, vertical_crs_epsg: int | None) -> str:
+    """Format `<noun> (<unit>, <datum>)` when known; `<noun> (EPSG:N)` otherwise.
+
+    `vertical_crs_epsg=None` falls through to the EPSG:N form, preserving
+    callability when the cfg field is uninitialized during early renderer
+    unit tests.
+    """
+    if vertical_crs_epsg is None:
+        return f"{noun}"
+    entry = _EPSG_TO_VERTICAL_UNIT_AND_DATUM.get(vertical_crs_epsg)
+    if entry is None:
+        return f"{noun} (EPSG:{vertical_crs_epsg})"
+    unit, datum = entry
+    return f"{noun} ({unit}, {datum})"
+
+
+def dem_elev_label(vertical_crs_epsg: int | None) -> str:
+    """Colorbar label for DEM elevation."""
+    return _vertical_label("Elevation", vertical_crs_epsg)
+
+
+def wse_label(vertical_crs_epsg: int | None) -> str:
+    """Colorbar label for water-surface elevation."""
+    return _vertical_label("WSE", vertical_crs_epsg)
+
+
+def depth_label(vertical_crs_epsg: int | None) -> str:
+    """Colorbar label for flood depth."""
+    return _vertical_label("Depth", vertical_crs_epsg)
 
 
 # ---- Flow / discharge labels -----------------------------------------------

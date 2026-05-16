@@ -367,12 +367,14 @@ def render(
         cax=cax_depth, orientation="horizontal",
         extend="min",
     )
-    cbar_d.set_label(units.DEPTH_LABEL)
+    cbar_d.set_label(units.depth_label(analysis._system.cfg_system.crs.vertical_epsg))
     ax_depth.set_aspect("equal")
     ax_depth.set_xlim(bounds[0], bounds[2])
     ax_depth.set_ylim(bounds[1], bounds[3])
     ax_depth.set_title("Peak flood depth")
-    crs_for_labels = report_cfg.system_map.target_epsg or analysis._system.cfg_system.crs_epsg
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs_resolved = resolve_target_crs(analysis, report_cfg)
+    crs_for_labels = target_crs_resolved.to_epsg()
     ax_depth.tick_params(axis="both", labelsize=map_cfg.tick_labelsize)
     ax_depth.set_xlabel(units.easting_axis_label(crs_for_labels), fontsize=map_cfg.axis_label_fontsize)
     ax_depth.set_ylabel(units.northing_axis_label(crs_for_labels), fontsize=map_cfg.axis_label_fontsize)
@@ -442,7 +444,7 @@ def render(
         ax_wse.collections[0] if ax_wse.collections else wse_img,
         cax=cax_wse, orientation="horizontal",
     )
-    cbar_w.set_label(units.WSE_LABEL)
+    cbar_w.set_label(units.wse_label(analysis._system.cfg_system.crs.vertical_epsg))
     ax_wse.set_aspect("equal")
     ax_wse.set_title("Water surface elevation")
     # C8 — middle panel shares y-axis with ax_depth (sharey=ax_depth above);
@@ -735,7 +737,7 @@ def _render_plotly_branch(
                 z=depth_z, x=depth_x, y=depth_y,
                 colorscale="YlGnBu", zmin=depth_vmin, zmax=depth_vmax,
                 colorbar=dict(
-                    title=units.DEPTH_LABEL, orientation="h",
+                    title=units.depth_label(analysis._system.cfg_system.crs.vertical_epsg), orientation="h",
                     y=-0.10, len=0.30, x=0.16, thickness=12,
                 ),
                 hovertemplate="Depth: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
@@ -775,7 +777,7 @@ def _render_plotly_branch(
                 z=wse_z, x=wse_x, y=wse_y,
                 colorscale="cividis", zmin=wse_min, zmax=wse_max,
                 colorbar=dict(
-                    title=units.WSE_LABEL, orientation="h",
+                    title=units.wse_label(analysis._system.cfg_system.crs.vertical_epsg), orientation="h",
                     y=-0.10, len=0.30, x=0.52, thickness=12,
                 ),
                 hovertemplate="WSE: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
@@ -884,10 +886,9 @@ def _render_plotly_branch(
         )
 
     # ---- Axes setup -----------------------------------------------------
-    crs_for_labels = (
-        report_cfg.system_map.target_epsg
-        or analysis._system.cfg_system.crs_epsg
-    )
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs_resolved = resolve_target_crs(analysis, report_cfg)
+    crs_for_labels = target_crs_resolved.to_epsg()
     for col in (1, 2):
         fig.update_xaxes(
             range=[bounds[0], bounds[2]],
