@@ -285,6 +285,20 @@ class PerSimFigureSpec(cfgBaseModel):
     cmap: str = Field("viridis")
     vmin: float | None = Field(None)
     vmax: float | None = Field(None)
+    vmax_quantile: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Optional quantile (in [0, 1]) used to derive the colorbar upper bound "
+            "when `vmax` is None. When set, the renderer computes "
+            "`np.nanquantile(values, vmax_quantile)` as the colorbar max. This "
+            "clips out top-end outliers so the bulk of the value distribution is "
+            "visible with better contrast. When both `vmax` and `vmax_quantile` "
+            "are None, the renderer falls back to the absolute max. Not all "
+            "renderers consume this field; check the renderer's docstring."
+        ),
+    )
 
 
 class InteractiveBackendConfig(cfgBaseModel):
@@ -529,7 +543,7 @@ class PerSimConfig(cfgBaseModel):
     hydrology_panel: HydrologyPanelConfig = Field(default_factory=HydrologyPanelConfig)
     peak_flood_depth: PerSimFigureSpec = Field(default_factory=PerSimFigureSpec)
     conduit_flow: PerSimFigureSpec = Field(
-        default_factory=lambda: PerSimFigureSpec(cmap="plasma")
+        default_factory=lambda: PerSimFigureSpec(cmap="plasma", vmax_quantile=0.95)
     )
     interactive: PerSimMapInteractiveConfig = Field(
         default_factory=PerSimMapInteractiveConfig
