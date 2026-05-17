@@ -458,6 +458,22 @@ def synth_sensitivity_with_system_gpu_hardware_override():
     return case.analysis
 
 
+@pytest.fixture
+def synth_sensitivity_all_analysis_prefixed():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
+def synth_sensitivity_mixed_prefixed_columns():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_mixed_prefixed_columns(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
 @pytest.fixture(scope="session")
 def tritonswmm_cpu_compiled():
     """Pre-compile TRITON-SWMM CPU once per test session for each test-case

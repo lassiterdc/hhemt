@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -147,7 +148,6 @@ class TRITONSWMM_sensitivity_analysis:
         self.subanalysis_dir = (
             self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         )
-        self.independent_vars = self._attributes_varied_for_analysis()
         df_setup_full = self._retrieve_df_setup()
         self._df_setup_full = df_setup_full
         self._has_per_sa_system_configs = "system_config_yaml" in df_setup_full.columns
@@ -169,7 +169,13 @@ class TRITONSWMM_sensitivity_analysis:
                     sub_analysis_ids=list(df_setup_full.index.astype(str)),
                 )
             ]
-        self.df_setup = df_setup_full.loc[:, self.independent_vars]  # type: ignore
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config as _analysis_config_for_df_setup
+        analysis_cols = [
+            c for c in df_setup_full.columns
+            if c in _analysis_config_for_df_setup.model_fields
+            or _is_analysis_overlay_column(c)
+        ]
+        self.df_setup = df_setup_full.loc[:, analysis_cols]
         self.sub_analyses = self._create_sub_analyses()
 
         # Initialize workflow builder for sensitivity analysis
@@ -732,14 +738,70 @@ class TRITONSWMM_sensitivity_analysis:
     # def TRITONSWMM_runtimes(self):
     #     return self.master_analysis.TRITONSWMM_runtimes
 
-    def _attributes_varied_for_analysis(self):
-        df_setup = self._retrieve_df_setup()
-        keys_targeted_for_sensitivity = []
-        for key, val in self.master_analysis.cfg_analysis.model_dump().items():
-            # print(key)
-            if key in df_setup.columns:
-                keys_targeted_for_sensitivity.append(key)
-        return [k for k in keys_targeted_for_sensitivity if k != "system_config_yaml"]
+    @property
+    def analysis_independent_vars(self) -> list[str]:
+        """Phase 2 — analysis-config attributes varied across sub-analyses.
+
+        Returns the canonical (stripped) field name for each varied analysis-config
+        column. Recognizes both `analysis.{field}` (canonical) and bare `field`
+        names (deprecated; emits DeprecationWarning at sub-analysis construction
+        time via `_create_sub_analyses`).
+        """
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+        seen: list[str] = []
+        for col in self._df_setup_full.columns:
+            if col == "system_config_yaml":
+                continue
+            if _is_system_overlay_column(col):
+                continue
+            if _is_analysis_overlay_column(col):
+                field_name = _strip_analysis_prefix(col)
+            elif col in analysis_config.model_fields:
+                field_name = col  # bare name; DeprecationWarning fires at sub-analysis construction time
+            else:
+                continue  # Defensive — should be caught by _retrieve_df_setup allowlist
+            if field_name not in seen:
+                seen.append(field_name)
+        return seen
+
+    @property
+    def system_independent_vars(self) -> list[str]:
+        """Phase 2 — system-config attributes varied across sub-analyses.
+
+        Recognizes only `system.{field}` columns (no bare names — Phase 1 R1
+        rejects bare-name system_config columns at the allowlist gate).
+        """
+        seen: list[str] = []
+        for col in self._df_setup_full.columns:
+            if _is_system_overlay_column(col):
+                field_name = _strip_system_prefix(col)
+                if field_name not in seen:
+                    seen.append(field_name)
+        return seen
+
+    @property
+    def independent_vars(self) -> list[str]:
+        """BC alias — Phase 2 retains this name for downstream callers that haven't migrated.
+
+        Returns the union of `analysis_independent_vars` and
+        `system_independent_vars` (latter prefixed with `system.` to
+        disambiguate). Downstream callers should migrate to the explicit
+        `analysis_independent_vars` and `system_independent_vars` properties;
+        this alias may be deprecated in a future release.
+
+        Contract for prefixed-name entries: every entry of the returned list is
+        an opaque label suitable for Snakemake wildcards (charset
+        `^[A-Za-z0-9_.]+$`). Consumers MUST NOT deconstruct entries by `.`-split
+        or by Pydantic-field lookup against a single model — entries may name
+        either an `analysis_config` field (bare) OR a `system.{field}` overlay
+        column. Verified consumers (`analysis.py`, `workflow.py`,
+        `report_templates/workflow_description.rst.j2`, `config/report.py`,
+        `bundle/snakefile_generator.py`) treat entries as opaque labels and
+        tolerate the prefixed form without modification.
+        """
+        return self.analysis_independent_vars + [
+            f"system.{f}" for f in self.system_independent_vars
+        ]
 
     def _retrieve_df_setup(self) -> pd.DataFrame:
         import re as _re
@@ -1224,11 +1286,29 @@ class TRITONSWMM_sensitivity_analysis:
         dic_sensitivity_analyses = dict()
         for idx, row in self.df_setup.iterrows():
             sa_id = str(idx)
-            overlay_cells = {
-                (_strip_analysis_prefix(k) if k.startswith(_ANALYSIS_COLUMN_PREFIX) else k): v
-                for k, v in row.items()
-                if not pd.isna(v)
-            }
+            overlay_cells: dict = {}
+            for k, v in row.items():
+                if pd.isna(v):
+                    continue
+                if _is_analysis_overlay_column(k):
+                    overlay_cells[_strip_analysis_prefix(k)] = v
+                elif k in analysis_config.model_fields:
+                    warnings.warn(
+                        f"Bare-name analysis-config column `{k}` is deprecated; "
+                        f"rename to `analysis.{k}` for the canonical prefixed-column form. "
+                        f"Bare-name support will be removed in a future release.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
+                    overlay_cells[k] = v
+                else:
+                    # Defensive — `_retrieve_df_setup`'s column allowlist plus the
+                    # analysis-only `self.df_setup` projection should have filtered
+                    # `sa_id`/`system_config_yaml`/`system.*` already.
+                    raise ConfigurationError(
+                        field="sensitivity_analysis.unknown_column",
+                        message=f"Column `{k}` is not a recognized analysis-config field.",
+                    )
             cfg_snstvty_analysis = analysis_config.model_validate({
                 **self.master_analysis.cfg_analysis.model_dump(),
                 **overlay_cells,
@@ -1289,12 +1369,13 @@ class TRITONSWMM_sensitivity_analysis:
         """Compute the deterministic fingerprint payload for one sub-analysis.
 
         Projects the sub-analysis's post-Pydantic ``analysis_config.model_dump(mode="json")``
-        onto the columns named by ``self.independent_vars`` (sorted). Adds a
-        ``__schema_version__`` sentinel so future serializer-format changes are
-        themselves observable. Excludes ``sa_id`` (the path already disambiguates).
+        onto the canonical field names from ``self.analysis_independent_vars``
+        (sorted). Adds a ``__schema_version__`` sentinel so future
+        serializer-format changes are themselves observable. Excludes ``sa_id``
+        (the path already disambiguates).
 
         Stability contract: every ``analysis_config`` field that may appear in
-        ``self.independent_vars`` must be JSON-stable under ``model_dump(mode="json")``
+        ``self.analysis_independent_vars`` must be JSON-stable under ``model_dump(mode="json")``
         — that is, two invocations on the same sub_analysis instance must produce
         byte-identical ``json.dumps(..., sort_keys=True)`` output. The currently-known
         sensitivity-CSV columns (``cpus_per_sim``, ``n_omp_threads``, ``hpc_total_nodes``,
@@ -1309,9 +1390,12 @@ class TRITONSWMM_sensitivity_analysis:
         cfg_dump = sub_analysis.cfg_analysis.model_dump(mode="json")
         # KeyError on missing key — surfaces config-schema drift loudly rather than
         # producing fingerprints that silently project None for an absent field.
+        # Phase 2 — project against `analysis_independent_vars` (canonical stripped
+        # names) rather than the BC alias `independent_vars` (which includes
+        # `system.*` entries that have no key in `cfg_dump`).
         payload: dict[str, object] = {
             "__schema_version__": 1,
-            "fields": {k: cfg_dump[k] for k in sorted(self.independent_vars)},
+            "fields": {k: cfg_dump[k] for k in sorted(self.analysis_independent_vars)},
         }
         # When the sensitivity CSV declares a `system_config_yaml` column, bump the
         # schema and attach a SHA-1 of the sub-analysis's resolved cfg_system. This
