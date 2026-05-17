@@ -35,7 +35,55 @@ import xarray as xr
 from matplotlib.colors import Normalize
 from plotly.subplots import make_subplots
 
+import swmmio
+
+from matplotlib import cm as mcm
+
 from TRITON_SWMM_toolkit import units, utils
+from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
+    compute_padded_square_bounds,
+)
+
+
+def _build_discrete_depth_colorscale(
+    boundaries, vmin: float, vmax: float, base_cmap_name: str,
+):
+    """Build a Plotly stepped colorscale matching the matplotlib BoundaryNorm
+    behaviour the renderer used pre-iter-19. Returns the colorscale list AND
+    the per-band hex colors so callers can mirror them on a legend.
+
+    The colorscale has `len(boundaries)` bands. The first band covers
+    `[vmin, boundaries[0])` (lowest depth class); each subsequent band covers
+    `[boundaries[i-1], boundaries[i])`; the topmost band covers
+    `[boundaries[-1], vmax]`. Plotly's stepped-colorscale idiom is to repeat
+    each interior fraction with two stops — one closing the previous band
+    color and one opening the next.
+    """
+    cmap = mcm.get_cmap(base_cmap_name)
+    n_bands = len(boundaries)
+    # Sample the base colormap at evenly-spaced positions in [0.2, 1.0] so the
+    # lowest band still has visible saturation against a white panel.
+    positions = (
+        [0.2 + 0.8 * i / (n_bands - 1) for i in range(n_bands)]
+        if n_bands > 1 else [0.6]
+    )
+    rgba = [cmap(p) for p in positions]
+    hex_colors = [
+        "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+        for r, g, b, _a in rgba
+    ]
+    # Normalize boundaries into [0, 1] colorscale fraction space.
+    span = max(vmax - vmin, 1e-12)
+    norm_b = [max(0.0, min(1.0, (b - vmin) / span)) for b in boundaries]
+    cs = [[0.0, hex_colors[0]]]
+    for i in range(n_bands - 1):
+        cs.append([norm_b[i], hex_colors[i]])
+        cs.append([norm_b[i], hex_colors[i + 1]])
+    cs.append([1.0, hex_colors[-1]])
+    return cs, hex_colors
+from TRITON_SWMM_toolkit.report_renderers.system_overview import (
+    _resolve_inp_sources,
+)
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -94,19 +142,46 @@ def _shared_depth_max(analysis, target_crs):
     return g_max
 
 
-def _shared_wse_range(analysis, target_crs, dem_da):
+def _shared_wse_range(analysis, target_crs, dem_da, map_cfg=None):
     """Return (vmin, vmax) for the WSE colorbar, computed once across every
     event_iloc so all per-event figures share a colorbar (iter-15 user
-    request). Walks every event's TRITON summary, masks depth > 0 + watershed,
-    builds WSE = depth + DEM, and accumulates the global min/max. Falls back
-    to per-event range if no events expose a usable summary.
+    request). Walks every event's TRITON summary, masks depth >
+    dry_threshold_m + watershed, builds WSE = depth + DEM, and accumulates
+    the global quantile-clipped range across all wetted cells from all
+    events. Falls back to per-event range if no events expose a usable
+    summary.
+
+    F-I-2 (interactive-report-renderers Phase 3): WSE colorbar range uses
+    quantile clip across the union of wetted cells, not min/max. Suppresses
+    building-on-top dry-cell artifacts that would otherwise dominate the
+    cross-event colorbar scale. Quantiles read from `map_cfg.wse_clip_quantile_lower`
+    / `_upper` when `map_cfg` is supplied; falls back to (q01, q99) when
+    `map_cfg` is None (preserves callability from sites that don't have the
+    cfg in scope).
     """
     enabled = analysis._get_enabled_model_types()
     if "tritonswmm" not in enabled and "triton" not in enabled:
         return None
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
-    g_min, g_max = float("inf"), float("-inf")
+    if map_cfg is not None:
+        dry_threshold = float(map_cfg.dry_threshold_m)
+        q_lower = float(map_cfg.wse_clip_quantile_lower)
+        q_upper = float(map_cfg.wse_clip_quantile_upper)
+    else:
+        dry_threshold = 0.0
+        q_lower, q_upper = 0.01, 0.99
+    # F-I-2 building filter: exclude cells whose DEM lands on a wall/building
+    # so building-rooftop WSE values do not pollute the cross-event quantile
+    # clip. Threshold mirrors system_overview's wall-overlay rule.
+    sys_cfg = analysis._system.cfg_system
+    wall_th = None
+    if sys_cfg.dem_building_height is not None and sys_cfg.dem_outside_watershed_height is not None:
+        try:
+            buffer_m = analysis.cfg_analysis.report.system_map.elevation_style.wall_threshold_buffer_m
+        except AttributeError:
+            buffer_m = 40.0
+        wall_th = min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height) - buffer_m
     try:
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
@@ -115,6 +190,7 @@ def _shared_wse_range(analysis, target_crs, dem_da):
     if group not in tree.groups:
         return None
     ds_all = tree[group].to_dataset()
+    all_wet_values: list[np.ndarray] = []
     for _ev in analysis.df_sims.index:
         try:
             da_ev = ds_all["max_wlevel_m"].sel(event_iloc=int(_ev))
@@ -131,21 +207,22 @@ def _shared_wse_range(analysis, target_crs, dem_da):
                     m = utils.create_mask_from_shapefile(da_ev, tmp_path)
             else:
                 m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
-            wse_ev = (da_ev + dem_da).where(m & (da_ev > 0))
-            wse_min_obj = wse_ev.min()
-            wse_max_obj = wse_ev.max()
-            v_min = float(
-                wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj,
-            )
-            v_max = float(
-                wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj,
-            )
-            if np.isfinite(v_min):
-                g_min = min(g_min, v_min)
-            if np.isfinite(v_max):
-                g_max = max(g_max, v_max)
+            wse_ev = (da_ev + dem_da).where(m & (da_ev > dry_threshold))
+            if wall_th is not None:
+                wse_ev = wse_ev.where(dem_da < wall_th)
+            vals = wse_ev.values
+            if hasattr(vals, "compute"):
+                vals = vals.compute()
+            finite = vals[np.isfinite(vals)]
+            if finite.size > 0:
+                all_wet_values.append(finite)
         except KeyError:
             continue
+    if not all_wet_values:
+        return None
+    combined = np.concatenate(all_wet_values)
+    g_min = float(np.nanquantile(combined, q_lower))
+    g_max = float(np.nanquantile(combined, q_upper))
     if not np.isfinite(g_min) or not np.isfinite(g_max) or g_max <= g_min:
         return None
     return (g_min, g_max)
@@ -403,7 +480,7 @@ def render(
     # in the analysis so the user can compare WSE between event_iloc figures
     # by eye. Falls back to per-event range only if the cross-event scan
     # failed (no other event has a usable summary).
-    shared = _shared_wse_range(analysis, target_crs, dem_da)
+    shared = _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
     if shared is not None:
         wse_min, wse_max = shared
     else:
@@ -594,13 +671,19 @@ def _render_plotly_branch(
             mask = utils.create_mask_from_shapefile(da, tmp_path)
     else:
         mask = utils.create_mask_from_shapefile(da, watershed_shp)
-    da_masked = da.where(mask & (da > 0))
+    # F-I-3: split mask around configurable dry threshold. Cells inside the
+    # watershed with depth at or below `dry_threshold_m` render via a
+    # neutral-grey base trace so the watershed shape stays preattentive.
+    dry_threshold = map_cfg.dry_threshold_m
+    wet_mask = mask & (da > dry_threshold)
+    da_masked = da.where(wet_mask)
+    dry_indicator = xr.where(mask & ~wet_mask, 1.0, np.nan)
 
     try:
         wse_da = da + dem_da
     except Exception:
         wse_da = da + dem_da.interp_like(da, method="nearest")
-    wse_masked = wse_da.where(mask & (da > 0))
+    wse_masked = wse_da.where(wet_mask)
 
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
@@ -643,20 +726,48 @@ def _render_plotly_branch(
             d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin)
             else map_cfg.depth_vmax_fallback
         )
-    shared_wse = _shared_wse_range(analysis, target_crs, dem_da)
+    shared_wse = _shared_wse_range(analysis, target_crs, dem_da, map_cfg=map_cfg)
     if shared_wse is not None:
         wse_min, wse_max = shared_wse
     else:
-        wse_min_obj = wse_masked.min()
-        wse_max_obj = wse_masked.max()
-        wse_min = float(wse_min_obj.compute() if hasattr(wse_min_obj, "compute") else wse_min_obj)
-        wse_max = float(wse_max_obj.compute() if hasattr(wse_max_obj, "compute") else wse_max_obj)
-        if not np.isfinite(wse_min) or not np.isfinite(wse_max) or wse_max <= wse_min:
+        # F-I-2: clip WSE colorbar to quantiles of WETTED + on-real-terrain
+        # cells.  Suppresses building-on-top artifacts that would otherwise
+        # dominate the scale and collapse usable WSE range to <5% of the
+        # colorbar. Building cells reuse system_overview's wall-threshold
+        # pattern: DEM >= min(dem_building_height, dem_outside_watershed_height)
+        # - wall_threshold_buffer_m == building/wall.
+        sys_cfg = analysis._system.cfg_system
+        if sys_cfg.dem_building_height is not None and sys_cfg.dem_outside_watershed_height is not None:
+            wall_th = min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height) - report_cfg.system_map.elevation_style.wall_threshold_buffer_m
+            terrain_mask = dem_da < wall_th
+        else:
+            terrain_mask = xr.ones_like(dem_da, dtype=bool)
+        wse_for_range = wse_masked.where(terrain_mask)
+        wse_values = wse_for_range.values
+        if hasattr(wse_values, "compute"):
+            wse_values = wse_values.compute()
+        finite = wse_values[np.isfinite(wse_values)]
+        if finite.size > 0:
+            wse_min = float(np.nanquantile(finite, map_cfg.wse_clip_quantile_lower))
+            wse_max = float(np.nanquantile(finite, map_cfg.wse_clip_quantile_upper))
+            if not np.isfinite(wse_min) or not np.isfinite(wse_max) or wse_max <= wse_min:
+                wse_min, wse_max = map_cfg.wse_fallback_range
+        else:
             wse_min, wse_max = map_cfg.wse_fallback_range
 
-    bounds = dem_da.rio.bounds() if dem_da.rio.crs is not None else (
+    # F-I-5: cross-figure bounds parity with system_overview.  Load the same
+    # SWMM hydro + hydraulics models and call the shared
+    # compute_padded_square_bounds helper so per_sim map panels share their
+    # x/y extents with system_overview's panels exactly.
+    hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
+    hydro_model = swmmio.Model(str(hydro_inp))
+    hydraulics_model = swmmio.Model(str(hydraulics_inp))
+    dem_bounds_raw = dem_da.rio.bounds() if dem_da.rio.crs is not None else (
         float(dem_da.x.min()), float(dem_da.y.min()),
         float(dem_da.x.max()), float(dem_da.y.max()),
+    )
+    bounds = compute_padded_square_bounds(
+        dem_bounds_raw, hydro_model, hydraulics_model, padding_frac=0.02,
     )
 
     # ---- Datashader pre-raster gate -------------------------------------
@@ -702,14 +813,27 @@ def _render_plotly_branch(
         column_widths=[1, 1, 0.8],
         horizontal_spacing=0.06,
         vertical_spacing=0.06,
-        subplot_titles=("Peak flood depth", "Water surface elevation", "Rainfall"),
+        subplot_titles=("Peak flood depth", "Water surface elevation", "Flood Drivers"),
     )
+    # F-I-8: figure title removed (redundant with Snakemake sidebar/result-row labels).
+    # F-I-9: use registered `triton_journal` template instead of plotly_white.
+    # F-I-4 Option B: bottom margin expanded to 130 px to clear horizontal
+    # colorbars repositioned to y=-0.22.
+    # Iteration 2: showlegend=True so the dry-cell legend swatch surfaces.
     fig.update_layout(
-        template="plotly_white",
-        title=f"Per-sim peak flood depth — event_iloc {event_iloc}",
-        showlegend=False,
-        margin=dict(l=10, r=10, t=80, b=60),
+        template="triton_journal",
+        showlegend=True,
+        legend=dict(
+            orientation="h", yanchor="top", y=-0.10, x=0.0, xanchor="left",
+            bgcolor="rgba(255,255,255,0.8)", bordercolor="lightgrey", borderwidth=1,
+        ),
+        margin=dict(l=10, r=10, t=40, b=130),
     )
+
+    # Iteration 3: revert to continuous depth colorscale per user feedback
+    # ("go back to the previous color bar"). The discrete BoundaryNorm-style
+    # quantization from iter2 is left as the helper `_build_discrete_depth_colorscale`
+    # for future use, but the live render path passes `map_cfg.depth_cmap` directly.
 
     # ---- Depth panel ----------------------------------------------------
     depth_ref = ProvenanceRef(
@@ -722,6 +846,32 @@ def _render_plotly_branch(
             + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
         ),
     )
+    # F-I-3: dry-cell base trace (within-watershed but below threshold)
+    # rendered as light grey so the watershed shape stays preattentive even
+    # in panels with limited wet extent.
+    dry_grey_scale = [[0, map_cfg.dry_fill_color], [1, map_cfg.dry_fill_color]]
+    dry_ref_depth = ProvenanceRef(
+        source_path=watershed_rel, variable="watershed_polygon",
+        attrs={"dry_threshold_m": float(dry_threshold)},
+        transform=(
+            "within-watershed mask AND not (max_wlevel_m > dry_threshold_m); "
+            "rendered as flat dry_fill_color"
+        ),
+    )
+    with prov.artist(
+        axes_id="ax_depth_plotly", kind="image",
+        note="dry-cell base trace (depth panel)",
+    ) as a:
+        a.add_channel("z", dry_ref_depth)
+        a.add_channel("color", dry_ref_depth, cmap=map_cfg.dry_fill_color)
+        fig.add_trace(
+            go.Heatmap(
+                z=dry_indicator.values, x=dry_indicator.x.values, y=dry_indicator.y.values,
+                colorscale=dry_grey_scale, showscale=False,
+                hoverinfo="skip", showlegend=False, name="dry_watershed_depth",
+            ),
+            row=1, col=1,
+        )
     with prov.artist(
         axes_id="ax_depth_plotly", kind="image",
         note=f"peak flood depth raster (event {event_iloc})"
@@ -732,15 +882,21 @@ def _render_plotly_branch(
             "color", depth_ref,
             cmap=map_cfg.depth_cmap, vmin=depth_vmin, vmax=depth_vmax,
         )
+        # F-I-1: depth colormap from config (was hardcoded "YlGnBu").
+        # F-I-4 Option B: colorbar pushed to y=-0.22 to clear x-axis labels.
+        # Iteration 3: continuous colorscale (reverted from iter2's quantized
+        # version per user request — "go back to the previous color bar").
         fig.add_trace(
             go.Heatmap(
                 z=depth_z, x=depth_x, y=depth_y,
-                colorscale="YlGnBu", zmin=depth_vmin, zmax=depth_vmax,
+                colorscale=map_cfg.depth_cmap,
+                zmin=depth_vmin, zmax=depth_vmax,
                 colorbar=dict(
                     title=units.depth_label(analysis._system.cfg_system.crs.vertical_epsg), orientation="h",
-                    y=-0.10, len=0.30, x=0.16, thickness=12,
+                    y=-0.22, len=0.30, x=0.16, thickness=12,
                 ),
                 hovertemplate="Depth: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
+                showlegend=False,
                 name="depth",
             ),
             row=1, col=1,
@@ -761,6 +917,29 @@ def _render_plotly_branch(
         source_path=dem_rel, variable="dem_elev_m",
         attrs=dem_attrs, transform="reprojected to target_crs",
     )
+    # F-I-3: dry-cell base trace on the WSE panel as well.
+    dry_ref_wse = ProvenanceRef(
+        source_path=watershed_rel, variable="watershed_polygon",
+        attrs={"dry_threshold_m": float(dry_threshold)},
+        transform=(
+            "within-watershed mask AND not (max_wlevel_m > dry_threshold_m); "
+            "rendered as flat dry_fill_color"
+        ),
+    )
+    with prov.artist(
+        axes_id="ax_wse_plotly", kind="image",
+        note="dry-cell base trace (WSE panel)",
+    ) as a:
+        a.add_channel("z", dry_ref_wse)
+        a.add_channel("color", dry_ref_wse, cmap=map_cfg.dry_fill_color)
+        fig.add_trace(
+            go.Heatmap(
+                z=dry_indicator.values, x=dry_indicator.x.values, y=dry_indicator.y.values,
+                colorscale=dry_grey_scale, showscale=False,
+                hoverinfo="skip", showlegend=False, name="dry_watershed_wse",
+            ),
+            row=1, col=2,
+        )
     with prov.artist(
         axes_id="ax_wse_plotly", kind="image",
         note=f"water surface elevation = depth + DEM (event {event_iloc})"
@@ -772,18 +951,45 @@ def _render_plotly_branch(
             "color", wse_ref_depth,
             cmap=map_cfg.wse_cmap, vmin=wse_min, vmax=wse_max,
         )
+        # F-I-1: WSE colormap from config (was hardcoded "cividis").
+        # F-I-4 Option B: colorbar pushed to y=-0.22 to clear x-axis labels.
         fig.add_trace(
             go.Heatmap(
                 z=wse_z, x=wse_x, y=wse_y,
-                colorscale="cividis", zmin=wse_min, zmax=wse_max,
+                colorscale=map_cfg.wse_cmap, zmin=wse_min, zmax=wse_max,
                 colorbar=dict(
                     title=units.wse_label(analysis._system.cfg_system.crs.vertical_epsg), orientation="h",
-                    y=-0.10, len=0.30, x=0.52, thickness=12,
+                    y=-0.22, len=0.30, x=0.52, thickness=12,
                 ),
                 hovertemplate="WSE: %{z:.3f} m<br>x: %{x}<br>y: %{y}<extra></extra>",
-                name="wse",
+                showlegend=False, name="wse",
             ),
             row=1, col=2,
+        )
+
+    # Iteration 2: dummy-marker legend entry naming the dry-cell fill color +
+    # its threshold so the grey is interpretable. Plotly Heatmap traces do not
+    # surface in the legend by default; this Scatter trace plots no points
+    # (NaN coords) but the marker styling renders the legend swatch.
+    dry_legend_ref = ProvenanceRef(
+        source_path=watershed_rel, variable="watershed_polygon",
+        attrs={"dry_threshold_m": float(dry_threshold)},
+        transform="legend swatch labelling the dry_fill_color cells",
+    )
+    with prov.artist(
+        axes_id="ax_depth_plotly", kind="legend",
+        note="dry-cell legend swatch (dummy Scatter, no plotted points)",
+    ) as a:
+        a.add_channel("color", dry_legend_ref, cmap=map_cfg.dry_fill_color)
+        fig.add_trace(
+            go.Scatter(
+                x=[None], y=[None], mode="markers",
+                marker=dict(color=map_cfg.dry_fill_color, symbol="square", size=12,
+                            line=dict(color="darkgrey", width=0.5)),
+                name=f"≤ {map_cfg.dry_threshold_m:g} m (dry)",
+                showlegend=True, hoverinfo="skip",
+            ),
+            row=1, col=1,
         )
 
     # ---- Watershed boundary overlay on both maps ------------------------
@@ -846,18 +1052,21 @@ def _render_plotly_branch(
         attrs=rain_attrs, selection={"event_iloc": int(event_iloc)},
     )
     panel_cfg = report_cfg.per_sim.hydrology_panel
+    # F-I-7: convert times to hours for x-axis display + propagate the units
+    # change into the provenance channel so the manifest tells the truth.
+    times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     with prov.artist(
         axes_id="ax_rain_plotly", kind="bar",
         note="rainfall time series (event hydrology — top sub-panel)",
     ) as a:
-        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
         fig.add_trace(
             go.Bar(
-                x=times_min, y=rainfall,
+                x=times_hr, y=rainfall,
                 marker=dict(color=panel_cfg.rain_color),
                 name="rainfall", showlegend=False,
-                hovertemplate="t: %{x} min<br>rain: %{y:.2f}<extra></extra>",
+                hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
             ),
             row=1, col=3,
         )
@@ -872,15 +1081,15 @@ def _render_plotly_branch(
         axes_id="ax_bc_plotly", kind="line2d",
         note="boundary condition water level (event hydrology — bottom sub-panel)",
     ) as a:
-        a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)
         fig.add_trace(
             go.Scatter(
-                x=times_min, y=bc_water_level, mode="lines",
+                x=times_hr, y=bc_water_level, mode="lines",
                 line=dict(color=panel_cfg.bc_line_color,
                           width=panel_cfg.bc_line_width),
                 name="bc_water_level", showlegend=False,
-                hovertemplate="t: %{x} min<br>BC: %{y:.3f} m<extra></extra>",
+                hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
             ),
             row=2, col=3,
         )
@@ -889,20 +1098,29 @@ def _render_plotly_branch(
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
     target_crs_resolved = resolve_target_crs(analysis, report_cfg)
     crs_for_labels = target_crs_resolved.to_epsg()
+    # F-I-10: link col-2 map axes to col-1 via `matches=` so interactive
+    # pan/zoom on either panel synchronises the other. Plotly's
+    # `shared_xaxes` in `make_subplots` does not always emit `matches`.
     for col in (1, 2):
-        fig.update_xaxes(
+        x_kwargs = dict(
             range=[bounds[0], bounds[2]],
             title_text=units.easting_axis_label(crs_for_labels),
             row=1, col=col,
         )
-        fig.update_yaxes(
+        y_kwargs = dict(
             range=[bounds[1], bounds[3]],
             scaleanchor=f"x{col}", scaleratio=1.0,
             title_text=units.northing_axis_label(crs_for_labels) if col == 1 else None,
             row=1, col=col,
         )
+        if col == 2:
+            x_kwargs["matches"] = "x"
+            y_kwargs["matches"] = "y"
+        fig.update_xaxes(**x_kwargs)
+        fig.update_yaxes(**y_kwargs)
+    # F-I-7: hydrology x-axes now in hours from event start.
     fig.update_xaxes(
-        range=[float(times_min[0]), float(times_min[-1])],
+        range=[float(times_hr[0]), float(times_hr[-1])],
         title_text="", row=1, col=3,
     )
     fig.update_yaxes(
@@ -910,8 +1128,8 @@ def _render_plotly_branch(
         row=1, col=3,
     )
     fig.update_xaxes(
-        range=[float(times_min[0]), float(times_min[-1])],
-        title_text=units.TIME_AXIS_FROM_EVENT_START, row=2, col=3,
+        range=[float(times_hr[0]), float(times_hr[-1])],
+        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS, row=2, col=3,
     )
     fig.update_yaxes(
         title_text=units.bc_water_level_axis_label(

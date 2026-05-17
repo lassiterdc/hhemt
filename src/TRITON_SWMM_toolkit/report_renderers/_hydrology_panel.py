@@ -82,6 +82,10 @@ def draw_event_hydrology_panel(
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
 
     times_min = hydro_data["times_min"]
+    # F-I-7 (interactive-report-renderers Phase 3): convert minutes→hours for
+    # the displayed x-axis. Cross-figure consistency: per_sim_conduit_flow's
+    # matplotlib branch inherits this when it calls the shared helper.
+    times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     rainfall = hydro_data["rainfall"]
     bc_water_level = hydro_data["bc_water_level"]
     rain_attrs = hydro_data["rain_attrs"]
@@ -106,15 +110,15 @@ def draw_event_hydrology_panel(
             axes_id="ax_rain", kind="bar",
             note="rainfall time series (event hydrology — top sub-panel)",
         ) as a:
-            a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+            a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", rain_ref, units=rain_units)
             ax_rain.bar(
-                times_min, rainfall, width=1.0, align="edge",
+                times_hr, rainfall, width=1.0 / units.MINUTES_PER_HOUR, align="edge",
                 color=panel_cfg.rain_color, edgecolor="none",
             )
     else:
         ax_rain.bar(
-            times_min, rainfall, width=1.0, align="edge",
+            times_hr, rainfall, width=1.0 / units.MINUTES_PER_HOUR, align="edge",
             color=panel_cfg.rain_color, edgecolor="none",
         )
 
@@ -123,7 +127,7 @@ def draw_event_hydrology_panel(
     ax_rain.set_xlabel("")
     ax_rain.tick_params(axis="x", labelbottom=False)
     ax_rain.tick_params(axis="y", labelsize=panel_cfg.tick_labelsize)
-    ax_rain.set_xlim(times_min[0], times_min[-1])
+    ax_rain.set_xlim(times_hr[0], times_hr[-1])
     ax_rain.set_ylim(0, max(float(np.nanmax(rainfall)) * 1.1, panel_cfg.rain_ylim_min_cap))
     for spine in ("top", "right"):
         ax_rain.spines[spine].set_visible(False)
@@ -139,22 +143,22 @@ def draw_event_hydrology_panel(
             axes_id="ax_bc", kind="line2d",
             note="boundary condition water level (event hydrology — bottom sub-panel)",
         ) as a:
-            a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+            a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
             a.add_channel("y", bc_ref, units=bc_units)
             ax_bc.plot(
-                times_min, bc_water_level,
+                times_hr, bc_water_level,
                 color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
             )
     else:
         ax_bc.plot(
-            times_min, bc_water_level,
+            times_hr, bc_water_level,
             color=panel_cfg.bc_line_color, linewidth=panel_cfg.bc_line_width,
         )
 
     ax_bc.set_ylabel(units.bc_water_level_axis_label(cfg_analysis.storm_tide_units or "m"))
-    ax_bc.set_xlabel(units.TIME_AXIS_FROM_EVENT_START)
+    ax_bc.set_xlabel(units.TIME_AXIS_FROM_EVENT_START_HOURS)
     ax_bc.tick_params(axis="both", labelsize=panel_cfg.tick_labelsize)
-    ax_bc.set_xlim(times_min[0], times_min[-1])
+    ax_bc.set_xlim(times_hr[0], times_hr[-1])
     bc_min = float(np.nanmin(bc_water_level))
     bc_max = float(np.nanmax(bc_water_level))
     if (bc_max - bc_min) < panel_cfg.bc_flat_threshold:

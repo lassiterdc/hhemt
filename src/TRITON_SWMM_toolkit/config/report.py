@@ -27,7 +27,16 @@ class HydrologyPanelConfig(cfgBaseModel):
     Defaults match the prior `_RAIN_COLOR` / `_BC_LINE_COLOR` constants in
     `_hydrology_panel.py` lines 23-24.
     """
-    rain_color: str = Field("#9ecae1", description="Rainfall bar color (hex).")
+    rain_color: str = Field(
+        "#03152e",
+        description=(
+            "Rainfall bar color (hex). Near-black navy for maximum legibility "
+            "against Plotly's white panel background; iter3 darkened past "
+            "ColorBrewer Blues 9/9 (#08306b) because the thinner Plotly bars "
+            "still read as pale at scale. Mid-tone alternatives like #3182bd "
+            "and the deeper #08306b were both flagged as too light."
+        ),
+    )
     bc_line_color: str = Field("black", description="BC water-level line color.")
     bc_line_width: float = Field(1.5, description="BC line width (pt).")
     rain_ylim_min_cap: float = Field(
@@ -73,8 +82,52 @@ class PerSimMapConfig(cfgBaseModel):
         (0.01, 0.05, 0.10, 0.50, 1.00),
         description="Discrete legend boundaries cited in the manifest (m).",
     )
-    wse_cmap: str = Field("plasma")
+    wse_cmap: str = Field(
+        "plasma",
+        description=(
+            "WSE colormap. Perceptually uniform, CVD-safe. Default plasma per "
+            "user preference (iter4 of Phase 3 design-figure); the Plotly "
+            "branch's earlier hardcoded `cividis` is also CVD-safe and was "
+            "the iter1-3 transient default, but user prefers plasma's warmer "
+            "range for the WSE-on-real-terrain colorbar after iter3's "
+            "building-cell exclusion (which produces WSE [1.81, 6.05] m on "
+            "the norfolk fixture — well within plasma's high-contrast band)."
+        ),
+    )
     wse_fallback_range: tuple[float, float] = Field((0.0, 1.0))
+    dry_threshold_m: float = Field(
+        0.0025,
+        description=(
+            "Within-watershed depth-mask threshold in meters. Cells with "
+            "max_wlevel_m < this value render as `dry_fill_color` (neutral "
+            "grey) rather than as wet-color or transparent. Default 0.0025 m "
+            "= 2.5 mm (a standard puddle-vs-sheen threshold)."
+        ),
+    )
+    dry_fill_color: str = Field(
+        "#d9d9d9",
+        description=(
+            "Neutral light grey fill for within-watershed dry cells. Preserves "
+            "watershed shape as preattentive background context per Wilke "
+            "Ch. 23."
+        ),
+    )
+    wse_clip_quantile_upper: float = Field(
+        0.99,
+        description=(
+            "Upper-quantile clip on WSE colorbar (computed across wetted "
+            "cells). Suppresses building-on-top dry-cell artifacts that would "
+            "otherwise dominate the colorbar scale and collapse usable range "
+            "below 5%."
+        ),
+    )
+    wse_clip_quantile_lower: float = Field(
+        0.01,
+        description=(
+            "Lower-quantile clip on WSE colorbar (computed across wetted "
+            "cells)."
+        ),
+    )
     utilization_cmap: str = Field("Blues")
     peak_flow_cmap: str = Field("Reds")
     conduit_outline_color: str = Field("black")

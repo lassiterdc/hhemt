@@ -58,6 +58,8 @@ def bc_provenance_units(storm_tide_units: str) -> str:
 # ---- Time-axis label -------------------------------------------------------
 TIME_AXIS_FROM_EVENT_START: str = "Minutes from event start"
 TIME_AXIS_PROVENANCE_UNITS: str = "minutes from event start"
+TIME_AXIS_FROM_EVENT_START_HOURS: str = "Hours from event start"
+TIME_AXIS_PROVENANCE_UNITS_HOURS: str = "hours from event start"
 
 
 # ---- Map / spatial labels --------------------------------------------------
