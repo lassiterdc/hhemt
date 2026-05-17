@@ -459,6 +459,42 @@ def test_fingerprint_payload_includes_system_overlay(
     assert payload["system_overlay"].get("target_dem_resolution") in {1.0, 2.0}
 
 
+# ============================================================================
+# Phase 2 of prefixed_column_config_variation — tests
+# ============================================================================
+
+
+def test_bare_name_analysis_config_column_emits_deprecation_warning():
+    """Phase 2 R2 — bare-name analysis-config columns emit DeprecationWarning at construction."""
+    # The default synth sensitivity CSV uses bare names (run_mode, n_mpi_procs, etc.),
+    # so a fresh load must surface a DeprecationWarning naming a bare analysis-config column.
+    with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
+        _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+            start_from_scratch=True
+        )
+
+
+def test_analysis_dot_prefix_column_accepted_silently(synth_sensitivity_all_analysis_prefixed):
+    """Phase 2 R2 — `analysis.{field}` columns accepted without DeprecationWarning."""
+    import warnings
+    analysis = synth_sensitivity_all_analysis_prefixed
+    # Construction already completed via the fixture. Re-derive the sub-analyses under
+    # an explicit DeprecationWarning-as-error filter to confirm no bare-name warning fires
+    # for the all-prefixed fixture.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        _ = analysis.sensitivity._create_sub_analyses()
+
+
+def test_attributes_varied_for_analysis_split(synth_sensitivity_mixed_prefixed_columns):
+    """Phase 2 R10 — `analysis_independent_vars` and `system_independent_vars` are separate."""
+    analysis = synth_sensitivity_mixed_prefixed_columns
+    assert "n_omp_threads" in analysis.sensitivity.analysis_independent_vars  # bare-name in fixture
+    assert "n_mpi_procs" in analysis.sensitivity.analysis_independent_vars  # analysis.n_mpi_procs in fixture
+    assert "target_dem_resolution" in analysis.sensitivity.system_independent_vars
+    assert "target_dem_resolution" not in analysis.sensitivity.analysis_independent_vars
+
+
 def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     synth_sensitivity_with_system_overlay, monkeypatch,
 ):

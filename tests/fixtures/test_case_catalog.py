@@ -1045,6 +1045,65 @@ class Local_TestCases:
         )
 
     @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_all_analysis_prefixed",
+            model_subset="all",
+            drop_columns=["run_mode", "n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"],
+            extra_columns={
+                "analysis.run_mode":      ["mpi", "openmp", "hybrid", "serial"],
+                "analysis.n_mpi_procs":   [2, 1, 2, 1],
+                "analysis.n_omp_threads": [1, 2, 2, 1],
+                "analysis.n_gpus":        [0, 0, 0, 0],
+                "analysis.n_nodes":       [1, 1, 1, 1],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_all_analysis_prefixed",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_mixed_prefixed_columns(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 2 R10 — mixed bare + `analysis.` + `system.` columns."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_mixed_prefixed_columns",
+            model_subset="all",
+            drop_columns=["n_mpi_procs"],
+            extra_columns={
+                # `n_omp_threads` retained as bare (deprecated path); `analysis.n_mpi_procs`
+                # introduced as canonical prefixed replacement.
+                "analysis.n_mpi_procs": [2, 1, 2, 1],
+                "system.target_dem_resolution": [1.0, 1.0, 2.0, 2.0],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_mixed_prefixed_columns",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
     def _write_synth_sensitivity_csv(
         analysis_name: str,
         model_subset: str,
