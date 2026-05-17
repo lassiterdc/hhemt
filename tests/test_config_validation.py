@@ -83,26 +83,6 @@ def test_analysis_config_explicit_toggle_dependency(tmp_path: Path):
         analysis_config.model_validate(cfg)
 
 
-def test_analysis_config_gpu_hardware_override_default_none(tmp_path: Path):
-    cfg = _minimal_analysis_config_dict(tmp_path)
-    model = analysis_config.model_validate(cfg)
-    assert model.gpu_hardware_override is None
-
-
-def test_analysis_config_gpu_hardware_override_accepts_string(tmp_path: Path):
-    cfg = _minimal_analysis_config_dict(tmp_path)
-    cfg["gpu_hardware_override"] = "a100"
-    model = analysis_config.model_validate(cfg)
-    assert model.gpu_hardware_override == "a100"
-
-
-def test_analysis_config_gpu_hardware_override_rejects_non_string(tmp_path: Path):
-    cfg = _minimal_analysis_config_dict(tmp_path)
-    cfg["gpu_hardware_override"] = 42
-    with pytest.raises(ValidationError, match="gpu_hardware_override"):
-        analysis_config.model_validate(cfg)
-
-
 # ---------------------------------------------------------------------------
 # Phase 1 — report_config schema validation
 # ---------------------------------------------------------------------------
@@ -231,3 +211,30 @@ def test_report_artifacts_not_in_globus_exclude_patterns():
             f"{DEFAULT_EXCLUDE_PATTERNS}; R12 requires report artifacts "
             "to be included in the default Globus transfer."
         )
+
+
+def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
+    """Phase 1 R9 — every system_config and analysis_config field name MUST match
+    `^[A-Za-z0-9_.]+$` so the prefixed-column overlay mechanism (which routes
+    `system.{field}` / `analysis.{field}` cells into Snakemake wildcards) cannot
+    silently break on a future field addition with a hyphen or other unsafe char.
+
+    Developer-facing assertion against the codebase's Pydantic model schemas.
+    Failure indicates a toolkit author has introduced a bad field name.
+    """
+    import re
+
+    charset = re.compile(r"^[A-Za-z0-9_.]+$")
+    offenders: list[str] = []
+    for model_name, model in [
+        ("system_config", system_config),
+        ("analysis_config", analysis_config),
+    ]:
+        for field_name in model.model_fields:
+            if not charset.match(field_name):
+                offenders.append(f"{model_name}.{field_name}")
+    assert not offenders, (
+        f"Pydantic field names outside Snakemake-wildcard-safe charset "
+        f"^[A-Za-z0-9_.]+$ (toolkit author defect, not a user-config issue): "
+        f"{offenders}."
+    )

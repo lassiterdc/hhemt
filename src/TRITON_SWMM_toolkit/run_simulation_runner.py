@@ -112,6 +112,7 @@ def main():
             analysis_config_yaml=args.analysis_config,
             system=system,
             skip_log_update=True,
+            is_main_orchestrator=False,
         )
 
         event_iloc = args.event_iloc

@@ -239,16 +239,6 @@ class analysis_config(cfgBaseModel):
         None,
         description="Path to the configuration file of the master analysis.",
     )
-    gpu_hardware_override: Optional[str] = Field(
-        default=None,
-        description=(
-            "Per-sub-analysis override for system.gpu_hardware, used in GRES "
-            "construction. Set via sensitivity CSV column of the same name. "
-            "Free-form string — SLURM rejects invalid values at submission "
-            "time, which is the appropriate failure site. Only honored when "
-            "is_subanalysis=True; ignored otherwise with a preflight warning."
-        ),
-    )
     report: _report_config_model = Field(
         ...,
         description=(
