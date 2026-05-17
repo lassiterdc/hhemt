@@ -41,6 +41,9 @@ OpKind = Literal[
     "csv_add_column",
     "csv_assert_unique",
     "flag_rewrite_paths",
+    "rewrite_text_preserving_mtime",
+    "rewrite_text_with_reference_mtime",
+    "clear_snakemake_metadata",
     "invalidate_compile_artifacts",
     "regenerate_scenario_status_csv",
     "guarded_remove",
@@ -687,6 +690,144 @@ class MigrationContext:
             if new_path.exists():
                 continue
             flag.rename(new_path)
+
+    def rewrite_text_preserving_mtime(self, path: Path, new_text: str) -> None:
+        self.plan.append(
+            PlannedOp(
+                "rewrite_text_preserving_mtime",
+                {"path": str(path), "new_text": new_text},
+            )
+        )
+
+    def _apply_rewrite_text_preserving_mtime(
+        self, path: str, new_text: str
+    ) -> None:
+        """Atomically rewrite `path` with `new_text`, restoring the original mtime.
+
+        Idempotent: when the on-disk bytes already match new_text, no write
+        occurs and mtime is preserved by no-op. The primitive exists because
+        the toolkit's Snakemake rerun-triggers default to ["mtime", "input"]
+        (workflow.py:1609); a naive Path.write_text bumps mtime → mtime trigger
+        fires → spurious rerun.
+
+        Atomic write via temp-file + rename + utime to keep concurrent readers
+        in a consistent state. The temp suffix uses PID so two concurrent
+        callers do not collide.
+        """
+        import os
+        p = Path(path)
+        if p.exists() and p.read_text() == new_text:
+            return  # idempotent: byte-identical, mtime preserved
+        if not p.exists():
+            # No prior file → just write; nothing to preserve.
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(new_text)
+            return
+        stat = p.stat()
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+        tmp.write_text(new_text)
+        tmp.replace(p)
+        os.utime(p, (stat.st_atime, stat.st_mtime))
+
+    def rewrite_text_with_reference_mtime(
+        self, path: Path, new_text: str, reference_mtime: float
+    ) -> None:
+        self.plan.append(
+            PlannedOp(
+                "rewrite_text_with_reference_mtime",
+                {
+                    "path": str(path),
+                    "new_text": new_text,
+                    "reference_mtime": reference_mtime,
+                },
+            )
+        )
+
+    def _apply_rewrite_text_with_reference_mtime(
+        self, path: str, new_text: str, reference_mtime: float
+    ) -> None:
+        """Atomically rewrite `path` with `new_text` and set mtime to an EXPLICIT reference.
+
+        Distinct from `rewrite_text_preserving_mtime`, which preserves whatever
+        mtime `Path.stat()` currently returns. The "preserving" variant is
+        fragile when anything between the breaking change and the migration
+        touches the file (a dry-run that triggers a content-rewrite via
+        compare-and-write will bump mtime to wall-clock time; the migration
+        would then "preserve" that broken-now mtime, leaving the file newer
+        than every downstream output and re-triggering the Snakemake cascade
+        the migration was meant to prevent).
+
+        This variant takes an explicit reference mtime so the migration author
+        can pin the result to a known-safe timestamp (e.g., the corresponding
+        downstream output flag's mtime, which guarantees input ≤ output and
+        therefore no mtime-trigger fire).
+        """
+        import os
+        p = Path(path)
+        if p.exists() and p.read_text() == new_text:
+            # Idempotent on content; ensure mtime matches the reference even if
+            # something previously bumped it.
+            stat = p.stat()
+            if stat.st_mtime != reference_mtime:
+                os.utime(p, (stat.st_atime, reference_mtime))
+            return
+        if not p.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(new_text)
+            os.utime(p, (reference_mtime, reference_mtime))
+            return
+        stat = p.stat()
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+        tmp.write_text(new_text)
+        tmp.replace(p)
+        os.utime(p, (stat.st_atime, reference_mtime))
+
+    def clear_snakemake_metadata(self, backup_label: str) -> None:
+        self.plan.append(
+            PlannedOp(
+                "clear_snakemake_metadata",
+                {"backup_label": backup_label},
+            )
+        )
+
+    def _apply_clear_snakemake_metadata(self, backup_label: str) -> None:
+        """Clear `.snakemake/metadata/` under target_dir, retaining a backup copy.
+
+        Snakemake's `--rerun-triggers input` does set-comparison against
+        `.snakemake/metadata/<rule>/...` records. A migration that renames a
+        file declared in any rule's `input:` set (e.g., V0007 renaming
+        a_setup_complete.flag → a_setup_target_0_complete.flag) invalidates
+        those records — Snakemake reads the prior input set, compares to the
+        new Snakefile's declaration, detects a set-change, and plans a rerun
+        of every affected rule.
+
+        The migration's responsibility is to keep on-disk state coherent with
+        the new Snakefile. Clearing the metadata makes Snakemake fall back to
+        make-style "outputs exist and are newer than inputs" semantics —
+        which is correct for any tree whose outputs already exist with mtimes
+        preserved by earlier migration steps (V0006, V0007's `Path.rename`).
+
+        The cleared metadata is backed up to
+        `{target_dir}/.snakemake/metadata.bak.{backup_label}` so the operator
+        can inspect or restore it if a downstream concern surfaces. The backup
+        is intentionally not auto-deleted — it carries audit value.
+        """
+        import shutil
+        metadata_dir = self.target_dir / ".snakemake" / "metadata"
+        if not metadata_dir.is_dir():
+            return  # nothing to clear (e.g., never-run analysis)
+        backup_dir = self.target_dir / ".snakemake" / f"metadata.bak.{backup_label}"
+        if backup_dir.exists():
+            # Subsequent migrate runs should not silently overwrite a prior
+            # backup. Keep the first one; skip the clear on re-run.
+            return
+        shutil.copytree(metadata_dir, backup_dir)
+        shutil.rmtree(metadata_dir)
+        logger.info(
+            "[%s] cleared .snakemake/metadata/; backup at %s",
+            self.migration_id,
+            backup_dir,
+        )
 
     # ---- Invalidation ----
 
