@@ -15,19 +15,36 @@ Snakefile-build step inside `analysis.run()`) produces v3 bytes when the master
 df declares any `system.*` overlay column. The byte difference triggers
 Snakemake's `input:` rerun trigger on every sa_id, even when no row content
 changed. This migration pre-emptively rewrites the v1 file to its byte-identical
-v3 form, preserving mtime so the post-migration Snakefile sees an up-to-date
-fingerprint and does NOT replan the sa_id chain.
+v3 form, pinning the result's mtime to a known-safe reference so the
+post-migration Snakefile sees an up-to-date fingerprint and does NOT replan
+the sa_id chain.
 
-mtime preservation is load-bearing: workflow.py:1609 configures
+mtime semantics are load-bearing: workflow.py:1609 configures
 `rerun-triggers: ["mtime", "input"]`. A naive Path.write_text bumps mtime →
-mtime trigger fires → rerun. The migration uses the new
-`ctx.rewrite_text_preserving_mtime` primitive (added in this PR) which writes
-to a temp file, captures the original mtime, performs an atomic rename, then
-restores the captured mtime via os.utime.
+mtime trigger fires → rerun. Previously this migration used
+`rewrite_text_preserving_mtime` which blindly preserved `Path.stat().st_mtime`,
+but that is fragile: if anything touches the fingerprint between the breaking
+feature landing and the migration running (e.g., `analysis.run(dry_run=True)`
+triggers `_build_snakefile_content()` which triggers the live regenerator's
+compare-and-write — bumping mtime to wall-clock time), V0006 would faithfully
+preserve that broken-now mtime instead of the original. The result: input ≫
+output mtime → Snakemake plans every sa_id chain anyway.
 
-Idempotency: the primitive reads the file, computes the would-be-new payload,
-and skips the write entirely when the bytes already match. So re-running the
-migration is a no-op once any sa_id is already at v3.
+V0006 now resolves an EXPLICIT reference mtime per fingerprint and pins the
+rewritten file to it via `ctx.rewrite_text_with_reference_mtime`. The
+reference is chosen, in priority order:
+
+  1. The corresponding `_status/b_prepare_sa-{sa_id}_*_complete.flag` mtime if
+     it exists — this is the rule's downstream output and the strongest
+     guarantee that fingerprint ≤ output (which is what we want for
+     "Snakemake should not consider input newer than output").
+  2. `_status/a_setup_target_0_complete.flag` mtime (post-V0007).
+  3. `_status/a_setup_complete.flag` mtime (pre-V0007 fallback).
+  4. `_version.json` mtime.
+  5. `Path.stat().st_mtime` (last-resort — current preservation behavior).
+
+Idempotency: the primitive's content-match short-circuit applies. Re-running
+the migration produces no observable change once any sa_id is at v3.
 """
 from __future__ import annotations
 
@@ -44,8 +61,39 @@ version_to: int = 6
 description: str = (
     "Rewrite _status/sa-{sa_id}_inputs.json from schema v1 to schema v3 "
     "(byte-identical to post-prefixed_column_config_variation regeneration), "
-    "preserving mtime so Snakemake does not replan sa_id chains"
+    "pinning mtime to an explicit reference so Snakemake does not replan sa_id chains"
 )
+
+
+def _resolve_reference_mtime(ctx: MigrationContext, sa_id: str, fp: Path) -> float:
+    """Choose the safest reference mtime for a fingerprint file's post-migration mtime.
+
+    Priority order matches the module docstring. See the module docstring's
+    rationale for why blindly preserving Path.stat() is insufficient.
+    """
+    status_dir = ctx.target_dir / "_status"
+    # Priority 1: corresponding b_prepare flag for this sa_id
+    prepare_flags = list(
+        status_dir.glob(f"b_prepare_sa-{sa_id}_*_complete.flag")
+    )
+    if prepare_flags:
+        # Earliest mtime across any matching event_id; any one of them is ≥ the
+        # original fingerprint mtime.
+        return min(p.stat().st_mtime for p in prepare_flags)
+    # Priority 2: post-V0007 master setup flag
+    post_v0007 = status_dir / "a_setup_target_0_complete.flag"
+    if post_v0007.exists():
+        return post_v0007.stat().st_mtime
+    # Priority 3: pre-V0007 master setup flag
+    pre_v0007 = status_dir / "a_setup_complete.flag"
+    if pre_v0007.exists():
+        return pre_v0007.stat().st_mtime
+    # Priority 4: analysis-dir _version.json
+    version_json = ctx.target_dir / "_version.json"
+    if version_json.exists():
+        return version_json.stat().st_mtime
+    # Priority 5: last-resort — preserve current mtime
+    return fp.stat().st_mtime
 
 
 def upgrade(ctx: MigrationContext) -> None:
@@ -71,7 +119,10 @@ def upgrade(ctx: MigrationContext) -> None:
             continue  # already at v3 or unrecognized schema
 
         new_text = json.dumps(new_payload, sort_keys=True, separators=(",", ":")) + "\n"
-        ctx.rewrite_text_preserving_mtime(fp, new_text)
+        # Extract sa_id from the filename: sa-{sa_id}_inputs.json
+        sa_id = fp.stem.removeprefix("sa-").removesuffix("_inputs")
+        ref_mtime = _resolve_reference_mtime(ctx, sa_id, fp)
+        ctx.rewrite_text_with_reference_mtime(fp, new_text, ref_mtime)
 
 
 def _upgrade_payload(existing: dict) -> dict | None:

@@ -241,34 +241,145 @@ def test_v0_to_v1_against_norfolk_sensitivity_analysis_fixture(
             assert not pattern.match(entry.name), f"unexpected legacy form: {entry}"
 
 
-def test_v5_to_v6_preserves_fingerprint_mtime(tmp_path: Path) -> None:
-    """V0006 rewrites fingerprint payloads without bumping mtime.
+def test_v5_to_v6_pins_fingerprint_mtime_to_prepare_flag_reference(tmp_path: Path) -> None:
+    """V0006 rewrites fingerprint payloads with mtime pinned to a downstream
+    output's reference mtime, NOT preserved from the (possibly bumped) prior
+    fingerprint mtime.
 
-    Snakemake rerun-triggers include "mtime"; a v1→v3 schema upgrade that
-    bumps mtime would spuriously rerun every sa_id chain. Asserts the
-    rewritten file's mtime is within 1 second of the original (filesystem
-    timestamp resolution).
+    Snakemake rerun-triggers include "mtime". The fingerprint is an input to
+    the per-sa_id prepare rule; the prepare rule's output is
+    `_status/b_prepare_sa-{sa_id}_*_complete.flag`. To prevent Snakemake from
+    planning a rerun, the fingerprint's mtime must be ≤ the prepare-flag's
+    mtime. V0006's `_resolve_reference_mtime` picks the prepare-flag's mtime
+    as priority-1 reference precisely so this invariant holds.
+
+    This test fabricates the operational failure mode encountered on Rivanna
+    (2026-05-17): a fingerprint touched AFTER the original prepare-flag was
+    written, then "preserved" by the prior V0006 implementation as wall-clock
+    time. The new V0006 implementation pins to the prepare-flag's mtime
+    regardless of the fingerprint's current mtime, so the cascade does not
+    fire.
     """
     work = _copy_fixture("v5", tmp_path)
-    fp = work / "_status" / "sa-0_inputs.json"
-    # Create the v1 fingerprint at a known-old mtime
-    fp.parent.mkdir(parents=True, exist_ok=True)
+    status_dir = work / "_status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+
+    # Set up the v1 fingerprint at a recently-bumped (wall-clock-ish) mtime —
+    # simulating the failure mode where `analysis.run(dry_run=True)` was
+    # invoked after the breaking feature landed but before V0006 ran.
+    fp = status_dir / "sa-0_inputs.json"
     fp.write_text(
         '{"__schema_version__":1,"fields":{"cpus_per_sim":1,"n_omp_threads":1,"run_mode":"serial"}}\n'
     )
     import os
-    old_mtime = 1_700_000_000.0
-    os.utime(fp, (old_mtime, old_mtime))
+    bumped_mtime = 1_800_000_000.0  # represents "today's wall-clock"
+    os.utime(fp, (bumped_mtime, bumped_mtime))
+
+    # Pre-place a prepare flag at a known-earlier mtime — this is the reference
+    # V0006 should pin to (priority 1 in _resolve_reference_mtime).
+    prepare_flag = status_dir / "b_prepare_sa-0_evt-year.9_event_type.compound_event_id.1_complete.flag"
+    prepare_flag.write_text("")
+    prepare_flag_mtime = 1_700_000_000.0  # represents "original May 13 run"
+    os.utime(prepare_flag, (prepare_flag_mtime, prepare_flag_mtime))
 
     runner.run_migration(
         work, target=6, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
     )
 
     new_mtime = fp.stat().st_mtime
-    assert abs(new_mtime - old_mtime) < 1.0, (
-        f"V0006 bumped mtime from {old_mtime} to {new_mtime}; "
-        "fingerprint rewrite must preserve mtime per workflow.py:1609 "
-        "rerun-triggers contract"
+    assert abs(new_mtime - prepare_flag_mtime) < 1.0, (
+        f"V0006 left fingerprint mtime at {new_mtime}; expected to be pinned "
+        f"to prepare-flag reference {prepare_flag_mtime} (within filesystem "
+        "timestamp resolution). The fingerprint must end up ≤ prepare-flag's "
+        "mtime to prevent Snakemake's mtime rerun trigger from firing."
     )
     # And the content must be at schema v3
     assert json.loads(fp.read_text())["__schema_version__"] == 3
+
+
+def test_v6_to_v7_clears_snakemake_metadata_with_backup(tmp_path: Path) -> None:
+    """V0007 clears `.snakemake/metadata/` so Snakemake's `--rerun-triggers
+    input` set-comparison does not fire on the rename-induced input-set
+    change, and retains a backup at `.snakemake/metadata.bak.V0007`.
+
+    Without this clear, the per-sa_id rules' persisted metadata still
+    references the old `a_setup_complete.flag` name even after V0007 renames
+    the file. Snakemake reads the metadata, compares to the new Snakefile's
+    declaration, detects the set-change, and plans reruns for every affected
+    rule — defeating the migration's purpose.
+    """
+    work = _copy_fixture("v5", tmp_path)
+    # V0007 requires subanalyses/ (sensitivity-only); the v5 fixture has it
+    assert (work / "subanalyses").is_dir()
+
+    # Pre-place the legacy flag V0007 will rename
+    (work / "_status").mkdir(parents=True, exist_ok=True)
+    legacy_flag = work / "_status" / "a_setup_complete.flag"
+    legacy_flag.write_text("")
+
+    # Pre-populate .snakemake/metadata/ with a fake rule record to verify the
+    # clear-with-backup behavior. The content doesn't need to be valid
+    # Snakemake metadata — only that the dir exists and gets cleared+backed up.
+    metadata_dir = work / ".snakemake" / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    fake_record = metadata_dir / "fake_rule_record.json"
+    fake_record.write_text('{"input_set": ["_status/a_setup_complete.flag"]}\n')
+
+    runner.run_migration(
+        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
+    )
+
+    assert not metadata_dir.exists(), (
+        "V0007 must remove .snakemake/metadata/ after backing it up; the "
+        "metadata still references the pre-rename input-file name and would "
+        "trigger Snakemake's set-change rerun cascade"
+    )
+    backup_dir = work / ".snakemake" / "metadata.bak.V0007"
+    assert backup_dir.is_dir(), (
+        "V0007 must back up the cleared metadata to "
+        ".snakemake/metadata.bak.V0007 for audit + recovery"
+    )
+    assert (backup_dir / "fake_rule_record.json").is_file(), (
+        "Backup must contain the original metadata files"
+    )
+    # And the flag rename must have happened
+    assert not legacy_flag.exists()
+    assert (work / "_status" / "a_setup_target_0_complete.flag").is_file()
+
+
+def test_v6_to_v7_metadata_clear_idempotent_on_rerun(tmp_path: Path) -> None:
+    """Re-running V0007 against an already-migrated tree must not double-back-up
+    the metadata (the existing backup would be silently overwritten otherwise).
+    The primitive's existing-backup short-circuit handles this.
+    """
+    work = _copy_fixture("v5", tmp_path)
+    (work / "_status").mkdir(parents=True, exist_ok=True)
+    (work / "_status" / "a_setup_complete.flag").write_text("")
+    metadata_dir = work / ".snakemake" / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    (metadata_dir / "original.json").write_text("original")
+
+    # First run: clear + backup
+    runner.run_migration(
+        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
+    )
+    backup_dir = work / ".snakemake" / "metadata.bak.V0007"
+    assert backup_dir.is_dir()
+    original_backup_content = (backup_dir / "original.json").read_text()
+    assert original_backup_content == "original"
+
+    # Simulate a subsequent Snakemake run repopulating metadata with new content
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+    (metadata_dir / "new_post_migration.json").write_text("regenerated")
+
+    # Second run: must NOT overwrite the existing backup. The primitive's
+    # short-circuit means metadata_dir is left alone too (re-clear would
+    # require a new backup_label).
+    runner.run_migration(
+        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
+    )
+    # Backup retained with original content
+    assert (backup_dir / "original.json").read_text() == "original"
+    # And the second backup-conflict short-circuit means the post-migration
+    # metadata is not destroyed
+    assert (metadata_dir / "new_post_migration.json").read_text() == "regenerated"
