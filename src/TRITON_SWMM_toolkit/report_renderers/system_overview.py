@@ -32,6 +32,9 @@ import swmmio
 from plotly.subplots import make_subplots
 
 from TRITON_SWMM_toolkit import swmm_schema as _ss, units
+from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
+    compute_padded_square_bounds,
+)
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -724,7 +727,7 @@ def _render_plotly_branch(
     )
     # Panel bounds: square + padded + encompass all SWMM nodes so left-edge
     # nodes (e.g., upstream-most subcatchment outfalls) are not clipped.
-    panel_bounds = _compute_panel_bounds(
+    panel_bounds = compute_padded_square_bounds(
         dem_bounds, hydro_model, hydraulics_model, padding_frac=0.02,
     )
     for col in (1, 2, 3):
@@ -1508,54 +1511,6 @@ def _matplotlib_cmap_to_plotly_colorscale(
             [float(t), f"rgb({int(r * 255)},{int(g * 255)},{int(b * 255)})"]
         )
     return colorscale
-
-
-def _compute_panel_bounds(
-    dem_bounds,
-    hydro_model,
-    hydraulics_model,
-    *,
-    padding_frac: float = 0.02,
-) -> tuple[float, float, float, float]:
-    """Return a padded SQUARE (xmin, ymin, xmax, ymax) that encompasses both
-    the TRITON DEM modeled extent AND every SWMM node coordinate from both
-    the hydrology and hydraulics models.
-
-    Without this expansion, left-edge nodes (e.g., upstream-most subcatchment
-    outlets whose coordinates sit slightly outside the DEM's processed bounds)
-    are clipped at the panel boundary. The padding + square-up also satisfy
-    the user-requested "lock 1:1 aspect ratio" for any plot with
-    easting/northing axes: with Δx == Δy and `scaleanchor` enforced on the
-    Plotly y-axes, the data renders square inside the panel envelope.
-    """
-    xmins = [float(dem_bounds[0])]
-    ymins = [float(dem_bounds[1])]
-    xmaxs = [float(dem_bounds[2])]
-    ymaxs = [float(dem_bounds[3])]
-    for model in (hydro_model, hydraulics_model):
-        coords_df = getattr(getattr(model, "inp", None), "coordinates", None)
-        if coords_df is None or len(coords_df) == 0:
-            continue
-        xmins.append(float(coords_df["X"].min()))
-        xmaxs.append(float(coords_df["X"].max()))
-        ymins.append(float(coords_df["Y"].min()))
-        ymaxs.append(float(coords_df["Y"].max()))
-    xmin, xmax = min(xmins), max(xmaxs)
-    ymin, ymax = min(ymins), max(ymaxs)
-    dx, dy = xmax - xmin, ymax - ymin
-    # Square-up by expanding the shorter dimension symmetrically.
-    if dx < dy:
-        delta = (dy - dx) / 2.0
-        xmin -= delta
-        xmax += delta
-    elif dy < dx:
-        delta = (dx - dy) / 2.0
-        ymin -= delta
-        ymax += delta
-    # Pad by `padding_frac` on every side so edge-symbols are not clipped.
-    side = xmax - xmin  # == ymax - ymin after square-up
-    pad = side * padding_frac
-    return (xmin - pad, ymin - pad, xmax + pad, ymax + pad)
 
 
 def _resolve_dem_color_range(
