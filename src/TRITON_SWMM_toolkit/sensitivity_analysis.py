@@ -19,6 +19,7 @@ from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
 from TRITON_SWMM_toolkit.workflow import (
     SensitivityAnalysisWorkflowBuilder,
+    SnakemakeDiagnostics,
     _emit_report_artifacts,
 )
 
@@ -242,6 +243,7 @@ class TRITONSWMM_sensitivity_analysis:
         override_hpc_total_nodes: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
+        snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -317,6 +319,7 @@ class TRITONSWMM_sensitivity_analysis:
             override_hpc_total_nodes=override_hpc_total_nodes,
             report_formats=report_formats,
             extra_sbatch_args=extra_sbatch_args,
+            snakemake_diagnostics=snakemake_diagnostics,
         )
 
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":

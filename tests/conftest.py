@@ -1,8 +1,33 @@
+import os
+
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
+from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 
 # import tests.fixtures.test_case_catalog as cases
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _pytest_uses_non_interactive_snakemake_lock_clear():
+    """Route this pytest session through the non-interactive branch of
+    ``_check_and_clear_snakemake_lock`` so ``.snakemake/locks/`` and
+    ``.snakemake/incomplete/`` are silently cleared before every snakemake
+    invocation. Production / CLI users do not set the sentinel env var, so
+    the interactive prompt remains the default outside the test suite.
+
+    Phase 1 of synth-test-isolation-and-runtime (Decision D1-Option-D): the
+    helper-body branch is the single firing point for the unconditional
+    pre-snakemake clear required by R4. Fixtures do not clear separately;
+    this fixture just toggles policy.
+    """
+    prior = os.environ.get(_NON_INTERACTIVE_LOCK_CLEAR_ENV)
+    os.environ[_NON_INTERACTIVE_LOCK_CLEAR_ENV] = "1"
+    yield
+    if prior is None:
+        os.environ.pop(_NON_INTERACTIVE_LOCK_CLEAR_ENV, None)
+    else:
+        os.environ[_NON_INTERACTIVE_LOCK_CLEAR_ENV] = prior
 
 
 @pytest.fixture
