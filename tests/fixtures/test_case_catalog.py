@@ -883,7 +883,233 @@ class Local_TestCases:
         )
 
     @staticmethod
-    def _write_synth_sensitivity_csv(analysis_name: str, model_subset: str) -> Path:
+    def retrieve_synth_cpu_config_sensitivity_case_with_system_overlay(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R1/R5/R6 — `system.target_dem_resolution` overlay → two UniqueSystemTargets."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_with_system_overlay",
+            model_subset="all",
+            extra_columns={
+                "system.target_dem_resolution": [1.0, 1.0, 2.0, 2.0],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_with_system_overlay",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_mutex_violation(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
+        _require_cpu_cores_for_sensitivity()
+        dest_dir = (
+            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            / "synthetic_test_runs"
+            / "_sensitivity_configs"
+        )
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        per_sa_yaml = dest_dir / "synth_mutex_violation_row0_system.yaml"
+        per_sa_yaml.write_text("# placeholder per-sa system YAML for mutex-violation test\n")
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_mutex_violation",
+            model_subset="all",
+            extra_columns={
+                "system_config_yaml": [str(per_sa_yaml), "", "", ""],
+                "system.target_dem_resolution": [1.0, None, None, None],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_mutex_violation",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R4 — `system.gpu_compilation_backend='WRONG'` → Pydantic Literal failure."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_invalid_overlay",
+            model_subset="all",
+            extra_columns={
+                "system.gpu_compilation_backend": ["WRONG", None, None, None],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_invalid_overlay",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_legacy_gpu_hardware_override(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R8/R-X-2 — legacy `gpu_hardware_override` column → migration ConfigurationError."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_legacy_gpu_hw_override",
+            model_subset="all",
+            extra_columns={
+                "gpu_hardware_override": ["a6000", "a6000", "a6000", "a6000"],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_legacy_gpu_hw_override",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_typo_in_prefixed_column(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R9 — unknown column `system.target_dem_reslution` (typo) → ConfigurationError."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_typo_in_prefixed_column",
+            model_subset="all",
+            extra_columns={
+                "system.target_dem_reslution": [1.0, 1.0, 2.0, 2.0],  # intentional typo
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_typo_in_prefixed_column",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_with_system_gpu_hardware_override(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 1 R8 (T13 equivalence) — `system.gpu_hardware='override-test-gpu'` overlay."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            model_subset="all",
+            extra_columns={
+                "system.gpu_hardware": [
+                    "override-test-gpu", "override-test-gpu",
+                    "override-test-gpu", "override-test-gpu",
+                ],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 2 R2 — all analysis-config columns use the canonical `analysis.` prefix."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_all_analysis_prefixed",
+            model_subset="all",
+            drop_columns=["run_mode", "n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"],
+            extra_columns={
+                "analysis.run_mode":      ["mpi", "openmp", "hybrid", "serial"],
+                "analysis.n_mpi_procs":   [2, 1, 2, 1],
+                "analysis.n_omp_threads": [1, 2, 2, 1],
+                "analysis.n_gpus":        [0, 0, 0, 0],
+                "analysis.n_nodes":       [1, 1, 1, 1],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_all_analysis_prefixed",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_mixed_prefixed_columns(
+        start_from_scratch: bool = False,
+    ):
+        """Phase 2 R10 — mixed bare + `analysis.` + `system.` columns."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_mixed_prefixed_columns",
+            model_subset="all",
+            drop_columns=["n_mpi_procs"],
+            extra_columns={
+                # `n_omp_threads` retained as bare (deprecated path); `analysis.n_mpi_procs`
+                # introduced as canonical prefixed replacement.
+                "analysis.n_mpi_procs": [2, 1, 2, 1],
+                "system.target_dem_resolution": [1.0, 1.0, 2.0, 2.0],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_mixed_prefixed_columns",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+            },
+        )
+
+    @staticmethod
+    def _write_synth_sensitivity_csv(
+        analysis_name: str,
+        model_subset: str,
+        extra_columns: dict[str, list] | None = None,
+        drop_columns: list[str] | None = None,
+    ) -> Path:
         # Sibling dir (not under runs_root/<analysis_name>) so constructor's
         # start_from_scratch wipe of the analysis dir does not delete the CSV.
         runs_root = (
@@ -924,6 +1150,16 @@ class Local_TestCases:
             raise ValueError(
                 f"model_subset must be 'all', 'triton', or 'swmm'; got {model_subset!r}"
             )
+        if extra_columns:
+            for col_name, col_values in extra_columns.items():
+                if len(col_values) != len(df):
+                    raise ValueError(
+                        f"extra_columns[{col_name!r}] has {len(col_values)} values; "
+                        f"df has {len(df)} rows."
+                    )
+                df[col_name] = col_values
+        if drop_columns:
+            df = df.drop(columns=[c for c in drop_columns if c in df.columns])
         assert all(
             re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]
         ), "sa_id values must match ^[A-Za-z0-9_.]+$"
