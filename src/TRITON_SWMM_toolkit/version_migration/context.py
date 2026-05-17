@@ -41,6 +41,7 @@ OpKind = Literal[
     "csv_add_column",
     "csv_assert_unique",
     "flag_rewrite_paths",
+    "rewrite_text_preserving_mtime",
     "invalidate_compile_artifacts",
     "regenerate_scenario_status_csv",
     "guarded_remove",
@@ -687,6 +688,44 @@ class MigrationContext:
             if new_path.exists():
                 continue
             flag.rename(new_path)
+
+    def rewrite_text_preserving_mtime(self, path: Path, new_text: str) -> None:
+        self.plan.append(
+            PlannedOp(
+                "rewrite_text_preserving_mtime",
+                {"path": str(path), "new_text": new_text},
+            )
+        )
+
+    def _apply_rewrite_text_preserving_mtime(
+        self, path: str, new_text: str
+    ) -> None:
+        """Atomically rewrite `path` with `new_text`, restoring the original mtime.
+
+        Idempotent: when the on-disk bytes already match new_text, no write
+        occurs and mtime is preserved by no-op. The primitive exists because
+        the toolkit's Snakemake rerun-triggers default to ["mtime", "input"]
+        (workflow.py:1609); a naive Path.write_text bumps mtime → mtime trigger
+        fires → spurious rerun.
+
+        Atomic write via temp-file + rename + utime to keep concurrent readers
+        in a consistent state. The temp suffix uses PID so two concurrent
+        callers do not collide.
+        """
+        import os
+        p = Path(path)
+        if p.exists() and p.read_text() == new_text:
+            return  # idempotent: byte-identical, mtime preserved
+        if not p.exists():
+            # No prior file → just write; nothing to preserve.
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(new_text)
+            return
+        stat = p.stat()
+        tmp = p.with_suffix(p.suffix + f".{os.getpid()}.tmp")
+        tmp.write_text(new_text)
+        tmp.replace(p)
+        os.utime(p, (stat.st_atime, stat.st_mtime))
 
     # ---- Invalidation ----
 

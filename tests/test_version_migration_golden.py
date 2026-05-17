@@ -239,3 +239,36 @@ def test_v0_to_v1_against_norfolk_sensitivity_analysis_fixture(
     for sims in [analysis_dir / "sims"] + list(analysis_dir.glob("subanalyses/sa_*/sims")):
         for entry in sims.iterdir():
             assert not pattern.match(entry.name), f"unexpected legacy form: {entry}"
+
+
+def test_v5_to_v6_preserves_fingerprint_mtime(tmp_path: Path) -> None:
+    """V0006 rewrites fingerprint payloads without bumping mtime.
+
+    Snakemake rerun-triggers include "mtime"; a v1→v3 schema upgrade that
+    bumps mtime would spuriously rerun every sa_id chain. Asserts the
+    rewritten file's mtime is within 1 second of the original (filesystem
+    timestamp resolution).
+    """
+    work = _copy_fixture("v5", tmp_path)
+    fp = work / "_status" / "sa-0_inputs.json"
+    # Create the v1 fingerprint at a known-old mtime
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fp.write_text(
+        '{"__schema_version__":1,"fields":{"cpus_per_sim":1,"n_omp_threads":1,"run_mode":"serial"}}\n'
+    )
+    import os
+    old_mtime = 1_700_000_000.0
+    os.utime(fp, (old_mtime, old_mtime))
+
+    runner.run_migration(
+        work, target=6, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
+    )
+
+    new_mtime = fp.stat().st_mtime
+    assert abs(new_mtime - old_mtime) < 1.0, (
+        f"V0006 bumped mtime from {old_mtime} to {new_mtime}; "
+        "fingerprint rewrite must preserve mtime per workflow.py:1609 "
+        "rerun-triggers contract"
+    )
+    # And the content must be at schema v3
+    assert json.loads(fp.read_text())["__schema_version__"] == 3
