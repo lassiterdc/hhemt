@@ -36,6 +36,8 @@ sensitivity:
   # Allow-listed by the validator alongside literal CSV columns.
   independent_vars:
     - n_devices
+    - system.target_dem_resolution
+    - system.gpu_hardware
   dependent_var: performance.Total
   aggregation: mean
   group_by_var: run_mode
