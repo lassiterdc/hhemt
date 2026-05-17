@@ -15,4 +15,5 @@ layout_relevant:
   globs:
     - "src/TRITON_SWMM_toolkit/config/**/*.py"
     - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"
+    - "src/TRITON_SWMM_toolkit/version_migration/versions/*.py"
 non_breaking_allowlist: []
