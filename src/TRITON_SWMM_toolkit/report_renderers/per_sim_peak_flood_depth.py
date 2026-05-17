@@ -677,7 +677,11 @@ def _render_plotly_branch(
     dry_threshold = map_cfg.dry_threshold_m
     wet_mask = mask & (da > dry_threshold)
     da_masked = da.where(wet_mask)
-    dry_indicator = xr.where(mask & ~wet_mask, 1.0, np.nan)
+    # Iter6 (2026-05-17): dry-cell rendering uses a watershed-shaped polygon
+    # fill (single go.Scatter with fill="toself") rather than a per-cell
+    # Heatmap indicator. Trims ~3 MB of HTML payload (the per-cell indicator
+    # raster was the dominant payload contributor; the polygon fill is O(N)
+    # in vertex count, ~100s of points). dry_indicator no longer needed.
 
     try:
         wse_da = da + dem_da
@@ -846,28 +850,50 @@ def _render_plotly_branch(
             + ("; datashader pre-rasterized (512x512, max)" if use_datashader else "")
         ),
     )
-    # F-I-3: dry-cell base trace (within-watershed but below threshold)
-    # rendered as light grey so the watershed shape stays preattentive even
-    # in panels with limited wet extent.
-    dry_grey_scale = [[0, map_cfg.dry_fill_color], [1, map_cfg.dry_fill_color]]
-    dry_ref_depth = ProvenanceRef(
+    # Iter6 (2026-05-17): build watershed polygon coords once; reuse on both
+    # map panels as the dry-cell base fill. Plotly's `fill="toself"` connects
+    # the last point back to the first per linestring; multi-polygon
+    # watersheds use None separators so each ring fills as its own region.
+    if watershed_gdf.crs is not None:
+        ws_proj_fill = watershed_gdf.to_crs(target_crs)
+    else:
+        ws_proj_fill = watershed_gdf
+    ws_fill_x, ws_fill_y = [], []
+    for geom in ws_proj_fill.geometry:
+        if geom is None:
+            continue
+        polygons = list(geom.geoms) if hasattr(geom, "geoms") else [geom]
+        for poly in polygons:
+            xs, ys = poly.exterior.coords.xy
+            ws_fill_x.extend(list(xs) + [None])
+            ws_fill_y.extend(list(ys) + [None])
+    dry_ref = ProvenanceRef(
         source_path=watershed_rel, variable="watershed_polygon",
-        attrs={"dry_threshold_m": float(dry_threshold)},
+        attrs={
+            "dry_threshold_m": float(dry_threshold),
+            "render_mode": "polygon_fill",
+        },
         transform=(
-            "within-watershed mask AND not (max_wlevel_m > dry_threshold_m); "
-            "rendered as flat dry_fill_color"
+            "within-watershed background fill; wet Heatmap overlays on top "
+            "for cells where max_wlevel_m > dry_threshold_m; remaining "
+            "watershed cells show through this dry_fill_color polygon"
         ),
     )
+    # F-I-3 (iter6): dry-cell base fill rendered as a watershed-shaped polygon
+    # via go.Scatter(fill="toself") on the depth panel. Saves ~1.5 MB vs the
+    # iter1-5 per-cell Heatmap approach.
     with prov.artist(
-        axes_id="ax_depth_plotly", kind="image",
-        note="dry-cell base trace (depth panel)",
+        axes_id="ax_depth_plotly", kind="patch",
+        note="dry-cell watershed fill polygon (depth panel)",
     ) as a:
-        a.add_channel("z", dry_ref_depth)
-        a.add_channel("color", dry_ref_depth, cmap=map_cfg.dry_fill_color)
+        a.add_channel("x", dry_ref)
+        a.add_channel("y", dry_ref)
+        a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
         fig.add_trace(
-            go.Heatmap(
-                z=dry_indicator.values, x=dry_indicator.x.values, y=dry_indicator.y.values,
-                colorscale=dry_grey_scale, showscale=False,
+            go.Scatter(
+                x=ws_fill_x, y=ws_fill_y,
+                fill="toself", fillcolor=map_cfg.dry_fill_color,
+                mode="lines", line=dict(width=0),
                 hoverinfo="skip", showlegend=False, name="dry_watershed_depth",
             ),
             row=1, col=1,
@@ -917,25 +943,20 @@ def _render_plotly_branch(
         source_path=dem_rel, variable="dem_elev_m",
         attrs=dem_attrs, transform="reprojected to target_crs",
     )
-    # F-I-3: dry-cell base trace on the WSE panel as well.
-    dry_ref_wse = ProvenanceRef(
-        source_path=watershed_rel, variable="watershed_polygon",
-        attrs={"dry_threshold_m": float(dry_threshold)},
-        transform=(
-            "within-watershed mask AND not (max_wlevel_m > dry_threshold_m); "
-            "rendered as flat dry_fill_color"
-        ),
-    )
+    # F-I-3 (iter6): dry-cell base fill on the WSE panel — same polygon-fill
+    # approach as the depth panel above; reuses ws_fill_x/ws_fill_y.
     with prov.artist(
-        axes_id="ax_wse_plotly", kind="image",
-        note="dry-cell base trace (WSE panel)",
+        axes_id="ax_wse_plotly", kind="patch",
+        note="dry-cell watershed fill polygon (WSE panel)",
     ) as a:
-        a.add_channel("z", dry_ref_wse)
-        a.add_channel("color", dry_ref_wse, cmap=map_cfg.dry_fill_color)
+        a.add_channel("x", dry_ref)
+        a.add_channel("y", dry_ref)
+        a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
         fig.add_trace(
-            go.Heatmap(
-                z=dry_indicator.values, x=dry_indicator.x.values, y=dry_indicator.y.values,
-                colorscale=dry_grey_scale, showscale=False,
+            go.Scatter(
+                x=ws_fill_x, y=ws_fill_y,
+                fill="toself", fillcolor=map_cfg.dry_fill_color,
+                mode="lines", line=dict(width=0),
                 hoverinfo="skip", showlegend=False, name="dry_watershed_wse",
             ),
             row=1, col=2,

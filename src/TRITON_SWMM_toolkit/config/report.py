@@ -407,11 +407,17 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
         ),
     )
     datashader_threshold_cells: int = Field(
-        1_000_000,
+        25_000,
         description=(
             "Pre-rasterize via Datashader Canvas.raster() when per-frame cell "
             "count exceeds this. Below the threshold, frames go directly to "
-            "go.Heatmap. Tuned to keep per-frame JSON < ~5 MB."
+            "go.Heatmap. Tuned during Phase 3 design-figure closeout "
+            "(2026-05-17): the prior 1_000_000 default skipped Datashader on "
+            "the norfolk fixture (29,542 valid cells), pushing per-figure "
+            "HTML to 6.76 MB > 5 MB DoD budget; lowering to 25,000 fires the "
+            "branch on any norfolk-scale and larger fixture, trims the per-"
+            "figure HTML by replacing the 29,542-cell raster JSON with a "
+            "512×512 datashader aggregate."
         ),
     )
     visible_layers_default: list[
