@@ -767,7 +767,10 @@ class Local_TestCases:
         )
 
     @staticmethod
-    def retrieve_synth_multi_sim_test_case(start_from_scratch: bool = False):
+    def retrieve_synth_multi_sim_test_case(
+        start_from_scratch: bool = False,
+        skip_run: bool = False,
+    ):
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_multi_sim",
             # Iter-2 of `per_sim_peak_flood_depth` (2026-04-28): bumped from 2
@@ -776,6 +779,7 @@ class Local_TestCases:
             # (event 0: hydro-only, event 1: BC-only, event 2: both).
             n_events=3,
             start_from_scratch=start_from_scratch,
+            skip_run=skip_run,
         )
 
     @staticmethod
@@ -827,6 +831,7 @@ class Local_TestCases:
     @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
+        skip_run: bool = False,
     ):
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
@@ -840,6 +845,7 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
+            skip_run=skip_run,
             additional_analysis_configs={
                 "report": Local_TestCases._load_synth_sensitivity_report_dict()
             },
