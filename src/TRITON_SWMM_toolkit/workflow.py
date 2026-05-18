@@ -845,8 +845,8 @@ class SnakemakeWorkflowBuilder:
         # Build resource blocks using helper
         setup_resources = self._build_resource_block(
             partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-            runtime_min=30,
-            mem_mb=self.cfg_analysis.mem_gb_per_cpu * 1000,
+            runtime_min=self.cfg_analysis.hpc_runtime_min_for_setup,
+            mem_mb=self.cfg_analysis.hpc_mem_allocation_for_setup_mb,
             nodes=1,
             tasks=1,
             cpus_per_task=1,
@@ -4103,8 +4103,8 @@ onerror:
 {
                 self._base_builder._build_resource_block(
                     partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
-                    runtime_min=30,
-                    mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                    runtime_min=self.master_analysis.cfg_analysis.hpc_runtime_min_for_setup,
+                    mem_mb=self.master_analysis.cfg_analysis.hpc_mem_allocation_for_setup_mb,
                     nodes=1,
                     tasks=1,
                     cpus_per_task=1,

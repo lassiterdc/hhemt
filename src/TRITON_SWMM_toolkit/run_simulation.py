@@ -386,17 +386,25 @@ class TRITONSWMM_run:
 
         og_env = os.environ.copy()
         env = dict()
+        # Always prepend ${CONDA_PREFIX}/lib so triton.exe finds the conda env's
+        # libstdc++.so.6 at runtime (libstdc++ ABI fix — matches the link-time
+        # libstdc++ injected by system.py's compile script). Required because
+        # gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30 but the conda
+        # env's libgdal/libmuparser need GLIBCXX_3.4.31+.
+        ld_segments = ["${CONDA_PREFIX}/lib"]
         swmm_dir = self._analysis._system.cfg_system.SWMM_software_directory
         if swmm_dir:
             swmm_path = swmm_dir / "swmm_build" / "bin"
-            # Prepend the SWMM bin directory to the parent LD_LIBRARY_PATH so that
-            # HPC-provided library paths (rocm, libfabric, etc.) inherited from the
-            # SBATCH environment are preserved. The SBATCH script loads all required
-            # modules before launching Snakemake, so og_env["LD_LIBRARY_PATH"] already
-            # contains the full set of needed paths on both login and compute nodes.
-            # Passing this via env= dict (not via shell command string) avoids any
-            # ARG_MAX concerns since env vars go through a separate execve() vector.
-            env["LD_LIBRARY_PATH"] = f"{swmm_path}:{og_env.get('LD_LIBRARY_PATH', '$LD_LIBRARY_PATH')}"
+            ld_segments.append(str(swmm_path))
+        # Append the parent LD_LIBRARY_PATH so HPC-provided library paths (rocm,
+        # libfabric, etc.) inherited from the SBATCH environment are preserved.
+        # The SBATCH script loads all required modules before launching Snakemake,
+        # so og_env["LD_LIBRARY_PATH"] already contains the full set of needed
+        # paths on both login and compute nodes. Passing this via env= dict (not
+        # via shell command string) avoids any ARG_MAX concerns since env vars go
+        # through a separate execve() vector.
+        ld_segments.append(og_env.get("LD_LIBRARY_PATH", "$LD_LIBRARY_PATH"))
+        env["LD_LIBRARY_PATH"] = ":".join(ld_segments)
 
         # PATH is intentionally omitted from the env dict. The bash -lc (login shell)
         # rebuilds PATH from /etc/profile and the module load in the command string
