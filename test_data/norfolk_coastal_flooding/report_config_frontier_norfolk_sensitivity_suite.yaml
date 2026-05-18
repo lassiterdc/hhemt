@@ -37,6 +37,7 @@ sensitivity:
   # Frontier CSV header: sa_id, run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes, mem_gb_per_cpu.
   independent_vars:
     - n_devices
+    - system.target_dem_resolution
   dependent_var: performance.Total
   aggregation: mean
   group_by_var: run_mode

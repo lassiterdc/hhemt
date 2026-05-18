@@ -59,6 +59,28 @@ class CRSConfig(cfgBaseModel):
 
 
 class system_config(cfgBaseModel):
+    """Pydantic model for TRITON-SWMM system configuration.
+
+    Per-sub-analysis variation via prefixed sensitivity-CSV columns
+    ----------------------------------------------------------------
+    When used with TRITON-SWMM_toolkit's sensitivity-analysis workflow,
+    every field of this SystemConfig may be varied per sub-analysis via
+    sensitivity-CSV/XLSX columns of the form ``system.{field}``. The
+    column is mutually exclusive with the ``system_config_yaml`` full-file
+    column on a per-row basis. Overlay cells are synthesized into a
+    per-``UniqueSystemTarget`` config via Pydantic ``model_validate``
+    (re-fires field-level and cross-field validators), then materialized
+    to ``{analysis_dir}/_generated/target_{target_id}.yaml`` so runner
+    scripts can consume the resolved config via their existing
+    ``--system-config`` argument. See the
+    ``synthesized per target system yamls under generated`` stipulation
+    for the derived-artifact invariant. Coordinated multi-field changes
+    (e.g., Manning's-mode toggle + lookup file + colname coupling) should
+    still use the ``system_config_yaml`` escape hatch; bare-column
+    overlays cannot atomically express multi-field dependencies that
+    Pydantic cross-field validators expect.
+    """
+
     # FILEPATHS
     system_directory: Path = Field(
         ...,

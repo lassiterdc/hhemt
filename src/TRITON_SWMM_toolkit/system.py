@@ -503,6 +503,36 @@ class TRITONSWMM_system:
             check=True,
         )
 
+    @staticmethod
+    def _emit_libstdcpp_ld_preamble_lines() -> list:
+        # Ensure conda env's libstdc++ resolves at link AND runtime (libstdc++ ABI fix).
+        # gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30, but the conda env's
+        # libgdal/libmuparser need GLIBCXX_3.4.31+.
+        return [
+            "# Ensure conda env's libstdc++ resolves at link AND runtime (libstdc++ ABI fix)",
+            "# Required because gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30 but",
+            "# the conda env's libgdal/libmuparser need GLIBCXX_3.4.31+.",
+            'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"',
+            "",
+        ]
+
+    @staticmethod
+    def _emit_libstdcpp_link_patch_lines() -> list:
+        # Post-cmake / pre-make: append conda env's libstdc++.so.6 to the triton.exe
+        # link.txt so the linker resolves @GLIBCXX_3.4.31+ symbols required by
+        # libgdal/libmuparser. Kokkos's nvcc_wrapper drops bare paths from
+        # CMAKE_EXE_LINKER_FLAGS, so this is the most robust path to land libstdc++.
+        return [
+            "# Libstdc++ ABI link patch (post-cmake, pre-make):",
+            'if [ -f CMakeFiles/triton.exe.dir/link.txt ]; then',
+            '  sed -i "s|\\$| ${CONDA_PREFIX}/lib/libstdc++.so.6|" CMakeFiles/triton.exe.dir/link.txt',
+            '  echo "[LINK PATCH] appended ${CONDA_PREFIX}/lib/libstdc++.so.6 to triton.exe link.txt"',
+            'else',
+            '  echo "[LINK PATCH] WARNING: CMakeFiles/triton.exe.dir/link.txt not found; skipping patch"',
+            'fi',
+            "",
+        ]
+
     def _compile_backend(
         self,
         backend: str,
@@ -554,6 +584,8 @@ class TRITONSWMM_system:
                     "",
                 ]
             )
+
+        bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
         if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
             bash_script_lines.extend(
@@ -622,6 +654,9 @@ class TRITONSWMM_system:
                 "",
                 f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
+            ]
+            + self._emit_libstdcpp_link_patch_lines()
+            + [
                 "echo '=== CMAKE CONFIGURATION ==='",
                 "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
                 "",
@@ -896,6 +931,8 @@ class TRITONSWMM_system:
                 ]
             )
 
+        bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
+
         if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
             bash_script_lines.extend(
                 [
@@ -958,6 +995,9 @@ class TRITONSWMM_system:
                 "",
                 f'cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
+            ]
+            + self._emit_libstdcpp_link_patch_lines()
+            + [
                 "make -j4",
                 "",
                 "echo 'Build finished'",
@@ -1157,6 +1197,7 @@ class TRITONSWMM_system:
             bash_script_lines.append("")
 
         # Build SWMM
+        bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
         bash_script_lines.extend(
             [
                 f'cd "{build_dir}"',

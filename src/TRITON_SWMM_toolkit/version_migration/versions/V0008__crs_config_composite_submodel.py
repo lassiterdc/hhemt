@@ -1,4 +1,4 @@
-"""V0006: composite CRSConfig submodel under cfg_system.crs.
+"""V0008: composite CRSConfig submodel under cfg_system.crs.
 
 Replaces the legacy flat `crs_epsg: <int>` field on system_config with a
 composite `crs: {horizontal_epsg, vertical_epsg}` submodel
@@ -7,13 +7,19 @@ composite `crs: {horizontal_epsg, vertical_epsg}` submodel
 On-disk migration: this migration is a no-op against the persisted
 `cached_configs/system.yaml` because the cfg-load path (the
 `system_config.validate_toggle_dependencies` model_validator with the
-`mode="before"` shim introduced alongside V0006) tolerates both the
+`mode="before"` shim introduced alongside V0008) tolerates both the
 legacy flat form and the new nested form. The migration's responsibility
-is to bump `_version.json` 5→6 and to record on-disk a verification
-probe that the cfg-load path round-trips both forms. The shim is a
-one-cycle backward-compat surface; a future migration (V0007 or later)
-will remove the shim and require cfg files to use the nested form
-explicitly.
+is to bump `_version.json` 7→8 and to record on-disk a verification
+probe that the cfg-load path round-trips both forms. The shim spans
+multiple cycles (introduced at V0008, ostensibly removable at V0009 or
+later); a future migration will remove the shim and require cfg files
+to use the nested form explicitly.
+
+Renumber note: this migration was originally authored as V0006 on the
+worktree branch `worktree-toolkit_05-06_1348_interactive-report-renderers-pwi`
+and renumbered to V0008 at the Phase 6 closure merge to resolve a V0006
+collision with `V0006__fingerprint_schema_v3.py` from a parallel session
+on origin/main. The renumber is documented in the merge commit.
 
 Layout-relevant files modified in this layout bump:
   - src/TRITON_SWMM_toolkit/config/system.py (CRSConfig introduced;
@@ -22,7 +28,7 @@ Layout-relevant files modified in this layout bump:
     vertical_crs_epsg LogField[int])
 
 Note: the system_log JSON does not include `vertical_crs_epsg` in
-legacy v5 fixtures — the field is optional (LogField default-factory)
+legacy v7 fixtures — the field is optional (LogField default-factory)
 and reads as None on legacy logs. No on-disk fixup needed.
 """
 from __future__ import annotations
@@ -31,8 +37,8 @@ from pathlib import Path
 
 from TRITON_SWMM_toolkit.version_migration.context import MigrationContext
 
-version_from: int = 5
-version_to: int = 6
+version_from: int = 7
+version_to: int = 8
 description: str = (
     "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg "
     "field on system_log"
@@ -53,10 +59,10 @@ def upgrade(ctx: MigrationContext) -> None:
     The migration is otherwise a no-op against the persisted
     `cached_configs/system.yaml` because the cfg-load shim in
     `system_config.validate_toggle_dependencies` handles form
-    translation transparently at every cfg load. The shim is a
-    one-cycle backward-compat surface; a future migration (V0007 or
-    later) will remove the shim and require cfg files to use the
-    nested form explicitly.
+    translation transparently at every cfg load. The shim spans
+    multiple cycles (introduced at V0008, ostensibly removable at V0009
+    or later); a future migration will remove the shim and require
+    cfg files to use the nested form explicitly.
     """
     import yaml
 
@@ -71,9 +77,9 @@ def upgrade(ctx: MigrationContext) -> None:
     has_flat = "crs_epsg" in cfg
     has_nested = "crs" in cfg
     if not has_flat and not has_nested:
-        # No CRS declaration — pre-V0006 stub fixtures or partial configs
+        # No CRS declaration — pre-V0008 stub fixtures or partial configs
         # whose CRS is provided programmatically by test harnesses. The
-        # post-V0006 cfg-load path will fail later if a real user runs
+        # post-V0008 cfg-load path will fail later if a real user runs
         # `analysis.run()` against this config; that's the correct surface
         # for the error, not this migration probe.
         return
@@ -84,7 +90,7 @@ def upgrade(ctx: MigrationContext) -> None:
         )
 
         raise MigrationBlockedError(
-            f"V0006: cached cfg_system at {cfg_system_path} contains BOTH "
+            f"V0008: cached cfg_system at {cfg_system_path} contains BOTH "
             f"the legacy `crs_epsg` and the new `crs` blocks. Remove one "
             f"before re-running the migration — the cfg-load shim does not "
             f"merge them."
@@ -104,7 +110,7 @@ def upgrade(ctx: MigrationContext) -> None:
         )
 
         raise MigrationBlockedError(
-            f"V0006: cached cfg_system at {cfg_system_path} contains a CRS "
+            f"V0008: cached cfg_system at {cfg_system_path} contains a CRS "
             f"declaration that fails validation ({exc}). Accepted forms: "
             f"`crs_epsg: <int>` (legacy) or `crs: {{horizontal_epsg: <int>, "
             f"vertical_epsg: <int>}}` (new). EPSG codes must be valid "

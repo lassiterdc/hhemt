@@ -11,7 +11,9 @@ layout_relevant:
     - src/TRITON_SWMM_toolkit/process_simulation.py
     - src/TRITON_SWMM_toolkit/processing_analysis.py
     - src/TRITON_SWMM_toolkit/cf_conventions.py
+    - src/TRITON_SWMM_toolkit/sensitivity_analysis.py
   globs:
     - "src/TRITON_SWMM_toolkit/config/**/*.py"
     - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"
+    - "src/TRITON_SWMM_toolkit/version_migration/versions/*.py"
 non_breaking_allowlist: []
