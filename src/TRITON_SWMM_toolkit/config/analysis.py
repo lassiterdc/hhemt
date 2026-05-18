@@ -102,6 +102,27 @@ class analysis_config(cfgBaseModel):
         12000,
         description="Memory allocation for consolidating simulation summaries across all scenarios.",
     )
+    hpc_mem_allocation_for_setup_mb: int = Field(
+        default=12000,
+        gt=0,
+        description=(
+            "Memory allocation (in MB) for the setup_target SLURM rule that runs "
+            "system-input processing (DEM coarsening, Manning's raster) and TRITON-SWMM "
+            "compilation. Default 12 GB covers 0.35 m DEM processing (empirical peak "
+            "~5.15 GB parent-process RSS) with 2.3x headroom and the compile-side peak "
+            "(~1.34 GB) ~9x. Increase for higher-resolution DEMs or larger watersheds."
+        ),
+    )
+    hpc_runtime_min_for_setup: int = Field(
+        default=60,
+        gt=0,
+        description=(
+            "Time allocation (in minutes) for the setup_target SLURM rule. Default 60 "
+            "covers 0.35 m DEM processing (empirical wall time ~2:24) plus a -j4 GPU "
+            "compile (~3 min) with headroom. Increase for higher-resolution DEMs or "
+            "slower nodes."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: Optional[int] = Field(
         None,
