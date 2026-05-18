@@ -284,6 +284,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         toggle_use_constant_mannings: bool = False,
         sensitivity_csv: Path | None = None,
         start_from_scratch: bool = False,
+        skip_run: bool = False,
         params: SyntheticModelParams = DEFAULT_PARAMS,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
@@ -347,7 +348,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.system = TRITONSWMM_system(self.system_yaml)
         self.analysis = TRITONSWMM_analysis(self.analysis_yaml, self.system)
         self.system._analysis = self.analysis
-        if start_from_scratch:
+        # `skip_run=True` (Phase 2, synth-test-isolation-and-runtime): callers that
+        # need only a configured analysis for `generate_snakefile_content` skip the
+        # ~heavy DEM/landuse preprocessing. start_from_scratch still wipes the
+        # system_directory and re-writes configs; only the run-side preprocessing
+        # is gated. See A6 verification in the Phase 2 plan doc.
+        if start_from_scratch and not skip_run:
             self.system.process_system_level_inputs(
                 overwrite_outputs_if_already_created=True, verbose=False
             )

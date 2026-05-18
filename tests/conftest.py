@@ -355,6 +355,31 @@ def synth_multi_sim_analysis_cached():
     return case.analysis
 
 
+@pytest.fixture(scope="session")
+def synth_multi_sim_builder():
+    """Configured-but-not-run multi-sim analysis (Phase 2,
+    synth-test-isolation-and-runtime). No DEM/landuse preprocessing, no compile,
+    no scenario prep — sufficient for `generate_snakefile_content`-only tests.
+    Session-scoped so the 4 collapsed symmetry tests share one builder."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+        start_from_scratch=True,
+        skip_run=True,
+    )
+    return case.analysis
+
+
+@pytest.fixture(scope="session")
+def synth_sensitivity_builder():
+    """Configured-but-not-run sensitivity analysis (Phase 2,
+    synth-test-isolation-and-runtime). Same contract as `synth_multi_sim_builder`
+    but consumes the sensitivity-CSV factory."""
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch=True,
+        skip_run=True,
+    )
+    return case.analysis
+
+
 @pytest.fixture
 def synth_triton_only_analysis():
     case = cases.Local_TestCases.retrieve_synth_triton_only_test_case(
