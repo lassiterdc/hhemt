@@ -153,7 +153,7 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
     "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
     "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".html"},
-    "per_analysis_summary": {"matplotlib": ".svg", "plotly": ".svg"},
+    "per_analysis_summary": {"matplotlib": ".html", "plotly": ".html"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
     "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
 }
@@ -1269,11 +1269,10 @@ rule render_report:
     ) -> str:
         """Generate the Snakemake rule for the per-analysis summary table (R7).
 
-        Produces `plots/per_analysis/summary_table.svg` — a deterministic
-        metrics table (n sims, n successful/pending/failed, average TRITON +
-        SWMM flow-routing continuity errors). Per Phase 5 plan: SWMM .rpt
-        parsing delegates to swmm_output_parser.return_swmm_system_outputs,
-        not in-renderer regex.
+        Produces `plots/per_analysis/summary_table.html` — a Tabulator data
+        grid (n sims, expected total, n successful/pending/failed, enabled
+        model types, sensitivity-analysis mode). HTML emit replaced the prior
+        matplotlib SVG path at Phase 6.
 
         ``input_flag`` defaults to the regular multisim consolidation flag
         (`e_consolidate_complete`); the sensitivity master Snakefile passes
