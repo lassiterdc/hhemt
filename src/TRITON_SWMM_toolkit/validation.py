@@ -1149,6 +1149,76 @@ def _check_static_backend_kaleido_available(
         )
 
 
+def _validate_setup_mem_sizing(
+    cfg_system: system_config,
+    cfg_analysis: analysis_config,
+    result: ValidationResult,
+):
+    """Warn when hpc_mem_allocation_for_setup_mb is under-sized for the smallest
+    target_dem_resolution across master + sensitivity overlays + per-sub-analysis
+    YAMLs. Empirical peak parent-process RSS at 0.35 m DEM is ~5.15 GB; an 8 GB
+    threshold gives a guard band without preventing user override.
+    """
+    setup_mem_mb = cfg_analysis.hpc_mem_allocation_for_setup_mb
+    if setup_mem_mb >= 8000:
+        return
+
+    candidate_resolutions: list[float] = []
+    master_res = getattr(cfg_system, "target_dem_resolution", None)
+    if master_res is not None:
+        candidate_resolutions.append(float(master_res))
+
+    if cfg_analysis.toggle_sensitivity_analysis and cfg_analysis.sensitivity_analysis:
+        sa_csv = Path(cfg_analysis.sensitivity_analysis)
+        if sa_csv.is_file():
+            try:
+                import pandas as pd
+                if sa_csv.suffix.lower() in {".xlsx", ".xls"}:
+                    df = pd.read_excel(sa_csv)
+                else:
+                    df = pd.read_csv(sa_csv)
+            except Exception:
+                df = None
+            if df is not None:
+                if "system.target_dem_resolution" in df.columns:
+                    for val in df["system.target_dem_resolution"].dropna().tolist():
+                        try:
+                            candidate_resolutions.append(float(val))
+                        except (TypeError, ValueError):
+                            continue
+                if "system_config_yaml" in df.columns:
+                    from TRITON_SWMM_toolkit.config.loaders import load_system_config
+                    seen: set[Path] = set()
+                    for cell in df["system_config_yaml"].dropna().tolist():
+                        yaml_path = Path(str(cell).strip())
+                        if not yaml_path.is_file() or yaml_path in seen:
+                            continue
+                        seen.add(yaml_path)
+                        try:
+                            loaded = load_system_config(yaml_path)
+                        except Exception:
+                            continue
+                        loaded_res = getattr(loaded, "target_dem_resolution", None)
+                        if loaded_res is not None:
+                            candidate_resolutions.append(float(loaded_res))
+
+    if not candidate_resolutions:
+        return
+    min_res = min(candidate_resolutions)
+    if min_res <= 0.5:
+        result.add_warning(
+            field="analysis.hpc_mem_allocation_for_setup_mb",
+            message=(
+                f"hpc_mem_allocation_for_setup_mb={setup_mem_mb} MB may be "
+                f"under-sized: at least one target_dem_resolution={min_res} m "
+                f"is <= 0.5 m. Empirical peak parent-process RSS at 0.35 m DEM "
+                f"is ~5.15 GB; 8 GB threshold gives a guard band."
+            ),
+            current_value=setup_mem_mb,
+            fix_hint="Increase hpc_mem_allocation_for_setup_mb to >= 8000 (default 12000).",
+        )
+
+
 # ============================================================================
 # Combined Preflight Validation
 # ============================================================================
@@ -1204,6 +1274,9 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+
+    # Setup-rule memory sizing sanity check (warning only — does not fail-fast).
+    _validate_setup_mem_sizing(cfg_system, cfg_analysis, result)
 
     # Interactive-output runtime-dependency check (Phase 1 substrate).
     # Warns only — does not fail-fast — because the matplotlib branch

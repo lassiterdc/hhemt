@@ -45,6 +45,24 @@ reference is chosen, in priority order:
 
 Idempotency: the primitive's content-match short-circuit applies. Re-running
 the migration produces no observable change once any sa_id is at v3.
+
+Conservative v2 skip — legacy escape hatch carve-out:
+
+If a fingerprint payload's `__schema_version__` is 2 (the schema produced by
+`_compute_sa_id_fingerprint_payload` when `_has_per_sa_system_configs` is True
+— i.e., the sensitivity CSV declares a `system_config_yaml` column, the legacy
+per-sub-analysis system-config escape hatch), V0006 logs a warning and returns
+without rewriting. The v2 → v3 promotion requires reading the per-sub-analysis
+system YAML to compute the matching `system_cfg_hash` field, which V0006
+deliberately does not depend on (cfg_paths-style dependencies are out of scope
+for this migration's contract). Operators carrying v2 fingerprints have two
+recovery paths: (a) hand-rewrite the payload to v3 form, computing
+`system_cfg_hash` via `hashlib.sha1(cfg_system.model_dump_json().encode()).hexdigest()`
+and adding the resolved `system_overlay` per-sa_id row; (b) accept the
+Snakemake rerun for those sa_ids by deleting the fingerprint file. Path (b)
+is acceptable for occasional v2 trees; path (a) is documented for operators
+maintaining v2-heavy deployments. The v2 → v3 promotion is intentionally not
+automated to avoid coupling V0006 to the system-config-resolution stack.
 """
 from __future__ import annotations
 

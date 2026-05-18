@@ -6,6 +6,8 @@ import yaml
 import TRITON_SWMM_toolkit.constants as cnst
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.config.analysis import analysis_config
+from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+from TRITON_SWMM_toolkit.config.report import report_config as report_config_model
 from TRITON_SWMM_toolkit.examples import (
     NorfolkIreneExample,
     TRITON_SWMM_example,
@@ -39,6 +41,7 @@ class CaseStudyBuilder:
         platform_config: Optional["PlatformConfig"] = None,
         analysis_overrides: dict | None = None,
         system_overrides: dict | None = None,
+        report_config_yaml: Path | None = None,
     ):
 
         #
@@ -97,6 +100,18 @@ class CaseStudyBuilder:
 
         # update analysis attributes
         cfg_analysis.analysis_id = analysis_name
+
+        # Inline source-side report_config.yaml into cfg_analysis.report when the
+        # case method supplies one. The template_analysis_config.yaml ships with
+        # report: {} (an empty default) — V0005 retroactively populated this field
+        # for already-on-disk analyses but did not update CaseStudyBuilder to do
+        # the same at instantiation, so sensitivity cases (whose run-time validator
+        # requires report.sensitivity) hit ConfigurationError unless their canonical
+        # standalone report_config_*.yaml is threaded here.
+        if report_config_yaml is not None:
+            cfg_analysis.report = yaml_to_model(
+                Path(report_config_yaml), report_config_model
+            )
 
         # add additional fields
         for key, val in final_analysis_configs.items():
@@ -174,6 +189,9 @@ class UVACaseStudies:
         analysis_name = "uva_sensitivity_suite"
         example_dir = all_examples.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
+        report_config_yaml = (
+            example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
+        )
 
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -203,6 +221,7 @@ class UVACaseStudies:
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
+            report_config_yaml=report_config_yaml,
         )
 
     @classmethod
@@ -302,6 +321,9 @@ class FrontierCaseStudies:
         analysis_name = "frontier_sensitivity_suite"
         example_dir = all_examples.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_frontier_suite
+        report_config_yaml = (
+            example_dir / "report_config_frontier_norfolk_sensitivity_suite.yaml"
+        )
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
@@ -324,4 +346,5 @@ class FrontierCaseStudies:
             download_if_exists=download_if_exists,
             platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
+            report_config_yaml=report_config_yaml,
         )
