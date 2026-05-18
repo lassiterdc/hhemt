@@ -191,6 +191,7 @@ rule process_triton:
     input: "_status/c_run_triton_evt-{event_id}_complete.flag"
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
     log: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_triton_evt-{event_id}.log"
+    group: "process_evt_{event_id}"
     conda: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -220,6 +221,7 @@ rule process_tritonswmm:
     input: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
     log: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
+    group: "process_evt_{event_id}"
     conda: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -249,6 +251,7 @@ rule process_swmm:
     input: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
     log: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
+    group: "process_evt_{event_id}"
     conda: "/home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],

@@ -1142,6 +1142,7 @@ rule process_{model_type}:
     input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
     output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
     log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
+    group: "process_evt_{{event_id}}"
     conda: "{conda_env_path}"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
