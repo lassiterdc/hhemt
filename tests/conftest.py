@@ -1,9 +1,16 @@
+import hashlib
 import os
+from pathlib import Path
 
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
 from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
+
+_SYNTH_SENSITIVITY_REPORT_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
+)
 
 # import tests.fixtures.test_case_catalog as cases
 
@@ -557,3 +564,97 @@ def tritonswmm_cpu_compiled():
             case.analysis._system.compile_SWMM(
                 recompile_if_already_done_successfully=False,
             )
+
+
+# ========== Phase 3a: Session-scope rendered_synth_* fixtures (R7) ==========
+
+
+def _mtime_sha_snapshot(analysis_dir: Path) -> dict[str, tuple[float, str]]:
+    """Return ``{relative_path: (mtime, sha1)}`` for ``_status/*.flag`` and
+    every ``*.manifest.json`` under ``plots/``. Used by the session-scope
+    rendered-fixture finalizers to enforce read-only consumption (R-CP-3:
+    SHA-1 is the durable invariant; mtime-only drift is a warning)."""
+    snapshot: dict[str, tuple[float, str]] = {}
+    status_dir = analysis_dir / "_status"
+    if status_dir.exists():
+        for f in status_dir.glob("*.flag"):
+            snapshot[str(f.relative_to(analysis_dir))] = (
+                f.stat().st_mtime,
+                hashlib.sha1(f.read_bytes()).hexdigest(),
+            )
+    plots_dir = analysis_dir / "plots"
+    if plots_dir.exists():
+        for f in plots_dir.rglob("*.manifest.json"):
+            snapshot[str(f.relative_to(analysis_dir))] = (
+                f.stat().st_mtime,
+                hashlib.sha1(f.read_bytes()).hexdigest(),
+            )
+    return snapshot
+
+
+def _assert_no_sha_drift(
+    label: str,
+    initial: dict[str, tuple[float, str]],
+    final: dict[str, tuple[float, str]],
+) -> None:
+    """Compare two snapshots from :func:`_mtime_sha_snapshot`. Hard-fails on
+    SHA-changed or deleted entries (R7 read-only invariant); mtime-only
+    differences are downgraded to a pytest warning (R-CP-3 mitigation:
+    read-write `open()` without writes still bumps mtime on some
+    filesystems)."""
+    drift: list[str] = []
+    for k, (m0, sha0) in initial.items():
+        if k not in final:
+            drift.append(f"DELETED: {k}")
+            continue
+        m1, sha1 = final[k]
+        if sha0 != sha1:
+            drift.append(f"SHA-CHANGED: {k}")
+        elif m0 != m1:
+            drift.append(f"MTIME-ONLY-DRIFT: {k} (warning)")
+    sha_drift = [d for d in drift if not d.startswith("MTIME-ONLY-DRIFT")]
+    if sha_drift:
+        pytest.fail(
+            f"{label} session fixture was mutated:\n  " + "\n  ".join(sha_drift)
+        )
+
+
+@pytest.fixture(scope="session")
+def rendered_synth_multi_sim():
+    """Session-scope: build, run, and render the synth multisim analysis once.
+
+    Promoted from function-scope per Phase 3a (R7,
+    synth-test-isolation-and-runtime). Builds its own case from
+    ``Local_TestCases`` (a session-scope fixture cannot depend on the
+    function-scope ``synth_multi_sim_analysis``). Renders both ``html`` and
+    ``zip`` formats so bundle round-trip tests find both artifacts. The
+    session finalizer asserts no consumer mutated ``_status/*.flag`` or
+    ``plots/**/*.manifest.json`` via SHA-1 (mtime-only drift tolerated)."""
+    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+        start_from_scratch=True,
+    )
+    case.analysis.run()
+    case.analysis.render_report(format="html")
+    case.analysis.render_report(format="zip")
+    snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    yield case.analysis
+    final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    _assert_no_sha_drift("rendered_synth_multi_sim", snapshot, final)
+
+
+@pytest.fixture(scope="session")
+def rendered_synth_sensitivity():
+    """Session-scope: build, run, and render the synth sensitivity analysis
+    once. See ``rendered_synth_multi_sim`` for contract details. Uses
+    ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` (relocated from
+    ``test_synth_08_bundle_round_trip.py`` in Phase 3a)."""
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch=True,
+    )
+    case.analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
+    case.analysis.render_report(format="html")
+    case.analysis.render_report(format="zip")
+    snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    yield case.analysis
+    final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
+    _assert_no_sha_drift("rendered_synth_sensitivity", snapshot, final)

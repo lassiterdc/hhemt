@@ -18,29 +18,11 @@ from pathlib import Path
 
 import pytest
 
-
-@pytest.fixture
-def rendered_synth_multi_sim(synth_multi_sim_analysis):
-    """Reuse the existing synth multisim fixture and ensure render_report
-    has been invoked so manifest sidecars exist."""
-    synth_multi_sim_analysis.run()
-    synth_multi_sim_analysis.render_report(format="html")
-    synth_multi_sim_analysis.render_report(format="zip")
-    return synth_multi_sim_analysis
-
-
-_SYNTH_SENSITIVITY_REPORT_CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
-)
-
-
-@pytest.fixture
-def rendered_synth_sensitivity(synth_sensitivity_analysis):
-    synth_sensitivity_analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
-    synth_sensitivity_analysis.render_report(format="html")
-    synth_sensitivity_analysis.render_report(format="zip")
-    return synth_sensitivity_analysis
+# Phase 3a (synth-test-isolation-and-runtime, R7): `rendered_synth_multi_sim`
+# and `rendered_synth_sensitivity` were promoted to session-scope fixtures in
+# `tests/conftest.py`. The `_SYNTH_SENSITIVITY_REPORT_CONFIG` constant moved
+# with them. Tests in this file consume the session-scope versions
+# automatically via pytest's fixture-resolution rules.
 
 
 def test_bundle_report_data_is_opt_in():
