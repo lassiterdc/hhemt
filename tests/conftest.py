@@ -15,6 +15,14 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
 # import tests.fixtures.test_case_catalog as cases
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_snakemake_subprocess: test launches Snakemake as a subprocess; "
+        "incompatible with pytest-xdist parallel workers (nested parallelism)",
+    )
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _pytest_uses_non_interactive_snakemake_lock_clear():
     """Route this pytest session through the non-interactive branch of

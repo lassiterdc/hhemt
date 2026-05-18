@@ -23,6 +23,16 @@ import pytest
 # `tests/conftest.py`. The `_SYNTH_SENSITIVITY_REPORT_CONFIG` constant moved
 # with them. Tests in this file consume the session-scope versions
 # automatically via pytest's fixture-resolution rules.
+#
+# Phase 4 (synth-test-isolation-and-runtime): although per-test bodies consume
+# the cached rendered fixtures rather than invoking snakemake themselves, the
+# session-scope rendered fixtures DO invoke snakemake once each at first
+# resolution. Under pytest-xdist, session fixtures are per-worker — so 4 workers
+# would each launch snakemake, producing the exact nested-parallelism conflict
+# Phase 4 marks against. Hence the requires_snakemake_subprocess marker applies
+# at file scope.
+
+pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 def test_bundle_report_data_is_opt_in():
