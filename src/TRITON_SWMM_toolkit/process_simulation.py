@@ -483,9 +483,16 @@ class TRITONSWMM_sim_post_processing:
 
         event_iloc = self._scenario.event_iloc
 
-        ds = ds.sum(dim="timestep_min").mean(dim="Rank")
+        ds = ds.sum(dim="timestep_min").max(dim="Rank")
         ds.attrs["units"] = "seconds"
-        ds.attrs["notes"] = "Values represent the sum of compute times per timestep averaged across MPI ranks."
+        ds.attrs["notes"] = (
+            "Per-column slowest-rank cumulative cost. 'Total' / 'Simulation' / 'Init' "
+            "equal wallclock elapsed from triton.exe start through final checkpoint "
+            "barrier (TRITON synchronizes ranks before every checkpoint per "
+            "triton.h:2151-2162). Category columns ('Compute','MPI','IO','SWMM',"
+            "'Resize','Other') are upper bounds on the per-category contribution "
+            "to wallclock — slowest-rank category cost, NOT per-rank means."
+        )
         self._write_output(ds, fname_out, compression_level, verbose, mode=mode)
         elapsed_s = time.time() - start_time
         self.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
