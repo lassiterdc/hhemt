@@ -1,0 +1,10 @@
+{
+  "attributes": {
+    "sim_date": "",
+    "output_creation_date": "2026-05-14T01:56:04-04:00",
+    "units": "seconds",
+    "notes": "Values represent the sum of compute times per timestep averaged across MPI ranks."
+  },
+  "zarr_format": 3,
+  "node_type": "group"
+}

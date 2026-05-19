@@ -391,54 +391,10 @@ class TRITONSWMM_sim_post_processing:
 
         reporting_interval_s = self._analysis.cfg_analysis.TRITON_reporting_timestep_s
         min_per_tstep = reporting_interval_s / 60
-        fpattern_prefix = "performance"
-        varname = "performance"
-        fldr_out_triton = performance_dir
-        perf_tseries = return_filelist_by_tstep(fldr_out_triton, fpattern_prefix, min_per_tstep, varname)
-
-        # Fail fast if directory exists but no performance files found
-        # This likely indicates files are being written to the wrong location
-        if len(perf_tseries) == 0:
-            raise FileNotFoundError(
-                f"Performance directory {fldr_out_triton} exists but contains no performance*.txt files. "
-                "This may indicate performance files are being written to a different location. "
-                f"Expected pattern: performance*.txt in {fldr_out_triton}"
-            )
-        lst_perf_tseries = []
-        perfs_with_negatives = []
-        dfs_with_negatives = []
-        for tstep, f in perf_tseries.items():
-            df_ranks, ___ = parse_performance_file(f)
-            df_ranks[perf_tseries.index.name] = tstep
-            df_ranks = df_ranks.reset_index().set_index([perf_tseries.index.name, "Rank"])
-            lst_perf_tseries.append(df_ranks)
-            if (df_ranks < 0).any().any():
-                perfs_with_negatives.append(str(f))
-                dfs_with_negatives.append(df_ranks)
-        if len(perfs_with_negatives) > 0:
-            all_files = "\n    - ".join(perfs_with_negatives)
-            warning_text = (
-                f"Negative times encountered in {len(perfs_with_negatives)} performance.txt files.\n"
-                f"E.g., {perfs_with_negatives[0]}:\n{dfs_with_negatives[0].to_markdown()}\n"
-                "This is a known issue in some versions of TRITON-SWMM that should\n"
-                " not cause significant bias in performance measurement.\n"
-                f" Files with negative time values: {all_files}"
-            )
-            warnings.warn(
-                warning_text,
-                UserWarning,
-                stacklevel=2,
-            )
-        full_perf_timeseries = pd.concat(lst_perf_tseries)
-        full_perf_timeseries.loc[pd.IndexSlice[0, 0], :] = 0
-        full_perf_timeseries = full_perf_timeseries.sort_index()
-        perf_timeseries_deltas = full_perf_timeseries.diff().dropna()
-        # a reset is assumed if all values are less than or equal to zero
-        idx_resets = (full_perf_timeseries.diff().dropna() <= 0).all(axis=1)
-        idx = idx_resets[idx_resets].index
-        perf_timeseries_deltas.loc[idx, :] = full_perf_timeseries.loc[idx, :]
-        # convert cumulative values to magnitude per timestep accounting for potential resets
-        ds = perf_timeseries_deltas.to_xarray()
+        # Delegate parsing + per-rank diff aggregation to the module-level helper so
+        # the V0008 migration and the regression test share one source of truth.
+        # The helper raises FileNotFoundError if no performance{N}.txt files match.
+        ds = _aggregate_perf_tseries(performance_dir, min_per_tstep=min_per_tstep)
 
         event_iloc = self._scenario.event_iloc
         ds = ds.assign_coords(coords=dict(event_iloc=event_iloc))
@@ -1545,6 +1501,99 @@ class TRITONSWMM_sim_post_processing:
         node_ok = self.log.SWMM_node_summary_written and bool(self.log.SWMM_node_summary_written.get())
         link_ok = self.log.SWMM_link_summary_written and bool(self.log.SWMM_link_summary_written.get())
         return node_ok and link_ok
+
+
+def _aggregate_perf_tseries(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+    """Parse per-checkpoint ``performance{N}.txt`` files into an :class:`xr.Dataset`
+    of corrected per-rank deltas.
+
+    The diff fix vs the pre-V0008 implementation: prior code called ``pd.diff()`` on a
+    ``(timestep_min, Rank)`` MultiIndex frame, which crossed rank boundaries and produced
+    inter-rank-skew rather than per-rank deltas. ``groupby(level='Rank').diff()`` keeps
+    the diff within each rank's checkpoint sequence.
+
+    Module-level so the V0008 migration and the production ``_export_performance_tseries``
+    aggregator share one source of truth. The optional ``min_per_tstep`` argument lets
+    production preserve its prior coord-value semantics (``timestep_min = filename_int *
+    min_per_tstep``); the default ``1.0`` matches V0008's prescription and the
+    regression-test fixtures.
+    """
+    import re
+
+    files = sorted(
+        raw_perf_dir.glob("performance*.txt"),
+        key=lambda f: int(re.search(r"(\d+)", f.name).group(1) or 0)
+        if re.search(r"(\d+)", f.name)
+        else 0,
+    )
+    files = [f for f in files if re.search(r"performance(\d+)", f.name)]
+    if not files:
+        raise FileNotFoundError(
+            f"Performance directory {raw_perf_dir} contains no performance{{N}}.txt files."
+        )
+
+    dfs = []
+    perfs_with_negatives: list[str] = []
+    dfs_with_negatives: list[pd.DataFrame] = []
+    for f in files:
+        m = re.search(r"performance(\d+)", f.name)
+        if m is None:
+            continue
+        tstep_iloc = int(m.group(1))
+        df_ranks, _ = parse_performance_file(f)
+        df_ranks = df_ranks.reset_index()
+        df_ranks["timestep_min"] = tstep_iloc * min_per_tstep
+        df_ranks = df_ranks.set_index(["timestep_min", "Rank"])
+        dfs.append(df_ranks)
+        if (df_ranks < 0).any().any():
+            perfs_with_negatives.append(str(f))
+            dfs_with_negatives.append(df_ranks)
+
+    if perfs_with_negatives:
+        all_files = "\n    - ".join(perfs_with_negatives)
+        warnings.warn(
+            (
+                f"Negative times encountered in {len(perfs_with_negatives)} performance.txt files.\n"
+                f"E.g., {perfs_with_negatives[0]}:\n{dfs_with_negatives[0].to_markdown()}\n"
+                "This is a known issue in some versions of TRITON-SWMM that should\n"
+                " not cause significant bias in performance measurement.\n"
+                f" Files with negative time values: {all_files}"
+            ),
+            UserWarning,
+            stacklevel=2,
+        )
+
+    full = pd.concat(dfs).sort_index()
+    # Per-rank diff (BUGFIX V0008): keep within each rank's checkpoint sequence.
+    deltas = full.groupby(level="Rank").diff()
+    # First checkpoint per rank produces NaN from groupby.diff() — fill with the
+    # absolute cumulative at that first checkpoint (TRITON starts the timer at
+    # process construction; see triton.h:362).
+    first_per_rank = full.groupby(level="Rank").head(1)
+    deltas.loc[first_per_rank.index, :] = first_per_rank
+    # Reset detector: per-rank deltas <= 0 imply a resume reset; the row's
+    # absolute value IS the new cumulative for that rank.
+    idx_resets = (deltas <= 0).all(axis=1)
+    idx = idx_resets[idx_resets].index
+    deltas.loc[idx, :] = full.loc[idx, :]
+    return deltas.to_xarray()
+
+
+def _aggregate_perf_summary(raw_perf_dir: Path, min_per_tstep: float = 1.0) -> xr.Dataset:
+    """Reduce per-rank deltas to a slowest-rank wallclock summary.
+
+    Computes ``_aggregate_perf_tseries(...).sum(dim='timestep_min').max(dim='Rank')`` —
+    the ``max(Rank)`` reduction is the slowest-rank cumulative per Hager-Wellein 2011 ch.5
+    convention. Module-level so the V0008 migration and the regression test share one
+    source of truth with the corrected aggregator.
+
+    Note: in Phase 1 the production instance method ``_export_performance_summary`` does
+    NOT call this helper — it retains its inline ``mean(Rank)`` aggregation at line ~530.
+    Phase 2 of the ``superlinear-speedup-fixes`` plan wires the instance method through
+    this helper, completing the aggregation-semantic switch.
+    """
+    ds = _aggregate_perf_tseries(raw_perf_dir, min_per_tstep=min_per_tstep)
+    return ds.sum(dim="timestep_min").max(dim="Rank")
 
 
 def parse_performance_file(filepath):
