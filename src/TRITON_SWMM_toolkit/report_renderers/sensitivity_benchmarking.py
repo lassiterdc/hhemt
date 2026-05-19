@@ -116,6 +116,23 @@ def render(
         )
 
     df = pd.DataFrame(rows)
+    # Wallclock-safe column allowlist (V0008+): only barrier-synchronized
+    # cumulative columns can be interpreted as wallclock. Other performance.*
+    # columns are per-category cost, not wallclock; raise rather than silently
+    # mislabel.
+    _WALLCLOCK_SAFE_COLS = {
+        "performance.Total",
+        "performance.Simulation",
+        "performance.Init",
+    }
+    if dependent_var not in _WALLCLOCK_SAFE_COLS:
+        raise ValueError(
+            f"dependent_var {dependent_var!r} is not wallclock-safe. "
+            f"Choose one of: {sorted(_WALLCLOCK_SAFE_COLS)}. Other performance.* "
+            "columns are per-category cost and cannot be plotted as wallclock. "
+            "See library/docs/stipulations/TRITON-SWMM_toolkit/wallclock reduction uses max over rank.md "
+            "for the project rule on this."
+        )
     df["wallclock_s"] = df["value"]
     df["wallclock_hr"] = df["wallclock_s"] / 3600.0
     df["indep_value"] = df["sa_id"].map(df_setup[independent_var])
