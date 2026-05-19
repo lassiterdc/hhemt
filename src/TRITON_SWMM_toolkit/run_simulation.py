@@ -420,9 +420,21 @@ class TRITONSWMM_run:
             env["OMP_PROC_BIND"] = "true"
             env["OMP_PLACES"] = "cores"
         else:
-            # OMP_PROC_BIND intentionally omitted for serial/mpi/gpu modes (OMP_NUM_THREADS=1);
-            # Kokkos will warn about its absence but the warning is cosmetic at 1 thread.
+            # OMP_NUM_THREADS=1 for serial/mpi/gpu modes.
+            # OMP_PROC_BIND=true and OMP_PLACES=cores are REQUIRED even at 1 thread:
+            # Kokkos initializes an OpenMP worker thread for every parallel_for,
+            # and without binding the Linux scheduler will migrate that worker
+            # across cores/sockets on a NUMA host. Post-migration, cache lines
+            # first-touched on the original NUMA node become cross-socket fetches,
+            # which on Cascade Lake-SP (Rivanna 'standard' partition) adds ~3-5x
+            # latency to every DRAM access on TRITON's memory-bandwidth-bound
+            # flux kernels. Empirically: missing the binding inflated sa_32's
+            # serial wallclock relative to a properly-bound baseline (see
+            # `library/docs/decisions/TRITON-SWMM_toolkit/LAYOUT_VERSION 8 fix per rank diff in performance aggregation.md`
+            # for the empirically-verified sa_32 cumulative).
             env["OMP_NUM_THREADS"] = "1"
+            env["OMP_PROC_BIND"] = "true"
+            env["OMP_PLACES"] = "cores"
 
         # ----------------------------
         # MPI NIC policy (Frontier / Cray MPICH)
