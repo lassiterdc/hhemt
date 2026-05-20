@@ -306,14 +306,16 @@ class InteractiveBackendConfig(cfgBaseModel):
     emit HTML; matplotlib-PNG renderers ignore this block."""
 
     enabled: bool = Field(
-        False,
+        True,
         description=(
             "Master switch. When False, renderers emit static PNG via the "
             "matplotlib branch of emit_plot_with_sources (legacy behavior). "
-            "When True, renderers with an HTML emit-path emit HTML via the "
-            "str branch of emit_plot_with_sources. Defaults to False during "
-            "Phases 2-7 (per-renderer migrations); flipped to True at Phase 9 "
-            "so main remains shippable mid-migration."
+            "When True (default), renderers with an HTML emit-path emit HTML "
+            "via the str branch of emit_plot_with_sources. Flipped from "
+            "False to True at Phase 9 of the interactive_report_renderers PWI "
+            "after Phase 8.5's cleanup_stale_metadata mechanism landed, so "
+            "the first post-flip invocation against an existing analysis_dir "
+            "handles the one-shot rule-rename cleanup cascade silently."
         ),
     )
     static_backend: Literal["matplotlib", "plotly"] = Field(
