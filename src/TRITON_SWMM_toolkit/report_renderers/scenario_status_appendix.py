@@ -309,13 +309,15 @@ def _build_column_groups(
         groups.append((
             "Configuration",
             other_cols,
-            "User input fields (analysis config fields, sensitivity analysis .xlsx fields) or fields derived directly from user input.",
+            "User input fields (analysis config fields, sensitivity analysis .xlsx fields) "
+            "or fields derived directly from user input.",
         ))
     if perf_cols:
         groups.append((
             "Performance Breakdown",
             perf_cols,
-            "From the simulation's performance.txt. Invalid for hotstart-resumed runs — reflects only the resumed timestep range.",
+            "From the simulation's performance.txt. Invalid for hotstart-resumed runs — "
+            "reflects only the resumed timestep range.",
         ))
     if actual_cols:
         groups.append((

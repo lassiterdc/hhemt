@@ -30,7 +30,8 @@ from __future__ import annotations
 import json
 import re
 import warnings
-from typing import Any, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 import pandas as pd
 
@@ -771,7 +772,7 @@ def sanitize_persistence_id(value: str) -> str:
     return sanitized or "_"
 
 
-def dtype_for_dataframe_column(series: "pd.Series") -> str:
+def dtype_for_dataframe_column(series: pd.Series) -> str:
     """Map a pandas Series dtype to a Tabulator filter dtype label.
 
     Returns one of ``"numeric"``, ``"boolean"``, ``"categorical"``, or
@@ -789,7 +790,7 @@ def dtype_for_dataframe_column(series: "pd.Series") -> str:
 
 
 def build_columns_spec(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     visible_columns_default: Iterable[str] | None,
     header_filter: bool,
@@ -831,7 +832,7 @@ def build_columns_spec(
 
 
 def build_options_dict(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     columns_spec: list[dict],
     table_height: str,
@@ -1087,8 +1088,13 @@ def build_html_document(
         "    <h3>Columns</h3>\n"
         '    <button type="button" class="trf-toggle-all" data-action="show-all">Show all</button>\n'
         '    <button type="button" class="trf-toggle-all" data-action="hide-all">Hide all</button>\n'
-        '    <button type="button" class="trf-copy-table" title="Copy filtered rows × visible columns to clipboard (tab-separated). Paste into a spreadsheet to keep cell boundaries.">Copy table</button>\n'
-        '    <button type="button" class="trf-reset-all" title="Clear all persisted table state (sort / filter / headerFilter / group / page / cached column widths) from localStorage and reload the page. Use this if the table behaves oddly after a config change.">Reset all</button>\n'
+        '    <button type="button" class="trf-copy-table" '
+        'title="Copy filtered rows × visible columns to clipboard (tab-separated). '
+        'Paste into a spreadsheet to keep cell boundaries.">Copy table</button>\n'
+        '    <button type="button" class="trf-reset-all" '
+        'title="Clear all persisted table state (sort / filter / headerFilter / group / page / '
+        'cached column widths) from localStorage and reload the page. '
+        'Use this if the table behaves oddly after a config change.">Reset all</button>\n'
         '    <div class="trf-copy-status" aria-live="polite" role="status"></div>\n'
         '    <div class="trf-column-list"></div>\n'
         "  </aside>\n"
@@ -1258,7 +1264,8 @@ def build_html_document(
         '          document.execCommand("copy");\n'
         "          document.body.removeChild(ta);\n"
         "        }\n"
-        '        copyStatus.textContent = "Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
+        '        copyStatus.textContent = '
+        '"Copied " + dataRows.length + " rows × " + fields.length + " cols to clipboard.";\n'
         "        setTimeout(function() {\n"
         '          copyStatus.textContent = "";\n'
         "        }, 3000);\n"
@@ -1292,7 +1299,8 @@ def build_html_document(
         "        }\n"
         "        keysToRemove.forEach(function(k) { localStorage.removeItem(k); });\n"
         "        if (window.console && window.console.log) {\n"
-        "          window.console.log('trf reset: removed ' + keysToRemove.length + ' localStorage keys with prefix ' + prefix);\n"
+        "          window.console.log('trf reset: removed ' + keysToRemove.length + "
+        "' localStorage keys with prefix ' + prefix);\n"
         "        }\n"
         "        location.reload();\n"
         "      });\n"
