@@ -520,6 +520,62 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_synth_render_report_interactive_html(synth_multi_sim_analysis_cached):
+    # Snakemake's report engine embeds figures as
+    # `data:{mime};charset=utf8;filename={name};base64,{payload}` URIs in the
+    # rendered analysis_report.html. With static_backend="plotly" (synth
+    # fixture default), the chart renderers emit interactive HTML and the
+    # table renderers (errors_and_warnings, scenario_status_appendix,
+    # per_analysis_summary) emit Tabulator HTML; both surface as
+    # data:text/html URIs. The base64-decoded payload contains
+    # `Plotly.newPlot` or `new Tabulator`. This test asserts the bundle
+    # carries the expected count of interactive figures and that the
+    # on-disk plot bundle stays under the master plan's 5 MB / 15 MB
+    # budgets.
+    import base64
+    import re
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    report_path = analysis.render_report(format="html")
+    assert report_path.exists()
+    html = report_path.read_text(encoding="utf-8")
+
+    data_uris = re.findall(
+        r'"data:text/html;charset=utf8;filename=([^;]+);base64,([A-Za-z0-9+/=]+)"',
+        html,
+    )
+    assert len(data_uris) >= 6, (
+        f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: "
+        f"{[name for name, _ in data_uris]}"
+    )
+    marker_hits = 0
+    for _name, payload in data_uris:
+        inner = base64.b64decode(payload).decode("utf-8", errors="replace")
+        if ("Plotly.newPlot" in inner) or ("new Tabulator" in inner):
+            marker_hits += 1
+    assert marker_hits >= 6, (
+        f"Expected >= 6 figures with Plotly/Tabulator markers in decoded "
+        f"payload, got {marker_hits} of {len(data_uris)}"
+    )
+
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    html_files = list(plots_dir.rglob("*.html"))
+    per_figure_max = max((p.stat().st_size for p in html_files), default=0)
+    total = sum(p.stat().st_size for p in html_files)
+    assert per_figure_max < 5_000_000, (
+        f"Per-figure max {per_figure_max / 1e6:.1f} MB exceeds 5 MB budget"
+    )
+    assert total < 15_000_000, (
+        f"Total plots/*.html {total / 1e6:.1f} MB exceeds 15 MB budget"
+    )
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     """R15: 'Sources:' bullet block appears in rendered HTML report text."""
     from pathlib import Path

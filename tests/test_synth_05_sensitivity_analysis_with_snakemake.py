@@ -338,6 +338,34 @@ def test_render_report_idempotent(synth_sensitivity_analysis_cached):
 
 
 @pytest.mark.slow
+def test_synth_render_report_interactive_zip(synth_sensitivity_analysis_cached, tmp_path):
+    # ZIP-fallback path: render_report(format="zip") writes
+    # `analysis_report.zip` containing `report.html` + per-figure
+    # `data/*.html` entries. Asserts the bundle carries >= 6 data/*.html
+    # entries (one per interactive figure under the master plan's expected
+    # shape).
+    import zipfile
+    from pathlib import Path
+
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+    )
+    zip_path = analysis.sensitivity.render_report(format="zip")
+    assert zip_path.exists() and zip_path.suffix == ".zip"
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+    # Snakemake's --report zip lays figures out under
+    # `analysis_report/data/raw/<hash>/<figure>.html`. Match anywhere under
+    # `data/` to stay robust to root-prefix changes across Snakemake versions.
+    html_entries = [n for n in names if "/data/" in n and n.endswith(".html")]
+    assert len(html_entries) >= 6, (
+        f"Expected >= 6 data/*.html entries in ZIP, got {len(html_entries)}: {html_entries}"
+    )
+
+
+@pytest.mark.slow
 def test_plot_sources_attribution(synth_sensitivity_analysis_cached):
     """R15: 'Sources:' bullet block appears in master HTML report."""
     from pathlib import Path
