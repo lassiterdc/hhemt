@@ -446,7 +446,10 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled):
     if not consolidate_flag.exists():
         report_config = (
             _Path(__file__).resolve().parents[0].parent
-            / "tests" / "configs" / "reports" / "synth_multisim_report_config.yaml"
+            / "tests"
+            / "configs"
+            / "reports"
+            / "synth_multisim_report_config.yaml"
         )
         analysis.run(
             from_scratch=False,
@@ -454,6 +457,55 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled):
         )
 
     return analysis
+
+
+@pytest.fixture(scope="session")
+def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
+    """Yield a synth sensitivity master analysis with all sims + consolidations produced.
+
+    Used by Phase 3 sensitivity-reprocess tests. Session-scoped: the first
+    invocation in a pytest session runs the synth sensitivity master through
+    ``sensitivity.submit_workflow(mode="local")`` if the analysis is not
+    already at the ``f_consolidate_master_complete.flag`` state; subsequent
+    invocations reuse the materialized analysis from the test-case cache.
+
+    Returns the ``TRITONSWMM_sensitivity_analysis`` object (master analysis
+    accessible via ``.master_analysis``). Stale ``.snakemake/locks/`` /
+    ``.snakemake/incomplete/`` (and the reprocess-side
+    ``.snakemake_reprocess/.snakemake/locks/`` /
+    ``.snakemake_reprocess/.snakemake/incomplete/``) directories from prior
+    interrupted runs are silently cleared before yielding, mirroring the
+    Phase 2 fixture pattern (``synthetic_multisim_completed``).
+    """
+    import shutil
+
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    case = Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=False)
+    master_analysis = case.analysis
+    sensitivity = master_analysis.sensitivity
+    analysis_dir = master_analysis.analysis_paths.analysis_dir
+
+    # Clear stale lock + incomplete subtrees on both the run and reprocess
+    # working dirs so a leftover state from an interrupted prior run does
+    # not interfere with the fixture's submit_workflow() (if it fires) or
+    # with the test body's sensitivity.reprocess() invocations.
+    for sub_root_name in (".snakemake", ".snakemake_reprocess"):
+        sub_root = analysis_dir / sub_root_name
+        if sub_root.exists():
+            shutil.rmtree(sub_root / "locks", ignore_errors=True)
+            shutil.rmtree(sub_root / "incomplete", ignore_errors=True)
+            (sub_root / "log").mkdir(parents=True, exist_ok=True)
+
+    # Ensure the master analysis is in a "post-master-consolidate" state. If
+    # ``f_consolidate_master_complete.flag`` is absent, run the master
+    # sensitivity workflow once locally to materialize per-sa flags + the
+    # master flag + the sensitivity_datatree.zarr.
+    master_flag = analysis_dir / "_status" / "f_consolidate_master_complete.flag"
+    if not master_flag.exists():
+        sensitivity.submit_workflow(mode="local")
+
+    return sensitivity
 
 
 @pytest.fixture(scope="session")

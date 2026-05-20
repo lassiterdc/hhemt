@@ -44,7 +44,8 @@ def _is_system_overlay_column(col: str) -> bool:
     if not col.startswith(_SYSTEM_COLUMN_PREFIX):
         return False
     from TRITON_SWMM_toolkit.config.system import system_config
-    field_name = col[len(_SYSTEM_COLUMN_PREFIX):]
+
+    field_name = col[len(_SYSTEM_COLUMN_PREFIX) :]
     return field_name in system_config.model_fields
 
 
@@ -53,20 +54,21 @@ def _is_analysis_overlay_column(col: str) -> bool:
     if not col.startswith(_ANALYSIS_COLUMN_PREFIX):
         return False
     from TRITON_SWMM_toolkit.config.analysis import analysis_config
-    field_name = col[len(_ANALYSIS_COLUMN_PREFIX):]
+
+    field_name = col[len(_ANALYSIS_COLUMN_PREFIX) :]
     return field_name in analysis_config.model_fields
 
 
 def _strip_system_prefix(col: str) -> str:
     """Return the system_config field name from a `system.{field}` column."""
     assert col.startswith(_SYSTEM_COLUMN_PREFIX), f"expected system.* column, got {col!r}"
-    return col[len(_SYSTEM_COLUMN_PREFIX):]
+    return col[len(_SYSTEM_COLUMN_PREFIX) :]
 
 
 def _strip_analysis_prefix(col: str) -> str:
     """Return the analysis_config field name from an `analysis.{field}` column."""
     assert col.startswith(_ANALYSIS_COLUMN_PREFIX), f"expected analysis.* column, got {col!r}"
-    return col[len(_ANALYSIS_COLUMN_PREFIX):]
+    return col[len(_ANALYSIS_COLUMN_PREFIX) :]
 
 
 def _to_native_attr(value):
@@ -145,15 +147,11 @@ class TRITONSWMM_sensitivity_analysis:
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
         self.sub_analyses_prefix = "sa_"
-        self.subanalysis_dir = (
-            self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
-        )
+        self.subanalysis_dir = self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         df_setup_full = self._retrieve_df_setup()
         self._df_setup_full = df_setup_full
         self._has_per_sa_system_configs = "system_config_yaml" in df_setup_full.columns
-        self._has_per_sa_system_overlay_columns = any(
-            _is_system_overlay_column(c) for c in df_setup_full.columns
-        )
+        self._has_per_sa_system_overlay_columns = any(_is_system_overlay_column(c) for c in df_setup_full.columns)
         if self._has_per_sa_system_overlay_columns or self._has_per_sa_system_configs:
             self.unique_system_targets = self._build_unique_system_targets(
                 df_setup_full,
@@ -170,10 +168,11 @@ class TRITONSWMM_sensitivity_analysis:
                 )
             ]
         from TRITON_SWMM_toolkit.config.analysis import analysis_config as _analysis_config_for_df_setup
+
         analysis_cols = [
-            c for c in df_setup_full.columns
-            if c in _analysis_config_for_df_setup.model_fields
-            or _is_analysis_overlay_column(c)
+            c
+            for c in df_setup_full.columns
+            if c in _analysis_config_for_df_setup.model_fields or _is_analysis_overlay_column(c)
         ]
         self.df_setup = df_setup_full.loc[:, analysis_cols]
         self.sub_analyses = self._create_sub_analyses()
@@ -200,23 +199,17 @@ class TRITONSWMM_sensitivity_analysis:
                     verbose=verbose,
                 )
             if concurrent:
-                self.master_analysis.run_python_functions_concurrently(
-                    prepare_scenario_launchers, verbose=verbose
-                )
+                self.master_analysis.run_python_functions_concurrently(prepare_scenario_launchers, verbose=verbose)
             else:
                 for launcher in prepare_scenario_launchers:
                     launcher()
 
             if self.all_scenarios_created is not True:
                 scens_not_created = "\n\t".join(self.scenarios_not_created)
-                raise RuntimeError(
-                    f"Preparation failed for the following scenarios:\n{scens_not_created}"
-                )
+                raise RuntimeError(f"Preparation failed for the following scenarios:\n{scens_not_created}")
             self._update_master_analysis_log()
         elif self.master_analysis.cfg_analysis.multi_sim_run_method in ["batch_job"]:
-            raise ValueError(
-                "prepare scenarios is not currently executable as batch_job."
-            )
+            raise ValueError("prepare scenarios is not currently executable as batch_job.")
 
     def submit_workflow(
         self,
@@ -319,6 +312,109 @@ class TRITONSWMM_sensitivity_analysis:
             extra_sbatch_args=extra_sbatch_args,
         )
 
+    def reprocess(
+        self,
+        start_with: Literal["process", "consolidate", "render"] = "consolidate",
+        sa_ids: list[str] | None = None,
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        compression_level: int = 5,
+        verbose: bool = True,
+        dry_run: bool = False,
+    ) -> dict:
+        """Master-level reprocess for sensitivity analyses.
+
+        Invalidates per-sub-analysis consolidate flags (subset via ``sa_ids``
+        or all sub-analyses by default) plus the master consolidate flag,
+        then emits a scoped master Snakefile via
+        :meth:`SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content`
+        and submits it via
+        :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
+
+        Unlike :meth:`TRITONSWMM_analysis.reprocess`, this method does NOT
+        invoke the ``clear_raw_outputs`` orphan/abort gate (R12) — sensitivity
+        master reprocess is a downstream-only refresh of consolidation +
+        plotting + rendering against existing per-sa sim outputs and does
+        not need the in-flight reconciliation logic that the analysis-level
+        ``clear_raw_outputs`` flow uses.
+
+        Parameters
+        ----------
+        start_with
+            Stage to re-fire from. ``"consolidate"`` (default) deletes per-sa
+            ``e_consolidate_sa-{id}_complete.flag`` files and the master
+            ``f_consolidate_master_complete.flag``, then re-runs the consolidate
+            + master_consolidation + plot/render rule chain. ``"render"``
+            invalidates only the report artifacts. ``"process"`` is accepted
+            but maps onto the same Snakefile as ``"consolidate"`` (the master
+            generator does not emit ``process_*`` rules).
+        sa_ids
+            Optional subset of sub-analysis IDs (string-cast) to invalidate.
+            When ``None`` (default), every sub-analysis's per-sa consolidate
+            flag is invalidated. IDs not in ``sub_analyses`` are silently
+            ignored at the unlink call (``missing_ok=True``).
+        execution_mode
+            ``"auto"`` detects SLURM context; ``"local"`` / ``"slurm"`` force
+            the mode.
+        which
+            ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
+            consolidate rule shells' ``--which`` flag.
+        compression_level
+            Compression level (0-9) for the consolidate rule shells.
+        verbose
+            If True, print progress messages.
+        dry_run
+            If True, runs ``snakemake --dry-run`` only.
+
+        Returns
+        -------
+        dict
+            Status dictionary from
+            :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
+        """
+        # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern). Idempotent.
+        from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
+        from TRITON_SWMM_toolkit.version_migration.state import stamp_new_target
+
+        stamp_new_target(self.master_analysis.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
+        # Resolve invalidation target set. ``None`` → all sub-analyses; explicit
+        # list → subset. String-cast preserves alignment with sub_analyses dict
+        # iteration keys regardless of source type (int / str / numpy scalar).
+        if sa_ids is None:
+            targets = [str(sa_id) for sa_id in self.sub_analyses.keys()]
+        else:
+            targets = [str(s) for s in sa_ids]
+
+        # Invalidate per-sa consolidate flags + master flag. start_with controls
+        # which flags get unlinked; per-sa flag deletion is the entry point for
+        # both "consolidate" and "process" (the master generator does not emit
+        # process rules, so process invalidation is treated as consolidate
+        # invalidation). "render" leaves consolidate flags intact and only
+        # invalidates the rendered report artifact.
+        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        if start_with in ("consolidate", "process"):
+            for sa_id in targets:
+                (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
+            (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+        elif start_with == "render":
+            # No _status flag for render — re-fire by deleting the report
+            # artifacts so Snakemake's mtime trigger sees the output as absent.
+            (self.master_analysis.analysis_paths.analysis_dir / "analysis_report.html").unlink(missing_ok=True)
+            (self.master_analysis.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
+        else:
+            raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
+
+        # Delegate to the sensitivity workflow builder.
+        return self._workflow_builder.submit_reprocess_workflow(
+            start_with=start_with,
+            execution_mode=execution_mode,
+            which=which,
+            compression_level=compression_level,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
         """Render the master report for the sensitivity analysis.
 
@@ -350,12 +446,19 @@ class TRITONSWMM_sensitivity_analysis:
         # picks up edits made to the source-tree report_templates/.
         _emit_report_artifacts(master_dir)
         cmd = [
-            sys.executable, "-m", "snakemake",
-            "--snakefile", str(snakefile),
-            "--directory", str(master_dir),
-            "--report", str(out),
-            "--report-stylesheet", str(css_path),
-            "--cores", "1",
+            sys.executable,
+            "-m",
+            "snakemake",
+            "--snakefile",
+            str(snakefile),
+            "--directory",
+            str(master_dir),
+            "--report",
+            str(out),
+            "--report-stylesheet",
+            str(css_path),
+            "--cores",
+            "1",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -377,6 +480,7 @@ class TRITONSWMM_sensitivity_analysis:
             apply_post_process_surgery,
             apply_post_process_surgery_to_zip,
         )
+
         try:
             if format == "html":
                 out.write_text(apply_post_process_surgery(out.read_text()))
@@ -424,6 +528,7 @@ class TRITONSWMM_sensitivity_analysis:
             Path to the emitted bundle tar.
         """
         from TRITON_SWMM_toolkit.bundle import emit_bundle
+
         return emit_bundle(self, output_path)
 
     def run_all_sims(
@@ -450,9 +555,7 @@ class TRITONSWMM_sensitivity_analysis:
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
                 )
-            self.master_analysis.run_simulations_concurrently(
-                launch_functions, verbose=verbose
-            )
+            self.master_analysis.run_simulations_concurrently(launch_functions, verbose=verbose)
         else:
             for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 sub_analysis.run_sims_in_sequence(
@@ -485,9 +588,7 @@ class TRITONSWMM_sensitivity_analysis:
                 compression_level=compression_level,
             )
             scenario_timeseries_processing_launchers += launchers
-        self.master_analysis.run_python_functions_concurrently(
-            scenario_timeseries_processing_launchers
-        )
+        self.master_analysis.run_python_functions_concurrently(scenario_timeseries_processing_launchers)
         return
 
     def _consolidate_outputs_in_each_subanalysis(
@@ -512,9 +613,7 @@ class TRITONSWMM_sensitivity_analysis:
         success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
-                success = (
-                    success and sub_analysis.tritonswmm_triton_analysis_summary_created
-                )
+                success = success and sub_analysis.tritonswmm_triton_analysis_summary_created
             elif cfg_sys.toggle_triton_model:
                 success = success and sub_analysis.triton_only_analysis_summary_created
         return success
@@ -526,23 +625,11 @@ class TRITONSWMM_sensitivity_analysis:
         link_success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
-                node_success = (
-                    node_success
-                    and sub_analysis.tritonswmm_node_analysis_summary_created
-                )
-                link_success = (
-                    link_success
-                    and sub_analysis.tritonswmm_link_analysis_summary_created
-                )
+                node_success = node_success and sub_analysis.tritonswmm_node_analysis_summary_created
+                link_success = link_success and sub_analysis.tritonswmm_link_analysis_summary_created
             elif cfg_sys.toggle_swmm_model:
-                node_success = (
-                    node_success
-                    and sub_analysis.swmm_only_node_analysis_summary_created
-                )
-                link_success = (
-                    link_success
-                    and sub_analysis.swmm_only_link_analysis_summary_created
-                )
+                node_success = node_success and sub_analysis.swmm_only_node_analysis_summary_created
+                link_success = link_success and sub_analysis.swmm_only_link_analysis_summary_created
         return node_success and link_success
 
     def consolidate_outputs(
@@ -630,9 +717,7 @@ class TRITONSWMM_sensitivity_analysis:
             tree_dict[node_name] = xr.Dataset(attrs=attrs)
 
         tree = xr.DataTree.from_dict(tree_dict)
-        apply_global_attributes(
-            tree, analysis_id=str(self.master_analysis.cfg_analysis.analysis_id)
-        )
+        apply_global_attributes(tree, analysis_id=str(self.master_analysis.cfg_analysis.analysis_id))
         return tree
 
     def consolidate_sensitivity_datatree(
@@ -649,16 +734,11 @@ class TRITONSWMM_sensitivity_analysis:
         """
         fname_out = self.analysis_paths.sensitivity_datatree_zarr
         if fname_out is None:
-            raise ValueError(
-                "sensitivity_datatree_zarr path is not configured on AnalysisPaths."
-            )
+            raise ValueError("sensitivity_datatree_zarr path is not configured on AnalysisPaths.")
 
         if (not overwrite_if_already_created) and fname_out.exists():
             if verbose:
-                print(
-                    f"Sensitivity DataTree zarr already present at {fname_out}. "
-                    "Not overwriting."
-                )
+                print(f"Sensitivity DataTree zarr already present at {fname_out}. Not overwriting.")
             return fname_out
 
         # Ensure each sub-analysis has its analysis_datatree.zarr built.
@@ -677,12 +757,8 @@ class TRITONSWMM_sensitivity_analysis:
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
         self.master_analysis._refresh_log()
-        if hasattr(
-            self.master_analysis.log, "sensitivity_datatree_consolidation_complete"
-        ):
-            self.master_analysis.log.sensitivity_datatree_consolidation_complete.set(
-                True
-            )
+        if hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete"):
+            self.master_analysis.log.sensitivity_datatree_consolidation_complete.set(True)
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
         return fname_out
@@ -691,13 +767,8 @@ class TRITONSWMM_sensitivity_analysis:
         """Open the consolidated sensitivity DataTree zarr lazily."""
         path = self.analysis_paths.sensitivity_datatree_zarr
         if path is None or not path.exists():
-            raise ValueError(
-                "Sensitivity DataTree zarr not found. "
-                "Run consolidate_sensitivity_datatree() first."
-            )
-        return xr.open_datatree(
-            path, engine="zarr", chunks="auto", consolidated=False
-        )
+            raise ValueError("Sensitivity DataTree zarr not found. Run consolidate_sensitivity_datatree() first.")
+        return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
 
     def create_subanalysis_summaries(
         self,
@@ -748,6 +819,7 @@ class TRITONSWMM_sensitivity_analysis:
         time via `_create_sub_analyses`).
         """
         from TRITON_SWMM_toolkit.config.analysis import analysis_config
+
         seen: list[str] = []
         for col in self._df_setup_full.columns:
             if col == "system_config_yaml":
@@ -799,9 +871,7 @@ class TRITONSWMM_sensitivity_analysis:
         `bundle/snakefile_generator.py`) treat entries as opaque labels and
         tolerate the prefixed form without modification.
         """
-        return self.analysis_independent_vars + [
-            f"system.{f}" for f in self.system_independent_vars
-        ]
+        return self.analysis_independent_vars + [f"system.{f}" for f in self.system_independent_vars]
 
     def _retrieve_df_setup(self) -> pd.DataFrame:
         import re as _re
@@ -813,9 +883,7 @@ class TRITONSWMM_sensitivity_analysis:
         elif f_extension == "xlsx":
             df_setup = pd.read_excel(snstivity_definition)
         else:
-            raise ValueError(
-                "File extension not recognized for file defining sensitivity analysis."
-            )
+            raise ValueError("File extension not recognized for file defining sensitivity analysis.")
         if "sa_id" not in df_setup.columns:
             raise ValueError(
                 "sensitivity_analysis file must contain a required 'sa_id' column. "
@@ -830,13 +898,13 @@ class TRITONSWMM_sensitivity_analysis:
         bad = [v for v in df_setup["sa_id"] if not pat.match(v)]
         if bad:
             raise ValueError(
-                f"sa_id values must match ^[A-Za-z0-9_.]+$ (Snakemake-wildcard safe). "
-                f"Offending values: {bad}"
+                f"sa_id values must match ^[A-Za-z0-9_.]+$ (Snakemake-wildcard safe). Offending values: {bad}"
             )
         df_setup = df_setup.set_index("sa_id")
         # Phase 1 — column allowlist enforcement (post-set_index so sa_id excluded).
         from TRITON_SWMM_toolkit.config.analysis import analysis_config
         from TRITON_SWMM_toolkit.config.system import system_config
+
         KNOWN_BARE_COLS = {"system_config_yaml"}
         valid_columns = (
             KNOWN_BARE_COLS
@@ -869,9 +937,7 @@ class TRITONSWMM_sensitivity_analysis:
         Returns:
             Path to the exported CSV file.
         """
-        output_path = (
-            self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
-        )
+        output_path = self.analysis_paths.analysis_dir / "sensitivity_analysis_definition.csv"
         df_export = self.df_setup.copy()
         df_export.to_csv(output_path, index=True)
         return output_path
@@ -893,10 +959,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         if not self.subanalysis_dir.exists():
             return []
-        expected_names = {
-            f"{self.sub_analyses_prefix}{sa_id}"
-            for sa_id in self.df_setup.index.astype(str)
-        }
+        expected_names = {f"{self.sub_analyses_prefix}{sa_id}" for sa_id in self.df_setup.index.astype(str)}
         charset = _re.compile(r"^[A-Za-z0-9_.]+$")
         orphans: list[Path] = []
         for entry in self.subanalysis_dir.iterdir():
@@ -904,7 +967,7 @@ class TRITONSWMM_sensitivity_analysis:
                 continue
             if not entry.name.startswith(self.sub_analyses_prefix):
                 continue
-            suffix = entry.name[len(self.sub_analyses_prefix):]
+            suffix = entry.name[len(self.sub_analyses_prefix) :]
             if not charset.match(suffix):
                 continue
             if entry.name not in expected_names:
@@ -975,8 +1038,7 @@ class TRITONSWMM_sensitivity_analysis:
         if failed:
             summary = "; ".join(f"{p}: {exc}" for p, exc in failed)
             raise RuntimeError(
-                f"cleanup_orphan_subanalysis_dirs deleted {len(deleted)} of "
-                f"{len(orphans)} orphans; failures: {summary}"
+                f"cleanup_orphan_subanalysis_dirs deleted {len(deleted)} of {len(orphans)} orphans; failures: {summary}"
             )
         return deleted
 
@@ -1036,7 +1098,7 @@ class TRITONSWMM_sensitivity_analysis:
                 continue
             if not entry.name.startswith(prefix):
                 continue
-            sa_id = entry.name[len(prefix):]
+            sa_id = entry.name[len(prefix) :]
             if sa_id and sa_id not in expected_sa_ids:
                 orphans.append(sa_id)
         return sorted(orphans)
@@ -1105,8 +1167,7 @@ class TRITONSWMM_sensitivity_analysis:
             return result
         if not force:
             raise ValueError(
-                "cleanup_all_orphans called with dry_run=False but force=False. "
-                "Pass force=True to perform deletion."
+                "cleanup_all_orphans called with dry_run=False but force=False. Pass force=True to perform deletion."
             )
         for p in result["dirs"]:
             if verbose:
@@ -1123,17 +1184,12 @@ class TRITONSWMM_sensitivity_analysis:
             if zarr_path is not None and zarr_path.exists():
                 if verbose:
                     print(
-                        f"[cleanup-orphans] Deleting sensitivity_datatree.zarr "
-                        f"(rebuild on next run): {zarr_path}",
+                        f"[cleanup-orphans] Deleting sensitivity_datatree.zarr (rebuild on next run): {zarr_path}",
                         flush=True,
                     )
                 fast_rmtree(zarr_path)
                 result["sensitivity_datatree_removed"] = True
-            master_flag = (
-                self.analysis_paths.analysis_dir
-                / "_status"
-                / "f_consolidate_master_complete.flag"
-            )
+            master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag"
             if master_flag.exists():
                 if verbose:
                     print(
@@ -1178,9 +1234,7 @@ class TRITONSWMM_sensitivity_analysis:
             generated_dir.mkdir(parents=True, exist_ok=True)
 
         has_yaml_col = "system_config_yaml" in df_setup_full.columns
-        overlay_col_names = sorted(
-            c for c in df_setup_full.columns if _is_system_overlay_column(c)
-        )
+        overlay_col_names = sorted(c for c in df_setup_full.columns if _is_system_overlay_column(c))
 
         # Group sub-analyses by their compile-key tuple.
         groups: dict[tuple, dict] = {}
@@ -1188,16 +1242,8 @@ class TRITONSWMM_sensitivity_analysis:
         for sa_id, row in df_setup_full.iterrows():
             sa_id_str = str(sa_id)
             yaml_cell = row.get("system_config_yaml") if has_yaml_col else None
-            yaml_specified = (
-                yaml_cell is not None
-                and not pd.isna(yaml_cell)
-                and str(yaml_cell).strip() != ""
-            )
-            overlay_cells = {
-                _strip_system_prefix(c): row[c]
-                for c in overlay_col_names
-                if not pd.isna(row[c])
-            }
+            yaml_specified = yaml_cell is not None and not pd.isna(yaml_cell) and str(yaml_cell).strip() != ""
+            overlay_cells = {_strip_system_prefix(c): row[c] for c in overlay_col_names if not pd.isna(row[c])}
             if overlay_cells and yaml_specified:
                 raise ConfigurationError(
                     field=f"sensitivity_analysis.row[{sa_id_str}]",
@@ -1212,16 +1258,17 @@ class TRITONSWMM_sensitivity_analysis:
 
             if overlay_cells:
                 try:
-                    cfg = system_config.model_validate({
-                        **self._system.cfg_system.model_dump(),
-                        **overlay_cells,
-                    })
+                    cfg = system_config.model_validate(
+                        {
+                            **self._system.cfg_system.model_dump(),
+                            **overlay_cells,
+                        }
+                    )
                 except pydantic.ValidationError as exc:
                     raise ConfigurationError(
                         field=f"sensitivity_analysis.row[{sa_id_str}]",
                         message=(
-                            f"sa_id={sa_id_str}: system.* overlay-column values failed "
-                            f"SystemConfig validation: {exc}"
+                            f"sa_id={sa_id_str}: system.* overlay-column values failed SystemConfig validation: {exc}"
                         ),
                         config_path=sensitivity_csv,
                     ) from exc
@@ -1230,10 +1277,7 @@ class TRITONSWMM_sensitivity_analysis:
                 if not yaml_path.is_file():
                     raise ConfigurationError(
                         field="sensitivity_analysis.system_config_yaml",
-                        message=(
-                            f"sa_id={sa_id_str}: system_config_yaml does not exist "
-                            f"at {yaml_path}."
-                        ),
+                        message=(f"sa_id={sa_id_str}: system_config_yaml does not exist at {yaml_path}."),
                         config_path=sensitivity_csv,
                     )
                 cfg = TRITONSWMM_system(yaml_path).cfg_system
@@ -1266,12 +1310,14 @@ class TRITONSWMM_sensitivity_analysis:
                 target_system = self._system
             else:
                 target_system = TRITONSWMM_system(generated_yaml)
-            targets.append(UniqueSystemTarget(
-                target_id=target_id,
-                system_config_yaml=generated_yaml,
-                system=target_system,
-                sub_analysis_ids=sa_ids,
-            ))
+            targets.append(
+                UniqueSystemTarget(
+                    target_id=target_id,
+                    system_config_yaml=generated_yaml,
+                    system=target_system,
+                    sub_analysis_ids=sa_ids,
+                )
+            )
 
         return targets
 
@@ -1309,15 +1355,15 @@ class TRITONSWMM_sensitivity_analysis:
                         field="sensitivity_analysis.unknown_column",
                         message=f"Column `{k}` is not a recognized analysis-config field.",
                     )
-            cfg_snstvty_analysis = analysis_config.model_validate({
-                **self.master_analysis.cfg_analysis.model_dump(),
-                **overlay_cells,
-            })
+            cfg_snstvty_analysis = analysis_config.model_validate(
+                {
+                    **self.master_analysis.cfg_analysis.model_dump(),
+                    **overlay_cells,
+                }
+            )
             analysis_id = f"{self.sub_analyses_prefix}{sa_id}"
             cfg_snstvty_analysis.analysis_id = analysis_id  # type: ignore
-            sub_analysis_directory = self.subanalysis_dir / str(
-                cfg_snstvty_analysis.analysis_id
-            )
+            sub_analysis_directory = self.subanalysis_dir / str(cfg_snstvty_analysis.analysis_id)
             sub_analysis_directory.mkdir(parents=True, exist_ok=True)
             cfg_snstvty_analysis.toggle_sensitivity_analysis = False
             cfg_snstvty_analysis.is_subanalysis = True
@@ -1326,9 +1372,7 @@ class TRITONSWMM_sensitivity_analysis:
 
             cfg_snstvty_analysis.analysis_dir = sub_analysis_directory
 
-            cfg_snstvty_analysis.master_analysis_cfg_yaml = (
-                self.master_analysis.analysis_config_yaml
-            )
+            cfg_snstvty_analysis.master_analysis_cfg_yaml = self.master_analysis.analysis_config_yaml
 
             # Atomic write via temp-file + rename. `Path.write_text` truncates the
             # target before writing; concurrent readers in other plot subprocesses
@@ -1346,9 +1390,7 @@ class TRITONSWMM_sensitivity_analysis:
             # Once the deeper fix lands (sub-analysis yaml materialization lifted
             # out of `__init__` into the setup phase), this temp-file dance can
             # collapse back to a single `cfg_anlysys_yaml.write_text(...)`.
-            _tmp = cfg_anlysys_yaml.with_suffix(
-                cfg_anlysys_yaml.suffix + f".{os.getpid()}.tmp"
-            )
+            _tmp = cfg_anlysys_yaml.with_suffix(cfg_anlysys_yaml.suffix + f".{os.getpid()}.tmp")
             _tmp.write_text(
                 yaml.safe_dump(
                     cfg_snstvty_analysis.model_dump(mode="json"),
@@ -1363,9 +1405,7 @@ class TRITONSWMM_sensitivity_analysis:
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
 
-    def _compute_sa_id_fingerprint_payload(
-        self, sub_analysis: "anlysis.TRITONSWMM_analysis"
-    ) -> dict[str, object]:
+    def _compute_sa_id_fingerprint_payload(self, sub_analysis: "anlysis.TRITONSWMM_analysis") -> dict[str, object]:
         """Compute the deterministic fingerprint payload for one sub-analysis.
 
         Projects the sub-analysis's post-Pydantic ``analysis_config.model_dump(mode="json")``
@@ -1404,16 +1444,13 @@ class TRITONSWMM_sensitivity_analysis:
         # introduces per-sa system configs (Gotcha 17 cascade — see Phase 1 doc).
         if self._has_per_sa_system_configs:
             payload["__schema_version__"] = 2
-            cfg_system_json = sub_analysis._system.cfg_system.model_dump_json(
-                by_alias=False, exclude_none=False
-            )
-            payload["system_cfg_hash"] = hashlib.sha1(
-                cfg_system_json.encode("utf-8")
-            ).hexdigest()
+            cfg_system_json = sub_analysis._system.cfg_system.model_dump_json(by_alias=False, exclude_none=False)
+            payload["system_cfg_hash"] = hashlib.sha1(cfg_system_json.encode("utf-8")).hexdigest()
 
         # Phase 1 — attach system_overlay key when any system.* overlay columns
         # are declared on the master sensitivity df (un-projected).
         from TRITON_SWMM_toolkit.config.system import system_config
+
         df = self.master_analysis.sensitivity._df_setup_full
         overlay_col_names = [c for c in df.columns if _is_system_overlay_column(c)]
         if overlay_col_names:
@@ -1426,13 +1463,13 @@ class TRITONSWMM_sensitivity_analysis:
                 if not pd.isna(df.loc[sa_id_str, c])
             }
             if overlay_cells:
-                resolved = system_config.model_validate({
-                    **self.master_analysis._system.cfg_system.model_dump(),
-                    **overlay_cells,
-                })
-                resolved_overlay = {
-                    k: resolved.model_dump(mode="json")[k] for k in overlay_cells
-                }
+                resolved = system_config.model_validate(
+                    {
+                        **self.master_analysis._system.cfg_system.model_dump(),
+                        **overlay_cells,
+                    }
+                )
+                resolved_overlay = {k: resolved.model_dump(mode="json")[k] for k in overlay_cells}
             else:
                 resolved_overlay = {}
             payload["__schema_version__"] = 3
@@ -1487,8 +1524,7 @@ class TRITONSWMM_sensitivity_analysis:
         for target in self.unique_system_targets:
             if verbose:
                 print(
-                    f"[Setup] Processing target {target.target_id} "
-                    f"({len(target.sub_analysis_ids)} sub-analyses)",
+                    f"[Setup] Processing target {target.target_id} ({len(target.sub_analysis_ids)} sub-analyses)",
                     flush=True,
                 )
             target.system.process_system_level_inputs(
@@ -1532,10 +1568,7 @@ class TRITONSWMM_sensitivity_analysis:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
                 # Check if all enabled models completed
                 enabled_models = scen.run.model_types_enabled
-                all_models_completed = all(
-                    scen.model_run_completed(model_type)
-                    for model_type in enabled_models
-                )
+                all_models_completed = all(scen.model_run_completed(model_type) for model_type in enabled_models)
                 if not all_models_completed:
                     scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
@@ -1598,9 +1631,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sa_id, sub_analysis in self.sub_analyses.items():
-            assert (
-                sub_analysis.cfg_analysis.is_subanalysis
-            ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
+            assert sub_analysis.cfg_analysis.is_subanalysis, (
+                "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
+            )
             sub_df_status = sub_analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[sa_id, :]
@@ -1608,9 +1641,7 @@ class TRITONSWMM_sensitivity_analysis:
                 sub_df_status[key] = val
 
             sub_df_status["sa_id"] = sa_id
-            sub_df_status = sub_df_status[
-                ["sa_id"] + [c for c in sub_df_status.columns if c != "sa_id"]
-            ]
+            sub_df_status = sub_df_status[["sa_id"] + [c for c in sub_df_status.columns if c != "sa_id"]]
 
             status_frames.append(sub_df_status)
 
@@ -1632,9 +1663,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_scenarios_created = True
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
-            all_scenarios_created = (
-                all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
-            )
+            all_scenarios_created = all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
         return all_scenarios_created is True
 
     @property
@@ -1667,8 +1696,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             all_TRITON_timeseries_processed = (
-                all_TRITON_timeseries_processed
-                and sub_analysis.log.all_TRITON_timeseries_processed.get()
+                all_TRITON_timeseries_processed and sub_analysis.log.all_TRITON_timeseries_processed.get()
             )
         return all_TRITON_timeseries_processed is True
 
@@ -1686,8 +1714,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed
-                and sub_analysis.log.all_SWMM_timeseries_processed.get()
+                all_SWMM_timeseries_processed and sub_analysis.log.all_SWMM_timeseries_processed.get()
             )
         return all_SWMM_timeseries_processed is True
 
@@ -1748,8 +1775,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared
-                and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
+                all_raw_TRITON_outputs_cleared and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
             )
         return all_raw_TRITON_outputs_cleared is True
 
@@ -1767,8 +1793,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             sub_analysis._update_log()
             all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared
-                and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
+                all_raw_SWMM_outputs_cleared and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
             )
         return all_raw_SWMM_outputs_cleared is True
 

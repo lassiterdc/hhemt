@@ -4979,6 +4979,348 @@ rule render_report:
 
         return snakefile_content
 
+    def generate_reprocess_master_snakefile_content(
+        self,
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        compression_level: int = 5,
+        report_formats: list[str] | None = None,
+    ) -> str:
+        """Generate a reprocess-scoped master Snakefile for the sensitivity master.
+
+        Sibling to :meth:`generate_master_snakefile_content` — keeps the full
+        master generator stable while emitting only the downstream rules needed
+        for a master-level reprocess:
+
+        - ``rule consolidate_{prefix}{sa_id}`` for each sub-analysis, with the
+          per-sa sim completion flags declared as ``input:`` files (not
+          produced by any rule). Per the Phase 2 reprocess generator pattern,
+          live or never-started sims are silently excluded by filtering each
+          consolidate rule's input set to flags that already exist on disk.
+          ``--overwrite-outputs-if-already-created`` is baked into the shell.
+        - ``rule master_consolidation`` aggregating the per-sa flags into
+          ``f_consolidate_master_complete.flag`` (overwrite baked).
+        - The full plot + ``export_scenario_status`` + ``render_report`` rules,
+          reusing the same helpers as the production master Snakefile so the
+          rendered report is identical.
+
+        The reprocess driver invokes this Snakefile via
+        ``submit_reprocess_workflow``-equivalent dispatch in
+        :meth:`TRITONSWMM_sensitivity_analysis.reprocess` against the same
+        ``analysis_dir/.snakemake/`` lock dir as the full master Snakefile.
+        Per-Snakefile locking (distinct ``Snakefile`` vs ``Snakefile.reprocess``
+        paths) preserves coexistence safety for local tests + CLI smoke; true
+        coexistence with a concurrent live ``rule simulation_*`` driver is
+        tracked as a Phase 2 follow-up (see ``submit_reprocess_workflow``'s
+        body comment).
+
+        Parameters
+        ----------
+        which
+            ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
+            consolidate rule shells' ``--which`` flag.
+        compression_level
+            Compression level (0-9) for the consolidate rule shells.
+        report_formats
+            List of report formats to render; defaults to ``["zip"]``.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        # Emit report templates into master analysis_dir/report/ so the
+        # snakemake --report engine can resolve caption= paths. Mirrors the
+        # full master generator.
+        _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
+
+        conda_env_path = self._base_builder._get_conda_env_path()
+        master_config_args = self._base_builder._get_config_args(
+            analysis_config_yaml=self.master_analysis.analysis_config_yaml
+        )
+
+        # Sensitivity benchmarking + per-sim plotting context (sourced same as
+        # the full master generator so render targets match).
+        _report_cfg = self.master_analysis.cfg_analysis.report
+        _independent_vars: list[str] = (
+            list(_report_cfg.sensitivity.independent_vars) if _report_cfg.sensitivity is not None else []
+        )
+        _group_by_var: str | None = (
+            _report_cfg.sensitivity.group_by_var if _report_cfg.sensitivity is not None else None
+        )
+
+        # Single-enabled-model contract (sensitivity does not support multi-model).
+        enabled_models = []
+        if self.system.cfg_system.toggle_triton_model:
+            enabled_models.append("triton")
+        if self.system.cfg_system.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if self.system.cfg_system.toggle_swmm_model:
+            enabled_models.append("swmm")
+        if len(enabled_models) == 0:
+            raise ValueError("No model types enabled in system configuration")
+        if len(enabled_models) > 1:
+            raise ValueError(
+                f"Sensitivity analysis does not support multi-model execution. "
+                f"Enabled models: {enabled_models}. Please enable only one model type."
+            )
+        model_type = enabled_models[0]
+
+        log_dir_str = str(self.master_analysis.analysis_paths.analysis_log_directory)
+        master_analysis_id = str(self.master_analysis.cfg_analysis.analysis_id)
+        n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
+        try:
+            total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
+        except Exception:
+            total_n_sims = n_sub_analyses
+
+        # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
+        sa_event_pairs_sa: list[str] = []
+        sa_event_pairs_evt: list[str] = []
+        try:
+            for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
+                for event_iloc in sub_pair.df_sims.index:
+                    ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
+                    sa_event_pairs_sa.append(str(sa_id_pair))
+                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
+        except Exception:
+            sa_event_pairs_sa = []
+            sa_event_pairs_evt = []
+
+        _formats = report_formats if report_formats is not None else ["zip"]
+
+        # Snakefile preamble — config dict + onstart/onerror hooks identical to
+        # the production master generator so the rendered report's metadata
+        # surface is unchanged on reprocess.
+        snakefile_content = f'''# Auto-generated reprocess-scoped master Snakefile for sensitivity analysis
+# Re-runs downstream stages (per-sa consolidate + master consolidation +
+# plots + render) against existing per-sa sim completion flags. No
+# simulation or scenario-preparation rules are emitted.
+
+import os
+from datetime import datetime as _dt
+from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst as _fmt_sources_rst
+
+try:
+    from importlib.metadata import version as _pkg_version
+    _toolkit_version = _pkg_version("TRITON_SWMM_toolkit")
+except Exception:
+    _toolkit_version = "unknown"
+
+config["analysis_id"] = {master_analysis_id!r}
+config["toolkit_version"] = _toolkit_version
+config["n_sims"] = {total_n_sims}
+config["is_sensitivity"] = True
+config["n_sub_analyses"] = {n_sub_analyses}
+config["independent_vars"] = {_independent_vars!r}
+config["group_by_var"] = {_group_by_var!r}
+config["report"] = {{"generated_at": _dt.now().isoformat(timespec="seconds")}}
+
+SA_EVENT_PAIRS_SA = {sa_event_pairs_sa!r}
+SA_EVENT_PAIRS_EVT = {sa_event_pairs_evt!r}
+
+report: "report/workflow_description.rst"
+
+onstart:
+    shell("mkdir -p _status {log_dir_str}/sims {log_dir_str}")
+
+onerror:
+    shell("""
+        {self.python_executable} -m TRITON_SWMM_toolkit.export_scenario_status \\
+            {master_config_args} \\
+            > {log_dir_str}/export_scenario_status.log 2>&1
+    """)
+
+
+'''
+
+        _ext = _resolve_rule_all_extensions(self._base_builder._get_report_cfg_static_backend())
+
+        # rule all — mirrors the production master generator's render-target
+        # set (system_overview, per_analysis_summary, scenario_status_appendix,
+        # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-sa
+        # per-event plots, sensitivity-benchmarking plots, analysis_report.*).
+        consolidation_flags = [
+            f"_status/e_consolidate_sa-{sa_id}_complete.flag" for sa_id in self.sensitivity_analysis.sub_analyses.keys()
+        ]
+        rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
+        rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
+        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append('"scenario_status.csv"')
+        rule_all_inputs.append('"workflow_summary.md"')
+        if sa_event_pairs_sa:
+            _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
+            _e_cf = _ext["per_sim_per_sa_conduit_flow"]
+            rule_all_inputs.append(
+                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/peak_flood_depth{_e_pfd}", '
+                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+            )
+            rule_all_inputs.append(
+                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/conduit_flow{_e_cf}", '
+                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+            )
+        if _independent_vars:
+            _e_bench = _ext["sensitivity_benchmarking"]
+            rule_all_inputs.append(
+                f'expand("plots/sensitivity/benchmarking/{{independent_var}}_vs_total{_e_bench}", '
+                f"independent_var={_independent_vars!r})"
+            )
+        render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
+        for _fmt in _formats:
+            rule_all_inputs.append(f'"analysis_report.{_fmt}"')
+
+        snakefile_content += f"""rule all:
+    input:
+        {", ".join(rule_all_inputs)}
+
+"""
+
+        # Per-sub-analysis consolidate rules — declare existing sim flags as
+        # plain input: files (no upstream simulation_* rule emitted). Filter
+        # to flags that exist on disk; live or never-started scenarios are
+        # silently excluded, matching the Phase 2 reprocess generator pattern.
+        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        subanalysis_flags: list[str] = []
+        for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():
+            sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
+            sub_config_args = self._base_builder._get_config_args(
+                analysis_config_yaml=sub_analysis.analysis_config_yaml,
+                system_config_yaml=sub_analysis._system.system_config_yaml,
+            )
+            # Filter per-sa sim flags to those whose c_run_* file exists on disk.
+            available_sim_flags: list[str] = []
+            for event_iloc in sub_analysis.df_sims.index:
+                event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
+                sim_flag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
+                if (status_dir / f"c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag").exists():
+                    available_sim_flags.append(sim_flag)
+            # When no sim flags survive the filter for a sub-analysis, fall
+            # back to the input fingerprint file so the rule still emits with
+            # a valid input set and Snakemake's mtime trigger considers the
+            # consolidate rule reachable. (The consolidate runner is resilient
+            # to a sub-analysis with no completed sims — it would no-op the
+            # per-sa data tree.)
+            consolidate_inputs = [f'"{flag}"' for flag in available_sim_flags] or [f'"_status/sa-{sa_id}_inputs.json"']
+            subanalysis_flag = f"_status/e_consolidate_sa-{sa_id}_complete.flag"
+            subanalysis_flags.append(subanalysis_flag)
+            prefix = self.sensitivity_analysis.sub_analyses_prefix
+            snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
+    input: {", ".join(consolidate_inputs)}
+    output: "{subanalysis_flag}"
+    log: "{log_dir_str}/sims/consolidate_{prefix}{sa_id}.log"
+    conda: "{conda_env_path}"
+    resources:
+{
+                self._base_builder._build_resource_block(
+                    partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                    runtime_min=30,
+                    mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+                    nodes=1,
+                    tasks=1,
+                    cpus_per_task=1,
+                )
+            }
+    shell:
+        """
+        mkdir -p {log_dir_str}/sims {log_dir_str} _status
+        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            {sub_config_args} \\
+            --which {which} \\
+            --overwrite-outputs-if-already-created \\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+'''
+
+        # Master consolidation — aggregates per-sa flags into the master
+        # flag + sensitivity_datatree.zarr; overwrite baked.
+        snakefile_content += f'''rule master_consolidation:
+    input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
+    output: "_status/f_consolidate_master_complete.flag"
+    log: "{log_dir_str}/master_consolidation.log"
+    conda: "{conda_env_path}"
+    resources:
+{
+            self._base_builder._build_resource_block(
+                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=self.master_analysis.cfg_analysis.hpc_mem_allocation_for_analysis_output_consolidation_mb,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+        }
+    shell:
+        """
+        mkdir -p {log_dir_str}/sims {log_dir_str} _status
+        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            {master_config_args} \\
+            --consolidate-sensitivity-analysis-outputs \\
+            --which {which} \\
+            --overwrite-outputs-if-already-created \\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
+
+        # Plot + export + render rules — reuse the same helper methods as the
+        # production master so the rendered report set is byte-equivalent.
+        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_scenario_status_appendix(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+            input_flag="_status/f_consolidate_master_complete.flag",
+        )
+        if sa_event_pairs_sa:
+            snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
+        if _independent_vars:
+            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
+
+        # Render-report rule (wildcarded over format=zip|html), matching the
+        # production master generator.
+        render_inputs_str = ",\n        ".join(render_rule_input_items)
+        snakefile_content += f'''
+rule render_report:
+    input:
+        {render_inputs_str}
+    output:
+        "analysis_report.{{format}}"
+    wildcard_constraints:
+        format="zip|html"
+    log: "{log_dir_str}/render_report_{{format}}.log"
+    resources:
+{
+            self._base_builder._build_resource_block(
+                partition=self.master_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=30,
+                mem_mb=self.master_analysis.cfg_analysis.mem_gb_per_cpu * 1000,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+        }
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.render_report_runner \\
+            {master_config_args} \\
+            --format {{wildcards.format}} \\
+            > {{log}} 2>&1
+        """
+'''
+
+        return snakefile_content
+
     def _build_plot_rule_block_sensitivity_benchmarking(
         self, independent_vars: list[str], *, ctx: RuleEmissionContext | None = None
     ) -> str:
@@ -5504,3 +5846,197 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
         self.sensitivity_analysis._update_master_analysis_log()
         return result
+
+    def submit_reprocess_workflow(
+        self,
+        *,
+        start_with: Literal["process", "consolidate", "render"] = "consolidate",
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        which: Literal["TRITON", "SWMM", "both"] = "both",
+        compression_level: int = 5,
+        dry_run: bool = False,
+        verbose: bool = True,
+        report_formats: list[str] | None = None,
+    ) -> dict:
+        """Submit a reprocess-scoped master Snakefile for the sensitivity master.
+
+        Sibling to :meth:`submit_workflow`. Writes the scoped master Snakefile
+        to ``{analysis_dir}/Snakefile.reprocess`` via
+        :meth:`generate_reprocess_master_snakefile_content` (overwrite baked),
+        runs the Phase-1 reconciliation guard, and invokes Snakemake with
+        ``--rerun-triggers mtime`` so downstream rules only re-fire when
+        their outputs are missing or older than their inputs.
+
+        Per the Phase 2 reprocess deviation (in-flight sidecar comment):
+        the reprocess driver shares ``analysis_dir/.snakemake/`` with the run
+        path. Per-Snakefile locking via the distinct ``Snakefile.reprocess``
+        path provides coexistence safety for local tests + CLI smoke;
+        true coexistence with a concurrent live ``rule simulation_*`` driver
+        is tracked as a Phase 2 follow-up.
+
+        Parameters
+        ----------
+        start_with
+            Stage to re-fire from. Phase 3's master-level reprocess targets
+            ``"consolidate"`` by default; ``"process"`` / ``"render"`` map onto
+            the same Snakefile (the master generator does not emit process
+            rules, so ``start_with`` only affects the invalidation set
+            chosen by :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
+        execution_mode
+            ``"auto"`` (default) detects SLURM context; ``"local"`` / ``"slurm"``
+            force the mode.
+        which
+            ``"both"`` / ``"TRITON"`` / ``"SWMM"`` — threaded into the
+            consolidate rule shells' ``--which`` flag.
+        compression_level
+            Compression level (0-9) for the consolidate rule shells.
+        dry_run
+            If True, runs ``snakemake --dry-run`` only.
+        verbose
+            If True, print progress messages.
+        report_formats
+            Optional list of report formats to render; defaults to ``["zip"]``.
+
+        Returns
+        -------
+        dict
+            Status dictionary matching the shape of
+            :meth:`SnakemakeWorkflowBuilder.submit_reprocess_workflow`.
+        """
+        # Effective execution mode dispatch — mirror the analysis-level
+        # reprocess auto-detect.
+        if execution_mode == "auto":
+            mode: Literal["local", "slurm"] = "slurm" if self.master_analysis.in_slurm else "local"
+        else:
+            mode = execution_mode  # type: ignore[assignment]
+
+        if verbose:
+            print(
+                f"[Snakemake] Submitting sensitivity master reprocess workflow "
+                f"(start_with={start_with!r}, mode={mode})",
+                flush=True,
+            )
+
+        # Emit the scoped master Snakefile.
+        snakefile_content = self.generate_reprocess_master_snakefile_content(
+            which=which,
+            compression_level=compression_level,
+            report_formats=report_formats,
+        )
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        snakefile_path = analysis_dir / "Snakefile.reprocess"
+        (analysis_dir / "_status").mkdir(parents=True, exist_ok=True)
+        self.analysis_paths.analysis_log_directory.mkdir(parents=True, exist_ok=True)
+        (self.analysis_paths.analysis_log_directory / "sims").mkdir(parents=True, exist_ok=True)
+        snakefile_path.write_text(snakefile_content)
+        if verbose:
+            print(
+                f"[Snakemake] Reprocess master Snakefile generated: {snakefile_path}",
+                flush=True,
+            )
+
+        # Logs.
+        logs_dir = self.analysis_paths.analysis_log_directory
+        logfile_name = (
+            "snakemake_sensitivity_reprocess_dry_run.log" if dry_run else "snakemake_sensitivity_reprocess.log"
+        )
+        snakemake_logfile = logs_dir / logfile_name
+
+        # Build the snakemake command. Reuses the base builder's snakemake
+        # command builder + --rerun-triggers mtime.
+        cmd_args = self._base_builder._get_snakemake_base_cmd() + [
+            "--snakefile",
+            str(snakefile_path),
+            "--rerun-triggers",
+            "mtime",
+        ]
+
+        if mode == "local":
+            local_cores = self.master_analysis.cfg_analysis.local_cpu_cores_for_workflow
+            assert isinstance(local_cores, int), "local_cpu_cores_for_workflow must be specified for local runs"
+            cmd_args.extend(["--cores", str(local_cores) if local_cores > 1 else "1"])
+        else:  # slurm
+            config = self._base_builder.generate_snakemake_config(mode="slurm")
+            config_dir = self._base_builder.write_snakemake_config(config, mode="slurm")
+            cmd_args.extend(
+                [
+                    "--profile",
+                    str(config_dir),
+                    "--executor",
+                    "slurm",
+                    "--printshellcmds",
+                ]
+            )
+
+        if dry_run:
+            cmd_args.append("--dry-run")
+
+        # Facade — lock check (shared analysis_dir/.snakemake/ per Phase 2's
+        # deviation) + reconciliation against analysis_dir/_status/_submitted/.
+        # Phase 1's at-most-once guard protects this reprocess from a parallel
+        # live sim driver double-submitting.
+        self._base_builder._pre_snakemake_invocation_guards(
+            snakefile_path,
+            dry_run=dry_run,
+            verbose=verbose,
+            working_dir=analysis_dir,
+        )
+
+        # Subprocess invocation. Local runs block; slurm runs detach.
+        if mode == "local":
+            with open(snakemake_logfile, "w") as log_f:
+                result = subprocess.run(
+                    cmd_args,
+                    cwd=str(analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+            if verbose:
+                print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "mode": "local",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": (f"Snakemake sensitivity reprocess failed. See {snakemake_logfile} for details."),
+                    "snakemake_logfile": snakemake_logfile,
+                }
+            if verbose:
+                print("[Snakemake] Sensitivity reprocess completed successfully", flush=True)
+            self.sensitivity_analysis._update_master_analysis_log()
+            return {
+                "success": True,
+                "mode": "local",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": "Sensitivity reprocess completed successfully",
+                "snakemake_logfile": snakemake_logfile,
+            }
+
+        # slurm path
+        with open(snakemake_logfile, "w") as log_f:
+            proc = subprocess.Popen(
+                cmd_args,
+                cwd=str(analysis_dir),
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        if verbose:
+            print(
+                f"[Snakemake] Sensitivity reprocess submitted to background (PID: {proc.pid})",
+                flush=True,
+            )
+        self.sensitivity_analysis._update_master_analysis_log()
+        return {
+            "success": True,
+            "mode": "slurm",
+            "snakefile_path": snakefile_path,
+            "job_id": None,
+            "message": "Sensitivity reprocess submitted to SLURM (detached)",
+            "process": proc,
+            "snakemake_logfile": snakemake_logfile,
+        }
