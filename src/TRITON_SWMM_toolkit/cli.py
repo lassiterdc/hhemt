@@ -677,6 +677,107 @@ def reprocess_command(
         raise typer.Exit(10)
 
 
+@app.command(name="cleanup-stale-metadata")
+def cleanup_stale_metadata_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="List orphan metadata records without deleting (default) or delete them with --apply",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Required with --apply to actually invoke snakemake --cleanup-metadata",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print each orphan path",
+    ),
+):
+    """List or delete orphaned ``.snakemake/metadata/`` records left by past rule-output renames.
+
+    The Phase 8 rule-output renames (``.png``/``.svg`` → ``.html`` for
+    system_overview, per_sim plots, and sensitivity_benchmarking) leave orphaned
+    metadata records that Snakemake will trigger a one-shot full plot rebuild
+    against on first post-rename invocation. This command identifies those
+    orphans and optionally removes them via ``snakemake --cleanup-metadata <paths>``.
+
+    Examples:
+
+        # List orphans (no deletion)
+        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+            --analysis-config analysis.yaml
+
+        # Actually delete
+        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+            --analysis-config analysis.yaml --apply --force
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        if not dry_run and not force:
+            console_err.print(
+                "[bold red]Error:[/bold red] --apply requires --force to confirm deletion."
+            )
+            raise typer.Exit(2)
+
+        orphan_paths = analysis._enumerate_stale_metadata_paths()
+        n = len(orphan_paths)
+
+        if n == 0:
+            console.print("[green]No orphan metadata candidates enumerated.[/green]")
+        elif dry_run:
+            console.print(
+                f"[yellow]Found {n} orphan metadata candidate(s) (dry-run; nothing deleted).[/yellow]"
+            )
+            for p in orphan_paths:
+                console.print(f"  orphan: {p}")
+        else:
+            if verbose:
+                for p in orphan_paths:
+                    console.print(f"  orphan: {p}")
+            analysis._invoke_snakemake_cleanup_metadata(orphan_paths)
+            console.print(
+                f"[green]Invoked `snakemake --cleanup-metadata` against {n} orphan path(s).[/green]"
+            )
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════════

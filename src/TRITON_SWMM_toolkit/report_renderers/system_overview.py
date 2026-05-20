@@ -31,7 +31,11 @@ import rioxarray as rxr
 import swmmio
 from plotly.subplots import make_subplots
 
-from TRITON_SWMM_toolkit import swmm_schema as _ss, units
+from TRITON_SWMM_toolkit import swmm_schema as _ss
+from TRITON_SWMM_toolkit import units
+from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
+    compute_padded_square_bounds,
+)
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -138,6 +142,9 @@ def render(
         building_height = getattr(
             analysis._system.cfg_system, "dem_building_height", None,
         )
+        outside_watershed_height = getattr(
+            analysis._system.cfg_system, "dem_outside_watershed_height", None,
+        )
         return _render_plotly_branch(
             output_path=output_path,
             source_paths=source_paths,
@@ -149,6 +156,8 @@ def render(
             map_cfg=map_cfg, manifest_data=manifest_data, prov=prov,
             plotly_js_mode=report_cfg.interactive.plotly_js_mode,
             dem_building_height=building_height,
+            dem_outside_watershed_height=outside_watershed_height,
+            vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
         )
 
     # Matplotlib branch (legacy / interactive.enabled=False default).
@@ -174,6 +183,7 @@ def render(
     _draw_elevation_panel(
         ax_dem, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel,
+        vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
     )
 
     return emit_plot_with_sources(
@@ -505,7 +515,8 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 
 
 def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
-                          prov, dem_source: str):
+                          prov, dem_source: str,
+                          vertical_crs_epsg: int | None = None):
     import matplotlib.cm as cm
     from matplotlib.lines import Line2D
 
@@ -556,7 +567,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
             origin="upper", aspect="equal",
         )
     cbar = plt.colorbar(im, ax=ax, shrink=ep.cbar_shrink, pad=ep.cbar_pad, extend="max")
-    cbar.set_label(units.DEM_ELEV_LABEL)
+    cbar.set_label(units.dem_elev_label(vertical_crs_epsg))
 
     legend_handles = []
 
@@ -683,13 +694,14 @@ def _render_plotly_branch(
     prov,
     plotly_js_mode: str,
     dem_building_height: float | None = None,
+    dem_outside_watershed_height: float | None = None,
+    vertical_crs_epsg: int | None = None,
 ) -> Path:
+    # Side-effect import: registers `triton_journal` Plotly template.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
-
-    # Side-effect import: registers `triton_journal` Plotly template.
-    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
 
     # Three subplots, equal aspect, shared spatial extent (DEM bounds).
     fig = make_subplots(
@@ -699,10 +711,11 @@ def _render_plotly_branch(
     )
     fig.update_layout(
         template="triton_journal",
-        title="System overview — Hydrology, Hydraulics, TRITON DEM",
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.18, xanchor="left", x=0),
-        margin=dict(l=10, r=10, t=60, b=80),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.30, xanchor="left", x=0),
+        margin=dict(l=10, r=10, t=40, b=100),
+        height=600,
+        plot_bgcolor="white",
     )
     # Lock equal-aspect on all panels and pin to DEM bounds.
     # Axis titles label the projected CRS so readers can identify the
@@ -712,16 +725,38 @@ def _render_plotly_branch(
         target_crs.to_string() if hasattr(target_crs, "to_string")
         else str(target_crs)
     )
+    # Panel bounds: square + padded + encompass all SWMM nodes so left-edge
+    # nodes (e.g., upstream-most subcatchment outfalls) are not clipped.
+    panel_bounds = compute_padded_square_bounds(
+        dem_bounds, hydro_model, hydraulics_model, padding_frac=0.02,
+    )
     for col in (1, 2, 3):
         x_title = "Easting (m)" if col != 2 else f"Easting (m) — {crs_authority}"
-        fig.update_xaxes(
-            range=[dem_bounds[0], dem_bounds[2]],
+        x_kwargs = dict(
+            range=[panel_bounds[0], panel_bounds[2]],
             title_text=x_title,
             row=1, col=col,
         )
+        # Defensively link x-axes via `matches="x"` so pan/zoom on any panel
+        # synchronizes the other two (Plotly's `shared_xaxes=True` in
+        # `make_subplots` does NOT always emit the `matches` property — verified
+        # empirically against this fixture's rendered HTML). The y-axes are
+        # already linked via `make_subplots(shared_yaxes=True)`'s emitted
+        # `matches="y"`.
+        if col > 1:
+            x_kwargs["matches"] = "x"
+        # `constrain="domain"` on both axes: when `scaleanchor` enforces 1:1
+        # data aspect, Plotly defaults to *expanding the range* to fill the
+        # subplot's plot area. With 3 narrow panels side-by-side that blows
+        # the x range out to ~6000 m on a ~1900-m-wide dataset (user Round 4
+        # "way too zoomed out"). `constrain="domain"` shrinks the rendered
+        # domain instead, keeping the data range exactly at panel_bounds.
+        x_kwargs["constrain"] = "domain"
+        fig.update_xaxes(**x_kwargs)
         fig.update_yaxes(
-            range=[dem_bounds[1], dem_bounds[3]],
+            range=[panel_bounds[1], panel_bounds[3]],
             scaleanchor=f"x{col}", scaleratio=1.0,
+            constrain="domain",
             title_text="Northing (m)" if col == 1 else None,
             row=1, col=col,
         )
@@ -736,6 +771,8 @@ def _render_plotly_branch(
         fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel, col=3,
         dem_building_height=dem_building_height,
+        dem_outside_watershed_height=dem_outside_watershed_height,
+        vertical_crs_epsg=vertical_crs_epsg,
     )
 
     # Filter the default Plotly modebar to the buttons that map onto the
@@ -777,7 +814,7 @@ def _render_plotly_branch(
     try:
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1400, height=500, scale=1,
+            engine="kaleido", width=1500, height=600, scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
@@ -917,7 +954,7 @@ def _draw_hydrology_panel_plotly(
                     x=outlet_xs, y=outlet_ys, mode="markers",
                     marker=dict(
                         symbol="circle",
-                        size=max(int(hp.outlet_marker_size ** 0.5 * 2), 4),
+                        size=_plotly_junction_marker_size(map_cfg),
                         color=hp.outlet_marker_fill,
                         line=dict(color="black", width=hp.outlet_marker_edgewidth),
                     ),
@@ -935,19 +972,37 @@ def _draw_hydrology_panel_plotly(
             )
 
 
+def _plotly_node_marker_size(map_cfg) -> int:
+    """Outfall-marker size (the larger of the two Plotly node markers).
+
+    Outlets + junctions render at HALF this size via
+    `_plotly_junction_marker_size`. Outfalls render at this full size.
+    Derived from `hydrology_panel.outlet_marker_size` so a single cfg knob
+    governs every node marker in the Plotly system_overview.
+    """
+    return max(int(map_cfg.hydrology_panel.outlet_marker_size ** 0.5 * 2), 4)
+
+
+def _plotly_junction_marker_size(map_cfg) -> int:
+    """Junction-and-outlet marker size — 50% of the outfall size.
+
+    Shared by the hydrology-panel subcatchment outlets and the
+    hydraulics-panel junctions so a single variable controls both
+    (user Round 6: junctions in both panels must use the same variable).
+    """
+    return max(int(_plotly_node_marker_size(map_cfg) * 0.5), 2)
+
+
 def _draw_hydraulics_panel_plotly(
     fig, hydraulics_model, hydraulics_rel: str, map_cfg, prov, *, col: int,
 ) -> None:
     hp = map_cfg.hydraulics_panel
-    # Use the hydrology-outlet marker-size formula uniformly across both
-    # panels for visual parity (matplotlib's default `junction_marker_size=70`
-    # and `outfall_marker_size=100` produce visibly oversized Plotly markers
-    # relative to the hydrology-panel outlets at `outlet_marker_size=22`).
-    # Phase C iteration may revisit per-symbol sizing if a specialist
-    # recommends emphasis differentiation.
-    hp_node_size = max(
-        int(map_cfg.hydrology_panel.outlet_marker_size ** 0.5 * 2), 4,
-    )
+    # Outfalls render at the full unified node-marker size.
+    # Junctions render at 50% of that size; the same helper is used by
+    # the hydrology-panel subcatchment-outlet trace so a single variable
+    # governs both blue-dot families across both panels (user Round 6).
+    hp_node_size = _plotly_node_marker_size(map_cfg)
+    hp_junction_size = _plotly_junction_marker_size(map_cfg)
     coords_df = hydraulics_model.inp.coordinates
     junctions_df = hydraulics_model.inp.junctions
     outfalls_df = hydraulics_model.inp.outfalls
@@ -1030,7 +1085,7 @@ def _draw_hydraulics_panel_plotly(
                 go.Scatter(
                     x=conduit_x, y=conduit_y, mode="lines",
                     line=dict(color=hp.conduit_color, width=hp.conduit_linewidth),
-                    name="SWMM conduits",
+                    name="Conduits",
                     legendgroup="hydraulics",
                     hoverinfo="skip",
                 ),
@@ -1103,14 +1158,14 @@ def _draw_hydraulics_panel_plotly(
                     x=jx, y=jy, mode="markers",
                     marker=dict(
                         symbol="circle",
-                        size=hp_node_size,
+                        size=hp_junction_size,
                         color=hp.junction_fill,
                         line=dict(
                             color="black",
                             width=hp.junction_marker_edgewidth,
                         ),
                     ),
-                    name="SWMM junction",
+                    name="Junctions",
                     legendgroup="hydraulics",
                     customdata=j_customdata,
                     hovertemplate=(
@@ -1140,7 +1195,10 @@ def _draw_hydraulics_panel_plotly(
                 go.Scatter(
                     x=ox, y=oy, mode="markers",
                     marker=dict(
-                        symbol=_matplotlib_marker_to_plotly(hp.outfall_marker),
+                        # Explicit `triangle-up` (equivalent to the matplotlib
+                        # `"^"` marker). Plotly's `triangle-up` is an
+                        # equilateral triangle inscribed in the marker box.
+                        symbol="triangle-up",
                         size=hp_node_size,
                         color=hp.outfall_fill,
                         line=dict(
@@ -1148,15 +1206,14 @@ def _draw_hydraulics_panel_plotly(
                             width=hp.outfall_marker_edgewidth,
                         ),
                     ),
-                    name="SWMM outfall",
-                    legendgroup="hydraulics",
+                    name="Outfalls",
+                    legendgroup="hydraulics_outfalls",
                     customdata=o_customdata,
                     hovertemplate=(
                         "<b>Outfall %{customdata[0]}</b><br>"
                         "Invert: %{customdata[1]:.2f} m"
                         "<extra></extra>"
                     ),
-                    showlegend=False,
                 ),
                 row=1, col=col,
             )
@@ -1174,7 +1231,7 @@ def _draw_hydraulics_panel_plotly(
         label_xs.append(float(coords_df.at[name, _ss.COORDS_X]))
         label_ys.append(float(coords_df.at[name, _ss.COORDS_Y]))
         label_texts.append(f"{name}<br>Rim: {rim:.2f}<br>Inv: {invert:.2f}")
-    for name, row in outfalls_df.iterrows():
+    for name, _row in outfalls_df.iterrows():
         if name not in coords_df.index:
             continue
         label_xs.append(float(coords_df.at[name, _ss.COORDS_X]))
@@ -1207,7 +1264,11 @@ def _draw_elevation_panel_plotly(
     fig, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
     prov, *, dem_source: str, col: int,
     dem_building_height: float | None = None,
+    dem_outside_watershed_height: float | None = None,
+    vertical_crs_epsg: int | None = None,
 ) -> None:
+    from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
+
     ep = map_cfg.elevation_panel
     dem_squeezed = dem.squeeze()
     arr = dem_squeezed.values
@@ -1228,9 +1289,27 @@ def _draw_elevation_panel_plotly(
     else:
         vmin, vmax, wall_threshold = 0.0, 1.0, 1.0
 
+    # Cfg-derived wall_threshold override (when both height fields are set on
+    # cfg_system). The threshold separates "real elevation" cells from the
+    # synthetic-fill cells: any cell whose elevation matches or exceeds the
+    # minimum of the two sentinel heights — building height assigned to the
+    # building-footprint cells, and the outside-watershed bathtub elevation —
+    # is recolored to `ep.over_color` (white) by the walls-overlay Heatmap.
+    cfg_sentinels = [
+        h for h in (dem_building_height, dem_outside_watershed_height)
+        if h is not None
+    ]
+    if cfg_sentinels:
+        # Subtract `ep.wall_threshold_buffer_m` so coarsened-but-still-building
+        # cells (DEM cells whose elevation falls below the strict sentinel due
+        # to spatial resampling) are also flagged as walls. Default buffer 30 m
+        # yields threshold 50 m for Norfolk's 80 m building-height sentinel.
+        wall_threshold = float(min(cfg_sentinels)) - float(ep.wall_threshold_buffer_m)
+
     # Two-heatmap overlay reproduces matplotlib's `cmap.set_over` behavior:
-    # bottom layer shows modeled-area gradient (walls masked NaN); top layer
-    # shows walls only as a single grey color (matplotlib's set_over("#808080")).
+    # bottom layer shows modeled-area gradient (sentinel cells masked NaN);
+    # top layer shows sentinel cells as a uniform color (`ep.over_color`,
+    # default white per Round 2 user-feedback).
     arr_modeled = np.where(arr < wall_threshold, arr, np.nan)
     arr_walls = np.where(arr >= wall_threshold, 1.0, np.nan)
 
@@ -1260,12 +1339,14 @@ def _draw_elevation_panel_plotly(
         )
         fig.add_trace(
             go.Heatmap(
-                z=arr_modeled, x=xs, y=ys,
+                z=arr_modeled,
+                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
                 colorscale=cmap_plotly,
                 zmin=vmin, zmax=vmax, zauto=False,
                 showscale=True,
                 colorbar=dict(
-                    title=units.DEM_ELEV_LABEL,
+                    title=units.dem_elev_label(vertical_crs_epsg),
                     len=ep.cbar_shrink, x=1.005,
                 ),
                 name="DEM elevation (modeled area)",
@@ -1279,16 +1360,46 @@ def _draw_elevation_panel_plotly(
         )
         fig.add_trace(
             go.Heatmap(
-                z=arr_walls, x=xs, y=ys,
+                z=arr_walls,
+                x0=float(xs[0]), dx=float(xs[1] - xs[0]),
+                y0=float(ys[0]), dy=float(ys[1] - ys[0]),
                 colorscale=[[0, ep.over_color], [1, ep.over_color]],
                 zmin=0.0, zmax=1.0, zauto=False,
                 showscale=False,
+                showlegend=False,
                 name="DEM walls",
                 hovertemplate=(
                     "Wall / out-of-range cell<br>"
                     "Easting: %{x:.1f} m<br>Northing: %{y:.1f} m"
                     "<extra></extra>"
                 ),
+            ),
+            row=1, col=col,
+        )
+
+    # Black bounding box around the TRITON DEM modeled-area extent (per Round 2
+    # user feedback): a 5-point Scatter path tracing dem_bounds. Sits ON TOP of
+    # the Heatmaps but BELOW the BC line + watershed polygon so the user can
+    # always see where the gridded modeled region begins/ends.
+    with prov.artist(
+        axes_id="ax_dem_plotly", kind="scatter_path",
+        note="TRITON DEM modeled-extent bounding box",
+    ) as a:
+        a.add_channel("x", ref=ProvenanceRef(
+            source_path=dem_source, transform="rio.bounds[xmin..xmax]",
+        ))
+        a.add_channel("y", ref=ProvenanceRef(
+            source_path=dem_source, transform="rio.bounds[ymin..ymax]",
+        ))
+        fig.add_trace(
+            go.Scatter(
+                x=[dem_bounds[0], dem_bounds[2], dem_bounds[2], dem_bounds[0], dem_bounds[0]],
+                y=[dem_bounds[1], dem_bounds[1], dem_bounds[3], dem_bounds[3], dem_bounds[1]],
+                mode="lines",
+                line=dict(color="black", width=1.5),
+                name="TRITON DEM extent",
+                showlegend=False,
+                hoverinfo="skip",
             ),
             row=1, col=col,
         )
@@ -1403,7 +1514,7 @@ def _matplotlib_cmap_to_plotly_colorscale(
 
 
 def _resolve_dem_color_range(
-    valid_values: "np.ndarray", ep,
+    valid_values: np.ndarray, ep,
     vmax_percentile: float = 90.0,
 ) -> tuple[float, float, float]:
     """Resolve (vmin, vmax, overlay_threshold) for the DEM heatmap.
