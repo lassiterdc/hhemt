@@ -470,7 +470,13 @@ class SnakemakeWorkflowBuilder:
         """
         return [sys.executable, "-m", "snakemake"]
 
-    def _check_and_clear_snakemake_lock(self, snakefile_path: Path, dry_run: bool, verbose: bool = True) -> None:
+    def _check_and_clear_snakemake_lock(
+        self,
+        snakefile_path: Path,
+        dry_run: bool,
+        verbose: bool = True,
+        working_dir: Path | None = None,
+    ) -> None:
         """Check for a stale Snakemake lock and prompt the user to clear it.
 
         Snakemake leaves lock files in .snakemake/locks/ when a workflow is
@@ -489,6 +495,13 @@ class SnakemakeWorkflowBuilder:
             If True, skip the lock check entirely.
         verbose : bool
             If True, print status messages.
+        working_dir : Path | None, default None
+            Snakemake working directory whose ``.snakemake/locks/`` subtree
+            should be cleared. When ``None`` (the run/submit default), falls
+            through to ``self.analysis_paths.analysis_dir`` — the existing
+            behavior, unchanged. The reprocess path passes
+            ``analysis_dir / ".snakemake_reprocess"`` so the reprocess driver
+            clears its own lock subtree rather than the main ``.snakemake/``.
 
         Raises
         ------
@@ -498,7 +511,8 @@ class SnakemakeWorkflowBuilder:
         """
         if dry_run:
             return
-        locks_dir = self.analysis_paths.analysis_dir / ".snakemake" / "locks"
+        wd = working_dir if working_dir is not None else self.analysis_paths.analysis_dir
+        locks_dir = wd / ".snakemake" / "locks"
         lock_files = list(locks_dir.glob("*.lock")) if locks_dir.exists() else []
         if not lock_files:
             return
@@ -539,7 +553,7 @@ class SnakemakeWorkflowBuilder:
 
         result = subprocess.run(
             unlock_cmd,
-            cwd=str(self.analysis_paths.analysis_dir),
+            cwd=str(wd),
             capture_output=True,
             text=True,
         )
@@ -710,6 +724,7 @@ class SnakemakeWorkflowBuilder:
         snakefile_path: Path,
         dry_run: bool,
         verbose: bool,
+        working_dir: Path | None = None,
     ) -> None:
         """Shared pre-Snakemake-invocation guard sequence.
 
@@ -721,8 +736,33 @@ class SnakemakeWorkflowBuilder:
         downstream reconciliation), then the reconciliation runs only when
         ``dry_run`` is False (a dry run plans without submitting, so an
         in-flight duplicate does not yet matter).
+
+        Parameters
+        ----------
+        snakefile_path : Path
+            Path to the Snakefile (passed to the lock check for --unlock).
+        dry_run : bool
+            If True, skip the lock check and reconciliation entirely.
+        verbose : bool
+            If True, print status messages from the lock check.
+        working_dir : Path | None, default None
+            Snakemake working directory whose ``.snakemake/locks/`` subtree
+            should be cleared by the lock check. When ``None`` (the
+            run/submit default), the lock check falls through to
+            ``self.analysis_paths.analysis_dir`` — the existing behavior on
+            every Phase-1 caller, unchanged. The reprocess path threads
+            ``analysis_dir / ".snakemake_reprocess"`` so the reprocess
+            driver clears its own lock subtree. The reconciliation guard is
+            unaffected by ``working_dir`` — it sweeps the analysis-level
+            ``_status/_submitted/`` sentinel directory which is shared
+            across run and reprocess paths.
         """
-        self._check_and_clear_snakemake_lock(snakefile_path, dry_run=dry_run, verbose=verbose)
+        self._check_and_clear_snakemake_lock(
+            snakefile_path,
+            dry_run=dry_run,
+            verbose=verbose,
+            working_dir=working_dir,
+        )
         if not dry_run:
             self._reconcile_inflight_submissions()
 
@@ -939,6 +979,96 @@ class SnakemakeWorkflowBuilder:
             log_path_template="logs/plots/system_overview.log",
         )
         return _emit_plot_rule(spec, ctx)
+
+    def _build_process_rule_block(
+        self,
+        model_type: str,
+        *,
+        which_arg: str,
+        config_args: str,
+        log_dir_str: str,
+        conda_env_path: str,
+        process_resources: str,
+        compression_level: int,
+        clear_raw_outputs: bool,
+        overwrite_outputs_if_already_created: bool,
+    ) -> str:
+        """Emit a single ``rule process_{model_type}`` block.
+
+        Extracted from ``generate_snakefile_content`` so the same template
+        is reused by the reprocess generator
+        (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
+        which bakes ``overwrite_outputs_if_already_created=True`` and
+        ``clear_raw_outputs=False`` to re-fire processing against existing
+        sim outputs without removing the raw outputs.
+        """
+        return f'''
+rule process_{model_type}:
+    input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+    output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
+    log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
+    conda: "{conda_env_path}"
+    params:
+        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
+    resources:
+{process_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
+            --event-iloc {{params.event_iloc}} \\
+            {config_args} \\
+            --model-type {model_type} \\
+            --which {which_arg} \\
+            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
+
+    def _build_consolidate_rule_block(
+        self,
+        *,
+        consolidate_input_str: str,
+        which: str,
+        config_args: str,
+        log_dir_str: str,
+        conda_env_path: str,
+        consolidate_resources: str,
+        compression_level: int,
+        overwrite_outputs_if_already_created: bool,
+    ) -> str:
+        """Emit the ``rule consolidate`` block.
+
+        Extracted from ``generate_snakefile_content`` so the same template
+        is reused by the reprocess generator
+        (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
+        which can supply a different ``consolidate_input_str`` (referencing
+        existing ``c_run_*`` sim flags directly when reprocess starts at
+        ``consolidate`` and the process stage is skipped) and bakes
+        ``overwrite_outputs_if_already_created=True`` to regenerate the
+        analysis datatree.
+        """
+        return f'''
+rule consolidate:
+    input: {consolidate_input_str}
+    output: "_status/e_consolidate_complete.flag"
+    log: "{log_dir_str}/consolidate.log"
+    conda: "{conda_env_path}"
+    resources:
+{consolidate_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            {config_args} \\
+            --compression-level {compression_level} \\
+            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            --which {which} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+'''
 
     def generate_snakefile_content(
         self,
@@ -1300,30 +1430,17 @@ rule run_{model_type}:
                 else:
                     raise ValueError(f"Unknown model_type: {model_type}")
 
-                snakefile_content += f'''
-rule process_{model_type}:
-    input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
-    output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
-    log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
-    conda: "{conda_env_path}"
-    params:
-        event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
-    resources:
-{process_resources}
-    shell:
-        """
-        {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
-            --event-iloc {{params.event_iloc}} \\
-            {config_args} \\
-            --model-type {model_type} \\
-            --which {which_arg} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
-            --compression-level {compression_level} \\
-            > {{log}} 2>&1
-        touch {{output}}
-        """
-'''
+                snakefile_content += self._build_process_rule_block(
+                    model_type,
+                    which_arg=which_arg,
+                    config_args=config_args,
+                    log_dir_str=log_dir_str,
+                    conda_env_path=str(conda_env_path),
+                    process_resources=process_resources,
+                    compression_level=compression_level,
+                    clear_raw_outputs=clear_raw_outputs,
+                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                )
 
         # Consolidation rule depends on final output of each model type
         # Build list of all output flags from all enabled models
@@ -1338,25 +1455,16 @@ rule process_{model_type}:
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
 
-        snakefile_content += f'''
-rule consolidate:
-    input: {consolidate_input_str}
-    output: "_status/e_consolidate_complete.flag"
-    log: "{log_dir_str}/consolidate.log"
-    conda: "{conda_env_path}"
-    resources:
-{consolidate_resources}
-    shell:
-        """
-        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
-            {config_args} \\
-            --compression-level {compression_level} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
-            --which {which} \\
-            > {{log}} 2>&1
-        touch {{output}}
-        """
-'''
+        snakefile_content += self._build_consolidate_rule_block(
+            consolidate_input_str=consolidate_input_str,
+            which=which,
+            config_args=config_args,
+            log_dir_str=log_dir_str,
+            conda_env_path=str(conda_env_path),
+            consolidate_resources=consolidate_resources,
+            compression_level=compression_level,
+            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+        )
         snakefile_content += self._build_plot_rule_block_system_overview()
         snakefile_content += self._build_plot_rule_block_per_sim()
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
@@ -3984,6 +4092,213 @@ exit $snakemake_status
 
         self.analysis._refresh_log()
         return result
+
+    def submit_reprocess_workflow(
+        self,
+        *,
+        start_with: Literal["process", "consolidate", "render"],
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        multi_sim_run_method_override: str | None = None,
+        dry_run: bool = False,
+        verbose: bool = True,
+    ) -> dict:
+        """Submit a reprocess-scoped workflow against existing sim outputs.
+
+        Re-runs downstream stages (process / consolidate / plot / render)
+        without re-running simulations. Uses a separate
+        ``{analysis_dir}/.snakemake_reprocess/`` working directory so it can
+        coexist with a live simulation driver and clears that subtree's
+        ``.snakemake/locks/`` rather than the main ``.snakemake/locks/``.
+
+        Parameters
+        ----------
+        start_with
+            Downstream stage to re-fire from. See
+            :func:`TRITON_SWMM_toolkit.reprocess_snakefile_generator.generate_reprocess_snakefile`
+            for the stage → re-emitted rule mapping.
+        execution_mode
+            ``"auto"`` detects SLURM context; ``"local"`` forces local
+            subprocess execution; ``"slurm"`` forces SLURM submission.
+        multi_sim_run_method_override
+            When set, takes precedence over the analysis's configured
+            ``multi_sim_run_method`` for execution dispatch. Used by
+            :meth:`TRITONSWMM_analysis.reprocess` to force the
+            ``1_job_many_srun_tasks`` method to ``batch_job`` semantics on
+            reprocess paths (the original allocation contract does not
+            apply to reprocess).
+        dry_run
+            If True, runs ``snakemake --dry-run`` only and returns.
+        verbose
+            If True, print progress messages.
+
+        Returns
+        -------
+        dict
+            Status dictionary matching the run-path's shape (``success``,
+            ``mode``, ``snakefile_path``, ``job_id``, ``message``,
+            ``snakemake_logfile``).
+        """
+        from TRITON_SWMM_toolkit.reprocess_snakefile_generator import (
+            write_reprocess_snakefile,
+        )
+
+        # Effective execution dispatch — reprocess overrides take precedence.
+        effective_method = (
+            multi_sim_run_method_override
+            if multi_sim_run_method_override is not None
+            else self.cfg_analysis.multi_sim_run_method
+        )
+        if execution_mode == "auto":
+            mode: Literal["local", "slurm"] = "slurm" if self.analysis.in_slurm else "local"
+        else:
+            mode = execution_mode  # type: ignore[assignment]
+
+        if verbose:
+            print(
+                f"[Snakemake] Submitting reprocess workflow (start_with={start_with!r}, "
+                f"mode={mode}, method={effective_method})",
+                flush=True,
+            )
+
+        # Write the reprocess-scoped Snakefile.
+        snakefile_path = write_reprocess_snakefile(self, start_with=start_with, overwrite=True)
+        if verbose:
+            print(
+                f"[Snakemake] Reprocess Snakefile generated: {snakefile_path}",
+                flush=True,
+            )
+
+        # Logs.
+        logs_dir = self.analysis_paths.analysis_log_directory
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        logfile_name = "snakemake_reprocess_dry_run.log" if dry_run else "snakemake_reprocess.log"
+        snakemake_logfile = logs_dir / logfile_name
+
+        # Snakemake working directory: ``analysis_dir`` itself. The plan's
+        # original design used ``--directory analysis_dir/.snakemake_reprocess``
+        # to isolate the reprocess driver's ``.snakemake/`` state from a
+        # parallel live sim driver, but Snakemake's ``--directory`` flag also
+        # re-roots every relative path in the Snakefile (rule inputs/outputs)
+        # against the working dir — which breaks resolution of
+        # ``_status/c_run_*.flag`` and every other relative artifact path
+        # because those live in ``analysis_dir/_status/``, not
+        # ``.snakemake_reprocess/_status/``. Sharing ``analysis_dir/.snakemake/``
+        # is safe for Phase 2's local tests and CLI smoke because the
+        # reprocess Snakefile lives at a distinct path
+        # (``Snakefile.reprocess``) and Snakemake locks are keyed per
+        # Snakefile. **Follow-up**: true coexistence with a concurrent live
+        # ``rule run_*`` driver requires either rewriting reprocess Snakefile
+        # paths to absolute form or adopting a future ``--lock-dir``-style
+        # mechanism. See ``# Follow-up Ideas`` in the in-flight sidecar.
+        reprocess_working_dir = self.analysis_paths.analysis_dir
+
+        # Build the snakemake command. Reuses the run/submit base command and
+        # adds ``--rerun-triggers mtime`` so downstream rules only re-fire
+        # when outputs are missing or older — the surgical reprocess intent.
+        cmd_args = self._get_snakemake_base_cmd() + [
+            "--snakefile",
+            str(snakefile_path),
+            "--rerun-triggers",
+            "mtime",
+        ]
+
+        if mode == "local":
+            local_cores = self.cfg_analysis.local_cpu_cores_for_workflow
+            assert isinstance(local_cores, int), "local_cpu_cores_for_workflow must be specified for local runs"
+            if local_cores > 1:
+                cmd_args.extend(["--cores", str(local_cores)])
+            else:
+                cmd_args.extend(["--cores", "1"])
+        else:  # slurm
+            # Build slurm profile (same as the run path) — reprocess inherits
+            # the analysis's slurm submission contract for downstream rules.
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+            cmd_args.extend(
+                [
+                    "--profile",
+                    str(config_dir),
+                    "--executor",
+                    "slurm",
+                    "--printshellcmds",
+                ]
+            )
+
+        if dry_run:
+            cmd_args.append("--dry-run")
+
+        # Facade — lock check (against the shared analysis_dir/.snakemake/
+        # per the working-dir explanation above) + reconciliation against
+        # analysis_dir/_status/_submitted/. Phase 1's at-most-once guard
+        # protects reprocess from a parallel live sim driver
+        # double-submitting; the lock-check working_dir matches the
+        # subprocess cwd below.
+        self._pre_snakemake_invocation_guards(
+            snakefile_path,
+            dry_run=dry_run,
+            verbose=verbose,
+            working_dir=reprocess_working_dir,
+        )
+
+        # Subprocess invocation. Local runs block; slurm runs detach (the run
+        # path's distinction is preserved here).
+        if mode == "local":
+            with open(snakemake_logfile, "w") as log_f:
+                result = subprocess.run(
+                    cmd_args,
+                    cwd=str(self.analysis_paths.analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    check=False,
+                )
+            if verbose:
+                print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
+            if result.returncode != 0:
+                return {
+                    "success": False,
+                    "mode": "local",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": (f"Snakemake reprocess failed. See {snakemake_logfile} for details."),
+                    "snakemake_logfile": snakemake_logfile,
+                }
+            if verbose:
+                print("[Snakemake] Reprocess completed successfully", flush=True)
+            self.analysis._refresh_log()
+            return {
+                "success": True,
+                "mode": "local",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": "Reprocess completed successfully",
+                "snakemake_logfile": snakemake_logfile,
+            }
+
+        # slurm path
+        with open(snakemake_logfile, "w") as log_f:
+            proc = subprocess.Popen(
+                cmd_args,
+                cwd=str(self.analysis_paths.analysis_dir),
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        if verbose:
+            print(
+                f"[Snakemake] Reprocess submitted to background (PID: {proc.pid})",
+                flush=True,
+            )
+        self.analysis._refresh_log()
+        return {
+            "success": True,
+            "mode": "slurm",
+            "snakefile_path": snakefile_path,
+            "job_id": None,
+            "message": "Reprocess submitted to SLURM (detached)",
+            "process": proc,
+            "snakemake_logfile": snakemake_logfile,
+        }
 
 
 class SensitivityAnalysisWorkflowBuilder:

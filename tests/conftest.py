@@ -401,6 +401,62 @@ def synth_sensitivity_mixed_prefixed_columns():
 
 
 @pytest.fixture(scope="session")
+def synthetic_multisim_completed(tritonswmm_cpu_compiled):
+    """Yield a synth multisim TRITONSWMM_analysis with sim outputs produced.
+
+    Used by Phase 2 reprocess tests. Session-scoped: the first invocation
+    in a pytest session runs the synth multisim through
+    ``analysis.run(from_scratch=False, ...)`` if the analysis is not
+    already at the ``e_consolidate_complete.flag`` state; subsequent
+    invocations reuse the materialized analysis from the test-case cache.
+
+    Stale ``.snakemake/locks/`` / ``.snakemake/incomplete/`` (and the
+    reprocess-side ``.snakemake_reprocess/.snakemake/locks/`` /
+    ``.snakemake_reprocess/.snakemake/incomplete/``) directories from
+    prior interrupted runs are silently cleared before yielding.
+    Follow-up: integrate this clear into the broader
+    ``_pytest_uses_non_interactive_snakemake_lock_clear`` autouse fixture
+    described by stipulation
+    ``library/docs/stipulations/TRITON-SWMM_toolkit/snakemake fixture setup clears locks and incomplete.md``
+    (cross-plan synth-test-isolation work; not yet implemented).
+    """
+    import shutil
+    from pathlib import Path as _Path
+
+    from tests.fixtures.test_case_catalog import Local_TestCases
+
+    case = Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=False)
+    analysis = case.analysis
+    analysis_dir = analysis.analysis_paths.analysis_dir
+
+    # Clear stale lock + incomplete subtrees on both the run and reprocess
+    # working dirs so a leftover state from an interrupted prior run does
+    # not interfere with the fixture's analysis.run() (if it fires) or
+    # with the test body's analysis.reprocess() invocations.
+    for sub_root_name in (".snakemake", ".snakemake_reprocess"):
+        sub_root = analysis_dir / sub_root_name
+        if sub_root.exists():
+            shutil.rmtree(sub_root / "locks", ignore_errors=True)
+            shutil.rmtree(sub_root / "incomplete", ignore_errors=True)
+            (sub_root / "log").mkdir(parents=True, exist_ok=True)
+
+    # Ensure the analysis is in a "post-consolidate" state. If
+    # ``e_consolidate_complete.flag`` is absent, run() once to materialize.
+    consolidate_flag = analysis_dir / "_status" / "e_consolidate_complete.flag"
+    if not consolidate_flag.exists():
+        report_config = (
+            _Path(__file__).resolve().parents[0].parent
+            / "tests" / "configs" / "reports" / "synth_multisim_report_config.yaml"
+        )
+        analysis.run(
+            from_scratch=False,
+            report_config=report_config if report_config.exists() else None,
+        )
+
+    return analysis
+
+
+@pytest.fixture(scope="session")
 def tritonswmm_cpu_compiled():
     """Pre-compile TRITON-SWMM CPU once per test session for each test-case
     family used by the coupled-mode tests.
