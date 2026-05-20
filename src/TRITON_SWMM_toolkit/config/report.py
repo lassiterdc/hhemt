@@ -27,7 +27,16 @@ class HydrologyPanelConfig(cfgBaseModel):
     Defaults match the prior `_RAIN_COLOR` / `_BC_LINE_COLOR` constants in
     `_hydrology_panel.py` lines 23-24.
     """
-    rain_color: str = Field("#9ecae1", description="Rainfall bar color (hex).")
+    rain_color: str = Field(
+        "#03152e",
+        description=(
+            "Rainfall bar color (hex). Near-black navy for maximum legibility "
+            "against Plotly's white panel background; iter3 darkened past "
+            "ColorBrewer Blues 9/9 (#08306b) because the thinner Plotly bars "
+            "still read as pale at scale. Mid-tone alternatives like #3182bd "
+            "and the deeper #08306b were both flagged as too light."
+        ),
+    )
     bc_line_color: str = Field("black", description="BC water-level line color.")
     bc_line_width: float = Field(1.5, description="BC line width (pt).")
     rain_ylim_min_cap: float = Field(
@@ -73,8 +82,52 @@ class PerSimMapConfig(cfgBaseModel):
         (0.01, 0.05, 0.10, 0.50, 1.00),
         description="Discrete legend boundaries cited in the manifest (m).",
     )
-    wse_cmap: str = Field("plasma")
+    wse_cmap: str = Field(
+        "plasma",
+        description=(
+            "WSE colormap. Perceptually uniform, CVD-safe. Default plasma per "
+            "user preference (iter4 of Phase 3 design-figure); the Plotly "
+            "branch's earlier hardcoded `cividis` is also CVD-safe and was "
+            "the iter1-3 transient default, but user prefers plasma's warmer "
+            "range for the WSE-on-real-terrain colorbar after iter3's "
+            "building-cell exclusion (which produces WSE [1.81, 6.05] m on "
+            "the norfolk fixture — well within plasma's high-contrast band)."
+        ),
+    )
     wse_fallback_range: tuple[float, float] = Field((0.0, 1.0))
+    dry_threshold_m: float = Field(
+        0.0025,
+        description=(
+            "Within-watershed depth-mask threshold in meters. Cells with "
+            "max_wlevel_m < this value render as `dry_fill_color` (neutral "
+            "grey) rather than as wet-color or transparent. Default 0.0025 m "
+            "= 2.5 mm (a standard puddle-vs-sheen threshold)."
+        ),
+    )
+    dry_fill_color: str = Field(
+        "#d9d9d9",
+        description=(
+            "Neutral light grey fill for within-watershed dry cells. Preserves "
+            "watershed shape as preattentive background context per Wilke "
+            "Ch. 23."
+        ),
+    )
+    wse_clip_quantile_upper: float = Field(
+        0.99,
+        description=(
+            "Upper-quantile clip on WSE colorbar (computed across wetted "
+            "cells). Suppresses building-on-top dry-cell artifacts that would "
+            "otherwise dominate the colorbar scale and collapse usable range "
+            "below 5%."
+        ),
+    )
+    wse_clip_quantile_lower: float = Field(
+        0.01,
+        description=(
+            "Lower-quantile clip on WSE colorbar (computed across wetted "
+            "cells)."
+        ),
+    )
     utilization_cmap: str = Field("Blues")
     peak_flow_cmap: str = Field("Reds")
     conduit_outline_color: str = Field("black")
@@ -148,7 +201,26 @@ class ElevationPanelStyle(cfgBaseModel):
             "family variant. Overridable per-deployment via report_config.yaml."
         ),
     )
-    over_color: str = Field("#808080")
+    over_color: str = Field(
+        "white",
+        description=(
+            "Color applied to DEM cells exceeding `wall_threshold_fraction` (buildings) "
+            "AND used implicitly via `plot_bgcolor` for out-of-watershed cells (which are "
+            "NaN-masked). White unifies the two non-modeled-area cell classes visually."
+        ),
+    )
+    wall_threshold_buffer_m: float = Field(
+        40.0,
+        description=(
+            "Subtractive buffer in meters applied to the cfg-derived wall threshold "
+            "(`min(dem_building_height, dem_outside_watershed_height) - buffer`). "
+            "Catches DEM cells whose coarsened elevation falls below the building "
+            "sentinel but is still building-dominated due to resampling. With Norfolk's "
+            "default `dem_building_height=80.0` and a 40 m buffer, threshold = 40 m, "
+            "which empirically catches coarsened-but-still-building cells (Round 4 "
+            "feedback: 50 m still left yellow-rendered building cells; 40 m clears them)."
+        ),
+    )
     wall_threshold_fraction: float = Field(
         0.9,
         description=(
@@ -167,7 +239,7 @@ class SystemMapConfig(cfgBaseModel):
         description=(
             "Target CRS for the system map and downstream per-sim renderers. "
             "Resolved via `resolve_target_crs()` precedence: this field -> "
-            "system_config.crs_epsg -> DEM .rio.crs. When None, falls through to "
+            "system_config.crs.horizontal_epsg -> DEM .rio.crs. When None, falls through to "
             "the next precedence level."
         ),
     )
@@ -213,6 +285,20 @@ class PerSimFigureSpec(cfgBaseModel):
     cmap: str = Field("viridis")
     vmin: float | None = Field(None)
     vmax: float | None = Field(None)
+    vmax_quantile: float | None = Field(
+        None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Optional quantile (in [0, 1]) used to derive the colorbar upper bound "
+            "when `vmax` is None. When set, the renderer computes "
+            "`np.nanquantile(values, vmax_quantile)` as the colorbar max. This "
+            "clips out top-end outliers so the bulk of the value distribution is "
+            "visible with better contrast. When both `vmax` and `vmax_quantile` "
+            "are None, the renderer falls back to the absolute max. Not all "
+            "renderers consume this field; check the renderer's docstring."
+        ),
+    )
 
 
 class InteractiveBackendConfig(cfgBaseModel):
@@ -220,14 +306,16 @@ class InteractiveBackendConfig(cfgBaseModel):
     emit HTML; matplotlib-PNG renderers ignore this block."""
 
     enabled: bool = Field(
-        False,
+        True,
         description=(
             "Master switch. When False, renderers emit static PNG via the "
             "matplotlib branch of emit_plot_with_sources (legacy behavior). "
-            "When True, renderers with an HTML emit-path emit HTML via the "
-            "str branch of emit_plot_with_sources. Defaults to False during "
-            "Phases 2-7 (per-renderer migrations); flipped to True at Phase 9 "
-            "so main remains shippable mid-migration."
+            "When True (default), renderers with an HTML emit-path emit HTML "
+            "via the str branch of emit_plot_with_sources. Flipped from "
+            "False to True at Phase 9 of the interactive_report_renderers PWI "
+            "after Phase 8.5's cleanup_stale_metadata mechanism landed, so "
+            "the first post-flip invocation against an existing analysis_dir "
+            "handles the one-shot rule-rename cleanup cascade silently."
         ),
     )
     static_backend: Literal["matplotlib", "plotly"] = Field(
@@ -335,11 +423,17 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
         ),
     )
     datashader_threshold_cells: int = Field(
-        1_000_000,
+        25_000,
         description=(
             "Pre-rasterize via Datashader Canvas.raster() when per-frame cell "
             "count exceeds this. Below the threshold, frames go directly to "
-            "go.Heatmap. Tuned to keep per-frame JSON < ~5 MB."
+            "go.Heatmap. Tuned during Phase 3 design-figure closeout "
+            "(2026-05-17): the prior 1_000_000 default skipped Datashader on "
+            "the norfolk fixture (29,542 valid cells), pushing per-figure "
+            "HTML to 6.76 MB > 5 MB DoD budget; lowering to 25,000 fires the "
+            "branch on any norfolk-scale and larger fixture, trims the per-"
+            "figure HTML by replacing the 29,542-cell raster JSON with a "
+            "512×512 datashader aggregate."
         ),
     )
     visible_layers_default: list[
@@ -445,13 +539,34 @@ class TableInteractiveConfig(cfgBaseModel):
                 )
         return v
 
+    def resolve_persistence_key(self, *, renderer_name: str, analysis_id: str) -> str | None:
+        """Resolve the effective Tabulator persistenceID for a renderer.
+
+        When ``persistence_id`` is set by the user, returns
+        ``f"{renderer_name}__{persistence_id}"`` so multiple renderers
+        sharing this config (per_analysis_summary + scenario_status_appendix)
+        don't collide on the same localStorage key. When unset, derives
+        from ``analysis_id`` via the same sanitization rule as the renderer
+        previously applied inline. Returns ``None`` only when both
+        ``persistence_id`` is unset AND ``analysis_id`` is empty/unsafe
+        after sanitization — in which case the renderer should not enable
+        persistence.
+        """
+        from TRITON_SWMM_toolkit.report_renderers._tabulator_defaults import (
+            sanitize_persistence_id,
+        )
+        effective = self.persistence_id or sanitize_persistence_id(analysis_id)
+        if not effective or effective == "_":
+            return None
+        return f"{renderer_name}__{effective}"
+
 
 class PerSimConfig(cfgBaseModel):
     map: PerSimMapConfig = Field(default_factory=PerSimMapConfig)
     hydrology_panel: HydrologyPanelConfig = Field(default_factory=HydrologyPanelConfig)
     peak_flood_depth: PerSimFigureSpec = Field(default_factory=PerSimFigureSpec)
     conduit_flow: PerSimFigureSpec = Field(
-        default_factory=lambda: PerSimFigureSpec(cmap="plasma")
+        default_factory=lambda: PerSimFigureSpec(cmap="plasma", vmax_quantile=0.95)
     )
     interactive: PerSimMapInteractiveConfig = Field(
         default_factory=PerSimMapInteractiveConfig
@@ -773,9 +888,11 @@ def resolve_target_crs(analysis, report_cfg: report_config):
     """Resolve the target CRS for renderers.
 
     Precedence (first non-None wins):
-      1. report_cfg.system_map.target_epsg
-      2. analysis._system.cfg_system.crs_epsg
-      3. analysis._system.sys_paths.dem_processed's .rio.crs
+      1. report_cfg.system_map.target_epsg [DEPRECATED — removal scheduled in
+         the FOLLOW-UP plan; retained one cycle for back-compat with existing
+         report_config.yaml files that explicitly set this override.]
+      2. analysis._system.cfg_system.crs.horizontal_epsg (canonical)
+      3. analysis._system.sys_paths.dem_processed's .rio.crs (last-resort)
     """
     import pyproj
     import rioxarray as rxr
@@ -784,8 +901,9 @@ def resolve_target_crs(analysis, report_cfg: report_config):
         return pyproj.CRS.from_epsg(report_cfg.system_map.target_epsg)
 
     cfg_sys = analysis._system.cfg_system
-    if getattr(cfg_sys, "crs_epsg", None) is not None:
-        return pyproj.CRS.from_epsg(cfg_sys.crs_epsg)
+    horizontal = cfg_sys.crs.horizontal_epsg
+    if horizontal is not None:
+        return pyproj.CRS.from_epsg(horizontal)
 
     dem_path = analysis._system.sys_paths.dem_processed
     dem = rxr.open_rasterio(dem_path)
@@ -796,7 +914,7 @@ def resolve_target_crs(analysis, report_cfg: report_config):
         field="report_cfg.system_map.target_epsg",
         message=(
             "Cannot resolve target CRS: report_cfg.system_map.target_epsg is None, "
-            "system_config.crs_epsg is None, and the processed DEM at "
+            "system_config.crs.horizontal_epsg is None, and the processed DEM at "
             f"{dem_path} has no CRS metadata."
         ),
         config_path=None,

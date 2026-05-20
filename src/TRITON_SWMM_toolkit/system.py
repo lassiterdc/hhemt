@@ -290,28 +290,31 @@ class TRITONSWMM_system:
         return rds_dem_coarse
 
     def _validate_and_log_dem_crs(self, crs) -> None:
-        """Validate DEM CRS against cfg_system.crs_epsg and record on the log."""
+        """Validate DEM CRS against cfg_system.crs.horizontal_epsg and record on the log."""
+        from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
         if crs is None:
             return
         try:
             epsg = crs.to_epsg()
         except Exception:
             epsg = None
-        configured = getattr(self.cfg_system, "crs_epsg", None)
-        if configured is not None and epsg is not None and configured != epsg:
-            from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-
-            raise ConfigurationError(f"DEM CRS (EPSG:{epsg}) does not match configured crs_epsg (EPSG:{configured}).")
-        if configured is None and epsg is not None:
-            import warnings as _warnings
-
-            _warnings.warn(
-                f"crs_epsg not set in system_config; derived EPSG:{epsg} from DEM.",
-                UserWarning,
-                stacklevel=2,
+        configured = self.cfg_system.crs.horizontal_epsg
+        if epsg is not None and configured != epsg:
+            raise ConfigurationError(
+                f"DEM CRS (EPSG:{epsg}) does not match configured "
+                f"cfg_system.crs.horizontal_epsg (EPSG:{configured})."
             )
-        if epsg is not None and hasattr(self.log, "dem_crs_epsg"):
+        if epsg is None:
+            raise ConfigurationError(
+                f"Could not derive EPSG code from the DEM CRS "
+                f"({crs!r}). Set cfg_system.crs.horizontal_epsg explicitly "
+                f"or use a DEM whose .rio.crs has a resolvable EPSG."
+            )
+        if hasattr(self.log, "dem_crs_epsg"):
             self.log.dem_crs_epsg.set(epsg)
+        if hasattr(self.log, "vertical_crs_epsg"):
+            self.log.vertical_crs_epsg.set(self.cfg_system.crs.vertical_epsg)
 
     def _create_mannings_raster_matching_dem(self, fillna_val=-9999):
         dem_unprocessed = self.cfg_system.DEM_fullres

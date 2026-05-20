@@ -337,7 +337,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "toggle_use_constant_mannings": kwargs["toggle_use_constant_mannings"],
             "target_dem_resolution": float(params.cell_size_m),
             "gpu_compilation_backend": None,
-            "crs_epsg": int(params.epsg),
+            "crs": {"horizontal_epsg": int(params.epsg), "vertical_epsg": 5703},
         }
         if not kwargs["toggle_use_constant_mannings"]:
             system_cfg.update(

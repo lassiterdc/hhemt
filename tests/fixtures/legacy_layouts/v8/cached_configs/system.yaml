@@ -1,4 +1,4 @@
-# Minimal system config stub for legacy_layouts/v0 golden fixture.
+# Minimal system config stub for legacy_layouts/v8 golden fixture.
 # NOT loaded by TRITONSWMM_system in the fast tests — the autouse monkeypatch
 # in tests/test_version_migration_golden.py fakes
 # MigrationContext.build_expected_slugs_for_current_version to read
@@ -6,3 +6,6 @@
 # completeness and for the CLI smoke command exercised in Success Criteria.
 system_directory: ./_system
 swmm_only: true
+crs:
+  horizontal_epsg: 3857
+  vertical_epsg: 5703

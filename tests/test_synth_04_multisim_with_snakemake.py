@@ -520,6 +520,62 @@ def test_render_report_idempotent(synth_multi_sim_analysis_cached):
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_synth_render_report_interactive_html(synth_multi_sim_analysis_cached):
+    # Snakemake's report engine embeds figures as
+    # `data:{mime};charset=utf8;filename={name};base64,{payload}` URIs in the
+    # rendered analysis_report.html. With static_backend="plotly" (synth
+    # fixture default), the chart renderers emit interactive HTML and the
+    # table renderers (errors_and_warnings, scenario_status_appendix,
+    # per_analysis_summary) emit Tabulator HTML; both surface as
+    # data:text/html URIs. The base64-decoded payload contains
+    # `Plotly.newPlot` or `new Tabulator`. This test asserts the bundle
+    # carries the expected count of interactive figures and that the
+    # on-disk plot bundle stays under the master plan's 5 MB / 15 MB
+    # budgets.
+    import base64
+    import re
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    report_path = analysis.render_report(format="html")
+    assert report_path.exists()
+    html = report_path.read_text(encoding="utf-8")
+
+    data_uris = re.findall(
+        r'"data:text/html;charset=utf8;filename=([^;]+);base64,([A-Za-z0-9+/=]+)"',
+        html,
+    )
+    assert len(data_uris) >= 6, (
+        f"Expected >= 6 data:text/html figure URIs, got {len(data_uris)}: "
+        f"{[name for name, _ in data_uris]}"
+    )
+    marker_hits = 0
+    for _name, payload in data_uris:
+        inner = base64.b64decode(payload).decode("utf-8", errors="replace")
+        if ("Plotly.newPlot" in inner) or ("new Tabulator" in inner):
+            marker_hits += 1
+    assert marker_hits >= 6, (
+        f"Expected >= 6 figures with Plotly/Tabulator markers in decoded "
+        f"payload, got {marker_hits} of {len(data_uris)}"
+    )
+
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    html_files = list(plots_dir.rglob("*.html"))
+    per_figure_max = max((p.stat().st_size for p in html_files), default=0)
+    total = sum(p.stat().st_size for p in html_files)
+    assert per_figure_max < 5_000_000, (
+        f"Per-figure max {per_figure_max / 1e6:.1f} MB exceeds 5 MB budget"
+    )
+    assert total < 15_000_000, (
+        f"Total plots/*.html {total / 1e6:.1f} MB exceeds 15 MB budget"
+    )
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_plot_sources_attribution(synth_multi_sim_analysis_cached):
     """R15: 'Sources:' bullet block appears in rendered HTML report text."""
     from pathlib import Path
@@ -621,3 +677,64 @@ def test_emit_plot_with_sources_html_branch(tmp_path):
     assert manifest["preview_dpi"] is None
     assert manifest["figure_size_inches"] is None
     assert manifest["preview_size_bytes"] is None
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
+    synth_multi_sim_analysis_cached,
+):
+    # Phase 8.5: when cleanup_stale_metadata=True (default) and orphan
+    # metadata records are enumerated, analysis.run() subprocess-invokes
+    # snakemake --cleanup-metadata. The enumeration is deterministic
+    # (no filesystem inspection) so it is non-empty whenever df_sims has
+    # rows. We mock submit_workflow + the subprocess invocation to verify
+    # the gate fires without re-running the workflow.
+    from unittest.mock import patch
+
+    analysis = synth_multi_sim_analysis_cached
+
+    # Deterministic enumeration covers the Phase 8 orphan paths.
+    orphan_paths = analysis._enumerate_stale_metadata_paths()
+    assert "plots/system_overview.png" in orphan_paths
+    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+    for event_iloc in analysis.df_sims.index:
+        ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+        event_id = compute_event_id_slug(ev)
+        assert f"plots/per_sim/{event_id}/peak_flood_depth.png" in orphan_paths
+        assert f"plots/per_sim/{event_id}/conduit_flow.png" in orphan_paths
+
+    # The cleanup gate is preconditioned on BOTH a Snakefile and a
+    # `.snakemake/metadata/` directory existing (skipped on first-run
+    # analyses where no metadata records can exist). Ensure both exist
+    # so the gate fires.
+    snakefile = analysis.analysis_paths.analysis_dir / "Snakefile"
+    snakefile.touch(exist_ok=True)
+    metadata_dir = analysis.analysis_paths.analysis_dir / ".snakemake" / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # Gate fires with cleanup_stale_metadata=True (default).
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+    mock_inv.assert_called_once()
+    called_paths = mock_inv.call_args[0][0]
+    assert called_paths == orphan_paths
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_cleanup_stale_metadata_disabled_skips_invocation(
+    synth_multi_sim_analysis_cached,
+):
+    # Phase 8.5: when cleanup_stale_metadata=False, the cleanup gate does
+    # not fire — _invoke_snakemake_cleanup_metadata is not called.
+    from unittest.mock import patch
+
+    analysis = synth_multi_sim_analysis_cached
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=False, dry_run=True, verbose=False)
+    mock_inv.assert_not_called()

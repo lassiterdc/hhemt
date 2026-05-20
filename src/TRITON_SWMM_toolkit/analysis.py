@@ -273,6 +273,88 @@ class TRITONSWMM_analysis:
                         flush=True,
                     )
 
+    def _enumerate_stale_metadata_paths(self) -> list[str]:
+        """Return Snakemake-output-path strings whose ``.snakemake/metadata/``
+        records are known stale due to past rule-output renames.
+
+        Currently enumerates the four Phase 8 rule-rename orphans:
+
+        - ``plots/system_overview.png``
+        - ``plots/per_sim/{event_id}/peak_flood_depth.png`` (one per event_iloc)
+        - ``plots/per_sim/{event_id}/conduit_flow.png`` (one per event_iloc)
+        - ``plots/sensitivity/benchmarking/{independent_var}_vs_total.svg``
+          (one per ``sensitivity.independent_vars`` when sensitivity is enabled
+          at the master analysis level)
+
+        The enumeration is deterministic — paths are constructed from
+        ``self.df_sims.index`` (event_ilocs) plus the canonical event-id
+        slug (``compute_event_id_slug``) and, when sensitivity is enabled,
+        ``self.sensitivity.independent_vars``. No filesystem inspection;
+        Snakemake's ``cleanup_metadata`` is idempotent on non-existent records.
+
+        Returns paths as strings (relative to ``analysis_dir``).
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        orphans: list[str] = ["plots/system_overview.png"]
+        for event_iloc in self.df_sims.index:
+            ev = self._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            orphans.append(f"plots/per_sim/{event_id}/peak_flood_depth.png")
+            orphans.append(f"plots/per_sim/{event_id}/conduit_flow.png")
+        if (
+            self.cfg_analysis.toggle_sensitivity_analysis
+            and not self.cfg_analysis.is_subanalysis
+        ):
+            for ind_var in self.sensitivity.independent_vars:
+                orphans.append(
+                    f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg"
+                )
+        return orphans
+
+    def _invoke_snakemake_cleanup_metadata(self, orphan_paths: list[str]) -> None:
+        """Subprocess-invoke ``snakemake --cleanup-metadata`` against orphan paths.
+
+        Snakemake's ``cleanup_metadata`` is idempotent (no-op without error on
+        non-existent records), so passing paths that have no record on disk is
+        safe — the cost is one subprocess call per ``analysis.run()`` when the
+        gate fires.
+
+        Raises ``WorkflowError`` on non-zero subprocess exit, capturing the
+        last 50 lines of combined stdout+stderr in the ``stderr`` field.
+        """
+        import subprocess
+
+        from TRITON_SWMM_toolkit.exceptions import WorkflowError
+
+        cmd = [
+            "snakemake",
+            "--cleanup-metadata",
+            *orphan_paths,
+            "--directory",
+            str(self.analysis_paths.analysis_dir),
+            "--cores",
+            "1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            combined = (result.stdout + "\n" + result.stderr)
+            tail = "\n".join(combined.splitlines()[-50:])
+            # Best-effort hygiene: "No Snakefile found" is a benign no-op for
+            # analyses whose Snakefile has been removed or never written —
+            # there is no metadata to interpret without a Snakefile, but
+            # there is also no harm in skipping cleanup in that case.
+            if "No Snakefile found" in combined:
+                return
+            raise WorkflowError(
+                phase="cleanup_stale_metadata",
+                return_code=result.returncode,
+                stderr=(
+                    f"snakemake --cleanup-metadata exit {result.returncode}; "
+                    f"last 50 lines:\n{tail}"
+                ),
+            )
+
     def validate(self) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
 
@@ -1483,6 +1565,7 @@ class TRITONSWMM_analysis:
         report_config: "Path | None" = None,
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
+        cleanup_stale_metadata: bool = True,
         extra_sbatch_args: list[str] | None = None,
     ) -> "WorkflowResult":
         """
@@ -1512,6 +1595,20 @@ class TRITONSWMM_analysis:
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
+        cleanup_orphans : bool, default False
+            When True, deletes orphan sub-analysis artifacts (subanalysis dirs,
+            status flags, sensitivity_datatree.zarr groups) detected when an
+            ``sa_id`` is removed from the sensitivity CSV/XLSX. Opt-in because
+            the blast radius is irrecoverable (subanalysis data deleted).
+        cleanup_stale_metadata : bool, default True
+            When True (default), subprocess-invokes ``snakemake --cleanup-metadata``
+            against orphaned ``.snakemake/metadata/`` records left by past
+            rule-output renames (e.g., Phase 8's ``.png``/``.svg`` → ``.html``
+            flip). When False, skips the cleanup; users may experience a
+            one-shot full plot rebuild on first post-rename invocation per
+            Phase 8 Risks. Asymmetric with ``cleanup_orphans`` default (False)
+            because metadata-cleanup blast radius is bounded to records, not
+            data; safe to auto-apply.
         extra_sbatch_args : list[str] | None
             Optional list of additional SBATCH directive strings (e.g.,
             ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
@@ -1674,6 +1771,41 @@ class TRITONSWMM_analysis:
                     force=True,
                     verbose=verbose,
                 )
+
+        # Stale-metadata cleanup gate — analysis-level, not sensitivity-specific
+        # (per Phase 8.5 of interactive_report_renderers plan). Asymmetric with
+        # cleanup_orphans default: cleanup_stale_metadata defaults to True
+        # because metadata-cleanup blast radius is bounded to .snakemake/metadata/
+        # records — no data is deleted; worst-case auto-apply result is the same
+        # one-shot full plot rebuild Phase 8 Risks documents.
+        # Precondition for the subprocess invocation: `snakemake
+        # --cleanup-metadata` requires BOTH a Snakefile in the working
+        # directory (to interpret path arguments) AND a
+        # `.snakemake/metadata/` directory (the records to clean). The
+        # Snakefile is generated by `submit_workflow()` later in this
+        # method, so at this gate site it exists only on resumed analyses
+        # (the use case cleanup_stale_metadata targets — fresh analyses
+        # have no stale metadata to clean).
+        _snakefile = self.analysis_paths.analysis_dir / "Snakefile"
+        _metadata_dir = self.analysis_paths.analysis_dir / ".snakemake" / "metadata"
+        if (
+            cleanup_stale_metadata
+            and not from_scratch
+            and _snakefile.exists()
+            and _metadata_dir.exists()
+        ):
+            orphan_paths = self._enumerate_stale_metadata_paths()
+            if orphan_paths:
+                if verbose:
+                    print(
+                        f"[cleanup-stale-metadata] Cleaning {len(orphan_paths)} "
+                        f"orphan metadata record(s) from "
+                        f"{self.analysis_paths.analysis_dir}/.snakemake/metadata/",
+                        flush=True,
+                    )
+                    for p in orphan_paths:
+                        print(f"  orphan: {p}", flush=True)
+                self._invoke_snakemake_cleanup_metadata(orphan_paths)
 
         # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
         # stamp per version_migration_system master plan PI-1). Idempotent
