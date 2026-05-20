@@ -263,6 +263,7 @@ def render(
     # matching peak_flood_depth's overlay so both per-sim figures show the
     # same domain context.
     import geopandas as gpd  # noqa: PLC0415
+
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_rel = os.path.relpath(str(Path(watershed_shp).resolve()), analysis_root)
@@ -375,7 +376,12 @@ def _render_plotly_branch(
     no max_over_full filter slider, no legend-click magnitude-class toggling.
     """
     import geopandas as gpd
+    import matplotlib.cm as mcm
     import rioxarray as rxr
+    from matplotlib.colors import Normalize as _MplNormalize
+
+    # Side-effect import: registers `triton_journal` Plotly template.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
@@ -389,10 +395,6 @@ def _render_plotly_branch(
     from TRITON_SWMM_toolkit.report_renderers.system_overview import (
         _resolve_inp_sources,
     )
-    # Side-effect import: registers `triton_journal` Plotly template.
-    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    import matplotlib.cm as mcm
-    from matplotlib.colors import Normalize as _MplNormalize
 
     cfg = report_cfg.per_sim.conduit_flow
     map_cfg = report_cfg.per_sim.map
@@ -567,9 +569,9 @@ def _render_plotly_branch(
                 continue
             mid_val = 0.5 * (bin_edges[bin_idx] + bin_edges[bin_idx + 1])
             color_rgba = cmap(norm(mid_val))
-            color_hex = "rgba({:.0f},{:.0f},{:.0f},{:.3f})".format(
-                color_rgba[0] * 255, color_rgba[1] * 255,
-                color_rgba[2] * 255, color_rgba[3],
+            color_hex = (
+                f"rgba({color_rgba[0] * 255:.0f},{color_rgba[1] * 255:.0f},"
+                f"{color_rgba[2] * 255:.0f},{color_rgba[3]:.3f})"
             )
             xs: list[float | None] = []
             ys: list[float | None] = []
@@ -821,10 +823,10 @@ def _mpl_cmap_to_plotly_colorscale(cmap_name: str, n_samples: int = 32) -> list:
     return [
         [
             i / (n_samples - 1),
-            "rgb({:.0f},{:.0f},{:.0f})".format(
-                cmap(i / (n_samples - 1))[0] * 255,
-                cmap(i / (n_samples - 1))[1] * 255,
-                cmap(i / (n_samples - 1))[2] * 255,
+            (
+                f"rgb({cmap(i / (n_samples - 1))[0] * 255:.0f},"
+                f"{cmap(i / (n_samples - 1))[1] * 255:.0f},"
+                f"{cmap(i / (n_samples - 1))[2] * 255:.0f})"
             ),
         ]
         for i in range(n_samples)

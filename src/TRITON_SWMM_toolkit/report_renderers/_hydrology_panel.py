@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 def load_event_hydrology_data(
     weather_path: str | Path,
-    cfg_analysis: "analysis_config",
+    cfg_analysis: analysis_config,
     weather_event_indexers: dict,
 ) -> dict:
     """Open the master weather NetCDF, slice the event row, and return hydrology arrays.
@@ -68,15 +68,15 @@ def load_event_hydrology_data(
 
 
 def draw_event_hydrology_panel(
-    ax_rain: "Axes",
-    ax_bc: "Axes",
+    ax_rain: Axes,
+    ax_bc: Axes,
     *,
     hydro_data: dict,
     weather_rel_path: str,
     event_iloc: int,
-    cfg_analysis: "analysis_config",
-    panel_cfg: "HydrologyPanelConfig",
-    prov: "ProvenanceLog | None" = None,
+    cfg_analysis: analysis_config,
+    panel_cfg: HydrologyPanelConfig,
+    prov: ProvenanceLog | None = None,
 ) -> tuple[float, float]:
     """Render rainfall (top) + BC water level (bottom). Returns (bc_min, bc_max)."""
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef

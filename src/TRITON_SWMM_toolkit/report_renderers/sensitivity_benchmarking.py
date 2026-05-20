@@ -265,7 +265,12 @@ def render(
     for ax in (ax_wall, ax_cost, ax_speedup, ax_eff):
         ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
         if report_cfg.sensitivity.show_gridlines:
-            ax.grid(True, which="major", axis="both", color=sens_cfg.gridline_color, linewidth=sens_cfg.gridline_width, zorder=0)
+            ax.grid(
+                True, which="major", axis="both",
+                color=sens_cfg.gridline_color,
+                linewidth=sens_cfg.gridline_width,
+                zorder=0,
+            )
 
     if group_by_var is not None:
         # Asterisk after groups that get per-point n_mpi_procs annotations
@@ -598,9 +603,19 @@ def _draw_metric_panel(
             note="ideal-reference line",
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
-            ax.plot([1, x_max], [1, x_max], color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
+            ax.plot(
+                [1, x_max], [1, x_max],
+                color=sens_cfg.ideal_line_color,
+                linewidth=sens_cfg.ideal_line_width,
+                zorder=2, label=ideal_label,
+            )
     elif ideal_kind == "constant":
-        ax.axhline(ideal_value, color=sens_cfg.ideal_line_color, linewidth=sens_cfg.ideal_line_width, zorder=2, label=ideal_label)
+        ax.axhline(
+            ideal_value,
+            color=sens_cfg.ideal_line_color,
+            linewidth=sens_cfg.ideal_line_width,
+            zorder=2, label=ideal_label,
+        )
     else:
         raise ValueError(f"ideal_kind must be 'linear' or 'constant'; got {ideal_kind!r}")
 
@@ -764,7 +779,7 @@ def _render_plotly_branch(
     plotly_js_mode: str,
     prov: ProvenanceLog,
     gpu_legend_suffix: str = "",
-    facet: "FacetConfig | None" = None,
+    facet: FacetConfig | None = None,
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",

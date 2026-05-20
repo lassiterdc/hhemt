@@ -31,7 +31,8 @@ import rioxarray as rxr
 import swmmio
 from plotly.subplots import make_subplots
 
-from TRITON_SWMM_toolkit import swmm_schema as _ss, units
+from TRITON_SWMM_toolkit import swmm_schema as _ss
+from TRITON_SWMM_toolkit import units
 from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
@@ -696,12 +697,11 @@ def _render_plotly_branch(
     dem_outside_watershed_height: float | None = None,
     vertical_crs_epsg: int | None = None,
 ) -> Path:
+    # Side-effect import: registers `triton_journal` Plotly template.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
-
-    # Side-effect import: registers `triton_journal` Plotly template.
-    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
 
     # Three subplots, equal aspect, shared spatial extent (DEM bounds).
     fig = make_subplots(
@@ -1231,7 +1231,7 @@ def _draw_hydraulics_panel_plotly(
         label_xs.append(float(coords_df.at[name, _ss.COORDS_X]))
         label_ys.append(float(coords_df.at[name, _ss.COORDS_Y]))
         label_texts.append(f"{name}<br>Rim: {rim:.2f}<br>Inv: {invert:.2f}")
-    for name, row in outfalls_df.iterrows():
+    for name, _row in outfalls_df.iterrows():
         if name not in coords_df.index:
             continue
         label_xs.append(float(coords_df.at[name, _ss.COORDS_X]))
@@ -1514,7 +1514,7 @@ def _matplotlib_cmap_to_plotly_colorscale(
 
 
 def _resolve_dem_color_range(
-    valid_values: "np.ndarray", ep,
+    valid_values: np.ndarray, ep,
     vmax_percentile: float = 90.0,
 ) -> tuple[float, float, float]:
     """Resolve (vmin, vmax, overlay_threshold) for the DEM heatmap.

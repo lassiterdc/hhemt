@@ -31,18 +31,17 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.io as pio
 import rioxarray as rxr
+import swmmio
 import xarray as xr
+from matplotlib import cm as mcm
 from matplotlib.colors import Normalize
 from plotly.subplots import make_subplots
-
-import swmmio
-
-from matplotlib import cm as mcm
 
 from TRITON_SWMM_toolkit import units, utils
 from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
     compute_padded_square_bounds,
 )
+from TRITON_SWMM_toolkit.report_renderers.system_overview import _resolve_inp_sources
 
 
 def _build_discrete_depth_colorscale(
@@ -69,7 +68,7 @@ def _build_discrete_depth_colorscale(
     )
     rgba = [cmap(p) for p in positions]
     hex_colors = [
-        "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+        f"#{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
         for r, g, b, _a in rgba
     ]
     # Normalize boundaries into [0, 1] colorscale fraction space.
@@ -81,9 +80,7 @@ def _build_discrete_depth_colorscale(
         cs.append([norm_b[i], hex_colors[i + 1]])
     cs.append([1.0, hex_colors[-1]])
     return cs, hex_colors
-from TRITON_SWMM_toolkit.report_renderers.system_overview import (
-    _resolve_inp_sources,
-)
+
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -334,9 +331,7 @@ def render(
     hydro_data = load_event_hydrology_data(
         weather_path, analysis.cfg_analysis, weather_event_indexers,
     )
-    times_min = hydro_data["times_min"]
     rainfall = hydro_data["rainfall"]
-    bc_water_level = hydro_data["bc_water_level"]
 
     # ---- Path relpaths --------------------------------------------------
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
@@ -621,14 +616,15 @@ def _render_plotly_branch(
     when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
     """
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+
+    # Side-effect import: registers `triton_journal` Plotly template at import time.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
-    # Side-effect import: registers `triton_journal` Plotly template at import time.
-    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
 
     cfg = report_cfg.per_sim.peak_flood_depth  # noqa: F841 — parity with mpl branch
@@ -742,7 +738,10 @@ def _render_plotly_branch(
         # - wall_threshold_buffer_m == building/wall.
         sys_cfg = analysis._system.cfg_system
         if sys_cfg.dem_building_height is not None and sys_cfg.dem_outside_watershed_height is not None:
-            wall_th = min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height) - report_cfg.system_map.elevation_style.wall_threshold_buffer_m
+            wall_th = (
+                min(sys_cfg.dem_building_height, sys_cfg.dem_outside_watershed_height)
+                - report_cfg.system_map.elevation_style.wall_threshold_buffer_m
+            )
             terrain_mask = dem_da < wall_th
         else:
             terrain_mask = xr.ones_like(dem_da, dtype=bool)

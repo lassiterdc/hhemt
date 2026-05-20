@@ -124,8 +124,12 @@ def apply_post_process_surgery(
 
     # 3. Navbar span text
     html_text = html_text.replace(
-        'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "Snakemake"\n                    )',
-        'e(\n                        "span",\n                        { className: "font-bold mx-1" },\n                        "TRITON-SWMM Toolkit"\n                    )',
+        'e(\n                        "span",\n'
+        '                        { className: "font-bold mx-1" },\n'
+        '                        "Snakemake"\n                    )',
+        'e(\n                        "span",\n'
+        '                        { className: "font-bold mx-1" },\n'
+        '                        "TRITON-SWMM Toolkit"\n                    )',
     )
 
     # 4. Category-sort comparator
