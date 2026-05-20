@@ -1,4 +1,4 @@
-# Minimal system config stub for legacy_layouts/v0 golden fixture.
+# Minimal system config stub for legacy_layouts/v6 golden fixture.
 # NOT loaded by TRITONSWMM_system in the fast tests — the autouse monkeypatch
 # in tests/test_version_migration_golden.py fakes
 # MigrationContext.build_expected_slugs_for_current_version to read

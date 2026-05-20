@@ -184,13 +184,14 @@ def render(
     # used as a fallback if user has overridden via YAML.
     UTILIZATION_CMAP = map_cfg.utilization_cmap
     PEAK_FLOW_CMAP = map_cfg.peak_flow_cmap
+    peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [
         (ax1, cax_util, max_over_full, max_over_full_name, max_over_full_attrs,
          "max / full flow", 0.0, 1.0, UTILIZATION_CMAP, "ax_utilization"),
         (ax2, cax_peak, peak_flow, peak_flow_name, peak_flow_attrs,
          units.flow_axis_label(),
          (float(cfg.vmin) if cfg.vmin is not None else 0.0),
-         (float(cfg.vmax) if cfg.vmax is not None else float(peak_flow.max() or 1.0)),
+         peak_flow_vmax,
          PEAK_FLOW_CMAP, "ax_peak_flow"),
     ]
     for ax, cax, values, var_name, var_attrs, label, vmin, vmax, cmap_name, axes_id in panels:
@@ -240,7 +241,9 @@ def render(
     # peak_flood_depth.py C8 fix).
     ax2.tick_params(axis="y", labelleft=False)
     ax2.set_ylabel("")
-    crs = report_cfg.system_map.target_epsg or analysis._system.cfg_system.crs_epsg
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs = resolve_target_crs(analysis, report_cfg)
+    crs = target_crs.to_epsg()
     ax1.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
     ax1.set_ylabel(units.northing_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
     ax2.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
@@ -260,6 +263,7 @@ def render(
     # matching peak_flood_depth's overlay so both per-sim figures show the
     # same domain context.
     import geopandas as gpd  # noqa: PLC0415
+
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_rel = os.path.relpath(str(Path(watershed_shp).resolve()), analysis_root)
@@ -309,6 +313,25 @@ def render(
     )
 
 
+def _resolve_peak_flow_vmax(peak_flow: np.ndarray, cfg) -> float:
+    """Resolve the colorbar upper bound for the peak-flow panel.
+
+    Precedence: explicit `cfg.vmax` wins; otherwise `np.nanquantile(peak_flow,
+    cfg.vmax_quantile)` when `vmax_quantile` is set; otherwise the absolute
+    max (legacy fallback). Returns 1.0 when peak_flow is all-NaN or empty.
+    """
+    if cfg.vmax is not None:
+        return float(cfg.vmax)
+    if cfg.vmax_quantile is not None:
+        try:
+            q = float(np.nanquantile(peak_flow, cfg.vmax_quantile))
+        except (ValueError, TypeError):
+            q = float("nan")
+        if np.isfinite(q) and q > 0.0:
+            return q
+    return float(peak_flow.max() or 1.0)
+
+
 def _link_summary_ref(source_rel: str, var_name, var_attrs, link_id, event_iloc):
     """Build a `ProvenanceRef` for a link-summary variable / link / event row."""
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
@@ -353,18 +376,25 @@ def _render_plotly_branch(
     no max_over_full filter slider, no legend-click magnitude-class toggling.
     """
     import geopandas as gpd
+    import matplotlib.cm as mcm
     import rioxarray as rxr
+    from matplotlib.colors import Normalize as _MplNormalize
+
+    # Side-effect import: registers `triton_journal` Plotly template.
+    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
+    from TRITON_SWMM_toolkit.report_renderers._map_bounds import (
+        compute_padded_square_bounds,
+    )
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
-    # Side-effect import: registers `triton_journal` Plotly template.
-    from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    import matplotlib.cm as mcm
-    from matplotlib.colors import Normalize as _MplNormalize
+    from TRITON_SWMM_toolkit.report_renderers.system_overview import (
+        _resolve_inp_sources,
+    )
 
     cfg = report_cfg.per_sim.conduit_flow
     map_cfg = report_cfg.per_sim.map
@@ -429,6 +459,8 @@ def _render_plotly_branch(
         weather_path, analysis.cfg_analysis, weather_event_indexers,
     )
     times_min = hydro_data["times_min"]
+    # Phase 3 inheritance (F-I-7): hydrology x-axis in HOURS from event start.
+    times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     rainfall = hydro_data["rainfall"]
     bc_water_level = hydro_data["bc_water_level"]
     rain_attrs = hydro_data["rain_attrs"]
@@ -438,9 +470,19 @@ def _render_plotly_branch(
 
     sys_paths = analysis._system.sys_paths
     _dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
-    map_bounds = _dem_da.rio.bounds() if _dem_da.rio.crs is not None else (
+    dem_bounds_raw = _dem_da.rio.bounds() if _dem_da.rio.crs is not None else (
         float(_dem_da.x.min()), float(_dem_da.y.min()),
         float(_dem_da.x.max()), float(_dem_da.y.max()),
+    )
+
+    # Phase 3 inheritance (F-I-5): cross-figure bounds parity with system_overview
+    # and per_sim_peak_flood_depth. Same padded square encompassing DEM + every
+    # SWMM node from both hydro + hydraulics models.
+    hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
+    hydro_model = swmmio.Model(str(hydro_inp))
+    hydraulics_model = swmmio.Model(str(hydraulics_inp))
+    bounds = compute_padded_square_bounds(
+        dem_bounds_raw, hydro_model, hydraulics_model, padding_frac=0.02,
     )
 
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
@@ -469,13 +511,14 @@ def _render_plotly_branch(
         column_widths=[1, 1, 0.8],
         horizontal_spacing=0.06,
         vertical_spacing=0.06,
-        subplot_titles=("Max / full flow", "Peak flow", "Rainfall"),
+        subplot_titles=("Max / full flow", "Peak flow", "Flood Drivers"),
     )
+    # Phase 3 inheritance: F-I-8 title omission; F-I-9 triton_journal template;
+    # F-I-4 Option B bottom margin expanded to clear horizontal colorbars at y=-0.22.
     fig.update_layout(
-        template="plotly_white",
-        title=f"Per-sim conduit flow — event_iloc {event_iloc}",
+        template="triton_journal",
         showlegend=False,
-        margin=dict(l=10, r=10, t=80, b=60),
+        margin=dict(l=10, r=10, t=40, b=130),
     )
 
     # ---- Utilization + peak-flow panels (binned-trace approach) ----------
@@ -496,7 +539,7 @@ def _render_plotly_branch(
             "var_attrs": peak_flow_attrs,
             "label": units.flow_axis_label(),
             "vmin": float(cfg.vmin) if cfg.vmin is not None else 0.0,
-            "vmax": float(cfg.vmax) if cfg.vmax is not None else float(peak_flow.max() or 1.0),
+            "vmax": _resolve_peak_flow_vmax(peak_flow, cfg),
             "cmap_name": PEAK_FLOW_CMAP, "colorbar_x": 0.52,
         },
     ]
@@ -526,9 +569,9 @@ def _render_plotly_branch(
                 continue
             mid_val = 0.5 * (bin_edges[bin_idx] + bin_edges[bin_idx + 1])
             color_rgba = cmap(norm(mid_val))
-            color_hex = "rgba({:.0f},{:.0f},{:.0f},{:.3f})".format(
-                color_rgba[0] * 255, color_rgba[1] * 255,
-                color_rgba[2] * 255, color_rgba[3],
+            color_hex = (
+                f"rgba({color_rgba[0] * 255:.0f},{color_rgba[1] * 255:.0f},"
+                f"{color_rgba[2] * 255:.0f},{color_rgba[3]:.3f})"
             )
             xs: list[float | None] = []
             ys: list[float | None] = []
@@ -589,7 +632,7 @@ def _render_plotly_branch(
                         showscale=True, color=[p["vmin"]],
                         colorbar=dict(
                             title=p["label"], orientation="h",
-                            y=-0.10, len=0.30, x=p["colorbar_x"], thickness=12,
+                            y=-0.22, len=0.30, x=p["colorbar_x"], thickness=12,
                         ),
                     ),
                     showlegend=False, hoverinfo="skip",
@@ -647,14 +690,14 @@ def _render_plotly_branch(
         axes_id="ax_rain_plotly", kind="bar",
         note="rainfall time series (event hydrology — top sub-panel)",
     ) as a:
-        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
         fig.add_trace(
             go.Bar(
-                x=times_min, y=rainfall,
+                x=times_hr, y=rainfall,
                 marker=dict(color=panel_cfg.rain_color),
                 name="rainfall", showlegend=False,
-                hovertemplate="t: %{x} min<br>rain: %{y:.2f}<extra></extra>",
+                hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
             ),
             row=1, col=3,
         )
@@ -667,38 +710,45 @@ def _render_plotly_branch(
         axes_id="ax_bc_plotly", kind="line2d",
         note="boundary condition water level (event hydrology — bottom sub-panel)",
     ) as a:
-        a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS)
+        a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)
         fig.add_trace(
             go.Scatter(
-                x=times_min, y=bc_water_level, mode="lines",
+                x=times_hr, y=bc_water_level, mode="lines",
                 line=dict(color=panel_cfg.bc_line_color,
                           width=panel_cfg.bc_line_width),
                 name="bc_water_level", showlegend=False,
-                hovertemplate="t: %{x} min<br>BC: %{y:.3f} m<extra></extra>",
+                hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
             ),
             row=2, col=3,
         )
 
     # ---- Axes setup -----------------------------------------------------
-    crs_for_labels = (
-        report_cfg.system_map.target_epsg
-        or analysis._system.cfg_system.crs_epsg
-    )
+    from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+    target_crs = resolve_target_crs(analysis, report_cfg)
+    crs_for_labels = target_crs.to_epsg()
+    # Phase 3 inheritance (F-I-10): link col-2 map axes to col-1 via `matches=`
+    # so interactive pan/zoom on either panel synchronises the other.
     for col in (1, 2):
-        fig.update_xaxes(
-            range=[map_bounds[0], map_bounds[2]],
+        x_kwargs = dict(
+            range=[bounds[0], bounds[2]],
             title_text=units.easting_axis_label(crs_for_labels),
             row=1, col=col,
         )
-        fig.update_yaxes(
-            range=[map_bounds[1], map_bounds[3]],
+        y_kwargs = dict(
+            range=[bounds[1], bounds[3]],
             scaleanchor=f"x{col}", scaleratio=1.0,
             title_text=units.northing_axis_label(crs_for_labels) if col == 1 else None,
             row=1, col=col,
         )
+        if col == 2:
+            x_kwargs["matches"] = "x"
+            y_kwargs["matches"] = "y"
+        fig.update_xaxes(**x_kwargs)
+        fig.update_yaxes(**y_kwargs)
+    # Phase 3 inheritance (F-I-7): hydrology x-axes now in hours from event start.
     fig.update_xaxes(
-        range=[float(times_min[0]), float(times_min[-1])],
+        range=[float(times_hr[0]), float(times_hr[-1])],
         title_text="", row=1, col=3,
     )
     fig.update_yaxes(
@@ -706,8 +756,8 @@ def _render_plotly_branch(
         row=1, col=3,
     )
     fig.update_xaxes(
-        range=[float(times_min[0]), float(times_min[-1])],
-        title_text=units.TIME_AXIS_FROM_EVENT_START, row=2, col=3,
+        range=[float(times_hr[0]), float(times_hr[-1])],
+        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS, row=2, col=3,
     )
     fig.update_yaxes(
         title_text=units.bc_water_level_axis_label(
@@ -773,10 +823,10 @@ def _mpl_cmap_to_plotly_colorscale(cmap_name: str, n_samples: int = 32) -> list:
     return [
         [
             i / (n_samples - 1),
-            "rgb({:.0f},{:.0f},{:.0f})".format(
-                cmap(i / (n_samples - 1))[0] * 255,
-                cmap(i / (n_samples - 1))[1] * 255,
-                cmap(i / (n_samples - 1))[2] * 255,
+            (
+                f"rgb({cmap(i / (n_samples - 1))[0] * 255:.0f},"
+                f"{cmap(i / (n_samples - 1))[1] * 255:.0f},"
+                f"{cmap(i / (n_samples - 1))[2] * 255:.0f})"
             ),
         ]
         for i in range(n_samples)

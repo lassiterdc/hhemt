@@ -237,6 +237,13 @@ __marimo__/
 *test_data/*/tests/*
 *test_data/*/triton/*
 *test_data/*/swmm/*
+# TRITON-SWMM case-study runtime outputs (cases/{suite}/...)
+test_data/*/cases/_version.json
+test_data/*/cases/system_log.json
+test_data/*/cases/*/log.json
+test_data/*/cases/*/sensitivity_analysis_definition.csv
+test_data/*/cases/*/_generated/
+test_data/*/cases/*/subanalyses/
 profile_runner.py.lprof
 profiling/retrieve_profile.out
 *test_data/reference_for_addressing*
