@@ -365,6 +365,54 @@ def _emit_report_artifacts(dest_root: Path) -> None:
     (dst_report / "workflow_description.rst").write_text((src_templates / "workflow_description.rst.j2").read_text())
 
 
+# Pinned to the format emitted by snakemake-executor-plugin-slurm/submit_string.py:29
+# (--comment rule_{job.name}_wildcards_{...}). Bump on plugin version changes.
+_COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_sa_")
+
+
+def _slurm_job_is_live(job_id: str, *, timeout_s: float = 10.0) -> bool:
+    """True if ``job_id`` is PENDING/RUNNING/etc. in squeue.
+
+    squeue is authoritative for live jobs (sacct gaps cannot hide a live job).
+    Absent from squeue → treated as not-live (stale). Callers using this for
+    the at-most-once-execution guard should reclaim the sentinel when this
+    returns False.
+
+    On ``subprocess.TimeoutExpired`` (controller unresponsive) returns False
+    and emits a stderr warning — the caller's at-most-once guard treats
+    unknown state as not-live, which is the safe direction (a real live job
+    that's skipped here would simply be queued and Snakemake would re-detect
+    it on the next submit; the alternative — blocking ``submit_workflow()``
+    indefinitely on a hung controller — is strictly worse).
+    """
+    _LIVE = {
+        "PENDING",
+        "RUNNING",
+        "CONFIGURING",
+        "COMPLETING",
+        "REQUEUED",
+        "RESIZING",
+        "SUSPENDED",
+    }
+    try:
+        r = subprocess.run(
+            ["squeue", "-j", job_id, "-h", "-o", "%T"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"[reconcile] WARNING: squeue {job_id} timed out after {timeout_s}s — treating as not-live",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().split()[0] in _LIVE
+    return False
+
+
 class SnakemakeWorkflowBuilder:
     """
     Builder class for generating and executing Snakemake workflows.
@@ -503,6 +551,180 @@ class SnakemakeWorkflowBuilder:
             )
         if verbose:
             print("[Snakemake] Unlock successful. Proceeding.", flush=True)
+
+    def _reconcile_inflight_submissions(self) -> None:
+        """At-most-once-execution guard: reconcile prior-driver simulation submissions.
+
+        Sweeps the per-analysis ``_status/_submitted/`` sentinel directory and
+        classifies each recorded SLURM job-id as live or dead via the
+        module-level :func:`_slurm_job_is_live` helper. Dead sentinels are
+        reclaimed (deleted); live sentinels block submission with a
+        :class:`WorkflowError` listing the offending job-ids (v1 abort
+        semantics — auto-exclude is a v2 enhancement).
+
+        Also runs the ``--comment``-based recovery query against ``sacct`` to
+        catch jobs whose sentinel write was missed because the driver died
+        between ``sbatch`` and the worker's first writable line.
+
+        Fast path: returns immediately with zero SLURM calls when no
+        sentinels exist (the common case for fresh analyses).
+
+        Raises
+        ------
+        WorkflowError
+            When one or more live duplicate simulation jobs are detected for
+            this analysis. The error names the live job-ids and instructs the
+            user to wait or ``scancel`` before resubmitting; no second
+            ``sbatch`` is issued.
+        """
+        import json
+
+        submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+        sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
+        if not sentinels:
+            return  # fast path: zero SLURM calls
+
+        alive: list[tuple[str, str]] = []  # (sentinel_name, job_id)
+        for s in sentinels:
+            try:
+                jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
+            except json.JSONDecodeError:
+                print(
+                    f"[reconcile] WARNING: corrupt sentinel {s.name}; deleting and skipping",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                s.unlink(missing_ok=True)
+                continue
+            except OSError as _e:
+                # Transient FS issue (NFS hiccup, concurrent write) — preserve
+                # the sentinel and surface the error so the next submit attempt
+                # re-evaluates rather than silently treating it as stale.
+                raise WorkflowError(
+                    phase="preflight-reconciliation",
+                    return_code=1,
+                    stderr=(
+                        f"Failed to read sentinel {s}: {_e}. Retry submit, or inspect _status/_submitted/ manually."
+                    ),
+                ) from _e
+            if jid and _slurm_job_is_live(jid):
+                alive.append((s.stem, jid))
+            else:
+                s.unlink(missing_ok=True)  # DEAD/stale → reclaim
+
+        # --comment recovery for the lost-sentinel window
+        alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
+        if alive:
+            raise WorkflowError(
+                phase="preflight-reconciliation",
+                return_code=1,  # sentinel: pre-submission abort
+                stderr=(
+                    "At-most-once guard: simulation jobs from a prior driver are "
+                    "still in flight for this analysis: "
+                    f"{alive}. Wait for them to finish, or `scancel` them, before "
+                    "resubmitting. (No second sbatch was issued.)"
+                ),
+            )
+
+    def _recover_inflight_via_comment(self, known_jobids: set[str]) -> list[tuple[str, str]]:
+        """Recover in-flight simulation jobs missed by the sentinel sweep.
+
+        Catches the lost-sentinel window: a driver that died post-``sbatch``
+        but before the worker wrote its sentinel. Queries ``sacct`` for the
+        current user's recent jobs and matches the SLURM ``--comment`` field
+        the executor plugin sets (``rule_{job.name}_wildcards_{...}``). Live
+        jobs whose ids are not already in ``known_jobids`` are returned.
+
+        Empirical-tripwire (Phase 1 DoD note): the assumption that
+        ``sacct -o Comment`` returns the executor's
+        ``rule_{job.name}_wildcards_{...}`` string on this cluster is
+        unconfirmed for UVA Rivanna / Frontier at Phase 1 close. To make the
+        assumption grep-detectable in HPC stderr logs rather than silently
+        elided, this method emits a one-line summary of every invocation
+        when sacct returned any rows: how many rows scanned, how many had
+        comments matching ``_COMMENT_RULE_PREFIXES``, and how many of those
+        were live. A persistent ``0 prefix-matched`` line in production logs
+        is the signal that the comment-format assumption has drifted and
+        the recovery branch has degenerated to a no-op (which falls back
+        cleanly to the sentinel-only guard — degradation, not incorrectness).
+
+        Parameters
+        ----------
+        known_jobids
+            Job-ids already accounted for by the sentinel sweep; excluded
+            from the recovery result to avoid double-counting.
+
+        Returns
+        -------
+        list of (label, job_id) tuples
+            Labels are prefixed with ``comment:`` so the caller can
+            distinguish recovery-path hits from sentinel hits in the
+            ``WorkflowError`` listing.
+        """
+        import getpass
+
+        out = subprocess.run(
+            [
+                "sacct",
+                "-u",
+                getpass.getuser(),
+                "-n",
+                "-P",
+                "-o",
+                "JobIDRaw,State,Comment",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        found: list[tuple[str, str]] = []
+        rows_scanned = 0
+        prefix_matched = 0
+        if out.returncode == 0:
+            for line in out.stdout.splitlines():
+                parts = line.split("|")
+                if len(parts) < 3:
+                    continue
+                rows_scanned += 1
+                jid, _state, comment = parts[0], parts[1], parts[2]
+                if jid in known_jobids:
+                    continue
+                if comment.startswith(_COMMENT_RULE_PREFIXES):
+                    prefix_matched += 1
+                    if _slurm_job_is_live(jid):
+                        found.append((f"comment:{comment}", jid))
+        # Empirical-tripwire stderr line — only when sacct returned data, to
+        # avoid noise on fresh clusters with no recent user jobs. The line
+        # is the falsifiable artifact for the Phase 1 DoD's pending empirical
+        # confirmation step.
+        if rows_scanned > 0:
+            print(
+                f"[reconcile] sacct-comment recovery: {rows_scanned} rows scanned, "
+                f"{prefix_matched} prefix-matched, {len(found)} live",
+                file=sys.stderr,
+                flush=True,
+            )
+        return found
+
+    def _pre_snakemake_invocation_guards(
+        self,
+        snakefile_path: Path,
+        dry_run: bool,
+        verbose: bool,
+    ) -> None:
+        """Shared pre-Snakemake-invocation guard sequence.
+
+        Threaded into every submit-path call site (local, single-job, tmux)
+        so the at-most-once reconciliation runs on every SLURM-submitting
+        code path and the dry-run skip stays uniform across all three modes.
+        Order matters: the lock check runs first (its prompt is the
+        highest-friction interactive step and a stale lock would defeat any
+        downstream reconciliation), then the reconciliation runs only when
+        ``dry_run`` is False (a dry run plans without submitting, so an
+        in-flight duplicate does not yet matter).
+        """
+        self._check_and_clear_snakemake_lock(snakefile_path, dry_run=dry_run, verbose=verbose)
+        if not dry_run:
+            self._reconcile_inflight_submissions()
 
     def _get_config_args(
         self,
@@ -2026,8 +2248,9 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             if dry_run:
                 cmd_args.append("--dry-run")
 
-            # Check for stale lock before running Snakemake locally (skipped on dry runs)
-            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=dry_run, verbose=verbose)
+            # Pre-Snakemake guards: lock check + at-most-once reconciliation
+            # (reconciliation skipped on dry runs; see helper docstring).
+            self._pre_snakemake_invocation_guards(snakefile_path, dry_run=dry_run, verbose=verbose)
 
             with open(snakemake_logfile, "w") as log_f:
                 result = subprocess.run(
@@ -2613,8 +2836,8 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                     flush=True,
                 )
 
-            # Check for stale lock before consuming a SLURM allocation
-            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=False, verbose=verbose)
+            # Pre-Snakemake guards: lock check + at-most-once reconciliation
+            self._pre_snakemake_invocation_guards(snakefile_path, dry_run=False, verbose=verbose)
 
             # Generate single_job profile
             config = self.generate_snakemake_config(mode="single_job")
@@ -3041,8 +3264,8 @@ env PATH="${{CONDA_PREFIX}}/bin:${{SLURM_BIN}}:/usr/local/bin:/usr/bin:/usr/sbin
                     "Please install tmux or use multi_sim_run_method='local'."
                 )
 
-            # Check for stale lock before launching tmux session
-            self._check_and_clear_snakemake_lock(snakefile_path, dry_run=False, verbose=verbose)
+            # Pre-Snakemake guards: lock check + at-most-once reconciliation
+            self._pre_snakemake_invocation_guards(snakefile_path, dry_run=False, verbose=verbose)
 
             # Generate unique session name
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -4020,16 +4243,13 @@ onerror:
         # df_sims is empty (otherwise only reachable via transitive deps through
         # prepare_sa rules).
         setup_target_flags = [
-            f"_status/a_setup_target_{target.target_id}_complete.flag"
-            for target in self.unique_system_targets
+            f"_status/a_setup_target_{target.target_id}_complete.flag" for target in self.unique_system_targets
         ]
         # sa_id (str) → target_id reverse lookup used when emitting per-SA rule
         # dependencies. Built once per Snakefile generation. Keys are coerced to
         # str to match sub_analyses dict iteration keys regardless of source type.
         sa_id_to_target_id: dict[str, int] = {
-            str(sa_id): target.target_id
-            for target in self.unique_system_targets
-            for sa_id in target.sub_analysis_ids
+            str(sa_id): target.target_id for target in self.unique_system_targets for sa_id in target.sub_analysis_ids
         }
 
         rule_all_inputs = [f'"{flag}"' for flag in setup_target_flags]
@@ -4078,11 +4298,11 @@ onerror:
         for _fmt in _formats:
             rule_all_inputs.append(f'"analysis_report.{_fmt}"')
 
-        snakefile_content += f'''rule all:
+        snakefile_content += f"""rule all:
     input:
         {", ".join(rule_all_inputs)}
 
-'''
+"""
 
         # Phase 3: emit one setup rule per unique compile target. For a sensitivity
         # study that varies gpu_hardware or target_dem_resolution across sub-analyses,
@@ -4117,9 +4337,7 @@ onerror:
             {target_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
-            {
-                "--compile-triton-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_tritonswmm_model else ""
-            }\\
+            {"--compile-triton-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_tritonswmm_model else ""}\\
             {"--compile-triton-only " if compile_TRITON_SWMM and target_cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
@@ -4172,9 +4390,7 @@ onerror:
 
             # Setup-target flag this sub-analysis depends on (Phase 3). Keyed by
             # str(sa_id) to match the map built before the rule_all section.
-            setup_target_flag = (
-                f"_status/a_setup_target_{sa_id_to_target_id[str(sa_id)]}_complete.flag"
-            )
+            setup_target_flag = f"_status/a_setup_target_{sa_id_to_target_id[str(sa_id)]}_complete.flag"
 
             # Build resource blocks for this sub-analysis
             prep_resources_sa = self._base_builder._build_resource_block(
@@ -4275,6 +4491,7 @@ onerror:
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
+            --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             > {{log}} 2>&1
         touch {{output}}

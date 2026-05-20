@@ -25,12 +25,14 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-from pathlib import Path
-import traceback
+import datetime
+import json
 import logging
-
+import os
+import sys
+import traceback
+from pathlib import Path
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
 
@@ -45,9 +47,7 @@ logger = logging.getLogger(__name__)
 
 def main():
     """Main entry point for simulation execution subprocess."""
-    parser = argparse.ArgumentParser(
-        description="Run a single simulation in a subprocess"
-    )
+    parser = argparse.ArgumentParser(description="Run a single simulation in a subprocess")
     parser.add_argument(
         "--event-iloc",
         type=int,
@@ -74,6 +74,16 @@ def main():
         help="Model type to run (default: tritonswmm)",
     )
     parser.add_argument(
+        "--sa-id",
+        type=str,
+        default=None,
+        help=(
+            "Sensitivity sub-analysis id (omitted for multisim runs). When set, "
+            "the at-most-once submission sentinel is keyed on simulation_sa_{sa_id}; "
+            "otherwise it is keyed on run_{model_type}."
+        ),
+    )
+    parser.add_argument(
         "--pickup-where-leftoff",
         action="store_true",
         default=False,
@@ -95,11 +105,19 @@ def main():
         logger.error(f"System config not found: {args.system_config}")
         return 2
 
+    # At-most-once-execution sentinel handle. Initialized to None so the
+    # finally cleanup below is safe even if an exception fires before the
+    # sentinel write (e.g., scenario instantiation failure). Charset note:
+    # event_id (and sa_id for sensitivity) flow into the sentinel filename
+    # but have already been validated at config load against
+    # ^[A-Za-z0-9_.]+$, so no re-validation is needed here.
+    _sentinel: Path | None = None
+
     try:
         # Import here to avoid import errors if dependencies are missing
-        from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
         from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+        from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
@@ -121,12 +139,44 @@ def main():
 
         scenario = TRITONSWMM_scenario(event_iloc, analysis)
 
+        # At-most-once-execution submission sentinel. Written atomically via
+        # temp + os.replace; guarded on $SLURM_JOB_ID so the path is a no-op
+        # for local runs. Filename pattern matches what
+        # SnakemakeWorkflowBuilder._reconcile_inflight_submissions() looks
+        # for. R2 reconciliation: Python-side failures (exceptions, non-zero
+        # returns) MUST delete the sentinel via the finally clause below so
+        # the next driver does not block on a zombie sim; the sentinel only
+        # legitimately survives when the OS-level worker process dies
+        # without running its finally (SLURM-killed worker, hardware fault).
+        _jobid = os.environ.get("SLURM_JOB_ID")
+        if _jobid:
+            event_id = scenario.event_id
+            analysis_dir = analysis.analysis_paths.analysis_dir
+            _subdir = Path(analysis_dir) / "_status" / "_submitted"
+            _subdir.mkdir(parents=True, exist_ok=True)
+            if args.sa_id:
+                _sentinel = _subdir / f"simulation_sa_{args.sa_id}_evt-{event_id}.json"
+            else:
+                _sentinel = _subdir / f"run_{model_type}_evt-{event_id}.json"
+            _tmp = _sentinel.with_suffix(".json.tmp")
+            _tmp.write_text(
+                json.dumps(
+                    {
+                        "slurm_jobid": _jobid,
+                        "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                        "sa_id": args.sa_id,
+                        "model_type": model_type,
+                        "event_id": event_id,
+                        "submitted_at": datetime.datetime.now().isoformat(),
+                    }
+                )
+            )
+            os.replace(_tmp, _sentinel)
+
         # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
         if not scenario.log.scenario_creation_complete.get():
-            logger.error(
-                f"[{event_iloc}] Scenario not prepared. Cannot run simulation."
-            )
+            logger.error(f"[{event_iloc}] Scenario not prepared. Cannot run simulation.")
             return 1
 
         # Get model-specific log for this simulation
@@ -135,9 +185,7 @@ def main():
         # Verify model-specific compilation
         if model_type == "triton":
             if not hasattr(system, "compilation_triton_only_successful"):
-                logger.error(
-                    f"[{event_iloc}] TRITON-only compilation check not implemented"
-                )
+                logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
                 return 1
             if not system.compilation_triton_only_successful:
                 logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
@@ -168,18 +216,14 @@ def main():
 
         # Check if simulation already completed
         if simprep_result is None:
-            logger.info(
-                f"[{event_iloc}] {model_type} simulation already completed, skipping execution"
-            )
+            logger.info(f"[{event_iloc}] {model_type} simulation already completed, skipping execution")
             logger.info(f"{model_type} simulation completed successfully")
             return 0
 
         # Unpack simulation command and metadata
         cmd, env, model_logfile, sim_start_reporting_tstep = simprep_result
         if model_logfile is None:
-            logger.error(
-                f"[{event_iloc}] Missing logfile path for model_type={model_type}"
-            )
+            logger.error(f"[{event_iloc}] Missing logfile path for model_type={model_type}")
             return 1
 
         # Launch the executable (not the runner!)
@@ -187,9 +231,8 @@ def main():
         logger.info(f"[{event_iloc}] Command: {' '.join(cmd)}")
         logger.info(f"[{event_iloc}] Log file: {model_logfile}")
 
-        import time
         import subprocess
-        import os
+        import time
 
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)
@@ -208,9 +251,7 @@ def main():
 
         # Check simulation status via log file
         status = (
-            "simulation completed"
-            if run.model_run_completed(model_type)
-            else "simulation started but did not finish"
+            "simulation completed" if run.model_run_completed(model_type) else "simulation started but did not finish"
         )
 
         logger.info(f"[{event_iloc}] Simulation status: {status}")
@@ -233,6 +274,14 @@ def main():
         logger.error(f"Exception occurred during simulation execution: {e}")
         logger.error(traceback.format_exc())
         return 1
+    finally:
+        # Per the R2 reconciliation refinement: any Python-side termination
+        # path (clean return, exception, early-exit) deletes the sentinel so
+        # the next driver does not block on a zombie. The sentinel only
+        # legitimately survives when the OS-level worker process dies
+        # without running this finally (SLURM kill, hardware fault).
+        if _sentinel is not None:
+            _sentinel.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
