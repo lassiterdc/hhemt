@@ -15,10 +15,75 @@ from rasterio.transform import from_origin
 import TRITON_SWMM_toolkit.utils as ut
 from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.config.loaders import load_system_config
-from TRITON_SWMM_toolkit.exceptions import CompilationError, ConfigurationError
+from TRITON_SWMM_toolkit.exceptions import CompilationError, ConfigurationError, ProcessingError
 from TRITON_SWMM_toolkit.log import TRITONSWMM_system_log
 from TRITON_SWMM_toolkit.paths import SysPaths
 from TRITON_SWMM_toolkit.plot_system import TRITONSWMM_system_plotting
+
+
+_ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
+
+
+def _assert_dem_integrity(fpath_raster):
+    """Verify a just-written ESRI ASCII raster has expected structure.
+
+    Fail-fast at setup time rather than letting a corrupt DEM trigger a
+    TRITON SIGSEGV at simulation init (uva_sensitivity_suite Mode 3, 2026-
+    05-20). Checks:
+      (a) line count == nrows + 6 (header) + 0 trailing blank lines
+      (b) every data row has exactly ncols whitespace-separated fields
+      (c) header nrows/ncols match observed body
+    Raises ProcessingError on violation; caller catches at setup phase.
+
+    Note: this is a module-level function (not an instance method) because it
+    touches no instance state. Per SE plan-review Flag 5: module-level scope
+    eliminates the `__new__` testing anti-pattern (Feathers, "Working
+    Effectively with Legacy Code" Ch. 9) and signals functional purity.
+    """
+    with open(fpath_raster) as f:
+        lines = f.readlines()
+    if len(lines) < 6:
+        msg = f"file has {len(lines)} lines (< 6 header lines required)"
+        print(f"[Setup] DEM integrity assertion failed: {fpath_raster} — {msg}", flush=True, file=sys.stderr)
+        raise ProcessingError(
+            "dem_integrity_check",
+            filepath=fpath_raster,
+            reason=msg,
+        )
+    header = {}
+    for line in lines[:6]:
+        key, _, value = line.strip().partition(" ")
+        header[key.lower()] = value.strip()
+    try:
+        declared_nrows = int(header["nrows"])
+        declared_ncols = int(header["ncols"])
+    except (KeyError, ValueError) as exc:
+        msg = f"header parse failed: {exc}"
+        print(f"[Setup] DEM integrity assertion failed: {fpath_raster} — {msg}", flush=True, file=sys.stderr)
+        raise ProcessingError(
+            "dem_integrity_check",
+            filepath=fpath_raster,
+            reason=msg,
+        ) from exc
+    expected_total = 6 + declared_nrows
+    if len(lines) != expected_total:
+        msg = f"line count {len(lines)} != header nrows+6 ({expected_total})"
+        print(f"[Setup] DEM integrity assertion failed: {fpath_raster} — {msg}", flush=True, file=sys.stderr)
+        raise ProcessingError(
+            "dem_integrity_check",
+            filepath=fpath_raster,
+            reason=msg,
+        )
+    for i, line in enumerate(lines[6:], start=7):
+        fields = line.split()
+        if len(fields) != declared_ncols:
+            msg = f"data row {i}: {len(fields)} fields != header ncols ({declared_ncols})"
+            print(f"[Setup] DEM integrity assertion failed: {fpath_raster} — {msg}", flush=True, file=sys.stderr)
+            raise ProcessingError(
+                "dem_integrity_check",
+                filepath=fpath_raster,
+                reason=msg,
+            )
 
 
 class TRITONSWMM_system:
@@ -37,10 +102,8 @@ class TRITONSWMM_system:
         )
         # Initialize paths with backend split
         self.sys_paths = SysPaths(
-            dem_processed=system_dir
-            / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
-            mannings_processed=system_dir
-            / f"mannings_{self.cfg_system.target_dem_resolution:.2f}m.dem",
+            dem_processed=system_dir / f"elevation_{self.cfg_system.target_dem_resolution:.2f}m.dem",
+            mannings_processed=system_dir / f"mannings_{self.cfg_system.target_dem_resolution:.2f}m.dem",
             # TRITON-SWMM build dirs (coupled model)
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
@@ -51,24 +114,16 @@ class TRITONSWMM_system:
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
             TRITON_build_dir_gpu=(
-                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}"
-                if self.cfg_system.gpu_compilation_backend
-                else None
+                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}" if self.cfg_system.gpu_compilation_backend else None
             ),
             # SWMM standalone build dir
-            SWMM_build_dir=(
-                swmm_dir if (self.cfg_system.toggle_swmm_model and swmm_dir) else None
-            ),
+            SWMM_build_dir=(swmm_dir if (self.cfg_system.toggle_swmm_model and swmm_dir) else None),
             # Compilation artifacts (shared across build types)
             compilation_script_cpu=system_dir / "compile_cpu.sh",
             compilation_script_gpu=(
-                system_dir / f"compile_gpu{gpu_suffix}.sh"
-                if self.cfg_system.gpu_compilation_backend
-                else None
+                system_dir / f"compile_gpu{gpu_suffix}.sh" if self.cfg_system.gpu_compilation_backend else None
             ),
-            compilation_logfile_cpu=(
-                tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"
-            ),
+            compilation_logfile_cpu=(tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"),
             compilation_logfile_gpu=(
                 tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" / "compilation.log"
                 if self.cfg_system.gpu_compilation_backend
@@ -76,9 +131,7 @@ class TRITONSWMM_system:
             ),
             # Backwards compatibility aliases (point to TRITON-SWMM CPU versions)
             TRITON_build_dir=tritonswmm_dir / "build_tritonswmm_cpu",
-            compilation_logfile=tritonswmm_dir
-            / "build_tritonswmm_cpu"
-            / "compilation.log",
+            compilation_logfile=tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log",
             compilation_script=system_dir / "compile_cpu.sh",
             system_datatree_zarr=system_dir / "system_datatree.zarr",
         )
@@ -113,25 +166,18 @@ class TRITONSWMM_system:
             raise RuntimeError("No analysis defined. Call add_analysis() first.")
         return self._analysis
 
-    def process_system_level_inputs(
-        self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False
-    ):
+    def process_system_level_inputs(self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False):
         self.create_dem_for_TRITON(overwrite_outputs_if_already_created, verbose)
         if not self.cfg_system.toggle_use_constant_mannings:
-            self.create_mannings_file_for_TRITON(
-                overwrite_outputs_if_already_created, verbose
-            )
+            self.create_mannings_file_for_TRITON(overwrite_outputs_if_already_created, verbose)
 
-    def create_dem_for_TRITON(
-        self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False
-    ):
+    def create_dem_for_TRITON(self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False):
         dem_processed = self.sys_paths.dem_processed
         if dem_processed.exists() and not overwrite_outputs_if_already_created:
             out = "DEM file already exists. Not rewriting."
         rds_dem_coarse = self._coarsen_dem()
-        self._write_raster_formatted_for_TRITON(
-            rds_dem_coarse, dem_processed, include_metadata=True
-        )
+        self._write_raster_formatted_for_TRITON(rds_dem_coarse, dem_processed, include_metadata=True)
+        _assert_dem_integrity(dem_processed)
         out = f"wrote {str(dem_processed)}"
         # Log DEM processing status
         self.log.dem_processed.set(True)
@@ -206,9 +252,7 @@ class TRITONSWMM_system:
         df_lu_vals = pd.Series(index=unique_values, name="placeholder").to_frame()  # type: ignore
         df_lu_vals.index.name = landuse_colname
         # join the landuse values present in the raster with the lookup table
-        df_lu_vals = df_lu_vals.join(
-            df_lu_lookup.set_index(landuse_colname), how="left"
-        )
+        df_lu_vals = df_lu_vals.join(df_lu_lookup.set_index(landuse_colname), how="left")
         s_lu_mannings_mapping = df_lu_vals[mannings_colname].copy()
         dict_s_lu_mannings = s_lu_mannings_mapping.to_dict()
 
@@ -282,9 +326,7 @@ class TRITONSWMM_system:
         self._validate_and_log_dem_crs(crs)
         assert rds_mannings.rio.crs == rds_dem.rio.crs  # type: ignore
         # resample mannings to og dem resolution to ensure exact alignment of final output
-        rds_mannings = spatial_resampling(
-            rds_mannings, rds_dem, missingfillval=fillna_val
-        ).rio.write_crs(crs)
+        rds_mannings = spatial_resampling(rds_mannings, rds_dem, missingfillval=fillna_val).rio.write_crs(crs)
         assert (
             np.isclose(rds_mannings.rio.resolution(), rds_dem.rio.resolution())  # type: ignore
         ).sum() == 2
@@ -299,18 +341,12 @@ class TRITONSWMM_system:
         assert rds_mannings.min().values > 0
         return rds_mannings_coarse
 
-    def _write_raster_formatted_for_TRITON(
-        self, rds, output: Path, include_metadata: bool, fillna_val=-9999
-    ):
+    def _write_raster_formatted_for_TRITON(self, rds, output: Path, include_metadata: bool, fillna_val=-9999):
         __, og_avg_gridsize = compute_grid_resolution(rds)
         ncols = rds.x.shape[0]
         nrows = rds.y.shape[0]
-        xllcorner = (
-            rds.x.values.min() - og_avg_gridsize / 2
-        )  # adjusted from center to corner
-        yllcorner = (
-            rds.y.values.min() - og_avg_gridsize / 2
-        )  # adjusted from center to corner
+        xllcorner = rds.x.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
+        yllcorner = rds.y.values.min() - og_avg_gridsize / 2  # adjusted from center to corner
         # define DEM
         raster_metadata = {
             "ncols         ": ncols,
@@ -327,44 +363,62 @@ class TRITONSWMM_system:
             self._write_raster(output, rds)
 
     def _write_raster(self, fpath_raster, rds, raster_metadata=None):
-        if raster_metadata is not None:
-            data_write_mode = "a"
-            f = open(fpath_raster, "w")
-            for key in raster_metadata:
-                f.write(key + str(raster_metadata[key]) + "\n")
-            f.close()
-        else:
-            data_write_mode = "w"
-        # create dataframe with the right shape
-        df_long = (
-            rds.to_dataframe("elevation").reset_index().loc[:, ["x", "y", "elevation"]]
-        )
-        df = df_long.pivot(index="y", columns="x", values="elevation")
-        # ensure y is DESCENDING down and x is ASCENDING to the right
-        df = df.sort_index(ascending=False)
-        cols_sorted = df.columns.sort_values(ascending=True)
-        df = df.loc[:, cols_sorted]
-        # pad with zeros to achieve consistent spacing in the resulting file
-        target_decimal_places = 5
-        longest_num = (
-            len(str(df.abs().max().max()).split(".")[0]) + target_decimal_places + 1
-        )
-        df_padded = df.apply(
-            self._flt_to_str_certain_num_of_characters,
-            args=(target_decimal_places, longest_num),
-        )
-        # df_padded = df_padded.astype(float)
-        df_padded.to_csv(
-            fpath_raster, mode=data_write_mode, index=False, header=False, sep=" "
-        )
+        """Stream-write a rioxarray DataArray to an ESRI ASCII raster file.
 
-    def _flt_to_str_certain_num_of_characters(
-        self, flt, target_decimal_places, longest_num
-    ):
-        flt = round(flt, target_decimal_places)  # type: ignore
-        str_flt = flt.astype(str)
-        str_flt = str_flt.apply(lambda x: str(x).ljust(longest_num, "0"))
-        return str_flt
+        Row-streamed implementation: iterates the DataArray in row-blocks,
+        formats each block via vectorized numpy string ops, and appends
+        directly to the file handle. Avoids the prior to_dataframe -> pivot
+        -> to_csv pipeline that materialized the full grid ~13x in memory
+        and was vulnerable to a pivot-induced row-doubling failure when
+        coarsen_georaster produced near-identity y-coordinates.
+
+        Output format (preserved from prior implementation):
+          - 6 header lines (when raster_metadata provided) of "key value\n"
+          - nrows data rows, each ncols space-separated fixed-point floats
+          - target_decimal_places = 5
+          - field width = len(str(int(max_abs))) + target_decimal_places + 1
+          - line terminator = single "\n"; no trailing blank line
+          - NODATA value rendered through the same numeric formatter
+        """
+        # Squeeze band dim if present (rxr.open_rasterio yields (1, ny, nx)).
+        arr = rds.values[0] if rds.ndim == 3 else rds.values
+        nrows, ncols = arr.shape
+
+        # Sort row order: y DESCENDING (north -> south, ESRI ASCII convention).
+        y_vals = np.asarray(rds.y.values)
+        x_vals = np.asarray(rds.x.values)
+        row_order = np.argsort(y_vals)[::-1]
+        col_order = np.argsort(x_vals)
+        arr = arr[row_order][:, col_order]
+
+        # Compute field width from the full array (matches prior longest_num).
+        target_decimal_places = 5
+        max_abs = float(np.nanmax(np.abs(arr))) if arr.size else 0.0
+        longest_num = len(str(int(max_abs))) + target_decimal_places + 1
+
+        # Open in text-append mode if header already written; else text-write.
+        write_mode = "a" if raster_metadata is not None else "w"
+        if raster_metadata is not None:
+            with open(fpath_raster, "w") as f_hdr:
+                for key in raster_metadata:
+                    f_hdr.write(key + str(raster_metadata[key]) + "\n")
+
+        # Row-streamed body emission. Block size chosen for ~1 MB buffer
+        # per block at typical ncols; tunable via _ROW_BLOCK_SIZE (D-PR-5 B).
+        row_block_size = _ROW_BLOCK_SIZE
+        fmt = "{:.%df}" % target_decimal_places
+        with open(fpath_raster, write_mode) as f:
+            for start in range(0, nrows, row_block_size):
+                stop = min(start + row_block_size, nrows)
+                block = arr[start:stop]
+                # Vectorized format-and-pad: per cell, "{:.5f}".format(v).ljust(longest_num, "0").
+                # Preserve prior right-pad-with-"0" convention for byte-stability with the
+                # existing 1.1m ground-truth artifact; see follow-up idea for cleanup.
+                lines = []
+                for row in block:
+                    cells = [fmt.format(v).ljust(longest_num, "0") for v in row]
+                    lines.append(" ".join(cells))
+                f.write("\n".join(lines) + "\n")
 
     def _sync_compilation_log_field(self, log_field, success: bool):
         current_value = log_field.get()
@@ -411,10 +465,7 @@ class TRITONSWMM_system:
 
         # Download TRITON-SWMM source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
-        if (
-            redownload_triton_swmm_if_exists
-            or not TRITONSWMM_software_directory.exists()
-        ):
+        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -478,9 +529,7 @@ class TRITONSWMM_system:
         clone_cmd = f"git clone {self.cfg_system.TRITONSWMM_git_URL}"
         branch_checkout_cmd = ""
         if self.cfg_system.TRITONSWMM_branch_key:
-            branch_checkout_cmd = (
-                f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
-            )
+            branch_checkout_cmd = f" && git checkout {self.cfg_system.TRITONSWMM_branch_key}"
 
         if verbose:
             print(
@@ -524,12 +573,12 @@ class TRITONSWMM_system:
         # CMAKE_EXE_LINKER_FLAGS, so this is the most robust path to land libstdc++.
         return [
             "# Libstdc++ ABI link patch (post-cmake, pre-make):",
-            'if [ -f CMakeFiles/triton.exe.dir/link.txt ]; then',
+            "if [ -f CMakeFiles/triton.exe.dir/link.txt ]; then",
             '  sed -i "s|\\$| ${CONDA_PREFIX}/lib/libstdc++.so.6|" CMakeFiles/triton.exe.dir/link.txt',
             '  echo "[LINK PATCH] appended ${CONDA_PREFIX}/lib/libstdc++.so.6 to triton.exe link.txt"',
-            'else',
+            "else",
             '  echo "[LINK PATCH] WARNING: CMakeFiles/triton.exe.dir/link.txt not found; skipping patch"',
-            'fi',
+            "fi",
             "",
         ]
 
@@ -573,9 +622,7 @@ class TRITONSWMM_system:
 
         # Optional: Load HPC modules
         if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules = (
-                self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-            )
+            modules = self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
@@ -773,8 +820,7 @@ class TRITONSWMM_system:
             raise ConfigurationError(
                 field="gpu_hardware",
                 message=(
-                    f"Unknown gpu_hardware '{gpu_hardware}'. Supported values: "
-                    f"{', '.join(sorted(mapping.keys()))}."
+                    f"Unknown gpu_hardware '{gpu_hardware}'. Supported values: {', '.join(sorted(mapping.keys()))}."
                 ),
                 config_path=self.system_config_yaml,
             )
@@ -844,10 +890,7 @@ class TRITONSWMM_system:
         # Download TRITON source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        if (
-            redownload_triton_swmm_if_exists
-            or not TRITONSWMM_software_directory.exists()
-        ):
+        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -866,9 +909,7 @@ class TRITONSWMM_system:
                 )
             elif backend == "gpu":
                 if self.cfg_system.gpu_compilation_backend is None:
-                    raise ValueError(
-                        "GPU backend requested but gpu_compilation_backend not set in config."
-                    )
+                    raise ValueError("GPU backend requested but gpu_compilation_backend not set in config.")
                 self._compile_triton_only_backend(
                     backend="gpu",
                     build_dir=self.sys_paths.TRITON_build_dir_gpu,  # type: ignore
@@ -919,9 +960,7 @@ class TRITONSWMM_system:
 
         # Optional: Load HPC modules
         if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules = (
-                self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-            )
+            modules = self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
@@ -981,9 +1020,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3'"
                 )
             else:
-                raise ValueError(
-                    f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}"
-                )
+                raise ValueError(f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}")
 
         # Build commands - KEY DIFFERENCE: -DTRITON_ENABLE_SWMM=OFF
         bash_script_lines.extend(
@@ -1010,12 +1047,8 @@ class TRITONSWMM_system:
         script_file.chmod(0o755)
 
         if verbose:
-            print(
-                f"[TRITON-only {backend.upper()}] Starting compilation...", flush=True
-            )
-            print(
-                f"[TRITON-only {backend.upper()}]   Script: {script_file}", flush=True
-            )
+            print(f"[TRITON-only {backend.upper()}] Starting compilation...", flush=True)
+            print(f"[TRITON-only {backend.upper()}]   Script: {script_file}", flush=True)
 
         # Execute compilation
         build_dir.mkdir(parents=True, exist_ok=True)
@@ -1054,9 +1087,7 @@ class TRITONSWMM_system:
                     flush=True,
                 )
             else:
-                print(
-                    f"[TRITON-only {backend.upper()}] ✗ Compilation failed", flush=True
-                )
+                print(f"[TRITON-only {backend.upper()}] ✗ Compilation failed", flush=True)
                 print(f"[TRITON-only {backend.upper()}]   Log: {logfile}", flush=True)
 
         # Raise exception if compilation failed
@@ -1079,9 +1110,7 @@ class TRITONSWMM_system:
             success = triton_check
         else:
             success = False
-        self._sync_compilation_log_field(
-            self.log.compilation_triton_cpu_successful, success
-        )
+        self._sync_compilation_log_field(self.log.compilation_triton_cpu_successful, success)
         return success
 
     @property
@@ -1089,9 +1118,7 @@ class TRITONSWMM_system:
         """Check if TRITON-only GPU backend compiled successfully."""
         if self.sys_paths.TRITON_build_dir_gpu is None:
             success = False
-            self._sync_compilation_log_field(
-                self.log.compilation_triton_gpu_successful, success
-            )
+            self._sync_compilation_log_field(self.log.compilation_triton_gpu_successful, success)
             return success
         logfile = self.sys_paths.TRITON_build_dir_gpu / "compilation.log"
         if logfile.exists():
@@ -1100,9 +1127,7 @@ class TRITONSWMM_system:
             success = triton_check
         else:
             success = False
-        self._sync_compilation_log_field(
-            self.log.compilation_triton_gpu_successful, success
-        )
+        self._sync_compilation_log_field(self.log.compilation_triton_gpu_successful, success)
         return success
 
     @property
@@ -1112,10 +1137,7 @@ class TRITONSWMM_system:
         For individual backend checks, use compilation_triton_only_cpu_successful and compilation_triton_only_gpu_successful.
         """
         if self.cfg_system.gpu_compilation_backend:
-            return (
-                self.compilation_triton_only_cpu_successful
-                and self.compilation_triton_only_gpu_successful
-            )
+            return self.compilation_triton_only_cpu_successful and self.compilation_triton_only_gpu_successful
         else:
             return self.compilation_triton_only_cpu_successful
 
@@ -1147,11 +1169,7 @@ class TRITONSWMM_system:
                 print("[SWMM] Skipped (toggle_swmm_model=False)", flush=True)
             return
 
-        if (
-            self.compilation_swmm_successful
-            and not recompile_if_already_done_successfully
-        ):
-
+        if self.compilation_swmm_successful and not recompile_if_already_done_successfully:
             if verbose:
                 print("[SWMM] Already compiled successfully (skipping)", flush=True)
             return
@@ -1163,9 +1181,7 @@ class TRITONSWMM_system:
 
         build_dir = self.sys_paths.SWMM_build_dir
         if build_dir is None:
-            raise ValueError(
-                "SWMM build dir not configured (toggle_swmm_model may be False)"
-            )
+            raise ValueError("SWMM build dir not configured (toggle_swmm_model may be False)")
 
         swmm_source_dir = build_dir / "swmm_source"
         logfile = build_dir / "compilation.log"
@@ -1259,16 +1275,12 @@ class TRITONSWMM_system:
         """Check if standalone SWMM compiled successfully."""
         if self.sys_paths.SWMM_build_dir is None:
             success = False
-            self._sync_compilation_log_field(
-                self.log.compilation_swmm_successful, success
-            )
+            self._sync_compilation_log_field(self.log.compilation_swmm_successful, success)
             return success
         logfile = self.sys_paths.SWMM_build_dir / "compilation.log"
         if not logfile.exists():
             success = False
-            self._sync_compilation_log_field(
-                self.log.compilation_swmm_successful, success
-            )
+            self._sync_compilation_log_field(self.log.compilation_swmm_successful, success)
             return success
         log = ut.read_text_file_as_string(logfile)
         success_markers = ("Built target runswmm", "Built target swmm5")
@@ -1304,18 +1316,10 @@ class TRITONSWMM_system:
             exe_path = self.sys_paths.SWMM_build_dir / "swmm_build" / exe_name
             if exe_path.exists():
                 return exe_path
-            exe_path = (
-                self.sys_paths.SWMM_build_dir
-                / "swmm_build"
-                / "bin"
-                / "Release"
-                / exe_name
-            )
+            exe_path = self.sys_paths.SWMM_build_dir / "swmm_build" / "bin" / "Release" / exe_name
             if exe_path.exists():
                 return exe_path
-            exe_path = (
-                self.sys_paths.SWMM_build_dir / "swmm_build" / "src" / "run" / exe_name
-            )
+            exe_path = self.sys_paths.SWMM_build_dir / "swmm_build" / "src" / "run" / exe_name
             if exe_path.exists():
                 return exe_path
         return None
@@ -1329,9 +1333,7 @@ class TRITONSWMM_system:
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log
         success = swmm_check and triton_check
-        self._sync_compilation_log_field(
-            self.log.compilation_tritonswmm_cpu_successful, success
-        )
+        self._sync_compilation_log_field(self.log.compilation_tritonswmm_cpu_successful, success)
         return success
 
     @property
@@ -1339,23 +1341,17 @@ class TRITONSWMM_system:
         """Check if TRITON-SWMM GPU backend compiled successfully."""
         if self.sys_paths.compilation_logfile_gpu is None:
             success = False
-            self._sync_compilation_log_field(
-                self.log.compilation_tritonswmm_gpu_successful, success
-            )
+            self._sync_compilation_log_field(self.log.compilation_tritonswmm_gpu_successful, success)
             return success
         if not self.sys_paths.compilation_logfile_gpu.exists():
             success = False
-            self._sync_compilation_log_field(
-                self.log.compilation_tritonswmm_gpu_successful, success
-            )
+            self._sync_compilation_log_field(self.log.compilation_tritonswmm_gpu_successful, success)
             return success
         log = self.retrieve_compilation_log("gpu")
         swmm_check = "Built target swmm5" in log
         triton_check = "[100%] Built target triton.exe" in log
         success = swmm_check and triton_check
-        self._sync_compilation_log_field(
-            self.log.compilation_tritonswmm_gpu_successful, success
-        )
+        self._sync_compilation_log_field(self.log.compilation_tritonswmm_gpu_successful, success)
         return success
 
     @property
@@ -1365,9 +1361,7 @@ class TRITONSWMM_system:
         For individual backend checks, use compilation_cpu_successful and compilation_gpu_successful.
         """
         if self.cfg_system.gpu_compilation_backend:
-            success = (
-                self.compilation_cpu_successful and self.compilation_gpu_successful
-            )
+            success = self.compilation_cpu_successful and self.compilation_gpu_successful
         else:
             success = self.compilation_cpu_successful
         return success
@@ -1455,9 +1449,7 @@ def spatial_resampling(xds_to_resample, xds_target, missingfillval=-9999):
         xds_target, resampling=Resampling.average
     )
     # fill missing values with prespecified val (this should just corresponds to areas where one dataset has pieces outside the other)
-    xds_to_resampled = xr.where(
-        xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled
-    )
+    xds_to_resampled = xr.where(xds_to_resampled >= 3.403e37, x=missingfillval, y=xds_to_resampled)
     return xds_to_resampled
 
 
@@ -1467,20 +1459,13 @@ def compute_grid_resolution(rds):
     return res_xy, mean_grid_size
 
 
-def coarsen_georaster(
-    rds, target_resolution, xllcorner=None, yllcorner=None, nrows=None, ncols=None
-):
+def coarsen_georaster(rds, target_resolution, xllcorner=None, yllcorner=None, nrows=None, ncols=None):
     crs = rds.rio.crs
     _, og_avg_gridsize = compute_grid_resolution(rds)
     res_multiplier = target_resolution / og_avg_gridsize
     target_res = og_avg_gridsize * res_multiplier
 
-    if (
-        xllcorner is not None
-        and yllcorner is not None
-        and nrows is not None
-        and ncols is not None
-    ):
+    if xllcorner is not None and yllcorner is not None and nrows is not None and ncols is not None:
         # left, bottom, right, top = rds.rio.bounds()  # type: ignore
         # ncols = int(np.ceil((right - xllcorner) / target_resolution))
         # nrows = int(np.ceil((top - yllcorner) / target_resolution))

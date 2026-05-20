@@ -499,7 +499,17 @@ class TRITONSWMM_run:
                 env_exports.append(f'export {key}="{escaped_value}"')
             env_export_str = "; ".join(env_exports)
 
-            full_cmd = f"{env_export_str}; {module_load_cmd}{launch_cmd_str}"
+            # Re-prepend ${CONDA_PREFIX}/lib AFTER module_load_cmd: module load
+            # gcc/12.4.0 prepends gcc-12 lib (max GLIBCXX_3.4.30) which demotes
+            # the conda lib exported just above. The conda lib has GLIBCXX_3.4.31
+            # required by conda libgdal/libmuparser. Empirically: sa-43 (A100)
+            # failed at runtime with `version GLIBCXX_3.4.31 not found` resolving
+            # to `/apps/.../gcc/12.4.0/lib64/libstdc++.so.6` until this re-prepend
+            # lands (uva_sensitivity_suite investigation, 2026-05-20).
+            post_module_ld = (
+                'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; ' if module_load_cmd else ""
+            )
+            full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
                 "-lc",
@@ -655,16 +665,23 @@ class TRITONSWMM_run:
             raise ValueError(f"Unknown run_mode: {run_mode}")
 
         # Build the full command with explicit environment variable exports.
-        # env["LD_LIBRARY_PATH"] already contains the full path set (swmm_bin prepended
-        # to og_env's LD_LIBRARY_PATH which includes rocm/libfabric paths from the SBATCH
-        # module load), so ordering relative to module_load_cmd doesn't matter here.
         env_exports = []
         for key, value in env.items():
             escaped_value = value.replace('"', '\\"')
             env_exports.append(f'export {key}="{escaped_value}"')
         env_export_str = "; ".join(env_exports)
-
-        full_cmd = f"{env_export_str}; {module_load_cmd}{launch_cmd_str}"
+        # Re-prepend ${CONDA_PREFIX}/lib AFTER module_load_cmd. The prior comment
+        # ("ordering relative to module_load_cmd doesn't matter here") is FALSIFIED
+        # on UVA Rivanna where `module load gcc/12.4.0` prepends a gcc-12 libstdc++
+        # (max GLIBCXX_3.4.30) ahead of the conda lib exported earlier. The conda
+        # lib has GLIBCXX_3.4.31 required by conda libgdal/libmuparser; without
+        # the re-prepend, A100 sims fail at runtime with `version GLIBCXX_3.4.31
+        # not found` resolving to the gcc module lib64. Empirically: sa-43–54
+        # blocked until this re-prepend lands (uva_sensitivity_suite, 2026-05-20).
+        # On Frontier (rocm/libfabric only) the re-prepend is a no-op — conda lib
+        # is already first in LD_LIBRARY_PATH.
+        post_module_ld = 'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; ' if module_load_cmd else ""
+        full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",
             "-lc",
