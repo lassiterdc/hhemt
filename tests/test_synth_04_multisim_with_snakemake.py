@@ -677,3 +677,64 @@ def test_emit_plot_with_sources_html_branch(tmp_path):
     assert manifest["preview_dpi"] is None
     assert manifest["figure_size_inches"] is None
     assert manifest["preview_size_bytes"] is None
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
+    synth_multi_sim_analysis_cached,
+):
+    # Phase 8.5: when cleanup_stale_metadata=True (default) and orphan
+    # metadata records are enumerated, analysis.run() subprocess-invokes
+    # snakemake --cleanup-metadata. The enumeration is deterministic
+    # (no filesystem inspection) so it is non-empty whenever df_sims has
+    # rows. We mock submit_workflow + the subprocess invocation to verify
+    # the gate fires without re-running the workflow.
+    from unittest.mock import patch
+
+    analysis = synth_multi_sim_analysis_cached
+
+    # Deterministic enumeration covers the Phase 8 orphan paths.
+    orphan_paths = analysis._enumerate_stale_metadata_paths()
+    assert "plots/system_overview.png" in orphan_paths
+    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+    for event_iloc in analysis.df_sims.index:
+        ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+        event_id = compute_event_id_slug(ev)
+        assert f"plots/per_sim/{event_id}/peak_flood_depth.png" in orphan_paths
+        assert f"plots/per_sim/{event_id}/conduit_flow.png" in orphan_paths
+
+    # The cleanup gate is preconditioned on BOTH a Snakefile and a
+    # `.snakemake/metadata/` directory existing (skipped on first-run
+    # analyses where no metadata records can exist). Ensure both exist
+    # so the gate fires.
+    snakefile = analysis.analysis_paths.analysis_dir / "Snakefile"
+    snakefile.touch(exist_ok=True)
+    metadata_dir = analysis.analysis_paths.analysis_dir / ".snakemake" / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # Gate fires with cleanup_stale_metadata=True (default).
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=True, dry_run=True, verbose=False)
+    mock_inv.assert_called_once()
+    called_paths = mock_inv.call_args[0][0]
+    assert called_paths == orphan_paths
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_cleanup_stale_metadata_disabled_skips_invocation(
+    synth_multi_sim_analysis_cached,
+):
+    # Phase 8.5: when cleanup_stale_metadata=False, the cleanup gate does
+    # not fire — _invoke_snakemake_cleanup_metadata is not called.
+    from unittest.mock import patch
+
+    analysis = synth_multi_sim_analysis_cached
+    with (
+        patch.object(analysis, "_invoke_snakemake_cleanup_metadata") as mock_inv,
+        patch.object(analysis, "submit_workflow"),
+    ):
+        analysis.run(cleanup_stale_metadata=False, dry_run=True, verbose=False)
+    mock_inv.assert_not_called()
