@@ -537,6 +537,27 @@ class TableInteractiveConfig(cfgBaseModel):
                 )
         return v
 
+    def resolve_persistence_key(self, *, renderer_name: str, analysis_id: str) -> str | None:
+        """Resolve the effective Tabulator persistenceID for a renderer.
+
+        When ``persistence_id`` is set by the user, returns
+        ``f"{renderer_name}__{persistence_id}"`` so multiple renderers
+        sharing this config (per_analysis_summary + scenario_status_appendix)
+        don't collide on the same localStorage key. When unset, derives
+        from ``analysis_id`` via the same sanitization rule as the renderer
+        previously applied inline. Returns ``None`` only when both
+        ``persistence_id`` is unset AND ``analysis_id`` is empty/unsafe
+        after sanitization — in which case the renderer should not enable
+        persistence.
+        """
+        from TRITON_SWMM_toolkit.report_renderers._tabulator_defaults import (
+            sanitize_persistence_id,
+        )
+        effective = self.persistence_id or sanitize_persistence_id(analysis_id)
+        if not effective or effective == "_":
+            return None
+        return f"{renderer_name}__{effective}"
+
 
 class PerSimConfig(cfgBaseModel):
     map: PerSimMapConfig = Field(default_factory=PerSimMapConfig)

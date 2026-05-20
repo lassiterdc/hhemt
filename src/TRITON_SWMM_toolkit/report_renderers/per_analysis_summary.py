@@ -10,28 +10,21 @@ sub-analysis with status counts.
 
 from __future__ import annotations
 
-import json
 import os
-import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pandas as pd
 
+from TRITON_SWMM_toolkit.report_renderers._tabulator_defaults import (
+    build_columns_spec,
+    build_html_document,
+    build_options_dict,
+)
+
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.config.report import report_config
-
-
-_TABULATOR_VERSION = "6.4.0"
-_TABULATOR_JS_CDN = (
-    f"https://cdn.jsdelivr.net/npm/tabulator-tables@{_TABULATOR_VERSION}"
-    "/dist/js/tabulator.min.js"
-)
-_TABULATOR_CSS_CDN = (
-    f"https://cdn.jsdelivr.net/npm/tabulator-tables@{_TABULATOR_VERSION}"
-    "/dist/css/tabulator.min.css"
-)
 
 
 def render(
@@ -210,93 +203,43 @@ def render(
 
 
 def _build_tabulator_html(df: pd.DataFrame, report_cfg: report_config) -> str:
-    """Build a self-contained Tabulator HTML document from a DataFrame.
+    """Build a self-contained Tabulator HTML document from the workflow-health DataFrame.
 
-    columns_spec comes from df.columns (one Tabulator column per DataFrame
-    column). data_records comes from df.to_dict(orient='records'). Options
-    come from PerAnalysisSummaryConfig.interactive (TableInteractiveConfig
-    instance wired in at Phase 1).
+    Delegates construction to ``_tabulator_defaults``. No persistence-id
+    derivation here — per_analysis_summary's data is fully aggregate (one
+    row per metric in regular mode; one row per sub-analysis in
+    sensitivity-master mode) so cross-analysis persistence collision is
+    not a risk; ``persistence_id`` is wired only when the user explicitly
+    sets it via config.
     """
     tab_cfg = report_cfg.per_analysis_summary.interactive
 
-    columns_spec: list[dict] = []
-    for col in df.columns:
-        col_spec: dict = {
-            "title": str(col),
-            "field": str(col),
-        }
-        if tab_cfg.header_filter:
-            col_spec["headerFilter"] = "input"
-        if tab_cfg.visible_columns_default is not None:
-            col_spec["visible"] = str(col) in set(tab_cfg.visible_columns_default)
-        columns_spec.append(col_spec)
+    columns_spec = build_columns_spec(
+        df,
+        visible_columns_default=tab_cfg.visible_columns_default,
+        header_filter=tab_cfg.header_filter,
+    )
 
-    data_records = df.to_dict(orient="records")
+    options = build_options_dict(
+        df,
+        columns_spec=columns_spec,
+        table_height=tab_cfg.table_height,
+        pagination_size=tab_cfg.pagination_size,
+        persistence_id=tab_cfg.persistence_id,
+    )
 
-    options: dict = {
-        "data": data_records,
-        "columns": columns_spec,
-        "layout": "fitColumns",
-        "height": tab_cfg.table_height,
-    }
-    if tab_cfg.pagination_size > 0:
-        options["pagination"] = "local"
-        options["paginationSize"] = tab_cfg.pagination_size
-    if tab_cfg.persistence_id is not None:
-        options["persistence"] = True
-        options["persistenceID"] = tab_cfg.persistence_id
-
-    # JS mode resolution. Inline mode is /design-figure Phase C scope; fall
-    # back to CDN with a one-time warning when requested during the pre-step
-    # informational-congruence port.
     js_mode = getattr(
         getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn",
     )
-    if js_mode == "inline":
-        warnings.warn(
-            "per_analysis_summary: tabulator_js_mode='inline' is not yet "
-            "implemented; falling back to CDN. Inline bundling is scheduled "
-            "for /design-figure Phase C iteration.",
-            stacklevel=2,
-        )
 
-    head_assets = (
-        f'<link rel="stylesheet" href="{_TABULATOR_CSS_CDN}">\n'
-        f'<script src="{_TABULATOR_JS_CDN}"></script>'
+    return build_html_document(
+        title="Analysis summary",
+        container_id="summary-table",
+        body_heading_html="",
+        options=options,
+        js_mode=js_mode,
+        renderer_name="per_analysis_summary",
     )
-
-    options_json = json.dumps(options, default=_json_default)
-
-    return (
-        "<!DOCTYPE html>\n"
-        '<html lang="en">\n'
-        "<head>\n"
-        '<meta charset="utf-8">\n'
-        "<title>Analysis summary</title>\n"
-        f"{head_assets}\n"
-        "<style>\n"
-        "body { margin: 0; padding: 12px; "
-        'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", '
-        "Roboto, sans-serif; }\n"
-        "#summary-table { width: 100%; }\n"
-        "</style>\n"
-        "</head>\n"
-        "<body>\n"
-        '<div id="summary-table"></div>\n'
-        "<script>\n"
-        f"const tableOptions = {options_json};\n"
-        'new Tabulator("#summary-table", tableOptions);\n'
-        "</script>\n"
-        "</body>\n"
-        "</html>\n"
-    )
-
-
-def _json_default(obj):
-    """JSON serialization fallback for non-native types (numpy scalars, etc.)."""
-    if hasattr(obj, "item"):
-        return obj.item()
-    return str(obj)
 
 
 def _is_scenario_successful(analysis, event_iloc: int) -> bool:
