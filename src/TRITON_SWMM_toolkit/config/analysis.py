@@ -220,7 +220,7 @@ class analysis_config(cfgBaseModel):
     )
     process_output_target_chunksize_mb: int = Field(
         200,
-        description="Chunks size for processed outputs.",
+        description="Target memory budget (MiB) per chunk for streaming-chunked operations on per-scenario timeseries output. Consumed by both write_timeseries_outputs (raw-to-zarr chunked write at process_simulation.py L544/L736) AND summarize_triton_simulation_results' _streaming_argmax_with_companions helper (per-cell argmax+companion reduction). Default 200 MiB; at the coarsest grids (0.35m) the chunk degenerates to 1 timestep per chunk and the reduction runs O(N_tsteps) chunks — see Gotcha #23.",
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
