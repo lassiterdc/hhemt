@@ -37,8 +37,8 @@ from pathlib import Path
 
 from TRITON_SWMM_toolkit.version_migration.context import MigrationContext
 
-version_from: int = 7
-version_to: int = 8
+version_from: int = 8
+version_to: int = 9
 description: str = (
     "Composite CRSConfig submodel under cfg_system.crs; vertical_crs_epsg "
     "field on system_log"
