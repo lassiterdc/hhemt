@@ -1328,8 +1328,13 @@ class TRITONSWMM_sim_post_processing:
 
         # Summarize
         target_dem_res = self._system.cfg_system.target_dem_resolution
+        chunksize_mb = self._analysis.cfg_analysis.process_output_target_chunksize_mb
         ds_summary = summarize_triton_simulation_results(
-            ds_full, self._scenario.event_iloc, target_dem_res, verbose=verbose
+            ds_full,
+            self._scenario.event_iloc,
+            target_dem_res,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
         )
 
         # Write
@@ -1797,100 +1802,308 @@ def summarize_swmm_simulation_results(ds, event_iloc, tstep_dimname="date_time")
     return ds
 
 
-def summarize_triton_simulation_results(
-    ds, event_iloc, target_dem_resolution, tstep_dimname="timestep_min", verbose=False
+def _streaming_argmax_with_companions(
+    ds,
+    primary_var,
+    companion_vars,
+    dim,
+    chunksize_mb,
+    verbose=False,
 ):
     """
-    Summarize TRITON simulation results by computing max velocity, time of max velocity,
-    water level statistics, and final flood volume.
+    Compute per-cell max and argmax of ``primary_var`` along ``dim``, plus the
+    values of each variable in ``companion_vars`` at the argmax timestep, using
+    explicit per-chunk Python loops to bound peak working-set memory.
 
-    Phase 1.2: Uses lazy dask operations to minimize memory usage. All computations
-    remain lazy until the final dataset is returned, at which point only the small
-    summary results are materialized (not the full timeseries).
+    This routine replaces the lazy-dask + ``.sel(<dask-array>)`` pattern in
+    ``summarize_triton_simulation_results`` that triggered full-timeseries
+    materialization inside a single dask task. The per-chunk loop keeps peak RSS
+    bounded by ``chunksize_mb`` plus a small per-cell scratch state, regardless
+    of timeseries length or grid resolution.
 
     Parameters
     ----------
     ds : xr.Dataset
-        TRITON timeseries dataset (should be opened with chunks="auto" for lazy loading)
-    event_iloc : int
-        Event index for coordinate assignment
-    target_dem_resolution : float
-        Target DEM resolution for grid validation (meters)
-    tstep_dimname : str, optional
-        Name of timestep dimension (default: "timestep_min")
+        Source dataset (typically lazy / dask-backed). Must contain
+        ``primary_var``, all ``companion_vars``, and ``dim``.
+    primary_var : str
+        Variable name whose max-along-``dim`` is computed. May be a name that is
+        NOT in ``ds.data_vars`` if it is constructed by the caller and assigned
+        to ``ds`` before invocation (e.g., ``velocity_mps``).
+    companion_vars : list[str]
+        Names of variables to sample at the per-cell argmax timestep. Each name
+        must exist in ``ds.data_vars`` and share ``dim``.
+    dim : str
+        Name of the dimension to reduce along (typically ``"timestep_min"``).
+    chunksize_mb : float
+        Target memory budget per chunk, in MiB. Used by
+        ``estimate_timesteps_per_chunk`` to derive ``chunk_timesteps``.
     verbose : bool, optional
-        Print progress messages (default: False)
+        Print per-chunk progress messages.
+
+    Returns
+    -------
+    dict[str, np.ndarray]
+        Keys:
+        - ``f"max_{primary_var}"``: float64 (ny, nx) — per-cell maximum.
+        - ``f"argmax_{dim}"``: float64 (ny, nx) — value of ``dim`` coordinate at argmax;
+          NaN for all-NaN cells.
+        - ``f"{cv}_at_argmax"`` for each ``cv`` in ``companion_vars``:
+          float64 (ny, nx) — value of ``cv`` at the argmax timestep; NaN for all-NaN cells.
+
+    Examples
+    --------
+    >>> # Helper call with primary='velocity_mps', companions=['velocity_x_mps','velocity_y_mps']:
+    >>> # result.keys() = {'max_velocity_mps', 'argmax_timestep_min',
+    >>> #                  'velocity_x_mps_at_argmax', 'velocity_y_mps_at_argmax'}
+
+    Notes
+    -----
+    First-occurrence tie semantics match ``xr.DataArray.idxmax(skipna=True)``:
+    when multiple timesteps share the per-cell maximum, the earliest (lowest
+    ``dim`` index) wins. This is enforced via strict ``>`` in the running-state
+    update and via ``np.argmax`` (which returns first occurrence) inside each
+    chunk.
+
+    Memory bound: ``peak_bytes ≈ chunk_timesteps × ny × nx × 8 × n_active_arrays``
+    where ``n_active_arrays = 1 (primary) + len(companion_vars) + 1 (intermediate scratch)``.
+    Per-cell running state adds ``(2 + len(companion_vars)) × ny × nx × 8`` bytes.
+    """
+    from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
+
+    if dim not in ds.dims:
+        raise ValueError(f"dim {dim!r} not in ds.dims {tuple(ds.dims)}")
+    if primary_var not in ds.data_vars:
+        raise ValueError(f"primary_var {primary_var!r} not in ds.data_vars")
+    for cv in companion_vars:
+        if cv not in ds.data_vars:
+            raise ValueError(f"companion_var {cv!r} not in ds.data_vars")
+
+    ny = len(ds["y"])
+    nx = len(ds["x"])
+    dim_values = ds[dim].values
+    total_timesteps = len(dim_values)
+
+    n_variables = 1 + len(companion_vars) + 1  # primary + companions + scratch
+    chunk_size = estimate_timesteps_per_chunk(
+        rds_dem=ds[primary_var].isel({dim: 0}),
+        n_variables=n_variables,
+        memory_budget_MiB=chunksize_mb,
+    )
+    n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
+
+    if verbose:
+        print(
+            f"[Streaming Argmax] primary={primary_var}, companions={companion_vars}, "
+            f"chunk_timesteps={chunk_size}, n_chunks={n_chunks}, total={total_timesteps}",
+            flush=True,
+        )
+
+    running_max = np.full((ny, nx), -np.inf, dtype=np.float64)
+    argmax_idx = np.full((ny, nx), -1, dtype=np.int64)
+    companion_at_argmax = {
+        cv: np.full((ny, nx), np.nan, dtype=np.float64) for cv in companion_vars
+    }
+
+    for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
+        chunk_end = min(chunk_start + chunk_size, total_timesteps)
+
+        if verbose:
+            print(
+                f"[Streaming Argmax] chunk {chunk_idx + 1}/{n_chunks}: "
+                f"timesteps {chunk_start}-{chunk_end - 1}",
+                flush=True,
+            )
+
+        primary_chunk = ds[primary_var].isel({dim: slice(chunk_start, chunk_end)}).values
+        companion_chunks = {
+            cv: ds[cv].isel({dim: slice(chunk_start, chunk_end)}).values
+            for cv in companion_vars
+        }
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            chunk_max = np.nanmax(primary_chunk, axis=0)
+        chunk_argmax_local = np.argmax(
+            np.where(np.isnan(primary_chunk), -np.inf, primary_chunk),
+            axis=0,
+        )
+        chunk_argmax_global = chunk_argmax_local + chunk_start
+
+        update_mask = chunk_max > running_max
+        running_max = np.where(update_mask, chunk_max, running_max)
+        argmax_idx = np.where(update_mask, chunk_argmax_global, argmax_idx)
+
+        for cv, cv_chunk in companion_chunks.items():
+            yi, xi = np.ogrid[:ny, :nx]
+            cv_at_chunk_argmax = cv_chunk[chunk_argmax_local, yi, xi]
+            companion_at_argmax[cv] = np.where(
+                update_mask, cv_at_chunk_argmax, companion_at_argmax[cv]
+            )
+
+        del primary_chunk
+        del companion_chunks
+        gc.collect()
+
+    no_data_mask = argmax_idx == -1
+
+    running_max_out = np.where(no_data_mask, np.nan, running_max).astype(np.float64)
+    argmax_dim_values_out = np.where(
+        no_data_mask, np.nan, dim_values[np.where(no_data_mask, 0, argmax_idx)]
+    ).astype(np.float64)
+
+    result = {
+        f"max_{primary_var}": running_max_out,
+        f"argmax_{dim}": argmax_dim_values_out,
+    }
+    for cv in companion_vars:
+        result[f"{cv}_at_argmax"] = np.where(
+            no_data_mask, np.nan, companion_at_argmax[cv]
+        ).astype(np.float64)
+
+    return result
+
+
+def summarize_triton_simulation_results(
+    ds,
+    event_iloc,
+    target_dem_resolution,
+    *,
+    chunksize_mb,
+    tstep_dimname="timestep_min",
+    verbose=False,
+):
+    """
+    Summarize TRITON simulation results by computing max velocity, time of max
+    velocity, water level statistics, and final flood volume — using a streaming
+    chunked reduction that bounds peak working-set memory by ``chunksize_mb``.
+
+    Replaces a prior lazy-dask implementation whose final ``.compute()``
+    triggered full-timeseries materialization via ``.sel(<lazy-dask-array>)``
+    advanced indexing. The streaming refactor uses ``_streaming_argmax_with_companions``
+    to compute the max + argmax + companion-at-argmax fields under explicit
+    Python loop control, with chunk size derived from ``chunksize_mb`` and the
+    grid dimensions.
+
+    Parameters
+    ----------
+    ds : xr.Dataset
+        TRITON timeseries dataset. Lazy / dask-backed is supported but no longer
+        required: the streaming helper materializes per-chunk slices via
+        ``.values`` directly.
+    event_iloc : int
+        Event index for coordinate assignment.
+    target_dem_resolution : float
+        Target DEM resolution for grid validation (meters).
+    chunksize_mb : float
+        Target memory budget per chunk, in MiB. Passed through to
+        ``_streaming_argmax_with_companions``. Typically sourced from
+        ``cfg_analysis.process_output_target_chunksize_mb``.
+    tstep_dimname : str, optional
+        Name of timestep dimension (default: ``"timestep_min"``).
+    verbose : bool, optional
+        Print progress messages (default: ``False``).
 
     Returns
     -------
     xr.Dataset
-        Summarized dataset with event_iloc coordinate and expanded dimensions.
-        This is a small dataset (no timestep dimension) that gets materialized
-        from lazy operations.
+        Summarized dataset with ``event_iloc`` coordinate and expanded dims.
+        Schema preserved verbatim from the prior implementation: variables
+        ``max_velocity_mps``, ``time_of_max_velocity_min``,
+        ``velocity_x_mps_at_time_of_max_velocity``,
+        ``velocity_y_mps_at_time_of_max_velocity``, ``max_wlevel_m``,
+        ``time_of_max_wlevel_min``, ``wlevel_m_last_tstep``,
+        ``final_surface_flood_volume_m3``.
     """
     if verbose:
-        print(f"[Summary] Computing summary statistics (lazy operations)", flush=True)
+        print(
+            f"[Summary] Computing summary statistics (streaming chunked reduction, "
+            f"chunksize_mb={chunksize_mb})",
+            flush=True,
+        )
 
-    # Get timestep coordinate values (small operation, can materialize)
     tsteps = ds[tstep_dimname].to_series()
 
-    # Phase 1.2: All operations below remain lazy (dask arrays) until explicitly computed
-    # This allows xarray/dask to optimize the computation graph
+    ds_with_velocity = ds.assign(
+        velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
+    )
 
-    # Compute max velocity, time of max velocity, and velocity components at max
-    # Note: These operations build a dask computation graph, not actual results yet
-    velocity_mps = (ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5
+    velocity_result = _streaming_argmax_with_companions(
+        ds=ds_with_velocity,
+        primary_var="velocity_mps",
+        companion_vars=["velocity_x_mps", "velocity_y_mps"],
+        dim=tstep_dimname,
+        chunksize_mb=chunksize_mb,
+        verbose=verbose,
+    )
+    del ds_with_velocity
+    gc.collect()
 
-    # Create summary dataset with lazy operations
     ds_summary = xr.Dataset()
+    cell_dims = ("y", "x")
+    cell_coords = {"y": ds["y"].values, "x": ds["x"].values}
 
-    # Max velocity (lazy)
-    ds_summary["max_velocity_mps"] = velocity_mps.max(dim=tstep_dimname, skipna=True)
-
-    # Time of max velocity (lazy)
-    time_of_max_velocity = velocity_mps.idxmax(dim=tstep_dimname, skipna=True)
-    ds_summary["time_of_max_velocity_min"] = time_of_max_velocity
-
-    # Velocity components at time of max (lazy)
-    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = (
-        ds["velocity_x_mps"].sel(timestep_min=time_of_max_velocity).reset_coords(drop=True)
+    ds_summary["max_velocity_mps"] = xr.DataArray(
+        velocity_result["max_velocity_mps"], dims=cell_dims, coords=cell_coords
     )
-    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = (
-        ds["velocity_y_mps"].sel(timestep_min=time_of_max_velocity).reset_coords(drop=True)
+    ds_summary["time_of_max_velocity_min"] = xr.DataArray(
+        velocity_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["velocity_x_mps_at_time_of_max_velocity"] = xr.DataArray(
+        velocity_result["velocity_x_mps_at_argmax"], dims=cell_dims, coords=cell_coords
+    )
+    ds_summary["velocity_y_mps_at_time_of_max_velocity"] = xr.DataArray(
+        velocity_result["velocity_y_mps_at_argmax"], dims=cell_dims, coords=cell_coords
     )
 
-    # Max water level and time of max (lazy)
-    # Handle MH variable if it exists with timestep dimension
     if "max_wlevel_m" in ds.data_vars and tstep_dimname in ds.max_wlevel_m.dims:
-        # MH file has max across all computational timesteps at each reporting timestep
-        # Take the last reporting timestep which has the overall maximum
-        ds_summary["max_wlevel_m"] = ds.max_wlevel_m.sel(
-            timestep_min=ds.max_wlevel_m.timestep_min.to_series().max()
-        ).reset_coords(drop=True)
+        ds_summary["max_wlevel_m"] = (
+            ds.max_wlevel_m.sel(timestep_min=ds.max_wlevel_m.timestep_min.to_series().max())
+            .reset_coords(drop=True)
+            .compute()
+        )
+        wlevel_argmax_result = _streaming_argmax_with_companions(
+            ds=ds, primary_var="wlevel_m", companion_vars=[],
+            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
+        )
+        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
+            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
+        )
     elif "max_wlevel_m" in ds.data_vars:
-        # Already a summary variable, just copy
-        ds_summary["max_wlevel_m"] = ds["max_wlevel_m"]
+        ds_summary["max_wlevel_m"] = ds["max_wlevel_m"].compute()
+        wlevel_argmax_result = _streaming_argmax_with_companions(
+            ds=ds, primary_var="wlevel_m", companion_vars=[],
+            dim=tstep_dimname, chunksize_mb=chunksize_mb, verbose=verbose,
+        )
+        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
+            wlevel_argmax_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords,
+        )
     else:
-        # Compute from wlevel_m timeseries
-        ds_summary["max_wlevel_m"] = ds["wlevel_m"].max(dim=tstep_dimname, skipna=True)
+        wlevel_result = _streaming_argmax_with_companions(
+            ds=ds,
+            primary_var="wlevel_m",
+            companion_vars=[],
+            dim=tstep_dimname,
+            chunksize_mb=chunksize_mb,
+            verbose=verbose,
+        )
+        ds_summary["max_wlevel_m"] = xr.DataArray(
+            wlevel_result["max_wlevel_m"], dims=cell_dims, coords=cell_coords
+        )
+        ds_summary["time_of_max_wlevel_min"] = xr.DataArray(
+            wlevel_result[f"argmax_{tstep_dimname}"], dims=cell_dims, coords=cell_coords
+        )
 
-    ds_summary["time_of_max_wlevel_min"] = ds["wlevel_m"].idxmax(dim=tstep_dimname, skipna=True)
-
-    # Water level in last timestep (lazy)
-    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(timestep_min=tsteps.max()).reset_coords(drop=True)
+    ds_summary["wlevel_m_last_tstep"] = ds["wlevel_m"].sel(
+        timestep_min=tsteps.max()
+    ).reset_coords(drop=True).compute()
     ds_summary["wlevel_m_last_tstep"].attrs["notes"] = (
         "this is the water level in the last reported time step for computing mass balance"
     )
 
-    # Compute final stored volume (lazy)
-    # Grid validation (small operation, can materialize)
     x_dim = ds.x.to_series().diff().mode().iloc[0]
     y_dim = ds.y.to_series().diff().mode().iloc[0]
-
-    # Use tolerance-based comparison for floating-point values
-    # 1 micrometer tolerance is negligible for meter-scale grids but allows for
-    # floating-point precision differences between YAML serialization and binary output
-    tolerance = 1e-6  # 1 micrometer
+    tolerance = 1e-6
 
     if not np.isclose(abs(x_dim), abs(y_dim), atol=tolerance, rtol=0):
         raise ValueError(
@@ -1908,22 +2121,15 @@ def summarize_triton_simulation_results(
             f"Tolerance: {tolerance}m"
         )
 
-    ds_summary["final_surface_flood_volume_m3"] = (ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)).sum()
+    ds_summary["final_surface_flood_volume_m3"] = (
+        ds_summary["wlevel_m_last_tstep"] * abs(x_dim) * abs(y_dim)
+    ).sum()
     ds_summary["final_surface_flood_volume_m3"].attrs["units"] = "m3"
 
-    # Assign event_iloc coordinate and expand dims (metadata operations)
     ds_summary = ds_summary.assign_coords(coords=dict(event_iloc=event_iloc))
     ds_summary = ds_summary.expand_dims("event_iloc")
 
     if verbose:
-        print(f"[Summary] Materializing summary results (.compute())", flush=True)
-
-    # Phase 1.2: This is where the actual computation happens
-    # Dask optimizes the entire computation graph and executes it efficiently
-    # Only the small summary dataset (no timestep dimension) is materialized
-    ds_summary = ds_summary.compute()
-
-    if verbose:
-        print(f"[Summary] Summary generation complete", flush=True)
+        print("[Summary] Summary generation complete", flush=True)
 
     return ds_summary

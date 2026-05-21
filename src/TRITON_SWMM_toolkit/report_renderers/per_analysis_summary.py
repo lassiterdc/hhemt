@@ -1,19 +1,26 @@
-"""Per-analysis summary renderer: deterministic workflow-health table as matplotlib SVG.
+"""Per-analysis summary renderer: workflow-health table as a Tabulator data grid (HTML).
 
-Default rows: total simulations, n successful / pending / failed, enabled model
-types, sensitivity-analysis mode (when applicable). Comprehensive diagnostic
-content (continuity errors, performance breakdowns, conduit utilization,
-sensitivity benchmarking) lives in the v2 comprehensive report catalog plan;
-this table is a workflow-health placeholder for the v1 report.
+Migrated from a matplotlib `ax.table(...)` + SVG output to a self-contained
+Tabulator HTML emit at Phase 6 of the interactive_report_renderers feature.
+Default rows in regular multisim mode: total simulations, expected total,
+n successful / pending / failed, enabled model types, sensitivity-analysis
+mode (when applicable). Sensitivity-master mode renders one row per
+sub-analysis with status counts.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import matplotlib.pyplot as plt
 import pandas as pd
+
+from TRITON_SWMM_toolkit.report_renderers._tabulator_defaults import (
+    build_columns_spec,
+    build_html_document,
+    build_options_dict,
+)
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
@@ -25,18 +32,7 @@ def render(
     report_cfg: report_config,
     output_path: Path,
 ) -> Path:
-    """Render the analysis summary table to output_path."""
-    static_backend = getattr(
-        getattr(report_cfg, "interactive", None),
-        "static_backend",
-        "plotly",
-    )
-    if static_backend == "plotly":
-        from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
-            warn_no_plotly_branch,
-        )
-        warn_no_plotly_branch("per_analysis_summary")
-
+    """Render the analysis summary table to output_path as a Tabulator data grid."""
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
@@ -44,16 +40,13 @@ def render(
         ProvenanceLog,
         ProvenanceRef,
     )
-    from TRITON_SWMM_toolkit.report_renderers.system_overview import _apply_rcparams
 
-    _apply_rcparams(report_cfg)
     prov = ProvenanceLog()
 
-    # Detect sensitivity-master scope: the analysis is the master sensitivity
-    # analysis with sub-analyses populated. In that case, render a per-sa-row
-    # table (one row per sub-analysis showing status counts) — Iteration 6
-    # "show all sub-analyses" scope. Otherwise fall back to the regular
-    # multisim single-scope table.
+    # Sensitivity-master scope: the analysis is the master sensitivity analysis
+    # with sub-analyses populated. Render a per-sa-row table (one row per
+    # sub-analysis showing status counts). Otherwise fall back to the regular
+    # multisim single-scope metrics table.
     is_sensitivity_master = (
         getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
         and getattr(analysis, "sensitivity", None) is not None
@@ -63,7 +56,6 @@ def render(
     metrics = report_cfg.per_analysis_summary.metrics
 
     if is_sensitivity_master:
-        # Multi-row table: one row per sub-analysis with status counts.
         per_sa_rows = []
         for sa_id, sub in analysis.sensitivity.sub_analyses.items():
             n = len(sub.df_sims.index)
@@ -85,45 +77,39 @@ def render(
     else:
         n_sims = len(analysis.df_sims.index)
         # Prefer scenario_status.csv (written by export_scenario_status.py as
-        # Snakemake onsuccess/onerror hook) for pending/failed counts —
-        # already aggregates the per-log inference. Fall back to per-log
-        # iteration if the CSV is missing (e.g., workflow killed before the
-        # hook ran).
-        scenario_status_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+        # Snakemake onsuccess/onerror hook). Fall back to per-log iteration
+        # if the CSV is missing.
+        scenario_status_csv = (
+            Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+        )
         if scenario_status_csv.exists():
-            # CSV schema (per export_scenario_status.py): one row per
-            # (event_iloc, model_type) with `run_completed` boolean column.
-            # No explicit status column — derive: True → success; False with
-            # `scenario_setup=True` → failed; everything else → pending.
             status_df = pd.read_csv(scenario_status_csv)
-            # Aggregate per scenario (event_iloc): a scenario is successful
-            # when ALL its model_type rows have run_completed=True; failed if
-            # any row has scenario_setup=True but run_completed=False;
-            # pending otherwise.
-            success_per_event = status_df.groupby("event_iloc")["run_completed"].all()
+            success_per_event = status_df.groupby("event_iloc")[
+                "run_completed"
+            ].all()
             n_successful = int(success_per_event.sum())
-            # Failed: at least one model_type row failed (run_completed False
-            # but scenario was set up)
-            failed_mask = (~status_df["run_completed"].fillna(False).astype(bool)) & status_df["scenario_setup"].fillna(False).astype(bool)
+            failed_mask = (
+                ~status_df["run_completed"].fillna(False).astype(bool)
+            ) & status_df["scenario_setup"].fillna(False).astype(bool)
             failed_events = status_df[failed_mask]["event_iloc"].unique()
-            # Exclude events that are otherwise successful (some model_types succeeded)
-            failed_events = [e for e in failed_events if not success_per_event.get(e, False)]
+            failed_events = [
+                e for e in failed_events if not success_per_event.get(e, False)
+            ]
             n_failed = len(failed_events)
             n_pending = max(0, n_sims - n_successful - n_failed)
         else:
             n_successful = sum(
-                1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i)
+                1
+                for i in analysis.df_sims.index
+                if _is_scenario_successful(analysis, i)
             )
             n_pending = sum(
-                1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i)
+                1
+                for i in analysis.df_sims.index
+                if _is_scenario_pending(analysis, i)
             )
             n_failed = n_sims - n_successful - n_pending
 
-        # Derived expected total: n_weather_events × n_sensitivity_rows for
-        # sensitivity analyses; n_weather_events otherwise. `analysis.df_setup`
-        # is NOT a proxy for `analysis.sensitivity.df_setup` — verified by grep
-        # of analysis.py + sensitivity_analysis.py. The renderer dispatches on
-        # `cfg_analysis.toggle_sensitivity_analysis` to pick the right object.
         n_weather_events = len(analysis.df_sims.index)
         is_sensitivity = (
             getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
@@ -132,10 +118,15 @@ def render(
         if is_sensitivity:
             n_sa_rows = len(analysis.sensitivity.df_setup.index)
             expected_total = n_weather_events * n_sa_rows
-            expected_label = f"Expected total (derived: {n_weather_events} events × {n_sa_rows} sa rows)"
+            expected_label = (
+                f"Expected total (derived: {n_weather_events} events "
+                f"× {n_sa_rows} sa rows)"
+            )
         else:
             expected_total = n_weather_events
-            expected_label = f"Expected total (derived: {n_weather_events} weather events)"
+            expected_label = (
+                f"Expected total (derived: {n_weather_events} weather events)"
+            )
 
         rows = []
         if "n_sims" in metrics:
@@ -149,39 +140,30 @@ def render(
             rows.append(("Failed", n_failed))
         if "enabled_model_types" in metrics:
             enabled = analysis._get_enabled_model_types()
-            rows.append(("Enabled model types", ", ".join(enabled) if enabled else "(none)"))
+            rows.append(
+                ("Enabled model types", ", ".join(enabled) if enabled else "(none)")
+            )
         if "sensitivity_mode" in metrics:
             sensitivity_cfg = getattr(report_cfg, "sensitivity", None)
-            mode = getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
+            mode = (
+                getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
+            )
             if mode is not None:
                 rows.append(("Sensitivity analysis mode", str(mode)))
 
         df = pd.DataFrame(rows, columns=["Metric", "Value"])
-    pas_cfg = report_cfg.per_analysis_summary
-    fig, ax = plt.subplots(
-        figsize=(
-            pas_cfg.figure_width_inches,
-            pas_cfg.figure_height_per_row_inches * len(df) + pas_cfg.figure_height_padding_inches,
-        ),
-        layout="constrained",
-    )
-    ax.axis("off")
 
-    # Source paths the parsers will read. The renderer's actual read in regular
-    # multisim mode is `scenario_status.csv` (line 87 above) and the fallback
-    # `_is_scenario_successful` reads `run_{model}.log` text files via
-    # `scen.model_run_completed(mt)` — NOT `log_{mt}.json`. The prior version
-    # of this block enumerated `log_{mt}.json` paths into the manifest, but
-    # those files are never opened. Drop the fabricated enumeration and
-    # declare `scenario_status.csv` as the actual source.
+    # Source-path declarations identical to legacy matplotlib renderer. Regular
+    # multisim mode reads scenario_status.csv; sensitivity-master mode reads
+    # nothing from disk (per-sa counts come from in-memory sub_analyses).
     source_paths: list[Path] = []
-    scenario_status_csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+    scenario_status_csv_path = (
+        Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+    )
     if scenario_status_csv_path.exists():
         source_paths.append(scenario_status_csv_path)
 
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
-    import os
-
     rel_sources = [
         os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths
     ]
@@ -189,7 +171,10 @@ def render(
     with prov.artist(
         axes_id="ax_summary",
         kind="table",
-        note="per-analysis workflow-health table (status counts + enabled model types)",
+        note=(
+            "per-analysis workflow-health table "
+            "(status counts + enabled model types) — Tabulator data grid"
+        ),
     ) as a:
         for rel in rel_sources:
             a.add_channel(
@@ -198,27 +183,62 @@ def render(
                     source_path=rel,
                     variable="run_completed",
                     attrs={},
-                    transform="aggregated by event_iloc to derive successful/pending/failed counts",
+                    transform=(
+                        "aggregated by event_iloc to derive "
+                        "successful/pending/failed counts"
+                    ),
                 ),
             )
-        table = ax.table(
-            cellText=df.values,
-            colLabels=df.columns,
-            cellLoc="left",
-            loc="center",
-        )
-    table.auto_set_font_size(False)
-    table.set_fontsize(report_cfg.figure_defaults.font_size)
-    table.scale(*report_cfg.per_analysis_summary.table_scale)
+
+    html_text = _build_tabulator_html(df, report_cfg)
 
     return emit_plot_with_sources(
-        fig,
+        html_text,
         output_path,
         source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
-        dpi=report_cfg.figure_defaults.savefig_dpi,
-        output_format="svg",
         provenance=prov,
+        output_format="html",
+    )
+
+
+def _build_tabulator_html(df: pd.DataFrame, report_cfg: report_config) -> str:
+    """Build a self-contained Tabulator HTML document from the workflow-health DataFrame.
+
+    Delegates construction to ``_tabulator_defaults``. No persistence-id
+    derivation here — per_analysis_summary's data is fully aggregate (one
+    row per metric in regular mode; one row per sub-analysis in
+    sensitivity-master mode) so cross-analysis persistence collision is
+    not a risk; ``persistence_id`` is wired only when the user explicitly
+    sets it via config.
+    """
+    tab_cfg = report_cfg.per_analysis_summary.interactive
+
+    columns_spec = build_columns_spec(
+        df,
+        visible_columns_default=tab_cfg.visible_columns_default,
+        header_filter=tab_cfg.header_filter,
+    )
+
+    options = build_options_dict(
+        df,
+        columns_spec=columns_spec,
+        table_height=tab_cfg.table_height,
+        pagination_size=tab_cfg.pagination_size,
+        persistence_id=tab_cfg.persistence_id,
+    )
+
+    js_mode = getattr(
+        getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn",
+    )
+
+    return build_html_document(
+        title="Analysis summary",
+        container_id="summary-table",
+        body_heading_html="",
+        options=options,
+        js_mode=js_mode,
+        renderer_name="per_analysis_summary",
     )
 
 

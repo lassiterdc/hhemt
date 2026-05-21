@@ -4,6 +4,60 @@ from pathlib import Path
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 
 
+class CRSConfig(cfgBaseModel):
+    """Composite horizontal + vertical CRS for the modeled system.
+
+    The horizontal CRS controls map-axis units (Easting/Northing) and
+    spatial reprojection. The vertical CRS controls elevation/WSE/depth
+    colorbar labels and provides a datum reference for CF-1.13
+    `vertical_datum` stamping on consolidated outputs.
+
+    `vertical_epsg` defaults to EPSG:5703 (NAVD88 height, m), which is
+    the dominant North American vertical datum. The datum-aware
+    `units.dem_elev_label`/`wse_label`/`depth_label` functions consume
+    this field to render colorbar suffixes like `"(m, NAVD88)"`.
+    Override with EPSG:6360 (NAVD88 ftUS) or EPSG:8228 (NAVD88 ft) when
+    the DEM is in non-metric vertical units.
+    """
+
+    horizontal_epsg: int = Field(
+        ...,
+        description=(
+            "EPSG code for the horizontal CRS of the DEM. Must be a "
+            "projected or geographic CRS. Validated against the DEM "
+            "raster's .rio.crs at system processing time."
+        ),
+    )
+    vertical_epsg: int = Field(
+        5703,
+        description=(
+            "EPSG code for the vertical CRS / datum of DEM elevations. "
+            "Defaults to 5703 (NAVD88 height, m). Drives elevation/WSE/"
+            "depth colorbar labels in renderers and CF-1.13 "
+            "vertical_datum stamping on consolidated outputs."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_crs_types(self):
+        import pyproj
+
+        horiz = pyproj.CRS.from_epsg(self.horizontal_epsg)
+        if not (horiz.is_projected or horiz.is_geographic):
+            raise ValueError(
+                f"horizontal_epsg {self.horizontal_epsg} is neither projected "
+                f"nor geographic; check the EPSG code."
+            )
+        vert = pyproj.CRS.from_epsg(self.vertical_epsg)
+        if not vert.is_vertical:
+            raise ValueError(
+                f"vertical_epsg {self.vertical_epsg} is not a vertical CRS; "
+                f"use EPSG:5703 (NAVD88 m), 6360 (NAVD88 ftUS), or 8228 "
+                f"(NAVD88 ft)."
+            )
+        return self
+
+
 class system_config(cfgBaseModel):
     """Pydantic model for TRITON-SWMM system configuration.
 
@@ -206,18 +260,27 @@ class system_config(cfgBaseModel):
             "Target number of rows in the processed DEM, mannings, and TRITON results"
         ),
     )
-    crs_epsg: Optional[int] = Field(
-        None,
+    crs: CRSConfig = Field(
+        ...,
         description=(
-            "EPSG code for the DEM coordinate reference system. If None, "
-            "derived from the DEM raster at runtime and logged for reproducibility. "
-            "When set, validated against the DEM's CRS at system processing time."
+            "Composite horizontal + vertical CRS for the modeled system. "
+            "horizontal_epsg is required; vertical_epsg defaults to 5703 "
+            "(NAVD88 m). See CRSConfig for full semantics."
         ),
     )
 
     @model_validator(mode="before")
     @classmethod
     def validate_toggle_dependencies(cls, values):
+        # Backward-compat shim (one-cycle, removable after consumers migrate):
+        # accept legacy flat `crs_epsg: <int>` and promote into the nested
+        # `crs: {horizontal_epsg: <int>}` form. Vertical defaults to 5703.
+        # NB: cfgBaseModel uses extra="forbid"; the legacy key must be
+        # popped — not merely shadowed — before pydantic validates.
+        if isinstance(values, dict) and "crs_epsg" in values and "crs" not in values:
+            legacy = values.pop("crs_epsg")
+            if legacy is not None:
+                values["crs"] = {"horizontal_epsg": int(legacy)}
         errors = []
 
         _, additional_errors = cls.validate_from_toggle(

@@ -492,6 +492,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         default_factory=LogField
     )
     dem_crs_epsg: LogField[int] = Field(default_factory=LogField)
+    vertical_crs_epsg: LogField[int] = Field(default_factory=LogField)
 
     # ----------------------------
     # Consolidated validators
@@ -516,6 +517,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
 
     _validate_int_fields = field_validator(
         "dem_crs_epsg",
+        "vertical_crs_epsg",
         mode="before",
     )(_create_logfield_validator(int))
 
@@ -534,6 +536,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
         "dem_crs_epsg",
+        "vertical_crs_epsg",
     )(_logfield_serializer)
 
     def write(self):
