@@ -5092,6 +5092,7 @@ rule render_report:
         which: Literal["TRITON", "SWMM", "both"] = "both",
         compression_level: int = 5,
         report_formats: list[str] | None = None,
+        start_with: Literal["process", "consolidate", "render"] = "consolidate",
     ) -> str:
         """Generate a reprocess-scoped master Snakefile for the sensitivity master.
 
@@ -5099,14 +5100,30 @@ rule render_report:
         master generator stable while emitting only the downstream rules needed
         for a master-level reprocess:
 
-        - ``rule consolidate_{prefix}{sa_id}`` for each sub-analysis, with the
-          per-sa sim completion flags declared as ``input:`` files (not
-          produced by any rule). Per the Phase 2 reprocess generator pattern,
-          live or never-started sims are silently excluded by filtering each
-          consolidate rule's input set to flags that already exist on disk.
-          ``--overwrite-outputs-if-already-created`` is baked into the shell.
+        - ``rule consolidate_{prefix}{sa_id}`` for each sub-analysis WITH AT
+          LEAST ONE COMPLETED SIM (filtered by ``c_run_*`` flag existence on
+          disk). Sub-analyses with zero completed sims are silently excluded
+          from the DAG — no per-sa consolidate rule emitted, no fingerprint
+          fallback input. Per-sub-analysis resources are sourced from the
+          sub-analysis's own ``cfg_analysis`` (honoring per-row overrides for
+          ``hpc_mem_allocation_for_sim_output_processing_mb`` and partition).
+        - Under ``start_with='process'``: for each (sa_id, event_id) whose
+          ``c_run_*`` flag exists AND whose ``d_process_*`` flag does NOT
+          exist on disk, emit a per-sa per-event ``rule process_{model_type}_sa_{sa_id}_evt_{event_id}``
+          mirroring the canonical sensitivity workflow generator's process
+          emit (workflow.py:4920-4954). The per-sa consolidate's input list
+          dynamically mixes ``d_process_*`` flags (newly-emitted process rules)
+          and ``c_run_*`` flags (events already processed). The per-sa
+          consolidate shell appends ``--allow-incomplete`` ONLY when at least
+          one event in this sub-analysis went through the conditional process
+          emit (truly mixed state); fully-complete sub-analyses retain the
+          consolidate runner's existing fail-fast behavior. Under
+          ``start_with='consolidate'`` or ``'render'``: no process rules
+          emitted; consolidate consumes ``c_run_*`` flags directly and
+          ``--allow-incomplete`` is not added (fail-fast preserved).
         - ``rule master_consolidation`` aggregating the per-sa flags into
-          ``f_consolidate_master_complete.flag`` (overwrite baked).
+          ``f_consolidate_master_complete.flag`` (overwrite + allow-incomplete
+          baked).
         - The full plot + ``export_scenario_status`` + ``render_report`` rules,
           reusing the same helpers as the production master Snakefile so the
           rendered report is identical.
@@ -5130,6 +5147,12 @@ rule render_report:
             Compression level (0-9) for the consolidate rule shells.
         report_formats
             List of report formats to render; defaults to ``["zip"]``.
+        start_with
+            Stage to re-fire from. ``"process"`` enables conditional per-sa
+            per-event process_timeseries emission (Option C: only emit for
+            (sa_id, event_id) pairs whose d_process flag is missing).
+            ``"consolidate"`` and ``"render"`` skip process emission entirely
+            and the per-sa consolidate consumes c_run flags directly.
         """
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
 
@@ -5179,14 +5202,28 @@ rule render_report:
             total_n_sims = n_sub_analyses
 
         # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
+        # Option C invariant: only include (sa_id, event_id) pairs whose
+        # c_run_* flag exists on disk. Excluded sub-analyses' events would
+        # otherwise trigger per-sim plot rules whose renderer reads
+        # non-existent per-sa scenario data (the plot rule's only input is
+        # the master consolidation flag, so Snakemake would schedule them
+        # unconditionally and they would fail at render time).
+        from TRITON_SWMM_toolkit.constants import sim_run_flag_per_sa
         sa_event_pairs_sa: list[str] = []
         sa_event_pairs_evt: list[str] = []
+        analysis_dir_for_pairs = self.master_analysis.analysis_paths.analysis_dir
         try:
             for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
                 for event_iloc in sub_pair.df_sims.index:
                     ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
+                    event_id_pair = compute_event_id_slug(ev)
+                    c_run_flag_path = analysis_dir_for_pairs / sim_run_flag_per_sa(
+                        model_type, str(sa_id_pair), event_id_pair
+                    )
+                    if not c_run_flag_path.exists():
+                        continue
                     sa_event_pairs_sa.append(str(sa_id_pair))
-                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
+                    sa_event_pairs_evt.append(event_id_pair)
         except Exception:
             sa_event_pairs_sa = []
             sa_event_pairs_evt = []
@@ -5244,8 +5281,17 @@ onerror:
         # set (system_overview, per_analysis_summary, scenario_status_appendix,
         # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-sa
         # per-event plots, sensitivity-benchmarking plots, analysis_report.*).
+        # rule_all's consolidation_flags list will be reconciled against the
+        # actually-emitted subanalysis_flags below. Initialize as the full
+        # set; Spec 3's per-sa loop populates the actual subanalysis_flags
+        # list (filtered to sub-analyses with at least one completed sim).
+        # After Spec 3's loop completes, rule_all's input list is patched
+        # to match the actually-emitted set (see Spec 5's reconciliation
+        # block below) so Snakemake's DAG resolution doesn't reference
+        # nonexistent rules.
+        from TRITON_SWMM_toolkit.constants import consolidate_subanalysis_flag
         consolidation_flags = [
-            f"_status/e_consolidate_sa-{sa_id}_complete.flag" for sa_id in self.sensitivity_analysis.sub_analyses.keys()
+            consolidate_subanalysis_flag(str(sa_id)) for sa_id in self.sensitivity_analysis.sub_analyses.keys()
         ]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
@@ -5282,33 +5328,130 @@ onerror:
 
 """
 
-        # Per-sub-analysis consolidate rules — declare existing sim flags as
-        # plain input: files (no upstream simulation_* rule emitted). Filter
-        # to flags that exist on disk; live or never-started scenarios are
-        # silently excluded, matching the Phase 2 reprocess generator pattern.
-        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        # Per-sub-analysis emit block — Option C (2026-05-21):
+        #   1. Filter sub-analyses to those with at least one c_run_* flag on
+        #      disk (Issue A fix: skip emit entirely for un-completed
+        #      sub-analyses, no fingerprint fallback).
+        #   2. Under start_with='process': for each (sa_id, event_id) with
+        #      c_run flag present but d_process flag missing, emit a per-sa
+        #      per-event process_timeseries rule mirroring the canonical
+        #      sensitivity workflow generator (workflow.py:4920-4954).
+        #   3. Per-sa consolidate input list mixes d_process flags (newly-
+        #      emitted process rules) and c_run flags (already-processed
+        #      events). Per-sa consolidate shell appends --allow-incomplete
+        #      ONLY when this sub-analysis has at least one event that went
+        #      through the conditional process emit (truly mixed state);
+        #      fully-complete sub-analyses retain fail-fast behavior.
+        #   4. Per-sub-analysis process_resources_sa is computed INSIDE the
+        #      loop so per-row cfg overrides (e.g., sa-33's bumped
+        #      hpc_mem_allocation_for_sim_output_processing_mb for 1.1m DEM)
+        #      are honored — mirrors canonical generator at workflow.py:4850.
+        # Flag-name builders live in TRITON_SWMM_toolkit.constants (single
+        # source of truth for new code; existing hardcoded sites are
+        # tracked as a follow-up refactor).
+        from TRITON_SWMM_toolkit.constants import (
+            consolidate_subanalysis_flag,
+            process_timeseries_flag_per_sa,
+            sa_inputs_fingerprint_flag,
+            sim_run_flag_per_sa,
+        )
+
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         subanalysis_flags: list[str] = []
+
         for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():
             sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml,
                 system_config_yaml=sub_analysis._system.system_config_yaml,
             )
-            # Filter per-sa sim flags to those whose c_run_* file exists on disk.
-            available_sim_flags: list[str] = []
+            # Per-sub-analysis process resources sourced from THIS sub-analysis's
+            # cfg (mirrors canonical sensitivity workflow at workflow.py:4850);
+            # honors per-sub-analysis overrides via the `analysis.*` overlay
+            # column convention.
+            process_resources_sa = self._base_builder._build_resource_block(
+                partition=sub_analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=120,
+                mem_mb=sub_analysis.cfg_analysis.hpc_mem_allocation_for_sim_output_processing_mb,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=2,
+            )
+            # Walk this sub-analysis's events, classifying each by on-disk
+            # c_run / d_process flag presence.
+            consolidate_inputs: list[str] = []
+            per_event_process_rules: list[str] = []
+            had_conditional_process_emit = False
             for event_iloc in sub_analysis.df_sims.index:
-                event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
-                sim_flag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
-                if (status_dir / f"c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag").exists():
-                    available_sim_flags.append(sim_flag)
-            # When no sim flags survive the filter for a sub-analysis, fall
-            # back to the input fingerprint file so the rule still emits with
-            # a valid input set and Snakemake's mtime trigger considers the
-            # consolidate rule reachable. (The consolidate runner is resilient
-            # to a sub-analysis with no completed sims — it would no-op the
-            # per-sa data tree.)
-            consolidate_inputs = [f'"{flag}"' for flag in available_sim_flags] or [f'"_status/sa-{sa_id}_inputs.json"']
-            subanalysis_flag = f"_status/e_consolidate_sa-{sa_id}_complete.flag"
+                event_id = compute_event_id_slug(
+                    sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+                )
+                c_run_flag = sim_run_flag_per_sa(model_type, str(sa_id), event_id)
+                d_process_flag = process_timeseries_flag_per_sa(model_type, str(sa_id), event_id)
+                c_run_path = analysis_dir / c_run_flag
+                d_process_path = analysis_dir / d_process_flag
+                if not c_run_path.exists():
+                    # Sim never completed → exclude from DAG for this reprocess.
+                    continue
+                if start_with == "process" and not d_process_path.exists():
+                    # Conditional process emit: this (sa_id, event_id) needs
+                    # process_timeseries re-fired. Build the rule and route
+                    # consolidate's input through the d_process flag it will
+                    # produce.
+                    had_conditional_process_emit = True
+                    event_id_rule = event_id.replace(".", "_").replace("-", "_")
+                    process_rule_name = f"process_sa_{sa_id_rule}_evt_{event_id_rule}"
+                    fingerprint_flag = sa_inputs_fingerprint_flag(str(sa_id))
+                    per_event_process_rules.append(f'''rule {process_rule_name}:
+    input:
+        "{c_run_flag}",
+        "{fingerprint_flag}"
+    output: "{d_process_flag}"
+    log: "{log_dir_str}/sims/{process_rule_name}.log"
+    conda: "{conda_env_path}"
+    resources:
+{process_resources_sa}
+    shell:
+        """
+        mkdir -p {log_dir_str}/sims {log_dir_str} _status
+        {self.python_executable} -m TRITON_SWMM_toolkit.process_timeseries_runner \\
+            --event-iloc {event_iloc} \\
+            {sub_config_args} \\
+            --model-type {model_type} \\
+            --which {which} \\
+            --overwrite-outputs-if-already-created \\
+            --compression-level {compression_level} \\
+            > {{log}} 2>&1
+        touch {{output}}
+        """
+
+''')
+                    consolidate_inputs.append(f'"{d_process_flag}"')
+                else:
+                    # Either start_with is not 'process', or d_process flag
+                    # already exists — consolidate consumes the c_run flag
+                    # directly.
+                    consolidate_inputs.append(f'"{c_run_flag}"')
+
+            if not consolidate_inputs:
+                # Issue A fix: this sub-analysis has zero completed sims;
+                # skip emitting the per-sa consolidate rule entirely. No
+                # fingerprint fallback. Spec 5's rule_all reconciliation
+                # excludes this sa_id from rule_all's input list.
+                continue
+
+            # Emit any per-(sa, event) process rules first so they sit above
+            # the per-sa consolidate that depends on them (Snakemake rule
+            # order does not affect DAG resolution but readability puts
+            # producers above consumers).
+            for process_rule_block in per_event_process_rules:
+                snakefile_content += process_rule_block
+
+            # Conditional --allow-incomplete: only emit when truly mixed
+            # state (option (a) from the SE specialist's plan review).
+            # Fully-complete sub-analyses retain consolidate's fail-fast.
+            allow_incomplete_line = "            --allow-incomplete \\\n" if had_conditional_process_emit else ""
+            subanalysis_flag = consolidate_subanalysis_flag(str(sa_id))
             subanalysis_flags.append(subanalysis_flag)
             prefix = self.sensitivity_analysis.sub_analyses_prefix
             snakefile_content += f'''rule consolidate_{prefix}{sa_id_rule}:
@@ -5333,7 +5476,7 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-            --overwrite-outputs-if-already-created \\
+{allow_incomplete_line}            --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5341,11 +5484,24 @@ onerror:
 
 '''
 
-        # Master consolidation — aggregates per-sa flags into the master
-        # flag + sensitivity_datatree.zarr; overwrite baked.
+        # Reconcile rule_all's consolidation_flags entry against the
+        # actually-emitted subanalysis_flags (filtered by Spec 3 to exclude
+        # zero-completed sub-analyses). rule_all_inputs[0:len(consolidation_flags)]
+        # spans the original full-set entries; replace that slice with the
+        # filtered set so Snakemake doesn't reference nonexistent per-sa
+        # consolidate rules at DAG resolution.
+        n_original_consolidation_entries = len(consolidation_flags)
+        rule_all_inputs[0:n_original_consolidation_entries] = [
+            f'"{flag}"' for flag in subanalysis_flags
+        ]
+
+        # Master consolidation — aggregates the EMITTED per-sa flags into the
+        # master flag + sensitivity_datatree.zarr; overwrite + allow-incomplete
+        # baked. Uses the central flag-name builder for the master flag (Spec 1).
+        from TRITON_SWMM_toolkit.constants import consolidate_master_flag
         snakefile_content += f'''rule master_consolidation:
     input: {", ".join([f'"{flag}"' for flag in subanalysis_flags])}
-    output: "_status/f_consolidate_master_complete.flag"
+    output: "{consolidate_master_flag()}"
     log: "{log_dir_str}/master_consolidation.log"
     conda: "{conda_env_path}"
     resources:
@@ -5994,11 +6150,17 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         Parameters
         ----------
         start_with
-            Stage to re-fire from. Phase 3's master-level reprocess targets
-            ``"consolidate"`` by default; ``"process"`` / ``"render"`` map onto
-            the same Snakefile (the master generator does not emit process
-            rules, so ``start_with`` only affects the invalidation set
-            chosen by :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
+            Stage to re-fire from. ``"consolidate"`` (default) emits per-sa
+            consolidate rules consuming ``c_run_*`` flags directly. ``"process"``
+            additionally emits per-(sa_id, event_id) process_timeseries rules
+            for events whose ``d_process_*`` flag is missing on disk, so partial
+            process-step state (sim ran, summary zarrs missing) can be recovered
+            without invoking the normal workflow's ``run``. The per-sa
+            consolidate shell adds ``--allow-incomplete`` only for sub-analyses
+            in truly-mixed state; fully-complete sub-analyses retain
+            fail-fast behavior. ``"render"`` skips per-sa consolidate emission
+            entirely (handled by the upstream invalidation in
+            :meth:`TRITONSWMM_sensitivity_analysis.reprocess`).
         execution_mode
             ``"auto"`` (default) detects SLURM context; ``"local"`` / ``"slurm"``
             force the mode.
@@ -6039,6 +6201,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             which=which,
             compression_level=compression_level,
             report_formats=report_formats,
+            start_with=start_with,
         )
         analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         snakefile_path = analysis_dir / "Snakefile.reprocess"

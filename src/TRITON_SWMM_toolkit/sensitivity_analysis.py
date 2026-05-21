@@ -324,6 +324,7 @@ class TRITONSWMM_sensitivity_analysis:
         compression_level: int = 5,
         verbose: bool = True,
         dry_run: bool = False,
+        report_formats: list[str] | None = None,
     ) -> dict:
         """Master-level reprocess for sensitivity analyses.
 
@@ -416,6 +417,7 @@ class TRITONSWMM_sensitivity_analysis:
             compression_level=compression_level,
             dry_run=dry_run,
             verbose=verbose,
+            report_formats=report_formats,
         )
 
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
