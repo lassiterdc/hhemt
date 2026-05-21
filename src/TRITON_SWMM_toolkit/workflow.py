@@ -24,6 +24,7 @@ import yaml  # type: ignore
 
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
+from TRITON_SWMM_toolkit.utils import fast_rmtree
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -563,12 +564,11 @@ class SnakemakeWorkflowBuilder:
         # the from-scratch path, and on the cached path metadata must persist
         # for rerun-triggers to work.
         import os
-        import shutil as _shutil
         if os.environ.get(_NON_INTERACTIVE_LOCK_CLEAR_ENV) == "1":
             for sub in ("locks", "incomplete"):
                 target = snakemake_state / sub
                 if target.exists():
-                    _shutil.rmtree(target)
+                    fast_rmtree(target)
             (snakemake_state / "log").mkdir(parents=True, exist_ok=True)
             return
         locks_dir = snakemake_state / "locks"
