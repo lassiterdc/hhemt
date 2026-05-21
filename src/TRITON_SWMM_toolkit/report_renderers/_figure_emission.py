@@ -315,7 +315,7 @@ def _emit_html_with_sources(
     source_paths: Iterable[Path],
     analysis_dir: Path,
     manifest_data: dict[str, Any] | None,
-    provenance: "ProvenanceLog | None",
+    provenance: ProvenanceLog | None,
 ) -> Path:
     """HTML-branch counterpart to :func:`emit_plot_with_sources`.
 

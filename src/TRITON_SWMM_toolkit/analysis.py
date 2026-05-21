@@ -26,7 +26,6 @@ from TRITON_SWMM_toolkit.plot_utils import print_json_file_tree
 from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.processing_analysis import TRITONSWMM_analysis_post_processing
 from TRITON_SWMM_toolkit.resource_management import ResourceManager
-from TRITON_SWMM_toolkit.workflow import _emit_report_artifacts
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
@@ -41,7 +40,11 @@ from TRITON_SWMM_toolkit.swmm_output_parser import (
 )
 from TRITON_SWMM_toolkit.utils import fast_rmtree, parse_triton_log_file
 from TRITON_SWMM_toolkit.validation import ValidationResult, preflight_validate
-from TRITON_SWMM_toolkit.workflow import SnakemakeDiagnostics, SnakemakeWorkflowBuilder
+from TRITON_SWMM_toolkit.workflow import (
+    SnakemakeDiagnostics,
+    SnakemakeWorkflowBuilder,
+    _emit_report_artifacts,
+)
 
 if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
@@ -151,15 +154,11 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["output_swmm_only_link_summary"] = analysis_dir / f"SWMM_only_links.{ext}"
 
         # Hierarchical DataTree consolidation (Phase 2)
-        analysis_paths_kwargs["analysis_datatree_zarr"] = (
-            analysis_dir / "analysis_datatree.zarr"
-        )
+        analysis_paths_kwargs["analysis_datatree_zarr"] = analysis_dir / "analysis_datatree.zarr"
 
         # Sensitivity-level DataTree zarr (Phase 3) — aggregates sub-analyses.
         if cfg_analysis.toggle_sensitivity_analysis:
-            analysis_paths_kwargs["sensitivity_datatree_zarr"] = (
-                analysis_dir / "sensitivity_datatree.zarr"
-            )
+            analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "sensitivity_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
 
@@ -186,9 +185,7 @@ class TRITONSWMM_analysis:
         self.nsims = len(self.df_sims)
 
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            self.sensitivity = TRITONSWMM_sensitivity_analysis(
-                self, is_main_orchestrator=is_main_orchestrator
-            )
+            self.sensitivity = TRITONSWMM_sensitivity_analysis(self, is_main_orchestrator=is_main_orchestrator)
             self.nsims *= len(self.sensitivity.df_setup)
         if not skip_log_update:
             # self._add_all_scenarios()
@@ -245,9 +242,7 @@ class TRITONSWMM_analysis:
             failures = self.classify_incomplete_sim_failures()
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 incomplete_nodes: list[int] = []
-                incomplete_sa_ids = {
-                    re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures
-                }
+                incomplete_sa_ids = {re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures}
                 for sa_id in incomplete_sa_ids:
                     sa = self.sensitivity.sub_analyses[sa_id]
                     n_gpus = sa.cfg_analysis.n_gpus or 0
@@ -281,6 +276,88 @@ class TRITONSWMM_analysis:
                         "[Analysis] Some failures are not time limits — see debugging docs for root cause.",
                         flush=True,
                     )
+
+    def _enumerate_stale_metadata_paths(self) -> list[str]:
+        """Return Snakemake-output-path strings whose ``.snakemake/metadata/``
+        records are known stale due to past rule-output renames.
+
+        Currently enumerates the four Phase 8 rule-rename orphans:
+
+        - ``plots/system_overview.png``
+        - ``plots/per_sim/{event_id}/peak_flood_depth.png`` (one per event_iloc)
+        - ``plots/per_sim/{event_id}/conduit_flow.png`` (one per event_iloc)
+        - ``plots/sensitivity/benchmarking/{independent_var}_vs_total.svg``
+          (one per ``sensitivity.independent_vars`` when sensitivity is enabled
+          at the master analysis level)
+
+        The enumeration is deterministic — paths are constructed from
+        ``self.df_sims.index`` (event_ilocs) plus the canonical event-id
+        slug (``compute_event_id_slug``) and, when sensitivity is enabled,
+        ``self.sensitivity.independent_vars``. No filesystem inspection;
+        Snakemake's ``cleanup_metadata`` is idempotent on non-existent records.
+
+        Returns paths as strings (relative to ``analysis_dir``).
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        orphans: list[str] = ["plots/system_overview.png"]
+        for event_iloc in self.df_sims.index:
+            ev = self._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            orphans.append(f"plots/per_sim/{event_id}/peak_flood_depth.png")
+            orphans.append(f"plots/per_sim/{event_id}/conduit_flow.png")
+        if (
+            self.cfg_analysis.toggle_sensitivity_analysis
+            and not self.cfg_analysis.is_subanalysis
+        ):
+            for ind_var in self.sensitivity.independent_vars:
+                orphans.append(
+                    f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg"
+                )
+        return orphans
+
+    def _invoke_snakemake_cleanup_metadata(self, orphan_paths: list[str]) -> None:
+        """Subprocess-invoke ``snakemake --cleanup-metadata`` against orphan paths.
+
+        Snakemake's ``cleanup_metadata`` is idempotent (no-op without error on
+        non-existent records), so passing paths that have no record on disk is
+        safe — the cost is one subprocess call per ``analysis.run()`` when the
+        gate fires.
+
+        Raises ``WorkflowError`` on non-zero subprocess exit, capturing the
+        last 50 lines of combined stdout+stderr in the ``stderr`` field.
+        """
+        import subprocess
+
+        from TRITON_SWMM_toolkit.exceptions import WorkflowError
+
+        cmd = [
+            "snakemake",
+            "--cleanup-metadata",
+            *orphan_paths,
+            "--directory",
+            str(self.analysis_paths.analysis_dir),
+            "--cores",
+            "1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            combined = (result.stdout + "\n" + result.stderr)
+            tail = "\n".join(combined.splitlines()[-50:])
+            # Best-effort hygiene: "No Snakefile found" is a benign no-op for
+            # analyses whose Snakefile has been removed or never written —
+            # there is no metadata to interpret without a Snakefile, but
+            # there is also no harm in skipping cleanup in that case.
+            if "No Snakefile found" in combined:
+                return
+            raise WorkflowError(
+                phase="cleanup_stale_metadata",
+                return_code=result.returncode,
+                stderr=(
+                    f"snakemake --cleanup-metadata exit {result.returncode}; "
+                    f"last 50 lines:\n{tail}"
+                ),
+            )
 
     def validate(self) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
@@ -499,6 +576,7 @@ class TRITONSWMM_analysis:
                 on this analysis (no *.manifest.json sidecars exist).
         """
         from TRITON_SWMM_toolkit.bundle import emit_bundle
+
         return emit_bundle(self, output_path)
 
     @staticmethod
@@ -1491,6 +1569,7 @@ class TRITONSWMM_analysis:
         report_config: "Path | None" = None,
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
+        cleanup_stale_metadata: bool = True,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> "WorkflowResult":
@@ -1521,6 +1600,20 @@ class TRITONSWMM_analysis:
         transfer_config : PostRunTransferConfig | None
             If provided, automatically transfer results to the local machine
             after successful completion (requires ``wait_for_job_completion=True``).
+        cleanup_orphans : bool, default False
+            When True, deletes orphan sub-analysis artifacts (subanalysis dirs,
+            status flags, sensitivity_datatree.zarr groups) detected when an
+            ``sa_id`` is removed from the sensitivity CSV/XLSX. Opt-in because
+            the blast radius is irrecoverable (subanalysis data deleted).
+        cleanup_stale_metadata : bool, default True
+            When True (default), subprocess-invokes ``snakemake --cleanup-metadata``
+            against orphaned ``.snakemake/metadata/`` records left by past
+            rule-output renames (e.g., Phase 8's ``.png``/``.svg`` → ``.html``
+            flip). When False, skips the cleanup; users may experience a
+            one-shot full plot rebuild on first post-rename invocation per
+            Phase 8 Risks. Asymmetric with ``cleanup_orphans`` default (False)
+            because metadata-cleanup blast radius is bounded to records, not
+            data; safe to auto-apply.
         extra_sbatch_args : list[str] | None
             Optional list of additional SBATCH directive strings (e.g.,
             ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
@@ -1600,13 +1693,15 @@ class TRITONSWMM_analysis:
 
         import time
 
-        from .orchestration import WorkflowResult, translate_mode, translate_phases
+        from .config.loaders import yaml_to_model
         from .config.report import (
             report_config as ReportConfigModel,
+        )
+        from .config.report import (
             validate_sensitivity_independent_vars,
         )
-        from .config.loaders import yaml_to_model
         from .exceptions import ConfigurationError
+        from .orchestration import WorkflowResult, translate_mode, translate_phases
 
         # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
         # Resolution order:
@@ -1628,11 +1723,7 @@ class TRITONSWMM_analysis:
         else:
             cfg_report = self.cfg_analysis.report
 
-        sa_csv = (
-            self.cfg_analysis.sensitivity_analysis
-            if self.cfg_analysis.toggle_sensitivity_analysis
-            else None
-        )
+        sa_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
         validate_sensitivity_independent_vars(cfg_report, sa_csv)
         self._cfg_report = cfg_report
 
@@ -1658,11 +1749,7 @@ class TRITONSWMM_analysis:
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
-        if (
-            not from_scratch
-            and self.cfg_analysis.toggle_sensitivity_analysis
-            and not self.cfg_analysis.is_subanalysis
-        ):
+        if not from_scratch and self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
             from TRITON_SWMM_toolkit.exceptions import ConfigurationError as _CfgErr
 
             _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
@@ -1685,8 +1772,45 @@ class TRITONSWMM_analysis:
                 )
             if _has_orphans and cleanup_orphans:
                 self.sensitivity.cleanup_all_orphans(
-                    dry_run=False, force=True, verbose=verbose,
+                    dry_run=False,
+                    force=True,
+                    verbose=verbose,
                 )
+
+        # Stale-metadata cleanup gate — analysis-level, not sensitivity-specific
+        # (per Phase 8.5 of interactive_report_renderers plan). Asymmetric with
+        # cleanup_orphans default: cleanup_stale_metadata defaults to True
+        # because metadata-cleanup blast radius is bounded to .snakemake/metadata/
+        # records — no data is deleted; worst-case auto-apply result is the same
+        # one-shot full plot rebuild Phase 8 Risks documents.
+        # Precondition for the subprocess invocation: `snakemake
+        # --cleanup-metadata` requires BOTH a Snakefile in the working
+        # directory (to interpret path arguments) AND a
+        # `.snakemake/metadata/` directory (the records to clean). The
+        # Snakefile is generated by `submit_workflow()` later in this
+        # method, so at this gate site it exists only on resumed analyses
+        # (the use case cleanup_stale_metadata targets — fresh analyses
+        # have no stale metadata to clean).
+        _snakefile = self.analysis_paths.analysis_dir / "Snakefile"
+        _metadata_dir = self.analysis_paths.analysis_dir / ".snakemake" / "metadata"
+        if (
+            cleanup_stale_metadata
+            and not from_scratch
+            and _snakefile.exists()
+            and _metadata_dir.exists()
+        ):
+            orphan_paths = self._enumerate_stale_metadata_paths()
+            if orphan_paths:
+                if verbose:
+                    print(
+                        f"[cleanup-stale-metadata] Cleaning {len(orphan_paths)} "
+                        f"orphan metadata record(s) from "
+                        f"{self.analysis_paths.analysis_dir}/.snakemake/metadata/",
+                        flush=True,
+                    )
+                    for p in orphan_paths:
+                        print(f"  orphan: {p}", flush=True)
+                self._invoke_snakemake_cleanup_metadata(orphan_paths)
 
         # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
         # stamp per version_migration_system master plan PI-1). Idempotent
@@ -1829,12 +1953,19 @@ class TRITONSWMM_analysis:
         # --cores 1 is required by Snakemake's CLI even though --report is a
         # post-execution render that does not execute rules.
         cmd = [
-            sys.executable, "-m", "snakemake",
-            "--snakefile", str(snakefile),
-            "--directory", str(self.analysis_paths.analysis_dir),
-            "--report", str(out),
-            "--report-stylesheet", str(css_path),
-            "--cores", "1",
+            sys.executable,
+            "-m",
+            "snakemake",
+            "--snakefile",
+            str(snakefile),
+            "--directory",
+            str(self.analysis_paths.analysis_dir),
+            "--report",
+            str(out),
+            "--report-stylesheet",
+            str(css_path),
+            "--cores",
+            "1",
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -1856,6 +1987,7 @@ class TRITONSWMM_analysis:
             apply_post_process_surgery,
             apply_post_process_surgery_to_zip,
         )
+
         try:
             if format == "html":
                 out.write_text(apply_post_process_surgery(out.read_text()))
@@ -2245,6 +2377,216 @@ class TRITONSWMM_analysis:
                 result["dry_run_report_markdown"] = report_path
 
         return result
+
+    def reprocess(
+        self,
+        start_with: "Literal['process','consolidate','render']" = "consolidate",
+        execution_mode: "Literal['auto','local','slurm']" = "auto",
+        which: "Literal['TRITON','SWMM','both']" = "both",
+        clear_raw_outputs: bool = False,
+        verbose: bool = True,
+        dry_run: bool = False,
+    ) -> dict:
+        """Re-run downstream stages against existing sim outputs.
+
+        Re-runs processing / consolidation / plotting / report rendering
+        without re-running the simulation rules. Runs the Phase-1
+        reconciliation guard against ``_status/_submitted/`` before
+        submitting, so a parallel live sim driver cannot be double-submitted.
+        Emits a scope-limited Snakefile at
+        ``{analysis_dir}/Snakefile.reprocess`` and runs it against a
+        sibling ``.snakemake_reprocess/`` working directory so the reprocess
+        driver does not collide with the main ``.snakemake/`` state.
+
+        Parameters
+        ----------
+        start_with
+            Stage to re-fire from. ``"consolidate"`` is the common case —
+            re-aggregates the analysis datatree zarr and re-renders the
+            report against existing sim outputs.
+        execution_mode
+            ``"auto"`` (default) detects SLURM context; ``"local"`` /
+            ``"slurm"`` force the mode.
+        which
+            ``"both"`` (default) / ``"TRITON"`` / ``"SWMM"`` — passes through
+            to ``rule consolidate``'s ``--which`` flag.
+        clear_raw_outputs
+            **Hard-default False.** When True, two guards must both pass:
+            (a) every enabled sim's ``c_run_*`` flag must exist (no
+            never-started sims); (b) no ``_status/_submitted/`` sentinel
+            may be present (no in-flight / just-died sims). Cites
+            stipulation ``clear raw triton outputs deferred until last allocation``
+            (under ``library/docs/stipulations/TRITON-SWMM_toolkit/``).
+        verbose
+            If True, print progress messages.
+        dry_run
+            If True, runs ``snakemake --dry-run`` only.
+
+        Returns
+        -------
+        dict
+            Status dictionary from
+            :meth:`SnakemakeWorkflowBuilder.submit_reprocess_workflow`.
+
+        Raises
+        ------
+        ConfigurationError
+            When ``clear_raw_outputs=True`` and either guard fails.
+        """
+        # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern, mirroring
+        # run() and submit_workflow). Idempotent under concurrent writers;
+        # if _version.json is missing or stamped at an older version, this
+        # writes a fresh stamp at the current LAYOUT_VERSION.
+        from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
+        from TRITON_SWMM_toolkit.version_migration.state import stamp_new_target
+
+        from .exceptions import ConfigurationError
+
+        stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
+        if clear_raw_outputs:
+            # Guard (a): every enabled sim must have a c_run_* flag.
+            if not self._all_sim_flags_present():
+                raise ConfigurationError(
+                    field="clear_raw_outputs",
+                    message=(
+                        "reprocess refuses clear_raw_outputs while c_run_* flags are absent "
+                        "(some sims have not completed). See stipulation "
+                        "`clear raw triton outputs deferred until last allocation`."
+                    ),
+                    config_path=str(self.analysis_config_yaml),
+                )
+            # Guard (b): no in-flight or unreconciled _submitted/ sentinel.
+            submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+            if submitted_dir.exists() and any(submitted_dir.glob("*.json")):
+                raise ConfigurationError(
+                    field="clear_raw_outputs",
+                    message=(
+                        "reprocess refuses clear_raw_outputs while _submitted/ sentinels are present "
+                        "(simulations may still be in flight or recently died). Run the Phase-1 "
+                        "reconciliation guard or `scancel` outstanding jobs first."
+                    ),
+                    config_path=str(self.analysis_config_yaml),
+                )
+
+        # Reprocess overrides 1_job_many_srun_tasks → batch_job at submission
+        # time. 1_job_many_srun_tasks reserves an exclusive multi-node SLURM
+        # allocation that the downstream-only reprocess does not need, and the
+        # method cannot decouple driver-cancel from job-cancel (master plan
+        # Assumptions + FQ1 research). The override is local — the analysis's
+        # original cfg_analysis.multi_sim_run_method is not mutated.
+        effective_method: str | None = None
+        if self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+            effective_method = "batch_job"
+            if verbose:
+                print(
+                    "[reprocess] NOTE: 1_job_many_srun_tasks reprocess overridden to "
+                    "batch_job (per-rule sbatch). The original analysis_config is unchanged.",
+                    flush=True,
+                )
+
+        # Invalidate from start_with onward — deletes the upstream flag/artifact
+        # that triggers Snakemake's mtime-driven re-fire. Per D-INVALIDATE
+        # option 1: delete flags + rely on the generator's baked overwrite.
+        self._invalidate_downstream_flags(start_with)
+
+        # Delegate to the workflow builder. The submit method writes the
+        # reprocess Snakefile and orchestrates the snakemake invocation with
+        # `--directory .snakemake_reprocess --rerun-triggers mtime
+        # --snakefile Snakefile.reprocess`.
+        result = self._workflow_builder.submit_reprocess_workflow(
+            start_with=start_with,
+            execution_mode=execution_mode,
+            multi_sim_run_method_override=effective_method,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+        return result
+
+    def _all_sim_flags_present(self) -> bool:
+        """True iff every enabled sim's ``c_run_*`` completion flag exists.
+
+        Used as the *flag-presence* component of the ``clear_raw_outputs``
+        guard; the sentinel-presence component (in-flight detection) is
+        checked separately at the :meth:`reprocess` call site.
+
+        Enumeration contract
+        --------------------
+        For a non-sensitivity analysis: for each enabled model_type (from
+        cfg_system's ``toggle_*_model`` fields) and each event_id in the
+        analysis's event set, expect
+        ``{_status}/c_run_{model_type}_evt-{event_id}.flag``.
+
+        For a sensitivity master analysis: recurse into each sub-analysis's
+        ``_status/`` directory and check
+        ``c_run_{model_type}_sa-{sa_id}_evt-{event_id}.flag`` for every
+        (sa_id, event_id, enabled_model_type) tuple.
+
+        Returns True only if every expected flag exists. Missing → False.
+        Does NOT consult ``_submitted/`` sentinels; that signal is the
+        in-flight guard layered on top of this method at the
+        :meth:`reprocess` call site.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        cfg_sys = self._system.cfg_system
+        enabled_models: list[str] = []
+        if cfg_sys.toggle_triton_model:
+            enabled_models.append("triton")
+        if cfg_sys.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if cfg_sys.toggle_swmm_model:
+            enabled_models.append("swmm")
+        if not enabled_models:
+            return False  # No models enabled — nothing to attest.
+
+        # Non-sensitivity path (sensitivity paths handled by
+        # TRITONSWMM_sensitivity_analysis.reprocess in Phase 3).
+        if getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False):
+            # Sensitivity master analyses are out of scope for Phase 2's
+            # reprocess; the sensitivity-master reprocess is Phase 3. Until
+            # then, conservatively return False so the guard short-circuits
+            # rather than admitting a false-positive.
+            return False
+
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        for i in range(len(self.df_sims)):
+            event_id = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
+            for model in enabled_models:
+                flag = status_dir / f"c_run_{model}_evt-{event_id}_complete.flag"
+                if not flag.exists():
+                    return False
+        return True
+
+    def _invalidate_downstream_flags(self, start_with: str) -> None:
+        """Delete ``_status`` flags from ``start_with`` onward.
+
+        Never deletes ``c_run_*`` (sim) flags. The render layer is
+        file-driven — deleting plot/report artifacts is the trigger for
+        re-firing (Snakemake's mtime check sees the output as absent).
+
+        Parameters
+        ----------
+        start_with
+            One of ``"process"``, ``"consolidate"``, ``"render"``.
+        """
+        sd = self.analysis_paths.analysis_dir / "_status"
+        if start_with == "process":
+            for f in sd.glob("d_process_*"):
+                f.unlink(missing_ok=True)
+            (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+        elif start_with == "consolidate":
+            (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+        elif start_with == "render":
+            # No _status flag for render — re-fire by deleting the report
+            # artifacts so Snakemake's mtime trigger sees the output as
+            # absent. Plot PNGs/HTML are left in place; the plot rules
+            # only re-fire if a plot's inputs are newer (the intended
+            # surgical behavior for `start_with="render"`).
+            (self.analysis_paths.analysis_dir / "analysis_report.html").unlink(missing_ok=True)
+            (self.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
+        else:
+            raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
     # TODO - fix or delete
     # @property

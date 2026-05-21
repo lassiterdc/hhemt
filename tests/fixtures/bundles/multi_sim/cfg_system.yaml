@@ -36,4 +36,6 @@ processed_xllcorner: null
 processed_yllcorner: null
 ncols: null
 nrows: null
-crs_epsg: 3857
+crs:
+  horizontal_epsg: 3857
+  vertical_epsg: 5703

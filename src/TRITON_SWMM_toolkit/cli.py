@@ -151,33 +151,15 @@ def run_command(
     # ═══════════════════════════════════════════════════════════════
     # HPC Override Options
     # ═══════════════════════════════════════════════════════════════
-    platform_config: str | None = typer.Option(
-        None, "--platform-config", help="Platform configuration name"
-    ),
-    partition: str | None = typer.Option(
-        None, "--partition", help="SLURM partition override"
-    ),
-    account: str | None = typer.Option(
-        None, "--account", help="SLURM account override"
-    ),
-    qos: str | None = typer.Option(
-        None, "--qos", help="SLURM QoS override"
-    ),
-    nodes: int | None = typer.Option(
-        None, "--nodes", help="Number of nodes", min=1
-    ),
-    ntasks_per_node: int | None = typer.Option(
-        None, "--ntasks-per-node", help="Tasks per node", min=1
-    ),
-    cpus_per_task: int | None = typer.Option(
-        None, "--cpus-per-task", help="CPUs per task", min=1
-    ),
-    gpus_per_node: int | None = typer.Option(
-        None, "--gpus-per-node", help="GPUs per node", min=0
-    ),
-    walltime: str | None = typer.Option(
-        None, "--walltime", help="Walltime limit (HH:MM:SS format)"
-    ),
+    platform_config: str | None = typer.Option(None, "--platform-config", help="Platform configuration name"),
+    partition: str | None = typer.Option(None, "--partition", help="SLURM partition override"),
+    account: str | None = typer.Option(None, "--account", help="SLURM account override"),
+    qos: str | None = typer.Option(None, "--qos", help="SLURM QoS override"),
+    nodes: int | None = typer.Option(None, "--nodes", help="Number of nodes", min=1),
+    ntasks_per_node: int | None = typer.Option(None, "--ntasks-per-node", help="Tasks per node", min=1),
+    cpus_per_task: int | None = typer.Option(None, "--cpus-per-task", help="CPUs per task", min=1),
+    gpus_per_node: int | None = typer.Option(None, "--gpus-per-node", help="GPUs per node", min=0),
+    walltime: str | None = typer.Option(None, "--walltime", help="Walltime limit (HH:MM:SS format)"),
     # ═══════════════════════════════════════════════════════════════
     # Workflow Engine Options
     # ═══════════════════════════════════════════════════════════════
@@ -268,19 +250,19 @@ def run_command(
             raise CLIValidationError(
                 argument="--profile",
                 message="--profile is required",
-                fix_hint="Specify production, testcase, or case-study"
+                fix_hint="Specify production, testcase, or case-study",
             )
         if not system_config:
             raise CLIValidationError(
                 argument="--system-config",
                 message="--system-config is required",
-                fix_hint="Provide path to system configuration YAML file"
+                fix_hint="Provide path to system configuration YAML file",
             )
         if not analysis_config:
             raise CLIValidationError(
                 argument="--analysis-config",
                 message="--analysis-config is required",
-                fix_hint="Provide path to analysis configuration YAML file"
+                fix_hint="Provide path to analysis configuration YAML file",
             )
 
         # ═══════════════════════════════════════════════════════════════
@@ -448,6 +430,7 @@ def run_command(
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
         if verbose:
             import traceback
+
             console_err.print(traceback.format_exc())
         raise typer.Exit(10)
 
@@ -521,9 +504,7 @@ def cleanup_orphans_command(
             raise typer.Exit(2)
 
         if not dry_run and not force:
-            console_err.print(
-                "[bold red]Error:[/bold red] --apply requires --force to confirm deletion."
-            )
+            console_err.print("[bold red]Error:[/bold red] --apply requires --force to confirm deletion.")
             raise typer.Exit(2)
 
         result = analysis.sensitivity.cleanup_all_orphans(
@@ -561,6 +542,228 @@ def cleanup_orphans_command(
             console.print(
                 f"[green]Deleted {n_dirs} orphan dir(s), {n_flags} status flag(s), "
                 f"and {n_groups} datatree group(s){extras_msg}.[/green]"
+            )
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
+@app.command(name="reprocess")
+def reprocess_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    start_with: str = typer.Option(
+        "consolidate",
+        "--start-with",
+        help="Stage to re-fire from: process | consolidate | render",
+    ),
+    execution_mode: str = typer.Option(
+        "auto",
+        "--execution-mode",
+        help="Execution mode: auto | local | slurm",
+    ),
+    which: str = typer.Option(
+        "both",
+        "--which",
+        help="Processing scope: TRITON | SWMM | both",
+    ),
+    clear_raw_outputs: bool = typer.Option(
+        False,
+        "--clear-raw-outputs/--no-clear-raw-outputs",
+        help="Clear raw sim outputs during reprocess. Hard-default False; "
+        "requires every sim's c_run_*.flag to exist and no in-flight "
+        "_status/_submitted/ sentinel.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Run snakemake --dry-run only; no execution",
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        help="Print progress messages",
+    ),
+):
+    """Re-run downstream stages (process / consolidate / render) against existing
+    simulation outputs without re-running sims.
+
+    Builds a scope-limited Snakefile at ``{analysis_dir}/Snakefile.reprocess``
+    and runs it against a separate ``.snakemake_reprocess/`` working dir so
+    the reprocess driver can coexist with a live simulation driver. Runs
+    the Phase-1 reconciliation guard before submission.
+
+    Examples:
+
+        # Re-aggregate datatree + render (common case)
+        $ triton-swmm reprocess --system-config system.yaml \\
+            --analysis-config analysis.yaml --start-with consolidate
+
+        # Re-render report only against existing plots
+        $ triton-swmm reprocess --system-config system.yaml \\
+            --analysis-config analysis.yaml --start-with render
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        if start_with not in ("process", "consolidate", "render"):
+            console_err.print(
+                f"[bold red]Error:[/bold red] --start-with must be one of "
+                f"'process', 'consolidate', 'render'; got {start_with!r}."
+            )
+            raise typer.Exit(2)
+        if execution_mode not in ("auto", "local", "slurm"):
+            console_err.print(
+                f"[bold red]Error:[/bold red] --execution-mode must be one of "
+                f"'auto', 'local', 'slurm'; got {execution_mode!r}."
+            )
+            raise typer.Exit(2)
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        result = analysis.reprocess(
+            start_with=start_with,  # type: ignore[arg-type]
+            execution_mode=execution_mode,  # type: ignore[arg-type]
+            which=which,  # type: ignore[arg-type]
+            clear_raw_outputs=clear_raw_outputs,
+            verbose=verbose,
+            dry_run=dry_run,
+        )
+
+        if result.get("success"):
+            console.print(f"[green]Reprocess completed:[/green] {result.get('message', '(no message)')}")
+            raise typer.Exit(0)
+        else:
+            console_err.print(f"[bold red]Reprocess failed:[/bold red] {result.get('message', '(no message)')}")
+            raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
+@app.command(name="cleanup-stale-metadata")
+def cleanup_stale_metadata_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="List orphan metadata records without deleting (default) or delete them with --apply",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Required with --apply to actually invoke snakemake --cleanup-metadata",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print each orphan path",
+    ),
+):
+    """List or delete orphaned ``.snakemake/metadata/`` records left by past rule-output renames.
+
+    The Phase 8 rule-output renames (``.png``/``.svg`` → ``.html`` for
+    system_overview, per_sim plots, and sensitivity_benchmarking) leave orphaned
+    metadata records that Snakemake will trigger a one-shot full plot rebuild
+    against on first post-rename invocation. This command identifies those
+    orphans and optionally removes them via ``snakemake --cleanup-metadata <paths>``.
+
+    Examples:
+
+        # List orphans (no deletion)
+        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+            --analysis-config analysis.yaml
+
+        # Actually delete
+        $ triton-swmm cleanup-stale-metadata --system-config system.yaml \\
+            --analysis-config analysis.yaml --apply --force
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        if not dry_run and not force:
+            console_err.print(
+                "[bold red]Error:[/bold red] --apply requires --force to confirm deletion."
+            )
+            raise typer.Exit(2)
+
+        orphan_paths = analysis._enumerate_stale_metadata_paths()
+        n = len(orphan_paths)
+
+        if n == 0:
+            console.print("[green]No orphan metadata candidates enumerated.[/green]")
+        elif dry_run:
+            console.print(
+                f"[yellow]Found {n} orphan metadata candidate(s) (dry-run; nothing deleted).[/yellow]"
+            )
+            for p in orphan_paths:
+                console.print(f"  orphan: {p}")
+        else:
+            if verbose:
+                for p in orphan_paths:
+                    console.print(f"  orphan: {p}")
+            analysis._invoke_snakemake_cleanup_metadata(orphan_paths)
+            console.print(
+                f"[green]Invoked `snakemake --cleanup-metadata` against {n} orphan path(s).[/green]"
             )
 
         raise typer.Exit(0)
@@ -721,7 +924,8 @@ def _validate_cli_arguments(**kwargs) -> None:
     # Walltime format validation
     if kwargs["walltime"]:
         import re
-        if not re.match(r'^\d{2}:\d{2}:\d{2}$', kwargs["walltime"]):
+
+        if not re.match(r"^\d{2}:\d{2}:\d{2}$", kwargs["walltime"]):
             raise CLIValidationError(
                 argument="--walltime",
                 message=f"Invalid walltime format: {kwargs['walltime']}",
@@ -735,9 +939,9 @@ def _print_dry_run_summary(args: dict) -> None:
 
     # Profile information
     console.print(f"[bold]Profile:[/bold] {args['profile']}")
-    if args['profile'] == 'testcase':
+    if args["profile"] == "testcase":
         console.print(f"[bold]Testcase:[/bold] {args['testcase']}")
-    elif args['profile'] == 'case-study':
+    elif args["profile"] == "case-study":
         console.print(f"[bold]Case Study:[/bold] {args['case_study']}")
 
     # Configuration files
@@ -753,18 +957,18 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print(f"  From scratch: {args['from_scratch']}")
 
     # Event selection
-    if args['event_ilocs'] or args['event_range']:
+    if args["event_ilocs"] or args["event_range"]:
         console.print("\n[bold]Event Selection:[/bold]")
-        if args['event_ilocs']:
+        if args["event_ilocs"]:
             console.print(f"  Indices: {args['event_ilocs']}")
-        if args['event_range']:
+        if args["event_range"]:
             console.print(f"  Range: {args['event_range']}")
 
     # HPC overrides (if any)
     hpc_overrides = {
-        k: v for k, v in args.items()
-        if k in ['partition', 'account', 'nodes', 'walltime', 'cpus_per_task']
-        and v is not None
+        k: v
+        for k, v in args.items()
+        if k in ["partition", "account", "nodes", "walltime", "cpus_per_task"] and v is not None
     }
     if hpc_overrides:
         console.print("\n[bold]HPC Overrides:[/bold]")
@@ -777,17 +981,26 @@ def _print_dry_run_summary(args: dict) -> None:
 @app.command(name="bundle")
 def bundle_command(
     system_config: Path = typer.Option(
-        ..., "--system-config",
-        exists=True, file_okay=True, dir_okay=False, readable=True,
+        ...,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
         help="Path to system configuration YAML file",
     ),
     analysis_config: Path = typer.Option(
-        ..., "--analysis-config",
-        exists=True, file_okay=True, dir_okay=False, readable=True,
+        ...,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
         help="Path to analysis configuration YAML file",
     ),
     output: Path = typer.Option(
-        None, "--output",
+        None,
+        "--output",
         help=(
             "Target path for the bundle zip. Defaults to "
             "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
@@ -820,11 +1033,16 @@ def bundle_command(
 @app.command(name="report-from-bundle")
 def report_from_bundle_command(
     bundle_path: Path = typer.Argument(
-        ..., exists=True, file_okay=True, dir_okay=True, readable=True,
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=True,
+        readable=True,
         help="Path to the bundle zip (or unpacked bundle directory).",
     ),
     format: str = typer.Option(
-        "zip", "--format",
+        "zip",
+        "--format",
         help="Output format: 'zip' (single-HTML wrapped in a zip — default) or 'html' (uncompressed single-file).",
     ),
 ) -> None:
@@ -863,11 +1081,7 @@ def report_from_bundle_command(
 
     local_sha = _get_toolkit_git_sha(strict=False)
     bundle_sha = bundle.manifest.get("toolkit_git_sha", "unknown")
-    if (
-        bundle_sha != "unknown"
-        and local_sha != "unknown"
-        and bundle_sha != local_sha
-    ):
+    if bundle_sha != "unknown" and local_sha != "unknown" and bundle_sha != local_sha:
         console.print(
             f"[yellow]Toolkit git SHA divergence:[/yellow] bundle={bundle_sha}, "
             f"local={local_sha}. The local re-render uses the locally installed "
@@ -887,6 +1101,7 @@ def report_from_bundle_command(
             f"removing (left behind by an interrupted prior render)."
         )
         from TRITON_SWMM_toolkit.utils import fast_rmtree
+
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 
