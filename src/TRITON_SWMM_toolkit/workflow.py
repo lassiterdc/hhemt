@@ -1098,6 +1098,7 @@ rule process_{model_type}:
         consolidate_resources: str,
         compression_level: int,
         overwrite_outputs_if_already_created: bool,
+        allow_incomplete: bool = False,
     ) -> str:
         """Emit the ``rule consolidate`` block.
 
@@ -1109,6 +1110,14 @@ rule process_{model_type}:
         ``consolidate`` and the process stage is skipped) and bakes
         ``overwrite_outputs_if_already_created=True`` to regenerate the
         analysis datatree.
+
+        ``allow_incomplete`` (default False) opts into the consolidate runner's
+        ``--allow-incomplete`` mode, which demotes the runner's
+        ``all_sims_run`` hard fail to a warning so reprocess against a
+        partially-complete analysis dir can proceed against the
+        Snakefile-DAG-scoped subset of completed scenarios. The canonical
+        workflow path (``generate_snakefile_content``) leaves this False so
+        unexpected sim absence still fails fast.
         """
         return f'''
 rule consolidate:
@@ -1124,6 +1133,7 @@ rule consolidate:
             {config_args} \\
             --compression-level {compression_level} \\
             {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            {"--allow-incomplete " if allow_incomplete else ""}\\
             --which {which} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5355,6 +5365,7 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
+            --allow-incomplete \\
             --which {which} \\
             --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\

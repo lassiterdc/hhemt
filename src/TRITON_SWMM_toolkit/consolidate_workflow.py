@@ -277,6 +277,17 @@ def main() -> int:
         default=False,
         help="If True, consolidate subanalysis-level outputs into master analysis outputs (for sensitivity analysis)",
     )
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        default=False,
+        help=(
+            "If True, demote the 'all simulations completed' hard fail to a warning and consolidate only the "
+            "completed scenarios. Set by the reprocess Snakefile generators when running against a partially-"
+            "complete analysis dir. Canonical (non-reprocess) workflow invocations leave this False so missing "
+            "sims still fail fast."
+        ),
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -316,31 +327,48 @@ def main() -> int:
         logger.info("Verifying simulation completion status...")
         analysis._update_log()
 
-        # Check if all simulations ran
+        # Check if all simulations ran. Under --allow-incomplete (set by the reprocess Snakefile
+        # generators), demote to a warning and continue — the reprocess Snakefile's `input:` directive
+        # has already scope-limited the rule to completed sim flags, so the runner consolidates only
+        # those completed scenarios and the un-run ones are surfaced via the operator-facing log
+        # below (and the rendered report's Errors-and-Warnings sidebar).
         if not analysis.log.all_sims_run.get():
-            logger.error("Not all simulations completed successfully")
-            logger.error(f"Scenarios not run: {analysis.scenarios_not_run}")
-            return 1
-
-        logger.info("All simulations completed successfully")
+            if args.allow_incomplete:
+                logger.warning("Not all simulations completed successfully; --allow-incomplete is set, proceeding with completed scenarios only")
+                logger.warning(f"Scenarios not run: {analysis.scenarios_not_run}")
+            else:
+                logger.error("Not all simulations completed successfully")
+                logger.error(f"Scenarios not run: {analysis.scenarios_not_run}")
+                return 1
+        else:
+            logger.info("All simulations completed successfully")
 
         # Validate resource usage (skipped for subanalysis)
         if not analysis.cfg_analysis.is_subanalysis:
             validate_resource_usage(analysis, logger)
 
-        # Check if all timeseries were processed
+        # Check if all timeseries were processed. The all_*_timeseries_processed log fields are computed
+        # over the full sensitivity definition just like all_sims_run, so under --allow-incomplete the
+        # warnings would otherwise fire spuriously for the out-of-scope (un-run) scenarios. Demote to
+        # an info-level note in that case; the canonical workflow path (flag absent) keeps the warnings.
         if args.which in ["both", "TRITON"]:
             if not analysis.log.all_TRITON_timeseries_processed.get():
-                logger.warning("Not all TRITON timeseries were processed")
-                logger.warning(
-                    f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed}"
-                )
+                if args.allow_incomplete:
+                    logger.info("Skipping all-TRITON-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)")
+                else:
+                    logger.warning("Not all TRITON timeseries were processed")
+                    logger.warning(
+                        f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed}"
+                    )
         if args.which in ["both", "SWMM"]:
             if not analysis.log.all_SWMM_timeseries_processed.get():
-                logger.warning("Not all SWMM timeseries were processed")
-                logger.warning(
-                    f"Scenarios with unprocessed SWMM timeseries: {analysis.SWMM_time_series_not_processed}"
-                )
+                if args.allow_incomplete:
+                    logger.info("Skipping all-SWMM-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)")
+                else:
+                    logger.warning("Not all SWMM timeseries were processed")
+                    logger.warning(
+                        f"Scenarios with unprocessed SWMM timeseries: {analysis.SWMM_time_series_not_processed}"
+                    )
 
         # Phase 3b: Consolidate outputs
         if args.consolidate_sensitivity_analysis_outputs:

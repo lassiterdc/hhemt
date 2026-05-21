@@ -292,6 +292,7 @@ onerror:
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
             overwrite_outputs_if_already_created=overwrite,
+            allow_incomplete=True,
         )
 
     # ---- Plot rules (always emitted; their mtime trigger handles re-firing) ----
