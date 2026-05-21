@@ -10,6 +10,8 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 @pytest.fixture
 def mock_analysis():
@@ -165,6 +167,17 @@ class TestWaitForSlormJobCompletion:
 
 class TestSubmitSingleJobWorkflow:
     """Tests for _submit_single_job_workflow method."""
+
+    @pytest.fixture(autouse=True)
+    def _patch_lock_clear(self):
+        # _submit_single_job_workflow calls self._check_and_clear_snakemake_lock
+        # before any subprocess work; with the mock analysis_dir of /test/analysis,
+        # the lock-clear's mkdir hits Permission denied and the catch-all handler
+        # in submit_single_job_workflow masks the intended assertion paths. Patch
+        # it out so the 6 tests below exercise the mocked subprocess paths they
+        # were designed for. (Phase 4 of synth-test-isolation-and-runtime, D13.)
+        with patch.object(SnakemakeWorkflowBuilder, "_check_and_clear_snakemake_lock"):
+            yield
 
     @patch("subprocess.run")
     def test_submit_without_wait(self, mock_run, workflow_builder):

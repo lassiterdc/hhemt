@@ -46,6 +46,8 @@ from tests._failing_fixture_helpers import (
     prepare_clone_dir,
 )
 
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 # ---------------------------------------------------------------------------
 # Synthetic ValidationReport tests (deterministic; isolated from analysis init)

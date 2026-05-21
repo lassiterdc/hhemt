@@ -11,6 +11,15 @@ import pytest
 from TRITON_SWMM_toolkit.version_migration import state
 from TRITON_SWMM_toolkit.version_migration.constants import LAYOUT_VERSION
 
+# Phase 4 (synth-test-isolation-and-runtime): the two stamp-wire regression
+# tests at the bottom of this file (test_analysis_run_stamps_version_file and
+# test_submit_workflow_stamps_version_file) invoke analysis.run() and
+# analysis.submit_workflow() respectively, which launch snakemake subprocesses.
+# File-level marker chosen over per-function for uniformity with the rest of
+# the phase-4 marker set; the cost of serializing the unit tests above is
+# negligible because they are fast.
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 def test_read_returns_none_when_missing(tmp_path: Path) -> None:
     assert state.read_version_file(tmp_path) is None

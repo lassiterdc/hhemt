@@ -1,9 +1,12 @@
 import pytest
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    not tst_ut.on_frontier(), reason="Only runs on Frontier HPC"
-)
+pytestmark = [
+    pytest.mark.requires_snakemake_subprocess,
+    pytest.mark.skipif(
+        not tst_ut.on_frontier(), reason="Only runs on Frontier HPC"
+    ),
+]
 
 # cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
 # salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0

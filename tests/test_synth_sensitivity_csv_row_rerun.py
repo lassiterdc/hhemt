@@ -15,6 +15,8 @@ import pytest
 
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 @pytest.fixture
 def synth_sa_two_row(tmp_path):

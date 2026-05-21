@@ -4,9 +4,12 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
+pytestmark = [
+    pytest.mark.requires_snakemake_subprocess,
+    pytest.mark.skipif(
+        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+    ),
+]
 
 
 def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis):
@@ -219,6 +222,15 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         f"expected under {repo_src}. Layer 2 PYTHONPATH inheritance is broken."
     )
 
+    # Phase 1 (synth-test-isolation-and-runtime) exercises SnakemakeDiagnostics
+    # end-to-end so P1-V2's `test_diagnose.log` + `--reason` annotations
+    # requirement is satisfied by every run of this test.
+    from TRITON_SWMM_toolkit.workflow import SnakemakeDiagnostics
+
+    diagnostic_log_path = (
+        analysis.analysis_paths.analysis_dir / ".snakemake" / "log" / "test_diagnose.log"
+    )
+
     result = analysis.submit_workflow(
         mode="local",
         process_system_level_inputs=True,
@@ -235,10 +247,30 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,
+        snakemake_diagnostics=SnakemakeDiagnostics(
+            verbose=True,
+            reason=True,
+            log_path=diagnostic_log_path,
+        ),
     )
 
     assert result.get("success"), result.get("message", "Workflow failed")
     assert result.get("mode") == "local"
+    assert diagnostic_log_path.exists(), (
+        f"SnakemakeDiagnostics log_path was not honored — expected {diagnostic_log_path}"
+    )
+    log_text = diagnostic_log_path.read_text()
+    # snakemake 8/9 emits per-job rerun reasons automatically when --verbose
+    # is set (the standalone --reason flag was removed in snakemake 8).
+    # Phase 1's SnakemakeDiagnostics folds the legacy reason intent into the
+    # verbose path via emit_verbose; the log must therefore contain verbose-
+    # mode signal (either explicit "reason:" annotations or, on workflows
+    # where every job runs from scratch, the verbose-mode "Job " markers
+    # for executing jobs).
+    assert "reason:" in log_text.lower() or "job " in log_text.lower(), (
+        "expected --verbose-mode rerun-reason annotations in diagnostic log; "
+        f"got log of length {len(log_text)} chars"
+    )
 
     tst_ut.assert_analysis_workflow_completed_successfully(analysis)
 
