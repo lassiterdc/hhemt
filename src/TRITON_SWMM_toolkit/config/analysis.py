@@ -9,6 +9,16 @@ from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 from TRITON_SWMM_toolkit.config.report import report_config as _report_config_model
 
 
+ClearRawValue = (
+    Literal["all", "none"]
+    | list[Literal["tritonswmm", "triton", "swmm"]]
+)
+ForceRerunValue = (
+    Literal["all", "none"]
+    | dict[Literal["sa_id", "event_iloc"], list[int | str]]
+)
+
+
 class analysis_config(cfgBaseModel):
     # REQUIRED INPUTS
     analysis_id: Annotated[
@@ -273,6 +283,29 @@ class analysis_config(cfgBaseModel):
         ),
     )
 
+    # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
+    clear_raw: ClearRawValue = Field(
+        ...,
+        description=(
+            'Post-processing cleanup policy. "all" deletes all raw outputs '
+            'for every enabled model type. "none" deletes nothing. A list '
+            'of model type strings (subset of "tritonswmm", "triton", "swmm") '
+            'deletes raw outputs only for the listed model types. Required '
+            'field; no default — missing-from-YAML raises ValidationError.'
+        ),
+    )
+    force_rerun: ForceRerunValue = Field(
+        ...,
+        description=(
+            'Force-rerun policy. "all" re-runs everything. "none" runs no '
+            'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
+            'only) or "event_iloc" (non-sensitivity only) — and a list of int '
+            'or string identifiers re-runs only the named sub-analyses or '
+            'events. Required field; no default — missing-from-YAML raises '
+            'ValidationError.'
+        ),
+    )
+
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("analysis_id")
     def validate_analysis_id(cls, v):
@@ -280,6 +313,55 @@ class analysis_config(cfgBaseModel):
             raise ValueError(
                 "analysis_id must contain only letters, digits, underscores, or periods"
             )
+        return v
+
+    @field_validator("clear_raw", mode="after")
+    @classmethod
+    def _validate_clear_raw(cls, v):
+        if isinstance(v, list):
+            if not v:
+                raise ValueError("clear_raw list form cannot be empty; use 'none' to delete nothing")
+            if len(v) != len(set(v)):
+                raise ValueError(f"clear_raw list contains duplicates: {v}")
+            for item in v:
+                if item in ("all", "none"):
+                    raise ValueError(
+                        f"clear_raw list cannot contain sentinel value {item!r}; "
+                        f"use the sentinel as a bare string (clear_raw: {item})"
+                    )
+        return v
+
+    @field_validator("force_rerun", mode="after")
+    @classmethod
+    def _validate_force_rerun(cls, v):
+        _SA_ID_RE = re.compile(r"^[A-Za-z0-9_.]+$")
+        if isinstance(v, dict):
+            if len(v) != 1:
+                raise ValueError(
+                    f"force_rerun dict form must have exactly one key (either "
+                    f"'sa_id' or 'event_iloc'); got {len(v)} keys: {list(v.keys())}"
+                )
+            key = next(iter(v))
+            if key not in ("sa_id", "event_iloc"):
+                raise ValueError(
+                    f"force_rerun dict key must be 'sa_id' or 'event_iloc'; got {key!r}"
+                )
+            values = v[key]
+            if not isinstance(values, list) or not values:
+                raise ValueError(
+                    f"force_rerun.{key} value must be a non-empty list; got {values!r}"
+                )
+            if len(values) != len(set(map(str, values))):
+                raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
+            if key == "sa_id":
+                bad = [str(x) for x in values if not _SA_ID_RE.match(str(x))]
+                if bad:
+                    raise ValueError(
+                        f"force_rerun.sa_id values must match ^[A-Za-z0-9_.]+$ "
+                        f"(per accepted decision 'All user-provided identifiers that "
+                        f"become Snakemake wildcards must match ^[A-Za-z0-9_.]+$'); "
+                        f"got invalid: {bad}"
+                    )
         return v
 
     @model_validator(mode="before")
@@ -454,3 +536,18 @@ class analysis_config(cfgBaseModel):
                 )
 
         return values
+
+    @model_validator(mode="after")
+    def _validate_force_rerun_against_sensitivity_toggle(self):
+        if isinstance(self.force_rerun, dict):
+            key = next(iter(self.force_rerun))
+            if key == "sa_id" and not self.toggle_sensitivity_analysis:
+                raise ValueError(
+                    "force_rerun.sa_id requires toggle_sensitivity_analysis=True"
+                )
+            if key == "event_iloc" and self.toggle_sensitivity_analysis:
+                raise ValueError(
+                    "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
+                    "sensitivity-toggled analyses must use force_rerun.sa_id instead"
+                )
+        return self
