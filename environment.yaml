@@ -55,6 +55,7 @@ dependencies:
   # other stuff
   - coverage
   - pytest
+  - pytest-xdist>=3.0
   - py-spy>=0.3.14
   - ruff
   - ty

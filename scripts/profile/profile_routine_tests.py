@@ -292,7 +292,53 @@ def _extract_hot_functions(pstats_path: Path, top_n: int) -> list[tuple[str, flo
     return rows
 
 
-def _env_fingerprint() -> dict[str, str]:
+def _read_cpu_governor() -> str:
+    try:
+        return Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip()
+    except OSError:
+        return "(unavailable)"
+
+
+def _detect_taskset_applied() -> bool:
+    """True when this process is pinned to fewer CPUs than the system exposes.
+
+    Reads `/proc/self/status::Cpus_allowed_list` and compares against
+    `os.cpu_count()`. A taskset/affinity restriction (e.g., `taskset -c 0`)
+    yields a narrower set than the full system CPU list.
+    """
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith("Cpus_allowed_list:"):
+                spec = line.split(":", 1)[1].strip()
+                allowed: set[int] = set()
+                for token in spec.split(","):
+                    if "-" in token:
+                        lo, hi = token.split("-", 1)
+                        allowed.update(range(int(lo), int(hi) + 1))
+                    else:
+                        allowed.add(int(token))
+                return len(allowed) < (os.cpu_count() or len(allowed))
+    except (OSError, ValueError):
+        return False
+    return False
+
+
+def _noise_floor_iqr_pct(repetitions_retained: int, governor: str, taskset_applied: bool) -> float:
+    """Heuristic noise floor per hpc-perf Section 4 (Hager-Wellein 2011 §2.1).
+
+    Returns the expected IQR (%) under the current environment discipline. The
+    `repetitions_retained` argument is reserved for future per-rep adjustments
+    and is currently unused by the heuristic.
+    """
+    del repetitions_retained  # reserved for future adjustments
+    if governor == "performance" and taskset_applied:
+        return 1.0
+    if governor == "performance" or taskset_applied:
+        return 3.0
+    return 5.0  # schedutil + no pin
+
+
+def _env_fingerprint(repetitions: int) -> dict[str, str]:
     """Capture machine/env identity for the doc's fingerprint section.
 
     Hager-2010 stunt-defense surfaces: CPU model, CPU governor (#5
@@ -323,11 +369,13 @@ def _env_fingerprint() -> dict[str, str]:
         capture_output=True, text=True, check=False,
     ).stdout.strip()
 
-    governor = ""
-    try:
-        governor = Path("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor").read_text().strip()
-    except OSError:
-        governor = "(unavailable)"
+    governor = _read_cpu_governor()
+    taskset_applied = _detect_taskset_applied()
+    noise_floor_iqr_pct = _noise_floor_iqr_pct(
+        repetitions_retained=repetitions,
+        governor=governor,
+        taskset_applied=taskset_applied,
+    )
     smt_active = ""
     try:
         smt_active = Path("/sys/devices/system/cpu/smt/active").read_text().strip()
@@ -376,6 +424,8 @@ def _env_fingerprint() -> dict[str, str]:
         "conda_env": os.environ.get("CONDA_DEFAULT_ENV", "(none)"),
         "git_sha": git_sha or "(no git)",
         "cpu_governor": governor,
+        "taskset_applied": str(taskset_applied).lower(),
+        "noise_floor_iqr_pct": f"{noise_floor_iqr_pct:.1f}",
         "smt_active": smt_active,
         "smt_siblings": siblings,
         "filterwarnings": filterwarnings,
@@ -393,8 +443,15 @@ def _parse_args() -> argparse.Namespace:
                         help="Top-N hot functions (global)")
     parser.add_argument("--findings-top-k", type=int, default=DEFAULT_FINDINGS_TOP_K,
                         help="Top-K findings to surface")
-    parser.add_argument("--repetitions", type=int, default=DEFAULT_REPETITIONS,
-                        help="Profile runs (median across kept reps when >=2; first discarded as warmup when >=3)")
+    parser.add_argument(
+        "--repetitions", type=int, default=DEFAULT_REPETITIONS,
+        help=(
+            "Number of profile runs to retain. Default 1 for doc refresh. "
+            "Use 5 for optimization-measurement work. Use 10 for borderline (<10%%) "
+            "claimed deltas + paired Wilcoxon signed-rank test. "
+            "See hpc-perf research §4 for rationale (Hager-Wellein 2011 §2.1)."
+        ),
+    )
     parser.add_argument("--output", type=Path, default=None,
                         help="Output doc path (overwritten); default = $AGENTIC_WORKSPACE/library/knowledge/triton-swmm-toolkit/routine test profile results.md")
     parser.add_argument("--cprofile", dest="cprofile", action="store_true", default=True)
@@ -570,7 +627,7 @@ def main() -> int:
         flush=True,
     )
     emit(
-        env_fingerprint=_env_fingerprint(),
+        env_fingerprint=_env_fingerprint(repetitions=args.repetitions),
         runs=runs,
         top_n=args.top_n,
         findings_top_k=args.findings_top_k,

@@ -40,7 +40,11 @@ from TRITON_SWMM_toolkit.swmm_output_parser import (
 )
 from TRITON_SWMM_toolkit.utils import fast_rmtree, parse_triton_log_file
 from TRITON_SWMM_toolkit.validation import ValidationResult, preflight_validate
-from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder, _emit_report_artifacts
+from TRITON_SWMM_toolkit.workflow import (
+    SnakemakeDiagnostics,
+    SnakemakeWorkflowBuilder,
+    _emit_report_artifacts,
+)
 
 if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
@@ -1567,6 +1571,7 @@ class TRITONSWMM_analysis:
         cleanup_orphans: bool = False,
         cleanup_stale_metadata: bool = True,
         extra_sbatch_args: list[str] | None = None,
+        snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> "WorkflowResult":
         """
         High-level orchestration method for running TRITON-SWMM workflows.
@@ -1865,6 +1870,7 @@ class TRITONSWMM_analysis:
             "override_hpc_total_nodes": override_hpc_total_nodes,
             "report_formats": report_formats,
             "extra_sbatch_args": extra_sbatch_args,
+            "snakemake_diagnostics": snakemake_diagnostics,
         }
 
         if verbose:
@@ -2244,6 +2250,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
+        snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake (replaces submit_SLURM_job_array).
@@ -2332,6 +2339,7 @@ class TRITONSWMM_analysis:
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_formats=report_formats,
                 extra_sbatch_args=extra_sbatch_args,
+                snakemake_diagnostics=snakemake_diagnostics,
             )
         else:
             result = self._workflow_builder.submit_workflow(
@@ -2355,6 +2363,7 @@ class TRITONSWMM_analysis:
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 report_formats=report_formats,
                 extra_sbatch_args=extra_sbatch_args,
+                snakemake_diagnostics=snakemake_diagnostics,
             )
 
         if dry_run and result.get("success"):

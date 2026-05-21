@@ -25,6 +25,8 @@ import pytest
 
 import TRITON_SWMM_toolkit.constants as cnst
 
+from tests.fixtures import worktree_slug
+
 # Import from test fixtures
 from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
@@ -765,7 +767,10 @@ class Local_TestCases:
         )
 
     @staticmethod
-    def retrieve_synth_multi_sim_test_case(start_from_scratch: bool = False):
+    def retrieve_synth_multi_sim_test_case(
+        start_from_scratch: bool = False,
+        skip_run: bool = False,
+    ):
         return retrieve_synth_TRITON_SWMM_test_case(
             analysis_name="synth_multi_sim",
             # Iter-2 of `per_sim_peak_flood_depth` (2026-04-28): bumped from 2
@@ -774,6 +779,7 @@ class Local_TestCases:
             # (event 0: hydro-only, event 1: BC-only, event 2: both).
             n_events=3,
             start_from_scratch=start_from_scratch,
+            skip_run=skip_run,
         )
 
     @staticmethod
@@ -825,6 +831,7 @@ class Local_TestCases:
     @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case(
         start_from_scratch: bool = False,
+        skip_run: bool = False,
     ):
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
@@ -838,6 +845,7 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
+            skip_run=skip_run,
             additional_analysis_configs={
                 "report": Local_TestCases._load_synth_sensitivity_report_dict()
             },
@@ -916,6 +924,7 @@ class Local_TestCases:
         dest_dir = (
             Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
             / "synthetic_test_runs"
+            / worktree_slug()
             / "_sensitivity_configs"
         )
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -1112,9 +1121,12 @@ class Local_TestCases:
     ) -> Path:
         # Sibling dir (not under runs_root/<analysis_name>) so constructor's
         # start_from_scratch wipe of the analysis dir does not delete the CSV.
+        # Per-worktree rooting matches test_case_builder so concurrent runs in
+        # sibling worktrees do not race on the sensitivity CSV.
         runs_root = (
             Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
             / "synthetic_test_runs"
+            / worktree_slug()
         )
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)

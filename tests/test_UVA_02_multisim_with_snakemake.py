@@ -1,7 +1,10 @@
 import pytest
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UVA HPC")
+pytestmark = [
+    pytest.mark.requires_snakemake_subprocess,
+    pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UVA HPC"),
+]
 
 # module purge
 # module load gompi/14.2.0_5.0.7 miniforge

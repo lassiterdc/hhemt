@@ -1,5 +1,6 @@
 import sys
 import re
+import io
 import warnings
 from collections import Counter
 from functools import lru_cache
@@ -28,6 +29,27 @@ from TRITON_SWMM_toolkit.constants import (
 
 TDELTA_PATTERN = re.compile(r"^\s*(\d+)\s+(\d+):(\d+)")
 RPT_DATETIME_FORMAT = "%m/%d/%Y %H:%M:%S"
+
+# Bulk-parse regex patterns for parse_rpt_single_pass.
+# Each <<< Node|Link {id} >>> block has the structure:
+#   <<< (Node|Link) {id} >>>
+#   ------------ (separator 1)
+#   {column-name lines}
+#   ------------ (separator 2)
+#   {numeric rows: " MM/DD/YYYY HH:MM:SS  v1  v2  v3  v4"}
+#   (blank line, blank line)
+# The numeric block ends at the next <<< marker or two consecutive blank lines.
+_RE_TSERIES_BLOCK = re.compile(
+    r"<<<\s+(?P<kind>Node|Link)\s+(?P<id>\S+)\s+>>>"
+    r".*?"  # column-name lines + first separator (non-greedy; DOTALL spans newlines)
+    r"^\s*-{30,}\s*$"  # second separator (anchored to line)
+    # Data iterations use `[^\n]*` (not `.*`) so each iteration captures ONE line
+    # even under re.DOTALL — otherwise `.*` would greedily span the whole section.
+    r"(?P<data>(?:\n[ \t]+\d{1,2}/\d{1,2}/\d{4}[ \t]+\d{1,2}:\d{2}:\d{2}[^\n]*)+)",
+    re.DOTALL | re.MULTILINE,
+)
+_RE_NODE_TSERIES_SECTION = re.compile(r"Node Time Series Results")
+_RE_LINK_TSERIES_SECTION = re.compile(r"Link Time Series Results")
 
 
 def retrieve_swmm_performance_stats_from_rpt(
@@ -341,16 +363,61 @@ def parse_rpt_single_pass(f_rpt: Path):
 
     Returns section lines for summary tables, node/link time series datasets,
     system-level outputs, and a validity flag.
+
+    Bulk-parse path: reads the full file once, slices time-series sections via
+    pre-compiled regex, and parses numeric rows with `pd.read_csv` (C engine).
+    Summary tables remain on the per-line classifier (low-volume, irregular rows
+    handled by ``format_rpt_section_into_dataframe``).
     """
+    content = Path(f_rpt).read_text(encoding="latin-1")
+
     summary_section_headers = (
         "Node Flooding Summary",
         "Node Inflow Summary",
         "Link Flow Summary",
     )
-    dict_section_lines = {header: [] for header in summary_section_headers}
-    dict_lst_node_time_series = {}
-    dict_lst_link_time_series = {}
 
+    # Single-shot metadata + summary-table extraction over splitlines.
+    # The summary-table classifier mirrors the legacy state machine exactly so
+    # output equivalence holds for the orifice/irregular-row edge cases.
+    lines = content.splitlines(keepends=True)
+    (
+        dict_section_lines,
+        line_flw_units,
+        runoff_continuity_error_line,
+        flow_continuity_error_line,
+        system_flood_loss_line,
+        analysis_end_line,
+        valid,
+    ) = _scan_metadata_and_summaries(lines, summary_section_headers)
+
+    # Bulk tseries extraction via regex slicing + pd.read_csv per entity.
+    ds_node_tseries, ds_link_tseries = _bulk_parse_tseries(content)
+
+    dict_system_results = _build_system_results(
+        line_flw_units,
+        runoff_continuity_error_line,
+        flow_continuity_error_line,
+        system_flood_loss_line,
+        analysis_end_line,
+    )
+    return (
+        dict_section_lines,
+        ds_node_tseries,
+        ds_link_tseries,
+        dict_system_results,
+        valid,
+    )
+
+
+def _scan_metadata_and_summaries(lines, summary_section_headers):
+    """Single-pass scan for single-shot metadata lines + summary-section row lists.
+
+    Skips the time-series section entirely — that work is delegated to
+    ``_bulk_parse_tseries``. The result is identical to the legacy parser's
+    summary-table extraction.
+    """
+    dict_section_lines = {header: [] for header in summary_section_headers}
     valid = False
     encountered_flow_routing_continuity = False
     line_flw_units = None
@@ -358,22 +425,12 @@ def parse_rpt_single_pass(f_rpt: Path):
     flow_continuity_error_line = None
     system_flood_loss_line = None
     analysis_end_line = None
-
     current_summary_section = None
     summary_begin_header = False
     summary_end_header = False
+    tseries_section_started = False
 
-    tseries_started = False
-    tseries_key = None
-    tseries_is_link = False
-    tseries_is_node = False
-    tseries_begin_header = False
-    tseries_end_header = False
-    tseries_vals = []
-
-    for line_num, line in enumerate(_iter_rpt_lines(f_rpt)):
-        line_split = line.split(" ")
-        line_split_len = len(line_split)
+    for line_num, line in enumerate(lines):
         if "Element Count" in line:
             valid = True
         if "Flow Units" in line:
@@ -390,38 +447,11 @@ def parse_rpt_single_pass(f_rpt: Path):
         if "Analysis ended on" in line:
             analysis_end_line = line
 
-        if not tseries_started and "Node Time Series Results" in line:
-            tseries_started = True
-
-        if tseries_started:
-            if "<<<" in line:
-                tseries_key = line.split("<<<")[1].split(" ")[2]
-                lower_line = line.lower()
-                tseries_is_link = "link" in lower_line
-                tseries_is_node = "node" in lower_line
-                tseries_vals = []
-                tseries_begin_header = False
-                tseries_end_header = False
-                continue
-            if tseries_key is not None:
-                if "------------" in line:
-                    if not tseries_begin_header:
-                        tseries_begin_header = True
-                        continue
-                    if not tseries_end_header:
-                        tseries_end_header = True
-                        continue
-                if not (tseries_begin_header and tseries_end_header):
-                    continue
-                if line_split_len <= 3:
-                    if tseries_is_link:
-                        dict_lst_link_time_series[tseries_key] = tseries_vals
-                    if tseries_is_node:
-                        dict_lst_node_time_series[tseries_key] = tseries_vals
-                    tseries_key = None
-                    tseries_vals = []
-                    continue
-                tseries_vals.append(line)
+        # Skip summary-section extraction once we enter the time-series section.
+        if not tseries_section_started and "Node Time Series Results" in line:
+            tseries_section_started = True
+        if tseries_section_started:
+            continue
 
         for header in summary_section_headers:
             if header in line:
@@ -445,35 +475,104 @@ def parse_rpt_single_pass(f_rpt: Path):
             continue
         if line_num == 0:
             continue
-        if line_split_len <= 3:
+        if len(line.split(" ")) <= 3:
             current_summary_section = None
             continue
         dict_section_lines[current_summary_section].append(line)
 
-    if tseries_key is not None and tseries_vals:
-        if tseries_is_link:
-            dict_lst_link_time_series[tseries_key] = tseries_vals
-        if tseries_is_node:
-            dict_lst_node_time_series[tseries_key] = tseries_vals
-
-    dict_system_results = _build_system_results(
+    return (
+        dict_section_lines,
         line_flw_units,
         runoff_continuity_error_line,
         flow_continuity_error_line,
         system_flood_loss_line,
         analysis_end_line,
-    )
-    ds_node_tseries, ds_link_tseries = _build_tseries_datasets(
-        dict_lst_node_time_series,
-        dict_lst_link_time_series,
-    )
-    return (
-        dict_section_lines,
-        ds_node_tseries,
-        ds_link_tseries,
-        dict_system_results,
         valid,
     )
+
+
+def _bulk_parse_tseries(content: str):
+    """Slice node/link time-series blocks via regex and parse via a single pd.read_csv.
+
+    Replaces the per-line state machine + per-row Python split that previously
+    drove the time-series ingest. All per-section numeric rows are concatenated
+    and parsed in ONE `pd.read_csv` (C engine) call to amortize fixed setup cost.
+    Entity ids are reconstructed via `np.repeat` against per-block row counts.
+    """
+    m_node = _RE_NODE_TSERIES_SECTION.search(content)
+    m_link = _RE_LINK_TSERIES_SECTION.search(content)
+
+    node_section_end = m_link.start() if m_link else len(content)
+    node_section = content[m_node.end():node_section_end] if m_node else ""
+    link_section = content[m_link.end():] if m_link else ""
+
+    ds_node_tseries = _bulk_parse_section(
+        node_section,
+        kind_filter="Node",
+        idx_colname="node_id",
+        value_cols=["inflow_flow_cms", "flooding_cms", "depth_m", "head_m"],
+    )
+    ds_link_tseries = _bulk_parse_section(
+        link_section,
+        kind_filter="Link",
+        idx_colname="link_id",
+        value_cols=["flow_cms", "velocity_mps", "link_depth_m", "capacity_setting"],
+    )
+    return ds_node_tseries, ds_link_tseries
+
+
+def _bulk_parse_section(section_text, kind_filter, idx_colname, value_cols):
+    """Single-pass: collect all matching blocks' data into one buffer + parse once.
+
+    Returns an xarray Dataset with dims (idx_colname, date_time) — the same shape
+    the legacy `create_tseries_ds` produced for time-series blocks.
+    """
+    ids = []
+    row_counts = []
+    parts = []
+    for match in _RE_TSERIES_BLOCK.finditer(section_text):
+        if match.group("kind") != kind_filter:
+            continue
+        data_text = match.group("data")
+        # The regex's data group starts with `\n` and each iteration begins with
+        # `\n` + one row, so a leading newline always exists. count("\n") equals
+        # the number of rows captured.
+        n_rows = data_text.count("\n")
+        if n_rows == 0:
+            continue
+        ids.append(match.group("id"))
+        row_counts.append(n_rows)
+        parts.append(data_text)
+
+    if not parts:
+        empty_df = pd.DataFrame(columns=[idx_colname, "date_time", *value_cols])
+        empty_df["date_time"] = pd.to_datetime([], format=RPT_DATETIME_FORMAT)
+        empty_df = empty_df.set_index([idx_colname, "date_time"])
+        return empty_df.to_xarray()
+
+    buf = io.StringIO("".join(parts))
+    df = pd.read_csv(
+        buf,
+        sep=r"\s+",
+        header=None,
+        names=["date", "time", *value_cols],
+        engine="c",
+        dtype={"date": str, "time": str},
+    )
+    df["date_time"] = pd.to_datetime(
+        df["date"] + " " + df["time"], format=RPT_DATETIME_FORMAT, errors="coerce"
+    )
+    if df["date_time"].isna().any():
+        raise ValueError(
+            "Parsed RPT date_time values contained NaT. "
+            "Verify the RPT datetime format matches "
+            f"{RPT_DATETIME_FORMAT}."
+        )
+    df = df.drop(columns=["date", "time"])
+    df[idx_colname] = np.repeat(ids, row_counts)
+    df = df.set_index([idx_colname, "date_time"])
+    df = df[value_cols]
+    return df.to_xarray()
 
 
 def _iter_rpt_lines(f_rpt: Path):

@@ -8,6 +8,8 @@ the 1_job_many_srun_tasks execution mode.
 import pytest
 import tests.fixtures.test_case_catalog as cases
 
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 @pytest.fixture
 def norfolk_1job_analysis():

@@ -8,6 +8,8 @@ with dynamic concurrency (no --ntasks, using --exclusive instead).
 import pytest
 import tests.fixtures.test_case_catalog as cases
 
+pytestmark = pytest.mark.requires_snakemake_subprocess
+
 
 @pytest.fixture
 def norfolk_1job_cpu_only():

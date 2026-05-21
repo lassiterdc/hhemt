@@ -21,10 +21,12 @@ Example:
     system = test_case.system
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import platformdirs
 import yaml
 
 import TRITON_SWMM_toolkit.utils as ut
@@ -34,6 +36,22 @@ from TRITON_SWMM_toolkit.config.analysis import analysis_config
 # Import from production package
 from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from tests.fixtures import worktree_slug
+
+# Compiled TRITON-SWMM artifacts are reused across all worktrees because the
+# git URL/branch/CMake config does not vary per worktree. A single shared cache
+# dir holds the canonical _software/ tree; each worktree's runs_root/_software
+# is a symlink to it so start_from_scratch wipes inside a worktree never touch
+# the shared compile output. The shared cache lives at the legacy pre-Phase-1
+# location (sibling of per-worktree runs_root subdirs, not nested under any of
+# them) so binaries built before Phase 1 keep their baked RPATHs valid and no
+# recompile is forced by the per-worktree migration. Friction history:
+# `# Implementation friction > ## Phase 1 — per_worktree_isolation > ### shared
+# artifact cache name vs legacy RPATHs (2026-05-17T13:20)` in main scratch.
+_SHARED_ARTIFACT_CACHE = (
+    Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+    / "synthetic_test_runs"
+)
 
 
 class retrieve_TRITON_SWMM_test_case:
@@ -266,6 +284,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         toggle_use_constant_mannings: bool = False,
         sensitivity_csv: Path | None = None,
         start_from_scratch: bool = False,
+        skip_run: bool = False,
         params: SyntheticModelParams = DEFAULT_PARAMS,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
@@ -273,20 +292,45 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.artifacts = get_or_build_synthetic_case(params)
         self.analysis_name = analysis_name
 
+        # Per-worktree rooting (Phase 1, synth-test-isolation-and-runtime):
+        # nest runs_root under the current worktree's slug so concurrent pytest
+        # runs in sibling worktrees do not contend for the same cache. Falls
+        # back to "main" when not inside a worktree.
         runs_root = (
             Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
             / "synthetic_test_runs"
+            / worktree_slug()
         )
         self.system_directory = runs_root / analysis_name
-        # Compiled TRITON binaries are shared across all synth analyses (same
-        # git URL/branch, same CMake config) and live outside system_directory
-        # so start_from_scratch wipes of the analysis workspace do not clobber
-        # them. This is what makes warm-cache runs fast.
+        # Compiled TRITON binaries are reused across worktrees via a symlink
+        # to a shared artifact cache; the cache lives outside any worktree-
+        # scoped runs_root so start_from_scratch wipes of the analysis
+        # workspace never touch the compile output.
         self._software_root = runs_root / "_software"
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
-        self._software_root.mkdir(parents=True, exist_ok=True)
+        runs_root.mkdir(parents=True, exist_ok=True)
+        software_target = _SHARED_ARTIFACT_CACHE / "_software"
+        # Pre-Phase-1 caches at synthetic_test_runs/_software/ are NOT migrated:
+        # binaries built before Phase 1 have absolute RPATHs baked into them
+        # pointing at the legacy location (e.g., triton.exe's RPATH carries
+        # `.../synthetic_test_runs/_software/triton/.../swmm/src/solver`), so
+        # moving the tree would break runtime library resolution. First runs
+        # after Phase 1 pay a one-time fresh compile cost; subsequent runs (in
+        # this and other worktrees) reuse the populated shared cache.
+        software_target.mkdir(parents=True, exist_ok=True)
+        if self._software_root.is_symlink():
+            if self._software_root.resolve() != software_target.resolve():
+                self._software_root.unlink()
+                os.symlink(software_target, self._software_root, target_is_directory=True)
+        elif self._software_root.exists():
+            # Pre-existing real directory from before the symlink scheme — leave
+            # it in place rather than destroy compile artifacts. Subsequent
+            # fresh-worktree runs land on the symlink path naturally.
+            pass
+        else:
+            os.symlink(software_target, self._software_root, target_is_directory=True)
 
         self._write_configs(
             n_events=n_events,
@@ -304,7 +348,12 @@ class retrieve_synth_TRITON_SWMM_test_case:
         self.system = TRITONSWMM_system(self.system_yaml)
         self.analysis = TRITONSWMM_analysis(self.analysis_yaml, self.system)
         self.system._analysis = self.analysis
-        if start_from_scratch:
+        # `skip_run=True` (Phase 2, synth-test-isolation-and-runtime): callers that
+        # need only a configured analysis for `generate_snakefile_content` skip the
+        # ~heavy DEM/landuse preprocessing. start_from_scratch still wipes the
+        # system_directory and re-writes configs; only the run-side preprocessing
+        # is gated. See A6 verification in the Phase 2 plan doc.
+        if start_from_scratch and not skip_run:
             self.system.process_system_level_inputs(
                 overwrite_outputs_if_already_created=True, verbose=False
             )

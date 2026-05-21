@@ -33,6 +33,46 @@ if TYPE_CHECKING:
 from dataclasses import dataclass
 
 
+# Sentinel env var: when set to "1", _check_and_clear_snakemake_lock silently
+# rmtrees .snakemake/locks/ and .snakemake/incomplete/ before every snakemake
+# invocation instead of prompting the user. The tests/conftest.py session
+# fixture sets this for the duration of every pytest run; production / CLI
+# invocations leave it unset so the existing interactive prompt remains the
+# default path. Centralized as a constant so the fixture, the helper, and the
+# unit test all agree without a hand-synced string literal.
+_NON_INTERACTIVE_LOCK_CLEAR_ENV = "TRITON_SWMM_TEST_NON_INTERACTIVE_LOCK_CLEAR"
+
+
+@dataclass(frozen=True)
+class SnakemakeDiagnostics:
+    """Diagnostic flags that travel together to a snakemake CLI call.
+
+    Grouped so each facade layer adds one kwarg rather than several, keeping
+    the 19-kwarg submit_workflow signature manageable. Default-constructed
+    instance matches prior behavior: no ``--verbose``, no log capture
+    (``--printshellcmds`` remains unconditional outside this dataclass).
+
+    The ``reason`` field is retained for API compatibility with the Phase 1
+    design surface (sources: synth-test-isolation-and-runtime master plan
+    Decision D1) but is a no-op against snakemake 8/9 — the standalone
+    ``--reason`` CLI flag was removed in snakemake 8; per-job rerun reasons
+    are now emitted automatically when ``--verbose`` is set. Setting
+    ``reason=True`` therefore implies ``verbose=True`` to preserve intent
+    without invoking the removed flag.
+    """
+
+    verbose: bool = False
+    reason: bool = False
+    log_path: Path | None = None
+
+    @property
+    def emit_verbose(self) -> bool:
+        """True iff a --verbose flag should be appended (folds the reason
+        intent into verbose since standalone --reason was removed in
+        snakemake 8)."""
+        return self.verbose or self.reason
+
+
 @dataclass(frozen=True)
 class RuleEmissionContext:
     """Per-Snakefile-emission state shared across plot-rule, render-report, and
@@ -512,7 +552,26 @@ class SnakemakeWorkflowBuilder:
         if dry_run:
             return
         wd = working_dir if working_dir is not None else self.analysis_paths.analysis_dir
-        locks_dir = wd / ".snakemake" / "locks"
+        snakemake_state = wd / ".snakemake"
+        # Non-interactive test path: silently rmtree locks/ AND incomplete/ and
+        # re-create log/ for the tee target. Production / CLI invocations
+        # leave the env var unset and fall through to the interactive prompt.
+        # Phase 1 of synth-test-isolation-and-runtime — Decision D1-Option-D
+        # routes the unconditional pre-snakemake clear through this site so
+        # fixtures don't need to clear separately. metadata/ is deliberately
+        # untouched: start_from_scratch=True wipes the entire analysis_dir on
+        # the from-scratch path, and on the cached path metadata must persist
+        # for rerun-triggers to work.
+        import os
+        import shutil as _shutil
+        if os.environ.get(_NON_INTERACTIVE_LOCK_CLEAR_ENV) == "1":
+            for sub in ("locks", "incomplete"):
+                target = snakemake_state / sub
+                if target.exists():
+                    _shutil.rmtree(target)
+            (snakemake_state / "log").mkdir(parents=True, exist_ok=True)
+            return
+        locks_dir = snakemake_state / "locks"
         lock_files = list(locks_dir.glob("*.lock")) if locks_dir.exists() else []
         if not lock_files:
             return
@@ -1007,6 +1066,7 @@ rule process_{model_type}:
     input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
     output: "_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"
     log: "{log_dir_str}/sims/process_{model_type}_evt-{{event_id}}.log"
+    group: "process_evt_{{event_id}}"
     conda: "{conda_env_path}"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -2355,6 +2415,18 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             if dry_run:
                 cmd_args.append("--dry-run")
 
+            # Diagnostic flags from SnakemakeDiagnostics (Phase 1, synth-test-
+            # isolation-and-runtime): --verbose is opt-in per call. The reason
+            # intent folds into --verbose because snakemake 8+ removed the
+            # standalone --reason flag and now auto-emits per-job rerun
+            # reasons whenever --verbose is set.
+            diag = getattr(self, "_active_snakemake_diagnostics", SnakemakeDiagnostics())
+            if diag.emit_verbose:
+                cmd_args.append("--verbose")
+            if diag.log_path is not None:
+                snakemake_logfile = Path(diag.log_path)
+                snakemake_logfile.parent.mkdir(parents=True, exist_ok=True)
+
             # Pre-Snakemake guards: lock check + at-most-once reconciliation
             # (reconciliation skipped on dry runs; see helper docstring).
             self._pre_snakemake_invocation_guards(snakefile_path, dry_run=dry_run, verbose=verbose)
@@ -2585,6 +2657,18 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             if verbose:
                 cmd_args.append("--verbose")
 
+            # Diagnostic flags from SnakemakeDiagnostics. --verbose may
+            # already be appended above when the function's `verbose` kwarg
+            # is True; snakemake accepts duplicate flags idempotently. The
+            # standalone --reason flag was removed in snakemake 8; the reason
+            # intent folds into --verbose via SnakemakeDiagnostics.emit_verbose.
+            diag = getattr(self, "_active_snakemake_diagnostics", SnakemakeDiagnostics())
+            if diag.emit_verbose and not verbose:
+                cmd_args.append("--verbose")
+            if diag.log_path is not None:
+                snakemake_logfile = Path(diag.log_path)
+                snakemake_logfile.parent.mkdir(parents=True, exist_ok=True)
+
             with open(snakemake_logfile, "w") as log_f:
                 proc = subprocess.Popen(
                     cmd_args,
@@ -2725,6 +2809,13 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
             ]
             if verbose:
                 cmd_args.append("--verbose")
+
+            diag = getattr(self, "_active_snakemake_diagnostics", SnakemakeDiagnostics())
+            if diag.emit_verbose and not verbose:
+                cmd_args.append("--verbose")
+            if diag.log_path is not None:
+                snakemake_logfile = Path(diag.log_path)
+                snakemake_logfile.parent.mkdir(parents=True, exist_ok=True)
 
             with open(snakemake_logfile, "w") as log_f:
                 result = subprocess.run(
@@ -3834,6 +3925,7 @@ exit $snakemake_status
         override_hpc_total_nodes: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
+        snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
         """
         Submit workflow using Snakemake.
@@ -3888,6 +3980,13 @@ exit $snakemake_status
         dict
             Status dictionary with keys defined by run_snakemake_local or run_snakemake_slurm
         """
+        # Stash the diagnostics dataclass so the snakemake cmd-arg construction
+        # sites (run_snakemake_local, _run_snakemake_slurm_detached,
+        # _validate_batch_job_dry_run) can pick up the verbose/reason/log_path
+        # flags without threading the kwarg through every internal signature.
+        # A default-constructed instance is equivalent to passing None.
+        self._active_snakemake_diagnostics = snakemake_diagnostics or SnakemakeDiagnostics()
+
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
 
@@ -5525,6 +5624,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         override_hpc_total_nodes: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
+        snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> dict:
         """
         Submit sensitivity analysis workflow using Snakemake.
@@ -5582,6 +5682,13 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             - snakefile_path: Path
             - message: str
         """
+        # Stash diagnostics on the base builder so the cmd-arg sites
+        # (run_snakemake_local, _run_snakemake_slurm_detached,
+        # _validate_batch_job_dry_run on _base_builder) pick them up.
+        self._base_builder._active_snakemake_diagnostics = (
+            snakemake_diagnostics or SnakemakeDiagnostics()
+        )
+
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method
 
