@@ -2444,6 +2444,36 @@ class TRITONSWMM_analysis:
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
+        # Dispatch to the sensitivity-master reprocess path for sensitivity-toggled
+        # analyses. The non-sensitivity reprocess generator emits a `rule consolidate`
+        # that consumes from `analysis_dir/sims/`, which for sensitivity layouts does
+        # not exist — sims live under `subanalyses/sa_*/sims/`. The sensitivity-master
+        # generator (SensitivityAnalysisWorkflowBuilder.generate_reprocess_master_snakefile_content)
+        # emits per-sa consolidate rules + a master_consolidation rule that consume
+        # from the correct paths. Pattern mirrors analysis.py:683-801 property
+        # dispatches and the bundle CLI dispatch at cli.py:1026.
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            if clear_raw_outputs:
+                raise ConfigurationError(
+                    field="clear_raw_outputs",
+                    message=(
+                        "TRITONSWMM_analysis.reprocess does not support clear_raw_outputs "
+                        "for sensitivity-toggled analyses. The sensitivity-master reprocess "
+                        "path deliberately omits the clear_raw_outputs gate (see "
+                        "TRITONSWMM_sensitivity_analysis.reprocess docstring). Invoke "
+                        "self.sensitivity.reprocess(...) directly with explicit sa_ids if "
+                        "raw-output clearing is required."
+                    ),
+                    config_path=str(self.analysis_config_yaml),
+                )
+            return self.sensitivity.reprocess(
+                start_with=start_with,
+                execution_mode=execution_mode,
+                which=which,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+
         if clear_raw_outputs:
             # Guard (a): every enabled sim must have a c_run_* flag.
             if not self._all_sim_flags_present():
