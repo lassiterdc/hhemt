@@ -5281,17 +5281,31 @@ onerror:
         # set (system_overview, per_analysis_summary, scenario_status_appendix,
         # errors_and_warnings, scenario_status.csv, workflow_summary.md, per-sa
         # per-event plots, sensitivity-benchmarking plots, analysis_report.*).
-        # rule_all's consolidation_flags list will be reconciled against the
-        # actually-emitted subanalysis_flags below. Initialize as the full
-        # set; Spec 3's per-sa loop populates the actual subanalysis_flags
-        # list (filtered to sub-analyses with at least one completed sim).
-        # After Spec 3's loop completes, rule_all's input list is patched
-        # to match the actually-emitted set (see Spec 5's reconciliation
-        # block below) so Snakemake's DAG resolution doesn't reference
-        # nonexistent rules.
-        from TRITON_SWMM_toolkit.constants import consolidate_subanalysis_flag
+        # Determine the set of sub-analyses that will actually emit per-sa
+        # consolidate rules — Option C invariant: only sub-analyses with at
+        # least one c_run_* flag on disk get a per-sa consolidate rule (the
+        # per-sa loop further down enforces this with the same predicate).
+        # rule_all's consolidation_flags list initializes from THIS filtered
+        # set, not the full sensitivity-definition set. Snakemake's DAG
+        # planner would otherwise complain about missing inputs for the
+        # consolidate rules we never emit for un-completed sub-analyses.
+        from TRITON_SWMM_toolkit.constants import (
+            consolidate_subanalysis_flag,
+            sim_run_flag_per_sa as _sim_run_flag_per_sa,
+        )
+        _analysis_dir_for_consolidation_flags = self.master_analysis.analysis_paths.analysis_dir
+        completed_sa_ids: list[str] = []
+        for sa_id_check, sub_check in self.sensitivity_analysis.sub_analyses.items():
+            for event_iloc_check in sub_check.df_sims.index:
+                event_id_check = compute_event_id_slug(
+                    sub_check._retrieve_weather_indexer_using_integer_index(event_iloc_check)
+                )
+                c_run_flag_check = _sim_run_flag_per_sa(model_type, str(sa_id_check), event_id_check)
+                if (_analysis_dir_for_consolidation_flags / c_run_flag_check).exists():
+                    completed_sa_ids.append(str(sa_id_check))
+                    break
         consolidation_flags = [
-            consolidate_subanalysis_flag(str(sa_id)) for sa_id in self.sensitivity_analysis.sub_analyses.keys()
+            consolidate_subanalysis_flag(sa_id) for sa_id in completed_sa_ids
         ]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
@@ -5484,16 +5498,19 @@ onerror:
 
 '''
 
-        # Reconcile rule_all's consolidation_flags entry against the
-        # actually-emitted subanalysis_flags (filtered by Spec 3 to exclude
-        # zero-completed sub-analyses). rule_all_inputs[0:len(consolidation_flags)]
-        # spans the original full-set entries; replace that slice with the
-        # filtered set so Snakemake doesn't reference nonexistent per-sa
-        # consolidate rules at DAG resolution.
-        n_original_consolidation_entries = len(consolidation_flags)
-        rule_all_inputs[0:n_original_consolidation_entries] = [
-            f'"{flag}"' for flag in subanalysis_flags
-        ]
+        # Sanity assertion: the per-sa loop's subanalysis_flags must match
+        # the up-front completed_sa_ids list — both filter on the same
+        # c_run_* flag predicate. If they diverge, the up-front filter and
+        # the per-sa loop's filter disagree, which is a generator bug.
+        from TRITON_SWMM_toolkit.constants import consolidate_subanalysis_flag as _cons_flag
+        _expected_subanalysis_flags = [_cons_flag(sa_id) for sa_id in completed_sa_ids]
+        if subanalysis_flags != _expected_subanalysis_flags:
+            raise RuntimeError(
+                "generate_reprocess_master_snakefile_content: per-sa loop's "
+                f"subanalysis_flags={subanalysis_flags!r} does not match the "
+                f"up-front completed_sa_ids derivation={_expected_subanalysis_flags!r}; "
+                "Option C generator invariant violated."
+            )
 
         # Master consolidation — aggregates the EMITTED per-sa flags into the
         # master flag + sensitivity_datatree.zarr; overwrite + allow-incomplete
