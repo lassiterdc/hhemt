@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 import yaml  # type: ignore
 
-from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
 from TRITON_SWMM_toolkit.utils import fast_rmtree
@@ -44,6 +44,24 @@ from dataclasses import dataclass
 # default path. Centralized as a constant so the fixture, the helper, and the
 # unit test all agree without a hand-synced string literal.
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "TRITON_SWMM_TEST_NON_INTERACTIVE_LOCK_CLEAR"
+
+
+@dataclass(frozen=True)
+class ResolvedForceRerunSpec:
+    """Post-resolution force_rerun target set, ready for filesystem globbing.
+
+    The orchestrator resolves event_iloc integers to event_id slugs BEFORE
+    constructing this spec (per V0001's stable event-slug invariant); the
+    builder helper consumes only slugs/sa_ids. The ``scope`` field names which
+    axis the ``tokens`` index into, eliminating the same-type-different-content
+    failure mode where ints could be either user-supplied event_ilocs or
+    already-resolved slug strings.
+
+    Per cleanup-rerun-delete-redesign Phase 4.
+    """
+
+    scope: Literal["all", "none", "sa", "event"]
+    tokens: tuple[str, ...]  # () for "all"/"none"; sa_id strings for "sa"; event_id slugs for "event"
 
 
 @dataclass(frozen=True)
@@ -825,6 +843,55 @@ class SnakemakeWorkflowBuilder:
         system_cfg = system_config_yaml or self.system.system_config_yaml
         return f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
 
+    def _delete_flags_for_force_rerun(
+        self,
+        spec: ResolvedForceRerunSpec,
+    ) -> None:
+        """Pre-delete `_status/*.flag` markers so Snakemake's MTIME trigger
+        re-fires the dependent rules on the next workflow invocation.
+
+        Per cleanup-rerun-delete-redesign Phase 4 + R10. Snakemake's DAG
+        re-planning cascades downstream invalidation automatically once an
+        upstream input flag is deleted — the helper itself only deletes the
+        directly-matched flags + their `.flag.json` sidecars.
+
+        Glob anchors use delimiter-anchored separators per the FQ3 canonical
+        flag-name table — ``*sa-{v}_*.flag`` (non-terminal) AND
+        ``*sa-{v}.flag`` (terminal). Substring-only ``*sa-{v}*.flag`` is
+        NOT used because it false-matches `sa-1` against `sa-10`, `sa-11`,
+        `sa-100`.
+
+        Parameters
+        ----------
+        spec : ResolvedForceRerunSpec
+            Pre-resolved (scope, tokens) target set. ``scope == "none"``
+            short-circuits with no filesystem touch.
+        """
+        if spec.scope == "none":
+            return
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return
+
+        matched_flags: set[Path] = set()
+        if spec.scope == "all":
+            matched_flags.update(status_dir.glob("*.flag"))
+        elif spec.scope == "sa":
+            for v in spec.tokens:
+                matched_flags.update(status_dir.glob(f"*sa-{v}_*.flag"))
+                matched_flags.update(status_dir.glob(f"*sa-{v}.flag"))
+        elif spec.scope == "event":
+            for v in spec.tokens:
+                matched_flags.update(status_dir.glob(f"*evt-{v}_*.flag"))
+                matched_flags.update(status_dir.glob(f"*evt-{v}.flag"))
+        else:
+            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        for flag_path in matched_flags:
+            flag_path.unlink(missing_ok=True)
+            sidecar = flag_path.with_suffix(flag_path.suffix + ".json")
+            sidecar.unlink(missing_ok=True)
+
     def _build_resource_block(
         self,
         partition: str | None,
@@ -1030,12 +1097,11 @@ class SnakemakeWorkflowBuilder:
         Extracted from ``generate_snakefile_content`` so the same template
         is reused by the reprocess generator
         (``reprocess_snakefile_generator.generate_reprocess_snakefile``).
-        Phase 3 of cleanup-rerun-delete-redesign retires the legacy
-        ``--clear-raw-outputs`` / ``--overwrite-outputs-if-already-created``
-        flags: clearing is now driven by ``cfg_analysis.clear_raw`` + the
+        Clearing is driven by ``cfg_analysis.clear_raw`` + the
         ``--override-clear-raw`` runtime override (this method's
-        ``override_clear_raw`` parameter); force-rerun is the responsibility
-        of Phase 4's ``--override-force-rerun`` mechanism.
+        ``override_clear_raw`` parameter); force-rerun is handled by
+        ``--override-force-rerun`` via login-side flag pre-deletion (per
+        cleanup-rerun-delete-redesign Phase 4).
         """
         override_clear_raw_arg = (
             f"--override-clear-raw '{json.dumps(override_clear_raw)}' "
@@ -1062,8 +1128,10 @@ rule process_{model_type}:
             --which {which_arg} \\
             {override_clear_raw_arg}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name process_{model_type} \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1096,9 +1164,8 @@ rule process_{model_type}:
         workflow path (``generate_snakefile_content``) leaves this False so
         unexpected sim absence still fails fast.
 
-        Per cleanup-rerun-delete-redesign Phase 3, the legacy
-        ``--overwrite-outputs-if-already-created`` flag is retired; force-rerun
-        capability lands in Phase 4 via ``--override-force-rerun``.
+        Force-rerun is handled by ``--override-force-rerun`` via login-side
+        flag pre-deletion (per cleanup-rerun-delete-redesign Phase 4).
         """
         return f'''
 rule consolidate:
@@ -1115,8 +1182,9 @@ rule consolidate:
             --compression-level {compression_level} \\
             {"--allow-incomplete " if allow_incomplete else ""}\\
             --which {which} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1239,8 +1307,9 @@ rule consolidate:
             {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
+            --flag-output {{output}} \\
+            --rule-name setup \\
             > {{log}} 2>&1
-        touch {{output}}
         """'''
 
         # Build resource blocks using helper
@@ -1397,8 +1466,10 @@ rule prepare_scenario:
             {config_args} \\
             {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            --flag-output {{output}} \\
+            --rule-name prepare_scenario \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1461,8 +1532,10 @@ rule run_{model_type}:
             {config_args} \\
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            --flag-output {{output}} \\
+            --rule-name run_{model_type} \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -5047,8 +5120,10 @@ onerror:
             {"--compile-triton-only " if compile_TRITON_SWMM and target_cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
+            --flag-output {{output}} \\
+            --rule-name setup_target_{target.target_id} \\
+            --target-id {target.target_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5169,8 +5244,11 @@ onerror:
             {sub_config_args} \\
             {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            --flag-output {{output}} \\
+            --rule-name {prep_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5199,8 +5277,10 @@ onerror:
             --model-type {model_type} \\
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            --flag-output {{output}} \\
+            --rule-name {sim_rule_name} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5229,8 +5309,11 @@ onerror:
             --which {which} \\
             {f"--override-clear-raw '{json.dumps(override_clear_raw)}' " if override_clear_raw is not None else ""}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name {process_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5271,8 +5354,10 @@ onerror:
             {sub_config_args} \\
             --which {which} \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate_{prefix}{sa_id_rule} \\
+            --sa-id {sa_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5302,8 +5387,9 @@ onerror:
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name master_consolidation \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -5714,8 +5800,11 @@ onerror:
             --model-type {model_type} \\
             --which {which} \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name {process_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 ''')
@@ -5770,8 +5859,10 @@ onerror:
             {sub_config_args} \\
             --which {which} \\
 {allow_incomplete_line}            --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate_{prefix}{sa_id_rule} \\
+            --sa-id {sa_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5819,8 +5910,9 @@ onerror:
             --allow-incomplete \\
             --which {which} \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name master_consolidation \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 

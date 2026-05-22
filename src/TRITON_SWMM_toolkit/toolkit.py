@@ -155,6 +155,7 @@ class Toolkit:
         dry_run: bool = False,
         verbose: bool = True,
         report_config: Path | None = None,
+        override_force_rerun=None,
     ) -> WorkflowResult:
         """Run TRITON-SWMM workflow.
 
@@ -246,6 +247,7 @@ class Toolkit:
             dry_run=dry_run,
             verbose=verbose,
             report_config=report_config,
+            override_force_rerun=override_force_rerun,
         )
 
     def get_status(self) -> WorkflowStatus:

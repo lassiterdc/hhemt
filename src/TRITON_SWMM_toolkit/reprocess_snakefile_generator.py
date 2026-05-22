@@ -117,13 +117,14 @@ def generate_reprocess_snakefile(
 
     Notes
     -----
-    Per cleanup-rerun-delete-redesign Phase 3, the legacy ``overwrite`` flag
-    (which baked ``--overwrite-outputs-if-already-created`` into rule shells)
-    is retired. Reprocess relies on flag-invalidation
-    (``_invalidate_downstream_flags``) to trigger re-runs; force-rerun against
-    already-written outputs returns in Phase 4 via ``--override-force-rerun``.
-    Reprocess never clears raw outputs — ``override_clear_raw`` is omitted from
-    the emitted rule shells (equivalent to passing ``"none"`` at runtime).
+    Per cleanup-rerun-delete-redesign Phases 3 + 4, the legacy
+    rule-shell-level overwrite toggle is retired in favor of
+    ``override_force_rerun``-driven flag invalidation
+    (``_delete_flags_for_force_rerun``) which also invalidates the matching
+    per-scenario log records so the runner's ``_already_written`` crash-
+    recovery gate re-fires write paths under force-rerun. Reprocess never
+    clears raw outputs — ``override_clear_raw`` is omitted from the emitted
+    rule shells (equivalent to passing ``"none"`` at runtime).
     """
     if start_with not in START_STAGES:
         raise ValueError(f"start_with must be one of {START_STAGES!r}; got {start_with!r}")

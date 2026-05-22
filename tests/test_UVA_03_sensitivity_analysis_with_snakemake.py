@@ -104,7 +104,6 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
             [
                 "--compression-level 7",
                 "--which TRITON",
-                "--overwrite-outputs-if-already-created",
                 "--consolidate-sensitivity-analysis-outputs",
             ],
         ),

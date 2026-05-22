@@ -14,7 +14,7 @@ import yaml  # type: ignore
 
 import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
-from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
@@ -228,6 +228,7 @@ class TRITONSWMM_sensitivity_analysis:
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         override_clear_raw: ClearRawValue | None = None,
+        override_force_rerun: ForceRerunValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -289,6 +290,11 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
+        # Force-rerun pre-delete for direct sensitivity.submit_workflow callers.
+        # Idempotent when Analysis.submit_workflow already applied it on the
+        # dispatch path (matched flags would be absent by now).
+        self.master_analysis._apply_force_rerun(override_force_rerun)
+
         return self._workflow_builder.submit_workflow(
             mode=mode,
             process_system_level_inputs=process_system_level_inputs,
@@ -312,6 +318,36 @@ class TRITONSWMM_sensitivity_analysis:
             snakemake_diagnostics=snakemake_diagnostics,
         )
 
+    def _invalidate_processing_log_for_sa_ids(
+        self, sa_id_tokens: tuple[str, ...]
+    ) -> None:
+        """Per-sa_id dispatch for processing-log invalidation under
+        ``override_force_rerun={"sa_id": [...]}``.
+
+        For each requested sa_id, looks up its sub-analysis and calls the
+        per-sub-analysis ``Analysis._invalidate_processing_log_for_force_rerun``
+        with a ``scope="all"`` spec — which invalidates every scenario in
+        that sub-analysis. Sub-analyses are full Analysis instances and
+        own their own scenario list (cf. CLAUDE.md Gotcha 11: "Sensitivity
+        analysis sub-analyses are full TRITONSWMM_analysis instances").
+
+        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism.
+        """
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+        all_spec = ResolvedForceRerunSpec(scope="all", tokens=())
+        for sa_id in sa_id_tokens:
+            sub_analysis = self.sub_analyses.get(sa_id)
+            if sub_analysis is None:
+                # _validate_force_rerun_targets already filtered unknown
+                # sa_ids; reaching here means the sub_analyses dict is
+                # out of sync with df_setup — surface loudly.
+                raise RuntimeError(
+                    f"sub_analyses missing entry for sa_id={sa_id!r} after "
+                    f"validation passed; df_setup/sub_analyses are out of sync"
+                )
+            sub_analysis._invalidate_processing_log_for_force_rerun(all_spec)
+
     def reprocess(
         self,
         start_with: Literal["process", "consolidate", "render"] = "consolidate",
@@ -322,6 +358,8 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = True,
         dry_run: bool = False,
         report_formats: list[str] | None = None,
+        *,
+        override_force_rerun: ForceRerunValue | None = None,
     ) -> dict:
         """Master-level reprocess for sensitivity analyses.
 
@@ -379,6 +417,11 @@ class TRITONSWMM_sensitivity_analysis:
 
         stamp_new_target(self.master_analysis.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
+        # Force-rerun pre-delete (login-node responsibility). Per
+        # cleanup-rerun-delete-redesign Phase 4 + R10. Resolves + validates +
+        # deletes matched flags before Snakemake plans the reprocess DAG.
+        self.master_analysis._apply_force_rerun(override_force_rerun)
+
         # Resolve invalidation target set. ``None`` → all sub-analyses; explicit
         # list → subset. String-cast preserves alignment with sub_analyses dict
         # iteration keys regardless of source type (int / str / numpy scalar).
@@ -400,11 +443,13 @@ class TRITONSWMM_sensitivity_analysis:
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
-            # Phase 3 of cleanup-rerun-delete-redesign retired the
-            # --overwrite-outputs-if-already-created flag; runners early-return
-            # when the consolidated datatree zarr already exists. Delete the
-            # artifacts so reprocess actually rebuilds them. Phase 4 will
-            # replace bare deletion with override_force_rerun-driven flag mgmt.
+            # Per cleanup-rerun-delete-redesign Phases 3 + 4, the legacy
+            # rule-shell overwrite toggle is retired; runners early-return
+            # when the consolidated datatree zarr already exists. This
+            # method (called from reprocess) deletes the consolidated
+            # artifacts directly so the rebuild is unconditional. The
+            # parallel force-rerun path uses override_force_rerun which
+            # invalidates per-scenario log records in addition to flags.
             for sa_id in targets:
                 sub_analysis = self.sub_analyses.get(sa_id)
                 if sub_analysis is None:

@@ -146,7 +146,6 @@ def test_phase3_master_snakefile_emits_per_target_setup_rules(
             [
                 "--compression-level 7",
                 "--which TRITON",
-                "--overwrite-outputs-if-already-created",
                 "--consolidate-sensitivity-analysis-outputs",
             ],
         ),

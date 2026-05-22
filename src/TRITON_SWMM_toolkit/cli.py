@@ -31,7 +31,7 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
     """Parse the ``--override-clear-raw`` CLI flag value.
 
     Accepts ``"all"``, ``"none"``, or a JSON list (e.g. ``'["tritonswmm","swmm"]'``).
-    Phase 3 plants this helper; Phase 4 will reuse the same shape for
+    Phase 3 plants this helper; Phase 4 reuses the same shape for
     ``--override-force-rerun``.
     """
     if value is None:
@@ -44,6 +44,29 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
         raise typer.BadParameter(
             f"--override-clear-raw expects 'all', 'none', or a JSON list "
             f'like \'["tritonswmm","swmm"]\'; got: {value!r} ({exc})'
+        )
+
+
+def _parse_override_force_rerun(value: str | None) -> str | dict | None:
+    """Parse the ``--override-force-rerun`` CLI flag value.
+
+    Accepts ``"all"``, ``"none"``, or a JSON dict with one of
+    ``"sa_id"`` / ``"event_iloc"`` keys mapping to a list of values
+    (e.g. ``'{"sa_id":[0,5,22]}'`` for sensitivity, or
+    ``'{"event_iloc":[3,7]}'`` for non-sensitivity).
+
+    Per cleanup-rerun-delete-redesign Phase 4.
+    """
+    if value is None:
+        return None
+    if value in ("all", "none"):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(
+            f"--override-force-rerun expects 'all', 'none', or a JSON dict "
+            f'like \'{{"sa_id":[0,5]}}\'; got: {value!r} ({exc})'
         )
 
 
@@ -101,6 +124,16 @@ def run_command(
             "When omitted, reads cfg_analysis.clear_raw from the YAML."
         ),
         callback=lambda value: _parse_override_clear_raw(value),
+    ),
+    override_force_rerun: str = typer.Option(
+        None,
+        "--override-force-rerun",
+        help=(
+            'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
+            'or a JSON dict: \'{"sa_id":[0,5,22]}\' (sensitivity) or '
+            '\'{"event_iloc":[3,7]}\' (non-sensitivity).'
+        ),
+        callback=lambda value: _parse_override_force_rerun(value),
     ),
     resume: bool = typer.Option(
         True,
@@ -416,6 +449,7 @@ def run_command(
             dry_run=dry_run,
             verbose=verbose,
             override_clear_raw=override_clear_raw,
+            override_force_rerun=override_force_rerun,
         )
 
         # Check workflow result
@@ -637,6 +671,16 @@ def reprocess_command(
         ),
         callback=lambda value: _parse_override_clear_raw(value),
     ),
+    override_force_rerun: str = typer.Option(
+        None,
+        "--override-force-rerun",
+        help=(
+            'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
+            'or a JSON dict: \'{"sa_id":[0,5,22]}\' (sensitivity) or '
+            '\'{"event_iloc":[3,7]}\' (non-sensitivity).'
+        ),
+        callback=lambda value: _parse_override_force_rerun(value),
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -692,6 +736,7 @@ def reprocess_command(
             execution_mode=execution_mode,  # type: ignore[arg-type]
             which=which,  # type: ignore[arg-type]
             override_clear_raw=override_clear_raw if override_clear_raw is not None else "none",
+            override_force_rerun=override_force_rerun,
             verbose=verbose,
             dry_run=dry_run,
         )

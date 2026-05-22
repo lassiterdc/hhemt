@@ -1034,8 +1034,26 @@ class TRITONSWMM_sim_post_processing:
         return
 
     def _already_written(self, f_out) -> bool:
-        """
-        Checks log file to determine whether the file was written successfully
+        """Checks the per-model log to determine whether the file was
+        previously written successfully.
+
+        This gate is the runner-subprocess-level idempotency primitive. It
+        serves three roles in the post-Phase-4 architecture:
+
+        - Crash recovery: a worker that dies between writing the zarr and
+          the success-flag-touch leaves no log entry; the next runner
+          pass re-writes cleanly.
+        - Idempotent Snakemake re-fire: rules re-fired by upstream mtime
+          drift skip already-completed outputs.
+        - Force-rerun integration: ``Analysis._apply_force_rerun`` clears
+          the per-model log's ``processing_log.outputs`` dict for
+          targeted scenarios BEFORE Snakemake re-plans the DAG, so this
+          gate naturally returns False for force-rerun targets.
+
+        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism. The gate
+        is NOT user-toggleable — the retired rule-shell overwrite
+        toggle (legacy ``--overwrite-outputs-if-already-created`` flag)
+        has been replaced end-to-end by the force-rerun architecture.
         """
         proc_log = self.log.processing_log.outputs
         already_written = False

@@ -93,3 +93,23 @@ def write_status_flag(
     except Exception:
         Path(tmp).unlink(missing_ok=True)
         raise
+
+
+def emit_runner_flag(args: Any) -> None:
+    """Conditional flag-write helper for runner scripts.
+
+    Reads `--flag-output`, `--rule-name`, and optional `--model-type` /
+    `--sa-id` / `--event-id` from the parsed argparse namespace and calls
+    `write_status_flag`. No-op when `--flag-output` is not supplied (legacy
+    CLI invocations outside the toolkit-managed Snakemake workflow).
+    """
+    flag_output = getattr(args, "flag_output", None)
+    if flag_output is None:
+        return
+    write_status_flag(
+        flag_path=Path(flag_output),
+        rule_name=getattr(args, "rule_name", None) or "(unknown)",
+        model_type=getattr(args, "model_type", None),
+        sa_id=getattr(args, "sa_id", None),
+        event_id=getattr(args, "event_id", None),
+    )

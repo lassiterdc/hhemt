@@ -29,6 +29,7 @@ import traceback
 import logging
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.status_flags import emit_runner_flag as _emit_runner_flag
 import gc
 
 # Memory profiling imports (always-on, minimal overhead)
@@ -115,6 +116,30 @@ def main():
         action="store_true",
         default=False,
         help="Clear full timeseries files after creating summaries (to save disk space)",
+    )
+    parser.add_argument(
+        "--flag-output",
+        type=Path,
+        default=None,
+        help="Path to the _status/*.flag marker to write on success (toolkit-managed; optional for legacy CLI use)",
+    )
+    parser.add_argument(
+        "--rule-name",
+        type=str,
+        default=None,
+        help="Snakemake rule name for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--event-id",
+        type=str,
+        default=None,
+        help="Event id slug for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--sa-id",
+        type=str,
+        default=None,
+        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
     )
     try:
         args = parser.parse_args()
@@ -330,6 +355,7 @@ def main():
             scenario.log.refresh()
             logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
 
+        _emit_runner_flag(args)
         return 0
 
     except Exception as e:
