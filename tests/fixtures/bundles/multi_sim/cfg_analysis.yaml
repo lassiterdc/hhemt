@@ -51,3 +51,5 @@ master_analysis_cfg_yaml: null
 gpu_hardware_override: null
 
 report: {}
+clear_raw: none
+force_rerun: none

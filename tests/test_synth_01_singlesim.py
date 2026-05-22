@@ -61,15 +61,15 @@ def test_process_sim(synth_all_models_analysis_cached):
         for model_type in enabled_models:
             if model_type == "tritonswmm":
                 proc.write_timeseries_outputs(
-                    which="both", model_type=model_type, clear_raw_outputs=True
+                    which="both", model_type=model_type, override_clear_raw="all"
                 )
             elif model_type == "triton":
                 proc.write_timeseries_outputs(
-                    which="TRITON", model_type=model_type, clear_raw_outputs=True
+                    which="TRITON", model_type=model_type, override_clear_raw="all"
                 )
             elif model_type == "swmm":
                 proc.write_timeseries_outputs(
-                    which="SWMM", model_type=model_type, clear_raw_outputs=True
+                    which="SWMM", model_type=model_type, override_clear_raw="all"
                 )
 
     for event_iloc in analysis.df_sims.index:
@@ -80,19 +80,16 @@ def test_process_sim(synth_all_models_analysis_cached):
                 proc.write_summary_outputs(
                     which="both",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=False,
                 )
             elif model_type == "triton":
                 proc.write_summary_outputs(
                     which="TRITON",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=False,
                 )
             elif model_type == "swmm":
                 proc.write_summary_outputs(
                     which="SWMM",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=False,
                 )
 
     analysis._update_log()

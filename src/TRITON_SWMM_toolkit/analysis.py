@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
 from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
     from .orchestration import WorkflowResult, WorkflowStatus
     from .system import TRITONSWMM_system
+    from .workflow import ResolvedForceRerunSpec  # noqa: F401
 
 # All variable names present in TRITON performance.txt files.
 # Used to build all-None dicts for model types with no performance dataset (SWMM).
@@ -971,8 +973,8 @@ class TRITONSWMM_analysis:
     def retrieve_scenario_timeseries_processing_launchers(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -986,10 +988,9 @@ class TRITONSWMM_analysis:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process: TRITON, SWMM, or both
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (the default)
+            reads from the YAML config; a concrete value overrides for this run.
         verbose : bool
             If True, print progress messages
         compression_level : int
@@ -1007,8 +1008,7 @@ class TRITONSWMM_analysis:
             # Create a subprocess-based launcher
             launcher = proc._create_subprocess_timeseries_processing_launcher(
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -1223,9 +1223,9 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool,
         which: Literal["TRITON", "SWMM", "both"],
-        clear_raw_outputs: bool,
-        overwrite_outputs_if_already_created: bool,
         compression_level: int,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose=False,
         model_type: Literal["triton", "tritonswmm", "swmm"] = "tritonswmm",
     ):
@@ -1245,12 +1245,10 @@ class TRITONSWMM_analysis:
             If True, process timeseries outputs after simulation completes
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_outputs_after_sim_completion=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files, 0-9
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads from YAML).
         verbose : bool, optional
             If True, print progress messages (default: False)
         model_type : Literal["triton", "tritonswmm", "swmm"], optional
@@ -1313,10 +1311,9 @@ class TRITONSWMM_analysis:
             self.process_sim_timeseries(
                 event_iloc,
                 outputs_to_process,
-                clear_raw_outputs,
-                overwrite_outputs_if_already_created,
-                verbose,
-                compression_level,
+                override_clear_raw=override_clear_raw,
+                verbose=verbose,
+                compression_level=compression_level,
             )
         return
 
@@ -1324,8 +1321,8 @@ class TRITONSWMM_analysis:
         self,
         event_iloc,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -1341,10 +1338,9 @@ class TRITONSWMM_analysis:
             Integer index of the scenario in df_sims
         which : Literal["TRITON", "SWMM", "both"], optional
             Which outputs to process (default: "both")
-        clear_raw_outputs : bool, optional
-            If True, clear raw outputs after processing (default: True)
-        overwrite_outputs_if_already_created : bool, optional
-            If True, overwrite existing processed outputs (default: False)
+        override_clear_raw : ClearRawValue | None, optional
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads the YAML; a concrete value overrides for this invocation.
         verbose : bool, optional
             If True, print progress messages (default: False)
         compression_level : int, optional
@@ -1353,14 +1349,12 @@ class TRITONSWMM_analysis:
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
         proc.write_timeseries_outputs(
             which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
             verbose=verbose,
             compression_level=compression_level,
         )
         proc.write_summary_outputs(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -1368,8 +1362,8 @@ class TRITONSWMM_analysis:
     def process_all_sim_timeseries_serially(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -1377,8 +1371,7 @@ class TRITONSWMM_analysis:
             self.process_sim_timeseries(
                 event_iloc=event_iloc,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -1387,12 +1380,11 @@ class TRITONSWMM_analysis:
 
     def consolidate_analysis_outputs(
         self,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         self.process.consolidate_to_datatree(
-            overwrite_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -1516,9 +1508,9 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose=False,
     ):
         """
@@ -1528,8 +1520,7 @@ class TRITONSWMM_analysis:
         Arguments passed to processing process_sim_timeseriess
         (only needed if process_outputs_after_sim_completion=True):
             - which: Literal["TRITON", "SWMM", "both"]
-            - clear_raw_outputs: bool
-            - overwrite_outputs_if_already_created: bool
+            - override_clear_raw: ClearRawValue | None
             - compression_level: int
         """
         if verbose:
@@ -1548,8 +1539,7 @@ class TRITONSWMM_analysis:
                     verbose=verbose,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
-                    clear_raw_outputs=clear_raw_outputs,
-                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                    override_clear_raw=override_clear_raw,
                     compression_level=compression_level,
                     model_type=model_type,  # type: ignore
                 )
@@ -1563,7 +1553,8 @@ class TRITONSWMM_analysis:
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
         wait_for_job_completion: bool | None = None,
-        clear_raw_outputs: bool = True,
+        override_clear_raw: ClearRawValue | None = None,
+        override_force_rerun: ForceRerunValue | None = None,
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
@@ -1589,9 +1580,12 @@ class TRITONSWMM_analysis:
             Where to execute: auto-detect (default), force local, or force SLURM.
         verbose : bool
             If True, print progress messages.
-        clear_raw_outputs : bool
-            If True, clears TRITON-SWMM raw outputs after time series are
-            successfully processed. Set to False only when debugging.
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads the YAML; pass ``"none"`` / ``"all"`` / a list of model types
+            (e.g. ``["tritonswmm", "swmm"]``) to override for this invocation.
+            Per the ``override_`` prefix convention introduced by
+            cleanup-rerun-delete-redesign Phase 1.
         wait_for_job_completion : bool | None
             If True, block until the SLURM job finishes. Mainly for tests.
         override_hpc_total_nodes : int | None
@@ -1862,7 +1856,8 @@ class TRITONSWMM_analysis:
             **phase_params,
             "mode": exec_mode,
             "which": which,
-            "clear_raw_outputs": clear_raw_outputs,
+            "override_clear_raw": override_clear_raw,
+            "override_force_rerun": override_force_rerun,
             "compression_level": 5,
             "wait_for_completion": wait_for_job_completion,
             "dry_run": dry_run,
@@ -2240,8 +2235,8 @@ class TRITONSWMM_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
+        override_force_rerun: ForceRerunValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -2281,10 +2276,9 @@ class TRITONSWMM_analysis:
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads from YAML; concrete values follow the override-prefix convention.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -2317,6 +2311,11 @@ class TRITONSWMM_analysis:
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
+        # Force-rerun pre-delete (login-node responsibility per master plan
+        # Strategy). Resolve + validate + delete BEFORE Snakemake plans the DAG
+        # so MTIME-input triggers cascade re-fire automatically.
+        self._apply_force_rerun(override_force_rerun)
+
         if self.cfg_analysis.toggle_sensitivity_analysis:
             result = self.sensitivity.submit_workflow(
                 mode=mode,
@@ -2329,8 +2328,8 @@ class TRITONSWMM_analysis:
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
+                override_force_rerun=override_force_rerun,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
@@ -2342,6 +2341,10 @@ class TRITONSWMM_analysis:
                 snakemake_diagnostics=snakemake_diagnostics,
             )
         else:
+            # NOTE: override_force_rerun is NOT threaded into the inner builder
+            # — the pre-delete already happened at this layer
+            # (self._apply_force_rerun above) and the builder's
+            # submit_workflow does not need a runtime force-rerun parameter.
             result = self._workflow_builder.submit_workflow(
                 mode=mode,
                 process_system_level_inputs=process_system_level_inputs,
@@ -2353,8 +2356,7 @@ class TRITONSWMM_analysis:
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
@@ -2383,7 +2385,9 @@ class TRITONSWMM_analysis:
         start_with: "Literal['process','consolidate','render']" = "consolidate",
         execution_mode: "Literal['auto','local','slurm']" = "auto",
         which: "Literal['TRITON','SWMM','both']" = "both",
-        clear_raw_outputs: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = "none",
+        override_force_rerun: ForceRerunValue | None = None,
         verbose: bool = True,
         dry_run: bool = False,
     ) -> dict:
@@ -2410,8 +2414,12 @@ class TRITONSWMM_analysis:
         which
             ``"both"`` (default) / ``"TRITON"`` / ``"SWMM"`` — passes through
             to ``rule consolidate``'s ``--which`` flag.
-        clear_raw_outputs
-            **Hard-default False.** When True, two guards must both pass:
+        override_clear_raw
+            **Hard-default "none"** to preserve historic ``reprocess`` semantics
+            (reprocess never auto-clears unless the caller explicitly opts in).
+            Pass ``None`` to read ``cfg_analysis.clear_raw``; pass ``"all"`` /
+            ``"none"`` / a list of model types to override. When the resolved
+            value is anything other than ``"none"``, two guards must both pass:
             (a) every enabled sim's ``c_run_*`` flag must exist (no
             never-started sims); (b) no ``_status/_submitted/`` sentinel
             may be present (no in-flight / just-died sims). Cites
@@ -2431,8 +2439,11 @@ class TRITONSWMM_analysis:
         Raises
         ------
         ConfigurationError
-            When ``clear_raw_outputs=True`` and either guard fails.
+            When the resolved ``clear_raw`` would clear and either guard fails.
         """
+        resolved_clear_raw = override_clear_raw if override_clear_raw is not None else self.cfg_analysis.clear_raw
+        # True iff the resolved value would trigger any cleanup for any model.
+        would_clear = resolved_clear_raw != "none"
         # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern, mirroring
         # run() and submit_workflow). Idempotent under concurrent writers;
         # if _version.json is missing or stamped at an older version, this
@@ -2453,13 +2464,14 @@ class TRITONSWMM_analysis:
         # from the correct paths. Pattern mirrors analysis.py:683-801 property
         # dispatches and the bundle CLI dispatch at cli.py:1026.
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            if clear_raw_outputs:
+            if would_clear:
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "TRITONSWMM_analysis.reprocess does not support clear_raw_outputs "
-                        "for sensitivity-toggled analyses. The sensitivity-master reprocess "
-                        "path deliberately omits the clear_raw_outputs gate (see "
+                        "TRITONSWMM_analysis.reprocess does not support clearing raw outputs "
+                        "for sensitivity-toggled analyses (resolved clear_raw="
+                        f"{resolved_clear_raw!r}). The sensitivity-master reprocess "
+                        "path deliberately omits the clear-raw gate (see "
                         "TRITONSWMM_sensitivity_analysis.reprocess docstring). Invoke "
                         "self.sensitivity.reprocess(...) directly with explicit sa_ids if "
                         "raw-output clearing is required."
@@ -2470,19 +2482,20 @@ class TRITONSWMM_analysis:
                 start_with=start_with,
                 execution_mode=execution_mode,
                 which=which,
+                override_force_rerun=override_force_rerun,
                 verbose=verbose,
                 dry_run=dry_run,
             )
 
-        if clear_raw_outputs:
+        if would_clear:
             # Guard (a): every enabled sim must have a c_run_* flag.
             if not self._all_sim_flags_present():
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "reprocess refuses clear_raw_outputs while c_run_* flags are absent "
-                        "(some sims have not completed). See stipulation "
-                        "`clear raw triton outputs deferred until last allocation`."
+                        "reprocess refuses raw-output clearing while c_run_* flags are absent "
+                        f"(resolved clear_raw={resolved_clear_raw!r}; some sims have not completed). "
+                        "See stipulation `clear raw triton outputs deferred until last allocation`."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
@@ -2490,11 +2503,12 @@ class TRITONSWMM_analysis:
             submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
             if submitted_dir.exists() and any(submitted_dir.glob("*.json")):
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "reprocess refuses clear_raw_outputs while _submitted/ sentinels are present "
-                        "(simulations may still be in flight or recently died). Run the Phase-1 "
-                        "reconciliation guard or `scancel` outstanding jobs first."
+                        "reprocess refuses raw-output clearing while _submitted/ sentinels are present "
+                        f"(resolved clear_raw={resolved_clear_raw!r}; simulations may still be in flight "
+                        "or recently died). Run the Phase-1 reconciliation guard or `scancel` outstanding "
+                        "jobs first."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
@@ -2520,6 +2534,11 @@ class TRITONSWMM_analysis:
         # option 1: delete flags + rely on the generator's baked overwrite.
         self._invalidate_downstream_flags(start_with)
 
+        # Force-rerun pre-delete (login-node responsibility). Resolve +
+        # validate + delete BEFORE Snakemake plans the reprocess DAG. Per
+        # cleanup-rerun-delete-redesign Phase 4 + R10.
+        self._apply_force_rerun(override_force_rerun)
+
         # Delegate to the workflow builder. The submit method writes the
         # reprocess Snakefile and orchestrates the snakemake invocation with
         # `--directory .snakemake_reprocess --rerun-triggers mtime
@@ -2533,10 +2552,80 @@ class TRITONSWMM_analysis:
         )
         return result
 
+    def delete(self, override_in_flight: bool = False) -> None:
+        """Distributed Snakemake workflow that deletes the entire analysis_dir.
+
+        Refuses by default when ``_status/_submitted/*.json`` sentinels
+        indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
+        the guard.
+
+        Mirrors the dispatch pattern of :meth:`reprocess` — sensitivity-toggled
+        analyses dispatch to
+        :meth:`TRITONSWMM_sensitivity_analysis.delete`.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        + D-DeleteBoundary resolutions).
+        """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.delete(override_in_flight=override_in_flight)
+
+        analysis_dir = self.analysis_paths.analysis_dir
+
+        # 1. Clear any stale sentinels from a prior failed delete attempt.
+        # Without this, the post-check at step 3 could falsely pass on a
+        # half-completed previous delete and fast_rmtree a partially-deleted
+        # tree.
+        stale_dir = analysis_dir / "_status" / "_deleting"
+        if stale_dir.exists():
+            fast_rmtree(stale_dir)
+
+        # 2. Submit the distributed delete workflow. The workflow builder's
+        # _pre_delete_guards (live-sentinel refusal + scoped lock-check) runs
+        # inside submit_delete_workflow; orchestrator does not invoke it
+        # directly.
+        self._workflow_builder.submit_delete_workflow(override_in_flight=override_in_flight)
+
+        # 3. Verify all expected sentinels present; remove analysis_dir atomically.
+        expected = self._enumerate_expected_delete_sentinels()
+        deleting_dir = analysis_dir / "_status" / "_deleting"
+        actual = set(deleting_dir.glob("*.flag")) if deleting_dir.exists() else set()
+        missing = expected - actual
+        if missing:
+            print(
+                f"[delete] {len(missing)} per-rule sentinels missing — "
+                f"preserving analysis_dir for debugging.",
+                flush=True,
+            )
+            print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
+            return
+        print(
+            f"[delete] all {len(expected)} per-rule sentinels present — "
+            f"removing analysis_dir.",
+            flush=True,
+        )
+        fast_rmtree(analysis_dir)
+
+    def _enumerate_expected_delete_sentinels(self) -> set[Path]:
+        """Compute the set of ``_status/_deleting/*.flag`` paths the delete
+        workflow will produce on full success.
+
+        One per scenario for regular analyses (sensitivity-master analyses
+        delegate to :meth:`TRITONSWMM_sensitivity_analysis._enumerate_expected_delete_sentinels`
+        before reaching this method); plus one for the consolidation rule.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        delete_dir = self.analysis_paths.analysis_dir / "_status" / "_deleting"
+        expected = {delete_dir / "analysis_consolidation.flag"}
+        for i in range(len(self.df_sims)):
+            event_id = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
+            expected.add(delete_dir / f"scenario_evt-{event_id}.flag")
+        return expected
+
     def _all_sim_flags_present(self) -> bool:
         """True iff every enabled sim's ``c_run_*`` completion flag exists.
 
-        Used as the *flag-presence* component of the ``clear_raw_outputs``
+        Used as the *flag-presence* component of the ``override_clear_raw``
         guard; the sentinel-presence component (in-flight detection) is
         checked separately at the :meth:`reprocess` call site.
 
@@ -2595,6 +2684,18 @@ class TRITONSWMM_analysis:
         file-driven — deleting plot/report artifacts is the trigger for
         re-firing (Snakemake's mtime check sees the output as absent).
 
+        Per cleanup-rerun-delete-redesign Phases 3 + 4, the legacy
+        rule-shell-level overwrite toggle is fully retired. This helper
+        is the *reprocess* entry-point (start-from-a-named-stage); the
+        parallel *force-rerun* entry-point is
+        ``_apply_force_rerun(override_force_rerun)`` which invokes
+        ``_workflow_builder._delete_flags_for_force_rerun(spec)`` and
+        ``_invalidate_processing_log_for_force_rerun(spec)`` to ensure
+        ``process_simulation.py::_already_written`` returns False for
+        targeted outputs. This helper additionally deletes the
+        consolidated datatree zarr when ``start_with`` is ``"process"``
+        or ``"consolidate"`` so the rebuild path is unconditional.
+
         Parameters
         ----------
         start_with
@@ -2605,8 +2706,14 @@ class TRITONSWMM_analysis:
             for f in sd.glob("d_process_*"):
                 f.unlink(missing_ok=True)
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+            _zarr = self.analysis_paths.analysis_datatree_zarr
+            if _zarr is not None and _zarr.exists():
+                fast_rmtree(_zarr)
         elif start_with == "consolidate":
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+            _zarr = self.analysis_paths.analysis_datatree_zarr
+            if _zarr is not None and _zarr.exists():
+                fast_rmtree(_zarr)
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as
@@ -2617,6 +2724,188 @@ class TRITONSWMM_analysis:
             (self.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
+
+    def _validate_force_rerun_targets(self, resolved_force_rerun) -> None:
+        """Validate that requested ``sa_id`` / ``event_iloc`` values exist in the analysis.
+
+        Per cleanup-rerun-delete-redesign Phase 4, R11 + D-ForceRerunValidatesSaId
+        Option 1 (hard error at API entry). Unknown values raise
+        ``ConfigurationError`` before any filesystem touch.
+        """
+        from .exceptions import ConfigurationError
+
+        if resolved_force_rerun in ("all", "none"):
+            return
+        if not isinstance(resolved_force_rerun, dict):
+            raise ValueError(f"Unexpected force_rerun shape: {resolved_force_rerun!r}")
+        key = next(iter(resolved_force_rerun))
+        # Cross-check against toggle_sensitivity_analysis — mirrors the cfg-load
+        # validator in config/analysis.py but applies to the override path too.
+        if key == "sa_id" and not self.cfg_analysis.toggle_sensitivity_analysis:
+            raise ConfigurationError(
+                field="override_force_rerun",
+                message=(
+                    "override_force_rerun.sa_id requires toggle_sensitivity_analysis=True"
+                ),
+            )
+        if key == "event_iloc" and self.cfg_analysis.toggle_sensitivity_analysis:
+            raise ConfigurationError(
+                field="override_force_rerun",
+                message=(
+                    "override_force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
+                    "sensitivity-toggled analyses must use override_force_rerun.sa_id instead"
+                ),
+            )
+        requested = set(map(str, resolved_force_rerun[key]))
+        if key == "sa_id":
+            known = set(self.sensitivity.df_setup.index.astype(str))
+        else:  # event_iloc
+            known = set(map(str, self.df_sims.index))
+        unknown = requested - known
+        if unknown:
+            raise ConfigurationError(
+                field="override_force_rerun",
+                message=(
+                    f"override_force_rerun.{key} contains unknown values: "
+                    f"{sorted(unknown)}. Known {key} values: {sorted(known)}."
+                ),
+            )
+
+    def _build_force_rerun_spec(self, resolved_force_rerun):
+        """Resolve a ``ForceRerunValue`` into a ``ResolvedForceRerunSpec``.
+
+        For the ``event_iloc`` scope, resolves event_iloc integers to event_id
+        slugs via ``compute_event_id_slug`` (V0001's stable event-slug
+        invariant); the builder helper consumes only slugs/sa_ids.
+        """
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        if resolved_force_rerun == "all":
+            return ResolvedForceRerunSpec(scope="all", tokens=())
+        if resolved_force_rerun == "none":
+            return ResolvedForceRerunSpec(scope="none", tokens=())
+        assert isinstance(resolved_force_rerun, dict)
+        key = next(iter(resolved_force_rerun))
+        values = resolved_force_rerun[key]
+        if key == "sa_id":
+            return ResolvedForceRerunSpec(scope="sa", tokens=tuple(str(v) for v in values))
+        # event_iloc → event_id slug per V0001 stable slug invariant.
+        slugs = tuple(
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc)))
+            for iloc in values
+        )
+        return ResolvedForceRerunSpec(scope="event", tokens=slugs)
+
+    def _apply_force_rerun(self, override_force_rerun) -> None:
+        """Resolve, validate, and pre-delete flags + per-scenario log records
+        for the force-rerun override.
+
+        Called at workflow-submission boundaries (run / submit_workflow /
+        reprocess / submit_reprocess_workflow). Pre-delete happens on the
+        login node BEFORE Snakemake plans the DAG so MTIME-input triggers see
+        the deleted flags and cascade re-fire automatically. Per cleanup-
+        rerun-delete-redesign Phase 4 + R10.
+
+        Two-layer invalidation per the FQ0 trace (post-Phase-4):
+
+        1. ``_delete_flags_for_force_rerun(spec)`` removes ``_status/*.flag``
+           markers so Snakemake re-plans the affected rules.
+        2. ``_invalidate_processing_log_for_force_rerun(spec)`` clears the
+           per-scenario per-model log ``processing_log.outputs`` so each
+           runner subprocess's ``_already_written`` gate returns False and
+           the write paths actually re-execute. Without (2), step (1) alone
+           produces fresh flags but stale outputs.
+        """
+        resolved = (
+            override_force_rerun
+            if override_force_rerun is not None
+            else self.cfg_analysis.force_rerun
+        )
+        self._validate_force_rerun_targets(resolved)
+        spec = self._build_force_rerun_spec(resolved)
+        self._workflow_builder._delete_flags_for_force_rerun(spec)
+        self._invalidate_processing_log_for_force_rerun(spec)
+
+    def _invalidate_processing_log_for_force_rerun(
+        self, spec: "ResolvedForceRerunSpec"
+    ) -> None:
+        """Invalidate per-scenario log ``processing_log.outputs`` entries
+        that match the force-rerun spec.
+
+        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism: flag
+        deletion triggers Snakemake to re-plan the DAG, but the runner
+        subprocess's ``process_simulation.py::_already_written`` gate
+        consults each per-model log's ``processing_log.outputs`` dict, NOT
+        the flag files. Without log-record invalidation, the re-fired rule
+        subprocess executes ``write_timeseries_outputs(...)`` but every
+        internal ``_export_*`` early-returns on ``_already_written``
+        because the log still records ``success=True`` from the prior run
+        — net result is fresh flags but stale zarrs. This helper closes
+        that gap: for each scope matched by ``spec``, it clears the
+        corresponding per-model log files' ``processing_log.outputs`` (so
+        the next runner pass writes the outputs fresh) and resets the
+        ``raw_*_outputs_cleared`` markers so the clear-raw step re-runs.
+
+        For the ``"all"`` scope: invalidates every scenario's per-model
+        log. For ``"sa"`` scope: dispatches via
+        ``sensitivity._invalidate_processing_log_for_sa_ids``. For
+        ``"event"`` scope: invalidates only the scenarios whose
+        ``event_id`` slug matches the tokens.
+
+        On-disk side effect: the per-scenario log JSON file
+        (``log_tritonswmm.json`` / ``log_triton.json`` / ``log_swmm.json``)
+        is rewritten with ``processing_log.outputs = {}``. No zarr/nc
+        artifact is touched — the runner's ``_write_output`` path
+        overwrites the existing zarr on re-execution.
+        """
+        if spec.scope == "none":
+            return
+
+        if spec.scope == "sa":
+            # Sensitivity dispatch — sub-analyses own their scenarios.
+            self.sensitivity._invalidate_processing_log_for_sa_ids(spec.tokens)
+            return
+
+        if spec.scope == "all":
+            target_event_ids = set(self._all_event_id_slugs())
+        elif spec.scope == "event":
+            target_event_ids = set(spec.tokens)
+        else:
+            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        for event_iloc in range(len(self.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            if scen.event_id not in target_event_ids:
+                continue
+            for model_type in scen.run.model_types_enabled:
+                model_log = scen.get_log(model_type)
+                # Clear the processing_log dict and persist.
+                model_log.processing_log.outputs.clear()
+                # Also reset raw-outputs-cleared markers so the next
+                # processing pass re-runs the clear_raw step on top of
+                # the re-written outputs.
+                if model_log.raw_TRITON_outputs_cleared is not None:
+                    model_log.raw_TRITON_outputs_cleared.set(False)
+                if model_log.raw_SWMM_outputs_cleared is not None:
+                    model_log.raw_SWMM_outputs_cleared.set(False)
+                model_log.write()
+
+    def _all_event_id_slugs(self) -> list[str]:
+        """Helper: enumerate every scenario's event_id slug for ``"all"`` scope.
+
+        Uses the same V0001 stable-slug derivation as ``_build_force_rerun_spec``
+        — no scenarios attribute exists on Analysis (per Phase 2 audit row), so
+        slugs are computed from df_sims index via
+        ``compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))``.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+        return [
+            compute_event_id_slug(
+                self._retrieve_weather_indexer_using_integer_index(i)
+            )
+            for i in range(len(self.df_sims))
+        ]
 
     # TODO - fix or delete
     # @property

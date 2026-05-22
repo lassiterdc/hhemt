@@ -96,7 +96,6 @@ class TRITONSWMM_analysis_post_processing:
 
     def consolidate_to_datatree(
         self,
-        overwrite_if_already_created: bool = False,
         compression_level: int = 5,
         verbose: bool = False,
     ) -> Path:
@@ -106,6 +105,10 @@ class TRITONSWMM_analysis_post_processing:
         master-level per-mode flat zarrs are produced. The DataTree IS the
         canonical master-level artifact; per-scenario summaries are its
         only inputs.
+
+        Per cleanup-rerun-delete-redesign Phase 3, the legacy
+        ``overwrite_if_already_created`` parameter is retired; force-rerun
+        capability arrives in Phase 4 via ``override_force_rerun``.
         """
         fname_out = self._analysis.analysis_paths.analysis_datatree_zarr
         if fname_out is None:
@@ -113,7 +116,7 @@ class TRITONSWMM_analysis_post_processing:
                 "analysis_datatree_zarr path is not configured on AnalysisPaths."
             )
 
-        if (not overwrite_if_already_created) and fname_out.exists():
+        if fname_out.exists():
             if verbose:
                 print(f"DataTree zarr already present at {fname_out}. Not overwriting.")
             return fname_out

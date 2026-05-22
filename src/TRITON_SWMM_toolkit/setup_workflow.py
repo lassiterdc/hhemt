@@ -33,6 +33,7 @@ import traceback
 import logging
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.status_flags import emit_runner_flag as _emit_runner_flag
 
 
 # Configure logging to stderr
@@ -97,6 +98,24 @@ def main() -> int:
         default=False,
         help="Recompile even if already compiled successfully (applies to all compilation flags)",
     )
+    parser.add_argument(
+        "--flag-output",
+        type=Path,
+        default=None,
+        help="Path to the _status/*.flag marker to write on success (toolkit-managed; optional for legacy CLI use)",
+    )
+    parser.add_argument(
+        "--rule-name",
+        type=str,
+        default=None,
+        help="Snakemake rule name for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--target-id",
+        type=str,
+        default=None,
+        help="UniqueSystemTarget id for the flag sidecar payload (sensitivity per-target setup)",
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -138,6 +157,7 @@ def main() -> int:
             logger.info(
                 "No compilation or processing flags were passed. Doing nothing."
             )
+            _emit_runner_flag(args)
             return 0
 
         # Phase 1a: Process system-level inputs
@@ -273,6 +293,7 @@ def main() -> int:
                 return 1
 
         logger.info("Setup workflow completed successfully")
+        _emit_runner_flag(args)
         return 0
 
     except Exception as e:

@@ -63,8 +63,7 @@ def test_1job_dry_run_does_not_submit(norfolk_1job_analysis):
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which="both",
-        clear_raw_outputs=True,
-        overwrite_outputs_if_already_created=True,
+        override_clear_raw="all",
         compression_level=5,
         pickup_where_leftoff=False,
         dry_run=True,  # KEY: This should prevent SBATCH submission

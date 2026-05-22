@@ -11,8 +11,7 @@ Usage:
         --analysis-config /path/to/analysis.yaml \
         --system-config /path/to/system.yaml \
         --which both \
-        --clear-raw-outputs \
-        --overwrite-outputs-if-already-created \
+        [--override-clear-raw '"none"' | '"all"' | '["tritonswmm","swmm"]'] \
         --compression-level 5 \
 
 
@@ -24,11 +23,13 @@ Exit codes:
 
 import sys
 import argparse
+import json
 from pathlib import Path
 import traceback
 import logging
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.status_flags import emit_runner_flag as _emit_runner_flag
 import gc
 
 # Memory profiling imports (always-on, minimal overhead)
@@ -95,16 +96,14 @@ def main():
         help="Which outputs to process: TRITON, SWMM, or both",
     )
     parser.add_argument(
-        "--clear-raw-outputs",
-        action="store_true",
-        default=False,
-        help="Clear raw outputs after processing",
-    )
-    parser.add_argument(
-        "--overwrite-outputs-if-already-created",
-        action="store_true",
-        default=False,
-        help="Overwrite processed outputs if they already exist",
+        "--override-clear-raw",
+        type=str,
+        default=None,
+        help=(
+            'Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded '
+            'value: \'"all"\', \'"none"\', or \'["tritonswmm","swmm"]\'. When '
+            'omitted, the runner reads cfg_analysis.clear_raw from the YAML.'
+        ),
     )
     parser.add_argument(
         "--compression-level",
@@ -117,6 +116,30 @@ def main():
         action="store_true",
         default=False,
         help="Clear full timeseries files after creating summaries (to save disk space)",
+    )
+    parser.add_argument(
+        "--flag-output",
+        type=Path,
+        default=None,
+        help="Path to the _status/*.flag marker to write on success (toolkit-managed; optional for legacy CLI use)",
+    )
+    parser.add_argument(
+        "--rule-name",
+        type=str,
+        default=None,
+        help="Snakemake rule name for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--event-id",
+        type=str,
+        default=None,
+        help="Event id slug for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--sa-id",
+        type=str,
+        default=None,
+        help="Sub-analysis id for the flag sidecar payload (sensitivity)",
     )
     try:
         args = parser.parse_args()
@@ -200,12 +223,14 @@ def main():
         log_memory_profile("Before write_timeseries_outputs")
         gc.collect()
 
+        # Parse --override-clear-raw JSON payload if supplied
+        override_clear_raw = json.loads(args.override_clear_raw) if args.override_clear_raw is not None else None
+
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
-            clear_raw_outputs=args.clear_raw_outputs,
-            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -270,7 +295,6 @@ def main():
         proc.write_summary_outputs(
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
-            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -331,6 +355,7 @@ def main():
             scenario.log.refresh()
             logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
 
+        _emit_runner_flag(args)
         return 0
 
     except Exception as e:
