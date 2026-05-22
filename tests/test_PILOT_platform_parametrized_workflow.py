@@ -120,7 +120,7 @@ def test_workflow_config_flags_parametrized(platform_analysis):
         prepare_scenarios=True,
         process_timeseries=True,
         which="both",
-        clear_raw_outputs=True,
+        override_clear_raw="all",
         compression_level=5,
     )
 

@@ -11,6 +11,7 @@ Key Components:
 """
 
 import datetime
+import json
 import math
 import shlex
 import socket
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 import yaml  # type: ignore
 
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
 from TRITON_SWMM_toolkit.utils import fast_rmtree
@@ -42,6 +44,24 @@ from dataclasses import dataclass
 # default path. Centralized as a constant so the fixture, the helper, and the
 # unit test all agree without a hand-synced string literal.
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "TRITON_SWMM_TEST_NON_INTERACTIVE_LOCK_CLEAR"
+
+
+@dataclass(frozen=True)
+class ResolvedForceRerunSpec:
+    """Post-resolution force_rerun target set, ready for filesystem globbing.
+
+    The orchestrator resolves event_iloc integers to event_id slugs BEFORE
+    constructing this spec (per V0001's stable event-slug invariant); the
+    builder helper consumes only slugs/sa_ids. The ``scope`` field names which
+    axis the ``tokens`` index into, eliminating the same-type-different-content
+    failure mode where ints could be either user-supplied event_ilocs or
+    already-resolved slug strings.
+
+    Per cleanup-rerun-delete-redesign Phase 4.
+    """
+
+    scope: Literal["all", "none", "sa", "event"]
+    tokens: tuple[str, ...]  # () for "all"/"none"; sa_id strings for "sa"; event_id slugs for "event"
 
 
 @dataclass(frozen=True)
@@ -650,40 +670,12 @@ class SnakemakeWorkflowBuilder:
             user to wait or ``scancel`` before resubmitting; no second
             ``sbatch`` is issued.
         """
-        import json
-
         submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
         sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
         if not sentinels:
             return  # fast path: zero SLURM calls
 
-        alive: list[tuple[str, str]] = []  # (sentinel_name, job_id)
-        for s in sentinels:
-            try:
-                jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
-            except json.JSONDecodeError:
-                print(
-                    f"[reconcile] WARNING: corrupt sentinel {s.name}; deleting and skipping",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                s.unlink(missing_ok=True)
-                continue
-            except OSError as _e:
-                # Transient FS issue (NFS hiccup, concurrent write) — preserve
-                # the sentinel and surface the error so the next submit attempt
-                # re-evaluates rather than silently treating it as stale.
-                raise WorkflowError(
-                    phase="preflight-reconciliation",
-                    return_code=1,
-                    stderr=(
-                        f"Failed to read sentinel {s}: {_e}. Retry submit, or inspect _status/_submitted/ manually."
-                    ),
-                ) from _e
-            if jid and _slurm_job_is_live(jid):
-                alive.append((s.stem, jid))
-            else:
-                s.unlink(missing_ok=True)  # DEAD/stale → reclaim
+        alive = self._classify_live_sentinels(sentinels, reclaim_dead=True)
 
         # --comment recovery for the lost-sentinel window
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
@@ -850,6 +842,55 @@ class SnakemakeWorkflowBuilder:
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
         system_cfg = system_config_yaml or self.system.system_config_yaml
         return f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
+
+    def _delete_flags_for_force_rerun(
+        self,
+        spec: ResolvedForceRerunSpec,
+    ) -> None:
+        """Pre-delete `_status/*.flag` markers so Snakemake's MTIME trigger
+        re-fires the dependent rules on the next workflow invocation.
+
+        Per cleanup-rerun-delete-redesign Phase 4 + R10. Snakemake's DAG
+        re-planning cascades downstream invalidation automatically once an
+        upstream input flag is deleted — the helper itself only deletes the
+        directly-matched flags + their `.flag.json` sidecars.
+
+        Glob anchors use delimiter-anchored separators per the FQ3 canonical
+        flag-name table — ``*sa-{v}_*.flag`` (non-terminal) AND
+        ``*sa-{v}.flag`` (terminal). Substring-only ``*sa-{v}*.flag`` is
+        NOT used because it false-matches `sa-1` against `sa-10`, `sa-11`,
+        `sa-100`.
+
+        Parameters
+        ----------
+        spec : ResolvedForceRerunSpec
+            Pre-resolved (scope, tokens) target set. ``scope == "none"``
+            short-circuits with no filesystem touch.
+        """
+        if spec.scope == "none":
+            return
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return
+
+        matched_flags: set[Path] = set()
+        if spec.scope == "all":
+            matched_flags.update(status_dir.glob("*.flag"))
+        elif spec.scope == "sa":
+            for v in spec.tokens:
+                matched_flags.update(status_dir.glob(f"*sa-{v}_*.flag"))
+                matched_flags.update(status_dir.glob(f"*sa-{v}.flag"))
+        elif spec.scope == "event":
+            for v in spec.tokens:
+                matched_flags.update(status_dir.glob(f"*evt-{v}_*.flag"))
+                matched_flags.update(status_dir.glob(f"*evt-{v}.flag"))
+        else:
+            raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
+
+        for flag_path in matched_flags:
+            flag_path.unlink(missing_ok=True)
+            sidecar = flag_path.with_suffix(flag_path.suffix + ".json")
+            sidecar.unlink(missing_ok=True)
 
     def _build_resource_block(
         self,
@@ -1049,18 +1090,24 @@ class SnakemakeWorkflowBuilder:
         conda_env_path: str,
         process_resources: str,
         compression_level: int,
-        clear_raw_outputs: bool,
-        overwrite_outputs_if_already_created: bool,
+        override_clear_raw: ClearRawValue | None,
     ) -> str:
         """Emit a single ``rule process_{model_type}`` block.
 
         Extracted from ``generate_snakefile_content`` so the same template
         is reused by the reprocess generator
-        (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
-        which bakes ``overwrite_outputs_if_already_created=True`` and
-        ``clear_raw_outputs=False`` to re-fire processing against existing
-        sim outputs without removing the raw outputs.
+        (``reprocess_snakefile_generator.generate_reprocess_snakefile``).
+        Clearing is driven by ``cfg_analysis.clear_raw`` + the
+        ``--override-clear-raw`` runtime override (this method's
+        ``override_clear_raw`` parameter); force-rerun is handled by
+        ``--override-force-rerun`` via login-side flag pre-deletion (per
+        cleanup-rerun-delete-redesign Phase 4).
         """
+        override_clear_raw_arg = (
+            f"--override-clear-raw '{json.dumps(override_clear_raw)}' "
+            if override_clear_raw is not None
+            else ""
+        )
         return f'''
 rule process_{model_type}:
     input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
@@ -1079,11 +1126,12 @@ rule process_{model_type}:
             {config_args} \\
             --model-type {model_type} \\
             --which {which_arg} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            {override_clear_raw_arg}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name process_{model_type} \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1097,7 +1145,6 @@ rule process_{model_type}:
         conda_env_path: str,
         consolidate_resources: str,
         compression_level: int,
-        overwrite_outputs_if_already_created: bool,
         allow_incomplete: bool = False,
     ) -> str:
         """Emit the ``rule consolidate`` block.
@@ -1107,9 +1154,7 @@ rule process_{model_type}:
         (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
         which can supply a different ``consolidate_input_str`` (referencing
         existing ``c_run_*`` sim flags directly when reprocess starts at
-        ``consolidate`` and the process stage is skipped) and bakes
-        ``overwrite_outputs_if_already_created=True`` to regenerate the
-        analysis datatree.
+        ``consolidate`` and the process stage is skipped).
 
         ``allow_incomplete`` (default False) opts into the consolidate runner's
         ``--allow-incomplete`` mode, which demotes the runner's
@@ -1118,6 +1163,9 @@ rule process_{model_type}:
         Snakefile-DAG-scoped subset of completed scenarios. The canonical
         workflow path (``generate_snakefile_content``) leaves this False so
         unexpected sim absence still fails fast.
+
+        Force-rerun is handled by ``--override-force-rerun`` via login-side
+        flag pre-deletion (per cleanup-rerun-delete-redesign Phase 4).
         """
         return f'''
 rule consolidate:
@@ -1132,11 +1180,11 @@ rule consolidate:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {config_args} \\
             --compression-level {compression_level} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             {"--allow-incomplete " if allow_incomplete else ""}\\
             --which {which} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1151,8 +1199,7 @@ rule consolidate:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: str = "TRITON",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         report_formats: list[str] | None = None,
@@ -1187,10 +1234,10 @@ rule consolidate:
             If True, process timeseries outputs after each simulation
         which : str
             Which outputs to process: "TRITON", "SWMM", or "both"
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` threaded into the
+            emitted ``--override-clear-raw <json>`` rule-shell arg. ``None``
+            reads the YAML at runner-time.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -1260,8 +1307,9 @@ rule consolidate:
             {"--compile-triton-only " if compile_TRITON_SWMM and self.system.cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and self.system.cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
+            --flag-output {{output}} \\
+            --rule-name setup \\
             > {{log}} 2>&1
-        touch {{output}}
         """'''
 
         # Build resource blocks using helper
@@ -1418,8 +1466,10 @@ rule prepare_scenario:
             {config_args} \\
             {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            --flag-output {{output}} \\
+            --rule-name prepare_scenario \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1482,8 +1532,10 @@ rule run_{model_type}:
             {config_args} \\
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            --flag-output {{output}} \\
+            --rule-name run_{model_type} \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -1508,8 +1560,7 @@ rule run_{model_type}:
                     conda_env_path=str(conda_env_path),
                     process_resources=process_resources,
                     compression_level=compression_level,
-                    clear_raw_outputs=clear_raw_outputs,
-                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                    override_clear_raw=override_clear_raw,
                 )
 
         # Consolidation rule depends on final output of each model type
@@ -1533,7 +1584,6 @@ rule run_{model_type}:
             conda_env_path=str(conda_env_path),
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
         )
         snakefile_content += self._build_plot_rule_block_system_overview()
         snakefile_content += self._build_plot_rule_block_per_sim()
@@ -3925,8 +3975,7 @@ exit $snakemake_status
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,
@@ -3966,10 +4015,9 @@ exit $snakemake_status
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` threaded through to
+            the emitted Snakefile rule shells.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -4040,8 +4088,8 @@ exit $snakemake_status
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
+
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
@@ -4096,8 +4144,8 @@ exit $snakemake_status
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
+
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
@@ -4149,8 +4197,8 @@ exit $snakemake_status
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
+
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
@@ -4269,7 +4317,7 @@ exit $snakemake_status
             )
 
         # Write the reprocess-scoped Snakefile.
-        snakefile_path = write_reprocess_snakefile(self, start_with=start_with, overwrite=True)
+        snakefile_path = write_reprocess_snakefile(self, start_with=start_with)
         if verbose:
             print(
                 f"[Snakemake] Reprocess Snakefile generated: {snakefile_path}",
@@ -4408,6 +4456,299 @@ exit $snakemake_status
             "snakemake_logfile": snakemake_logfile,
         }
 
+    def _classify_live_sentinels(
+        self,
+        sentinel_paths: list[Path],
+        *,
+        reclaim_dead: bool = True,
+    ) -> list[tuple[str, str]]:
+        """Classify submitted-sentinel files by SLURM job liveness.
+
+        Returns the list of ``(sentinel_stem, job_id)`` tuples for sentinels
+        whose recorded SLURM job is still live per the module-level
+        :func:`_slurm_job_is_live` helper. When ``reclaim_dead=True`` (the
+        default), sentinels whose recorded job is dead or whose JSON payload
+        is corrupt are unlinked in-place — matching the original behavior of
+        :meth:`_reconcile_inflight_submissions`. Pass ``reclaim_dead=False``
+        from the delete path so the destructive sentinel sweep is owned by
+        the delete workflow itself (not by the preflight guard).
+
+        Per cleanup-rerun-delete-redesign Phase 2 (extracted from the body of
+        :meth:`_reconcile_inflight_submissions` so the delete-path guard can
+        share the classification primitive).
+        """
+        import json
+
+        alive: list[tuple[str, str]] = []
+        for s in sentinel_paths:
+            try:
+                jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
+            except json.JSONDecodeError:
+                print(
+                    f"[reconcile] WARNING: corrupt sentinel {s.name}; "
+                    f"{'deleting and skipping' if reclaim_dead else 'skipping (not reclaimed)'}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if reclaim_dead:
+                    s.unlink(missing_ok=True)
+                continue
+            except OSError as _e:
+                raise WorkflowError(
+                    phase="preflight-reconciliation",
+                    return_code=1,
+                    stderr=(
+                        f"Failed to read sentinel {s}: {_e}. Retry, or inspect _status/_submitted/ manually."
+                    ),
+                ) from _e
+            if jid and _slurm_job_is_live(jid):
+                alive.append((s.stem, jid))
+            elif reclaim_dead:
+                s.unlink(missing_ok=True)  # DEAD/stale → reclaim
+        return alive
+
+    def _pre_delete_guards(self, *, override_in_flight: bool) -> None:
+        """Entry guard for the distributed delete workflow.
+
+        Mirrors :meth:`_pre_snakemake_invocation_guards` but for the delete
+        path: (1) lock-check scoped to ``analysis_dir/.snakemake_delete/`` so
+        a stale Snakemake lock from a prior aborted delete attempt is
+        surfaced before resubmit; (2) sentinel classification via
+        :meth:`_classify_live_sentinels` (no reclaim — the delete workflow
+        owns sentinel cleanup); (3) ``--comment``-based sacct recovery via
+        :meth:`_recover_inflight_via_comment` so the lost-sentinel window
+        does not silently admit a delete against a live analysis. Refuses
+        with :class:`ConfigurationError` when any live job is detected and
+        ``override_in_flight`` is False.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        resolution + design recommendations C.4 and C.5).
+        """
+        analysis_dir = self.analysis_paths.analysis_dir
+
+        # (1) Lock-check scoped to .snakemake_delete/ (C.5).
+        snakefile_delete = analysis_dir / "Snakefile.delete"
+        if snakefile_delete.exists():
+            self._check_and_clear_snakemake_lock(
+                snakefile_delete,
+                dry_run=False,
+                verbose=True,
+                working_dir=analysis_dir / ".snakemake_delete",
+            )
+
+        # (2) Sentinel classification (no reclaim — destructive sentinel
+        # cleanup belongs to the delete-consolidation runner, not the
+        # preflight guard).
+        submitted_dir = analysis_dir / "_status" / "_submitted"
+        sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
+        alive = self._classify_live_sentinels(sentinels, reclaim_dead=False)
+
+        # (3) Comment-recovery for the lost-sentinel window (C.4).
+        alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
+
+        if alive and not override_in_flight:
+            live_jids = sorted({j for _, j in alive})
+            raise ConfigurationError(
+                field="analysis.delete()",
+                message=(
+                    f"Refusing to delete analysis_dir while {len(live_jids)} "
+                    f"simulation jobs are still live in SLURM: {live_jids}. "
+                    f"Cancel via `scancel {' '.join(str(j) for j in live_jids)}` "
+                    f"and retry, or pass `override_in_flight=True` (Python) "
+                    f"or `--override-in-flight` (CLI) to proceed."
+                ),
+                config_path=str(submitted_dir),
+            )
+        if alive and override_in_flight:
+            live_jids = sorted({j for _, j in alive})
+            print(
+                f"[delete] override_in_flight=True — proceeding despite "
+                f"{len(live_jids)} live SLURM jobs: {live_jids}",
+                flush=True,
+            )
+
+    def _build_delete_snakefile_content(self) -> str:
+        """Build the non-sensitivity delete Snakefile content.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Uses absolute paths in rule outputs so resolution is robust regardless
+        of Snakemake's ``--directory`` flag.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        analysis_dir = str(self.analysis_paths.analysis_dir)
+        python_exe = self.python_executable
+
+        # Per-scenario delete rules. Snakemake rule names must be valid Python
+        # identifiers (no dots / hyphens / spaces), so the event_id slug is
+        # sanitized for the rule name only; the file-path interpolations keep
+        # the original event_id so flag paths match what
+        # `_enumerate_expected_delete_sentinels` produces.
+        rules = []
+        per_scenario_flags = []
+        for i in range(len(self.analysis.df_sims)):
+            event_id = compute_event_id_slug(
+                self.analysis._retrieve_weather_indexer_using_integer_index(i)
+            )
+            rule_name_slug = event_id.replace(".", "_").replace("-", "_")
+            flag = f"{analysis_dir}/_status/_deleting/scenario_evt-{event_id}.flag"
+            per_scenario_flags.append(flag)
+            rules.append(
+                f'rule delete_scenario_{rule_name_slug}:\n'
+                f'    output:\n'
+                f'        "{flag}"\n'
+                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    shell:\n'
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_scenario_runner "\n'
+                f'        "--event-id {event_id} "\n'
+                f'        "--analysis-dir {analysis_dir}"\n\n'
+            )
+
+        consolidation_flag = f"{analysis_dir}/_status/_deleting/analysis_consolidation.flag"
+        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_scenario_flags)
+        rules.append(
+            f'rule delete_analysis_consolidation:\n'
+            f'    input:\n'
+            f'        {consolidation_inputs if per_scenario_flags else ""}\n'
+            f'    output:\n'
+            f'        "{consolidation_flag}"\n'
+            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    shell:\n'
+            f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
+            f'        "--analysis-dir {analysis_dir}"\n\n'
+        )
+
+        rule_all = (
+            f'rule all:\n'
+            f'    input:\n'
+            f'        "{consolidation_flag}"\n\n'
+        )
+        return rule_all + "".join(rules)
+
+    def _build_delete_sensitivity_snakefile_content(self, sa_ids: list[str]) -> str:
+        """Build the sensitivity-master delete Snakefile content.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Per-sub-analysis delete rules + analysis-level consolidation rule.
+        """
+        analysis_dir = str(self.analysis_paths.analysis_dir)
+        python_exe = self.python_executable
+
+        rules = []
+        per_sa_flags = []
+        for sa_id in sa_ids:
+            # Snakemake rule names must be valid Python identifiers; sanitize
+            # the sa_id for the rule name only, keep flag-path interpolation
+            # using the original sa_id so paths match `_enumerate_expected_*`.
+            rule_name_slug = sa_id.replace(".", "_").replace("-", "_")
+            flag = f"{analysis_dir}/_status/_deleting/subanalysis_sa-{sa_id}.flag"
+            per_sa_flags.append(flag)
+            rules.append(
+                f'rule delete_subanalysis_{rule_name_slug}:\n'
+                f'    output:\n'
+                f'        "{flag}"\n'
+                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    shell:\n'
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_runner "\n'
+                f'        "--sa-id {sa_id} "\n'
+                f'        "--analysis-dir {analysis_dir}"\n\n'
+            )
+
+        consolidation_flag = f"{analysis_dir}/_status/_deleting/analysis_consolidation.flag"
+        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_sa_flags)
+        rules.append(
+            f'rule delete_analysis_consolidation:\n'
+            f'    input:\n'
+            f'        {consolidation_inputs if per_sa_flags else ""}\n'
+            f'    output:\n'
+            f'        "{consolidation_flag}"\n'
+            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    shell:\n'
+            f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
+            f'        "--analysis-dir {analysis_dir}"\n\n'
+        )
+
+        rule_all = (
+            f'rule all:\n'
+            f'    input:\n'
+            f'        "{consolidation_flag}"\n\n'
+        )
+        return rule_all + "".join(rules)
+
+    def _submit_delete_snakemake(self, snakefile_path: Path, verbose: bool = True) -> dict:
+        """Invoke the delete Snakefile via subprocess.
+
+        Local-only execution for Phase 2 — the delete workflow is light
+        (rm-tree per scenario / sub-analysis + write-flag) and does not
+        require SLURM. Future expansion to ``slurm`` execution is straightforward
+        but out of Phase 2 scope.
+        """
+        analysis_dir = self.analysis_paths.analysis_dir
+        snakemake_dir = analysis_dir / ".snakemake_delete"
+        snakemake_dir.mkdir(exist_ok=True)
+        logs_dir = self.analysis_paths.analysis_log_directory
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        logfile = logs_dir / "snakemake_delete.log"
+
+        cmd_args = self._get_snakemake_base_cmd() + [
+            "--snakefile",
+            str(snakefile_path),
+            "--directory",
+            str(snakemake_dir),
+            "--cores",
+            "1",
+            "--rerun-triggers",
+            "mtime",
+            "input",
+        ]
+        if verbose:
+            print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
+        with open(logfile, "w") as log_f:
+            result = subprocess.run(
+                cmd_args,
+                cwd=str(analysis_dir),
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+        return {
+            "success": result.returncode == 0,
+            "snakefile_path": snakefile_path,
+            "snakemake_logfile": logfile,
+            "returncode": result.returncode,
+        }
+
+    def submit_delete_workflow(self, *, override_in_flight: bool = False) -> dict:
+        """Generate and submit the distributed delete Snakefile (non-sensitivity).
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Runs :meth:`_pre_delete_guards` first so the live-sentinel refusal
+        fires before any Snakefile is written.
+        """
+        self._pre_delete_guards(override_in_flight=override_in_flight)
+
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
+        snakefile_path.write_text(self._build_delete_snakefile_content())
+        return self._submit_delete_snakemake(snakefile_path)
+
+    def submit_delete_workflow_sensitivity(
+        self,
+        *,
+        sa_ids: list[str],
+        override_in_flight: bool = False,
+    ) -> dict:
+        """Generate and submit the sensitivity-master delete Snakefile.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Per-sub-analysis fan-out + analysis-level consolidation.
+        """
+        self._pre_delete_guards(override_in_flight=override_in_flight)
+
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
+        snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(sa_ids))
+        return self._submit_delete_snakemake(snakefile_path)
+
 
 class SensitivityAnalysisWorkflowBuilder:
     """
@@ -4453,10 +4794,27 @@ class SensitivityAnalysisWorkflowBuilder:
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
 
+    def submit_delete_workflow_sensitivity(self, *, override_in_flight: bool = False) -> dict:
+        """Submit the distributed sensitivity-master delete workflow.
+
+        Thin facade: derives the ``sa_ids`` list from
+        ``self.sensitivity_analysis.df_setup.index`` and delegates to
+        :meth:`SnakemakeWorkflowBuilder.submit_delete_workflow_sensitivity`
+        on the composed base builder. Pre-delete guards (live-sentinel
+        refusal, scoped lock-check, comment-recovery) fire inside the base
+        builder's method.
+
+        Per cleanup-rerun-delete-redesign Phase 2.
+        """
+        sa_ids = self.sensitivity_analysis.df_setup.index.astype(str).tolist()
+        return self._base_builder.submit_delete_workflow_sensitivity(
+            sa_ids=sa_ids,
+            override_in_flight=override_in_flight,
+        )
+
     def generate_master_snakefile_content(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
@@ -4466,7 +4824,7 @@ class SensitivityAnalysisWorkflowBuilder:
         overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
-        clear_raw_outputs: bool = True,
+        override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
         report_formats: list[str] | None = None,
     ) -> str:
@@ -4486,8 +4844,6 @@ class SensitivityAnalysisWorkflowBuilder:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing consolidated outputs
         compression_level : int
             Compression level for output files (0-9)
         process_system_level_inputs : bool
@@ -4506,8 +4862,8 @@ class SensitivityAnalysisWorkflowBuilder:
             If True, rerun SWMM hydrology model even if outputs exist
         process_timeseries : bool
             If True, process timeseries outputs after simulations
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
 
@@ -4764,8 +5120,10 @@ onerror:
             {"--compile-triton-only " if compile_TRITON_SWMM and target_cfg_system.toggle_triton_model else ""}\\
             {"--compile-swmm " if compile_TRITON_SWMM and target_cfg_system.toggle_swmm_model else ""}\\
             {"--recompile-if-already-done " if recompile_if_already_done_successfully else ""}\\
+            --flag-output {{output}} \\
+            --rule-name setup_target_{target.target_id} \\
+            --target-id {target.target_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -4886,8 +5244,11 @@ onerror:
             {sub_config_args} \\
             {"--overwrite-scenario-if-already-set-up " if overwrite_scenario_if_already_set_up else ""}\\
             {"--rerun-swmm-hydro " if rerun_swmm_hydro_if_outputs_exist else ""}\\
+            --flag-output {{output}} \\
+            --rule-name {prep_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -4916,8 +5277,10 @@ onerror:
             --model-type {model_type} \\
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
+            --flag-output {{output}} \\
+            --rule-name {sim_rule_name} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -4944,11 +5307,13 @@ onerror:
             {sub_config_args} \\
             --model-type {model_type} \\
             --which {which} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            {f"--override-clear-raw '{json.dumps(override_clear_raw)}' " if override_clear_raw is not None else ""}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name {process_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -4988,10 +5353,11 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate_{prefix}{sa_id_rule} \\
+            --sa-id {sa_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5020,10 +5386,10 @@ onerror:
             {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name master_consolidation \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -5433,10 +5799,12 @@ onerror:
             {sub_config_args} \\
             --model-type {model_type} \\
             --which {which} \\
-            --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name {process_rule_name} \\
+            --sa-id {sa_id} \\
+            --event-id {event_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 ''')
@@ -5490,10 +5858,11 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-{allow_incomplete_line}            --overwrite-outputs-if-already-created \\
-            --compression-level {compression_level} \\
+{allow_incomplete_line}            --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name consolidate_{prefix}{sa_id_rule} \\
+            --sa-id {sa_id} \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 
 '''
@@ -5540,10 +5909,10 @@ onerror:
             --consolidate-sensitivity-analysis-outputs \\
             --allow-incomplete \\
             --which {which} \\
-            --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\
+            --flag-output {{output}} \\
+            --rule-name master_consolidation \\
             > {{log}} 2>&1
-        touch {{output}}
         """
 '''
 
@@ -5798,8 +6167,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -5840,10 +6208,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -5921,7 +6287,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -5931,7 +6297,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
-                clear_raw_outputs=clear_raw_outputs,
+                override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
             )
@@ -5985,7 +6351,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -5995,7 +6361,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
-                clear_raw_outputs=clear_raw_outputs,
+                override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
             )
@@ -6050,7 +6416,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # (no nested Snakemake calls - all rules in one file)
         master_snakefile_content = self.generate_master_snakefile_content(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
             compression_level=compression_level,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
@@ -6060,7 +6426,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
-            clear_raw_outputs=clear_raw_outputs,
+            override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
         )

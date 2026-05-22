@@ -26,3 +26,5 @@ hydraulic_timestep_s: 0.01
 TRITON_reporting_timestep_s: 120
 open_boundaries: 1
 report: {}
+clear_raw: none
+force_rerun: none

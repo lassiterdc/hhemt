@@ -16,4 +16,21 @@ layout_relevant:
     - "src/TRITON_SWMM_toolkit/config/**/*.py"
     - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"
     - "src/TRITON_SWMM_toolkit/version_migration/versions/*.py"
-non_breaking_allowlist: []
+# cleanup-rerun-delete-redesign Phase 1: these paths are config-schema or
+# behavior-only changes — no on-disk layout changes. Justifications:
+#   - process_simulation.py: Phase 3 — replaces structurally broken
+#     `_clear_raw_TRITON_outputs` + `_clear_raw_SWMM_outputs` with a single
+#     corrected `_clear_raw_outputs(model_type)`. Behavior change; existing
+#     on-disk analyses continue to work post-upgrade.
+#   - scenario.py: Phase 3 — incidental method-signature touch to remove
+#     `clear_raw_outputs` references. No path or layout changes.
+#   - sensitivity_analysis.py: Phases 2 + 3 + 4 — adds `delete()` method,
+#     removes `clear_raw_outputs`, adds `override_force_rerun`. No on-disk
+#     layout changes; per-sa fingerprint schema (Gotcha 17) unchanged.
+#   - config/analysis.py: Phase 1 — adds Pydantic `clear_raw` and
+#     `force_rerun` fields. Config schema is NOT on-disk layout.
+non_breaking_allowlist:
+  - src/TRITON_SWMM_toolkit/process_simulation.py
+  - src/TRITON_SWMM_toolkit/scenario.py
+  - src/TRITON_SWMM_toolkit/sensitivity_analysis.py
+  - src/TRITON_SWMM_toolkit/config/analysis.py

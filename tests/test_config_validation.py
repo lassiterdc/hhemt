@@ -55,6 +55,8 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "TRITON_reporting_timestep_s": 60,
         "open_boundaries": 1,
         "report": {},
+        "clear_raw": "none",
+        "force_rerun": "none",
     }
 
 
@@ -238,3 +240,106 @@ def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
         f"^[A-Za-z0-9_.]+$ (toolkit author defect, not a user-config issue): "
         f"{offenders}."
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — cleanup-rerun-delete-redesign: clear_raw + force_rerun fields
+# ---------------------------------------------------------------------------
+
+
+def test_clear_raw_required(tmp_path: Path):
+    """Loading an analysis_config without `clear_raw` raises ValidationError."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    del cfg["clear_raw"]
+    with pytest.raises(ValidationError, match="clear_raw"):
+        analysis_config.model_validate(cfg)
+
+
+def test_force_rerun_required(tmp_path: Path):
+    """Loading an analysis_config without `force_rerun` raises ValidationError."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    del cfg["force_rerun"]
+    with pytest.raises(ValidationError, match="force_rerun"):
+        analysis_config.model_validate(cfg)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["all", "none", ["tritonswmm"], ["triton", "swmm"], ["tritonswmm", "triton", "swmm"]],
+)
+def test_clear_raw_accepts_valid_shapes(value, tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["clear_raw"] = value
+    result = analysis_config.model_validate(cfg)
+    assert result.clear_raw == value
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        ["all"],  # sentinel inside list
+        ["none"],  # sentinel inside list
+        [],  # empty list
+        ["tritonswmm", "tritonswmm"],  # duplicates
+        "unknown",  # not in Literal arm
+    ],
+)
+def test_clear_raw_rejects_invalid(value, tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["clear_raw"] = value
+    with pytest.raises(ValidationError):
+        analysis_config.model_validate(cfg)
+
+
+def test_force_rerun_accepts_all_none_sentinels(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["force_rerun"] = "all"
+    assert analysis_config.model_validate(cfg).force_rerun == "all"
+    cfg["force_rerun"] = "none"
+    assert analysis_config.model_validate(cfg).force_rerun == "none"
+
+
+def test_force_rerun_event_iloc_accepts_list(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["toggle_sensitivity_analysis"] = False
+    cfg["force_rerun"] = {"event_iloc": [3, 7]}
+    result = analysis_config.model_validate(cfg)
+    assert result.force_rerun == {"event_iloc": [3, 7]}
+
+
+def test_force_rerun_sa_id_requires_sensitivity_toggle(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["toggle_sensitivity_analysis"] = False
+    cfg["force_rerun"] = {"sa_id": ["0", "5"]}
+    with pytest.raises(ValidationError, match="toggle_sensitivity_analysis=True"):
+        analysis_config.model_validate(cfg)
+
+
+def test_force_rerun_event_iloc_requires_no_sensitivity(tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["toggle_sensitivity_analysis"] = True
+    cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))
+    cfg["force_rerun"] = {"event_iloc": [3, 7]}
+    with pytest.raises(ValidationError, match="toggle_sensitivity_analysis=False"):
+        analysis_config.model_validate(cfg)
+
+
+@pytest.mark.parametrize(
+    "value,match",
+    [
+        ({"sa_id": [], "event_iloc": [1]}, "exactly one key"),
+        ({"bad_key": [1]}, "'sa_id' or 'event_iloc'"),
+        ({"sa_id": []}, "non-empty list"),
+        ({"sa_id": ["0", "0"]}, "duplicates"),
+        ({"sa_id": ["bad id with spaces"]}, r"\^\[A-Za-z0-9_\.\]\+\$"),
+    ],
+)
+def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    # Use sensitivity-on so sa_id paths don't trip on the cross-field rule
+    # before the per-field validator gets a chance to fire.
+    cfg["toggle_sensitivity_analysis"] = True
+    cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))
+    cfg["force_rerun"] = value
+    with pytest.raises(ValidationError, match=match):
+        analysis_config.model_validate(cfg)

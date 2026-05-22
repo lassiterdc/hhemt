@@ -35,6 +35,7 @@ import traceback
 from pathlib import Path
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.status_flags import emit_runner_flag as _emit_runner_flag
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -88,6 +89,24 @@ def main():
         action="store_true",
         default=False,
         help="Resume simulation from last checkpoint if available",
+    )
+    parser.add_argument(
+        "--flag-output",
+        type=Path,
+        default=None,
+        help="Path to the _status/*.flag marker to write on success (toolkit-managed; optional for legacy CLI use)",
+    )
+    parser.add_argument(
+        "--rule-name",
+        type=str,
+        default=None,
+        help="Snakemake rule name for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--event-id",
+        type=str,
+        default=None,
+        help="Event id slug for the flag sidecar payload",
     )
     try:
         args = parser.parse_args()
@@ -218,6 +237,7 @@ def main():
         if simprep_result is None:
             logger.info(f"[{event_iloc}] {model_type} simulation already completed, skipping execution")
             logger.info(f"{model_type} simulation completed successfully")
+            _emit_runner_flag(args)
             return 0
 
         # Unpack simulation command and metadata
@@ -268,6 +288,7 @@ def main():
             return 1
 
         logger.info(f"[{event_iloc}] Simulation completed successfully")
+        _emit_runner_flag(args)
         return 0
 
     except Exception as e:

@@ -14,6 +14,7 @@ import yaml  # type: ignore
 
 import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
@@ -226,8 +227,8 @@ class TRITONSWMM_sensitivity_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
+        override_force_rerun: ForceRerunValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -266,10 +267,8 @@ class TRITONSWMM_sensitivity_analysis:
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -291,6 +290,11 @@ class TRITONSWMM_sensitivity_analysis:
             - snakefile_path: Path
             - message: str
         """
+        # Force-rerun pre-delete for direct sensitivity.submit_workflow callers.
+        # Idempotent when Analysis.submit_workflow already applied it on the
+        # dispatch path (matched flags would be absent by now).
+        self.master_analysis._apply_force_rerun(override_force_rerun)
+
         return self._workflow_builder.submit_workflow(
             mode=mode,
             process_system_level_inputs=process_system_level_inputs,
@@ -302,8 +306,7 @@ class TRITONSWMM_sensitivity_analysis:
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             wait_for_completion=wait_for_completion,
@@ -315,6 +318,36 @@ class TRITONSWMM_sensitivity_analysis:
             snakemake_diagnostics=snakemake_diagnostics,
         )
 
+    def _invalidate_processing_log_for_sa_ids(
+        self, sa_id_tokens: tuple[str, ...]
+    ) -> None:
+        """Per-sa_id dispatch for processing-log invalidation under
+        ``override_force_rerun={"sa_id": [...]}``.
+
+        For each requested sa_id, looks up its sub-analysis and calls the
+        per-sub-analysis ``Analysis._invalidate_processing_log_for_force_rerun``
+        with a ``scope="all"`` spec — which invalidates every scenario in
+        that sub-analysis. Sub-analyses are full Analysis instances and
+        own their own scenario list (cf. CLAUDE.md Gotcha 11: "Sensitivity
+        analysis sub-analyses are full TRITONSWMM_analysis instances").
+
+        Per cleanup-rerun-delete-redesign Phase 4 + B-mechanism.
+        """
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+        all_spec = ResolvedForceRerunSpec(scope="all", tokens=())
+        for sa_id in sa_id_tokens:
+            sub_analysis = self.sub_analyses.get(sa_id)
+            if sub_analysis is None:
+                # _validate_force_rerun_targets already filtered unknown
+                # sa_ids; reaching here means the sub_analyses dict is
+                # out of sync with df_setup — surface loudly.
+                raise RuntimeError(
+                    f"sub_analyses missing entry for sa_id={sa_id!r} after "
+                    f"validation passed; df_setup/sub_analyses are out of sync"
+                )
+            sub_analysis._invalidate_processing_log_for_force_rerun(all_spec)
+
     def reprocess(
         self,
         start_with: Literal["process", "consolidate", "render"] = "consolidate",
@@ -325,6 +358,8 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = True,
         dry_run: bool = False,
         report_formats: list[str] | None = None,
+        *,
+        override_force_rerun: ForceRerunValue | None = None,
     ) -> dict:
         """Master-level reprocess for sensitivity analyses.
 
@@ -336,11 +371,11 @@ class TRITONSWMM_sensitivity_analysis:
         :meth:`SensitivityAnalysisWorkflowBuilder.submit_reprocess_workflow`.
 
         Unlike :meth:`TRITONSWMM_analysis.reprocess`, this method does NOT
-        invoke the ``clear_raw_outputs`` orphan/abort gate (R12) — sensitivity
+        invoke the ``override_clear_raw`` orphan/abort gate (R12) — sensitivity
         master reprocess is a downstream-only refresh of consolidation +
         plotting + rendering against existing per-sa sim outputs and does
         not need the in-flight reconciliation logic that the analysis-level
-        ``clear_raw_outputs`` flow uses.
+        ``override_clear_raw`` flow uses.
 
         Parameters
         ----------
@@ -382,6 +417,11 @@ class TRITONSWMM_sensitivity_analysis:
 
         stamp_new_target(self.master_analysis.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
+        # Force-rerun pre-delete (login-node responsibility). Per
+        # cleanup-rerun-delete-redesign Phase 4 + R10. Resolves + validates +
+        # deletes matched flags before Snakemake plans the reprocess DAG.
+        self.master_analysis._apply_force_rerun(override_force_rerun)
+
         # Resolve invalidation target set. ``None`` → all sub-analyses; explicit
         # list → subset. String-cast preserves alignment with sub_analyses dict
         # iteration keys regardless of source type (int / str / numpy scalar).
@@ -396,11 +436,30 @@ class TRITONSWMM_sensitivity_analysis:
         # process rules, so process invalidation is treated as consolidate
         # invalidation). "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
+        from TRITON_SWMM_toolkit.utils import fast_rmtree as _fast_rmtree
+
         status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+            # Per cleanup-rerun-delete-redesign Phases 3 + 4, the legacy
+            # rule-shell overwrite toggle is retired; runners early-return
+            # when the consolidated datatree zarr already exists. This
+            # method (called from reprocess) deletes the consolidated
+            # artifacts directly so the rebuild is unconditional. The
+            # parallel force-rerun path uses override_force_rerun which
+            # invalidates per-scenario log records in addition to flags.
+            for sa_id in targets:
+                sub_analysis = self.sub_analyses.get(sa_id)
+                if sub_analysis is None:
+                    continue
+                _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
+                if _sub_zarr is not None and _sub_zarr.exists():
+                    _fast_rmtree(_sub_zarr)
+            _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
+            if _master_zarr is not None and _master_zarr.exists():
+                _fast_rmtree(_master_zarr)
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
@@ -419,6 +478,65 @@ class TRITONSWMM_sensitivity_analysis:
             verbose=verbose,
             report_formats=report_formats,
         )
+
+    def delete(self, override_in_flight: bool = False) -> None:
+        """Distributed delete workflow for the sensitivity master analysis.
+
+        Refuses by default when ``_status/_submitted/*.json`` sentinels
+        indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
+        the guard.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        + D-DeleteBoundary resolutions).
+        """
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+
+        # 1. Clear any stale sentinels from a prior failed delete attempt.
+        stale_dir = analysis_dir / "_status" / "_deleting"
+        if stale_dir.exists():
+            fast_rmtree(stale_dir)
+
+        # 2. Submit the distributed sensitivity-delete workflow. Guards run
+        # inside the builder; orchestrator does not invoke _pre_delete_guards
+        # directly.
+        self._workflow_builder.submit_delete_workflow_sensitivity(
+            override_in_flight=override_in_flight
+        )
+
+        # 3. Verify all expected sentinels present; remove analysis_dir atomically.
+        expected = self._enumerate_expected_delete_sentinels()
+        deleting_dir = analysis_dir / "_status" / "_deleting"
+        actual = set(deleting_dir.glob("*.flag")) if deleting_dir.exists() else set()
+        missing = expected - actual
+        if missing:
+            print(
+                f"[delete] {len(missing)} per-sa-rule sentinels missing — "
+                f"preserving analysis_dir for debugging.",
+                flush=True,
+            )
+            print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
+            return
+        print(
+            f"[delete] all {len(expected)} per-sa-rule sentinels present — "
+            f"removing analysis_dir.",
+            flush=True,
+        )
+        fast_rmtree(analysis_dir)
+
+    def _enumerate_expected_delete_sentinels(self) -> set[Path]:
+        """Compute the set of ``_status/_deleting/*.flag`` paths the
+        sensitivity delete workflow will produce on full success.
+
+        One per sub-analysis row in ``self.df_setup.index`` plus one for the
+        analysis-level consolidation rule.
+        """
+        delete_dir = self.master_analysis.analysis_paths.analysis_dir / "_status" / "_deleting"
+        expected = {delete_dir / "analysis_consolidation.flag"}
+        for sa_id in self.df_setup.index.astype(str):
+            expected.add(delete_dir / f"subanalysis_sa-{sa_id}.flag")
+        return expected
 
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
         """Render the master report for the sensitivity analysis.
@@ -542,9 +660,9 @@ class TRITONSWMM_sensitivity_analysis:
         concurrent: bool = False,
         process_outputs_after_sim_completion: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose=False,
     ):
         if concurrent:
@@ -567,8 +685,7 @@ class TRITONSWMM_sensitivity_analysis:
                     pickup_where_leftoff=pickup_where_leftoff,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
-                    clear_raw_outputs=clear_raw_outputs,
-                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                    override_clear_raw=override_clear_raw,
                     compression_level=compression_level,
                     verbose=verbose,
                 )
@@ -578,8 +695,8 @@ class TRITONSWMM_sensitivity_analysis:
     def process_simulation_timeseries_concurrently(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -587,8 +704,7 @@ class TRITONSWMM_sensitivity_analysis:
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             launchers = sub_analysis.retrieve_scenario_timeseries_processing_launchers(
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -599,13 +715,11 @@ class TRITONSWMM_sensitivity_analysis:
     def _consolidate_outputs_in_each_subanalysis(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis.consolidate_analysis_outputs(
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -640,19 +754,17 @@ class TRITONSWMM_sensitivity_analysis:
     def consolidate_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
+        *,
         verbose: bool = True,
         compression_level: int = 5,
     ):
         self.create_subanalysis_summaries(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
         self.consolidate_subanalysis_outputs(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -661,7 +773,7 @@ class TRITONSWMM_sensitivity_analysis:
     def consolidate_subanalysis_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
+        *,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -673,7 +785,6 @@ class TRITONSWMM_sensitivity_analysis:
         ``sensitivity_datatree.zarr`` at the master analysis dir.
         """
         self.consolidate_sensitivity_datatree(
-            overwrite_if_already_created=overwrite_outputs_if_already_created,
             compression_level=compression_level,
             verbose=verbose,
         )
@@ -727,7 +838,6 @@ class TRITONSWMM_sensitivity_analysis:
 
     def consolidate_sensitivity_datatree(
         self,
-        overwrite_if_already_created: bool = False,
         compression_level: int = 5,
         verbose: bool = False,
     ) -> Path:
@@ -741,7 +851,7 @@ class TRITONSWMM_sensitivity_analysis:
         if fname_out is None:
             raise ValueError("sensitivity_datatree_zarr path is not configured on AnalysisPaths.")
 
-        if (not overwrite_if_already_created) and fname_out.exists():
+        if fname_out.exists():
             if verbose:
                 print(f"Sensitivity DataTree zarr already present at {fname_out}. Not overwriting.")
             return fname_out
@@ -751,9 +861,8 @@ class TRITONSWMM_sensitivity_analysis:
             sub_path = sub_analysis.analysis_paths.analysis_datatree_zarr
             if sub_path is None:
                 continue
-            if overwrite_if_already_created or not sub_path.exists():
+            if not sub_path.exists():
                 sub_analysis.process.consolidate_to_datatree(
-                    overwrite_if_already_created=overwrite_if_already_created,
                     compression_level=compression_level,
                     verbose=verbose,
                 )
@@ -778,21 +887,19 @@ class TRITONSWMM_sensitivity_analysis:
     def create_subanalysis_summaries(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
+        *,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         if which in ["TRITON", "both"]:
             self._consolidate_outputs_in_each_subanalysis(
                 which="TRITON",
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )
         if which in ["SWMM", "both"]:
             self._consolidate_outputs_in_each_subanalysis(
                 which="SWMM",
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
                 verbose=verbose,
                 compression_level=compression_level,
             )

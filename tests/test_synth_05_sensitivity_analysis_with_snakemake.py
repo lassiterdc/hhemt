@@ -60,7 +60,6 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     master_snakefile_content = (
         sensitivity._workflow_builder.generate_master_snakefile_content(
             which="both",
-            overwrite_outputs_if_already_created=False,
             compression_level=5,
         )
     )
@@ -116,7 +115,6 @@ def test_phase3_master_snakefile_emits_per_target_setup_rules(
 
     content = sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both",
-        overwrite_outputs_if_already_created=False,
         compression_level=5,
     )
 
@@ -143,20 +141,17 @@ def test_phase3_master_snakefile_emits_per_target_setup_rules(
         (
             {
                 "which": "TRITON",
-                "overwrite_outputs_if_already_created": True,
                 "compression_level": 7,
             },
             [
                 "--compression-level 7",
                 "--which TRITON",
-                "--overwrite-outputs-if-already-created",
                 "--consolidate-sensitivity-analysis-outputs",
             ],
         ),
         (
             {
                 "which": "both",
-                "overwrite_outputs_if_already_created": False,
                 "compression_level": 5,
             },
             [
@@ -219,8 +214,7 @@ def test_snakemake_sensitivity_workflow_dry_run(
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which="both",
-        clear_raw_outputs=True,
-        overwrite_outputs_if_already_created=True,
+        override_clear_raw="all",
         compression_level=5,
         pickup_where_leftoff=False,
         dry_run=True,
@@ -270,8 +264,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which=which,
-        clear_raw_outputs=True,
-        overwrite_outputs_if_already_created=True,
+        override_clear_raw="all",
         compression_level=5,
         pickup_where_leftoff=False,
         verbose=True,

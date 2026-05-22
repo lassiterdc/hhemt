@@ -180,7 +180,6 @@ class retrieve_TRITON_SWMM_test_case:
             f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
         )
         self.system.process_system_level_inputs(
-            overwrite_outputs_if_already_created=start_from_scratch
         )
 
     # create weather time series dataset
@@ -354,8 +353,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # system_directory and re-writes configs; only the run-side preprocessing
         # is gated. See A6 verification in the Phase 2 plan doc.
         if start_from_scratch and not skip_run:
-            self.system.process_system_level_inputs(
-                overwrite_outputs_if_already_created=True, verbose=False
+            self.system.process_system_level_inputs( verbose=False
             )
 
     def _write_configs(self, **kwargs):
@@ -435,6 +433,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "target_processed_output_type": "zarr",
             "local_cpu_cores_for_workflow": 2,
             "report": {},
+            # Phase 1 of cleanup-rerun-delete-redesign added these as required
+            # fields with no defaults; synth fixture writes 'none' to mirror
+            # test_data/norfolk_coastal_flooding/template_analysis_config.yaml.
+            "clear_raw": "none",
+            "force_rerun": "none",
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])

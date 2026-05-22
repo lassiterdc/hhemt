@@ -14,7 +14,6 @@ Usage:
         --system-config /path/to/system.yaml \
         --analysis-config /path/to/analysis.yaml \
         [--consolidate-outputs] \
-        [--overwrite-outputs-if-already-created] \
         [--compression-level 5]
 
 Exit codes:
@@ -30,6 +29,7 @@ import traceback
 import logging
 
 from TRITON_SWMM_toolkit.log_utils import log_workflow_context
+from TRITON_SWMM_toolkit.status_flags import emit_runner_flag as _emit_runner_flag
 
 # Configure logging to stderr
 logging.basicConfig(
@@ -260,12 +260,6 @@ def main() -> int:
         help="Which outputs to process: TRITON, SWMM, or both (only used if --process-timeseries)",
     )
     parser.add_argument(
-        "--overwrite-outputs-if-already-created",
-        action="store_true",
-        default=False,
-        help="Overwrite existing consolidated outputs",
-    )
-    parser.add_argument(
         "--compression-level",
         type=int,
         default=5,
@@ -287,6 +281,24 @@ def main() -> int:
             "complete analysis dir. Canonical (non-reprocess) workflow invocations leave this False so missing "
             "sims still fail fast."
         ),
+    )
+    parser.add_argument(
+        "--flag-output",
+        type=Path,
+        default=None,
+        help="Path to the _status/*.flag marker to write on success (toolkit-managed; optional for legacy CLI use)",
+    )
+    parser.add_argument(
+        "--rule-name",
+        type=str,
+        default=None,
+        help="Snakemake rule name for the flag sidecar payload",
+    )
+    parser.add_argument(
+        "--sa-id",
+        type=str,
+        default=None,
+        help="Sub-analysis id for the flag sidecar payload (sensitivity per-sa consolidate)",
     )
     try:
         args = parser.parse_args()
@@ -377,7 +389,6 @@ def main() -> int:
             )
             try:
                 analysis.sensitivity.consolidate_sensitivity_datatree(
-                    overwrite_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )
@@ -390,7 +401,6 @@ def main() -> int:
             logger.info("Assembling per-scenario summaries into master DataTree...")
             try:
                 analysis.process.consolidate_to_datatree(
-                    overwrite_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )
@@ -401,6 +411,7 @@ def main() -> int:
                 return 1
 
         logger.info("Consolidation workflow completed successfully")
+        _emit_runner_flag(args)
         return 0
 
     except Exception as e:

@@ -288,7 +288,6 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
         #     "recompile_if_already_done_successfully": False,
         #     "overwrite_scenario_if_already_set_up": True,
         #     "rerun_swmm_hydro_if_outputs_exist": True,
-        #     "overwrite_outputs_if_already_created": True,
         #     "pickup_where_leftoff": False,
         # },
         "resume": {
@@ -297,7 +296,6 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
             "recompile_if_already_done_successfully": False,
             "overwrite_scenario_if_already_set_up": False,
             "rerun_swmm_hydro_if_outputs_exist": False,
-            "overwrite_outputs_if_already_created": False,
             "pickup_where_leftoff": True,
         },
     }

@@ -56,7 +56,7 @@ def test_system_gpu_hardware_absent_matches_default(synth_sensitivity_with_syste
         )
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", overwrite_outputs_if_already_created=False, compression_level=5
+        which="both", compression_level=5
     )
 
     sa_ids = list(sensitivity.sub_analyses.keys())
@@ -86,7 +86,7 @@ def test_system_gpu_hardware_overlay_propagates_to_gres_substring(
         sub_override.cfg_analysis.hpc_gpus_per_node = 1
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", overwrite_outputs_if_already_created=False, compression_level=5
+        which="both", compression_level=5
     )
 
     sa_ids = list(sensitivity.sub_analyses.keys())

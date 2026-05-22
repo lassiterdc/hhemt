@@ -36,15 +36,15 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
         for model_type in enabled_models:
             if model_type == "tritonswmm":
                 proc.write_timeseries_outputs(
-                    which="both", model_type=model_type, clear_raw_outputs=False
+                    which="both", model_type=model_type, override_clear_raw="none"
                 )
             elif model_type == "triton":
                 proc.write_timeseries_outputs(
-                    which="TRITON", model_type=model_type, clear_raw_outputs=False
+                    which="TRITON", model_type=model_type, override_clear_raw="none"
                 )
             elif model_type == "swmm":
                 proc.write_timeseries_outputs(
-                    which="SWMM", model_type=model_type, clear_raw_outputs=False
+                    which="SWMM", model_type=model_type, override_clear_raw="none"
                 )
 
         for model_type in enabled_models:
@@ -52,19 +52,16 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
                 proc.write_summary_outputs(
                     which="both",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "triton":
                 proc.write_summary_outputs(
                     which="TRITON",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "swmm":
                 proc.write_summary_outputs(
                     which="SWMM",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
 
     analysis._update_log()
@@ -73,9 +70,13 @@ def test_concurrently_process_scenario_timeseries(synth_multi_sim_analysis_cache
     for model_type in enabled_models:
         tst_ut.assert_model_outputs_processed(analysis, model_type)
 
-    analysis.process.consolidate_to_datatree(
-        overwrite_if_already_created=True,
-    )
+    # Phase 3 of cleanup-rerun-delete-redesign retired the overwrite_if_already_created
+    # parameter; consolidate_to_datatree now early-returns when the output exists.
+    # Delete it first so this regenerate-and-check pattern still exercises the writer.
+    if analysis.analysis_paths.analysis_datatree_zarr.exists():
+        import shutil
+        shutil.rmtree(analysis.analysis_paths.analysis_datatree_zarr)
+    analysis.process.consolidate_to_datatree()
 
     assert analysis.analysis_paths.analysis_datatree_zarr.exists(), (
         "analysis_datatree.zarr was not produced by consolidate_to_datatree()"
