@@ -285,24 +285,26 @@ class analysis_config(cfgBaseModel):
 
     # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
     clear_raw: ClearRawValue = Field(
-        ...,
+        "none",
         description=(
             'Post-processing cleanup policy. "all" deletes all raw outputs '
             'for every enabled model type. "none" deletes nothing. A list '
             'of model type strings (subset of "tritonswmm", "triton", "swmm") '
-            'deletes raw outputs only for the listed model types. Required '
-            'field; no default — missing-from-YAML raises ValidationError.'
+            'deletes raw outputs only for the listed model types. Defaults '
+            'to "none" — yamls written before this field was introduced '
+            'load cleanly with the strict-safe (delete-nothing) default.'
         ),
     )
     force_rerun: ForceRerunValue = Field(
-        ...,
+        "none",
         description=(
             'Force-rerun policy. "all" re-runs everything. "none" runs no '
             'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
             'only) or "event_iloc" (non-sensitivity only) — and a list of int '
             'or string identifiers re-runs only the named sub-analyses or '
-            'events. Required field; no default — missing-from-YAML raises '
-            'ValidationError.'
+            'events. Defaults to "none" — yamls written before this field '
+            'was introduced load cleanly with the strict-safe (re-run-nothing) '
+            'default.'
         ),
     )
 

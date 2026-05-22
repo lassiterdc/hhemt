@@ -247,20 +247,20 @@ def test_pydantic_config_field_names_are_snakemake_wildcard_safe():
 # ---------------------------------------------------------------------------
 
 
-def test_clear_raw_required(tmp_path: Path):
-    """Loading an analysis_config without `clear_raw` raises ValidationError."""
+def test_clear_raw_defaults_to_none(tmp_path: Path):
+    """Loading an analysis_config without `clear_raw` defaults to 'none' (strict-safe)."""
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["clear_raw"]
-    with pytest.raises(ValidationError, match="clear_raw"):
-        analysis_config.model_validate(cfg)
+    loaded = analysis_config.model_validate(cfg)
+    assert loaded.clear_raw == "none"
 
 
-def test_force_rerun_required(tmp_path: Path):
-    """Loading an analysis_config without `force_rerun` raises ValidationError."""
+def test_force_rerun_defaults_to_none(tmp_path: Path):
+    """Loading an analysis_config without `force_rerun` defaults to 'none' (strict-safe)."""
     cfg = _minimal_analysis_config_dict(tmp_path)
     del cfg["force_rerun"]
-    with pytest.raises(ValidationError, match="force_rerun"):
-        analysis_config.model_validate(cfg)
+    loaded = analysis_config.model_validate(cfg)
+    assert loaded.force_rerun == "none"
 
 
 @pytest.mark.parametrize(
