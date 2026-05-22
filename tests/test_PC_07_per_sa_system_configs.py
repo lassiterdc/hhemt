@@ -35,11 +35,14 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
     return SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml)
 
 
-def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple]):
+def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple], tmp_path: Path):
     """Bypass __init__ and stub TRITONSWMM_system to return per-path stubs."""
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
     master_cfg = SimpleNamespace(sensitivity_analysis=Path("/fake/sensitivity.csv"))
-    instance.master_analysis = SimpleNamespace(cfg_analysis=master_cfg)
+    instance.master_analysis = SimpleNamespace(
+        cfg_analysis=master_cfg,
+        analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+    )
 
     def fake_constructor(yaml_path):
         resolved = Path(yaml_path).resolve()
@@ -75,7 +78,7 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
         yaml_b: (10.0, None, None),  # same tuple as A → collapse
         yaml_c: (5.0, None, None),   # different tuple → its own target
     }
-    instance = _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs)
+    instance = _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs, tmp_path)
 
     df = pd.DataFrame(
         {
@@ -107,7 +110,7 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
         master_yaml: (10.0, None, None),
         yaml_d: (10.0, None, None),  # same tuple as master → collapses with master
     }
-    instance = _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs)
+    instance = _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs, tmp_path)
     instance._system = _make_stub_system(10.0, None, None, master_yaml)
 
     df = pd.DataFrame(
@@ -125,7 +128,7 @@ def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, t
 
 def test_build_unique_system_targets_raises_on_missing_yaml(monkeypatch, tmp_path):
     """Non-existent system_config_yaml path raises ConfigurationError."""
-    instance = _make_sa_instance_for_unit_test(monkeypatch, {})
+    instance = _make_sa_instance_for_unit_test(monkeypatch, {}, tmp_path)
 
     df = pd.DataFrame(
         {
