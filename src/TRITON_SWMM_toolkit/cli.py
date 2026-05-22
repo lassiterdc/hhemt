@@ -800,6 +800,15 @@ def delete_command(
         help="Print what would be deleted (count of scenarios / sub-analyses + "
         "disk size estimate) without deleting anything.",
     ),
+    skip_preview: bool = typer.Option(
+        False,
+        "--skip-preview",
+        help="Skip the per-sub-analysis disk-utilization preview before "
+        "deletion. Useful when the preview's per-sub-analysis `du -sh` "
+        "walks dominate runtime on large Lustre trees (~minutes per TiB). "
+        "Without the preview the user has no size context at the "
+        "confirmation prompt; typically combined with --yes.",
+    ),
 ):
     """Delete an entire analysis tree via distributed Snakemake workflow.
 
@@ -836,7 +845,13 @@ def delete_command(
         analysis = TRITONSWMM_analysis(analysis_config, system)
         system._analysis = analysis
 
-        _print_delete_dry_run_summary(analysis)
+        if skip_preview:
+            console.print(
+                f"[yellow]Preview skipped (--skip-preview). "
+                f"Targeting {analysis.analysis_paths.analysis_dir}[/yellow]"
+            )
+        else:
+            _print_delete_dry_run_summary(analysis)
 
         if dry_run:
             console.print("[yellow]Dry-run only — no deletion performed.[/yellow]")
