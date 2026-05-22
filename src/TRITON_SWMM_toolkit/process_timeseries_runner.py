@@ -11,8 +11,7 @@ Usage:
         --analysis-config /path/to/analysis.yaml \
         --system-config /path/to/system.yaml \
         --which both \
-        --clear-raw-outputs \
-        --overwrite-outputs-if-already-created \
+        [--override-clear-raw '"none"' | '"all"' | '["tritonswmm","swmm"]'] \
         --compression-level 5 \
 
 
@@ -24,6 +23,7 @@ Exit codes:
 
 import sys
 import argparse
+import json
 from pathlib import Path
 import traceback
 import logging
@@ -95,16 +95,14 @@ def main():
         help="Which outputs to process: TRITON, SWMM, or both",
     )
     parser.add_argument(
-        "--clear-raw-outputs",
-        action="store_true",
-        default=False,
-        help="Clear raw outputs after processing",
-    )
-    parser.add_argument(
-        "--overwrite-outputs-if-already-created",
-        action="store_true",
-        default=False,
-        help="Overwrite processed outputs if they already exist",
+        "--override-clear-raw",
+        type=str,
+        default=None,
+        help=(
+            'Runtime override for cfg_analysis.clear_raw. Accepts a JSON-encoded '
+            'value: \'"all"\', \'"none"\', or \'["tritonswmm","swmm"]\'. When '
+            'omitted, the runner reads cfg_analysis.clear_raw from the YAML.'
+        ),
     )
     parser.add_argument(
         "--compression-level",
@@ -200,12 +198,14 @@ def main():
         log_memory_profile("Before write_timeseries_outputs")
         gc.collect()
 
+        # Parse --override-clear-raw JSON payload if supplied
+        override_clear_raw = json.loads(args.override_clear_raw) if args.override_clear_raw is not None else None
+
         # Call the write_timeseries_outputs method
         proc.write_timeseries_outputs(
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
-            clear_raw_outputs=args.clear_raw_outputs,
-            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
             verbose=True,
             compression_level=args.compression_level,
         )
@@ -270,7 +270,6 @@ def main():
         proc.write_summary_outputs(
             which=args.which,  # type: ignore
             model_type=args.model_type,  # type: ignore
-            overwrite_outputs_if_already_created=args.overwrite_outputs_if_already_created,
             verbose=True,
             compression_level=args.compression_level,
         )

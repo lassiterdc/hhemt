@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
 from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
 from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
@@ -971,8 +972,8 @@ class TRITONSWMM_analysis:
     def retrieve_scenario_timeseries_processing_launchers(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -986,10 +987,9 @@ class TRITONSWMM_analysis:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process: TRITON, SWMM, or both
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (the default)
+            reads from the YAML config; a concrete value overrides for this run.
         verbose : bool
             If True, print progress messages
         compression_level : int
@@ -1007,8 +1007,7 @@ class TRITONSWMM_analysis:
             # Create a subprocess-based launcher
             launcher = proc._create_subprocess_timeseries_processing_launcher(
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -1223,9 +1222,9 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool,
         which: Literal["TRITON", "SWMM", "both"],
-        clear_raw_outputs: bool,
-        overwrite_outputs_if_already_created: bool,
         compression_level: int,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose=False,
         model_type: Literal["triton", "tritonswmm", "swmm"] = "tritonswmm",
     ):
@@ -1245,12 +1244,10 @@ class TRITONSWMM_analysis:
             If True, process timeseries outputs after simulation completes
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_outputs_after_sim_completion=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
         compression_level : int
             Compression level for output files, 0-9
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads from YAML).
         verbose : bool, optional
             If True, print progress messages (default: False)
         model_type : Literal["triton", "tritonswmm", "swmm"], optional
@@ -1313,10 +1310,9 @@ class TRITONSWMM_analysis:
             self.process_sim_timeseries(
                 event_iloc,
                 outputs_to_process,
-                clear_raw_outputs,
-                overwrite_outputs_if_already_created,
-                verbose,
-                compression_level,
+                override_clear_raw=override_clear_raw,
+                verbose=verbose,
+                compression_level=compression_level,
             )
         return
 
@@ -1324,8 +1320,8 @@ class TRITONSWMM_analysis:
         self,
         event_iloc,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -1341,10 +1337,9 @@ class TRITONSWMM_analysis:
             Integer index of the scenario in df_sims
         which : Literal["TRITON", "SWMM", "both"], optional
             Which outputs to process (default: "both")
-        clear_raw_outputs : bool, optional
-            If True, clear raw outputs after processing (default: True)
-        overwrite_outputs_if_already_created : bool, optional
-            If True, overwrite existing processed outputs (default: False)
+        override_clear_raw : ClearRawValue | None, optional
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads the YAML; a concrete value overrides for this invocation.
         verbose : bool, optional
             If True, print progress messages (default: False)
         compression_level : int, optional
@@ -1353,14 +1348,12 @@ class TRITONSWMM_analysis:
         proc = self._retrieve_sim_run_processing_object(event_iloc=event_iloc)
         proc.write_timeseries_outputs(
             which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
             verbose=verbose,
             compression_level=compression_level,
         )
         proc.write_summary_outputs(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -1368,8 +1361,8 @@ class TRITONSWMM_analysis:
     def process_all_sim_timeseries_serially(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose: bool = False,
         compression_level: int = 5,
     ):
@@ -1377,8 +1370,7 @@ class TRITONSWMM_analysis:
             self.process_sim_timeseries(
                 event_iloc=event_iloc,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -1387,12 +1379,11 @@ class TRITONSWMM_analysis:
 
     def consolidate_analysis_outputs(
         self,
-        overwrite_outputs_if_already_created: bool = False,
+        *,
         verbose: bool = False,
         compression_level: int = 5,
     ):
         self.process.consolidate_to_datatree(
-            overwrite_if_already_created=overwrite_outputs_if_already_created,
             verbose=verbose,
             compression_level=compression_level,
         )
@@ -1516,9 +1507,9 @@ class TRITONSWMM_analysis:
         pickup_where_leftoff,
         process_outputs_after_sim_completion: bool = False,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
+        *,
+        override_clear_raw: ClearRawValue | None = None,
         verbose=False,
     ):
         """
@@ -1528,8 +1519,7 @@ class TRITONSWMM_analysis:
         Arguments passed to processing process_sim_timeseriess
         (only needed if process_outputs_after_sim_completion=True):
             - which: Literal["TRITON", "SWMM", "both"]
-            - clear_raw_outputs: bool
-            - overwrite_outputs_if_already_created: bool
+            - override_clear_raw: ClearRawValue | None
             - compression_level: int
         """
         if verbose:
@@ -1548,8 +1538,7 @@ class TRITONSWMM_analysis:
                     verbose=verbose,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
                     which=which,
-                    clear_raw_outputs=clear_raw_outputs,
-                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                    override_clear_raw=override_clear_raw,
                     compression_level=compression_level,
                     model_type=model_type,  # type: ignore
                 )
@@ -1563,7 +1552,7 @@ class TRITONSWMM_analysis:
         execution_mode: Literal["auto", "local", "slurm"] = "auto",
         verbose: bool = True,
         wait_for_job_completion: bool | None = None,
-        clear_raw_outputs: bool = True,
+        override_clear_raw: ClearRawValue | None = None,
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
@@ -1589,9 +1578,12 @@ class TRITONSWMM_analysis:
             Where to execute: auto-detect (default), force local, or force SLURM.
         verbose : bool
             If True, print progress messages.
-        clear_raw_outputs : bool
-            If True, clears TRITON-SWMM raw outputs after time series are
-            successfully processed. Set to False only when debugging.
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads the YAML; pass ``"none"`` / ``"all"`` / a list of model types
+            (e.g. ``["tritonswmm", "swmm"]``) to override for this invocation.
+            Per the ``override_`` prefix convention introduced by
+            cleanup-rerun-delete-redesign Phase 1.
         wait_for_job_completion : bool | None
             If True, block until the SLURM job finishes. Mainly for tests.
         override_hpc_total_nodes : int | None
@@ -1862,7 +1854,7 @@ class TRITONSWMM_analysis:
             **phase_params,
             "mode": exec_mode,
             "which": which,
-            "clear_raw_outputs": clear_raw_outputs,
+            "override_clear_raw": override_clear_raw,
             "compression_level": 5,
             "wait_for_completion": wait_for_job_completion,
             "dry_run": dry_run,
@@ -2240,8 +2232,7 @@ class TRITONSWMM_analysis:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -2281,10 +2272,9 @@ class TRITONSWMM_analysis:
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw``. ``None`` (default)
+            reads from YAML; concrete values follow the override-prefix convention.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -2329,8 +2319,7 @@ class TRITONSWMM_analysis:
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
@@ -2353,8 +2342,7 @@ class TRITONSWMM_analysis:
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 wait_for_completion=wait_for_completion,
@@ -2383,7 +2371,8 @@ class TRITONSWMM_analysis:
         start_with: "Literal['process','consolidate','render']" = "consolidate",
         execution_mode: "Literal['auto','local','slurm']" = "auto",
         which: "Literal['TRITON','SWMM','both']" = "both",
-        clear_raw_outputs: bool = False,
+        *,
+        override_clear_raw: ClearRawValue | None = "none",
         verbose: bool = True,
         dry_run: bool = False,
     ) -> dict:
@@ -2410,8 +2399,12 @@ class TRITONSWMM_analysis:
         which
             ``"both"`` (default) / ``"TRITON"`` / ``"SWMM"`` — passes through
             to ``rule consolidate``'s ``--which`` flag.
-        clear_raw_outputs
-            **Hard-default False.** When True, two guards must both pass:
+        override_clear_raw
+            **Hard-default "none"** to preserve historic ``reprocess`` semantics
+            (reprocess never auto-clears unless the caller explicitly opts in).
+            Pass ``None`` to read ``cfg_analysis.clear_raw``; pass ``"all"`` /
+            ``"none"`` / a list of model types to override. When the resolved
+            value is anything other than ``"none"``, two guards must both pass:
             (a) every enabled sim's ``c_run_*`` flag must exist (no
             never-started sims); (b) no ``_status/_submitted/`` sentinel
             may be present (no in-flight / just-died sims). Cites
@@ -2431,8 +2424,11 @@ class TRITONSWMM_analysis:
         Raises
         ------
         ConfigurationError
-            When ``clear_raw_outputs=True`` and either guard fails.
+            When the resolved ``clear_raw`` would clear and either guard fails.
         """
+        resolved_clear_raw = override_clear_raw if override_clear_raw is not None else self.cfg_analysis.clear_raw
+        # True iff the resolved value would trigger any cleanup for any model.
+        would_clear = resolved_clear_raw != "none"
         # Lazy-stamp _version.json at LAYOUT_VERSION (PI-1 pattern, mirroring
         # run() and submit_workflow). Idempotent under concurrent writers;
         # if _version.json is missing or stamped at an older version, this
@@ -2453,13 +2449,14 @@ class TRITONSWMM_analysis:
         # from the correct paths. Pattern mirrors analysis.py:683-801 property
         # dispatches and the bundle CLI dispatch at cli.py:1026.
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            if clear_raw_outputs:
+            if would_clear:
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "TRITONSWMM_analysis.reprocess does not support clear_raw_outputs "
-                        "for sensitivity-toggled analyses. The sensitivity-master reprocess "
-                        "path deliberately omits the clear_raw_outputs gate (see "
+                        "TRITONSWMM_analysis.reprocess does not support clearing raw outputs "
+                        "for sensitivity-toggled analyses (resolved clear_raw="
+                        f"{resolved_clear_raw!r}). The sensitivity-master reprocess "
+                        "path deliberately omits the clear-raw gate (see "
                         "TRITONSWMM_sensitivity_analysis.reprocess docstring). Invoke "
                         "self.sensitivity.reprocess(...) directly with explicit sa_ids if "
                         "raw-output clearing is required."
@@ -2474,15 +2471,15 @@ class TRITONSWMM_analysis:
                 dry_run=dry_run,
             )
 
-        if clear_raw_outputs:
+        if would_clear:
             # Guard (a): every enabled sim must have a c_run_* flag.
             if not self._all_sim_flags_present():
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "reprocess refuses clear_raw_outputs while c_run_* flags are absent "
-                        "(some sims have not completed). See stipulation "
-                        "`clear raw triton outputs deferred until last allocation`."
+                        "reprocess refuses raw-output clearing while c_run_* flags are absent "
+                        f"(resolved clear_raw={resolved_clear_raw!r}; some sims have not completed). "
+                        "See stipulation `clear raw triton outputs deferred until last allocation`."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
@@ -2490,11 +2487,12 @@ class TRITONSWMM_analysis:
             submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
             if submitted_dir.exists() and any(submitted_dir.glob("*.json")):
                 raise ConfigurationError(
-                    field="clear_raw_outputs",
+                    field="override_clear_raw",
                     message=(
-                        "reprocess refuses clear_raw_outputs while _submitted/ sentinels are present "
-                        "(simulations may still be in flight or recently died). Run the Phase-1 "
-                        "reconciliation guard or `scancel` outstanding jobs first."
+                        "reprocess refuses raw-output clearing while _submitted/ sentinels are present "
+                        f"(resolved clear_raw={resolved_clear_raw!r}; simulations may still be in flight "
+                        "or recently died). Run the Phase-1 reconciliation guard or `scancel` outstanding "
+                        "jobs first."
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
@@ -2606,7 +2604,7 @@ class TRITONSWMM_analysis:
     def _all_sim_flags_present(self) -> bool:
         """True iff every enabled sim's ``c_run_*`` completion flag exists.
 
-        Used as the *flag-presence* component of the ``clear_raw_outputs``
+        Used as the *flag-presence* component of the ``override_clear_raw``
         guard; the sentinel-presence component (in-flight detection) is
         checked separately at the :meth:`reprocess` call site.
 
@@ -2665,6 +2663,15 @@ class TRITONSWMM_analysis:
         file-driven — deleting plot/report artifacts is the trigger for
         re-firing (Snakemake's mtime check sees the output as absent).
 
+        Per cleanup-rerun-delete-redesign Phase 3, the legacy
+        ``--overwrite-outputs-if-already-created`` flag is retired; reprocess
+        runners now early-return when the consolidated datatree zarr
+        already exists. To force regeneration this method also deletes the
+        consolidated datatree zarr artifact when ``start_with`` is
+        ``"process"`` or ``"consolidate"`` (so the next reprocess invocation
+        actually rebuilds the tree). Phase 4 will replace the bare deletion
+        with ``override_force_rerun``-driven flag invalidation.
+
         Parameters
         ----------
         start_with
@@ -2675,8 +2682,14 @@ class TRITONSWMM_analysis:
             for f in sd.glob("d_process_*"):
                 f.unlink(missing_ok=True)
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+            _zarr = self.analysis_paths.analysis_datatree_zarr
+            if _zarr is not None and _zarr.exists():
+                fast_rmtree(_zarr)
         elif start_with == "consolidate":
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
+            _zarr = self.analysis_paths.analysis_datatree_zarr
+            if _zarr is not None and _zarr.exists():
+                fast_rmtree(_zarr)
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as

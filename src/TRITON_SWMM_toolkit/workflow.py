@@ -11,6 +11,7 @@ Key Components:
 """
 
 import datetime
+import json
 import math
 import shlex
 import socket
@@ -22,6 +23,7 @@ from typing import TYPE_CHECKING, Literal
 
 import yaml  # type: ignore
 
+from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
 from TRITON_SWMM_toolkit.utils import fast_rmtree
@@ -1021,18 +1023,25 @@ class SnakemakeWorkflowBuilder:
         conda_env_path: str,
         process_resources: str,
         compression_level: int,
-        clear_raw_outputs: bool,
-        overwrite_outputs_if_already_created: bool,
+        override_clear_raw: ClearRawValue | None,
     ) -> str:
         """Emit a single ``rule process_{model_type}`` block.
 
         Extracted from ``generate_snakefile_content`` so the same template
         is reused by the reprocess generator
-        (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
-        which bakes ``overwrite_outputs_if_already_created=True`` and
-        ``clear_raw_outputs=False`` to re-fire processing against existing
-        sim outputs without removing the raw outputs.
+        (``reprocess_snakefile_generator.generate_reprocess_snakefile``).
+        Phase 3 of cleanup-rerun-delete-redesign retires the legacy
+        ``--clear-raw-outputs`` / ``--overwrite-outputs-if-already-created``
+        flags: clearing is now driven by ``cfg_analysis.clear_raw`` + the
+        ``--override-clear-raw`` runtime override (this method's
+        ``override_clear_raw`` parameter); force-rerun is the responsibility
+        of Phase 4's ``--override-force-rerun`` mechanism.
         """
+        override_clear_raw_arg = (
+            f"--override-clear-raw '{json.dumps(override_clear_raw)}' "
+            if override_clear_raw is not None
+            else ""
+        )
         return f'''
 rule process_{model_type}:
     input: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
@@ -1051,8 +1060,7 @@ rule process_{model_type}:
             {config_args} \\
             --model-type {model_type} \\
             --which {which_arg} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            {override_clear_raw_arg}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -1069,7 +1077,6 @@ rule process_{model_type}:
         conda_env_path: str,
         consolidate_resources: str,
         compression_level: int,
-        overwrite_outputs_if_already_created: bool,
         allow_incomplete: bool = False,
     ) -> str:
         """Emit the ``rule consolidate`` block.
@@ -1079,9 +1086,7 @@ rule process_{model_type}:
         (``reprocess_snakefile_generator.generate_reprocess_snakefile``)
         which can supply a different ``consolidate_input_str`` (referencing
         existing ``c_run_*`` sim flags directly when reprocess starts at
-        ``consolidate`` and the process stage is skipped) and bakes
-        ``overwrite_outputs_if_already_created=True`` to regenerate the
-        analysis datatree.
+        ``consolidate`` and the process stage is skipped).
 
         ``allow_incomplete`` (default False) opts into the consolidate runner's
         ``--allow-incomplete`` mode, which demotes the runner's
@@ -1090,6 +1095,10 @@ rule process_{model_type}:
         Snakefile-DAG-scoped subset of completed scenarios. The canonical
         workflow path (``generate_snakefile_content``) leaves this False so
         unexpected sim absence still fails fast.
+
+        Per cleanup-rerun-delete-redesign Phase 3, the legacy
+        ``--overwrite-outputs-if-already-created`` flag is retired; force-rerun
+        capability lands in Phase 4 via ``--override-force-rerun``.
         """
         return f'''
 rule consolidate:
@@ -1104,7 +1113,6 @@ rule consolidate:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {config_args} \\
             --compression-level {compression_level} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             {"--allow-incomplete " if allow_incomplete else ""}\\
             --which {which} \\
             > {{log}} 2>&1
@@ -1123,8 +1131,7 @@ rule consolidate:
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: str = "TRITON",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         report_formats: list[str] | None = None,
@@ -1159,10 +1166,10 @@ rule consolidate:
             If True, process timeseries outputs after each simulation
         which : str
             Which outputs to process: "TRITON", "SWMM", or "both"
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` threaded into the
+            emitted ``--override-clear-raw <json>`` rule-shell arg. ``None``
+            reads the YAML at runner-time.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -1480,8 +1487,7 @@ rule run_{model_type}:
                     conda_env_path=str(conda_env_path),
                     process_resources=process_resources,
                     compression_level=compression_level,
-                    clear_raw_outputs=clear_raw_outputs,
-                    overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                    override_clear_raw=override_clear_raw,
                 )
 
         # Consolidation rule depends on final output of each model type
@@ -1505,7 +1511,6 @@ rule run_{model_type}:
             conda_env_path=str(conda_env_path),
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
         )
         snakefile_content += self._build_plot_rule_block_system_overview()
         snakefile_content += self._build_plot_rule_block_per_sim()
@@ -3897,8 +3902,7 @@ exit $snakemake_status
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,
@@ -3938,10 +3942,9 @@ exit $snakemake_status
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` threaded through to
+            the emitted Snakefile rule shells.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -4012,8 +4015,8 @@ exit $snakemake_status
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
+
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
@@ -4068,8 +4071,8 @@ exit $snakemake_status
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
                 which=which,
-                clear_raw_outputs=clear_raw_outputs,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+                override_clear_raw=override_clear_raw,
+
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
@@ -4121,8 +4124,8 @@ exit $snakemake_status
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
             which=which,
-            clear_raw_outputs=clear_raw_outputs,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+            override_clear_raw=override_clear_raw,
+
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
@@ -4241,7 +4244,7 @@ exit $snakemake_status
             )
 
         # Write the reprocess-scoped Snakefile.
-        snakefile_path = write_reprocess_snakefile(self, start_with=start_with, overwrite=True)
+        snakefile_path = write_reprocess_snakefile(self, start_with=start_with)
         if verbose:
             print(
                 f"[Snakemake] Reprocess Snakefile generated: {snakefile_path}",
@@ -4739,7 +4742,6 @@ class SensitivityAnalysisWorkflowBuilder:
     def generate_master_snakefile_content(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        overwrite_outputs_if_already_created: bool = False,
         compression_level: int = 5,
         process_system_level_inputs: bool = False,
         overwrite_system_inputs: bool = False,
@@ -4749,7 +4751,7 @@ class SensitivityAnalysisWorkflowBuilder:
         overwrite_scenario_if_already_set_up: bool = False,
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
-        clear_raw_outputs: bool = True,
+        override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
         report_formats: list[str] | None = None,
     ) -> str:
@@ -4769,8 +4771,6 @@ class SensitivityAnalysisWorkflowBuilder:
         ----------
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing consolidated outputs
         compression_level : int
             Compression level for output files (0-9)
         process_system_level_inputs : bool
@@ -4789,8 +4789,8 @@ class SensitivityAnalysisWorkflowBuilder:
             If True, rerun SWMM hydrology model even if outputs exist
         process_timeseries : bool
             If True, process timeseries outputs after simulations
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         pickup_where_leftoff : bool
             If True, resume simulations from last checkpoint
 
@@ -5227,8 +5227,7 @@ onerror:
             {sub_config_args} \\
             --model-type {model_type} \\
             --which {which} \\
-            {"--clear-raw-outputs " if clear_raw_outputs else ""}\\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
+            {f"--override-clear-raw '{json.dumps(override_clear_raw)}' " if override_clear_raw is not None else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5271,7 +5270,6 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5303,7 +5301,6 @@ onerror:
             {master_config_args} \\
             --consolidate-sensitivity-analysis-outputs \\
             --which {which} \\
-            {"--overwrite-outputs-if-already-created " if overwrite_outputs_if_already_created else ""}\\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5716,7 +5713,6 @@ onerror:
             {sub_config_args} \\
             --model-type {model_type} \\
             --which {which} \\
-            --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -5773,8 +5769,7 @@ onerror:
         {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
             {sub_config_args} \\
             --which {which} \\
-{allow_incomplete_line}            --overwrite-outputs-if-already-created \\
-            --compression-level {compression_level} \\
+{allow_incomplete_line}            --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
         """
@@ -5823,7 +5818,6 @@ onerror:
             --consolidate-sensitivity-analysis-outputs \\
             --allow-incomplete \\
             --which {which} \\
-            --overwrite-outputs-if-already-created \\
             --compression-level {compression_level} \\
             > {{log}} 2>&1
         touch {{output}}
@@ -6081,8 +6075,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        clear_raw_outputs: bool = True,
-        overwrite_outputs_if_already_created: bool = False,
+        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
@@ -6123,10 +6116,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        clear_raw_outputs : bool
-            If True, clear raw outputs after processing
-        overwrite_outputs_if_already_created : bool
-            If True, overwrite existing processed outputs
+        override_clear_raw : ClearRawValue | None
+            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -6204,7 +6195,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -6214,7 +6205,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
-                clear_raw_outputs=clear_raw_outputs,
+                override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
             )
@@ -6268,7 +6259,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
-                overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
                 compression_level=compression_level,
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -6278,7 +6269,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                 rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                 process_timeseries=process_timeseries,
-                clear_raw_outputs=clear_raw_outputs,
+                override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
             )
@@ -6333,7 +6324,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # (no nested Snakemake calls - all rules in one file)
         master_snakefile_content = self.generate_master_snakefile_content(
             which=which,
-            overwrite_outputs_if_already_created=overwrite_outputs_if_already_created,
+
             compression_level=compression_level,
             process_system_level_inputs=process_system_level_inputs,
             overwrite_system_inputs=overwrite_system_inputs,
@@ -6343,7 +6334,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
             rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
             process_timeseries=process_timeseries,
-            clear_raw_outputs=clear_raw_outputs,
+            override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
         )

@@ -4,6 +4,7 @@ Provides a Snakemake-first single-command CLI for running TRITON-SWMM
 workflows with support for production, testcase, and case-study profiles.
 """
 
+import json
 from pathlib import Path
 
 import typer
@@ -24,6 +25,27 @@ from .profile_catalog import (
     list_testcases,
     load_profile_catalog,
 )
+
+
+def _parse_override_clear_raw(value: str | None) -> str | list | None:
+    """Parse the ``--override-clear-raw`` CLI flag value.
+
+    Accepts ``"all"``, ``"none"``, or a JSON list (e.g. ``'["tritonswmm","swmm"]'``).
+    Phase 3 plants this helper; Phase 4 will reuse the same shape for
+    ``--override-force-rerun``.
+    """
+    if value is None:
+        return None
+    if value in ("all", "none"):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(
+            f"--override-clear-raw expects 'all', 'none', or a JSON list "
+            f'like \'["tritonswmm","swmm"]\'; got: {value!r} ({exc})'
+        )
+
 
 app = typer.Typer(
     name="TRITON-SWMM",
@@ -69,6 +91,16 @@ def run_command(
         False,
         "--from-scratch",
         help="Clear run artifacts and execute from fresh state",
+    ),
+    override_clear_raw: str = typer.Option(
+        None,
+        "--override-clear-raw",
+        help=(
+            'Runtime override for cfg_analysis.clear_raw. Accepts "all", "none", '
+            'or a JSON list of model types: \'["tritonswmm","swmm"]\'. '
+            "When omitted, reads cfg_analysis.clear_raw from the YAML."
+        ),
+        callback=lambda value: _parse_override_clear_raw(value),
     ),
     resume: bool = typer.Option(
         True,
@@ -383,6 +415,7 @@ def run_command(
             execution_mode=execution_mode,
             dry_run=dry_run,
             verbose=verbose,
+            override_clear_raw=override_clear_raw,
         )
 
         # Check workflow result
@@ -591,12 +624,18 @@ def reprocess_command(
         "--which",
         help="Processing scope: TRITON | SWMM | both",
     ),
-    clear_raw_outputs: bool = typer.Option(
-        False,
-        "--clear-raw-outputs/--no-clear-raw-outputs",
-        help="Clear raw sim outputs during reprocess. Hard-default False; "
-        "requires every sim's c_run_*.flag to exist and no in-flight "
-        "_status/_submitted/ sentinel.",
+    override_clear_raw: str = typer.Option(
+        None,
+        "--override-clear-raw",
+        help=(
+            'Runtime override for cfg_analysis.clear_raw. Accepts "all", "none", '
+            'or a JSON list of model types: \'["tritonswmm","swmm"]\'. When '
+            'omitted, reprocess defaults to "none" (preserves historic semantics: '
+            "reprocess never auto-clears raw outputs). When the resolved value "
+            'would clear, two guards must pass: every sim\'s c_run_*.flag must '
+            "exist and no in-flight _status/_submitted/ sentinel may be present."
+        ),
+        callback=lambda value: _parse_override_clear_raw(value),
     ),
     dry_run: bool = typer.Option(
         False,
@@ -652,7 +691,7 @@ def reprocess_command(
             start_with=start_with,  # type: ignore[arg-type]
             execution_mode=execution_mode,  # type: ignore[arg-type]
             which=which,  # type: ignore[arg-type]
-            clear_raw_outputs=clear_raw_outputs,
+            override_clear_raw=override_clear_raw if override_clear_raw is not None else "none",
             verbose=verbose,
             dry_run=dry_run,
         )

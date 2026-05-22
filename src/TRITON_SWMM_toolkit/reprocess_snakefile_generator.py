@@ -102,7 +102,6 @@ def generate_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
-    overwrite: bool = True,
 ) -> str:
     """Generate the reprocess Snakefile body as a string.
 
@@ -115,10 +114,16 @@ def generate_reprocess_snakefile(
     start_with
         Stage to start reprocessing from. Determines which downstream rule
         families are emitted (see module docstring).
-    overwrite
-        When True (the default), bakes ``--overwrite-outputs-if-already-created``
-        into the consolidate and process rule shells so downstream artifacts
-        are regenerated even if they already exist on disk.
+
+    Notes
+    -----
+    Per cleanup-rerun-delete-redesign Phase 3, the legacy ``overwrite`` flag
+    (which baked ``--overwrite-outputs-if-already-created`` into rule shells)
+    is retired. Reprocess relies on flag-invalidation
+    (``_invalidate_downstream_flags``) to trigger re-runs; force-rerun against
+    already-written outputs returns in Phase 4 via ``--override-force-rerun``.
+    Reprocess never clears raw outputs — ``override_clear_raw`` is omitted from
+    the emitted rule shells (equivalent to passing ``"none"`` at runtime).
     """
     if start_with not in START_STAGES:
         raise ValueError(f"start_with must be one of {START_STAGES!r}; got {start_with!r}")
@@ -264,8 +269,7 @@ onerror:
                 conda_env_path=conda_env_path,
                 process_resources=process_resources,
                 compression_level=compression_level,
-                clear_raw_outputs=False,  # reprocess never clears raw outputs
-                overwrite_outputs_if_already_created=overwrite,
+                override_clear_raw="none",  # reprocess never clears raw outputs (force-no regardless of cfg)
             )
 
     # ---- Consolidate rule (start_with in {"process", "consolidate"}) ----
@@ -291,7 +295,6 @@ onerror:
             conda_env_path=conda_env_path,
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
-            overwrite_outputs_if_already_created=overwrite,
             allow_incomplete=True,
         )
 
@@ -349,7 +352,6 @@ def write_reprocess_snakefile(
     builder: SnakemakeWorkflowBuilder,
     *,
     start_with: Literal["process", "consolidate", "render"],
-    overwrite: bool = True,
 ) -> Path:
     """Generate the reprocess Snakefile and write it to ``Snakefile.reprocess``.
 
@@ -357,7 +359,7 @@ def write_reprocess_snakefile(
     normal ``Snakefile`` so the two can coexist). Overwrites any existing
     file at that path.
     """
-    text = generate_reprocess_snakefile(builder, start_with=start_with, overwrite=overwrite)
+    text = generate_reprocess_snakefile(builder, start_with=start_with)
     out = builder.analysis_paths.analysis_dir / "Snakefile.reprocess"
     out.write_text(text)
     return out

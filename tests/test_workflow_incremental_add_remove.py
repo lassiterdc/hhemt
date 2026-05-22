@@ -30,7 +30,7 @@ def _sim_rule_names(snakefile_text: str) -> set[str]:
 
 def _regenerate_master(sensitivity) -> str:
     return sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", overwrite_outputs_if_already_created=False, compression_level=5
+        which="both", compression_level=5
     )
 
 

@@ -14,7 +14,6 @@ Usage:
         --system-config /path/to/system.yaml \
         --analysis-config /path/to/analysis.yaml \
         [--consolidate-outputs] \
-        [--overwrite-outputs-if-already-created] \
         [--compression-level 5]
 
 Exit codes:
@@ -260,12 +259,6 @@ def main() -> int:
         help="Which outputs to process: TRITON, SWMM, or both (only used if --process-timeseries)",
     )
     parser.add_argument(
-        "--overwrite-outputs-if-already-created",
-        action="store_true",
-        default=False,
-        help="Overwrite existing consolidated outputs",
-    )
-    parser.add_argument(
         "--compression-level",
         type=int,
         default=5,
@@ -377,7 +370,6 @@ def main() -> int:
             )
             try:
                 analysis.sensitivity.consolidate_sensitivity_datatree(
-                    overwrite_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )
@@ -390,7 +382,6 @@ def main() -> int:
             logger.info("Assembling per-scenario summaries into master DataTree...")
             try:
                 analysis.process.consolidate_to_datatree(
-                    overwrite_if_already_created=args.overwrite_outputs_if_already_created,
                     verbose=True,
                     compression_level=args.compression_level,
                 )

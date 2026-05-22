@@ -82,7 +82,7 @@ def test_snakemake_workflow_config_generation(norfolk_frontier_multisim_analysis
         prepare_scenarios=True,
         process_timeseries=True,
         which="both",
-        clear_raw_outputs=True,
+        override_clear_raw="all",
         compression_level=5,
     )
 
@@ -167,8 +167,7 @@ def test_snakemake_workflow_dry_run(norfolk_frontier_multisim_analysis):
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which="both",
-        clear_raw_outputs=True,
-        overwrite_outputs_if_already_created=True,
+        override_clear_raw="all",
         compression_level=5,
         pickup_where_leftoff=False,
         dry_run=True,
@@ -210,8 +209,7 @@ def test_snakemake_workflow_execution(norfolk_frontier_multisim_analysis):
         rerun_swmm_hydro_if_outputs_exist=True,
         process_timeseries=True,
         which=which,
-        clear_raw_outputs=True,
-        overwrite_outputs_if_already_created=True,
+        override_clear_raw="all",
         compression_level=5,
         pickup_where_leftoff=False,
         wait_for_completion=True,

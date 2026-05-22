@@ -38,15 +38,15 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
         for model_type in enabled_models:
             if model_type == "tritonswmm":
                 proc.write_timeseries_outputs(
-                    which="both", model_type=model_type, clear_raw_outputs=False
+                    which="both", model_type=model_type, override_clear_raw="none"
                 )
             elif model_type == "triton":
                 proc.write_timeseries_outputs(
-                    which="TRITON", model_type=model_type, clear_raw_outputs=False
+                    which="TRITON", model_type=model_type, override_clear_raw="none"
                 )
             elif model_type == "swmm":
                 proc.write_timeseries_outputs(
-                    which="SWMM", model_type=model_type, clear_raw_outputs=False
+                    which="SWMM", model_type=model_type, override_clear_raw="none"
                 )
 
         for model_type in enabled_models:
@@ -54,19 +54,16 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
                 proc.write_summary_outputs(
                     which="both",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "triton":
                 proc.write_summary_outputs(
                     which="TRITON",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
             elif model_type == "swmm":
                 proc.write_summary_outputs(
                     which="SWMM",
                     model_type=model_type,
-                    overwrite_outputs_if_already_created=True,
                 )
 
     analysis._update_log()
