@@ -650,40 +650,12 @@ class SnakemakeWorkflowBuilder:
             user to wait or ``scancel`` before resubmitting; no second
             ``sbatch`` is issued.
         """
-        import json
-
         submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
         sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
         if not sentinels:
             return  # fast path: zero SLURM calls
 
-        alive: list[tuple[str, str]] = []  # (sentinel_name, job_id)
-        for s in sentinels:
-            try:
-                jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
-            except json.JSONDecodeError:
-                print(
-                    f"[reconcile] WARNING: corrupt sentinel {s.name}; deleting and skipping",
-                    file=sys.stderr,
-                    flush=True,
-                )
-                s.unlink(missing_ok=True)
-                continue
-            except OSError as _e:
-                # Transient FS issue (NFS hiccup, concurrent write) — preserve
-                # the sentinel and surface the error so the next submit attempt
-                # re-evaluates rather than silently treating it as stale.
-                raise WorkflowError(
-                    phase="preflight-reconciliation",
-                    return_code=1,
-                    stderr=(
-                        f"Failed to read sentinel {s}: {_e}. Retry submit, or inspect _status/_submitted/ manually."
-                    ),
-                ) from _e
-            if jid and _slurm_job_is_live(jid):
-                alive.append((s.stem, jid))
-            else:
-                s.unlink(missing_ok=True)  # DEAD/stale → reclaim
+        alive = self._classify_live_sentinels(sentinels, reclaim_dead=True)
 
         # --comment recovery for the lost-sentinel window
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
@@ -4408,6 +4380,299 @@ exit $snakemake_status
             "snakemake_logfile": snakemake_logfile,
         }
 
+    def _classify_live_sentinels(
+        self,
+        sentinel_paths: list[Path],
+        *,
+        reclaim_dead: bool = True,
+    ) -> list[tuple[str, str]]:
+        """Classify submitted-sentinel files by SLURM job liveness.
+
+        Returns the list of ``(sentinel_stem, job_id)`` tuples for sentinels
+        whose recorded SLURM job is still live per the module-level
+        :func:`_slurm_job_is_live` helper. When ``reclaim_dead=True`` (the
+        default), sentinels whose recorded job is dead or whose JSON payload
+        is corrupt are unlinked in-place — matching the original behavior of
+        :meth:`_reconcile_inflight_submissions`. Pass ``reclaim_dead=False``
+        from the delete path so the destructive sentinel sweep is owned by
+        the delete workflow itself (not by the preflight guard).
+
+        Per cleanup-rerun-delete-redesign Phase 2 (extracted from the body of
+        :meth:`_reconcile_inflight_submissions` so the delete-path guard can
+        share the classification primitive).
+        """
+        import json
+
+        alive: list[tuple[str, str]] = []
+        for s in sentinel_paths:
+            try:
+                jid = str(json.loads(s.read_text()).get("slurm_jobid") or "")
+            except json.JSONDecodeError:
+                print(
+                    f"[reconcile] WARNING: corrupt sentinel {s.name}; "
+                    f"{'deleting and skipping' if reclaim_dead else 'skipping (not reclaimed)'}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                if reclaim_dead:
+                    s.unlink(missing_ok=True)
+                continue
+            except OSError as _e:
+                raise WorkflowError(
+                    phase="preflight-reconciliation",
+                    return_code=1,
+                    stderr=(
+                        f"Failed to read sentinel {s}: {_e}. Retry, or inspect _status/_submitted/ manually."
+                    ),
+                ) from _e
+            if jid and _slurm_job_is_live(jid):
+                alive.append((s.stem, jid))
+            elif reclaim_dead:
+                s.unlink(missing_ok=True)  # DEAD/stale → reclaim
+        return alive
+
+    def _pre_delete_guards(self, *, override_in_flight: bool) -> None:
+        """Entry guard for the distributed delete workflow.
+
+        Mirrors :meth:`_pre_snakemake_invocation_guards` but for the delete
+        path: (1) lock-check scoped to ``analysis_dir/.snakemake_delete/`` so
+        a stale Snakemake lock from a prior aborted delete attempt is
+        surfaced before resubmit; (2) sentinel classification via
+        :meth:`_classify_live_sentinels` (no reclaim — the delete workflow
+        owns sentinel cleanup); (3) ``--comment``-based sacct recovery via
+        :meth:`_recover_inflight_via_comment` so the lost-sentinel window
+        does not silently admit a delete against a live analysis. Refuses
+        with :class:`ConfigurationError` when any live job is detected and
+        ``override_in_flight`` is False.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        resolution + design recommendations C.4 and C.5).
+        """
+        analysis_dir = self.analysis_paths.analysis_dir
+
+        # (1) Lock-check scoped to .snakemake_delete/ (C.5).
+        snakefile_delete = analysis_dir / "Snakefile.delete"
+        if snakefile_delete.exists():
+            self._check_and_clear_snakemake_lock(
+                snakefile_delete,
+                dry_run=False,
+                verbose=True,
+                working_dir=analysis_dir / ".snakemake_delete",
+            )
+
+        # (2) Sentinel classification (no reclaim — destructive sentinel
+        # cleanup belongs to the delete-consolidation runner, not the
+        # preflight guard).
+        submitted_dir = analysis_dir / "_status" / "_submitted"
+        sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
+        alive = self._classify_live_sentinels(sentinels, reclaim_dead=False)
+
+        # (3) Comment-recovery for the lost-sentinel window (C.4).
+        alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
+
+        if alive and not override_in_flight:
+            live_jids = sorted({j for _, j in alive})
+            raise ConfigurationError(
+                field="analysis.delete()",
+                message=(
+                    f"Refusing to delete analysis_dir while {len(live_jids)} "
+                    f"simulation jobs are still live in SLURM: {live_jids}. "
+                    f"Cancel via `scancel {' '.join(str(j) for j in live_jids)}` "
+                    f"and retry, or pass `override_in_flight=True` (Python) "
+                    f"or `--override-in-flight` (CLI) to proceed."
+                ),
+                config_path=str(submitted_dir),
+            )
+        if alive and override_in_flight:
+            live_jids = sorted({j for _, j in alive})
+            print(
+                f"[delete] override_in_flight=True — proceeding despite "
+                f"{len(live_jids)} live SLURM jobs: {live_jids}",
+                flush=True,
+            )
+
+    def _build_delete_snakefile_content(self) -> str:
+        """Build the non-sensitivity delete Snakefile content.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Uses absolute paths in rule outputs so resolution is robust regardless
+        of Snakemake's ``--directory`` flag.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        analysis_dir = str(self.analysis_paths.analysis_dir)
+        python_exe = self.python_executable
+
+        # Per-scenario delete rules. Snakemake rule names must be valid Python
+        # identifiers (no dots / hyphens / spaces), so the event_id slug is
+        # sanitized for the rule name only; the file-path interpolations keep
+        # the original event_id so flag paths match what
+        # `_enumerate_expected_delete_sentinels` produces.
+        rules = []
+        per_scenario_flags = []
+        for i in range(len(self.analysis.df_sims)):
+            event_id = compute_event_id_slug(
+                self.analysis._retrieve_weather_indexer_using_integer_index(i)
+            )
+            rule_name_slug = event_id.replace(".", "_").replace("-", "_")
+            flag = f"{analysis_dir}/_status/_deleting/scenario_evt-{event_id}.flag"
+            per_scenario_flags.append(flag)
+            rules.append(
+                f'rule delete_scenario_{rule_name_slug}:\n'
+                f'    output:\n'
+                f'        "{flag}"\n'
+                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    shell:\n'
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_scenario_runner "\n'
+                f'        "--event-id {event_id} "\n'
+                f'        "--analysis-dir {analysis_dir}"\n\n'
+            )
+
+        consolidation_flag = f"{analysis_dir}/_status/_deleting/analysis_consolidation.flag"
+        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_scenario_flags)
+        rules.append(
+            f'rule delete_analysis_consolidation:\n'
+            f'    input:\n'
+            f'        {consolidation_inputs if per_scenario_flags else ""}\n'
+            f'    output:\n'
+            f'        "{consolidation_flag}"\n'
+            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    shell:\n'
+            f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
+            f'        "--analysis-dir {analysis_dir}"\n\n'
+        )
+
+        rule_all = (
+            f'rule all:\n'
+            f'    input:\n'
+            f'        "{consolidation_flag}"\n\n'
+        )
+        return rule_all + "".join(rules)
+
+    def _build_delete_sensitivity_snakefile_content(self, sa_ids: list[str]) -> str:
+        """Build the sensitivity-master delete Snakefile content.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Per-sub-analysis delete rules + analysis-level consolidation rule.
+        """
+        analysis_dir = str(self.analysis_paths.analysis_dir)
+        python_exe = self.python_executable
+
+        rules = []
+        per_sa_flags = []
+        for sa_id in sa_ids:
+            # Snakemake rule names must be valid Python identifiers; sanitize
+            # the sa_id for the rule name only, keep flag-path interpolation
+            # using the original sa_id so paths match `_enumerate_expected_*`.
+            rule_name_slug = sa_id.replace(".", "_").replace("-", "_")
+            flag = f"{analysis_dir}/_status/_deleting/subanalysis_sa-{sa_id}.flag"
+            per_sa_flags.append(flag)
+            rules.append(
+                f'rule delete_subanalysis_{rule_name_slug}:\n'
+                f'    output:\n'
+                f'        "{flag}"\n'
+                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    shell:\n'
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_runner "\n'
+                f'        "--sa-id {sa_id} "\n'
+                f'        "--analysis-dir {analysis_dir}"\n\n'
+            )
+
+        consolidation_flag = f"{analysis_dir}/_status/_deleting/analysis_consolidation.flag"
+        consolidation_inputs = ",\n        ".join(f'"{f}"' for f in per_sa_flags)
+        rules.append(
+            f'rule delete_analysis_consolidation:\n'
+            f'    input:\n'
+            f'        {consolidation_inputs if per_sa_flags else ""}\n'
+            f'    output:\n'
+            f'        "{consolidation_flag}"\n'
+            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    shell:\n'
+            f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
+            f'        "--analysis-dir {analysis_dir}"\n\n'
+        )
+
+        rule_all = (
+            f'rule all:\n'
+            f'    input:\n'
+            f'        "{consolidation_flag}"\n\n'
+        )
+        return rule_all + "".join(rules)
+
+    def _submit_delete_snakemake(self, snakefile_path: Path, verbose: bool = True) -> dict:
+        """Invoke the delete Snakefile via subprocess.
+
+        Local-only execution for Phase 2 — the delete workflow is light
+        (rm-tree per scenario / sub-analysis + write-flag) and does not
+        require SLURM. Future expansion to ``slurm`` execution is straightforward
+        but out of Phase 2 scope.
+        """
+        analysis_dir = self.analysis_paths.analysis_dir
+        snakemake_dir = analysis_dir / ".snakemake_delete"
+        snakemake_dir.mkdir(exist_ok=True)
+        logs_dir = self.analysis_paths.analysis_log_directory
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        logfile = logs_dir / "snakemake_delete.log"
+
+        cmd_args = self._get_snakemake_base_cmd() + [
+            "--snakefile",
+            str(snakefile_path),
+            "--directory",
+            str(snakemake_dir),
+            "--cores",
+            "1",
+            "--rerun-triggers",
+            "mtime",
+            "input",
+        ]
+        if verbose:
+            print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
+        with open(logfile, "w") as log_f:
+            result = subprocess.run(
+                cmd_args,
+                cwd=str(analysis_dir),
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=False,
+            )
+        return {
+            "success": result.returncode == 0,
+            "snakefile_path": snakefile_path,
+            "snakemake_logfile": logfile,
+            "returncode": result.returncode,
+        }
+
+    def submit_delete_workflow(self, *, override_in_flight: bool = False) -> dict:
+        """Generate and submit the distributed delete Snakefile (non-sensitivity).
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Runs :meth:`_pre_delete_guards` first so the live-sentinel refusal
+        fires before any Snakefile is written.
+        """
+        self._pre_delete_guards(override_in_flight=override_in_flight)
+
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
+        snakefile_path.write_text(self._build_delete_snakefile_content())
+        return self._submit_delete_snakemake(snakefile_path)
+
+    def submit_delete_workflow_sensitivity(
+        self,
+        *,
+        sa_ids: list[str],
+        override_in_flight: bool = False,
+    ) -> dict:
+        """Generate and submit the sensitivity-master delete Snakefile.
+
+        Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+        Per-sub-analysis fan-out + analysis-level consolidation.
+        """
+        self._pre_delete_guards(override_in_flight=override_in_flight)
+
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
+        snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(sa_ids))
+        return self._submit_delete_snakemake(snakefile_path)
+
 
 class SensitivityAnalysisWorkflowBuilder:
     """
@@ -4452,6 +4717,24 @@ class SensitivityAnalysisWorkflowBuilder:
 
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
+
+    def submit_delete_workflow_sensitivity(self, *, override_in_flight: bool = False) -> dict:
+        """Submit the distributed sensitivity-master delete workflow.
+
+        Thin facade: derives the ``sa_ids`` list from
+        ``self.sensitivity_analysis.df_setup.index`` and delegates to
+        :meth:`SnakemakeWorkflowBuilder.submit_delete_workflow_sensitivity`
+        on the composed base builder. Pre-delete guards (live-sentinel
+        refusal, scoped lock-check, comment-recovery) fire inside the base
+        builder's method.
+
+        Per cleanup-rerun-delete-redesign Phase 2.
+        """
+        sa_ids = self.sensitivity_analysis.df_setup.index.astype(str).tolist()
+        return self._base_builder.submit_delete_workflow_sensitivity(
+            sa_ids=sa_ids,
+            override_in_flight=override_in_flight,
+        )
 
     def generate_master_snakefile_content(
         self,

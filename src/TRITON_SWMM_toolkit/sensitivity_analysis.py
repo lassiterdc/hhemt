@@ -420,6 +420,65 @@ class TRITONSWMM_sensitivity_analysis:
             report_formats=report_formats,
         )
 
+    def delete(self, override_in_flight: bool = False) -> None:
+        """Distributed delete workflow for the sensitivity master analysis.
+
+        Refuses by default when ``_status/_submitted/*.json`` sentinels
+        indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
+        the guard.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        + D-DeleteBoundary resolutions).
+        """
+        from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+
+        # 1. Clear any stale sentinels from a prior failed delete attempt.
+        stale_dir = analysis_dir / "_status" / "_deleting"
+        if stale_dir.exists():
+            fast_rmtree(stale_dir)
+
+        # 2. Submit the distributed sensitivity-delete workflow. Guards run
+        # inside the builder; orchestrator does not invoke _pre_delete_guards
+        # directly.
+        self._workflow_builder.submit_delete_workflow_sensitivity(
+            override_in_flight=override_in_flight
+        )
+
+        # 3. Verify all expected sentinels present; remove analysis_dir atomically.
+        expected = self._enumerate_expected_delete_sentinels()
+        deleting_dir = analysis_dir / "_status" / "_deleting"
+        actual = set(deleting_dir.glob("*.flag")) if deleting_dir.exists() else set()
+        missing = expected - actual
+        if missing:
+            print(
+                f"[delete] {len(missing)} per-sa-rule sentinels missing — "
+                f"preserving analysis_dir for debugging.",
+                flush=True,
+            )
+            print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
+            return
+        print(
+            f"[delete] all {len(expected)} per-sa-rule sentinels present — "
+            f"removing analysis_dir.",
+            flush=True,
+        )
+        fast_rmtree(analysis_dir)
+
+    def _enumerate_expected_delete_sentinels(self) -> set[Path]:
+        """Compute the set of ``_status/_deleting/*.flag`` paths the
+        sensitivity delete workflow will produce on full success.
+
+        One per sub-analysis row in ``self.df_setup.index`` plus one for the
+        analysis-level consolidation rule.
+        """
+        delete_dir = self.master_analysis.analysis_paths.analysis_dir / "_status" / "_deleting"
+        expected = {delete_dir / "analysis_consolidation.flag"}
+        for sa_id in self.df_setup.index.astype(str):
+            expected.add(delete_dir / f"subanalysis_sa-{sa_id}.flag")
+        return expected
+
     def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
         """Render the master report for the sensitivity analysis.
 
