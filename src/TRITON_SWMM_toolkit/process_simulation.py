@@ -24,10 +24,19 @@ from TRITON_SWMM_toolkit.swmm_output_parser import retrieve_SWMM_outputs_as_data
 from TRITON_SWMM_toolkit.log import TRITONSWMM_model_log
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
 
-# Subdirectories under `out_tritonswmm/` that the cleanup helper preserves.
-# `swmm/` holds the coupled-SWMM `.rpt` (e.g. `out_tritonswmm/swmm/hydraulics.rpt`)
-# and is intentionally preserved per the user-corrected Phase 3 semantics.
-_CLEAR_RAW_PRESERVE_SUBDIRS: frozenset[str] = frozenset({"swmm"})
+# Subdirectories under `out_tritonswmm/` or `out_triton/` that the cleanup
+# helper deletes. The shape is an explicit DELETE allowlist rather than a
+# PRESERVE deny-list so that any future TRITON or coupled-SWMM output family
+# added under `out_*/` is preserved by default (disk-pressure failure mode),
+# not silently deleted (data-loss failure mode). The coupled-SWMM
+# `hydraulics.rpt` at `out_tritonswmm/swmm/hydraulics.rpt` therefore survives
+# cleanup without an explicit preserve carve-out — its parent `swmm/` is
+# simply not in this allowlist. See the design-recommendation in the Phase 3
+# sidecar (sidecar_phase3_2026-05-21_2020.md) for the full Section 1-4
+# analysis that selected this shape over the original preserve-list.
+_CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
+    {"H", "QX", "QY", "MH", "bin", "cfg", "performance"}
+)
 
 
 class TRITONSWMM_sim_post_processing:
@@ -1108,15 +1117,17 @@ class TRITONSWMM_sim_post_processing:
         Per cleanup-rerun-delete-redesign Phase 3 + the user-corrected
         semantics:
 
-        - For ``"tritonswmm"`` or ``"triton"``: delete every subdirectory
-          under ``out_tritonswmm/`` or ``out_triton/`` (``H/``, ``QX/``,
-          ``QY/``, ``MH/``, ``bin/``, ``cfg/``, ``performance/``, ...)
-          EXCEPT the subdirectories named in ``_CLEAR_RAW_PRESERVE_SUBDIRS``.
-          Top-level files (``performance.txt``, ``log.out``) are preserved.
-          ``swmm/`` is preserved so the coupled-SWMM ``hydraulics.rpt`` (at
-          ``out_tritonswmm/swmm/hydraulics.rpt``) survives — the phase-doc
-          spec described this as a "top-level *.rpt", which is incorrect;
-          the path is one level deeper.
+        - For ``"tritonswmm"`` or ``"triton"``: under ``out_tritonswmm/`` or
+          ``out_triton/``, delete every subdirectory whose name is in
+          ``_CLEAR_RAW_DELETE_SUBDIRS`` (``H/``, ``QX/``, ``QY/``, ``MH/``,
+          ``bin/``, ``cfg/``, ``performance/``). Every other child — top-level
+          files such as ``performance.txt`` / ``log.out`` and any subdirectory
+          not in the allowlist — is preserved. The coupled-SWMM
+          ``hydraulics.rpt`` (at ``out_tritonswmm/swmm/hydraulics.rpt``)
+          therefore survives because its parent ``swmm/`` is not in the
+          allowlist; no explicit preserve carve-out is required. The
+          phase-doc spec described the .rpt as a "top-level *.rpt", which
+          is incorrect — the path is one level deeper.
         - For ``"swmm"``: delete ``self.scen_paths.swmm_full_out_file`` (the
           standalone-SWMM binary ``.out`` file). The standalone-SWMM ``.rpt``
           is preserved automatically — no enumeration of ``out_swmm/`` is
@@ -1135,7 +1146,7 @@ class TRITONSWMM_sim_post_processing:
             if out_dir is None or not out_dir.exists():
                 return
             for child in out_dir.iterdir():
-                if child.is_dir() and child.name not in _CLEAR_RAW_PRESERVE_SUBDIRS:
+                if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
                     fast_rmtree(child)
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the

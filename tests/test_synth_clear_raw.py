@@ -21,7 +21,7 @@ import pytest
 
 from TRITON_SWMM_toolkit.process_simulation import (
     TRITONSWMM_sim_post_processing,
-    _CLEAR_RAW_PRESERVE_SUBDIRS,
+    _CLEAR_RAW_DELETE_SUBDIRS,
 )
 
 
@@ -94,9 +94,12 @@ def test_clear_raw_outputs_deletes_subdirs_preserves_files_and_swmm(
     assert (out_dir / "performance.txt").exists(), "performance.txt must be preserved"
     assert (out_dir / "log.out").exists(), "log.out must be preserved"
 
-    # Preserved: swmm/ subdir (holds hydraulics.rpt under tritonswmm)
-    for preserved in _CLEAR_RAW_PRESERVE_SUBDIRS:
-        assert (out_dir / preserved).exists(), f"{preserved}/ subdir must be preserved"
+    # Preserved: any child NOT in _CLEAR_RAW_DELETE_SUBDIRS — including the
+    # swmm/ subdir, which holds hydraulics.rpt under tritonswmm. The seed
+    # function creates a swmm/ subdir for every parametrized case, so the
+    # assertion below holds for both out_tritonswmm and out_triton seeds
+    # even though only the coupled tritonswmm path uses the .rpt downstream.
+    assert (out_dir / "swmm").exists(), "swmm/ subdir must be preserved"
     assert (out_dir / "swmm" / "hydraulics.rpt").exists(), (
         "out_tritonswmm/swmm/hydraulics.rpt must survive _clear_raw_outputs"
     )
@@ -116,6 +119,34 @@ def test_clear_raw_outputs_swmm_deletes_only_out_file(tmp_path: Path):
 
     assert not out_file.exists(), ".out file should be deleted"
     assert rpt_file.exists(), ".rpt file must be preserved"
+
+
+def test_clear_raw_outputs_preserves_unknown_subdirs(tmp_path: Path):
+    """An UNKNOWN subdir (not in the delete-allowlist) survives cleanup.
+
+    Pins the design-recommendation choice of allowlist semantics: a future
+    TRITON or coupled-SWMM binary that adds a new output directory family
+    under out_*/ has its data preserved by default, not silently deleted.
+    The failure mode under future binary-output-set evolution is therefore
+    disk pressure (noisy, recoverable), not silent data loss.
+    """
+    out_dir = tmp_path / "out_tritonswmm"
+    _seed_tritonswmm_out_dir(out_dir)
+    # Seed an unknown future-output subdir alongside the known families.
+    (out_dir / "diagnostics_future").mkdir(parents=True, exist_ok=True)
+    (out_dir / "diagnostics_future" / "marker.bin").write_bytes(b"x")
+
+    proc = _make_proc("out_tritonswmm", out_dir)
+    TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
+
+    # Known delete-list subdirs are gone.
+    for sub in ("H", "QX", "QY", "MH", "bin", "cfg", "performance"):
+        assert not (out_dir / sub).exists(), f"{sub}/ should be deleted"
+    # Unknown subdir survives.
+    assert (out_dir / "diagnostics_future").exists(), (
+        "unknown subdirs must be preserved (allowlist semantics)"
+    )
+    assert (out_dir / "diagnostics_future" / "marker.bin").exists()
 
 
 def test_clear_raw_outputs_handles_missing_dir(tmp_path: Path):
