@@ -2533,6 +2533,76 @@ class TRITONSWMM_analysis:
         )
         return result
 
+    def delete(self, override_in_flight: bool = False) -> None:
+        """Distributed Snakemake workflow that deletes the entire analysis_dir.
+
+        Refuses by default when ``_status/_submitted/*.json`` sentinels
+        indicate live SLURM jobs. Pass ``override_in_flight=True`` to bypass
+        the guard.
+
+        Mirrors the dispatch pattern of :meth:`reprocess` — sensitivity-toggled
+        analyses dispatch to
+        :meth:`TRITONSWMM_sensitivity_analysis.delete`.
+
+        Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
+        + D-DeleteBoundary resolutions).
+        """
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.delete(override_in_flight=override_in_flight)
+
+        analysis_dir = self.analysis_paths.analysis_dir
+
+        # 1. Clear any stale sentinels from a prior failed delete attempt.
+        # Without this, the post-check at step 3 could falsely pass on a
+        # half-completed previous delete and fast_rmtree a partially-deleted
+        # tree.
+        stale_dir = analysis_dir / "_status" / "_deleting"
+        if stale_dir.exists():
+            fast_rmtree(stale_dir)
+
+        # 2. Submit the distributed delete workflow. The workflow builder's
+        # _pre_delete_guards (live-sentinel refusal + scoped lock-check) runs
+        # inside submit_delete_workflow; orchestrator does not invoke it
+        # directly.
+        self._workflow_builder.submit_delete_workflow(override_in_flight=override_in_flight)
+
+        # 3. Verify all expected sentinels present; remove analysis_dir atomically.
+        expected = self._enumerate_expected_delete_sentinels()
+        deleting_dir = analysis_dir / "_status" / "_deleting"
+        actual = set(deleting_dir.glob("*.flag")) if deleting_dir.exists() else set()
+        missing = expected - actual
+        if missing:
+            print(
+                f"[delete] {len(missing)} per-rule sentinels missing — "
+                f"preserving analysis_dir for debugging.",
+                flush=True,
+            )
+            print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
+            return
+        print(
+            f"[delete] all {len(expected)} per-rule sentinels present — "
+            f"removing analysis_dir.",
+            flush=True,
+        )
+        fast_rmtree(analysis_dir)
+
+    def _enumerate_expected_delete_sentinels(self) -> set[Path]:
+        """Compute the set of ``_status/_deleting/*.flag`` paths the delete
+        workflow will produce on full success.
+
+        One per scenario for regular analyses (sensitivity-master analyses
+        delegate to :meth:`TRITONSWMM_sensitivity_analysis._enumerate_expected_delete_sentinels`
+        before reaching this method); plus one for the consolidation rule.
+        """
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        delete_dir = self.analysis_paths.analysis_dir / "_status" / "_deleting"
+        expected = {delete_dir / "analysis_consolidation.flag"}
+        for i in range(len(self.df_sims)):
+            event_id = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
+            expected.add(delete_dir / f"scenario_evt-{event_id}.flag")
+        return expected
+
     def _all_sim_flags_present(self) -> bool:
         """True iff every enabled sim's ``c_run_*`` completion flag exists.
 

@@ -435,6 +435,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "target_processed_output_type": "zarr",
             "local_cpu_cores_for_workflow": 2,
             "report": {},
+            # Phase 1 of cleanup-rerun-delete-redesign added these as required
+            # fields with no defaults; synth fixture writes 'none' to mirror
+            # test_data/norfolk_coastal_flooding/template_analysis_config.yaml.
+            "clear_raw": "none",
+            "force_rerun": "none",
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])

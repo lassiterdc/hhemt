@@ -677,6 +677,184 @@ def reprocess_command(
         raise typer.Exit(10)
 
 
+@app.command(name="delete")
+def delete_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    override_in_flight: bool = typer.Option(
+        False,
+        "--override-in-flight",
+        help="Bypass the live-SLURM-sentinel refusal guard. Use only when you know "
+        "the jobs are dead but reconciliation cannot prove it (e.g., orphaned "
+        "sentinels from worker hard-kill).",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip the interactive confirmation prompt (use for scripted invocation).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Print what would be deleted (count of scenarios / sub-analyses + "
+        "disk size estimate) without deleting anything.",
+    ),
+):
+    """Delete an entire analysis tree via distributed Snakemake workflow.
+
+    Generates a Snakefile.delete with per-scenario (regular analysis) or
+    per-sub-analysis (sensitivity) delete rules plus an analysis-level
+    consolidation rule, then submits the workflow. On full success, the
+    orchestrator removes ``analysis_dir/`` atomically; if any per-rule
+    sentinel is missing, ``analysis_dir/`` is preserved for debugging.
+
+    Refuses by default when ``_status/_submitted/*.json`` sentinels indicate
+    live SLURM jobs. Pass ``--override-in-flight`` to bypass.
+
+    Per cleanup-rerun-delete-redesign Phase 2.
+
+    Examples:
+
+        # Inspect what would be deleted without acting
+        $ triton-swmm delete --system-config system.yaml \\
+            --analysis-config analysis.yaml --dry-run
+
+        # Delete after dry-run confirmation
+        $ triton-swmm delete --system-config system.yaml \\
+            --analysis-config analysis.yaml --yes
+
+        # Delete despite orphaned in-flight sentinels (use sparingly)
+        $ triton-swmm delete --system-config system.yaml \\
+            --analysis-config analysis.yaml --override-in-flight --yes
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        _print_delete_dry_run_summary(analysis)
+
+        if dry_run:
+            console.print("[yellow]Dry-run only — no deletion performed.[/yellow]")
+            raise typer.Exit(0)
+
+        if not yes:
+            response = input(
+                "Proceed with deletion? Type 'y' or 'yes' to confirm: "
+            ).strip().lower()
+            if response not in ("y", "yes"):
+                console_err.print("[yellow]Aborted.[/yellow]")
+                raise typer.Exit(1)
+
+        analysis.delete(override_in_flight=override_in_flight)
+
+        if analysis.analysis_paths.analysis_dir.exists():
+            console_err.print(
+                "[bold yellow]analysis_dir preserved — see [delete] log "
+                "messages above for missing sentinels.[/bold yellow]"
+            )
+            raise typer.Exit(1)
+        console.print("[green]Analysis deleted successfully.[/green]")
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
+def _print_delete_dry_run_summary(analysis) -> None:
+    """Print a per-scenario / per-sub-analysis breakdown of what
+    ``analysis.delete()`` would remove from disk, plus a total size estimate.
+
+    Per cleanup-rerun-delete-redesign Phase 2.
+    """
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    if not analysis_dir.exists():
+        console.print(
+            f"[yellow]analysis_dir does not exist: {analysis_dir}[/yellow]"
+        )
+        return
+
+    def _du(path: Path) -> int:
+        total = 0
+        if not path.exists():
+            return 0
+        if path.is_file():
+            try:
+                return path.stat().st_size
+            except OSError:
+                return 0
+        for p in path.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    def _fmt(size_bytes: int) -> str:
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+            if size_bytes < 1024.0:
+                return f"{size_bytes:.1f} {unit}"
+            size_bytes /= 1024.0  # type: ignore[assignment]
+        return f"{size_bytes:.1f} PiB"
+
+    console.print(
+        f"[bold]Delete preview for[/bold] {analysis_dir}"
+    )
+    total = 0
+    if analysis.cfg_analysis.toggle_sensitivity_analysis:
+        subanalyses_dir = analysis_dir / "subanalyses"
+        sa_ids = list(analysis.sensitivity.df_setup.index.astype(str))
+        console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
+        for sa_id in sa_ids:
+            sa_dir = subanalyses_dir / f"sa_{sa_id}"
+            size = _du(sa_dir)
+            total += size
+            console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
+    else:
+        sims_dir = analysis_dir / "sims"
+        scen_dirs = sorted(sims_dir.glob("*")) if sims_dir.exists() else []
+        console.print(f"  Regular analysis with {len(scen_dirs)} scenarios:")
+        for sd in scen_dirs:
+            size = _du(sd)
+            total += size
+            console.print(f"    {sd.name}: {_fmt(size)}")
+
+    analysis_level_size = _du(analysis_dir) - total
+    total_size = _du(analysis_dir)
+    console.print(f"  Analysis-level artifacts: {_fmt(analysis_level_size)}")
+    console.print(f"  [bold]Total to be removed:[/bold] {_fmt(total_size)}")
+
+
 @app.command(name="cleanup-stale-metadata")
 def cleanup_stale_metadata_command(
     system_config: Path = typer.Option(
