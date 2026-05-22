@@ -1338,7 +1338,7 @@ class TRITONSWMM_sensitivity_analysis:
         from TRITON_SWMM_toolkit.utils import fast_rmtree
 
         sensitivity_csv = self.master_analysis.cfg_analysis.sensitivity_analysis
-        analysis_dir = self.analysis_paths.analysis_dir
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         generated_dir = analysis_dir / "_generated"
 
         if is_main_orchestrator:
