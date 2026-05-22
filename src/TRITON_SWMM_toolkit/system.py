@@ -174,7 +174,22 @@ class TRITONSWMM_system:
     def create_dem_for_TRITON(self, overwrite_outputs_if_already_created: bool = False, verbose: bool = False):
         dem_processed = self.sys_paths.dem_processed
         if dem_processed.exists() and not overwrite_outputs_if_already_created:
-            out = "DEM file already exists. Not rewriting."
+            try:
+                _assert_dem_integrity(dem_processed)
+            except ProcessingError as e:
+                # Auto-remediate: an existing DEM that fails the integrity check is
+                # treated as a stale/corrupted artifact (e.g., from a prior concurrent-
+                # write race) and regenerated in place rather than raised. This makes
+                # resume runs self-healing for malformed-DEM corruption without
+                # requiring manual rm + rerun.
+                print(
+                    f"[Setup] DEM integrity check failed on existing file "
+                    f"({dem_processed}): {e.reason}. Regenerating from source raster."
+                )
+            else:
+                if verbose:
+                    print("DEM file already exists and passed integrity check. Not rewriting.")
+                return
         rds_dem_coarse = self._coarsen_dem()
         self._write_raster_formatted_for_TRITON(rds_dem_coarse, dem_processed, include_metadata=True)
         _assert_dem_integrity(dem_processed)
@@ -192,7 +207,9 @@ class TRITONSWMM_system:
     ):
         mannings_processed = self.sys_paths.mannings_processed
         if mannings_processed.exists() and not overwrite_outputs_if_already_created:
-            out = "Mannings file already exists. Not rewriting."
+            if verbose:
+                print("Manning's file already exists. Not rewriting.")
+            return
         include_metadata = False
         rds_mannings_coarse = self._create_mannings_raster_matching_dem()
         self._write_raster_formatted_for_TRITON(
@@ -396,29 +413,39 @@ class TRITONSWMM_system:
         max_abs = float(np.nanmax(np.abs(arr))) if arr.size else 0.0
         longest_num = len(str(int(max_abs))) + target_decimal_places + 1
 
-        # Open in text-append mode if header already written; else text-write.
-        write_mode = "a" if raster_metadata is not None else "w"
-        if raster_metadata is not None:
-            with open(fpath_raster, "w") as f_hdr:
-                for key in raster_metadata:
-                    f_hdr.write(key + str(raster_metadata[key]) + "\n")
-
-        # Row-streamed body emission. Block size chosen for ~1 MB buffer
-        # per block at typical ncols; tunable via _ROW_BLOCK_SIZE (D-PR-5 B).
+        # Write to a temp file in the same directory, then atomically replace the
+        # target via Path.replace() (POSIX rename — atomic on GPFS/NFS).  This
+        # eliminates the doubled-row corruption that occurred when two setup_target_*
+        # jobs sharing a DEM resolution ran concurrently: the old two-phase open
+        # (header in "w", data in "a") meant both jobs appended their data rows to
+        # the same file, producing 2× the expected row count.
         row_block_size = _ROW_BLOCK_SIZE
-        fmt = "{:.%df}" % target_decimal_places
-        with open(fpath_raster, write_mode) as f:
-            for start in range(0, nrows, row_block_size):
-                stop = min(start + row_block_size, nrows)
-                block = arr[start:stop]
-                # Vectorized format-and-pad: per cell, "{:.5f}".format(v).ljust(longest_num, "0").
-                # Preserve prior right-pad-with-"0" convention for byte-stability with the
-                # existing 1.1m ground-truth artifact; see follow-up idea for cleanup.
-                lines = []
-                for row in block:
-                    cells = [fmt.format(v).ljust(longest_num, "0") for v in row]
-                    lines.append(" ".join(cells))
-                f.write("\n".join(lines) + "\n")
+        fmt = f"{{:.{target_decimal_places}f}}"
+        fpath_raster = Path(fpath_raster)
+        tmp_fd, tmp_path_str = tempfile.mkstemp(dir=fpath_raster.parent, suffix=".dem.tmp")
+        try:
+            with open(tmp_fd, "w") as f:
+                if raster_metadata is not None:
+                    for key in raster_metadata:
+                        f.write(key + str(raster_metadata[key]) + "\n")
+                for start in range(0, nrows, row_block_size):
+                    stop = min(start + row_block_size, nrows)
+                    block = arr[start:stop]
+                    # Vectorized format-and-pad: per cell, "{:.5f}".format(v).ljust(longest_num, "0").
+                    # Preserve prior right-pad-with-"0" convention for byte-stability with the
+                    # existing 1.1m ground-truth artifact; see follow-up idea for cleanup.
+                    lines = []
+                    for row in block:
+                        cells = [fmt.format(v).ljust(longest_num, "0") for v in row]
+                        lines.append(" ".join(cells))
+                    f.write("\n".join(lines) + "\n")
+            Path(tmp_path_str).replace(fpath_raster)
+        except Exception:
+            try:
+                Path(tmp_path_str).unlink(missing_ok=True)
+            except Exception:
+                pass
+            raise
 
     def _sync_compilation_log_field(self, log_field, success: bool):
         current_value = log_field.get()
