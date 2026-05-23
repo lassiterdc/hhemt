@@ -73,10 +73,11 @@ def test_concurrently_process_scenario_timeseries(norfolk_multi_sim_analysis_cac
     for model_type in enabled_models:
         tst_ut.assert_model_outputs_processed(analysis, model_type)
 
-    # Consolidate per-scenario summaries into the master DataTree (Option B)
-    analysis.process.consolidate_to_datatree(
-        overwrite_if_already_created=True,
-    )
+    # Consolidate per-scenario summaries into the master DataTree (Option B).
+    # consolidate_to_datatree is idempotent-by-default since cleanup-rerun-delete-redesign
+    # Phase 3 retired the overwrite_if_already_created kwarg; it returns the existing zarr
+    # path without overwriting when present.
+    analysis.process.consolidate_to_datatree()
 
     # Validate the master DataTree was produced
     assert analysis.analysis_paths.analysis_datatree_zarr.exists(), (
