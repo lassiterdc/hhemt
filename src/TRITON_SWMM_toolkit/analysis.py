@@ -2701,27 +2701,32 @@ class TRITONSWMM_analysis:
         start_with
             One of ``"process"``, ``"consolidate"``, ``"render"``.
         """
-        sd = self.analysis_paths.analysis_dir / "_status"
+        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+        analysis_dir = self.analysis_paths.analysis_dir
+        sd = analysis_dir / "_status"
         if start_with == "process":
             for f in sd.glob("d_process_*"):
                 f.unlink(missing_ok=True)
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
             _zarr = self.analysis_paths.analysis_datatree_zarr
             if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr)
+                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "consolidate":
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
             _zarr = self.analysis_paths.analysis_datatree_zarr
             if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr)
+                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as
             # absent. Plot PNGs/HTML are left in place; the plot rules
             # only re-fire if a plot's inputs are newer (the intended
             # surgical behavior for `start_with="render"`).
-            (self.analysis_paths.analysis_dir / "analysis_report.html").unlink(missing_ok=True)
-            (self.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
+            report_html = analysis_dir / "analysis_report.html"
+            report_zip = analysis_dir / "analysis_report.zip"
+            report_html.unlink(missing_ok=True)
+            report_zip.unlink(missing_ok=True)
+            restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 

@@ -1188,6 +1188,58 @@ rule consolidate:
         """
 '''
 
+    def _build_consolidate_scenario_rule_block(
+        self,
+        *,
+        enabled_models: list[str],
+        config_args: str,
+        log_dir_str: str,
+        conda_env_path: str,
+        consolidate_scenario_resources: str,
+        compression_level: int,
+    ) -> str:
+        """Emit a single ``rule consolidate_scenario`` block (wildcarded on event_id).
+
+        Fans-in on every enabled model-type's ``d_process_{model_type}_evt-{event_id}_complete.flag``
+        for a given event_id and runs ``consolidate_workflow --event-id {event_id}`` which writes
+        the per-scenario DU sentinel at ``{scenario_dir}/_status/_du.json`` via
+        ``du_sentinels.compute_and_write_scope_sentinel`` (compare-and-write semantics; mtime
+        preserved when payload bytes are unchanged). The rule joins the existing
+        ``process_evt_{event_id}`` Snakemake group (see ``_build_process_rule_block:1116``) so it
+        co-schedules into the per-event SLURM allocation rather than submitting a separate sbatch.
+
+        The output declaration ``_status/f_consolidate_scenario_evt-{event_id}_complete.flag``
+        matches the existing letter-prefixed flag convention (``c_run_*``, ``d_process_*``,
+        ``e_consolidate_complete``). The DU sentinel itself is a secondary output so consumer
+        rules that declare it as ``input:`` get Snakemake-tracked mtime semantics.
+        """
+        input_flags = ", ".join(
+            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"'
+            for model_type in enabled_models
+        )
+        return f'''
+rule consolidate_scenario:
+    input: {input_flags}
+    output:
+        flag="_status/f_consolidate_scenario_evt-{{event_id}}_complete.flag",
+        du_sentinel="sims/{{event_id}}/_status/_du.json",
+    log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
+    group: "process_evt_{{event_id}}"
+    conda: "{conda_env_path}"
+    resources:
+{consolidate_scenario_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            {config_args} \\
+            --compression-level {compression_level} \\
+            --flag-output {{output.flag}} \\
+            --rule-name consolidate_scenario \\
+            --event-id {{wildcards.event_id}} \\
+            > {{log}} 2>&1
+        """
+'''
+
     def generate_snakefile_content(
         self,
         process_system_level_inputs: bool = False,
@@ -1563,15 +1615,44 @@ rule run_{model_type}:
                     override_clear_raw=override_clear_raw,
                 )
 
+            # Per-scenario consolidate rule: fans-in on all enabled model_types' process flags
+            # for a given event_id and writes the per-scenario _du.json sentinel exactly once.
+            # Resource block is intentionally lightweight; SLURM grouping absorbs the wall-clock
+            # cost into the per-event process-rule allocation (see _build_process_rule_block).
+            consolidate_scenario_resources = self._build_resource_block(
+                partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=10,
+                mem_mb=2048,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+            snakefile_content += self._build_consolidate_scenario_rule_block(
+                enabled_models=enabled_models,
+                config_args=config_args,
+                log_dir_str=log_dir_str,
+                conda_env_path=str(conda_env_path),
+                consolidate_scenario_resources=consolidate_scenario_resources,
+                compression_level=compression_level,
+            )
+
         # Consolidation rule depends on final output of each model type
         # Build list of all output flags from all enabled models
         consolidate_inputs = []
-        for model_type in enabled_models:
-            if process_timeseries:
-                flag_pattern = f"d_process_{model_type}_evt-{{event_id}}_complete.flag"
-            else:
+        if process_timeseries:
+            # Per-scenario consolidate rules (one per event_id) fan-in on the N
+            # per-model-type process flags AND write the per-scenario DU sentinel.
+            # The analysis-level consolidate waits for every per-scenario consolidate
+            # to finish — a K-input dependency instead of the prior N×K.
+            consolidate_inputs.append(
+                'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)'
+            )
+        else:
+            # No per-scenario consolidate exists when process_timeseries is False;
+            # fall back to depending directly on the per-(event, model_type) run flags.
+            for model_type in enabled_models:
                 flag_pattern = f"c_run_{model_type}_evt-{{event_id}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
+                consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
