@@ -309,6 +309,18 @@ class TRITONSWMM_scenario:
         return log
 
     @property
+    def disk_utilization_bytes(self) -> int | None:
+        """Return the scenario-level DU sentinel value, or None if absent."""
+        from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+
+        payload = read_du_sentinel(
+            self.scen_paths.sim_folder / "_status" / "_du.json"
+        )
+        if payload is None or "disk_utilization_bytes" not in payload:
+            return None
+        return int(payload["disk_utilization_bytes"])
+
+    @property
     def model_types_enabled(self) -> list[str]:
         """Get list of enabled model types from system config."""
         enabled = []
@@ -689,11 +701,16 @@ class TRITONSWMM_scenario:
             )
 
         # Remove any existing target path (dir/file/symlink) so symlink creation is deterministic.
+        # PATTERN A/B per du-sentinels mutation-site stipulation: symlink replacements are
+        # DU-immaterial (symlinks themselves are tiny; rglob does not follow symlinks), but
+        # if target_link was a real directory the rmtree IS material — pass analysis_dir
+        # through fast_rmtree so the EXEMPT short-circuit fires when appropriate.
+        _analysis_dir = self._analysis.analysis_paths.analysis_dir
         if target_link.exists() or target_link.is_symlink():
             if target_link.is_symlink() or target_link.is_file():
                 target_link.unlink()
             elif target_link.is_dir():
-                utils.fast_rmtree(target_link)
+                utils.fast_rmtree(target_link, analysis_dir=_analysis_dir)  # PATTERN A
             else:
                 target_link.unlink()
 

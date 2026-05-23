@@ -919,6 +919,26 @@ def _print_delete_dry_run_summary(analysis) -> None:
                 continue
         return total
 
+    def _du_via_sentinel(path: Path) -> tuple[int, bool]:
+        """Return (disk_utilization_bytes, from_sentinel).
+
+        Falls back to `_du` walk when the `_status/_du.json` sentinel is
+        absent and prints a stderr warning naming the missing sentinel.
+        """
+        import sys
+
+        from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+
+        sentinel_path = path / "_status" / "_du.json"
+        payload = read_du_sentinel(sentinel_path)
+        if payload is not None:
+            return int(payload.get("disk_utilization_bytes", 0)), True
+        print(
+            f"[delete] DU sentinel absent — walking tree: {sentinel_path}",
+            file=sys.stderr,
+        )
+        return _du(path), False
+
     def _fmt(size_bytes: int) -> str:
         for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
             if size_bytes < 1024.0:
@@ -936,7 +956,7 @@ def _print_delete_dry_run_summary(analysis) -> None:
         console.print(f"  Sensitivity master with {len(sa_ids)} sub-analyses:")
         for sa_id in sa_ids:
             sa_dir = subanalyses_dir / f"sa_{sa_id}"
-            size = _du(sa_dir)
+            size = _du_via_sentinel(sa_dir)[0]
             total += size
             console.print(f"    sa_{sa_id}: {_fmt(size)}  ({sa_dir})")
     else:
@@ -944,12 +964,13 @@ def _print_delete_dry_run_summary(analysis) -> None:
         scen_dirs = sorted(sims_dir.glob("*")) if sims_dir.exists() else []
         console.print(f"  Regular analysis with {len(scen_dirs)} scenarios:")
         for sd in scen_dirs:
-            size = _du(sd)
+            size = _du_via_sentinel(sd)[0]
             total += size
             console.print(f"    {sd.name}: {_fmt(size)}")
 
-    analysis_level_size = _du(analysis_dir) - total
-    total_size = _du(analysis_dir)
+    analysis_total = _du_via_sentinel(analysis_dir)[0]
+    analysis_level_size = analysis_total - total
+    total_size = analysis_total
     console.print(f"  Analysis-level artifacts: {_fmt(analysis_level_size)}")
     console.print(f"  [bold]Total to be removed:[/bold] {_fmt(total_size)}")
 

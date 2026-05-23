@@ -2552,7 +2552,12 @@ class TRITONSWMM_analysis:
         )
         return result
 
-    def delete(self, override_in_flight: bool = False) -> None:
+    def delete(
+        self,
+        override_in_flight: bool = False,
+        *,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> None:
         """Distributed Snakemake workflow that deletes the entire analysis_dir.
 
         Refuses by default when ``_status/_submitted/*.json`` sentinels
@@ -2564,10 +2569,15 @@ class TRITONSWMM_analysis:
         :meth:`TRITONSWMM_sensitivity_analysis.delete`.
 
         Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
-        + D-DeleteBoundary resolutions).
+        + D-DeleteBoundary resolutions) and distributed-delete-and-du-recording
+        Phase 3 (SLURM lift; ``override_multi_sim_run_method`` mirrors the
+        run-mode override pattern from :meth:`submit_workflow`).
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            return self.sensitivity.delete(override_in_flight=override_in_flight)
+            return self.sensitivity.delete(
+                override_in_flight=override_in_flight,
+                override_multi_sim_run_method=override_multi_sim_run_method,
+            )
 
         analysis_dir = self.analysis_paths.analysis_dir
 
@@ -2583,7 +2593,10 @@ class TRITONSWMM_analysis:
         # _pre_delete_guards (live-sentinel refusal + scoped lock-check) runs
         # inside submit_delete_workflow; orchestrator does not invoke it
         # directly.
-        self._workflow_builder.submit_delete_workflow(override_in_flight=override_in_flight)
+        self._workflow_builder.submit_delete_workflow(
+            override_in_flight=override_in_flight,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
         # 3. Verify all expected sentinels present; remove analysis_dir atomically.
         expected = self._enumerate_expected_delete_sentinels()
@@ -2701,27 +2714,32 @@ class TRITONSWMM_analysis:
         start_with
             One of ``"process"``, ``"consolidate"``, ``"render"``.
         """
-        sd = self.analysis_paths.analysis_dir / "_status"
+        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+        analysis_dir = self.analysis_paths.analysis_dir
+        sd = analysis_dir / "_status"
         if start_with == "process":
             for f in sd.glob("d_process_*"):
                 f.unlink(missing_ok=True)
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
             _zarr = self.analysis_paths.analysis_datatree_zarr
             if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr)
+                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "consolidate":
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
             _zarr = self.analysis_paths.analysis_datatree_zarr
             if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr)
+                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as
             # absent. Plot PNGs/HTML are left in place; the plot rules
             # only re-fire if a plot's inputs are newer (the intended
             # surgical behavior for `start_with="render"`).
-            (self.analysis_paths.analysis_dir / "analysis_report.html").unlink(missing_ok=True)
-            (self.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
+            report_html = analysis_dir / "analysis_report.html"
+            report_zip = analysis_dir / "analysis_report.zip"
+            report_html.unlink(missing_ok=True)
+            report_zip.unlink(missing_ok=True)
+            restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -3119,6 +3137,18 @@ class TRITONSWMM_analysis:
         return df[ordered]
 
     @property
+    def disk_utilization_bytes(self) -> int | None:
+        """Return the analysis-level DU sentinel value, or None if absent."""
+        from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+
+        payload = read_du_sentinel(
+            self.analysis_paths.analysis_dir / "_status" / "_du.json"
+        )
+        if payload is None or "disk_utilization_bytes" not in payload:
+            return None
+        return int(payload["disk_utilization_bytes"])
+
+    @property
     def df_status(self):
         """
         Get status DataFrame for all scenarios in the analysis.
@@ -3165,6 +3195,7 @@ class TRITONSWMM_analysis:
             scen.log.refresh()
             scenario_setup = scen.log.scenario_creation_complete.get() is True
             scenario_dir = str(scen.log.logfile.parent)
+            scenario_du = scen.disk_utilization_bytes
 
             weather_row = self.df_sims.loc[event_iloc].to_dict()
 
@@ -3175,6 +3206,7 @@ class TRITONSWMM_analysis:
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
                 row["scenario_directory"] = scenario_dir
+                row["disk_utilization_bytes"] = scenario_du
 
                 # Provide model-specific expected resources to downstream validators.
                 if model_type == "swmm":

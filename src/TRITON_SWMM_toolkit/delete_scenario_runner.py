@@ -4,13 +4,19 @@ Deletes the scenario's ``sims/{event_id}/`` subtree and writes the
 ``_status/_deleting/scenario_evt-{event_id}.flag`` sentinel via the
 toolkit-managed :func:`write_status_flag` helper.
 
-Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
+Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1, and
+distributed-delete-and-du-recording Phase 3 (submission-sentinel write-at-
+entry + try/finally cleanup so the pre-flight reconciliation guard can
+detect stuck-mid-delete workers).
 """
 
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -27,29 +33,70 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _write_submission_sentinel(
+    sentinel_path: Path, *, rule_token: str, slurm_job_id: str, event_id: str
+) -> None:
+    sentinel_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = sentinel_path.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(
+            {
+                "slurm_jobid": slurm_job_id,
+                "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                "rule_token": rule_token,
+                "event_id": event_id,
+                "submitted_at": datetime.datetime.now().isoformat(),
+            }
+        )
+    )
+    os.replace(tmp, sentinel_path)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     analysis_dir = args.analysis_dir.resolve()
-    scenario_dir = analysis_dir / "sims" / args.event_id
 
-    if scenario_dir.exists():
-        print(f"[delete] removing {scenario_dir}", flush=True)
-        fast_rmtree(scenario_dir)
-    else:
-        logger.warning(
-            "sims/%s does not exist; recording sentinel anyway (idempotent delete).",
-            args.event_id,
+    # Submission sentinel: written at entry, deleted in finally on every
+    # Python-side termination path. Guarded on $SLURM_JOB_ID so local runs
+    # are a no-op (matches run_simulation_runner's pattern).
+    _sentinel: Path | None = None
+    _slurm_jobid = os.environ.get("SLURM_JOB_ID")
+    if _slurm_jobid:
+        _rule_token = f"delete_scenario_{args.event_id}"
+        _sentinel = (
+            analysis_dir / "_status" / "_submitted" / f"{_rule_token}.json"
+        )
+        _write_submission_sentinel(
+            _sentinel,
+            rule_token=_rule_token,
+            slurm_job_id=_slurm_jobid,
+            event_id=args.event_id,
         )
 
-    flag_path = (
-        analysis_dir / "_status" / "_deleting" / f"scenario_evt-{args.event_id}.flag"
-    )
-    write_status_flag(
-        flag_path,
-        rule_name=f"delete_scenario_{args.event_id}",
-        event_id=args.event_id,
-    )
-    return 0
+    try:
+        scenario_dir = analysis_dir / "sims" / args.event_id
+
+        if scenario_dir.exists():
+            print(f"[delete] removing {scenario_dir}", flush=True)
+            fast_rmtree(scenario_dir)
+        else:
+            logger.warning(
+                "sims/%s does not exist; recording sentinel anyway (idempotent delete).",
+                args.event_id,
+            )
+
+        flag_path = (
+            analysis_dir / "_status" / "_deleting" / f"scenario_evt-{args.event_id}.flag"
+        )
+        write_status_flag(
+            flag_path,
+            rule_name=f"delete_scenario_{args.event_id}",
+            event_id=args.event_id,
+        )
+        return 0
+    finally:
+        if _sentinel is not None:
+            _sentinel.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
