@@ -4725,7 +4725,7 @@ exit $snakemake_status
                 f'rule delete_scenario_{rule_name_slug}:\n'
                 f'    output:\n'
                 f'        "{flag}"\n'
-                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
                 f'    shell:\n'
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_scenario_runner "\n'
                 f'        "--event-id {event_id} "\n'
@@ -4740,7 +4740,7 @@ exit $snakemake_status
             f'        {consolidation_inputs if per_scenario_flags else ""}\n'
             f'    output:\n'
             f'        "{consolidation_flag}"\n'
-            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
             f'    shell:\n'
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -4775,7 +4775,7 @@ exit $snakemake_status
                 f'rule delete_subanalysis_{rule_name_slug}:\n'
                 f'    output:\n'
                 f'        "{flag}"\n'
-                f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
                 f'    shell:\n'
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_runner "\n'
                 f'        "--sa-id {sa_id} "\n'
@@ -4790,7 +4790,7 @@ exit $snakemake_status
             f'        {consolidation_inputs if per_sa_flags else ""}\n'
             f'    output:\n'
             f'        "{consolidation_flag}"\n'
-            f'    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n'
+            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
             f'    shell:\n'
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -4803,13 +4803,42 @@ exit $snakemake_status
         )
         return rule_all + "".join(rules)
 
-    def _submit_delete_snakemake(self, snakefile_path: Path, verbose: bool = True) -> dict:
+    def _resolve_delete_mode_from_method(
+        self,
+        method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None,
+    ) -> Literal["local", "slurm"]:
+        """Map ``analysis_config.multi_sim_run_method`` (or None) to delete-executor mode.
+
+        ``None`` or ``"local"`` → ``"local"``; ``"batch_job"`` or
+        ``"1_job_many_srun_tasks"`` → ``"slurm"``. The ``None`` branch covers
+        analyses whose ``cfg_analysis`` was loaded from a YAML that did not
+        explicitly set ``multi_sim_run_method`` — these are treated as
+        ``"local"`` by default, matching the pre-Phase-3 ``--cores 1`` behavior.
+        """
+        if method is None or method == "local":
+            return "local"
+        if method in ("batch_job", "1_job_many_srun_tasks"):
+            return "slurm"
+        raise ConfigurationError(
+            field="multi_sim_run_method",
+            message=f"Unrecognized multi_sim_run_method={method!r} for delete-executor resolution",
+        )
+
+    def _submit_delete_snakemake(
+        self,
+        snakefile_path: Path,
+        *,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+        verbose: bool = True,
+    ) -> dict:
         """Invoke the delete Snakefile via subprocess.
 
-        Local-only execution for Phase 2 — the delete workflow is light
-        (rm-tree per scenario / sub-analysis + write-flag) and does not
-        require SLURM. Future expansion to ``slurm`` execution is straightforward
-        but out of Phase 2 scope.
+        Per cleanup-rerun-delete-redesign Phase 2 + distributed-delete-and-du-
+        recording Phase 3: supports both local (``--cores N``) and slurm
+        (``--executor slurm --profile <config_dir>``) execution. Mode is
+        resolved from ``analysis_config.multi_sim_run_method`` unless an
+        explicit ``override_multi_sim_run_method`` is supplied (read-config-
+        when-None per the override-prefix convention stipulation).
         """
         analysis_dir = self.analysis_paths.analysis_dir
         snakemake_dir = analysis_dir / ".snakemake_delete"
@@ -4818,17 +4847,28 @@ exit $snakemake_status
         logs_dir.mkdir(parents=True, exist_ok=True)
         logfile = logs_dir / "snakemake_delete.log"
 
+        resolved_method = (
+            override_multi_sim_run_method
+            if override_multi_sim_run_method is not None
+            else self.cfg_analysis.multi_sim_run_method
+        )
+        executor_mode = self._resolve_delete_mode_from_method(resolved_method)
+
         cmd_args = self._get_snakemake_base_cmd() + [
             "--snakefile",
             str(snakefile_path),
             "--directory",
             str(snakemake_dir),
-            "--cores",
-            "1",
             "--rerun-triggers",
             "mtime",
             "input",
         ]
+        if executor_mode == "slurm":
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+            cmd_args += ["--executor", "slurm", "--profile", str(config_dir)]
+        else:
+            cmd_args += ["--cores", str(self.cfg_analysis.hpc_max_simultaneous_sims or 1)]
         if verbose:
             print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
         with open(logfile, "w") as log_f:
@@ -4847,7 +4887,12 @@ exit $snakemake_status
             "returncode": result.returncode,
         }
 
-    def submit_delete_workflow(self, *, override_in_flight: bool = False) -> dict:
+    def submit_delete_workflow(
+        self,
+        *,
+        override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> dict:
         """Generate and submit the distributed delete Snakefile (non-sensitivity).
 
         Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
@@ -4858,13 +4903,17 @@ exit $snakemake_status
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
         snakefile_path.write_text(self._build_delete_snakefile_content())
-        return self._submit_delete_snakemake(snakefile_path)
+        return self._submit_delete_snakemake(
+            snakefile_path,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
     def submit_delete_workflow_sensitivity(
         self,
         *,
         sa_ids: list[str],
         override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
     ) -> dict:
         """Generate and submit the sensitivity-master delete Snakefile.
 
@@ -4875,7 +4924,10 @@ exit $snakemake_status
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
         snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(sa_ids))
-        return self._submit_delete_snakemake(snakefile_path)
+        return self._submit_delete_snakemake(
+            snakefile_path,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
 
 class SensitivityAnalysisWorkflowBuilder:
@@ -4922,7 +4974,12 @@ class SensitivityAnalysisWorkflowBuilder:
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
 
-    def submit_delete_workflow_sensitivity(self, *, override_in_flight: bool = False) -> dict:
+    def submit_delete_workflow_sensitivity(
+        self,
+        *,
+        override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> dict:
         """Submit the distributed sensitivity-master delete workflow.
 
         Thin facade: derives the ``sa_ids`` list from
@@ -4938,6 +4995,7 @@ class SensitivityAnalysisWorkflowBuilder:
         return self._base_builder.submit_delete_workflow_sensitivity(
             sa_ids=sa_ids,
             override_in_flight=override_in_flight,
+            override_multi_sim_run_method=override_multi_sim_run_method,
         )
 
     def generate_master_snakefile_content(

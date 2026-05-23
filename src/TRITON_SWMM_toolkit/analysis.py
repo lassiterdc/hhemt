@@ -2552,7 +2552,12 @@ class TRITONSWMM_analysis:
         )
         return result
 
-    def delete(self, override_in_flight: bool = False) -> None:
+    def delete(
+        self,
+        override_in_flight: bool = False,
+        *,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> None:
         """Distributed Snakemake workflow that deletes the entire analysis_dir.
 
         Refuses by default when ``_status/_submitted/*.json`` sentinels
@@ -2564,10 +2569,15 @@ class TRITONSWMM_analysis:
         :meth:`TRITONSWMM_sensitivity_analysis.delete`.
 
         Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
-        + D-DeleteBoundary resolutions).
+        + D-DeleteBoundary resolutions) and distributed-delete-and-du-recording
+        Phase 3 (SLURM lift; ``override_multi_sim_run_method`` mirrors the
+        run-mode override pattern from :meth:`submit_workflow`).
         """
         if self.cfg_analysis.toggle_sensitivity_analysis:
-            return self.sensitivity.delete(override_in_flight=override_in_flight)
+            return self.sensitivity.delete(
+                override_in_flight=override_in_flight,
+                override_multi_sim_run_method=override_multi_sim_run_method,
+            )
 
         analysis_dir = self.analysis_paths.analysis_dir
 
@@ -2583,7 +2593,10 @@ class TRITONSWMM_analysis:
         # _pre_delete_guards (live-sentinel refusal + scoped lock-check) runs
         # inside submit_delete_workflow; orchestrator does not invoke it
         # directly.
-        self._workflow_builder.submit_delete_workflow(override_in_flight=override_in_flight)
+        self._workflow_builder.submit_delete_workflow(
+            override_in_flight=override_in_flight,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
         # 3. Verify all expected sentinels present; remove analysis_dir atomically.
         expected = self._enumerate_expected_delete_sentinels()
