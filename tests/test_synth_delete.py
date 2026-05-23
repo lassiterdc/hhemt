@@ -135,7 +135,7 @@ def test_delete_preserves_dir_on_missing_sentinel(
     # Stub the Snakemake submission so no _status/_deleting/*.flag files are
     # ever produced — the post-check should then find the expected set
     # missing and refuse the final fast_rmtree.
-    def _stub_submit(self_builder, *, override_in_flight=False):
+    def _stub_submit(self_builder, *, override_in_flight=False, override_multi_sim_run_method=None):
         self_builder._pre_delete_guards(override_in_flight=override_in_flight)
         return {"success": True, "stub": True}
 

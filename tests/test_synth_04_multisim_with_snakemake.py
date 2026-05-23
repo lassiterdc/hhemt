@@ -767,3 +767,73 @@ def test_cleanup_stale_metadata_disabled_skips_invocation(
     ):
         analysis.run(cleanup_stale_metadata=False, dry_run=True, verbose=False)
     mock_inv.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — V-P2.2 / V-P2.3: scenario_status.csv carries the
+# disk_utilization_bytes column and analysis_report.html carries the Disk
+# Utilization sidebar card after a full run + render.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_scenario_status_csv_disk_utilization_column(synth_multi_sim_analysis_cached):
+    """V-P2.2 — `scenario_status.csv` carries `disk_utilization_bytes`
+    column with non-empty integer values for completed scenarios."""
+    import csv
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    csv_path = analysis.analysis_paths.analysis_dir / "scenario_status.csv"
+    assert csv_path.exists(), f"scenario_status.csv not emitted at {csv_path}"
+
+    with csv_path.open() as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+        assert reader.fieldnames is not None
+        assert "disk_utilization_bytes" in reader.fieldnames, (
+            f"disk_utilization_bytes missing from columns: {reader.fieldnames}"
+        )
+
+    # At least one row should have a non-empty integer-valued cell.
+    int_cells = [
+        r["disk_utilization_bytes"]
+        for r in rows
+        if r.get("disk_utilization_bytes") not in ("", None)
+    ]
+    assert int_cells, "All disk_utilization_bytes cells were empty"
+    for cell in int_cells:
+        assert int(cell) >= 0
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_cached):
+    """V-P2.3 — analysis_report.html carries the Disk Utilization sidebar
+    card after run + render."""
+    from pathlib import Path
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(
+        from_scratch=False,
+        report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG),
+    )
+    out_html = analysis.render_report(format="html")
+    assert out_html.exists() and out_html.stat().st_size > 0
+
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    backend = analysis._workflow_builder._get_report_cfg_static_backend()
+    du_ext = _output_ext_for(backend, "disk_utilization")
+    du_path = plots_dir / f"disk_utilization{du_ext}"
+    assert du_path.exists(), f"disk_utilization plot not emitted at {du_path}"
+    du_html = du_path.read_text()
+    # Either the populated table or the missing-sentinel banner is a valid
+    # rendered output (both are emitted by the same renderer). On a
+    # successful end-to-end run the analysis-level sentinel must be present.
+    assert "du-table" in du_html, (
+        f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
+    )

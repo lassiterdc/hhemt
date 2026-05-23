@@ -157,6 +157,17 @@ class TRITONSWMM_analysis_post_processing:
         self._analysis.log.add_sim_processing_entry(
             fname_out, get_file_size_MiB(fname_out), elapsed_s, True
         )
+
+        # Write the analysis-level DU sentinel. Compare-and-write semantics in
+        # du_sentinels.write_du_sentinel preserve mtime on idempotent re-runs,
+        # so consumer rules that declare _du.json as input: are not cascade-rerun.
+        from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+        compute_and_write_scope_sentinel(
+            self._analysis.analysis_paths.analysis_dir,
+            scope="analysis",
+            include_breakdown=True,
+        )
+
         if verbose:
             print(f"Wrote DataTree zarr to {fname_out} in {elapsed_s:.1f}s")
         return fname_out
