@@ -484,7 +484,12 @@ class TRITONSWMM_sensitivity_analysis:
             report_formats=report_formats,
         )
 
-    def delete(self, override_in_flight: bool = False) -> None:
+    def delete(
+        self,
+        override_in_flight: bool = False,
+        *,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> None:
         """Distributed delete workflow for the sensitivity master analysis.
 
         Refuses by default when ``_status/_submitted/*.json`` sentinels
@@ -492,7 +497,9 @@ class TRITONSWMM_sensitivity_analysis:
         the guard.
 
         Per cleanup-rerun-delete-redesign Phase 2 (D-DeleteSentinelInteraction
-        + D-DeleteBoundary resolutions).
+        + D-DeleteBoundary resolutions) and distributed-delete-and-du-
+        recording Phase 3 (SLURM lift; ``override_multi_sim_run_method``
+        mirrors the run-mode override pattern).
         """
         from TRITON_SWMM_toolkit.utils import fast_rmtree
 
@@ -507,7 +514,8 @@ class TRITONSWMM_sensitivity_analysis:
         # inside the builder; orchestrator does not invoke _pre_delete_guards
         # directly.
         self._workflow_builder.submit_delete_workflow_sensitivity(
-            override_in_flight=override_in_flight
+            override_in_flight=override_in_flight,
+            override_multi_sim_run_method=override_multi_sim_run_method,
         )
 
         # 3. Verify all expected sentinels present; remove analysis_dir atomically.
