@@ -1,22 +1,18 @@
-from pydantic import Field, field_validator, model_validator
-from typing import List, Optional, Literal, Annotated
-from pathlib import Path
-import re
 import math
+import re
+from pathlib import Path
+from typing import Annotated, Literal
+
+from pydantic import Field, field_validator, model_validator
+
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
+
 # One-way import: config/analysis.py imports report_config; config/report.py
 # must not import from config/analysis.py to avoid circular import.
 from TRITON_SWMM_toolkit.config.report import report_config as _report_config_model
 
-
-ClearRawValue = (
-    Literal["all", "none"]
-    | list[Literal["tritonswmm", "triton", "swmm"]]
-)
-ForceRerunValue = (
-    Literal["all", "none"]
-    | dict[Literal["sa_id", "event_iloc"], list[int | str]]
-)
+ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "swmm"]]
+ForceRerunValue = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"], list[int | str]]
 
 
 class analysis_config(cfgBaseModel):
@@ -55,13 +51,9 @@ class analysis_config(cfgBaseModel):
         description="Rainfall units in weather_timeseries mm or mm/hr.",
     )
     # COMPUTE CONFIG
-    run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(
-        ..., description="Compute configuration"
-    )
-    n_mpi_procs: Optional[int] = Field(
-        1, description="Number of MPI ranks per simulation."
-    )
-    n_omp_threads: Optional[int] = Field(
+    run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(..., description="Compute configuration")
+    n_mpi_procs: int | None = Field(1, description="Number of MPI ranks per simulation.")
+    n_omp_threads: int | None = Field(
         1,
         description=(
             "Number of OpenMP threads for simulation execution. For TRITON/TRITON-SWMM models, "
@@ -69,28 +61,26 @@ class analysis_config(cfgBaseModel):
             "updates the THREADS parameter in the [OPTIONS] section of .inp files."
         ),
     )
-    n_gpus: Optional[int] = Field(0, description="Number of GPUs per simulation")
-    n_nodes: Optional[int] = Field(1, description="Number of nodes per simulation.")
+    n_gpus: int | None = Field(0, description="Number of GPUs per simulation")
+    n_nodes: int | None = Field(1, description="Number of nodes per simulation.")
 
     # MULTI-SIMULATION EXECUTION METHOD
-    multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = (
-        Field(
-            "local",
-            description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (tmux session running Snakemake on login node - recommended for HPC), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
-        )
+    multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] = Field(
+        "local",
+        description="Method for running multiple simulations: 'local' (ThreadPoolExecutor on desktop), 'batch_job' (tmux session running Snakemake on login node - recommended for HPC), or '1_job_many_srun_tasks' (single SLURM job with multiple srun tasks respecting job allocation).",
     )
-    hpc_total_nodes: Optional[int] = Field(
+    hpc_total_nodes: int | None = Field(
         None,
         description="This is the total number of nodes that will be requested when multi_sim_run_method = 1_job_many_srun_tasks",
     )
-    hpc_total_job_duration_min: Optional[int] = Field(
+    hpc_total_job_duration_min: int | None = Field(
         None,
         description="This is the job duration when multi_sim_run_method = 1_job_many_srun_tasks",
     )
     # TODO - hpc_gpus_per_node should be used in the 1 big job approach and in the batch job approach
     # TODO - hpc_cpus_per_node should be used in a similar way. With both these arguments,
     # specifying n_nodes should no longer be necessary.
-    hpc_gpus_per_node: Optional[int] = Field(
+    hpc_gpus_per_node: int | None = Field(
         None,
         description=(
             "GPUs per node on the HPC cluster. Required when using GPUs with "
@@ -99,7 +89,7 @@ class analysis_config(cfgBaseModel):
             "generate --gres or --gpus-per-node directives."
         ),
     )
-    hpc_cpus_per_node: Optional[int] = Field(
+    hpc_cpus_per_node: int | None = Field(
         None,
         description="CPUs per node on the HPC cluster. Required for dry runs using "
         "multi_sim_run_method = 1_job_many_srun_tasks.",
@@ -133,41 +123,52 @@ class analysis_config(cfgBaseModel):
             "slower nodes."
         ),
     )
+    hpc_max_wait_for_inflight_min: int = Field(
+        480,
+        ge=60,
+        le=10080,
+        description=(
+            "Maximum walltime (minutes) the v2 wait-on-sentinel rule will "
+            "poll for the original SLURM job's completion-or-failure marker. "
+            "Default 480 (8 hours). Bounds: 60 (1 hour) to 10080 (1 week). "
+            "Phase A writes the markers; Phase B consumes them."
+        ),
+    )
     # local run constraints
-    local_cpu_cores_for_workflow: Optional[int] = Field(
+    local_cpu_cores_for_workflow: int | None = Field(
         None,
         description="This is passed to Snakemake to let it know how many CPU cores its allowed to use on your computer",
     )
-    local_gpus_for_workflow: Optional[int] = Field(
+    local_gpus_for_workflow: int | None = Field(
         None,
         description="This is passed to Snakemake to let it know how many GPUS its allowed to use on your computer",
     )
     # HPC JOB ARRAY PARAMETERS
     mem_gb_per_cpu: int = Field(2, description="Memory per CPU in GB. Defaults to 2GB.")
-    hpc_time_min_per_sim: Optional[int] = Field(
+    hpc_time_min_per_sim: int | None = Field(
         60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_max_simultaneous_sims: Optional[int] = Field(
+    hpc_max_simultaneous_sims: int | None = Field(
         None,
         description="Maximum number of concurrent simulations. "
         "NOTE: Not required for multi_sim_run_method=1_job_many_srun_tasks "
         "(concurrency determined dynamically from SLURM allocation). "
         "Required for setting an upper limit on the number of concurrent jobs submitted using sbatch for multi_sim_run_method=batch_job",
     )
-    hpc_ensemble_partition: Optional[str] = Field(
+    hpc_ensemble_partition: str | None = Field(
         None,
         description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for running simulations. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_setup_and_analysis_processing_partition: Optional[str] = Field(
+    hpc_setup_and_analysis_processing_partition: str | None = Field(
         None,
         description="SLURM partition name for simulation setup and analysis output consolidation (single node, single core processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_account: Optional[str] = Field(
+    hpc_account: str | None = Field(
         None,
         description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_login_node: Optional[str] = Field(
+    hpc_login_node: str | None = Field(
         None,
         description=(
             "Specific HPC login node hostname for tmux session reattach (e.g., 'login1.hpc.virginia.edu'). "
@@ -176,11 +177,11 @@ class analysis_config(cfgBaseModel):
             "When set, reattach hints will use ssh to this node directly."
         ),
     )
-    python_path: Optional[Path] = Field(
+    python_path: Path | None = Field(
         None,
         description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",
     )
-    additional_SBATCH_params: Optional[List[str]] = Field(
+    additional_SBATCH_params: list[str] | None = Field(
         None,
         description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when multi_sim_run_method = 1_job_many_srun_tasks.",
     )
@@ -194,23 +195,23 @@ class analysis_config(cfgBaseModel):
         description="If True, a boundary condition representing storm tide will be applied to the model.",
     )
 
-    storm_tide_boundary_line_gis: Optional[Path] = Field(
+    storm_tide_boundary_line_gis: Path | None = Field(
         None,
         description="Path to a line gis file spanning the extent of the dem boundary where the variable storm tide boundary condition should be applied.",
     )
-    storm_tide_units: Optional[str] = Field(
+    storm_tide_units: str | None = Field(
         None,
         description="Storm tide units, e.g., ft, m. Must align with units used DEM.",
     )
-    weather_event_summary_csv: Optional[Path] = Field(
+    weather_event_summary_csv: Path | None = Field(
         None,
         description="CSV file with weather event summary statistics. Events must share indices with weather_timeseries.",
     )
-    weather_time_series_storm_tide_datavar: Optional[str] = Field(
+    weather_time_series_storm_tide_datavar: str | None = Field(
         None,
         description="Data variables in weather_timeseries corresponding to storm tide.",
     )
-    sensitivity_analysis: Optional[Path] = Field(
+    sensitivity_analysis: Path | None = Field(
         None,
         description="sensitivity analysisal design csv file.",
     )
@@ -218,7 +219,7 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Path to a .csv file defining weather event index used for sensitivity. The columns must correspond to the sytem's weather_event_indices.",
     )
-    analysis_description: Optional[str] = Field(
+    analysis_description: str | None = Field(
         None,
         description="For readability.",
     )
@@ -258,7 +259,7 @@ class analysis_config(cfgBaseModel):
     )
 
     # extra inputs (currently only used by sensitivity analysis)
-    analysis_dir: Optional[Path] = Field(
+    analysis_dir: Path | None = Field(
         None,
         description="Optional path to analysis directory. If not specified, the analysis directory will be placed within the system directory named named with the analysis_id",
     )
@@ -266,7 +267,7 @@ class analysis_config(cfgBaseModel):
         False,
         description="This is used in the backend to help route subanalyses to appropriate processes.",
     )
-    master_analysis_cfg_yaml: Optional[Path] = Field(
+    master_analysis_cfg_yaml: Path | None = Field(
         None,
         description="Path to the configuration file of the master analysis.",
     )
@@ -290,9 +291,9 @@ class analysis_config(cfgBaseModel):
             'Post-processing cleanup policy. "all" deletes all raw outputs '
             'for every enabled model type. "none" deletes nothing. A list '
             'of model type strings (subset of "tritonswmm", "triton", "swmm") '
-            'deletes raw outputs only for the listed model types. Defaults '
+            "deletes raw outputs only for the listed model types. Defaults "
             'to "none" — yamls written before this field was introduced '
-            'load cleanly with the strict-safe (delete-nothing) default.'
+            "load cleanly with the strict-safe (delete-nothing) default."
         ),
     )
     force_rerun: ForceRerunValue = Field(
@@ -301,10 +302,10 @@ class analysis_config(cfgBaseModel):
             'Force-rerun policy. "all" re-runs everything. "none" runs no '
             'forced re-runs. A dict with exactly one key — "sa_id" (sensitivity '
             'only) or "event_iloc" (non-sensitivity only) — and a list of int '
-            'or string identifiers re-runs only the named sub-analyses or '
+            "or string identifiers re-runs only the named sub-analyses or "
             'events. Defaults to "none" — yamls written before this field '
-            'was introduced load cleanly with the strict-safe (re-run-nothing) '
-            'default.'
+            "was introduced load cleanly with the strict-safe (re-run-nothing) "
+            "default."
         ),
     )
 
@@ -312,9 +313,7 @@ class analysis_config(cfgBaseModel):
     @field_validator("analysis_id")
     def validate_analysis_id(cls, v):
         if not re.match(r"^[A-Za-z0-9_.]*$", v):
-            raise ValueError(
-                "analysis_id must contain only letters, digits, underscores, or periods"
-            )
+            raise ValueError("analysis_id must contain only letters, digits, underscores, or periods")
         return v
 
     @field_validator("clear_raw", mode="after")
@@ -345,14 +344,10 @@ class analysis_config(cfgBaseModel):
                 )
             key = next(iter(v))
             if key not in ("sa_id", "event_iloc"):
-                raise ValueError(
-                    f"force_rerun dict key must be 'sa_id' or 'event_iloc'; got {key!r}"
-                )
+                raise ValueError(f"force_rerun dict key must be 'sa_id' or 'event_iloc'; got {key!r}")
             values = v[key]
             if not isinstance(values, list) or not values:
-                raise ValueError(
-                    f"force_rerun.{key} value must be a non-empty list; got {values!r}"
-                )
+                raise ValueError(f"force_rerun.{key} value must be a non-empty list; got {values!r}")
             if len(values) != len(set(map(str, values))):
                 raise ValueError(f"force_rerun.{key} list contains duplicates: {values}")
             if key == "sa_id":
@@ -401,9 +396,7 @@ class analysis_config(cfgBaseModel):
         errors = []
         if values.get("is_subanalysis") is True:
             if values.get("master_analysis_cfg_yaml") is None:
-                errors.append(
-                    "master_analysis_cfg_yaml must be provided when is_subanalysis=True"
-                )
+                errors.append("master_analysis_cfg_yaml must be provided when is_subanalysis=True")
             if values.get("analysis_dir") is None:
                 errors.append("analysis_dir must be provided when is_subanalysis=True")
 
@@ -430,17 +423,13 @@ class analysis_config(cfgBaseModel):
         # -------------------------------
         if mode == "serial":
             if mpi is not None and mpi != 1:
-                raise ValueError(
-                    f"n_mpi_procs is set to {mpi}.\nn_mpi_procs must be None or 1 for serial mode"
-                )
+                raise ValueError(f"n_mpi_procs is set to {mpi}.\nn_mpi_procs must be None or 1 for serial mode")
             if omp is not None and omp != 1:
                 raise ValueError("n_omp_threads must be 1 or None for serial mode")
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for serial mode")
             if nodes is not None and nodes != 1:
-                raise ValueError(
-                    "n_nodes must be 1 or None for serial mode (single task cannot span multiple nodes)"
-                )
+                raise ValueError("n_nodes must be 1 or None for serial mode (single task cannot span multiple nodes)")
 
         elif mode == "openmp":
             if mpi not in (None, 1):
@@ -450,9 +439,7 @@ class analysis_config(cfgBaseModel):
             if gpus not in (None, 0):
                 raise ValueError("n_gpus must be None or 0 for OpenMP mode")
             if nodes is not None and nodes != 1:
-                raise ValueError(
-                    "n_nodes must be 1 or None for OpenMP mode (single task cannot span multiple nodes)"
-                )
+                raise ValueError("n_nodes must be 1 or None for OpenMP mode (single task cannot span multiple nodes)")
 
         elif mode == "mpi":
             if mpi is None or mpi < 2:
@@ -499,43 +486,28 @@ class analysis_config(cfgBaseModel):
                     f"Each node requires at least one MPI rank to run on it."
                 )
 
-            if (
-                multi_sim_method in {"1_job_many_srun_tasks", "batch_job"}
-                and not hpc_gpus_per_node
-            ):
+            if multi_sim_method in {"1_job_many_srun_tasks", "batch_job"} and not hpc_gpus_per_node:
                 raise ValueError(
                     "hpc_gpus_per_node is required when using GPUs with batch_job or 1_job_many_srun_tasks"
                 )
 
-        if multi_sim_method == "batch_job" and (
-            hpc_max_simultaneous_sims is None or hpc_max_simultaneous_sims < 1
-        ):
-            raise ValueError(
-                "hpc_max_simultaneous_sims is required and must be > 0 for multi_sim_run_method=batch_job"
-            )
+        if multi_sim_method == "batch_job" and (hpc_max_simultaneous_sims is None or hpc_max_simultaneous_sims < 1):
+            raise ValueError("hpc_max_simultaneous_sims is required and must be > 0 for multi_sim_run_method=batch_job")
 
-        if multi_sim_method == "batch_job" and (
-            hpc_total_job_duration_min is None or hpc_total_job_duration_min < 1
-        ):
+        if multi_sim_method == "batch_job" and (hpc_total_job_duration_min is None or hpc_total_job_duration_min < 1):
             raise ValueError(
                 "hpc_total_job_duration_min is required and must be > 0 for multi_sim_run_method=batch_job"
             )
 
         if multi_sim_method == "batch_job":
             if hpc_time_min_per_sim is None:
-                raise ValueError(
-                    "hpc_time_min_per_sim is required and must be >= 1 for multi_sim_run_method=batch_job"
-                )
-            if isinstance(hpc_time_min_per_sim, float) and math.isnan(
-                hpc_time_min_per_sim
-            ):
+                raise ValueError("hpc_time_min_per_sim is required and must be >= 1 for multi_sim_run_method=batch_job")
+            if isinstance(hpc_time_min_per_sim, float) and math.isnan(hpc_time_min_per_sim):
                 raise ValueError(
                     "hpc_time_min_per_sim must be a valid integer >= 1 for multi_sim_run_method=batch_job (NaN detected)"
                 )
             if hpc_time_min_per_sim < 1:
-                raise ValueError(
-                    "hpc_time_min_per_sim must be >= 1 for multi_sim_run_method=batch_job"
-                )
+                raise ValueError("hpc_time_min_per_sim must be >= 1 for multi_sim_run_method=batch_job")
 
         return values
 
@@ -544,12 +516,28 @@ class analysis_config(cfgBaseModel):
         if isinstance(self.force_rerun, dict):
             key = next(iter(self.force_rerun))
             if key == "sa_id" and not self.toggle_sensitivity_analysis:
-                raise ValueError(
-                    "force_rerun.sa_id requires toggle_sensitivity_analysis=True"
-                )
+                raise ValueError("force_rerun.sa_id requires toggle_sensitivity_analysis=True")
             if key == "event_iloc" and self.toggle_sensitivity_analysis:
                 raise ValueError(
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
                     "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_inflight_wait_vs_total_runtime(self):
+        if (
+            self.hpc_max_wait_for_inflight_min is not None
+            and self.hpc_total_job_duration_min is not None
+            and self.hpc_max_wait_for_inflight_min < self.hpc_total_job_duration_min
+        ):
+            import warnings
+
+            warnings.warn(
+                f"hpc_max_wait_for_inflight_min={self.hpc_max_wait_for_inflight_min} is less than "
+                f"hpc_total_job_duration_min={self.hpc_total_job_duration_min}. Wait-rule will time out "
+                f"before in-flight sims can finish; consider raising the wait cap.",
+                UserWarning,
+                stacklevel=2,
+            )
         return self
