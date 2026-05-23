@@ -19,9 +19,6 @@ import json
 
 import pytest
 
-from TRITON_SWMM_toolkit import workflow
-from TRITON_SWMM_toolkit.exceptions import WorkflowError
-
 
 def _write_sentinel(analysis_dir, name, jobid):
     d = analysis_dir / "_status" / "_submitted"
@@ -31,24 +28,41 @@ def _write_sentinel(analysis_dir, name, jobid):
     return path
 
 
-def test_reconcile_aborts_on_live_duplicate(monkeypatch, synthetic_multisim_builder):
-    """A live duplicate from a prior driver must block re-submission with WorkflowError."""
+def test_reconcile_returns_alive_set_for_live_duplicate(synthetic_multisim_builder):
+    """Phase 2: v2 reconcile RETURNS the alive set for an in-flight sim — it does NOT raise.
+
+    A submitted sentinel with no completed/failed marker is classified ALIVE.
+    Replaces the v1 raise-on-live test (`test_reconcile_aborts_on_live_duplicate`);
+    the v1 abort semantics no longer exist — graceful rerun substitutes wait-rules.
+    """
+    import tests.utils_for_testing as tst_ut
+
     b = synthetic_multisim_builder
-    _write_sentinel(b.analysis_paths.analysis_dir, "run_tritonswmm_evt-0", "999001")
-    monkeypatch.setattr(workflow, "_slurm_job_is_live", lambda jid: True)
-    monkeypatch.setattr(b, "_recover_inflight_via_comment", lambda known_jobids: [])
-    with pytest.raises(WorkflowError):
-        b._reconcile_inflight_submissions()
+    _write_sentinel(b.analysis_paths.analysis_dir, "run_tritonswmm_evt-test", "999001")
+    alive = b._reconcile_inflight_submissions()
+    assert ("run_tritonswmm_evt-test", "999001") in alive
+    tst_ut.assert_alive_set_reconciled(b, ["run_tritonswmm_evt-test"])
 
 
-def test_reconcile_reclaims_dead_sentinel(monkeypatch, synthetic_multisim_builder):
-    """A sentinel whose recorded job is no longer live is reclaimed (deleted) and submission proceeds."""
+def test_reconcile_reclaims_completed_sentinel(synthetic_multisim_builder):
+    """Phase 2: a sentinel with a _completed/ marker is reclaimed and absent from the alive set.
+
+    Replaces the v1 squeue-based dead-reclaim test
+    (`test_reconcile_reclaims_dead_sentinel`); v2 classifies via marker presence,
+    not `_slurm_job_is_live`. A sentinel with NO marker is now ALIVE, so the dead
+    state is modeled by writing a `_completed/` marker.
+    """
     b = synthetic_multisim_builder
-    s = _write_sentinel(b.analysis_paths.analysis_dir, "run_tritonswmm_evt-0", "999002")
-    monkeypatch.setattr(workflow, "_slurm_job_is_live", lambda jid: False)
-    monkeypatch.setattr(b, "_recover_inflight_via_comment", lambda known_jobids: [])
-    b._reconcile_inflight_submissions()  # no raise
-    assert not s.exists()  # dead sentinel reclaimed
+    analysis_dir = b.analysis_paths.analysis_dir
+    s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-test", "999002")
+    completed_dir = analysis_dir / "_status" / "_completed"
+    completed_dir.mkdir(parents=True, exist_ok=True)
+    (completed_dir / "run_tritonswmm_evt-test.json").write_text(
+        json.dumps({"status": "completed", "slurm_jobid": "999002"})
+    )
+    alive = b._reconcile_inflight_submissions()  # no raise
+    assert alive == []  # completed marker present → not alive
+    assert not s.exists()  # submitted sentinel reclaimed as safety net
 
 
 def test_reconcile_fast_path_no_sentinels(synthetic_multisim_builder):
@@ -84,23 +98,19 @@ def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multis
     assert jids == {"9001"}  # live + comment-matched; 9002 completed; malformed skipped
 
 
-def test_reconcile_keys_on_sensitivity_sentinel_pattern(monkeypatch, synthetic_multisim_builder):
-    """Sensitivity sentinel filename pattern (simulation_sa_{id}_evt-{id}) is
-    classified by the guard the same way as the multisim pattern. This
-    guards against the collision failure mode where two different sa_ids
-    sharing an event_id would write the same multisim-pattern filename if
-    the runner did not key on sa_id.
+def test_reconcile_returns_sensitivity_sentinel_in_alive_set(synthetic_multisim_builder):
+    """Phase 2: a sensitivity sentinel (simulation_sa_{id}_evt-{id}) with no marker is
+    returned in the alive set keyed on its full stem; v2 does not raise.
+
+    Replaces the v1 raise-based `test_reconcile_keys_on_sensitivity_sentinel_pattern`.
+    Guards the sa_id-keyed token (no collision with the multisim pattern) under v2
+    return-alive semantics.
     """
     b = synthetic_multisim_builder
     s = _write_sentinel(b.analysis_paths.analysis_dir, "simulation_sa_alpha_evt-0", "777001")
-    monkeypatch.setattr(workflow, "_slurm_job_is_live", lambda jid: True)
-    monkeypatch.setattr(b, "_recover_inflight_via_comment", lambda known_jobids: [])
-    with pytest.raises(WorkflowError) as excinfo:
-        b._reconcile_inflight_submissions()
-    # The error must name the sensitivity sentinel filename in the alive list
-    # (i.e., the guard did not mis-key on the multisim filename pattern).
-    assert "simulation_sa_alpha_evt-0" in str(excinfo.value)
-    assert s.exists()  # live sentinel is preserved
+    alive = b._reconcile_inflight_submissions()
+    assert ("simulation_sa_alpha_evt-0", "777001") in alive  # keyed on full sa_id stem
+    assert s.exists()  # alive sentinel preserved (no marker present)
 
 
 def _build_marker_ctx(analysis_dir, rule_token="run_tritonswmm_evt-0", jobid="12345"):
@@ -224,3 +234,98 @@ def test_classify_via_state_markers_returns_empty_when_completed_marker_present(
     assert result == []
     assert not sentinel.exists()  # reclaimed as safety net
     assert completed.exists()  # marker is untouched
+
+
+# ========== Phase 2: wait-rule emission + ruleorder ambiguity resolution ==========
+
+
+def _enabled_model_from_snakefile(content):
+    """Extract one enabled model_type from an emitted multisim Snakefile."""
+    import re
+
+    m = re.search(r"rule run_(\w+):", content)
+    assert m, "synth builder emitted no `rule run_*` block"
+    return m.group(1)
+
+
+def test_wait_rule_emitted_for_alive_sentinel_with_ruleorder(synthetic_multisim_builder):
+    """Phase 2: an alive token makes generate_snakefile_content emit (a) a concrete
+    `rule wait_for_*`, (b) the `ruleorder: wait_for_X > run_*` directive that resolves
+    the wildcard-vs-concrete AmbiguousRuleException, and (c) a `localrules:` line so the
+    wait-rule runs locally. Also asserts R7 (input-superset): the wait-rule's input is
+    the run-rule's prepare-flag input for the same event.
+    """
+    b = synthetic_multisim_builder
+    model = _enabled_model_from_snakefile(b.generate_snakefile_content())
+    token = f"run_{model}_evt-test"
+    sanitized = f"run_{model}_evt_test"
+
+    content = b.generate_snakefile_content(alive_by_token={token: "999001"})
+
+    assert f"rule wait_for_{sanitized}:" in content
+    assert f"ruleorder: wait_for_{sanitized} > run_{model}" in content
+    assert f"localrules: wait_for_{sanitized}" in content
+
+    # R7: the wait-rule's input set is the run-rule's input for this event
+    # (prepare_scenarios defaults True → b_prepare flag).
+    idx = content.index(f"rule wait_for_{sanitized}:")
+    wait_block = content[idx : idx + 600]
+    assert "_status/b_prepare_evt-test_complete.flag" in wait_block
+    # The wait-rule's output is the run-rule's flag, exactly.
+    assert f'"_status/c_run_{model}_evt-test_complete.flag"' in wait_block
+
+
+def test_e2e_kill_orchestrator_resubmit_wait_rule_emits():
+    """Phase 2: master Validation V3 end-to-end smoke — kill orchestrator, re-run,
+    assert no abort + wait-rule emitted + downstream unblocks on completion marker.
+    """
+    pytest.skip(
+        "E2E scaffold — requires tmux-orchestration / SIGTERM / monkeypatched-runner "
+        "fixtures not yet present in conftest. The end-to-end is exercised via the "
+        "master plan's ET3 (Frontier in-flight rerun empirical-testing protocol)."
+    )
+
+
+def test_snakefile_with_wait_rule_parses_without_ambiguity(synthetic_multisim_builder):
+    """Phase 2 (Spec E): the load-bearing ruleorder mechanism is EXECUTED under Snakemake,
+    not merely asserted by string presence. Build a Snakefile with one alive token, then
+    dry-run-target the contested flag so both the wildcard run-rule and the concrete
+    wait-rule are candidate producers — forcing the ambiguity that `ruleorder` resolves.
+    Assert no AmbiguousRuleException and that the wait-rule is the chosen producer.
+    """
+    import ast
+    import re
+    import shutil
+    import subprocess
+
+    if shutil.which("snakemake") is None:
+        pytest.skip("snakemake CLI not on PATH")
+
+    b = synthetic_multisim_builder
+    base = b.generate_snakefile_content()
+    model = _enabled_model_from_snakefile(base)
+    # Use a REAL event_id (one in SIM_IDS) so the wildcard run-rule's input
+    # function (ILOC_BY_EVENT_ID[event_id]) resolves during DAG build — a fake
+    # event_id raises KeyError before the ambiguity check is reached.
+    m = re.search(r"^SIM_IDS\s*=\s*(\[.*?\])", base, re.MULTILINE)
+    assert m, "SIM_IDS not found in emitted Snakefile"
+    event_id = ast.literal_eval(m.group(1))[0]
+
+    token = f"run_{model}_evt-{event_id}"
+    sanitized = token.replace("-", "_").replace(".", "_")
+    content = b.generate_snakefile_content(alive_by_token={token: "1"})
+
+    analysis_dir = b.analysis_paths.analysis_dir
+    snakefile = analysis_dir / "Snakefile.waittest"
+    snakefile.write_text(content)
+    target = f"_status/c_run_{model}_evt-{event_id}_complete.flag"
+
+    proc = subprocess.run(
+        ["snakemake", "-n", "--cores", "1", "-s", str(snakefile), "-d", str(analysis_dir), target],
+        capture_output=True,
+        text=True,
+    )
+    combined = proc.stdout + proc.stderr
+    assert "AmbiguousRuleException" not in combined, combined[-2000:]
+    # ruleorder must select the wait-rule as the producer of the contested flag.
+    assert sanitized in combined, combined[-2000:]

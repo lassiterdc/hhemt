@@ -1326,3 +1326,14 @@ def assert_rerun_trigger_correctness(
                 f"removed scenario {removed_key!r}: orphan file {path} was re-touched "
                 f"by rerun (mtime {before_mtime} -> {path.stat().st_mtime})"
             )
+
+
+def assert_alive_set_reconciled(builder, expected_rule_tokens: list[str]) -> None:
+    """Assert ``_reconcile_inflight_submissions`` returns the expected alive set.
+
+    Per sentinel-system-v2 Phase 2 — standardized helper for v2 reconcile tests.
+    """
+    alive = builder._reconcile_inflight_submissions()
+    observed_tokens = sorted(t for t, _ in alive)
+    if observed_tokens != sorted(expected_rule_tokens):
+        pytest.fail(f"alive set mismatch: expected {sorted(expected_rule_tokens)}, got {observed_tokens}")

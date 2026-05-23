@@ -425,6 +425,20 @@ def _emit_report_artifacts(dest_root: Path) -> None:
     (dst_report / "workflow_description.rst").write_text((src_templates / "workflow_description.rst.j2").read_text())
 
 
+def _sanitize_rule_name(token: str) -> str:
+    """Coerce a sentinel rule_token into a valid Snakemake/Python identifier.
+
+    Snakemake rule names must be valid Python identifiers (no ``-``, ``.``).
+    Sentinel rule_tokens written by :mod:`run_simulation_runner` follow the
+    pattern ``run_{model_type}_evt-{event_id}`` (multisim) or
+    ``simulation_sa_{sa_id}_evt-{event_id}`` (sensitivity); both contain
+    literal hyphens that must be replaced for use as a Snakemake rule name.
+
+    Per sentinel-system-v2 Phase 2.
+    """
+    return token.replace("-", "_").replace(".", "_")
+
+
 # Pinned to the format emitted by snakemake-executor-plugin-slurm/submit_string.py:29
 # (--comment rule_{job.name}_wildcards_{...}). Bump on plugin version changes.
 _COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_sa_")
@@ -645,51 +659,53 @@ class SnakemakeWorkflowBuilder:
         if verbose:
             print("[Snakemake] Unlock successful. Proceeding.", flush=True)
 
-    def _reconcile_inflight_submissions(self) -> None:
+    def _reconcile_inflight_submissions(self, analysis_dir: Path | None = None) -> list[tuple[str, str]]:
         """At-most-once-execution guard: reconcile prior-driver simulation submissions.
 
-        Sweeps the per-analysis ``_status/_submitted/`` sentinel directory and
-        classifies each recorded SLURM job-id as live or dead via the
-        module-level :func:`_slurm_job_is_live` helper. Dead sentinels are
-        reclaimed (deleted); live sentinels block submission with a
-        :class:`WorkflowError` listing the offending job-ids (v1 abort
-        semantics — auto-exclude is a v2 enhancement).
-
-        Also runs the ``--comment``-based recovery query against ``sacct`` to
-        catch jobs whose sentinel write was missed because the driver died
-        between ``sbatch`` and the worker's first writable line.
+        Sweeps the ``_status/_submitted/`` sentinel directory and classifies
+        each sentinel via :meth:`_classify_via_state_markers` (sentinel-only
+        liveness — no SLURM CLI). Completed/failed sentinels are reclaimed
+        (deleted) by the classifier; sentinels with neither marker are returned
+        as the alive set so the caller can substitute wait-rules for run-rules
+        at Snakefile-build time (v2 graceful-rerun).
 
         Fast path: returns immediately with zero SLURM calls when no
         sentinels exist (the common case for fresh analyses).
 
-        Raises
-        ------
-        WorkflowError
-            When one or more live duplicate simulation jobs are detected for
-            this analysis. The error names the live job-ids and instructs the
-            user to wait or ``scancel`` before resubmitting; no second
-            ``sbatch`` is issued.
+        Parameters
+        ----------
+        analysis_dir : Path | None, default None
+            Analysis directory whose ``_status/`` subtree is swept. ``None``
+            uses ``self.analysis_paths.analysis_dir`` (multisim / master). The
+            sensitivity path passes each per-sub-analysis dir
+            (``master/subanalyses/{analysis_id}``) because sensitivity markers
+            live under the sub-analysis dir, not the master dir (Spec D).
+
+        Returns
+        -------
+        list of (rule_token, slurm_jobid) tuples
+            The alive set: submitted-sentinels for which neither a completed
+            nor a failed marker has appeared. Empty when no in-flight work
+            remains.
         """
-        submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+        base_dir = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        submitted_dir = base_dir / "_status" / "_submitted"
         sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
         if not sentinels:
-            return  # fast path: zero SLURM calls
+            return []  # fast path: no alive set
 
-        alive = self._classify_live_sentinels(sentinels, reclaim_dead=True)
-
-        # --comment recovery for the lost-sentinel window
-        alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
+        # v2 graceful-rerun: classify via sentinel state markers (no SLURM CLI).
+        # The wait-rule emission layer consumes the alive set to substitute
+        # wait-on-sentinel rules for the in-flight set.
+        alive = self._classify_via_state_markers(sentinels, reclaim_completed=True, analysis_dir=base_dir)
         if alive:
-            raise WorkflowError(
-                phase="preflight-reconciliation",
-                return_code=1,  # sentinel: pre-submission abort
-                stderr=(
-                    "At-most-once guard: simulation jobs from a prior driver are "
-                    "still in flight for this analysis: "
-                    f"{alive}. Wait for them to finish, or `scancel` them, before "
-                    "resubmitting. (No second sbatch was issued.)"
-                ),
+            print(
+                f"[reconcile] v2 graceful-rerun: {len(alive)} in-flight rule(s) "
+                f"detected via sentinel state markers; emitting wait-rules in lieu "
+                f"of resubmit. Rule tokens: {sorted(t for t, _ in alive)}",
+                flush=True,
             )
+        return alive
 
     def _recover_inflight_via_comment(self, known_jobids: set[str]) -> list[tuple[str, str]]:
         """Recover in-flight simulation jobs missed by the sentinel sweep.
@@ -815,6 +831,16 @@ class SnakemakeWorkflowBuilder:
             working_dir=working_dir,
         )
         if not dry_run:
+            # v2: reconcile here (return discarded) preserves reclaim+detect on
+            # every guard call site — including the reprocess path and the
+            # single-job/tmux submit methods that do NOT thread an alive-set
+            # into Snakefile build. The Snakefile-build callers
+            # (generate_snakefile_content / generate_master_snakefile_content)
+            # additionally call _reconcile_inflight_submissions to CAPTURE the
+            # alive set for wait-rule emission. The double call is idempotent:
+            # reconcile only reclaims completed/failed markers and returns a
+            # stable alive set. Per sentinel-system-v2 Phase 2 (Spec C — guard
+            # call-site fan-out).
             self._reconcile_inflight_submissions()
 
     def _get_config_args(
@@ -1201,6 +1227,7 @@ rule consolidate:
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         report_formats: list[str] | None = None,
+        alive_by_token: dict[str, str] | None = None,
     ) -> str:
         """
         Generate Snakefile content with separate rules for prep, simulation, and processing.
@@ -1536,6 +1563,35 @@ rule run_{model_type}:
             > {{log}} 2>&1
         """
 '''
+
+            # v2 graceful-rerun: per alive (model_type, event_id) tuple matching
+            # this model's rule_token prefix, append a concrete-output wait-rule
+            # and a ``ruleorder`` directive that prefers it over the wildcard
+            # ``rule run_{model_type}`` for that specific event_id. Snakemake
+            # raises AmbiguousRuleException for two-rules-one-output without an
+            # explicit ruleorder; the wildcard-vs-concrete output overlap IS
+            # that ambiguity, and the ruleorder line is the documented
+            # resolution (Snakemake docs § Handling Ambiguous Rules).
+            wait_walltime_cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
+            _prefix = f"run_{model_type}_evt-"
+            for rule_token in sorted(alive_by_token or {}):
+                if not rule_token.startswith(_prefix):
+                    continue
+                event_id = rule_token[len(_prefix):]
+                flag_output_path = f"_status/c_run_{model_type}_evt-{event_id}_complete.flag"
+                run_rule_inputs = (
+                    [f"_status/b_prepare_evt-{event_id}_complete.flag"]
+                    if prepare_scenarios
+                    else ["_status/a_setup_complete.flag"]
+                )
+                sanitized = _sanitize_rule_name(rule_token)
+                snakefile_content += f"\nruleorder: wait_for_{sanitized} > run_{model_type}\n\n"
+                snakefile_content += self._emit_wait_for_sim_rule_block(
+                    rule_token=rule_token,
+                    flag_output_path=flag_output_path,
+                    run_rule_inputs=run_rule_inputs,
+                    wait_walltime_cap_min=wait_walltime_cap_min,
+                )
 
         # Add output processing rules (one per model type) if requested
         if process_timeseries:
@@ -4075,6 +4131,9 @@ exit $snakemake_status
                     flush=True,
                 )
 
+            # v2 graceful-rerun: reconcile before Snakefile build so the alive
+            # set substitutes wait-rules for run-rules at emit time (Phase 2).
+            alive_by_token = dict(self._reconcile_inflight_submissions())
             # Generate Snakefile content
             snakefile_content = self.generate_snakefile_content(
                 process_system_level_inputs=process_system_level_inputs,
@@ -4090,6 +4149,7 @@ exit $snakemake_status
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
+                alive_by_token=alive_by_token,
             )
 
             # Write Snakefile to disk
@@ -4131,6 +4191,8 @@ exit $snakemake_status
                     flush=True,
                 )
 
+            # v2 graceful-rerun: reconcile before Snakefile build (Phase 2).
+            alive_by_token = dict(self._reconcile_inflight_submissions())
             snakefile_content = self.generate_snakefile_content(
                 process_system_level_inputs=process_system_level_inputs,
                 overwrite_system_inputs=overwrite_system_inputs,
@@ -4145,6 +4207,7 @@ exit $snakemake_status
                 compression_level=compression_level,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
+                alive_by_token=alive_by_token,
             )
 
             snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
@@ -4182,6 +4245,8 @@ exit $snakemake_status
         if verbose:
             print(f"[Snakemake] Submitting workflow in {mode} mode", flush=True)
 
+        # v2 graceful-rerun: reconcile before Snakefile build (Phase 2).
+        alive_by_token = dict(self._reconcile_inflight_submissions())
         # Generate Snakefile content
         snakefile_content = self.generate_snakefile_content(
             process_system_level_inputs=process_system_level_inputs,
@@ -4197,6 +4262,7 @@ exit $snakemake_status
             compression_level=compression_level,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
+            alive_by_token=alive_by_token,
         )
 
         # Write Snakefile to disk
@@ -4505,6 +4571,7 @@ exit $snakemake_status
         sentinel_paths: list[Path],
         *,
         reclaim_completed: bool = True,
+        analysis_dir: Path | None = None,
     ) -> list[tuple[str, str]]:
         """Classify submitted-sentinel files by v2 state-marker presence.
 
@@ -4534,9 +4601,9 @@ exit $snakemake_status
         import json
 
         alive: list[tuple[str, str]] = []
-        analysis_dir = self.analysis_paths.analysis_dir
-        completed_dir = analysis_dir / "_status" / "_completed"
-        failed_dir = analysis_dir / "_status" / "_failed"
+        base_dir = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        completed_dir = base_dir / "_status" / "_completed"
+        failed_dir = base_dir / "_status" / "_failed"
         for s in sentinel_paths:
             rule_token = s.stem
             completed = completed_dir / f"{rule_token}.json"
@@ -4553,6 +4620,86 @@ exit $snakemake_status
                 jid = ""
             alive.append((rule_token, jid))
         return alive
+
+    def _emit_wait_for_sim_rule_block(
+        self,
+        *,
+        rule_token: str,
+        flag_output_path: str,
+        run_rule_inputs: list[str],
+        wait_walltime_cap_min: int,
+        analysis_dir_override: str | None = None,
+    ) -> str:
+        """Emit a Snakemake rule body that waits on the original SLURM job's
+        completion-marker write, in place of a normal ``rule run_*`` block.
+
+        The wait-rule:
+
+        - Is declared local via the Snakefile's ``localrules: wait_for_*``
+          preamble entry so it runs as a Snakemake-local task (no sbatch).
+        - Declares ``output:`` matching the run-rule's flag path exactly.
+        - Declares ``input:`` as the run-rule's input set (R7 — a superset is
+          permitted; here the equal set satisfies the superset constraint),
+          ensuring downstream rules' INPUT trigger does not fire spuriously
+          after wait -> run transitions on subsequent driver invocations.
+        - Polls ``_status/_completed/{rule_token}.json`` and
+          ``_status/_failed/{rule_token}.json`` from its ``shell:`` body — NOT
+          from ``input:`` — so the INPUT trigger does not see markers as
+          load-bearing dependencies.
+        - Exits 0 on ``_completed/`` marker presence. The original SLURM
+          job's runner already wrote ``flag_output_path`` before its
+          ``try/finally`` wrote the ``_completed/`` marker, so by the time the
+          wait-rule observes the marker the flag is already on disk and
+          Snakemake's output check passes. The wait-rule does NOT write the
+          flag itself (preserves the v1 "completion flag is written exactly
+          once, by the original worker" contract).
+        - Exits 1 on ``_failed/`` marker presence (propagating failure to
+          Snakemake's standard error handling).
+        - Exits 1 after ``wait_walltime_cap_min`` minutes if neither marker
+          appears.
+
+        Deliberately emits no ``conda:`` directive — the shell uses an
+        absolute ``{python_exe} -m TRITON_SWMM_toolkit.wait_for_sentinel_runner``
+        so it runs in the driver's interpreter (the poll loop has no
+        analysis-env dependency).
+
+        ``analysis_dir_override`` sets the ``--analysis-dir`` the wait-runner
+        polls. The multisim path leaves it ``None`` (markers live under the
+        single master ``analysis_dir``). The sensitivity path MUST pass the
+        per-sub-analysis dir (``master/subanalyses/{analysis_id}``) because
+        ``run_simulation_runner`` writes sensitivity markers under the sub
+        analysis's own ``analysis_dir`` (sensitivity_analysis.py:1485), not the
+        master dir — without the override the wait-runner would poll the wrong
+        directory and always hit the walltime cap.
+
+        Per sentinel-system-v2 Phase 2 (resolves D-Q5=A, D-Q2=A, R7, Spec D).
+        """
+        sanitized = _sanitize_rule_name(rule_token)
+        inputs_block = "\n        ".join(f'"{p}",' for p in sorted(set(run_rule_inputs)))
+        analysis_dir = (
+            analysis_dir_override if analysis_dir_override is not None else str(self.analysis_paths.analysis_dir)
+        )
+        python_exe = self.python_executable
+        # Snakemake `localrules:` takes literal rule names (not globs) and is
+        # additive across statements (docs § Local Rules). Emit a concrete
+        # per-rule localrules line so the wait-rule runs on the host node
+        # rather than being submitted to SLURM. A `wait_for_*` glob does NOT
+        # work — it would be read as a literal (nonexistent) rule name.
+        return (
+            f"localrules: wait_for_{sanitized}\n\n"
+            f"rule wait_for_{sanitized}:\n"
+            f"    input:\n"
+            f"        {inputs_block}\n"
+            f"    output:\n"
+            f'        "{flag_output_path}"\n'
+            f"    resources: cpus_per_task=1, mem_mb=100, runtime={wait_walltime_cap_min}\n"
+            f"    shell:\n"
+            f'        "{python_exe} -m TRITON_SWMM_toolkit.wait_for_sentinel_runner "\n'
+            f'        "--rule-token {rule_token} "\n'
+            f'        "--flag-output {{output}} "\n'
+            f'        "--analysis-dir {analysis_dir} "\n'
+            f'        "--max-wait-minutes {wait_walltime_cap_min}"\n\n'
+        )
 
     def _pre_delete_guards(self, *, override_in_flight: bool) -> None:
         """Entry guard for the distributed delete workflow.
@@ -4863,6 +5010,8 @@ class SensitivityAnalysisWorkflowBuilder:
         override_clear_raw: ClearRawValue | None = None,
         pickup_where_leftoff: bool = True,
         report_formats: list[str] | None = None,
+        alive_by_token: dict[str, str] | None = None,
+        alive_token_to_dir: dict[str, str] | None = None,
     ) -> str:
         """
         For sensitivity analyses.
@@ -5294,7 +5443,27 @@ onerror:
                 sim_outflag = f"_status/c_run_{model_type}_sa-{sa_id}_evt-{event_id}_complete.flag"
                 upstream_flag = prep_outflag if prepare_scenarios else setup_target_flag
 
-                snakefile_content += f'''rule {sim_rule_name}:
+                # v2 graceful-rerun: if this scenario is in the alive set, emit a
+                # wait-rule instead of the run-rule. The sensitivity sentinel
+                # rule_token convention (run_simulation_runner.py) is
+                # ``simulation_sa_{sa_id}_evt-{event_id}`` (literal hyphen). The
+                # wait-rule's ``--analysis-dir`` MUST be the per-sub-analysis dir
+                # (markers live under master/subanalyses/{id}/_status/, NOT the
+                # master dir — Spec D). Distinct concrete rule names mean no
+                # ``ruleorder`` is needed (unlike the multisim wildcard path).
+                _sentinel_token = f"simulation_sa_{sa_id}_evt-{event_id}"
+                if _sentinel_token in (alive_by_token or {}):
+                    snakefile_content += self._base_builder._emit_wait_for_sim_rule_block(
+                        rule_token=_sentinel_token,
+                        flag_output_path=sim_outflag,
+                        run_rule_inputs=[upstream_flag, f"_status/sa-{sa_id}_inputs.json"],
+                        wait_walltime_cap_min=sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
+                        analysis_dir_override=(alive_token_to_dir or {}).get(
+                            _sentinel_token, str(sub_analysis.analysis_paths.analysis_dir)
+                        ),
+                    )
+                else:
+                    snakefile_content += f'''rule {sim_rule_name}:
     input:
         "{upstream_flag}",
         "_status/sa-{sa_id}_inputs.json"
@@ -6191,6 +6360,29 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         conduit_emit = RuleSpec(**{**conduit_spec.__dict__, "renderer_module": "per_sim_conduit_flow"})
         return helpers + _emit_plot_rule(flood_emit, ctx) + _emit_plot_rule(conduit_emit, ctx)
 
+    def _reconcile_sensitivity_alive(self) -> tuple[dict[str, str], dict[str, str]]:
+        """Reconcile in-flight sensitivity sims across all sub-analysis dirs.
+
+        Sensitivity markers live under each sub-analysis's own ``analysis_dir``
+        (``master/subanalyses/{analysis_id}``), not the master dir — so the
+        master-dir reconcile would miss them (Spec D). This sweeps every
+        sub-analysis dir and returns two maps keyed by sentinel rule_token:
+        ``alive_by_token`` (token -> slurm_jobid) for the run-vs-wait branch in
+        :meth:`generate_master_snakefile_content`, and ``alive_token_to_dir``
+        (token -> sub-analysis dir str) so each wait-rule polls the directory
+        where its markers actually land.
+
+        Per sentinel-system-v2 Phase 2 (Spec 9 + Spec D).
+        """
+        alive_by_token: dict[str, str] = {}
+        alive_token_to_dir: dict[str, str] = {}
+        for _sub in self.sensitivity_analysis.sub_analyses.values():  # type: ignore[attr-defined]
+            _sub_dir = _sub.analysis_paths.analysis_dir
+            for _tok, _jid in self._base_builder._reconcile_inflight_submissions(analysis_dir=_sub_dir):
+                alive_by_token[_tok] = _jid
+                alive_token_to_dir[_tok] = str(_sub_dir)
+        return alive_by_token, alive_token_to_dir
+
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -6320,6 +6512,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
+            # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+            alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             # Generate master Snakefile
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
@@ -6335,6 +6529,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
+                alive_by_token=alive_by_token,
+                alive_token_to_dir=alive_token_to_dir,
             )
 
             master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -6384,6 +6580,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                     flush=True,
                 )
 
+            # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+            alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
             master_snakefile_content = self.generate_master_snakefile_content(
                 which=which,
                 compression_level=compression_level,
@@ -6398,6 +6596,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 override_clear_raw=override_clear_raw,
                 pickup_where_leftoff=pickup_where_leftoff,
                 report_formats=report_formats,
+                alive_by_token=alive_by_token,
+                alive_token_to_dir=alive_token_to_dir,
             )
 
             master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -6446,6 +6646,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 flush=True,
             )
 
+        # v2 graceful-rerun: reconcile per sub-analysis before build (Phase 2, Spec 9/D).
+        alive_by_token, alive_token_to_dir = self._reconcile_sensitivity_alive()
         # Generate master Snakefile with flattened hierarchy
         # (no nested Snakemake calls - all rules in one file)
         master_snakefile_content = self.generate_master_snakefile_content(
@@ -6462,6 +6664,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             override_clear_raw=override_clear_raw,
             pickup_where_leftoff=pickup_where_leftoff,
             report_formats=report_formats,
+            alive_by_token=alive_by_token,
+            alive_token_to_dir=alive_token_to_dir,
         )
 
         master_snakefile_path = self.master_analysis.analysis_paths.analysis_dir / "Snakefile"
