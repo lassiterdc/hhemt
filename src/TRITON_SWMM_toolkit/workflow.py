@@ -216,6 +216,10 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     "per_analysis_summary": {"matplotlib": ".html", "plotly": ".html"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
     "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
+    # Disk utilization is a table renderer — emits HTML unconditionally
+    # (no matplotlib raster branch). Matches per_analysis_summary /
+    # scenario_status_appendix / errors_and_warnings.
+    "disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 
@@ -1106,6 +1110,46 @@ class SnakemakeWorkflowBuilder:
         )
         return _emit_plot_rule(spec, ctx)
 
+    def _build_plot_rule_block_disk_utilization(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+        *,
+        ctx: RuleEmissionContext | None = None,
+    ) -> str:
+        """Emit the Snakemake rule for the Disk Utilization sidebar card.
+
+        Reads the analysis-level `_status/_du.json` written by Phase 1's
+        analysis-scope consolidate path; renders a compact HTML table.
+        """
+        if ctx is None:
+            ctx = self._make_rule_emission_context(
+                static_backend=self._get_report_cfg_static_backend()
+            )
+
+        spec = RuleSpec(
+            rule_name="plot_disk_utilization",
+            renderer_module="disk_utilization",
+            input_flags=(input_flag,),
+            output_path_template="plots/disk_utilization__OUTPUT_EXT__",
+            source_paths=(
+                {
+                    "path": "_status/_du.json",
+                    "variables": ["disk_utilization_bytes", "sub_path_breakdown"],
+                },
+            ),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/disk_utilization.rst",
+                "category": "System Information",
+                "labels": '{"figure": "Disk Utilization"}',
+            },
+            resources_yaml="mem_mb=1000, time_min=5",
+            log_path_template="logs/plots/disk_utilization.log",
+        )
+        return _emit_plot_rule(spec, ctx)
+
     def _build_process_rule_block(
         self,
         model_type: str,
@@ -1208,6 +1252,58 @@ rule consolidate:
             --which {which} \\
             --flag-output {{output}} \\
             --rule-name consolidate \\
+            > {{log}} 2>&1
+        """
+'''
+
+    def _build_consolidate_scenario_rule_block(
+        self,
+        *,
+        enabled_models: list[str],
+        config_args: str,
+        log_dir_str: str,
+        conda_env_path: str,
+        consolidate_scenario_resources: str,
+        compression_level: int,
+    ) -> str:
+        """Emit a single ``rule consolidate_scenario`` block (wildcarded on event_id).
+
+        Fans-in on every enabled model-type's ``d_process_{model_type}_evt-{event_id}_complete.flag``
+        for a given event_id and runs ``consolidate_workflow --event-id {event_id}`` which writes
+        the per-scenario DU sentinel at ``{scenario_dir}/_status/_du.json`` via
+        ``du_sentinels.compute_and_write_scope_sentinel`` (compare-and-write semantics; mtime
+        preserved when payload bytes are unchanged). The rule joins the existing
+        ``process_evt_{event_id}`` Snakemake group (see ``_build_process_rule_block:1116``) so it
+        co-schedules into the per-event SLURM allocation rather than submitting a separate sbatch.
+
+        The output declaration ``_status/f_consolidate_scenario_evt-{event_id}_complete.flag``
+        matches the existing letter-prefixed flag convention (``c_run_*``, ``d_process_*``,
+        ``e_consolidate_complete``). The DU sentinel itself is a secondary output so consumer
+        rules that declare it as ``input:`` get Snakemake-tracked mtime semantics.
+        """
+        input_flags = ", ".join(
+            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"'
+            for model_type in enabled_models
+        )
+        return f'''
+rule consolidate_scenario:
+    input: {input_flags}
+    output:
+        flag="_status/f_consolidate_scenario_evt-{{event_id}}_complete.flag",
+        du_sentinel="sims/{{event_id}}/_status/_du.json",
+    log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
+    group: "process_evt_{{event_id}}"
+    conda: "{conda_env_path}"
+    resources:
+{consolidate_scenario_resources}
+    shell:
+        """
+        {self.python_executable} -m TRITON_SWMM_toolkit.consolidate_workflow \\
+            {config_args} \\
+            --compression-level {compression_level} \\
+            --flag-output {{output.flag}} \\
+            --rule-name consolidate_scenario \\
+            --event-id {{wildcards.event_id}} \\
             > {{log}} 2>&1
         """
 '''
@@ -1444,7 +1540,8 @@ rule all:
         expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
+        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "plots/disk_utilization{_ext["disk_utilization"]}"{render_targets_in_rule_all},
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -1617,15 +1714,44 @@ rule run_{model_type}:
                     override_clear_raw=override_clear_raw,
                 )
 
+            # Per-scenario consolidate rule: fans-in on all enabled model_types' process flags
+            # for a given event_id and writes the per-scenario _du.json sentinel exactly once.
+            # Resource block is intentionally lightweight; SLURM grouping absorbs the wall-clock
+            # cost into the per-event process-rule allocation (see _build_process_rule_block).
+            consolidate_scenario_resources = self._build_resource_block(
+                partition=self.cfg_analysis.hpc_setup_and_analysis_processing_partition,
+                runtime_min=10,
+                mem_mb=2048,
+                nodes=1,
+                tasks=1,
+                cpus_per_task=1,
+            )
+            snakefile_content += self._build_consolidate_scenario_rule_block(
+                enabled_models=enabled_models,
+                config_args=config_args,
+                log_dir_str=log_dir_str,
+                conda_env_path=str(conda_env_path),
+                consolidate_scenario_resources=consolidate_scenario_resources,
+                compression_level=compression_level,
+            )
+
         # Consolidation rule depends on final output of each model type
         # Build list of all output flags from all enabled models
         consolidate_inputs = []
-        for model_type in enabled_models:
-            if process_timeseries:
-                flag_pattern = f"d_process_{model_type}_evt-{{event_id}}_complete.flag"
-            else:
+        if process_timeseries:
+            # Per-scenario consolidate rules (one per event_id) fan-in on the N
+            # per-model-type process flags AND write the per-scenario DU sentinel.
+            # The analysis-level consolidate waits for every per-scenario consolidate
+            # to finish — a K-input dependency instead of the prior N×K.
+            consolidate_inputs.append(
+                'expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)'
+            )
+        else:
+            # No per-scenario consolidate exists when process_timeseries is False;
+            # fall back to depending directly on the per-(event, model_type) run flags.
+            for model_type in enabled_models:
                 flag_pattern = f"c_run_{model_type}_evt-{{event_id}}_complete.flag"
-            consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
+                consolidate_inputs.append(f'expand("_status/{flag_pattern}", event_id=SIM_IDS)')
 
         # Join all input patterns
         consolidate_input_str = " + ".join(consolidate_inputs)
@@ -1644,6 +1770,7 @@ rule run_{model_type}:
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
         snakefile_content += self._build_plot_rule_block_errors_and_warnings()
+        snakefile_content += self._build_plot_rule_block_disk_utilization()
         snakefile_content += self._build_export_scenario_status_rule(
             input_flag="_status/e_consolidate_complete.flag",
         )
@@ -1662,6 +1789,7 @@ rule render_report:
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "plots/disk_utilization{_ext["disk_utilization"]}",
         "scenario_status.csv",
     output:
         "analysis_report.{{format}}"
@@ -4788,8 +4916,8 @@ exit $snakemake_status
                 f"rule delete_scenario_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n"
-                f"    shell:\n"
+                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
+                f'    shell:\n'
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_scenario_runner "\n'
                 f'        "--event-id {event_id} "\n'
                 f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -4803,8 +4931,8 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_scenario_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f"    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n"
-            f"    shell:\n"
+            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
+            f'    shell:\n'
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
         )
@@ -4834,8 +4962,8 @@ exit $snakemake_status
                 f"rule delete_subanalysis_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n"
-                f"    shell:\n"
+                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
+                f'    shell:\n'
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_runner "\n'
                 f'        "--sa-id {sa_id} "\n'
                 f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -4849,8 +4977,8 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_sa_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f"    resources: cpus_per_task=1, mem_mb=2048, runtime=60\n"
-            f"    shell:\n"
+            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
+            f'    shell:\n'
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
         )
@@ -4858,13 +4986,42 @@ exit $snakemake_status
         rule_all = f'rule all:\n    input:\n        "{consolidation_flag}"\n\n'
         return rule_all + "".join(rules)
 
-    def _submit_delete_snakemake(self, snakefile_path: Path, verbose: bool = True) -> dict:
+    def _resolve_delete_mode_from_method(
+        self,
+        method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None,
+    ) -> Literal["local", "slurm"]:
+        """Map ``analysis_config.multi_sim_run_method`` (or None) to delete-executor mode.
+
+        ``None`` or ``"local"`` → ``"local"``; ``"batch_job"`` or
+        ``"1_job_many_srun_tasks"`` → ``"slurm"``. The ``None`` branch covers
+        analyses whose ``cfg_analysis`` was loaded from a YAML that did not
+        explicitly set ``multi_sim_run_method`` — these are treated as
+        ``"local"`` by default, matching the pre-Phase-3 ``--cores 1`` behavior.
+        """
+        if method is None or method == "local":
+            return "local"
+        if method in ("batch_job", "1_job_many_srun_tasks"):
+            return "slurm"
+        raise ConfigurationError(
+            field="multi_sim_run_method",
+            message=f"Unrecognized multi_sim_run_method={method!r} for delete-executor resolution",
+        )
+
+    def _submit_delete_snakemake(
+        self,
+        snakefile_path: Path,
+        *,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+        verbose: bool = True,
+    ) -> dict:
         """Invoke the delete Snakefile via subprocess.
 
-        Local-only execution for Phase 2 — the delete workflow is light
-        (rm-tree per scenario / sub-analysis + write-flag) and does not
-        require SLURM. Future expansion to ``slurm`` execution is straightforward
-        but out of Phase 2 scope.
+        Per cleanup-rerun-delete-redesign Phase 2 + distributed-delete-and-du-
+        recording Phase 3: supports both local (``--cores N``) and slurm
+        (``--executor slurm --profile <config_dir>``) execution. Mode is
+        resolved from ``analysis_config.multi_sim_run_method`` unless an
+        explicit ``override_multi_sim_run_method`` is supplied (read-config-
+        when-None per the override-prefix convention stipulation).
         """
         analysis_dir = self.analysis_paths.analysis_dir
         snakemake_dir = analysis_dir / ".snakemake_delete"
@@ -4873,17 +5030,28 @@ exit $snakemake_status
         logs_dir.mkdir(parents=True, exist_ok=True)
         logfile = logs_dir / "snakemake_delete.log"
 
+        resolved_method = (
+            override_multi_sim_run_method
+            if override_multi_sim_run_method is not None
+            else self.cfg_analysis.multi_sim_run_method
+        )
+        executor_mode = self._resolve_delete_mode_from_method(resolved_method)
+
         cmd_args = self._get_snakemake_base_cmd() + [
             "--snakefile",
             str(snakefile_path),
             "--directory",
             str(snakemake_dir),
-            "--cores",
-            "1",
             "--rerun-triggers",
             "mtime",
             "input",
         ]
+        if executor_mode == "slurm":
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+            cmd_args += ["--executor", "slurm", "--profile", str(config_dir)]
+        else:
+            cmd_args += ["--cores", str(self.cfg_analysis.hpc_max_simultaneous_sims or 1)]
         if verbose:
             print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
         with open(logfile, "w") as log_f:
@@ -4902,7 +5070,12 @@ exit $snakemake_status
             "returncode": result.returncode,
         }
 
-    def submit_delete_workflow(self, *, override_in_flight: bool = False) -> dict:
+    def submit_delete_workflow(
+        self,
+        *,
+        override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> dict:
         """Generate and submit the distributed delete Snakefile (non-sensitivity).
 
         Per cleanup-rerun-delete-redesign Phase 2 + D-DeleteBoundary Option 1.
@@ -4913,13 +5086,17 @@ exit $snakemake_status
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
         snakefile_path.write_text(self._build_delete_snakefile_content())
-        return self._submit_delete_snakemake(snakefile_path)
+        return self._submit_delete_snakemake(
+            snakefile_path,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
     def submit_delete_workflow_sensitivity(
         self,
         *,
         sa_ids: list[str],
         override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
     ) -> dict:
         """Generate and submit the sensitivity-master delete Snakefile.
 
@@ -4930,7 +5107,10 @@ exit $snakemake_status
 
         snakefile_path = self.analysis_paths.analysis_dir / "Snakefile.delete"
         snakefile_path.write_text(self._build_delete_sensitivity_snakefile_content(sa_ids))
-        return self._submit_delete_snakemake(snakefile_path)
+        return self._submit_delete_snakemake(
+            snakefile_path,
+            override_multi_sim_run_method=override_multi_sim_run_method,
+        )
 
 
 class SensitivityAnalysisWorkflowBuilder:
@@ -4977,7 +5157,12 @@ class SensitivityAnalysisWorkflowBuilder:
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
 
-    def submit_delete_workflow_sensitivity(self, *, override_in_flight: bool = False) -> dict:
+    def submit_delete_workflow_sensitivity(
+        self,
+        *,
+        override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> dict:
         """Submit the distributed sensitivity-master delete workflow.
 
         Thin facade: derives the ``sa_ids`` list from
@@ -4993,6 +5178,7 @@ class SensitivityAnalysisWorkflowBuilder:
         return self._base_builder.submit_delete_workflow_sensitivity(
             sa_ids=sa_ids,
             override_in_flight=override_in_flight,
+            override_multi_sim_run_method=override_multi_sim_run_method,
         )
 
     def generate_master_snakefile_content(
@@ -5231,6 +5417,7 @@ onerror:
         rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
@@ -5612,6 +5799,9 @@ onerror:
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
             input_flag="_status/f_consolidate_master_complete.flag"
         )
+        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
         snakefile_content += self._base_builder._build_export_scenario_status_rule(
             input_flag="_status/f_consolidate_master_complete.flag",
         )
@@ -5886,6 +6076,7 @@ onerror:
         rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
         if sa_event_pairs_sa:
@@ -6135,6 +6326,9 @@ onerror:
             input_flag="_status/f_consolidate_master_complete.flag"
         )
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
             input_flag="_status/f_consolidate_master_complete.flag"
         )
         snakefile_content += self._base_builder._build_export_scenario_status_rule(

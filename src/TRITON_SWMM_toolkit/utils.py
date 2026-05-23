@@ -72,10 +72,18 @@ def fast_rmtree(
     *,
     missing_ok: bool = True,
     onerror: Optional[Callable] = None,
+    analysis_dir: Optional[str | Path] = None,
 ) -> None:
     """Fast, cross-platform directory delete.
 
     Uses OS-native delete commands for speed; falls back to shutil.rmtree.
+
+    When `analysis_dir` is provided AND `path` is not itself the analysis_dir,
+    `du_sentinels.restamp_parent_sentinels(path, analysis_dir=...)` is invoked
+    after the delete completes so parent-scope DU sentinels stay accurate. The
+    `path == analysis_dir` short-circuit converts the EXEMPT-site convention
+    (root-wipe — re-stamping a directory being deleted is meaningless) from a
+    prose comment into grep-detectable code (SE F-I Flag 2).
 
     Parameters
     ----------
@@ -85,6 +93,11 @@ def fast_rmtree(
         If True, silently return when path does not exist.
     onerror : callable, optional
         Error handler passed to shutil.rmtree (fallback only).
+    analysis_dir : str | Path, optional
+        Root of the analysis tree this delete is scoped to. When provided,
+        parent-scope DU sentinels under `analysis_dir` are re-stamped after
+        the delete; when None, no re-stamping occurs (the caller is responsible
+        for sentinel accuracy out-of-band).
     """
     path = Path(path)
 
@@ -95,6 +108,7 @@ def fast_rmtree(
 
     if path.is_symlink() or path.is_file():
         path.unlink()
+        _restamp_after_mutation(path, analysis_dir)
         return
 
     try:
@@ -112,9 +126,35 @@ def fast_rmtree(
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        return
     except Exception:
         shutil.rmtree(path, onerror=onerror)
+
+    _restamp_after_mutation(path, analysis_dir)
+
+
+def _restamp_after_mutation(
+    path: Path, analysis_dir: Optional[str | Path]
+) -> None:
+    """Re-stamp parent DU sentinels for `path` under `analysis_dir`.
+
+    No-op when `analysis_dir` is None, when `path == analysis_dir` (root-wipe
+    short-circuit per SE F-I Flag 2), or when path resolution fails. Imports
+    `restamp_parent_sentinels` lazily to keep `utils.py` free of a top-level
+    dependency on `du_sentinels.py`.
+    """
+    if analysis_dir is None:
+        return
+    try:
+        path_resolved = Path(path).resolve()
+        analysis_resolved = Path(analysis_dir).resolve()
+    except OSError:
+        return
+    if path_resolved == analysis_resolved:
+        return
+    if not analysis_resolved.exists():
+        return
+    from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+    restamp_parent_sentinels(Path(path), analysis_dir=analysis_resolved)
 
 
 def fix_line_endings(file_path, target_ending="\n"):

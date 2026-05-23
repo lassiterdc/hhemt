@@ -300,6 +300,12 @@ def main() -> int:
         default=None,
         help="Sub-analysis id for the flag sidecar payload (sensitivity per-sa consolidate)",
     )
+    parser.add_argument(
+        "--event-id",
+        type=str,
+        default=None,
+        help="Event id for the flag sidecar payload AND the per-scenario consolidate dispatch arm (multisim per-scenario consolidate; writes {scenario_dir}/_status/_du.json via du_sentinels.compute_and_write_scope_sentinel).",
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -334,6 +340,30 @@ def main() -> int:
             skip_log_update=False,
             is_main_orchestrator=False,
         )
+
+        # Per-scenario dispatch — writes {scenario_dir}/_status/_du.json via the DU sentinel
+        # helper. Skips the analysis-level all_sims_run / all_timeseries_processed checks
+        # below because those are analysis-scope invariants that would spuriously fail
+        # for a per-scenario invocation while sibling scenarios are still in flight.
+        if args.event_id is not None:
+            from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+            scenario_dir = analysis.analysis_paths.analysis_dir / "sims" / args.event_id
+            if not scenario_dir.exists():
+                logger.error(f"Per-scenario consolidate target does not exist: {scenario_dir}")
+                return 1
+            try:
+                compute_and_write_scope_sentinel(
+                    scenario_dir,
+                    scope="scenario",
+                    include_breakdown=True,
+                )
+                logger.info(f"Per-scenario DU sentinel written at {scenario_dir}/_status/_du.json")
+            except Exception as e:
+                logger.error(f"Failed to write per-scenario DU sentinel: {e}")
+                logger.error(traceback.format_exc())
+                return 1
+            _emit_runner_flag(args)
+            return 0
 
         # Phase 3a: Verify all simulations completed successfully
         logger.info("Verifying simulation completion status...")
