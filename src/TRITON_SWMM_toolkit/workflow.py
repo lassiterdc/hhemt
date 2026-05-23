@@ -217,6 +217,10 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     "per_analysis_summary": {"matplotlib": ".html", "plotly": ".html"},
     "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
     "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
+    # Disk utilization is a table renderer — emits HTML unconditionally
+    # (no matplotlib raster branch). Matches per_analysis_summary /
+    # scenario_status_appendix / errors_and_warnings.
+    "disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 
@@ -1080,6 +1084,46 @@ class SnakemakeWorkflowBuilder:
         )
         return _emit_plot_rule(spec, ctx)
 
+    def _build_plot_rule_block_disk_utilization(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+        *,
+        ctx: RuleEmissionContext | None = None,
+    ) -> str:
+        """Emit the Snakemake rule for the Disk Utilization sidebar card.
+
+        Reads the analysis-level `_status/_du.json` written by Phase 1's
+        analysis-scope consolidate path; renders a compact HTML table.
+        """
+        if ctx is None:
+            ctx = self._make_rule_emission_context(
+                static_backend=self._get_report_cfg_static_backend()
+            )
+
+        spec = RuleSpec(
+            rule_name="plot_disk_utilization",
+            renderer_module="disk_utilization",
+            input_flags=(input_flag,),
+            output_path_template="plots/disk_utilization__OUTPUT_EXT__",
+            source_paths=(
+                {
+                    "path": "_status/_du.json",
+                    "variables": ["disk_utilization_bytes", "sub_path_breakdown"],
+                },
+            ),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/disk_utilization.rst",
+                "category": "System Information",
+                "labels": '{"figure": "Disk Utilization"}',
+            },
+            resources_yaml="mem_mb=1000, time_min=5",
+            log_path_template="logs/plots/disk_utilization.log",
+        )
+        return _emit_plot_rule(spec, ctx)
+
     def _build_process_rule_block(
         self,
         model_type: str,
@@ -1471,7 +1515,8 @@ rule all:
         expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
+        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "plots/disk_utilization{_ext["disk_utilization"]}"{render_targets_in_rule_all},
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -1671,6 +1716,7 @@ rule run_{model_type}:
         snakefile_content += self._build_plot_rule_block_per_analysis_summary()
         snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
         snakefile_content += self._build_plot_rule_block_errors_and_warnings()
+        snakefile_content += self._build_plot_rule_block_disk_utilization()
         snakefile_content += self._build_export_scenario_status_rule(
             input_flag="_status/e_consolidate_complete.flag",
         )
@@ -1689,6 +1735,7 @@ rule render_report:
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "plots/disk_utilization{_ext["disk_utilization"]}",
         "scenario_status.csv",
     output:
         "analysis_report.{{format}}"
@@ -5127,6 +5174,7 @@ onerror:
         rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
@@ -5488,6 +5536,9 @@ onerror:
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
             input_flag="_status/f_consolidate_master_complete.flag"
         )
+        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
         snakefile_content += self._base_builder._build_export_scenario_status_rule(
             input_flag="_status/f_consolidate_master_complete.flag",
         )
@@ -5760,6 +5811,7 @@ onerror:
         rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
         if sa_event_pairs_sa:
@@ -6009,6 +6061,9 @@ onerror:
             input_flag="_status/f_consolidate_master_complete.flag"
         )
         snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
+            input_flag="_status/f_consolidate_master_complete.flag"
+        )
+        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
             input_flag="_status/f_consolidate_master_complete.flag"
         )
         snakefile_content += self._base_builder._build_export_scenario_status_rule(

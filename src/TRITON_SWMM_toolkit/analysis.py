@@ -3124,6 +3124,18 @@ class TRITONSWMM_analysis:
         return df[ordered]
 
     @property
+    def disk_utilization_bytes(self) -> int | None:
+        """Return the analysis-level DU sentinel value, or None if absent."""
+        from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+
+        payload = read_du_sentinel(
+            self.analysis_paths.analysis_dir / "_status" / "_du.json"
+        )
+        if payload is None or "disk_utilization_bytes" not in payload:
+            return None
+        return int(payload["disk_utilization_bytes"])
+
+    @property
     def df_status(self):
         """
         Get status DataFrame for all scenarios in the analysis.
@@ -3170,6 +3182,7 @@ class TRITONSWMM_analysis:
             scen.log.refresh()
             scenario_setup = scen.log.scenario_creation_complete.get() is True
             scenario_dir = str(scen.log.logfile.parent)
+            scenario_du = scen.disk_utilization_bytes
 
             weather_row = self.df_sims.loc[event_iloc].to_dict()
 
@@ -3180,6 +3193,7 @@ class TRITONSWMM_analysis:
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
                 row["scenario_directory"] = scenario_dir
+                row["disk_utilization_bytes"] = scenario_du
 
                 # Provide model-specific expected resources to downstream validators.
                 if model_type == "swmm":

@@ -309,6 +309,18 @@ class TRITONSWMM_scenario:
         return log
 
     @property
+    def disk_utilization_bytes(self) -> int | None:
+        """Return the scenario-level DU sentinel value, or None if absent."""
+        from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+
+        payload = read_du_sentinel(
+            self.scen_paths.sim_folder / "_status" / "_du.json"
+        )
+        if payload is None or "disk_utilization_bytes" not in payload:
+            return None
+        return int(payload["disk_utilization_bytes"])
+
+    @property
     def model_types_enabled(self) -> list[str]:
         """Get list of enabled model types from system config."""
         enabled = []
