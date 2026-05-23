@@ -26,6 +26,7 @@ Exit codes:
 """
 
 import argparse
+import dataclasses
 import datetime
 import json
 import logging
@@ -44,6 +45,37 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 logger = logging.getLogger(__name__)
+
+
+@dataclasses.dataclass(frozen=True)
+class _MarkerCtx:
+    """Per-runner-invocation context for v2 sentinel state-machine marker writes."""
+
+    jobid: str | None
+    rule_token: str
+    payload_base: dict
+    failed_dir: Path
+    completed_dir: Path
+
+
+def _write_failed_marker(ctx: _MarkerCtx | None) -> None:
+    """Write _status/_failed/{rule_token}.json before an early-exit return 1.
+
+    No-op when ctx is None or ctx.jobid is falsy (non-SLURM execution).
+    The companion finally block in main() checks marker presence and
+    skips the _completed/ write when this helper has already fired.
+    """
+    if ctx is None or not ctx.jobid:
+        return
+    payload = {
+        **ctx.payload_base,
+        "status": "failed",
+        "finished_at": datetime.datetime.now().isoformat(),
+    }
+    failed_marker = ctx.failed_dir / f"{ctx.rule_token}.json"
+    failed_tmp = failed_marker.with_suffix(".json.tmp")
+    failed_tmp.write_text(json.dumps(payload))
+    os.replace(failed_tmp, failed_marker)
 
 
 def main():
@@ -131,6 +163,7 @@ def main():
     # but have already been validated at config load against
     # ^[A-Za-z0-9_.]+$, so no re-validation is needed here.
     _sentinel: Path | None = None
+    _marker_ctx: _MarkerCtx | None = None
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -175,8 +208,10 @@ def main():
             _subdir.mkdir(parents=True, exist_ok=True)
             if args.sa_id:
                 _sentinel = _subdir / f"simulation_sa_{args.sa_id}_evt-{event_id}.json"
+                _rule_token = f"simulation_sa_{args.sa_id}_evt-{event_id}"
             else:
                 _sentinel = _subdir / f"run_{model_type}_evt-{event_id}.json"
+                _rule_token = f"run_{model_type}_evt-{event_id}"
             _tmp = _sentinel.with_suffix(".json.tmp")
             _tmp.write_text(
                 json.dumps(
@@ -191,11 +226,30 @@ def main():
                 )
             )
             os.replace(_tmp, _sentinel)
+            _completed_dir = Path(analysis_dir) / "_status" / "_completed"
+            _failed_dir = Path(analysis_dir) / "_status" / "_failed"
+            _completed_dir.mkdir(parents=True, exist_ok=True)
+            _failed_dir.mkdir(parents=True, exist_ok=True)
+            _marker_payload_base = {
+                "slurm_jobid": _jobid,
+                "run_uuid": os.environ.get("SLURM_JOB_NAME"),
+                "sa_id": args.sa_id,
+                "model_type": model_type,
+                "event_id": event_id,
+            }
+            _marker_ctx = _MarkerCtx(
+                jobid=_jobid,
+                rule_token=_rule_token,
+                payload_base=_marker_payload_base,
+                failed_dir=_failed_dir,
+                completed_dir=_completed_dir,
+            )
 
         # Verify scenario is prepared (check scenario prep log)
         scenario.log.refresh()
         if not scenario.log.scenario_creation_complete.get():
             logger.error(f"[{event_iloc}] Scenario not prepared. Cannot run simulation.")
+            _write_failed_marker(_marker_ctx)
             return 1
 
         # Get model-specific log for this simulation
@@ -205,20 +259,25 @@ def main():
         if model_type == "triton":
             if not hasattr(system, "compilation_triton_only_successful"):
                 logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
+                _write_failed_marker(_marker_ctx)
                 return 1
             if not system.compilation_triton_only_successful:
                 logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
+                _write_failed_marker(_marker_ctx)
                 return 1
         elif model_type == "tritonswmm":
             if not system.compilation_successful:
                 logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
+                _write_failed_marker(_marker_ctx)
                 return 1
         elif model_type == "swmm":
             if not hasattr(system, "compilation_swmm_successful"):
                 logger.error(f"[{event_iloc}] SWMM compilation check not implemented")
+                _write_failed_marker(_marker_ctx)
                 return 1
             if not system.compilation_swmm_successful:
                 logger.error(f"[{event_iloc}] SWMM has not been compiled")
+                _write_failed_marker(_marker_ctx)
                 return 1
 
         # Get the run object and prepare the simulation command
@@ -244,6 +303,7 @@ def main():
         cmd, env, model_logfile, sim_start_reporting_tstep = simprep_result
         if model_logfile is None:
             logger.error(f"[{event_iloc}] Missing logfile path for model_type={model_type}")
+            _write_failed_marker(_marker_ctx)
             return 1
 
         # Launch the executable (not the runner!)
@@ -285,6 +345,7 @@ def main():
         # Verify completion via log file check (no refresh needed - we'll check the log file directly)
         if not scenario.run.model_run_completed(model_type):
             logger.error(f"[{event_iloc}] Simulation did not complete successfully")
+            _write_failed_marker(_marker_ctx)
             return 1
 
         logger.info(f"[{event_iloc}] Simulation completed successfully")
@@ -294,6 +355,7 @@ def main():
     except Exception as e:
         logger.error(f"Exception occurred during simulation execution: {e}")
         logger.error(traceback.format_exc())
+        _write_failed_marker(_marker_ctx)
         return 1
     finally:
         # Per the R2 reconciliation refinement: any Python-side termination
@@ -301,6 +363,22 @@ def main():
         # the next driver does not block on a zombie. The sentinel only
         # legitimately survives when the OS-level worker process dies
         # without running this finally (SLURM kill, hardware fault).
+        # If neither completed nor failed marker has been written yet, this
+        # is a clean return path — write the completed marker. The explicit-
+        # failure path above writes _failed_ before returning so this branch
+        # is a no-op there.
+        if _marker_ctx is not None and _marker_ctx.jobid:
+            _completed_marker = _marker_ctx.completed_dir / f"{_marker_ctx.rule_token}.json"
+            _failed_marker = _marker_ctx.failed_dir / f"{_marker_ctx.rule_token}.json"
+            if not _completed_marker.exists() and not _failed_marker.exists():
+                _payload = {
+                    **_marker_ctx.payload_base,
+                    "status": "completed",
+                    "finished_at": datetime.datetime.now().isoformat(),
+                }
+                _completed_tmp = _completed_marker.with_suffix(".json.tmp")
+                _completed_tmp.write_text(json.dumps(_payload))
+                os.replace(_completed_tmp, _completed_marker)
         if _sentinel is not None:
             _sentinel.unlink(missing_ok=True)
 
