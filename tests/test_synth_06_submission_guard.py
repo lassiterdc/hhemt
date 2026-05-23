@@ -329,3 +329,100 @@ def test_snakefile_with_wait_rule_parses_without_ambiguity(synthetic_multisim_bu
     assert "AmbiguousRuleException" not in combined, combined[-2000:]
     # ruleorder must select the wait-rule as the producer of the contested flag.
     assert sanitized in combined, combined[-2000:]
+
+
+def test_force_rerun_does_not_touch_submitted_sentinels(synthetic_multisim_builder):
+    """Phase 4 (R10): override_force_rerun='all' deletes top-level _status/*.flag
+    completion markers but MUST NOT delete _status/_submitted/*.json sentinels nor
+    any v2 _status/_completed/ or _status/_failed/ marker. Exercises the public
+    _apply_force_rerun('all') integration path; locks the top-level *.flag glob in
+    workflow.py::_delete_flags_for_force_rerun against a future '*.json'-extending
+    or recursive 'fix' that would silently break v2 wait-rule tracking.
+    """
+    b = synthetic_multisim_builder
+    analysis_dir = b.analysis_paths.analysis_dir
+    submitted = _write_sentinel(analysis_dir, "run_tritonswmm_evt-test", "12345")
+    flag = analysis_dir / "_status" / "c_run_tritonswmm_evt-test_complete.flag"
+    flag.parent.mkdir(parents=True, exist_ok=True)
+    flag.touch()
+    completed_dir = analysis_dir / "_status" / "_completed"
+    completed_dir.mkdir(parents=True, exist_ok=True)
+    completed = completed_dir / "run_tritonswmm_evt-test.json"
+    completed.write_text(json.dumps({"slurm_jobid": "12345", "status": "completed"}))
+
+    # Hermetic cleanup: the synth-multisim case dir is shared with the
+    # session-scoped `synthetic_multisim_completed` fixture, so any artifact
+    # left here leaks into other tests' _status/ view.
+    try:
+        b.analysis._apply_force_rerun("all")
+
+        assert not flag.exists(), "force-rerun 'all' must delete the completion flag (v1 behavior preserved)"
+        assert submitted.exists(), "force-rerun must NOT delete _status/_submitted/*.json sentinels (R10)"
+        assert completed.exists(), "force-rerun must NOT delete _status/_completed/*.json v2 markers (R10)"
+    finally:
+        for p in (flag, submitted, completed):
+            p.unlink(missing_ok=True)
+
+
+def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_builder):
+    """Phase 4 (R10): _delete_flags_for_force_rerun uses Path.glob (non-recursive),
+    NOT Path.rglob — a .flag nested under a _status subdirectory MUST survive a
+    scope='all' force-rerun. Locks against a future '**/*.flag' change that would
+    reach into _submitted/_completed/_failed/. Tested directly on the helper so the
+    assertion isolates the glob behavior from log-invalidation orchestration.
+    """
+    from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+    b = synthetic_multisim_builder
+    status_dir = b.analysis_paths.analysis_dir / "_status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    top_flag = status_dir / "c_run_tritonswmm_evt-test_complete.flag"
+    top_flag.touch()
+    nested_dir = status_dir / "_submitted"
+    nested_dir.mkdir(parents=True, exist_ok=True)
+    nested_flag = nested_dir / "should_survive.flag"
+    nested_flag.touch()
+
+    try:
+        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
+
+        assert not top_flag.exists(), "top-level _status/*.flag must be deleted by scope='all'"
+        assert nested_flag.exists(), "nested _status/**/*.flag must survive — glob is non-recursive (R10)"
+    finally:
+        for p in (top_flag, nested_flag):
+            p.unlink(missing_ok=True)
+
+
+def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multisim_builder):
+    """Phase 4 (R10): scope='sa' force-rerun deletes only delimiter-anchored
+    *sa-{id}_*.flag / *sa-{id}.flag completion markers and MUST NOT delete
+    _status/_submitted/*.json sentinels. Also locks the delimiter anchoring so
+    sa-0 does not false-match sa-10. Tested directly on _delete_flags_for_force_rerun
+    because the public _apply_force_rerun(sa-scope) entry requires
+    toggle_sensitivity_analysis=True; the regression target is the glob, which is
+    analysis-type-agnostic.
+    """
+    from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+    b = synthetic_multisim_builder
+    analysis_dir = b.analysis_paths.analysis_dir
+    submitted = _write_sentinel(analysis_dir, "simulation_sa_0_evt-test", "55501")
+    status_dir = analysis_dir / "_status"
+    status_dir.mkdir(parents=True, exist_ok=True)
+    sa_flag = status_dir / "e_consolidate_sa-0_complete.flag"
+    sa_flag.touch()
+    other_sa_flag = status_dir / "e_consolidate_sa-10_complete.flag"
+    other_sa_flag.touch()
+
+    try:
+        b._delete_flags_for_force_rerun(ResolvedForceRerunSpec(scope="sa", tokens=("0",)))
+
+        assert not sa_flag.exists(), "sa-0 flag must be deleted by scope='sa' tokens=('0',)"
+        assert other_sa_flag.exists(), "sa-10 must NOT be matched by sa-0 (delimiter-anchored glob)"
+        assert submitted.exists(), "force-rerun must NOT delete _status/_submitted/*.json sentinels (R10)"
+    finally:
+        # other_sa_flag is a top-level *.flag with no sidecar — leaking it
+        # breaks test_synth_flag_writes::test_run_emits_flag_and_sidecar, which
+        # asserts every _status/*.flag in the shared case dir has a sidecar.
+        for p in (sa_flag, other_sa_flag, submitted):
+            p.unlink(missing_ok=True)
