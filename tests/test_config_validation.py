@@ -23,9 +23,7 @@ def _minimal_system_config_dict(tmp_path: Path) -> dict:
         "TRITONSWMM_software_directory": str(tmp_path / "triton"),
         "TRITONSWMM_git_URL": "https://example.com/triton.git",
         "SWMM_git_URL": "https://example.com/swmm.git",
-        "triton_swmm_configuration_template": str(
-            _touch(tmp_path / "inputs" / "TRITONSWMM.cfg")
-        ),
+        "triton_swmm_configuration_template": str(_touch(tmp_path / "inputs" / "TRITONSWMM.cfg")),
         "toggle_use_swmm_for_hydrology": False,
         "toggle_use_constant_mannings": True,
         "toggle_triton_model": False,
@@ -144,12 +142,8 @@ def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
     from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 
     csv_path = tmp_path / "sa.csv"
-    pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(
-        csv_path, index=False
-    )
-    cfg = report_config(
-        sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"])
-    )
+    pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(csv_path, index=False)
+    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
     with pytest.raises(ConfigurationError) as exc:
         validate_sensitivity_independent_vars(cfg, csv_path)
     assert "missing_col" in str(exc.value)
@@ -168,9 +162,7 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
 
     csv_path = tmp_path / "sa.csv"
     pd.DataFrame({"bad name": [1, 2]}).to_csv(csv_path, index=False)
-    cfg = report_config(
-        sensitivity=SensitivityReportConfig(independent_vars=["bad name"])
-    )
+    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["bad name"]))
     with pytest.raises(ConfigurationError, match="charset"):
         validate_sensitivity_independent_vars(cfg, csv_path)
 
@@ -342,4 +334,35 @@ def test_force_rerun_rejects_invalid_dict_shapes(value, match, tmp_path: Path):
     cfg["sensitivity_analysis"] = str(_touch(tmp_path / "inputs" / "sensitivity.csv"))
     cfg["force_rerun"] = value
     with pytest.raises(ValidationError, match=match):
+        analysis_config.model_validate(cfg)
+
+
+@pytest.mark.parametrize(
+    "value,should_raise",
+    [
+        (60, False),
+        (480, False),
+        (10080, False),
+        (59, True),
+        (10081, True),
+    ],
+)
+def test_hpc_max_wait_for_inflight_min_field_bounds(value, should_raise, tmp_path: Path):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["hpc_max_wait_for_inflight_min"] = value
+    if should_raise:
+        with pytest.raises(ValidationError, match="hpc_max_wait_for_inflight_min"):
+            analysis_config.model_validate(cfg)
+    else:
+        result = analysis_config.model_validate(cfg)
+        assert result.hpc_max_wait_for_inflight_min == value
+
+
+def test_hpc_max_wait_for_inflight_min_warns_when_less_than_total_job_duration(
+    tmp_path: Path,
+):
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["hpc_total_job_duration_min"] = 720
+    cfg["hpc_max_wait_for_inflight_min"] = 120
+    with pytest.warns(UserWarning, match="hpc_max_wait_for_inflight_min"):
         analysis_config.model_validate(cfg)
