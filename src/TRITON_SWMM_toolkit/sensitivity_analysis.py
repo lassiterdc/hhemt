@@ -437,8 +437,10 @@ class TRITONSWMM_sensitivity_analysis:
         # invalidation). "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
         from TRITON_SWMM_toolkit.utils import fast_rmtree as _fast_rmtree
+        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
 
-        status_dir = self.master_analysis.analysis_paths.analysis_dir / "_status"
+        master_analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        status_dir = master_analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
@@ -456,15 +458,18 @@ class TRITONSWMM_sensitivity_analysis:
                     continue
                 _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
                 if _sub_zarr is not None and _sub_zarr.exists():
-                    _fast_rmtree(_sub_zarr)
+                    _fast_rmtree(_sub_zarr, analysis_dir=master_analysis_dir)  # PATTERN A
             _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
             if _master_zarr is not None and _master_zarr.exists():
-                _fast_rmtree(_master_zarr)
+                _fast_rmtree(_master_zarr, analysis_dir=master_analysis_dir)  # PATTERN A
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
-            (self.master_analysis.analysis_paths.analysis_dir / "analysis_report.html").unlink(missing_ok=True)
-            (self.master_analysis.analysis_paths.analysis_dir / "analysis_report.zip").unlink(missing_ok=True)
+            _report_html = master_analysis_dir / "analysis_report.html"
+            _report_zip = master_analysis_dir / "analysis_report.zip"
+            _report_html.unlink(missing_ok=True)
+            _report_zip.unlink(missing_ok=True)
+            restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
@@ -1135,13 +1140,14 @@ class TRITONSWMM_sensitivity_analysis:
                 "cleanup_orphan_subanalysis_dirs called with dry_run=False but "
                 "force=False. Pass force=True to perform deletion."
             )
+        master_analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         deleted: list[Path] = []
         failed: list[tuple[Path, Exception]] = []
         for p in orphans:
             if verbose:
                 print(f"[cleanup-orphans] Deleting {p}", flush=True)
             try:
-                fast_rmtree(p)
+                fast_rmtree(p, analysis_dir=master_analysis_dir)  # PATTERN A
                 deleted.append(p)
             except Exception as exc:
                 failed.append((p, exc))
@@ -1281,10 +1287,11 @@ class TRITONSWMM_sensitivity_analysis:
             raise ValueError(
                 "cleanup_all_orphans called with dry_run=False but force=False. Pass force=True to perform deletion."
             )
+        master_analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         for p in result["dirs"]:
             if verbose:
                 print(f"[cleanup-orphans] Deleting dir {p}", flush=True)
-            fast_rmtree(p)
+            fast_rmtree(p, analysis_dir=master_analysis_dir)  # PATTERN A
         for p in result["status_flags"]:
             if verbose:
                 print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
@@ -1299,7 +1306,7 @@ class TRITONSWMM_sensitivity_analysis:
                         f"[cleanup-orphans] Deleting sensitivity_datatree.zarr (rebuild on next run): {zarr_path}",
                         flush=True,
                     )
-                fast_rmtree(zarr_path)
+                fast_rmtree(zarr_path, analysis_dir=master_analysis_dir)  # PATTERN A
                 result["sensitivity_datatree_removed"] = True
             master_flag = self.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag"
             if master_flag.exists():

@@ -1326,3 +1326,61 @@ def assert_rerun_trigger_correctness(
                 f"removed scenario {removed_key!r}: orphan file {path} was re-touched "
                 f"by rerun (mtime {before_mtime} -> {path.stat().st_mtime})"
             )
+
+
+def assert_du_sentinel_present(
+    scope_dir: Path,
+    *,
+    expected_min_bytes: int | None = None,
+) -> None:
+    """Assert that ``{scope_dir}/_status/_du.json`` exists, is parseable, and reports
+    at least ``expected_min_bytes`` of disk utilization (when provided).
+
+    Used by Phase 1 V-P1.3 and Phase 2 V-P2.4 per F-I Flag 8 / D6 standardized-assertion
+    preference — keeps DU sentinel test assertions in the toolkit's helper layer rather
+    than scattered inline ``stat`` / ``json.loads`` calls.
+    """
+    import json
+    sentinel = scope_dir / "_status" / "_du.json"
+    if not sentinel.exists():
+        raise AssertionError(f"DU sentinel missing at {sentinel}")
+    try:
+        payload = json.loads(sentinel.read_text())
+    except (OSError, ValueError) as e:
+        raise AssertionError(f"DU sentinel at {sentinel} is unparseable: {e}") from e
+    if "disk_utilization_bytes" not in payload:
+        raise AssertionError(
+            f"DU sentinel at {sentinel} is missing the disk_utilization_bytes field: {payload!r}"
+        )
+    if expected_min_bytes is not None:
+        actual = int(payload["disk_utilization_bytes"])
+        if actual < expected_min_bytes:
+            raise AssertionError(
+                f"DU sentinel at {sentinel} reports disk_utilization_bytes={actual}, "
+                f"below expected_min_bytes={expected_min_bytes}"
+            )
+
+
+def assert_du_mtime_preserved(
+    scope_dir: Path,
+    *,
+    prior_mtime: float,
+) -> None:
+    """Assert that ``{scope_dir}/_status/_du.json``'s mtime is unchanged from ``prior_mtime``.
+
+    Used by V-P1.3 to verify the compare-and-write contract preserves mtime across
+    idempotent workflow re-invocations. Captures the file's current ``st_mtime`` and
+    compares for exact equality to the prior value. Any drift fails the assertion —
+    the contract is bit-for-bit mtime preservation, not approximate-time preservation.
+    """
+    sentinel = scope_dir / "_status" / "_du.json"
+    if not sentinel.exists():
+        raise AssertionError(
+            f"DU sentinel missing at {sentinel} during mtime-preservation check"
+        )
+    current_mtime = sentinel.stat().st_mtime
+    if current_mtime != prior_mtime:
+        raise AssertionError(
+            f"DU sentinel at {sentinel} mtime advanced: prior={prior_mtime} "
+            f"current={current_mtime} (compare-and-write contract violated)"
+        )
