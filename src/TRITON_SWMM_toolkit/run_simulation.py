@@ -634,9 +634,10 @@ class TRITONSWMM_run:
                 #
                 # - "gres" mode (UVA): --ntasks-per-gpu=1
                 #   Same flag family as the Snakemake executor's sbatch
-                #   --ntasks-per-gpu=1 (submit_string.py:79-91). Redundant
-                #   with SLURM_NTASKS_PER_GPU=1 inherited from batch env, but
-                #   kept as defense-in-depth for per-task GPU isolation
+                #   --ntasks-per-gpu=1 (submit_string.py:79-91). This is the
+                #   SOLE task-count driver for the gres branch: the gres srun
+                #   below carries NO explicit --ntasks, so --ntasks-per-gpu=1
+                #   is load-bearing — it expands to one task per inherited GPU
                 #   (triggers tres_bind=gres/gpu:single:1). --gpus-per-task
                 #   MUST NOT be used here — it conflicts with the inherited
                 #   SLURM_NTASKS_PER_GPU (fatal in SLURM).
@@ -646,12 +647,23 @@ class TRITONSWMM_run:
                 gpu_alloc_mode = self._scenario._system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
                 if gpu_alloc_mode == "gpus":
                     gpu_bind_flag = "--gpus-per-task=1 "
+                    # Frontier: --gpus-per-task=1 honors --ntasks=N exactly; the
+                    # whole-node parent would otherwise over-expand --ntasks-per-gpu
+                    # to the full node GPU count, so clamp with explicit --ntasks.
+                    ntasks_flag = f"--ntasks={n_gpus} "
                 else:
                     gpu_bind_flag = "--ntasks-per-gpu=1 "
+                    # UVA gres mode: the parent batch step holds exactly N requested
+                    # GPUs and carries --ntasks-per-gpu=1. Dropping the explicit
+                    # --ntasks lets the step inherit ntasks_per_tres=1 and expand to
+                    # N (one task per inherited GPU). An explicit --ntasks=N collides
+                    # with the 1-task batch step ("More processors requested than
+                    # permitted"). Empirically confirmed on UVA gpu-a6000 (2026-05-23).
+                    ntasks_flag = ""
                 launch_cmd_str = (
                     f"srun "
                     f"-N {n_nodes_per_sim} "
-                    f"--ntasks={n_gpus} "
+                    f"{ntasks_flag}"
                     f"--cpus-per-task={n_omp_threads} "
                     f"{gpu_bind_flag}"
                     "--cpu-bind=cores "
