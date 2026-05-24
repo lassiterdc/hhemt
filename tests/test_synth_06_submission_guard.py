@@ -564,3 +564,47 @@ def test_max_plausible_job_lifetime_never_below_walltime(synthetic_multisim_buil
     derived = w._max_plausible_job_lifetime_min(cfg, slack_min=30)
     assert derived == cfg.hpc_total_job_duration_min + 30
     assert derived >= cfg.hpc_total_job_duration_min
+
+
+def test_prune_settled_markers_lists_and_unlinks_only_settled(synth_multi_sim_analysis):
+    """Phase 3 (R9): a marker whose _submitted/ sibling is GONE is settled and
+    pruned; a marker whose _submitted/ sibling is PRESENT is live and preserved.
+
+    Covers both the _completed and _failed marker subdirs, the dry_run=True
+    listing (no deletion), and the dry_run=False unlink path.
+    """
+    a = synth_multi_sim_analysis
+    status_dir = a.analysis_paths.analysis_dir / "_status"
+    submitted_dir = status_dir / "_submitted"
+    completed_dir = status_dir / "_completed"
+    failed_dir = status_dir / "_failed"
+    for d in (submitted_dir, completed_dir, failed_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Settled: _completed marker with NO _submitted sibling.
+    settled_completed = completed_dir / "run_tritonswmm_evt-settled.json"
+    settled_completed.write_text(json.dumps({"status": "completed"}))
+    # Settled: _failed marker with NO _submitted sibling.
+    settled_failed = failed_dir / "run_swmm_evt-settled.json"
+    settled_failed.write_text(json.dumps({"status": "failed"}))
+    # Live: _completed marker WITH a _submitted sibling (reconcile may still read it).
+    live_completed = completed_dir / "run_tritonswmm_evt-live.json"
+    live_completed.write_text(json.dumps({"status": "completed"}))
+    live_submitted = submitted_dir / "run_tritonswmm_evt-live.json"
+    live_submitted.write_text(json.dumps({"slurm_jobid": "999", "run_uuid": "u", "submitted_at": "t"}))
+
+    # dry_run lists only the two settled markers; nothing is deleted.
+    listed = a._prune_settled_markers(dry_run=True)
+    assert set(listed) == {settled_completed, settled_failed}
+    assert settled_completed.exists()
+    assert settled_failed.exists()
+    assert live_completed.exists()
+
+    # apply: only the settled markers are unlinked; the live marker and its
+    # _submitted sibling are preserved.
+    pruned = a._prune_settled_markers(dry_run=False)
+    assert set(pruned) == {settled_completed, settled_failed}
+    assert not settled_completed.exists()
+    assert not settled_failed.exists()
+    assert live_completed.exists()
+    assert live_submitted.exists()
