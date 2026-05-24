@@ -10,28 +10,43 @@ isolation by stubbing `TRITONSWMM_system` instantiation so the dedup tuple
 behavior, not real cfg loading.
 """
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+import yaml
 
 from TRITON_SWMM_toolkit import sensitivity_analysis as sa_mod
+from TRITON_SWMM_toolkit.config.loaders import load_system_config
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.sensitivity_analysis import (
     TRITONSWMM_sensitivity_analysis,
     UniqueSystemTarget,
 )
+from TRITON_SWMM_toolkit.validation import (
+    ValidationResult,
+    _validate_per_sa_system_configs,
+)
 
 
 def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilation_backend, system_config_yaml: Path):
     """Build a stub TRITONSWMM_system with just the attrs the dedup logic reads."""
-    cfg_system = SimpleNamespace(
-        target_dem_resolution=target_dem_resolution,
-        gpu_hardware=gpu_hardware,
-        gpu_compilation_backend=gpu_compilation_backend,
-    )
+    _fields = {
+        "target_dem_resolution": target_dem_resolution,
+        "gpu_hardware": gpu_hardware,
+        "gpu_compilation_backend": gpu_compilation_backend,
+    }
+    cfg_system = SimpleNamespace(**_fields)
+    # Faithful model_dump/model_dump_json shim (Class A) so the
+    # _build_unique_system_targets YAML-write (sensitivity_analysis.py:1432)
+    # and master-reuse short-circuit (:1436) run without AttributeError.
+    # **_kwargs absorbs the mode="json" call at :1432; the dict/sorted-json
+    # over the stub's own fields gives discriminating equality at :1436.
+    cfg_system.model_dump = lambda **_kwargs: dict(_fields)
+    cfg_system.model_dump_json = lambda **_kwargs: json.dumps(_fields, sort_keys=True)
     return SimpleNamespace(cfg_system=cfg_system, system_config_yaml=system_config_yaml)
 
 
@@ -46,12 +61,25 @@ def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple
 
     def fake_constructor(yaml_path):
         resolved = Path(yaml_path).resolve()
-        if resolved not in yaml_to_attrs:
-            raise AssertionError(f"unexpected yaml_path: {resolved}")
-        target_dem_resolution, gpu_hardware, gpu_compilation_backend = yaml_to_attrs[resolved]
-        return _make_stub_system(
-            target_dem_resolution, gpu_hardware, gpu_compilation_backend, resolved
-        )
+        if resolved in yaml_to_attrs:
+            target_dem_resolution, gpu_hardware, gpu_compilation_backend = yaml_to_attrs[resolved]
+            return _make_stub_system(
+                target_dem_resolution, gpu_hardware, gpu_compilation_backend, resolved
+            )
+        # Synthesized-target reconstruction path: _build_unique_system_targets
+        # writes _generated/target_{id}.yaml from cfg.model_dump(mode="json")
+        # then re-constructs TRITONSWMM_system(generated_yaml) for any non-master
+        # target (sensitivity_analysis.py:1439). Rebuild the stub from the
+        # round-tripped fields rather than failing on the unregistered path.
+        if resolved.is_file() and resolved.parent.name == "_generated":
+            dumped = yaml.safe_load(resolved.read_text())
+            return _make_stub_system(
+                dumped["target_dem_resolution"],
+                dumped["gpu_hardware"],
+                dumped["gpu_compilation_backend"],
+                resolved,
+            )
+        raise AssertionError(f"unexpected yaml_path: {resolved}")
 
     monkeypatch.setattr(sa_mod, "TRITONSWMM_system", fake_constructor, raising=False)
     # Also patch the in-method import target (the method imports lazily via
@@ -95,8 +123,12 @@ def test_build_unique_system_targets_dedups_by_compile_tuple(monkeypatch, tmp_pa
     assert ("0", "1") in by_ids
     assert ("2",) in by_ids
     collapsed = by_ids[("0", "1")]
-    # Canonical YAML must be lexicographically-first of the collapsing set.
-    assert collapsed.system_config_yaml == min(yaml_a, yaml_b, key=lambda p: str(p))
+    # Each unique target's canonical config is a synthesized YAML materialized
+    # under `_generated/target_{id}.yaml` (system-synthesis contract, commit
+    # 60103a4 — `system_config_yaml=generated_yaml` at sensitivity_analysis.py).
+    # The collapsing rows 0+1 are the first compile-tuple group → target_0.
+    assert collapsed.system_config_yaml == tmp_path / "_generated" / "target_0.yaml"
+    assert collapsed.system_config_yaml.is_file()
 
 
 def test_build_unique_system_targets_falls_back_to_master_on_null(monkeypatch, tmp_path):
@@ -258,28 +290,21 @@ def test_compile_TRITON_SWMM_for_sensitivity_analysis_iterates_unique_targets():
     instance._update_master_analysis_log.assert_called_once()
 
 
-def test_attributes_varied_filters_system_config_yaml(monkeypatch):
-    """`_attributes_varied_for_analysis()` excludes `system_config_yaml` defensively."""
+def test_attributes_varied_filters_system_config_yaml():
+    """`analysis_independent_vars` excludes `system_config_yaml` defensively.
+
+    The single `_attributes_varied_for_analysis()` method was split (Phase 2
+    analysis-config column migration, commit dca9869) into the
+    `analysis_independent_vars` / `system_independent_vars` properties, which
+    read `self._df_setup_full.columns` directly. `system_config_yaml` is skipped
+    explicitly in `analysis_independent_vars`; bare `run_mode` / `n_omp_threads`
+    are recognized as analysis_config fields.
+    """
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    # Master cfg has system_config_yaml in its model_dump (simulating a future
-    # cfg_analysis schema addition that pulls the field into the analysis layer).
-    instance.master_analysis = SimpleNamespace(
-        cfg_analysis=SimpleNamespace(
-            model_dump=lambda: {
-                "run_mode": "mpi",
-                "n_omp_threads": 1,
-                "system_config_yaml": "/some/path.yaml",
-            }
-        )
+    instance._df_setup_full = pd.DataFrame(
+        columns=["run_mode", "n_omp_threads", "system_config_yaml"]
     )
-    monkeypatch.setattr(
-        instance,
-        "_retrieve_df_setup",
-        lambda: pd.DataFrame(
-            columns=["run_mode", "n_omp_threads", "system_config_yaml"]
-        ),
-    )
-    keys = instance._attributes_varied_for_analysis()
+    keys = instance.analysis_independent_vars
     assert "system_config_yaml" not in keys
     assert "run_mode" in keys
     assert "n_omp_threads" in keys
@@ -341,17 +366,6 @@ def test_phase3_sa_id_to_target_id_map_reverses_target_membership():
 # Phase 4: Validation and testing
 # =========================================================================
 
-import textwrap
-
-import yaml
-
-from TRITON_SWMM_toolkit.config.loaders import load_system_config
-from TRITON_SWMM_toolkit.validation import (
-    ValidationResult,
-    _validate_per_sa_system_configs,
-    preflight_validate,
-)
-
 
 def _minimal_system_dict() -> dict:
     """Return a dict satisfying all required system_config fields.
@@ -384,6 +398,11 @@ def _minimal_system_dict() -> dict:
         "toggle_tritonswmm_model": True,
         "toggle_swmm_model": True,
         "target_dem_resolution": 10.0,
+        # `crs` became a required system_config field (commit c9fe93f, CRSConfig
+        # submodel). Supplied via the legacy flat `crs_epsg` key, which the
+        # system_config before-validator promotes into the nested
+        # `crs: {horizontal_epsg}` form.
+        "crs_epsg": 6440,
     }
 
 
@@ -584,6 +603,9 @@ def test_phase4_preflight_invokes_per_sa_validator(tmp_path, monkeypatch):
     cfg_analysis_stub = SimpleNamespace(
         toggle_sensitivity_analysis=True,
         sensitivity_analysis=csv_path,
+        # `_validate_setup_mem_sizing` reads this; >=8000 short-circuits its
+        # warning so this test stays focused on the per-SA wiring point.
+        hpc_mem_allocation_for_setup_mb=8000,
         # Minimal analysis-side attrs touched by other preflight validators
         # are bypassed by patching validate_analysis_config and
         # validate_data_consistency to no-ops; this test exercises only the
