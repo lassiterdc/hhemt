@@ -361,6 +361,33 @@ class TRITONSWMM_analysis:
                 ),
             )
 
+    def _prune_settled_markers(self, *, dry_run: bool = False) -> list[Path]:
+        """Prune settled _status/_completed and _status/_failed markers.
+
+        A marker is *settled* when its sibling _status/_submitted/{token}.json is
+        absent — the runner's try/finally wrote the marker then deleted the
+        submitted-sentinel, so the marker is pure accumulation that the reconcile
+        will never re-read (the reconcile only reads markers for tokens that HAVE
+        a submitted-sentinel; see _classify_via_state_markers). Returns the list of
+        settled-marker paths (deleted when dry_run=False).
+        """
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        submitted_dir = status_dir / "_submitted"
+        submitted_tokens = {p.stem for p in submitted_dir.glob("*.json")} if submitted_dir.exists() else set()
+        settled: list[Path] = []
+        for marker_subdir in ("_completed", "_failed"):
+            d = status_dir / marker_subdir
+            if not d.exists():
+                continue
+            for marker in d.glob("*.json"):
+                if marker.stem not in submitted_tokens:
+                    settled.append(marker)
+        settled = sorted(settled)
+        if not dry_run:
+            for m in settled:
+                m.unlink(missing_ok=True)
+        return settled
+
     def validate(self) -> ValidationResult:
         """Run preflight validation on system and analysis configurations.
 
@@ -1561,6 +1588,7 @@ class TRITONSWMM_analysis:
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
         cleanup_stale_metadata: bool = True,
+        prune_settled_markers: bool = True,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
     ) -> "WorkflowResult":
@@ -1608,6 +1636,14 @@ class TRITONSWMM_analysis:
             Phase 8 Risks. Asymmetric with ``cleanup_orphans`` default (False)
             because metadata-cleanup blast radius is bounded to records, not
             data; safe to auto-apply.
+        prune_settled_markers : bool, default True
+            When True (default), prunes settled ``_status/_completed`` and
+            ``_status/_failed`` markers (a marker is settled when its sibling
+            ``_status/_submitted/{token}.json`` is absent — pure accumulation the
+            reconcile will never re-read). Opt-out, mirroring
+            ``cleanup_stale_metadata``: the blast radius is bounded to inert
+            settled markers, so auto-applying is safe and bounds unbounded marker
+            growth over long resumable campaigns.
         extra_sbatch_args : list[str] | None
             Optional list of additional SBATCH directive strings (e.g.,
             ``["--qos=debug"]`` to route the job to Frontier's debug queue) to
@@ -1805,6 +1841,20 @@ class TRITONSWMM_analysis:
                     for p in orphan_paths:
                         print(f"  orphan: {p}", flush=True)
                 self._invoke_snakemake_cleanup_metadata(orphan_paths)
+
+        # Prune settled _status/_completed and _status/_failed markers (opt-out).
+        # A settled marker is inert (its _submitted/ sibling is gone, so the
+        # reconcile will never re-read it); pruning bounds unbounded marker
+        # accumulation over long resumable campaigns. Independent of the reconcile
+        # second-pass — settled markers are by definition not in-flight.
+        if prune_settled_markers:
+            pruned = self._prune_settled_markers()
+            if verbose and pruned:
+                print(
+                    f"[prune-settled-markers] Pruned {len(pruned)} settled "
+                    f"marker(s) from {self.analysis_paths.analysis_dir}/_status/",
+                    flush=True,
+                )
 
         # Stamp _version.json at LAYOUT_VERSION on first materialization (lazy
         # stamp per version_migration_system master plan PI-1). Idempotent
@@ -2390,6 +2440,7 @@ class TRITONSWMM_analysis:
         override_force_rerun: ForceRerunValue | None = None,
         verbose: bool = True,
         dry_run: bool = False,
+        prune_settled_markers: bool = True,
     ) -> dict:
         """Re-run downstream stages against existing sim outputs.
 
@@ -2429,6 +2480,12 @@ class TRITONSWMM_analysis:
             If True, print progress messages.
         dry_run
             If True, runs ``snakemake --dry-run`` only.
+        prune_settled_markers
+            When True (default), prunes settled ``_status/_completed`` /
+            ``_status/_failed`` markers (those whose ``_submitted/`` sibling is
+            gone) at the master ``_status/`` level before submitting. Opt-out;
+            mirrors ``run()``. Inert hygiene — does not affect reconcile
+            correctness.
 
         Returns
         -------
@@ -2454,6 +2511,16 @@ class TRITONSWMM_analysis:
         from .exceptions import ConfigurationError
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
+        # Prune settled _status markers (opt-out) — inert hygiene, mirrors run().
+        if prune_settled_markers:
+            pruned = self._prune_settled_markers()
+            if verbose and pruned:
+                print(
+                    f"[prune-settled-markers] Pruned {len(pruned)} settled "
+                    f"marker(s) from {self.analysis_paths.analysis_dir}/_status/",
+                    flush=True,
+                )
 
         # Dispatch to the sensitivity-master reprocess path for sensitivity-toggled
         # analyses. The non-sensitivity reprocess generator emits a `rule consolidate`
