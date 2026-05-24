@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Literal
+from typing import TYPE_CHECKING, Literal, Optional
 
 import yaml
 
@@ -10,11 +10,11 @@ from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
 from TRITON_SWMM_toolkit.config.report import report_config as report_config_model
 from TRITON_SWMM_toolkit.examples import (
     NorfolkIreneExample,
-    TRITON_SWMM_example,
     NorfolkObservedExample,
+    TRITON_SWMM_example,
 )
-from TRITON_SWMM_toolkit.utils import fast_rmtree
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from TRITON_SWMM_toolkit.utils import fast_rmtree
 
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
@@ -48,9 +48,7 @@ class CaseStudyBuilder:
         if example_name == "norfolk_irene":
             example = all_examples.norfolk_irene(download_if_exists=download_if_exists)
         elif example_name == "norfolk_observed_ensemble":
-            example = all_examples.norfolk_observed(
-                download_if_exists=download_if_exists
-            )
+            example = all_examples.norfolk_observed(download_if_exists=download_if_exists)
 
         self.example = example
         self.system = example.system
@@ -60,9 +58,7 @@ class CaseStudyBuilder:
         if platform_config is not None:
             analysis_overrides = analysis_overrides or {}
             system_overrides = system_overrides or {}
-            final_analysis_configs = (
-                platform_config.to_analysis_dict() | analysis_overrides
-            )
+            final_analysis_configs = platform_config.to_analysis_dict() | analysis_overrides
             final_system_configs = platform_config.to_system_dict() | system_overrides
         else:
             # When platform_config is None, use overrides directly or empty dicts
@@ -75,16 +71,14 @@ class CaseStudyBuilder:
             setattr(self.system.cfg_system, key, val)
 
         # update system directory
-        self.system.cfg_system.system_directory = (
-            self.system.cfg_system.system_directory.parent / case_system_dirname
-        )
+        self.system.cfg_system.system_directory = self.system.cfg_system.system_directory.parent / case_system_dirname
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
             fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
-        new_system_config_yaml = anlysys_dir / f"cfg_system.yaml"
+        new_system_config_yaml = anlysys_dir / "cfg_system.yaml"
 
         new_system_config_yaml.write_text(
             yaml.safe_dump(
@@ -109,9 +103,7 @@ class CaseStudyBuilder:
         # requires report.sensitivity) hit ConfigurationError unless their canonical
         # standalone report_config_*.yaml is threaded here.
         if report_config_yaml is not None:
-            cfg_analysis.report = yaml_to_model(
-                Path(report_config_yaml), report_config_model
-            )
+            cfg_analysis.report = yaml_to_model(Path(report_config_yaml), report_config_model)
 
         # add additional fields
         for key, val in final_analysis_configs.items():
@@ -119,7 +111,7 @@ class CaseStudyBuilder:
 
         cfg_analysis = analysis_config.model_validate(cfg_analysis)
         # write analysis as yaml
-        cfg_anlysys_yaml = anlysys_dir / f"cfg_analysis.yaml"
+        cfg_anlysys_yaml = anlysys_dir / "cfg_analysis.yaml"
         cfg_anlysys_yaml.write_text(
             yaml.safe_dump(
                 cfg_analysis.model_dump(mode="json"),
@@ -135,14 +127,11 @@ class CaseStudyBuilder:
 
 
 class UVACaseStudies:
-
     sensitivity_analysis_uva_suite = "full_benchmarking_experiment_uva.xlsx"
     sensitivity_analysis_uva_suite_swmm = "full_benchmarking_experiment_uva_swmm.xlsx"
 
     @classmethod
-    def observed_ensemble_triton_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    def observed_ensemble_triton_only(cls, start_from_scratch: bool = False, download_if_exists: bool = False):
         """UVA observed TRITON-only observed simulations"""
         example_name = "norfolk_observed_ensemble"
         analysis_name = "uva_observed_triton_only_3.7m_res"
@@ -181,17 +170,13 @@ class UVACaseStudies:
         )
 
     @classmethod
-    def benchmarking_norfolk_irene(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    def benchmarking_norfolk_irene(cls, start_from_scratch: bool = False, download_if_exists: bool = False):
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite"
         example_dir = all_examples.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
-        report_config_yaml = (
-            example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
-        )
+        report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
 
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -225,16 +210,13 @@ class UVACaseStudies:
         )
 
     @classmethod
-    def benchmarking_norfolk_irene_triton_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    def benchmarking_norfolk_irene_triton_only(cls, start_from_scratch: bool = False, download_if_exists: bool = False):
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite_triton_only"
-        sensitivity = (
-            all_examples.norfolk_irene().test_case_directory
-            / cls.sensitivity_analysis_uva_suite
-        )
+        example_dir = all_examples.norfolk_irene().test_case_directory
+        sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
+        report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
 
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -264,19 +246,17 @@ class UVACaseStudies:
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
+            report_config_yaml=report_config_yaml,
         )
 
     @classmethod
-    def benchmarking_norfolk_irene_swmm_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
+    def benchmarking_norfolk_irene_swmm_only(cls, start_from_scratch: bool = False, download_if_exists: bool = False):
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite_swmm_only"
-        sensitivity = (
-            all_examples.norfolk_irene().test_case_directory
-            / cls.sensitivity_analysis_uva_suite_swmm
-        )
+        example_dir = all_examples.norfolk_irene().test_case_directory
+        sensitivity = example_dir / cls.sensitivity_analysis_uva_suite_swmm
+        report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene_swmm.yaml"
 
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
@@ -306,6 +286,7 @@ class UVACaseStudies:
             platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
+            report_config_yaml=report_config_yaml,
         )
 
 
@@ -321,9 +302,7 @@ class FrontierCaseStudies:
         analysis_name = "frontier_sensitivity_suite"
         example_dir = all_examples.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_frontier_suite
-        report_config_yaml = (
-            example_dir / "report_config_frontier_norfolk_sensitivity_suite.yaml"
-        )
+        report_config_yaml = example_dir / "report_config_frontier_norfolk_sensitivity_suite.yaml"
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
