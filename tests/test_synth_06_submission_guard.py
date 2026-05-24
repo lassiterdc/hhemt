@@ -483,3 +483,84 @@ def test_one_job_script_inherits_mtime_only_via_profile(synthetic_multisim_build
         "1job script must not re-introduce the `input` rerun trigger; the "
         "single_job profile already pins rerun-triggers=['mtime'] (FQ2)"
     )
+
+
+def test_classify_stale_via_sacct_dead_alive_and_mtime_tiebreak(monkeypatch, synthetic_multisim_builder):
+    """Phase 2 R-STALE: the second-pass classifier reclaims DEAD + aged-UNKNOWN
+    tokens, keeps ALIVE + fresh-UNKNOWN tokens, and unlinks only the reclaimed
+    submitted-sentinels (R4/R5). One sacct call regardless of |input|."""
+    import os
+    import time
+
+    b = synthetic_multisim_builder
+    analysis_dir = b.analysis_paths.analysis_dir
+    dead_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-dead", "100")
+    alive_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-alive", "200")
+    fresh_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-fresh", "300")
+    aged_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-aged", "400")
+    # Age the UNKNOWN-bucket sentinel 100 days into the past — beyond any
+    # plausible walltime+slack cap (max config ceiling is 1 week).
+    old = time.time() - 100 * 24 * 3600
+    os.utime(aged_s, (old, old))
+
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda job_ids, **kw: {
+            "100": ("CANCELLED", "0:15", "JobKilled"),  # DEAD-stale
+            "200": ("RUNNING", "0:0", "None"),  # ALIVE
+            # 300, 400 absent → UNKNOWN bucket, resolved by mtime tiebreak
+        },
+    )
+
+    marker_less = [
+        ("run_tritonswmm_evt-dead", "100"),
+        ("run_tritonswmm_evt-alive", "200"),
+        ("run_tritonswmm_evt-fresh", "300"),
+        ("run_tritonswmm_evt-aged", "400"),
+    ]
+    still_alive, cleared = b._classify_stale_via_sacct(marker_less)
+
+    cleared_tokens = {c.rule_token for c in cleared}
+    assert cleared_tokens == {"run_tritonswmm_evt-dead", "run_tritonswmm_evt-aged"}
+    assert not dead_s.exists()  # DEAD reclaimed
+    assert not aged_s.exists()  # aged-UNKNOWN reclaimed via mtime fail-safe
+
+    alive_tokens = {t for t, _ in still_alive}
+    assert alive_tokens == {"run_tritonswmm_evt-alive", "run_tritonswmm_evt-fresh"}
+    assert alive_s.exists()  # ALIVE preserved (at-most-once)
+    assert fresh_s.exists()  # fresh-UNKNOWN preserved (re-probed next entry)
+
+    # The DEAD record carries the sacct State + Reason for the bug-surface print.
+    dead_rec = next(c for c in cleared if c.rule_token == "run_tritonswmm_evt-dead")
+    assert dead_rec.state == "CANCELLED"
+    assert dead_rec.reason == "JobKilled"
+    assert dead_rec.job_id == "100"
+
+
+def test_classify_stale_via_sacct_empty_input_is_zero_call_noop(monkeypatch, synthetic_multisim_builder):
+    """R5 scheduler-politeness: the common all-markers case (empty marker-less
+    residual) short-circuits to a zero-call no-op — sacct is never invoked."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("sacct must not be called on an empty marker-less set")
+
+    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", _boom)
+    b = synthetic_multisim_builder
+    assert b._classify_stale_via_sacct([]) == ([], [])
+
+
+def test_max_plausible_job_lifetime_never_below_walltime(synthetic_multisim_builder):
+    """R8/R-WAITCAP regression (SE + triton specialist follow-up): the derived
+    cap is walltime + slack, so it can never drop below the job's own walltime
+    even when the override ceiling is at its configured minimum."""
+    from TRITON_SWMM_toolkit import workflow as w
+
+    cfg = synthetic_multisim_builder.cfg_analysis
+    if cfg.hpc_total_job_duration_min is None:
+        pytest.skip(
+            "synth fixture has no hpc_total_job_duration_min; "
+            "walltime-derivation path not exercised (local-mode fallback)"
+        )
+    derived = w._max_plausible_job_lifetime_min(cfg, slack_min=30)
+    assert derived == cfg.hpc_total_job_duration_min + 30
+    assert derived >= cfg.hpc_total_job_duration_min
