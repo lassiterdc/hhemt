@@ -133,6 +133,24 @@ def test_gpu_srun_gres_mode_uses_ntasks_per_gpu():
     assert "--gpus-per-task" not in full_cmd
 
 
+def test_gres_mode_gpu_srun_omits_explicit_ntasks():
+    """gres-mode (UVA) multi-GPU srun must rely on --ntasks-per-gpu=1 expansion,
+    NOT an explicit --ntasks (which collides with the 1-task batch step)."""
+    run = _make_run("gpu", n_gpus=2, n_omp_threads=1, in_slurm=True, gpu_alloc_mode="gres")
+    full_cmd = _get_launch_cmd(run)
+    assert "--ntasks-per-gpu=1" in full_cmd
+    assert "--ntasks=" not in full_cmd          # the regression guard (no explicit clamp)
+    assert "--overlap" in full_cmd and "--kill-on-bad-exit=1" in full_cmd
+
+
+def test_gpus_mode_gpu_srun_keeps_explicit_ntasks():
+    """gpus-mode (Frontier) must keep --gpus-per-task=1 AND explicit --ntasks=N."""
+    run = _make_run("gpu", n_gpus=2, n_omp_threads=1, in_slurm=True, gpu_alloc_mode="gpus")
+    full_cmd = _get_launch_cmd(run)
+    assert "--gpus-per-task=1" in full_cmd
+    assert "--ntasks=2" in full_cmd
+
+
 def test_cpu_srun_gpu_flags_absent():
     """CPU mode srun command must NOT include any GPU binding flags."""
     run = _make_run("mpi", in_slurm=True)

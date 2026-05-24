@@ -1388,10 +1388,12 @@ rule consolidate_scenario:
         n_gpus = self.cfg_analysis.n_gpus or 0
         cpus_per_sim = mpi_ranks * omp_threads
 
-        # CRITICAL: Snakemake's SLURM executor uses max(threads, tasks×cpus_per_task) for --ntasks
-        # We must set threads = total CPUs needed to ensure correct SLURM allocation
-        # Even though we also set resources.tasks and resources.cpus_per_task correctly,
-        # Snakemake will underallocate if threads < required CPUs
+        # The SLURM executor maps the `tasks` resource to --ntasks (non-GPU) or
+        # --ntasks-per-gpu (gres-GPU), and `threads` to --cpus-per-task only (a fallback
+        # used when no cpus_per_task resource is set). `threads` never governs --ntasks.
+        # Verified against snakemake-executor-plugin-slurm v2.0.3 submit_string.py:79-128.
+        # snakemake_threads below drives the Snakemake scheduler's local concurrency
+        # accounting and the --cpus-per-task fallback — not --ntasks.
         snakemake_threads = cpus_per_sim
 
         # Conservative estimate: 2GB per CPU (can be made configurable later)
@@ -5555,8 +5557,11 @@ onerror:
                 cpus_per_task=1,
             )
 
-            # CRITICAL: Snakemake's SLURM executor uses max(threads, tasks×cpus_per_task) for allocation
-            # Always set threads = total CPUs to ensure correct SLURM --ntasks value
+            # The SLURM executor maps the `tasks` resource to --ntasks (non-GPU) or
+            # --ntasks-per-gpu (gres-GPU), and `threads` to --cpus-per-task only. `threads`
+            # never governs --ntasks. Verified against snakemake-executor-plugin-slurm
+            # v2.0.3 submit_string.py:79-128. snakemake_threads drives the Snakemake
+            # scheduler's local concurrency accounting and the --cpus-per-task fallback.
             snakemake_threads = cpus_per_sim
 
             # gpu_hardware comes directly from the per-target cfg_system. Under the
