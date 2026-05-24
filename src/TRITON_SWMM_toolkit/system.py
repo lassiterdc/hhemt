@@ -581,11 +581,15 @@ class TRITONSWMM_system:
 
     @staticmethod
     def _emit_libstdcpp_ld_preamble_lines() -> list:
-        # Ensure conda env's libstdc++ resolves at link AND runtime (libstdc++ ABI fix).
-        # gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30, but the conda env's
-        # libgdal/libmuparser need GLIBCXX_3.4.31+.
+        # Ensure conda env's libstdc++ resolves at RUNTIME for build-time tool
+        # invocations (libstdc++ ABI fix). gcc/12.4.0 module's libstdc++ maxes at
+        # GLIBCXX_3.4.30, but the conda env's libgdal/libmuparser need GLIBCXX_3.4.31+.
+        # NOTE: this LD_LIBRARY_PATH export does NOT fix the triton.exe LINK — the
+        # link failure is the C++ driver's implicit -lstdc++ resolving the missing
+        # `libstdc++.so` dev symlink (conda ships .so.6 only); that is handled by the
+        # -l:libstdc++.so.6 linker flag in cmake_flags (see _libstdcpp_linker_flag_fragment).
         return [
-            "# Ensure conda env's libstdc++ resolves at link AND runtime (libstdc++ ABI fix)",
+            "# Ensure conda env's libstdc++ resolves at runtime for build-time tools (ABI fix)",
             "# Required because gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30 but",
             "# the conda env's libgdal/libmuparser need GLIBCXX_3.4.31+.",
             'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"',
@@ -593,21 +597,23 @@ class TRITONSWMM_system:
         ]
 
     @staticmethod
-    def _emit_libstdcpp_link_patch_lines() -> list:
-        # Post-cmake / pre-make: append conda env's libstdc++.so.6 to the triton.exe
-        # link.txt so the linker resolves @GLIBCXX_3.4.31+ symbols required by
-        # libgdal/libmuparser. Kokkos's nvcc_wrapper drops bare paths from
-        # CMAKE_EXE_LINKER_FLAGS, so this is the most robust path to land libstdc++.
-        return [
-            "# Libstdc++ ABI link patch (post-cmake, pre-make):",
-            "if [ -f CMakeFiles/triton.exe.dir/link.txt ]; then",
-            '  sed -i "s|\\$| ${CONDA_PREFIX}/lib/libstdc++.so.6|" CMakeFiles/triton.exe.dir/link.txt',
-            '  echo "[LINK PATCH] appended ${CONDA_PREFIX}/lib/libstdc++.so.6 to triton.exe link.txt"',
-            "else",
-            '  echo "[LINK PATCH] WARNING: CMakeFiles/triton.exe.dir/link.txt not found; skipping patch"',
-            "fi",
-            "",
-        ]
+    def _libstdcpp_linker_flag_fragment() -> str:
+        # Force the triton.exe link line to link conda's EXACT libstdc++.so.6 file
+        # (which carries GLIBCXX_3.4.31 / CXXABI_1.3.15 required by conda
+        # libgdal/libmuparser) via a sanctioned CMake linker FLAG, not a post-cmake
+        # sed of cmake's generated linker command file. The implicit `-lstdc++` would otherwise
+        # resolve the `libstdc++.so` dev symlink, which conda's lib dir lacks (it
+        # ships libstdc++.so.6 only), falling back to module gcc-12's libstdc++
+        # (caps GLIBCXX_3.4.30) and failing the link. `-l:libstdc++.so.6` is the
+        # GNU-ld exact-file-by-soname form; `-L${CONDA_PREFIX}/lib` makes the soname
+        # resolve to the conda copy; --no-as-needed (push/pop-scoped) keeps it on the
+        # line. This is a linker FLAG (not a bare path), so wrappers that drop bare
+        # paths from CMAKE_EXE_LINKER_FLAGS keep it. Confirmed by the Rivanna
+        # link-probe (2026-05-24): links clean; ldd resolves libstdc++ => conda.
+        return (
+            "-L${CONDA_PREFIX}/lib "
+            "-Wl,--push-state,--no-as-needed -l:libstdc++.so.6 -Wl,--pop-state"
+        )
 
     def _compile_backend(
         self,
@@ -684,7 +690,7 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
@@ -705,7 +711,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                    '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             else:
                 cmake_flags = (
@@ -715,7 +721,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                    '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
 
         # Build commands
@@ -729,7 +735,6 @@ class TRITONSWMM_system:
                 f'cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
             ]
-            + self._emit_libstdcpp_link_patch_lines()
             + [
                 "echo '=== CMAKE CONFIGURATION ==='",
                 "grep -E 'CMAKE_CXX_FLAGS|TRITON_IGNORE_MACHINE|Kokkos.*ENABLE' CMakeCache.txt | head -20 || echo 'CMakeCache.txt not found'",
@@ -1019,7 +1024,7 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp'"
+                '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
             )
         else:
             # GPU backend
@@ -1029,7 +1034,8 @@ class TRITONSWMM_system:
                     "-DTRITON_IGNORE_MACHINE_FILES=ON "
                     f"{cmake_backend_flag} "
                     "-DKokkos_ENABLE_OPENMP=OFF "
-                    "-DCMAKE_CXX_FLAGS='-O3'"
+                    "-DCMAKE_CXX_FLAGS='-O3' "
+                    '-DCMAKE_EXE_LINKER_FLAGS="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             elif self.cfg_system.gpu_compilation_backend == "CUDA":
                 triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
@@ -1044,7 +1050,8 @@ class TRITONSWMM_system:
                     '-DCMAKE_CUDA_COMPILER="$NVCC" '
                     '-DCMAKE_CXX_COMPILER="$MPICXX" '
                     '-DCMAKE_C_COMPILER="$MPICC" '
-                    "-DCMAKE_CXX_FLAGS='-O3'"
+                    "-DCMAKE_CXX_FLAGS='-O3' "
+                    '-DCMAKE_EXE_LINKER_FLAGS="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             else:
                 raise ValueError(f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}")
@@ -1060,7 +1067,6 @@ class TRITONSWMM_system:
                 f'cmake -DTRITON_ENABLE_SWMM=OFF {cmake_flags} "${{TRITON_DIR}}" 2>&1 | tee cmake_output.txt',
                 "",
             ]
-            + self._emit_libstdcpp_link_patch_lines()
             + [
                 "make -j4",
                 "",
