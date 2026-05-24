@@ -607,9 +607,15 @@ class TRITONSWMM_system:
         # (caps GLIBCXX_3.4.30) and failing the link. `-l:libstdc++.so.6` is the
         # GNU-ld exact-file-by-soname form; `-L${CONDA_PREFIX}/lib` makes the soname
         # resolve to the conda copy; --no-as-needed (push/pop-scoped) keeps it on the
-        # line. This is a linker FLAG (not a bare path), so wrappers that drop bare
-        # paths from CMAKE_EXE_LINKER_FLAGS keep it. Confirmed by the Rivanna
-        # link-probe (2026-05-24): links clean; ldd resolves libstdc++ => conda.
+        # line. This fragment is threaded into CMAKE_CXX_STANDARD_LIBRARIES, NOT
+        # CMAKE_EXE_LINKER_FLAGS: the Kokkos-coupled CUDA build DISCARDS
+        # CMAKE_EXE_LINKER_FLAGS for the exe link (empirically — the flag never
+        # reaches the generated link command file), whereas CMAKE_CXX_STANDARD_LIBRARIES
+        # is appended to the link by cmake's link rule and survives. Confirmed on Rivanna
+        # (2026-05-24): via CMAKE_CXX_STANDARD_LIBRARIES the flag lands on the link command
+        # file, the build links
+        # clean (no GLIBCXX_3.4.31/CXXABI undefined refs), and ldd resolves
+        # libstdc++ => conda.
         return (
             "-L${CONDA_PREFIX}/lib "
             "-Wl,--push-state,--no-as-needed -l:libstdc++.so.6 -Wl,--pop-state"
@@ -661,6 +667,15 @@ class TRITONSWMM_system:
                     "# Load HPC modules",
                     "module purge",
                     f"module load {modules}",
+                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
+                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
+                    # the module gcc AND whose cc1 backend fails to execute in this
+                    # module-purged build env (`posix_spawnp: No such file or directory`).
+                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
+                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
+                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
+                    'export CC="$(command -v gcc)"',
+                    'export CXX="$(command -v g++)"',
                     "",
                 ]
             )
@@ -690,7 +705,7 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
             )
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
@@ -711,7 +726,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             else:
                 cmake_flags = (
@@ -721,7 +736,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     "-DCMAKE_C_FLAGS='-fopenmp' "
                     "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                    '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
+                    "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
 
         # Build commands
@@ -998,6 +1013,15 @@ class TRITONSWMM_system:
                     "# Load HPC modules",
                     "module purge",
                     f"module load {modules}",
+                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
+                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
+                    # the module gcc AND whose cc1 backend fails to execute in this
+                    # module-purged build env (`posix_spawnp: No such file or directory`).
+                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
+                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
+                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
+                    'export CC="$(command -v gcc)"',
+                    'export CXX="$(command -v g++)"',
                     "",
                 ]
             )
@@ -1024,7 +1048,7 @@ class TRITONSWMM_system:
                 "-DCMAKE_CXX_FLAGS='-O3 -fopenmp' "
                 "-DCMAKE_C_FLAGS='-fopenmp' "
                 "-DCMAKE_SHARED_LINKER_FLAGS='-fopenmp' "
-                '-DCMAKE_EXE_LINKER_FLAGS="-fopenmp ' + self._libstdcpp_linker_flag_fragment() + '"'
+                "-DCMAKE_EXE_LINKER_FLAGS='-fopenmp' " + '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
             )
         else:
             # GPU backend
@@ -1035,7 +1059,7 @@ class TRITONSWMM_system:
                     f"{cmake_backend_flag} "
                     "-DKokkos_ENABLE_OPENMP=OFF "
                     "-DCMAKE_CXX_FLAGS='-O3' "
-                    '-DCMAKE_EXE_LINKER_FLAGS="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             elif self.cfg_system.gpu_compilation_backend == "CUDA":
                 triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
@@ -1051,7 +1075,7 @@ class TRITONSWMM_system:
                     '-DCMAKE_CXX_COMPILER="$MPICXX" '
                     '-DCMAKE_C_COMPILER="$MPICC" '
                     "-DCMAKE_CXX_FLAGS='-O3' "
-                    '-DCMAKE_EXE_LINKER_FLAGS="' + self._libstdcpp_linker_flag_fragment() + '"'
+                    '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             else:
                 raise ValueError(f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}")
