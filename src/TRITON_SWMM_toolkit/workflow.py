@@ -19,7 +19,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import yaml  # type: ignore
 
@@ -491,6 +491,103 @@ def _slurm_job_is_live(job_id: str, *, timeout_s: float = 10.0) -> bool:
     return False
 
 
+# Terminal sacct State codes that mean the job is gone. Anything NOT in this
+# set AND present in sacct is treated as alive (still in the scheduler).
+_SACCT_DEAD_STATES: frozenset[str] = frozenset(
+    {
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "OUT_OF_MEMORY",
+        "NODE_FAIL",
+        "BOOT_FAIL",
+        "DEADLINE",
+        "PREEMPTED",
+        "REVOKED",
+        "SPECIAL_EXIT",
+    }
+)
+
+
+def _sacct_states_batched(job_ids: list[str], *, timeout_s: float = 30.0) -> dict[str, tuple[str, str, str]]:
+    """Batched sacct probe: ONE call for N job-ids (R5 scheduler-politeness).
+
+    Returns ``{job_id: (state, exit_code, reason)}`` for every job-id that
+    sacct returned a row for. Job-ids ABSENT from the result map are UNKNOWN
+    (purged from the accounting DB, or job-id reuse gap) and must be handled
+    by the caller's mtime-age fallback — never silently treated as alive.
+
+    ``CANCELLED by <uid>`` is normalized to ``CANCELLED``. On subprocess
+    timeout or non-zero return, returns an EMPTY map — every job-id then falls
+    to UNKNOWN, which the caller's mtime-age tiebreak resolves safely.
+    """
+    if not job_ids:
+        return {}
+    try:
+        r = subprocess.run(
+            ["sacct", "-j", ",".join(job_ids), "-n", "-P", "-X", "-o", "JobIDRaw,State,ExitCode,Reason"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        print(
+            f"[reconcile] WARNING: sacct batched probe ({len(job_ids)} jobs) "
+            f"timed out after {timeout_s}s — all unresolved job-ids fall to "
+            f"UNKNOWN (mtime-age tiebreak applies)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {}
+    except FileNotFoundError:
+        # sacct not on PATH (local mode, or a misconfigured HPC env). Same
+        # "probe could not resolve state" outcome as a timeout: return an empty
+        # map so every job-id falls to UNKNOWN and the mtime-age tiebreak
+        # resolves it safely. Surfaced once per reconcile so a genuinely-missing
+        # sacct on HPC stays visible.
+        print(
+            f"[reconcile] WARNING: sacct not found on PATH — batched probe "
+            f"({len(job_ids)} jobs) skipped; all unresolved job-ids fall to "
+            f"UNKNOWN (mtime-age tiebreak applies)",
+            file=sys.stderr,
+            flush=True,
+        )
+        return {}
+    if r.returncode != 0:
+        return {}
+    out: dict[str, tuple[str, str, str]] = {}
+    for line in r.stdout.splitlines():
+        parts = line.split("|")
+        if len(parts) < 4:
+            continue
+        jid, state, exit_code, reason = parts[0], parts[1], parts[2], parts[3]
+        out[jid] = (state.split()[0], exit_code, reason)
+    return out
+
+
+def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
+    """Upper bound on how long a sim job could plausibly run: its own SLURM
+    walltime + slack (queue/startup/accounting lag). Single source of truth for
+    BOTH the wait-rule poll cap (R-WAITCAP) and the R-STALE UNKNOWN-bucket
+    mtime-age fail-safe. Falls back to hpc_max_wait_for_inflight_min only when
+    hpc_total_job_duration_min is unset (e.g. local mode)."""
+    base = cfg_analysis.hpc_total_job_duration_min
+    if base is None:
+        return cfg_analysis.hpc_max_wait_for_inflight_min
+    return base + slack_min
+
+
+class _ClearedToken(NamedTuple):
+    """Self-describing record for an R-STALE-reclaimed stale token (replaces the
+    positional 4-tuple so the reconcile surface and tests read field names)."""
+
+    rule_token: str
+    job_id: str
+    state: str
+    reason: str
+
+
 class SnakemakeWorkflowBuilder:
     """
     Builder class for generating and executing Snakemake workflows.
@@ -701,7 +798,24 @@ class SnakemakeWorkflowBuilder:
         # v2 graceful-rerun: classify via sentinel state markers (no SLURM CLI).
         # The wait-rule emission layer consumes the alive set to substitute
         # wait-on-sentinel rules for the in-flight set.
-        alive = self._classify_via_state_markers(sentinels, reclaim_completed=True, analysis_dir=base_dir)
+        marker_less = self._classify_via_state_markers(sentinels, reclaim_completed=True, analysis_dir=base_dir)
+        # R-STALE: authoritatively classify the marker-less set via ONE batched
+        # sacct call so a dead-without-marker token is never held alive (and
+        # never blocks the 8h wait-rule cap). DEAD tokens are reclaimed here.
+        alive, cleared = self._classify_stale_via_sacct(marker_less, analysis_dir=base_dir)
+        if cleared:
+            print(
+                f"[reconcile] R-STALE: cleared {len(cleared)} stale SLURM token(s) — "
+                f"these jobs terminated WITHOUT emitting a success/failure marker and "
+                f"INDICATE A BUG TO INVESTIGATE:",
+                flush=True,
+            )
+            for rule_token, jid, state, reason in cleared:
+                print(
+                    f"[reconcile]   {rule_token} (job {jid}): {state}"
+                    f"{f' ({reason})' if reason and reason != 'None' else ''}",
+                    flush=True,
+                )
         if alive:
             print(
                 f"[reconcile] v2 graceful-rerun: {len(alive)} in-flight rule(s) "
@@ -1671,7 +1785,12 @@ rule run_{model_type}:
             # explicit ruleorder; the wildcard-vs-concrete output overlap IS
             # that ambiguity, and the ruleorder line is the documented
             # resolution (Snakemake docs § Handling Ambiguous Rules).
-            wait_walltime_cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
+            # R-WAITCAP: cap the wait-rule poll at the waited-on sim's own
+            # walltime+slack, bounded above by the optional override ceiling.
+            wait_walltime_cap_min = min(
+                _max_plausible_job_lifetime_min(self.cfg_analysis),
+                self.cfg_analysis.hpc_max_wait_for_inflight_min,
+            )
             _prefix = f"run_{model_type}_evt-"
             for rule_token in sorted(alive_by_token or {}):
                 if not rule_token.startswith(_prefix):
@@ -2239,7 +2358,17 @@ def _per_sim_conduit_flow_sources(wildcards):
             "printshellcmds": True,
             "rerun-incomplete": True,
             "keep-going": True,
-            "rerun-triggers": ["mtime", "input"],
+            # Phase 1 (v2 post-death-recovery hardening): narrow to mtime only so a
+            # resume after driver/orchestrator death cannot re-fire COMPLETED sims via
+            # the `input` trigger (which would waste GPU-days). The mtime trigger still
+            # covers every legitimate rerun the toolkit relies on — including the
+            # per-sa_id fingerprint mechanism (sa-{id}_inputs.json bumps mtime on
+            # content change; see Gotcha 17 and the comment near the fingerprint write
+            # site) and missing-output reruns after Phase 2 DEAD-token reclaim. The
+            # delete (:5045 → mtime,input) and reprocess (:4546/:7044 → mtime) paths
+            # set --rerun-triggers explicitly on the CLI, which overrides this profile
+            # default under configargparse precedence, so they are unaffected.
+            "rerun-triggers": ["mtime"],
         }
         assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
             "local_cpu_cores_for_workflow must be specified for local runs"
@@ -4751,6 +4880,65 @@ exit $snakemake_status
             alive.append((rule_token, jid))
         return alive
 
+    def _classify_stale_via_sacct(
+        self,
+        marker_less_alive: list[tuple[str, str]],
+        *,
+        analysis_dir: Path | None = None,
+        walltime_slack_min: int = 30,
+    ) -> tuple[list[tuple[str, str]], list[_ClearedToken]]:
+        """R-STALE second pass: authoritatively classify the marker-less set.
+
+        Three-state classification per the FQ1 table:
+        - sacct State in _SACCT_DEAD_STATES        -> DEAD-stale (reclaim + surface)
+        - sacct State present, not in dead set     -> ALIVE (keep as wait-rule)
+        - job-id absent from sacct OR blank job-id -> UNKNOWN, resolved by the
+          submitted-sentinel mtime-age tiebreak.
+
+        DEAD-classified submitted-sentinels are unlinked in-place. Returns
+        ``(still_alive, cleared)`` where ``cleared`` is
+        ``(rule_token, job_id, state, reason)`` for the R-STALE surface.
+        ONE sacct call regardless of |marker_less_alive| (R5); zero-call no-op
+        when the input is empty (the common all-markers case).
+        """
+        if not marker_less_alive:
+            return [], []
+
+        base_dir = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        submitted_dir = base_dir / "_status" / "_submitted"
+        # Single-slack site (resolves the double-slack hazard): the helper already
+        # adds the slack, so pass walltime_slack_min through it ONCE and do NOT add
+        # slack again here.
+        cap_min = _max_plausible_job_lifetime_min(self.cfg_analysis, slack_min=walltime_slack_min)
+        max_plausible_s = cap_min * 60
+
+        job_ids = [j for _, j in marker_less_alive if j]
+        states = _sacct_states_batched(job_ids)
+
+        still_alive: list[tuple[str, str]] = []
+        cleared: list[_ClearedToken] = []
+        for rule_token, jid in marker_less_alive:
+            sentinel = submitted_dir / f"{rule_token}.json"
+            row = states.get(jid) if jid else None
+            if row is not None:
+                state, _exit, reason = row
+                if state in _SACCT_DEAD_STATES:
+                    sentinel.unlink(missing_ok=True)
+                    cleared.append(_ClearedToken(rule_token, jid, state, reason))
+                else:
+                    still_alive.append((rule_token, jid))
+                continue
+            try:
+                age_s = time.time() - sentinel.stat().st_mtime
+            except OSError:
+                age_s = max_plausible_s + 1
+            if age_s >= max_plausible_s:
+                sentinel.unlink(missing_ok=True)
+                cleared.append(_ClearedToken(rule_token, jid or "(no jobid)", "UNKNOWN", "purged/age-exceeded"))
+            else:
+                still_alive.append((rule_token, jid))
+        return still_alive, cleared
+
     def _emit_wait_for_sim_rule_block(
         self,
         *,
@@ -5044,6 +5232,11 @@ exit $snakemake_status
             str(snakefile_path),
             "--directory",
             str(snakemake_dir),
+            # NOTE: the delete path deliberately RETAINS the `input` rerun-trigger
+            # (unlike the run path, narrowed to mtime-only in generate_snakemake_config
+            # for post-death-recovery). The DU-sentinel delete rules declare `input:`
+            # deps whose SET changes legitimately require the `input` trigger to refire.
+            # Do not "consistency"-narrow this to mtime-only.
             "--rerun-triggers",
             "mtime",
             "input",
@@ -5649,7 +5842,10 @@ onerror:
                         rule_token=_sentinel_token,
                         flag_output_path=sim_outflag,
                         run_rule_inputs=[upstream_flag, f"_status/sa-{sa_id}_inputs.json"],
-                        wait_walltime_cap_min=sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
+                        wait_walltime_cap_min=min(
+                            _max_plausible_job_lifetime_min(sub_analysis.cfg_analysis),
+                            sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
+                        ),
                         analysis_dir_override=(alive_token_to_dir or {}).get(
                             _sentinel_token, str(sub_analysis.analysis_paths.analysis_dir)
                         ),

@@ -128,10 +128,13 @@ class analysis_config(cfgBaseModel):
         ge=60,
         le=10080,
         description=(
-            "Maximum walltime (minutes) the v2 wait-on-sentinel rule will "
-            "poll for the original SLURM job's completion-or-failure marker. "
-            "Default 480 (8 hours). Bounds: 60 (1 hour) to 10080 (1 week). "
-            "Phase A writes the markers; Phase B consumes them."
+            "OVERRIDE CEILING (minutes) on the v2 wait-on-sentinel rule's poll "
+            "cap. As of v2-post-death-recovery-hardening, the wait-rule cap is "
+            "DERIVED per-rule from the waited-on sim's own walltime "
+            "(hpc_total_job_duration_min + 30 min slack); this field caps that "
+            "derived value from above (min(derived, this)). Default 480 (8h). "
+            "Bounds: 60 (1h) to 10080 (1 week). Set below the job walltime only "
+            "to force an earlier give-up on a still-running wait."
         ),
     )
     # local run constraints
