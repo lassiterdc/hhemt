@@ -426,3 +426,185 @@ def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multi
         # asserts every _status/*.flag in the shared case dir has a sidecar.
         for p in (sa_flag, other_sa_flag, submitted):
             p.unlink(missing_ok=True)
+
+
+# ========== Phase 1: rerun-triggers narrowed to mtime (post-death-recovery) ==========
+
+
+@pytest.mark.parametrize("mode", ["local", "slurm", "single_job"])
+def test_run_submit_uses_mtime_only_rerun_triggers(synthetic_multisim_builder, mode):
+    """Phase 1: the run-path Snakemake profile pins rerun-triggers to ['mtime']
+    for every execution mode — `input` is absent."""
+    b = synthetic_multisim_builder
+    try:
+        config = b.generate_snakemake_config(mode=mode)
+    except AssertionError as exc:
+        pytest.skip(f"mode={mode} requires hpc config not set on synth fixture: {exc}")
+    assert config["rerun-triggers"] == ["mtime"], (
+        f"mode={mode}: run-path profile must pin rerun-triggers to ['mtime'] "
+        f"so a post-death resume cannot re-fire completed sims via the `input` "
+        f"trigger; got {config['rerun-triggers']!r}"
+    )
+    assert "input" not in config["rerun-triggers"], (
+        f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
+    )
+
+
+def test_one_job_script_inherits_mtime_only_via_profile(synthetic_multisim_builder):
+    """Phase 1: the emitted run_workflow_1job.sh invokes snakemake with `--profile`
+    (which carries rerun-triggers=['mtime']) and does NOT hand-inject a conflicting
+    `--rerun-triggers ... input` on the script line."""
+    b = synthetic_multisim_builder
+    try:
+        config = b.generate_snakemake_config(mode="single_job")
+    except AssertionError as exc:
+        pytest.skip(f"single_job mode requires hpc config not set on synth fixture: {exc}")
+    config_dir = b.write_snakemake_config(config, mode="single_job")
+
+    # Load-bearing, fixture-independent assertion: the written single_job profile
+    # pins rerun-triggers to ['mtime']. This must hold on every fixture.
+    import yaml
+
+    written = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert written["rerun-triggers"] == ["mtime"]
+
+    # Script-text assertions depend on _generate_single_job_submission_script,
+    # which requires full HPC config (hpc_total_nodes) the synth fixture lacks.
+    # Skip only this portion when that config is absent — the profile assertion
+    # above already covers the load-bearing FQ2 guarantee.
+    snakefile_path = b.analysis_paths.analysis_dir / "Snakefile"
+    try:
+        script_path = b._generate_single_job_submission_script(snakefile_path, config_dir)
+    except AssertionError as exc:
+        pytest.skip(f"1job script generation requires hpc config not set on synth fixture: {exc}")
+    script_text = script_path.read_text()
+    assert "--profile" in script_text
+    assert "input" not in script_text.split("python -m snakemake", 1)[-1], (
+        "1job script must not re-introduce the `input` rerun trigger; the "
+        "single_job profile already pins rerun-triggers=['mtime'] (FQ2)"
+    )
+
+
+def test_classify_stale_via_sacct_dead_alive_and_mtime_tiebreak(monkeypatch, synthetic_multisim_builder):
+    """Phase 2 R-STALE: the second-pass classifier reclaims DEAD + aged-UNKNOWN
+    tokens, keeps ALIVE + fresh-UNKNOWN tokens, and unlinks only the reclaimed
+    submitted-sentinels (R4/R5). One sacct call regardless of |input|."""
+    import os
+    import time
+
+    b = synthetic_multisim_builder
+    analysis_dir = b.analysis_paths.analysis_dir
+    dead_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-dead", "100")
+    alive_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-alive", "200")
+    fresh_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-fresh", "300")
+    aged_s = _write_sentinel(analysis_dir, "run_tritonswmm_evt-aged", "400")
+    # Age the UNKNOWN-bucket sentinel 100 days into the past — beyond any
+    # plausible walltime+slack cap (max config ceiling is 1 week).
+    old = time.time() - 100 * 24 * 3600
+    os.utime(aged_s, (old, old))
+
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda job_ids, **kw: {
+            "100": ("CANCELLED", "0:15", "JobKilled"),  # DEAD-stale
+            "200": ("RUNNING", "0:0", "None"),  # ALIVE
+            # 300, 400 absent → UNKNOWN bucket, resolved by mtime tiebreak
+        },
+    )
+
+    marker_less = [
+        ("run_tritonswmm_evt-dead", "100"),
+        ("run_tritonswmm_evt-alive", "200"),
+        ("run_tritonswmm_evt-fresh", "300"),
+        ("run_tritonswmm_evt-aged", "400"),
+    ]
+    still_alive, cleared = b._classify_stale_via_sacct(marker_less)
+
+    cleared_tokens = {c.rule_token for c in cleared}
+    assert cleared_tokens == {"run_tritonswmm_evt-dead", "run_tritonswmm_evt-aged"}
+    assert not dead_s.exists()  # DEAD reclaimed
+    assert not aged_s.exists()  # aged-UNKNOWN reclaimed via mtime fail-safe
+
+    alive_tokens = {t for t, _ in still_alive}
+    assert alive_tokens == {"run_tritonswmm_evt-alive", "run_tritonswmm_evt-fresh"}
+    assert alive_s.exists()  # ALIVE preserved (at-most-once)
+    assert fresh_s.exists()  # fresh-UNKNOWN preserved (re-probed next entry)
+
+    # The DEAD record carries the sacct State + Reason for the bug-surface print.
+    dead_rec = next(c for c in cleared if c.rule_token == "run_tritonswmm_evt-dead")
+    assert dead_rec.state == "CANCELLED"
+    assert dead_rec.reason == "JobKilled"
+    assert dead_rec.job_id == "100"
+
+
+def test_classify_stale_via_sacct_empty_input_is_zero_call_noop(monkeypatch, synthetic_multisim_builder):
+    """R5 scheduler-politeness: the common all-markers case (empty marker-less
+    residual) short-circuits to a zero-call no-op — sacct is never invoked."""
+
+    def _boom(*a, **kw):
+        raise AssertionError("sacct must not be called on an empty marker-less set")
+
+    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", _boom)
+    b = synthetic_multisim_builder
+    assert b._classify_stale_via_sacct([]) == ([], [])
+
+
+def test_max_plausible_job_lifetime_never_below_walltime(synthetic_multisim_builder):
+    """R8/R-WAITCAP regression (SE + triton specialist follow-up): the derived
+    cap is walltime + slack, so it can never drop below the job's own walltime
+    even when the override ceiling is at its configured minimum."""
+    from TRITON_SWMM_toolkit import workflow as w
+
+    cfg = synthetic_multisim_builder.cfg_analysis
+    if cfg.hpc_total_job_duration_min is None:
+        pytest.skip(
+            "synth fixture has no hpc_total_job_duration_min; "
+            "walltime-derivation path not exercised (local-mode fallback)"
+        )
+    derived = w._max_plausible_job_lifetime_min(cfg, slack_min=30)
+    assert derived == cfg.hpc_total_job_duration_min + 30
+    assert derived >= cfg.hpc_total_job_duration_min
+
+
+def test_prune_settled_markers_lists_and_unlinks_only_settled(synth_multi_sim_analysis):
+    """Phase 3 (R9): a marker whose _submitted/ sibling is GONE is settled and
+    pruned; a marker whose _submitted/ sibling is PRESENT is live and preserved.
+
+    Covers both the _completed and _failed marker subdirs, the dry_run=True
+    listing (no deletion), and the dry_run=False unlink path.
+    """
+    a = synth_multi_sim_analysis
+    status_dir = a.analysis_paths.analysis_dir / "_status"
+    submitted_dir = status_dir / "_submitted"
+    completed_dir = status_dir / "_completed"
+    failed_dir = status_dir / "_failed"
+    for d in (submitted_dir, completed_dir, failed_dir):
+        d.mkdir(parents=True, exist_ok=True)
+
+    # Settled: _completed marker with NO _submitted sibling.
+    settled_completed = completed_dir / "run_tritonswmm_evt-settled.json"
+    settled_completed.write_text(json.dumps({"status": "completed"}))
+    # Settled: _failed marker with NO _submitted sibling.
+    settled_failed = failed_dir / "run_swmm_evt-settled.json"
+    settled_failed.write_text(json.dumps({"status": "failed"}))
+    # Live: _completed marker WITH a _submitted sibling (reconcile may still read it).
+    live_completed = completed_dir / "run_tritonswmm_evt-live.json"
+    live_completed.write_text(json.dumps({"status": "completed"}))
+    live_submitted = submitted_dir / "run_tritonswmm_evt-live.json"
+    live_submitted.write_text(json.dumps({"slurm_jobid": "999", "run_uuid": "u", "submitted_at": "t"}))
+
+    # dry_run lists only the two settled markers; nothing is deleted.
+    listed = a._prune_settled_markers(dry_run=True)
+    assert set(listed) == {settled_completed, settled_failed}
+    assert settled_completed.exists()
+    assert settled_failed.exists()
+    assert live_completed.exists()
+
+    # apply: only the settled markers are unlinked; the live marker and its
+    # _submitted sibling are preserved.
+    pruned = a._prune_settled_markers(dry_run=False)
+    assert set(pruned) == {settled_completed, settled_failed}
+    assert not settled_completed.exists()
+    assert not settled_failed.exists()
+    assert live_completed.exists()
+    assert live_submitted.exists()
