@@ -426,3 +426,60 @@ def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multi
         # asserts every _status/*.flag in the shared case dir has a sidecar.
         for p in (sa_flag, other_sa_flag, submitted):
             p.unlink(missing_ok=True)
+
+
+# ========== Phase 1: rerun-triggers narrowed to mtime (post-death-recovery) ==========
+
+
+@pytest.mark.parametrize("mode", ["local", "slurm", "single_job"])
+def test_run_submit_uses_mtime_only_rerun_triggers(synthetic_multisim_builder, mode):
+    """Phase 1: the run-path Snakemake profile pins rerun-triggers to ['mtime']
+    for every execution mode — `input` is absent."""
+    b = synthetic_multisim_builder
+    try:
+        config = b.generate_snakemake_config(mode=mode)
+    except AssertionError as exc:
+        pytest.skip(f"mode={mode} requires hpc config not set on synth fixture: {exc}")
+    assert config["rerun-triggers"] == ["mtime"], (
+        f"mode={mode}: run-path profile must pin rerun-triggers to ['mtime'] "
+        f"so a post-death resume cannot re-fire completed sims via the `input` "
+        f"trigger; got {config['rerun-triggers']!r}"
+    )
+    assert "input" not in config["rerun-triggers"], (
+        f"mode={mode}: `input` must be absent from run-path rerun-triggers (Phase 1)"
+    )
+
+
+def test_one_job_script_inherits_mtime_only_via_profile(synthetic_multisim_builder):
+    """Phase 1: the emitted run_workflow_1job.sh invokes snakemake with `--profile`
+    (which carries rerun-triggers=['mtime']) and does NOT hand-inject a conflicting
+    `--rerun-triggers ... input` on the script line."""
+    b = synthetic_multisim_builder
+    try:
+        config = b.generate_snakemake_config(mode="single_job")
+    except AssertionError as exc:
+        pytest.skip(f"single_job mode requires hpc config not set on synth fixture: {exc}")
+    config_dir = b.write_snakemake_config(config, mode="single_job")
+
+    # Load-bearing, fixture-independent assertion: the written single_job profile
+    # pins rerun-triggers to ['mtime']. This must hold on every fixture.
+    import yaml
+
+    written = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert written["rerun-triggers"] == ["mtime"]
+
+    # Script-text assertions depend on _generate_single_job_submission_script,
+    # which requires full HPC config (hpc_total_nodes) the synth fixture lacks.
+    # Skip only this portion when that config is absent — the profile assertion
+    # above already covers the load-bearing FQ2 guarantee.
+    snakefile_path = b.analysis_paths.analysis_dir / "Snakefile"
+    try:
+        script_path = b._generate_single_job_submission_script(snakefile_path, config_dir)
+    except AssertionError as exc:
+        pytest.skip(f"1job script generation requires hpc config not set on synth fixture: {exc}")
+    script_text = script_path.read_text()
+    assert "--profile" in script_text
+    assert "input" not in script_text.split("python -m snakemake", 1)[-1], (
+        "1job script must not re-introduce the `input` rerun trigger; the "
+        "single_job profile already pins rerun-triggers=['mtime'] (FQ2)"
+    )

@@ -2237,7 +2237,17 @@ def _per_sim_conduit_flow_sources(wildcards):
             "printshellcmds": True,
             "rerun-incomplete": True,
             "keep-going": True,
-            "rerun-triggers": ["mtime", "input"],
+            # Phase 1 (v2 post-death-recovery hardening): narrow to mtime only so a
+            # resume after driver/orchestrator death cannot re-fire COMPLETED sims via
+            # the `input` trigger (which would waste GPU-days). The mtime trigger still
+            # covers every legitimate rerun the toolkit relies on — including the
+            # per-sa_id fingerprint mechanism (sa-{id}_inputs.json bumps mtime on
+            # content change; see Gotcha 17 and the comment near the fingerprint write
+            # site) and missing-output reruns after Phase 2 DEAD-token reclaim. The
+            # delete (:5045 → mtime,input) and reprocess (:4546/:7044 → mtime) paths
+            # set --rerun-triggers explicitly on the CLI, which overrides this profile
+            # default under configargparse precedence, so they are unaffected.
+            "rerun-triggers": ["mtime"],
         }
         assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
             "local_cpu_cores_for_workflow must be specified for local runs"
@@ -5042,6 +5052,11 @@ exit $snakemake_status
             str(snakefile_path),
             "--directory",
             str(snakemake_dir),
+            # NOTE: the delete path deliberately RETAINS the `input` rerun-trigger
+            # (unlike the run path, narrowed to mtime-only in generate_snakemake_config
+            # for post-death-recovery). The DU-sentinel delete rules declare `input:`
+            # deps whose SET changes legitimately require the `input` trigger to refire.
+            # Do not "consistency"-narrow this to mtime-only.
             "--rerun-triggers",
             "mtime",
             "input",
