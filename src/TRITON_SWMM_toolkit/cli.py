@@ -1076,6 +1076,102 @@ def cleanup_stale_metadata_command(
         raise typer.Exit(10)
 
 
+@app.command(name="cleanup-settled-markers")
+def cleanup_settled_markers_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="List settled markers without deleting (default) or delete them with --apply",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Required with --apply to actually unlink settled markers",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print each settled-marker path",
+    ),
+):
+    """Prune settled ``_status/_completed`` / ``_status/_failed`` markers whose submitted-sentinel is gone.
+
+    Inert hygiene, not correctness.
+
+    A marker is *settled* when its sibling ``_status/_submitted/{token}.json`` is
+    absent: the runner's try/finally wrote the terminal marker then deleted the
+    submitted-sentinel, so the reconcile will never re-read it. These markers are
+    pure accumulation over long resumable campaigns. This command lists them and
+    optionally removes them.
+
+    Examples:
+
+        # List settled markers (no deletion)
+        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+            --analysis-config analysis.yaml
+
+        # Actually delete
+        $ triton-swmm cleanup-settled-markers --system-config system.yaml \\
+            --analysis-config analysis.yaml --apply --force
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        if not dry_run and not force:
+            console_err.print("[bold red]Error:[/bold red] --apply requires --force to confirm deletion.")
+            raise typer.Exit(2)
+
+        settled = analysis._prune_settled_markers(dry_run=dry_run)
+        n = len(settled)
+
+        if n == 0:
+            console.print("[green]No settled markers found.[/green]")
+        elif dry_run:
+            console.print(f"[yellow]Found {n} settled marker(s) (dry-run; nothing deleted).[/yellow]")
+            for p in settled:
+                console.print(f"  settled: {p}")
+        else:
+            if verbose:
+                for p in settled:
+                    console.print(f"  settled: {p}")
+            console.print(f"[green]Pruned {n} settled marker(s).[/green]")
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Helper Functions
 # ═══════════════════════════════════════════════════════════════════════

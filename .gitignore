@@ -244,6 +244,8 @@ test_data/*/cases/*/log.json
 test_data/*/cases/*/sensitivity_analysis_definition.csv
 test_data/*/cases/*/_generated/
 test_data/*/cases/*/subanalyses/
+test_data/*/cases/*/cfg_analysis.yaml
+test_data/*/cases/*/cfg_system.yaml
 profile_runner.py.lprof
 profiling/retrieve_profile.out
 *test_data/reference_for_addressing*
