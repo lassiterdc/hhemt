@@ -6,26 +6,7 @@ Maps to atomic plan "setup-target-mem-and-a100-compile-fix" — Parts A and B.
 
 import re
 
-import pytest
-
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
-
-
-@pytest.fixture
-def sensitivity_analysis_or_skip(request):
-    """Wrap the catalog-loaded sensitivity fixture; skip if it errors at load.
-
-    The bundled cpu_benchmarking_analysis.xlsx in this branch contains legacy
-    columns rejected by the current sensitivity-CSV allowlist. The breakage is
-    pre-existing on main and orthogonal to the setup-target-mem fix; this
-    wrapper lets the sensitivity-dependent tests skip cleanly until the
-    fixture is updated.
-    """
-    try:
-        return request.getfixturevalue("norfolk_sensitivity_analysis")
-    except Exception as exc:  # noqa: BLE001 — broad-catch ok at fixture-load boundary
-        pytest.skip(f"norfolk_sensitivity_analysis fixture unavailable: {exc!r}")
-
 
 # ----------------------------------------------------------------------------
 # Compile-script helper-method content tests (no fixtures needed)
@@ -73,11 +54,11 @@ def test_non_sensitivity_setup_rule_uses_dedicated_mem_field(norfolk_multi_sim_a
 # ----------------------------------------------------------------------------
 
 
-def test_setup_target_rule_uses_dedicated_mem_field(sensitivity_analysis_or_skip):
-    analysis = sensitivity_analysis_or_skip
+def test_setup_target_rule_uses_dedicated_mem_field(norfolk_sensitivity_analysis):
+    analysis = norfolk_sensitivity_analysis
     analysis.cfg_analysis.hpc_mem_allocation_for_setup_mb = 12000
     analysis.cfg_analysis.hpc_runtime_min_for_setup = 60
-    sf = analysis._workflow_builder.generate_snakefile_content(
+    sf = analysis.sensitivity._workflow_builder.generate_master_snakefile_content(
         process_system_level_inputs=True,
         compile_TRITON_SWMM=True,
         prepare_scenarios=True,
@@ -95,13 +76,13 @@ def test_setup_target_rule_uses_dedicated_mem_field(sensitivity_analysis_or_skip
 # ----------------------------------------------------------------------------
 
 
-def test_setup_mem_undersize_warning(sensitivity_analysis_or_skip):
+def test_setup_mem_undersize_warning(norfolk_sensitivity_analysis):
     from TRITON_SWMM_toolkit.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )
 
-    analysis = sensitivity_analysis_or_skip
+    analysis = norfolk_sensitivity_analysis
     cfg_system = analysis._system.cfg_system
     cfg_analysis = analysis.cfg_analysis
 
@@ -117,13 +98,13 @@ def test_setup_mem_undersize_warning(sensitivity_analysis_or_skip):
     assert "0.35" in flat
 
 
-def test_setup_mem_undersize_no_warning_when_safe(sensitivity_analysis_or_skip):
+def test_setup_mem_undersize_no_warning_when_safe(norfolk_sensitivity_analysis):
     from TRITON_SWMM_toolkit.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )
 
-    analysis = sensitivity_analysis_or_skip
+    analysis = norfolk_sensitivity_analysis
     cfg_system = analysis._system.cfg_system
     cfg_analysis = analysis.cfg_analysis
 

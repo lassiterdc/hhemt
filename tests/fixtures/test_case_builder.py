@@ -158,6 +158,16 @@ class retrieve_TRITON_SWMM_test_case:
         f_weather_tseries = anlysys_dir / "weather_tseries.nc"
         cfg_analysis.weather_timeseries = f_weather_tseries
 
+        # Materialize the synthetic weather timeseries BEFORE constructing
+        # TRITONSWMM_analysis: for sensitivity cases the analysis eagerly builds
+        # sub-analyses, each validated from a dict via analysis_config.model_validate,
+        # which runs the `_check_paths_exist` field validator and requires
+        # weather_timeseries to exist on disk. Creating the .nc after analysis
+        # construction left sensitivity fixtures unbuildable.
+        self.create_short_intense_weather_timeseries(
+            f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
+        )
+
         cfg_analysis = analysis_config.model_validate(cfg_analysis)
         # write analysis as yaml
         cfg_anlysys_yaml = anlysys_dir / "cfg_analysis.yaml"
@@ -176,9 +186,6 @@ class retrieve_TRITON_SWMM_test_case:
         if cfg_analysis.toggle_sensitivity_analysis:
             self.analysis.sensitivity.export_sensitivity_definition_csv()
 
-        self.create_short_intense_weather_timeseries(
-            f_weather_tseries, n_reporting_tsteps_per_sim, n_events, event_index_name
-        )
         self.system.process_system_level_inputs(
         )
 
