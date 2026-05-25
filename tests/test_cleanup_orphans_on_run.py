@@ -22,7 +22,7 @@ pytestmark = pytest.mark.requires_snakemake_subprocess
 
 
 @pytest.fixture
-def sensitivity_analysis_with_orphans(synth_sensitivity_analysis_cached):
+def sensitivity_analysis_with_orphans(norfolk_sensitivity_analysis_cached):
     """Yield a TRITONSWMM_analysis whose on-disk state contains orphan sa artifacts.
 
     Builds on the cached sensitivity fixture, then synthesizes:
@@ -31,15 +31,8 @@ def sensitivity_analysis_with_orphans(synth_sensitivity_analysis_cached):
     - _status/c_run_tritonswmm_sa-999_evt-foo_complete.flag
     - _status/e_consolidate_sa-999_complete.flag
     - sensitivity_datatree.zarr/sa_999/ subdirectory if the parent zarr exists
-
-    Phase 4 of synth-test-isolation-and-runtime (D14): swapped fixture from
-    norfolk_sensitivity_analysis_cached to synth_sensitivity_analysis_cached
-    as a narrow workaround for the cpu_benchmarking_analysis.xlsx column-allowlist
-    drift surfaced in the Phase 3 D10 follow-up bullet. The Norfolk variant reads
-    that xlsx and errors at fixture-resolution; the synth variant does not.
-    Real fix (xlsx audit + column disposition) remains open per the follow-up bullet.
     """
-    analysis = synth_sensitivity_analysis_cached
+    analysis = norfolk_sensitivity_analysis_cached
     analysis_dir = analysis.analysis_paths.analysis_dir
 
     orphan_sa_dir = analysis_dir / "subanalyses" / "sa_999"
@@ -142,10 +135,8 @@ def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
     assert not (analysis_dir / "subanalyses" / "sa_999").exists()
 
 
-def test_run_no_orphans_proceeds_silently(synth_sensitivity_analysis_cached):
-    # D14 (Phase 4): swapped from norfolk_sensitivity_analysis_cached for the
-    # cpu_benchmarking_analysis.xlsx column-allowlist drift workaround.
-    analysis = synth_sensitivity_analysis_cached
+def test_run_no_orphans_proceeds_silently(norfolk_sensitivity_analysis_cached):
+    analysis = norfolk_sensitivity_analysis_cached
     with patch("TRITON_SWMM_toolkit.config.report.validate_sensitivity_independent_vars"):
         with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
             # Should not raise even though cleanup_orphans=False (default)

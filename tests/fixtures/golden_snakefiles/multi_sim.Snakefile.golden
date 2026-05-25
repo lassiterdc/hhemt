@@ -32,9 +32,10 @@ rule all:
         "plots/system_overview.html",
         expand("plots/per_sim/{event_id}/peak_flood_depth.html", event_id=SIM_IDS),
         expand("plots/per_sim/{event_id}/conduit_flow.html",     event_id=SIM_IDS),
-        "plots/per_analysis/summary_table.svg",
+        "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
+        "plots/disk_utilization.html",
         "analysis_report.zip",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
@@ -49,42 +50,43 @@ onerror:
     # codes as informational — the workflow has already failed.
     shell("""
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.export_scenario_status \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
-            > /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log 2>&1
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            > /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log 2>&1
     """)
 
 rule setup:
     output: "_status/a_setup_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/setup.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/setup.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
-        runtime=30,
+        runtime=60,
         tasks=1,
         cpus_per_task=1,
-        mem_mb=2000,
+        mem_mb=12000,
         nodes=1
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.setup_workflow \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             \
             \
             --compile-triton-swmm \
             --compile-triton-only \
             --compile-swmm \
             \
+            --flag-output {output} \
+            --rule-name setup \
             > {log} 2>&1
-        touch {output}
         """
 
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/prepare_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/prepare_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -98,19 +100,21 @@ rule prepare_scenario:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.prepare_scenario_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             \
             \
+            --flag-output {output} \
+            --rule-name prepare_scenario \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/triton_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/triton_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -125,19 +129,21 @@ rule run_triton:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type triton \
             \
+            --flag-output {output} \
+            --rule-name run_triton \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -152,19 +158,21 @@ rule run_tritonswmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type tritonswmm \
             \
+            --flag-output {output} \
+            --rule-name run_tritonswmm \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/swmm_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/swmm_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -179,20 +187,22 @@ rule run_swmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type swmm \
             \
+            --flag-output {output} \
+            --rule-name run_swmm \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule process_triton:
     input: "_status/c_run_triton_evt-{event_id}_complete.flag"
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_triton_evt-{event_id}.log"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -206,23 +216,24 @@ rule process_triton:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type triton \
             --which TRITON \
-            --clear-raw-outputs \
             \
             --compression-level 5 \
+            --flag-output {output} \
+            --rule-name process_triton \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule process_tritonswmm:
     input: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -236,23 +247,24 @@ rule process_tritonswmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type tritonswmm \
             --which both \
-            --clear-raw-outputs \
             \
             --compression-level 5 \
+            --flag-output {output} \
+            --rule-name process_tritonswmm \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
         """
 
 rule process_swmm:
     input: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -266,22 +278,50 @@ rule process_swmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --model-type swmm \
             --which SWMM \
-            --clear-raw-outputs \
             \
             --compression-level 5 \
+            --flag-output {output} \
+            --rule-name process_swmm \
+            --event-id {wildcards.event_id} \
             > {log} 2>&1
-        touch {output}
+        """
+
+rule consolidate_scenario:
+    input: "_status/d_process_triton_evt-{event_id}_complete.flag", "_status/d_process_tritonswmm_evt-{event_id}_complete.flag", "_status/d_process_swmm_evt-{event_id}_complete.flag"
+    output:
+        flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
+        du_sentinel="sims/{event_id}/_status/_du.json",
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
+    group: "process_evt_{event_id}"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
+    resources:
+        slurm_partition="None",
+        runtime=10,
+        tasks=1,
+        cpus_per_task=1,
+        mem_mb=2048,
+        nodes=1
+    shell:
+        """
+        /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.consolidate_workflow \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --compression-level 5 \
+            --flag-output {output.flag} \
+            --rule-name consolidate_scenario \
+            --event-id {wildcards.event_id} \
+            > {log} 2>&1
         """
 
 rule consolidate:
-    input: expand("_status/d_process_triton_evt-{event_id}_complete.flag", event_id=SIM_IDS) + expand("_status/d_process_tritonswmm_evt-{event_id}_complete.flag", event_id=SIM_IDS) + expand("_status/d_process_swmm_evt-{event_id}_complete.flag", event_id=SIM_IDS)
+    input: expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)
     output: "_status/e_consolidate_complete.flag"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/consolidate.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/consolidate.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -292,13 +332,14 @@ rule consolidate:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.consolidate_workflow \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --compression-level 5 \
             \
             --which TRITON \
+            --flag-output {output} \
+            --rule-name consolidate \
             > {log} 2>&1
-        touch {output}
         """
 
 rule plot_system_overview:
@@ -315,13 +356,13 @@ rule plot_system_overview:
         source_paths = [{'path': '../elevation_3.50m.dem', 'variables': []}, {'path': 'sims/event_id.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_id.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../../../../.local/share/TRITON_SWMM_toolkit/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp', 'variables': []}],
         source_paths_rst = '- ``../elevation_3.50m.dem``\n\n- ``sims/event_id.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_id.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../../../../.local/share/TRITON_SWMM_toolkit/examples/norfolk_coastal_flooding/data/contents/shp_boundary_condition/variable_bc.shp``\n',
     log: "logs/plots/system_overview.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli system_overview \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -367,13 +408,13 @@ rule plot_per_sim_peak_flood_depth:
         source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_flood_depth_sources(w)),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
     log: "logs/plots/per_sim_peak_flood_depth_{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_peak_flood_depth \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
@@ -394,13 +435,13 @@ rule plot_per_sim_conduit_flow:
         source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_conduit_flow_sources(w)),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
     log: "logs/plots/per_sim_conduit_flow_{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_conduit_flow \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
@@ -411,7 +452,7 @@ rule plot_per_analysis_summary_table:
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
-            "plots/per_analysis/summary_table.svg",
+            "plots/per_analysis/summary_table.html",
             caption="report/captions/per_analysis_summary_table.rst",
             category="Workflow Status",
             subcategory="Workflow Health Summary",
@@ -421,13 +462,13 @@ rule plot_per_analysis_summary_table:
         source_paths = [{'path': 'sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}],
         source_paths_rst = '- ``sims/event_id.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_id.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=2000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_analysis_summary \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -448,13 +489,13 @@ rule plot_scenario_status_appendix:
         source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
         source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
     log: "logs/plots/scenario_status_appendix.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=1000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli scenario_status_appendix \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -475,13 +516,38 @@ rule plot_errors_and_warnings:
         source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_successful', 'compilation_triton_only_successful', 'compilation_swmm_successful']}],
         source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_successful``\n  - ``compilation_triton_only_successful``\n  - ``compilation_swmm_successful``\n',
     log: "logs/plots/errors_and_warnings.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=1000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli errors_and_warnings \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
+rule plot_disk_utilization:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/disk_utilization.html",
+            caption="report/captions/disk_utilization.rst",
+            category="System Information",
+            labels={"figure": "Disk Utilization"},
+        )
+    params:
+        source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
+        source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
+    log: "logs/plots/disk_utilization.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        python -m TRITON_SWMM_toolkit.report_renderers._cli disk_utilization \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -493,8 +559,8 @@ rule export_scenario_status:
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/export_scenario_status.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=10,
@@ -505,8 +571,8 @@ rule export_scenario_status:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.export_scenario_status \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             > {log} 2>&1
         """
 
@@ -515,15 +581,16 @@ rule render_report:
         "plots/system_overview.html",
         expand("plots/per_sim/{event_id}/peak_flood_depth.html", event_id=SIM_IDS),
         expand("plots/per_sim/{event_id}/conduit_flow.html",     event_id=SIM_IDS),
-        "plots/per_analysis/summary_table.svg",
+        "plots/per_analysis/summary_table.html",
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
+        "plots/disk_utilization.html",
         "scenario_status.csv",
     output:
         "analysis_report.{format}"
     wildcard_constraints:
         format="zip|html"
-    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/render_report_{format}.log"
+    log: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/logs/render_report_{format}.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -534,8 +601,8 @@ rule render_report:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.render_report_runner \
-            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
-            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-15_0904_per-sub-analysis-system-configs-pwi/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
+            --system-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_system.yaml \
+            --analysis-config /home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_05-24_1639_prefixed-column-followups/test_data/norfolk_coastal_flooding/tests/multi_sim/cfg_analysis.yaml \
             --format {wildcards.format} \
             > {log} 2>&1
         """
