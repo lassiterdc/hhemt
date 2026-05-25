@@ -1096,9 +1096,32 @@ class SnakemakeWorkflowBuilder:
         block = f"""        slurm_partition=\"{partition_name}\",
         runtime={runtime_min},"""
 
+        # GPU-job task emission, branched on the duplication hazard.
+        #
+        # gres-mode multi-GPU (UVA, gpus_total>=2): the snakemake-executor-plugin-
+        # slurm jobstep runs the rule command via `srun -n1` (anti-dup), but a
+        # parent sbatch carrying --ntasks-per-gpu=1 exports SLURM_NTASKS_PER_GPU=1,
+        # which that inner `srun -n1` inherits and SLURM re-expands to N tasks
+        # (_handle_ntasks_per_tres_step) -> N duplicate run_simulation_runner copies
+        # race on shared _status/hotstart/output. The fix routes this case through
+        # the executor's `mpi` + `tasks` path instead: tasks_per_gpu=0 SUPPRESSES
+        # --ntasks-per-gpu (submit_string.py:90 `if ntasks_per_gpu >= 1`, issue #316);
+        # mpi=True + tasks=N emits a bare --ntasks=N (submit_string.py:97-121) and
+        # flips the jobstep to its no-srun branch (jobstep __init__.py:97 — command
+        # runs ONCE). set_gres_string still emits --gres=gpu:hw:N. Net sbatch:
+        # `--gres=gpu:hw:N --ntasks=N` with NO --ntasks-per-gpu poison var. Per-rank
+        # GPU binding is re-established by run_simulation.py's inner gres srun
+        # (--ntasks-per-gpu=1 -> tres_bind=single:1), unchanged and proven (P1-b).
+        #
+        # Single-GPU gres (gpus_total==1), Frontier gpus-mode, and CPU jobs are
+        # IMMUNE and keep their existing emission byte-identically.
+        gres_multi_gpu = gpus_total >= 2 and gpu_alloc_mode == "gres"
+
         # For GPU jobs: set tasks=1 (1 task per GPU, SLURM executor uses --ntasks-per-gpu)
         # For non-GPU jobs: set tasks=<actual MPI rank count>
-        if gpus_total > 0:
+        if gres_multi_gpu:
+            block += f"\n        tasks={gpus_total},"  # one task per requested GPU
+        elif gpus_total > 0:
             block += "\n        tasks=1,"  # 1:1 GPU-to-task mapping
         else:
             block += f"\n        tasks={tasks},"  # Use actual task count
@@ -1108,9 +1131,17 @@ class SnakemakeWorkflowBuilder:
         mem_mb={mem_mb},
         nodes={sim_nodes}"""
 
-        # Only set mpi=True for non-GPU MPI jobs (has no effect on GPU jobs)
-        if mpi and gpus_total == 0:
+        # Emit mpi=True for non-GPU MPI jobs AND for gres-mode multi-GPU jobs.
+        # For gres-multi-GPU it drives the executor's --ntasks=N path (see block
+        # comment above); for non-GPU MPI it has its historical meaning. Frontier
+        # gpus-mode and single-GPU gres never set it.
+        if (mpi and gpus_total == 0) or gres_multi_gpu:
             block += ",\n        mpi=True"
+
+        if gres_multi_gpu:
+            # tasks_per_gpu=0 suppresses --ntasks-per-gpu in the executor's gpu_job
+            # branch so the mpi/--ntasks path is the sole task-count driver.
+            block += ",\n        tasks_per_gpu=0"
 
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":

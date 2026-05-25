@@ -499,16 +499,20 @@ class TRITONSWMM_run:
                 env_exports.append(f'export {key}="{escaped_value}"')
             env_export_str = "; ".join(env_exports)
 
-            # Re-prepend ${CONDA_PREFIX}/lib AFTER module_load_cmd: module load
-            # gcc/12.4.0 prepends gcc-12 lib (max GLIBCXX_3.4.30) which demotes
-            # the conda lib exported just above. The conda lib has GLIBCXX_3.4.31
-            # required by conda libgdal/libmuparser. Empirically: sa-43 (A100)
-            # failed at runtime with `version GLIBCXX_3.4.31 not found` resolving
-            # to `/apps/.../gcc/12.4.0/lib64/libstdc++.so.6` until this re-prepend
-            # lands (uva_sensitivity_suite investigation, 2026-05-20).
-            post_module_ld = (
-                'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; ' if module_load_cmd else ""
-            )
+            # Mirror the TRITON path's capability-guarded MPI-lib-first ordering
+            # (see the triton/triton-swmm full_cmd assembly below). SWMM is serial
+            # (no srun, no MPI) so the guard's mpicc test typically fails and the
+            # else-branch keeps the prior conda-first behavior; the uniform code
+            # path avoids a second ordering convention.
+            if module_load_cmd:
+                post_module_ld = (
+                    '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                    'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
+                    'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+                )
+            else:
+                post_module_ld = ""
             full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
@@ -682,17 +686,32 @@ class TRITONSWMM_run:
             escaped_value = value.replace('"', '\\"')
             env_exports.append(f'export {key}="{escaped_value}"')
         env_export_str = "; ".join(env_exports)
-        # Re-prepend ${CONDA_PREFIX}/lib AFTER module_load_cmd. The prior comment
-        # ("ordering relative to module_load_cmd doesn't matter here") is FALSIFIED
-        # on UVA Rivanna where `module load gcc/12.4.0` prepends a gcc-12 libstdc++
-        # (max GLIBCXX_3.4.30) ahead of the conda lib exported earlier. The conda
-        # lib has GLIBCXX_3.4.31 required by conda libgdal/libmuparser; without
-        # the re-prepend, A100 sims fail at runtime with `version GLIBCXX_3.4.31
-        # not found` resolving to the gcc module lib64. Empirically: sa-43–54
-        # blocked until this re-prepend lands (uva_sensitivity_suite, 2026-05-20).
-        # On Frontier (rocm/libfabric only) the re-prepend is a no-op — conda lib
-        # is already first in LD_LIBRARY_PATH.
-        post_module_ld = 'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; ' if module_load_cmd else ""
+        # Order LD_LIBRARY_PATH so the ACTIVE MPI module's lib dir precedes
+        # ${CONDA_PREFIX}/lib, which precedes the prior LD_LIBRARY_PATH. Rationale:
+        # triton.exe is compiled against the cluster MODULE OpenMPI (SLURM-PMI
+        # integrated). Its baked RUNPATH lists ${CONDA_PREFIX}/lib FIRST, and the
+        # prior conda-only re-prepend re-asserted conda first — so under bare srun
+        # triton.exe loaded conda's OpenMPI (libmpi.so.40/libopen-pal.so.80), which
+        # cannot do SLURM PMI rank wireup → multi-GPU rank 1 dies ~49s. Putting the
+        # module MPI lib dir first makes libmpi/libopen-pal resolve to the module
+        # (PMI works); ${CONDA_PREFIX}/lib stays present so libstdc++ still resolves
+        # to conda (GLIBCXX_3.4.31 for libgdal/libmuparser; module MPI dirs carry no
+        # libstdc++). The MPI lib dir is derived generically from the resolved mpicc
+        # wrapper — never hardcoded. The guard (mpicc resolves AND <prefix>/lib
+        # exists) makes this a byte-identical no-op on hosts with no MPI compiler
+        # wrapper (Frontier cray-mpich without mpicc, SWMM serial, local), so those
+        # paths keep the prior conda-first behavior. Empirically confirmed by a live
+        # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
+        # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
+        if module_load_cmd:
+            post_module_ld = (
+                '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
+                'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+            )
+        else:
+            post_module_ld = ""
         full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",
