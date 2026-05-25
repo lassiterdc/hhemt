@@ -25,6 +25,7 @@ def _make_run(
     in_slurm: bool = False,
     gpu_alloc_mode: str = "gpus",
     multi_sim_run_method: str | None = None,
+    modules: str = "",
 ):
     """Build a minimal TRITONSWMM_run with mocked scenario and analysis.
 
@@ -44,11 +45,11 @@ def _make_run(
     cfg.n_nodes = 1
     cfg.multi_sim_run_method = multi_sim_run_method
     cfg.hpc_additional_modules = []
-    cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = []
+    cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = modules
 
     sys_cfg = MagicMock()
     sys_cfg.preferred_slurm_option_for_allocating_gpus = gpu_alloc_mode
-    sys_cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = []
+    sys_cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = modules
 
     system = MagicMock()
     system.cfg_system = sys_cfg
@@ -149,6 +150,31 @@ def test_gpus_mode_gpu_srun_keeps_explicit_ntasks():
     full_cmd = _get_launch_cmd(run)
     assert "--gpus-per-task=1" in full_cmd
     assert "--ntasks=2" in full_cmd
+
+
+def test_mpi_module_lib_precedes_conda_lib():
+    """With an MPI module loaded, the runtime LD_LIBRARY_PATH must place the
+    derived MPI-module lib dir (via the mpicc-wrapper capability guard) BEFORE
+    ${CONDA_PREFIX}/lib. Regression guard for the conda-OpenMPI-shadows-module-
+    OpenMPI bug (rank 1 dies ~49s on multi-GPU sims, fixed 2026-05-24)."""
+    run = _make_run("gpu", n_gpus=2, in_slurm=True, gpu_alloc_mode="gres", modules="gcc/12.4.0 openmpi/4.1.4")
+    full_cmd = _get_launch_cmd(run)
+    # The guarded prepend snippet is present and orders MPI-lib before conda.
+    assert "command -v mpicc" in full_cmd
+    assert '"$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"' in full_cmd
+    # The MPI-lib token appears before the conda-only fallback in the emitted string.
+    assert full_cmd.index("$__MPI_LIB:${CONDA_PREFIX}/lib") < full_cmd.index(
+        'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi'
+    )
+
+
+def test_no_mpi_module_keeps_conda_first():
+    """With NO module loaded, no MPI-lib prepend is emitted and the command keeps
+    the prior conda-first behavior (no bare /lib, no $__MPI_LIB)."""
+    run = _make_run("gpu", n_gpus=2, in_slurm=True, gpu_alloc_mode="gres", modules="")
+    full_cmd = _get_launch_cmd(run)
+    assert "$__MPI_LIB" not in full_cmd
+    assert "command -v mpicc" not in full_cmd
 
 
 def test_cpu_srun_gpu_flags_absent():
