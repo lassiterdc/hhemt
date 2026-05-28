@@ -4979,6 +4979,83 @@ exit $snakemake_status
                 still_alive.append((rule_token, jid))
         return still_alive, cleared
 
+    def _orchestrator_liveness_gate(
+        self,
+        analysis_dir: Path | None = None,
+        *,
+        exclude_driver_id: str | None = None,
+    ) -> "WorkflowError | None":
+        """Return a WorkflowError if a LIVE orchestration driver exists for this
+        analysis, else None. Reclaims dead/stale sentinels in passing.
+
+        Default-safe: no ``_orchestrator/`` sentinels ⇒ returns None (proceed).
+        ``exclude_driver_id`` skips the caller's own self-sentinel (reprocess).
+        Reuses ``_classify_stale_via_sacct`` (jobid arm) and the cancel_workflow
+        ps/tmux probes — no new liveness probe is authored (R10).
+        """
+        import subprocess
+
+        from TRITON_SWMM_toolkit.orchestrator_sentinels import (
+            read_orchestrator_sentinels,
+        )
+
+        base = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
+        sentinels = [s for s in read_orchestrator_sentinels(base) if s.get("driver_id") != exclude_driver_id]
+        if not sentinels:
+            return None  # default-safe: no sentinel ⇒ proceed (R6)
+
+        live: list[str] = []
+        for s in sentinels:
+            mode = s.get("workflow_submission_mode")
+            path = Path(s["_path"])
+            alive = False
+            if mode == "local":
+                pid = s.get("pid")
+                alive = bool(pid) and subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+            elif mode in ("tmux", "batch_job"):
+                session = s.get("tmux_session_name")
+                alive = bool(session) and (
+                    subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0
+                )
+            elif mode == "1_job_many_srun_tasks":
+                jobid = s.get("slurm_jobid") or ""
+                # Use the direct liveness primitive — NOT _classify_stale_via_sacct,
+                # which resolves its sentinel path under _status/_submitted/{token}.json
+                # and, on an UNKNOWN (sacct-lagging) jobid, mtime-tiebreaks against that
+                # NON-EXISTENT _orchestrator path -> OSError -> always-DEAD, a
+                # false-proceed against a live single-job driver (the E3 hazard the gate
+                # exists to prevent). _slurm_job_is_live has no _submitted/-path coupling.
+                alive = bool(jobid) and _slurm_job_is_live(jobid)
+            else:
+                # Unknown mode: classify alive conservatively (do not silently
+                # proceed against an unrecognized driver record).
+                alive = True
+
+            if alive:
+                live.append(f"{s.get('driver_id')} (mode={mode})")
+            else:
+                path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
+                print(
+                    f"[orchestrator-gate] reclaimed stale sentinel "
+                    f"{s.get('driver_id')} (mode={mode}) at {path}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+        if live:
+            return WorkflowError(
+                phase="reprocess pre-submission orchestrator-liveness gate",
+                return_code=1,
+                stderr=(
+                    "Refusing reprocess: a live orchestration driver for this analysis "
+                    f"exists ({'; '.join(live)}). reprocess coexists with queued/running "
+                    "SLURM sim workers but must not run concurrently with a live run()/"
+                    "reprocess DRIVER (unarbitrated concurrent consolidate-zarr write). "
+                    "Cancel the live driver (or wait for it to finish) and retry."
+                ),
+            )
+        return None
+
     def _emit_wait_for_sim_rule_block(
         self,
         *,
