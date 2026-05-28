@@ -576,6 +576,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     workflow_submission_time: LogField[str] = Field(default_factory=LogField)
     workflow_submission_mode: LogField[str] = Field(default_factory=LogField)  # "tmux", "batch_job", etc.
     workflow_submission_node: LogField[str] = Field(default_factory=LogField)  # login node hostname at submission time
+    orchestrator_slurm_jobid: LogField[str] = Field(default_factory=LogField)  # E2: single-job orchestrator jobid
     workflow_canceled: LogField[bool] = Field(default_factory=LogField)
     workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
 
@@ -604,6 +605,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_submission_mode",
         "workflow_cancellation_time",
         "workflow_submission_node",
+        "orchestrator_slurm_jobid",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -636,6 +638,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_canceled",
         "workflow_cancellation_time",
         "workflow_submission_node",
+        "orchestrator_slurm_jobid",
     )(_logfield_serializer)
 
     # ----------------------------

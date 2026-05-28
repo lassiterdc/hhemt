@@ -3505,6 +3505,15 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 "message": f"Single-job workflow submitted (Job ID: {job_id})",
             }
 
+            # E2: persist orchestrator identity so a live single-job driver is
+            # detectable by the reprocess orchestration-liveness gate (Phase 2).
+            # Mirrors the tmux path's persistence at ~workflow.py:4071-4076.
+            if job_id:
+                self.analysis.log.orchestrator_slurm_jobid.set(job_id)
+                self.analysis.log.workflow_submission_mode.set("1_job_many_srun_tasks")
+                self.analysis.log.workflow_submission_time.set(datetime.datetime.now().isoformat())
+                self.analysis.log.workflow_submission_node.set(socket.gethostname())
+
             # Wait for completion if requested
             if wait_for_completion:
                 if job_id:
