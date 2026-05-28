@@ -198,3 +198,26 @@ def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_com
         )
     finally:
         stale_lock.unlink(missing_ok=True)
+
+
+def test_reprocess_dry_run_no_destructive_mutation(synthetic_multisim_completed):
+    """R5/R6: analysis.reprocess(dry_run=True, start_with='consolidate') must NOT
+    delete analysis_datatree.zarr nor re-stamp the analysis-scope _du.json. The
+    completion flag MAY be deleted (it is the cheap mtime trigger)."""
+    from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+
+    a = synthetic_multisim_completed
+    zarr = a.analysis_paths.analysis_datatree_zarr
+    assert zarr is not None and zarr.exists(), "fixture precondition: consolidated zarr present"
+    # Establish a known analysis-scope _du.json so the no-restamp assertion is
+    # unconditional (R5): without this, an absent sentinel skips the mtime check.
+    compute_and_write_scope_sentinel(a.analysis_paths.analysis_dir, scope="analysis")
+    du = a.analysis_paths.analysis_dir / "_status" / "_du.json"
+    assert du.exists(), "precondition: analysis-scope _du.json materialized"
+    du_mtime0 = du.stat().st_mtime_ns
+
+    result = a.reprocess(start_with="consolidate", execution_mode="local", dry_run=True, verbose=False)
+    assert result.get("success"), f"dry-run reprocess failed: {result.get('message')!r}"
+
+    assert zarr.exists(), "dry-run reprocess must NOT delete the consolidated zarr"
+    assert du.stat().st_mtime_ns == du_mtime0, "dry-run reprocess must NOT re-stamp _du.json"

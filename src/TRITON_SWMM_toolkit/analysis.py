@@ -2637,12 +2637,21 @@ class TRITONSWMM_analysis:
         # Invalidate from start_with onward — deletes the upstream flag/artifact
         # that triggers Snakemake's mtime-driven re-fire. Per D-INVALIDATE
         # option 1: delete flags + rely on the generator's baked overwrite.
-        self._invalidate_downstream_flags(start_with)
+        # On dry_run, the flag deletion still happens (it is the cheap,
+        # rerun-recreated trigger that makes the --dry-run DAG meaningful);
+        # only the destructive consolidated-zarr deletion + DU restamp are
+        # skipped (see `reprocess dry_run performs no destructive mutation`
+        # stipulation).
+        self._invalidate_downstream_flags(start_with, dry_run=dry_run)
 
         # Force-rerun pre-delete (login-node responsibility). Resolve +
         # validate + delete BEFORE Snakemake plans the reprocess DAG. Per
-        # cleanup-rerun-delete-redesign Phase 4 + R10.
-        self._apply_force_rerun(override_force_rerun)
+        # cleanup-rerun-delete-redesign Phase 4 + R10. Skipped on dry_run —
+        # it deletes flags and clears per-scenario processing-log records,
+        # both filesystem mutations that the dry-run no-destructive-mutation
+        # contract forbids.
+        if not dry_run:
+            self._apply_force_rerun(override_force_rerun)
 
         # Delegate to the workflow builder. The submit method writes the
         # reprocess Snakefile and orchestrates the snakemake invocation with
@@ -2796,7 +2805,7 @@ class TRITONSWMM_analysis:
                     return False
         return True
 
-    def _invalidate_downstream_flags(self, start_with: str) -> None:
+    def _invalidate_downstream_flags(self, start_with: str, *, dry_run: bool = False) -> None:
         """Delete ``_status`` flags from ``start_with`` onward.
 
         Never deletes ``c_run_*`` (sim) flags. The render layer is
@@ -2821,31 +2830,44 @@ class TRITONSWMM_analysis:
             One of ``"process"``, ``"consolidate"``, ``"render"``.
         """
         from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+
         analysis_dir = self.analysis_paths.analysis_dir
         sd = analysis_dir / "_status"
+        # Flag deletion is the cheap, rerun-recreated trigger Snakemake's
+        # `--rerun-triggers mtime` keys on (rule consolidate's only declared
+        # output is e_consolidate_complete.flag — the zarr is written by the
+        # runner shell, not a tracked output). It runs even on dry_run so the
+        # --dry-run DAG preview shows what would re-fire. The destructive
+        # consolidated-zarr deletion + DU restamp are gated behind
+        # `if not dry_run:` per the dry-run no-destructive-mutation contract.
         if start_with == "process":
             for f in sd.glob("d_process_*"):
                 f.unlink(missing_ok=True)
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
-            _zarr = self.analysis_paths.analysis_datatree_zarr
-            if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+            if not dry_run:
+                _zarr = self.analysis_paths.analysis_datatree_zarr
+                if _zarr is not None and _zarr.exists():
+                    fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "consolidate":
             (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
-            _zarr = self.analysis_paths.analysis_datatree_zarr
-            if _zarr is not None and _zarr.exists():
-                fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
+            if not dry_run:
+                _zarr = self.analysis_paths.analysis_datatree_zarr
+                if _zarr is not None and _zarr.exists():
+                    fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as
             # absent. Plot PNGs/HTML are left in place; the plot rules
             # only re-fire if a plot's inputs are newer (the intended
-            # surgical behavior for `start_with="render"`).
+            # surgical behavior for `start_with="render"`). The report-artifact
+            # unlink is the flag-equivalent re-fire trigger, so it runs even on
+            # dry_run (see D6); only the DU restamp is gated.
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
             report_html.unlink(missing_ok=True)
             report_zip.unlink(missing_ok=True)
-            restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
+            if not dry_run:
+                restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
