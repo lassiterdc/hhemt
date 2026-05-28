@@ -2486,9 +2486,10 @@ class TRITONSWMM_analysis:
         reconciliation guard against ``_status/_submitted/`` before
         submitting, so a parallel live sim driver cannot be double-submitted.
         Emits a scope-limited Snakefile at
-        ``{analysis_dir}/Snakefile.reprocess`` and runs it against a
-        sibling ``.snakemake_reprocess/`` working directory so the reprocess
-        driver does not collide with the main ``.snakemake/`` state.
+        ``{analysis_dir}/Snakefile.reprocess`` and runs it against the shared
+        ``.snakemake/`` with ``--nolock``; the ``_status/_orchestrator/``
+        liveness gate (not the Snakemake lock) prevents collision with a live
+        orchestration driver.
 
         Parameters
         ----------
@@ -2645,8 +2646,9 @@ class TRITONSWMM_analysis:
 
         # Delegate to the workflow builder. The submit method writes the
         # reprocess Snakefile and orchestrates the snakemake invocation with
-        # `--directory .snakemake_reprocess --rerun-triggers mtime
-        # --snakefile Snakefile.reprocess`.
+        # `--snakefile Snakefile.reprocess --rerun-triggers mtime --nolock`
+        # against the shared analysis_dir/.snakemake/; the
+        # _status/_orchestrator/ liveness gate is the concurrency authority.
         result = self._workflow_builder.submit_reprocess_workflow(
             start_with=start_with,
             execution_mode=execution_mode,

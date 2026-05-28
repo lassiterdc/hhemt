@@ -651,6 +651,7 @@ class SnakemakeWorkflowBuilder:
         dry_run: bool,
         verbose: bool = True,
         working_dir: Path | None = None,
+        skip_lock_check: bool = False,
     ) -> None:
         """Check for a stale Snakemake lock and prompt the user to clear it.
 
@@ -674,9 +675,17 @@ class SnakemakeWorkflowBuilder:
             Snakemake working directory whose ``.snakemake/locks/`` subtree
             should be cleared. When ``None`` (the run/submit default), falls
             through to ``self.analysis_paths.analysis_dir`` — the existing
-            behavior, unchanged. The reprocess path passes
-            ``analysis_dir / ".snakemake_reprocess"`` so the reprocess driver
-            clears its own lock subtree rather than the main ``.snakemake/``.
+            behavior, unchanged. The reprocess path shares the main
+            ``analysis_dir/.snakemake/`` and instead passes
+            ``skip_lock_check=True`` (the lock check is bypassed for reprocess;
+            the orchestrator-liveness gate is the concurrency authority).
+        skip_lock_check : bool, default False
+            When True, return before the lock check (and its interactive
+            ``input()`` prompt) entirely. The reprocess path passes True
+            because ``--nolock`` governs only the Snakemake subprocess and does
+            not shadow this toolkit-side prompt; the ``_status/_orchestrator/``
+            liveness gate is the reprocess concurrency authority. The run/submit
+            path passes False (the default), so its behavior is byte-identical.
 
         Raises
         ------
@@ -685,6 +694,12 @@ class SnakemakeWorkflowBuilder:
             snakemake --unlock itself fails.
         """
         if dry_run:
+            return
+        if skip_lock_check:
+            # Reprocess path: the orchestration-liveness sentinel — not the
+            # Snakemake lock — is the concurrency authority, and --nolock is on
+            # the reprocess subprocess. Skip the toolkit-side lock check so the
+            # interactive input() prompt below is never reached in a non-TTY.
             return
         wd = working_dir if working_dir is not None else self.analysis_paths.analysis_dir
         snakemake_state = wd / ".snakemake"
@@ -910,6 +925,7 @@ class SnakemakeWorkflowBuilder:
         dry_run: bool,
         verbose: bool,
         working_dir: Path | None = None,
+        skip_lock_check: bool = False,
     ) -> None:
         """Shared pre-Snakemake-invocation guard sequence.
 
@@ -935,18 +951,25 @@ class SnakemakeWorkflowBuilder:
             should be cleared by the lock check. When ``None`` (the
             run/submit default), the lock check falls through to
             ``self.analysis_paths.analysis_dir`` — the existing behavior on
-            every Phase-1 caller, unchanged. The reprocess path threads
-            ``analysis_dir / ".snakemake_reprocess"`` so the reprocess
-            driver clears its own lock subtree. The reconciliation guard is
-            unaffected by ``working_dir`` — it sweeps the analysis-level
-            ``_status/_submitted/`` sentinel directory which is shared
-            across run and reprocess paths.
+            every Phase-1 caller, unchanged. The reprocess path shares the
+            main ``analysis_dir/.snakemake/`` and passes ``skip_lock_check=True``
+            instead (the lock check is bypassed for reprocess). The
+            reconciliation guard is unaffected by ``working_dir`` — it sweeps
+            the analysis-level ``_status/_submitted/`` sentinel directory which
+            is shared across run and reprocess paths.
+        skip_lock_check : bool, default False
+            Threaded into :meth:`_check_and_clear_snakemake_lock`. When True
+            (reprocess path only), the lock check returns before its
+            interactive ``input()`` prompt — the ``_status/_orchestrator/``
+            liveness gate is the reprocess concurrency authority. The run/submit
+            path passes False (the default), so its behavior is byte-identical.
         """
         self._check_and_clear_snakemake_lock(
             snakefile_path,
             dry_run=dry_run,
             verbose=verbose,
             working_dir=working_dir,
+            skip_lock_check=skip_lock_check,
         )
         if not dry_run:
             # v2: reconcile here (return discarded) preserves reclaim+detect on
@@ -4621,10 +4644,11 @@ exit $snakemake_status
         """Submit a reprocess-scoped workflow against existing sim outputs.
 
         Re-runs downstream stages (process / consolidate / plot / render)
-        without re-running simulations. Uses a separate
-        ``{analysis_dir}/.snakemake_reprocess/`` working directory so it can
-        coexist with a live simulation driver and clears that subtree's
-        ``.snakemake/locks/`` rather than the main ``.snakemake/locks/``.
+        without re-running simulations. Shares ``{analysis_dir}/.snakemake/``
+        with the run path and uses ``--nolock`` so it coexists with queued/
+        running SLURM sim workers without touching the shared lock; the
+        ``_status/_orchestrator/`` liveness gate refuses fast only when a live
+        orchestration driver for the same analysis exists.
 
         Parameters
         ----------
@@ -4698,14 +4722,15 @@ exit $snakemake_status
         # against the working dir — which breaks resolution of
         # ``_status/c_run_*.flag`` and every other relative artifact path
         # because those live in ``analysis_dir/_status/``, not
-        # ``.snakemake_reprocess/_status/``. Sharing ``analysis_dir/.snakemake/``
-        # is safe for Phase 2's local tests and CLI smoke because the
-        # reprocess Snakefile lives at a distinct path
-        # (``Snakefile.reprocess``) and Snakemake locks are keyed per
-        # Snakefile. **Follow-up**: true coexistence with a concurrent live
-        # ``rule run_*`` driver requires either rewriting reprocess Snakefile
-        # paths to absolute form or adopting a future ``--lock-dir``-style
-        # mechanism. See ``# Follow-up Ideas`` in the in-flight sidecar.
+        # ``.snakemake_reprocess/_status/``. The reprocess Snakefile lives at a
+        # distinct path (``Snakefile.reprocess``). NOTE: Snakemake locks are
+        # keyed on the working-directory input/output file SET (a file-set
+        # intersection in persistence.py), NOT the Snakefile path — so a
+        # distinct Snakefile provides NO lock isolation. Coexistence with a
+        # live ``rule run_*`` driver is therefore handled by ``--nolock`` on
+        # the reprocess invocation plus the ``_status/_orchestrator/`` liveness
+        # gate, which is the concurrency authority (see the "reprocess uses
+        # --nolock + orchestrator-liveness sentinel" decision doc).
         reprocess_working_dir = self.analysis_paths.analysis_dir
 
         # Build the snakemake command. Reuses the run/submit base command and
@@ -4716,6 +4741,7 @@ exit $snakemake_status
             str(snakefile_path),
             "--rerun-triggers",
             "mtime",
+            "--nolock",
         ]
 
         if mode == "local":
@@ -4743,78 +4769,118 @@ exit $snakemake_status
         if dry_run:
             cmd_args.append("--dry-run")
 
-        # Facade — lock check (against the shared analysis_dir/.snakemake/
-        # per the working-dir explanation above) + reconciliation against
-        # analysis_dir/_status/_submitted/. Phase 1's at-most-once guard
-        # protects reprocess from a parallel live sim driver
-        # double-submitting; the lock-check working_dir matches the
-        # subprocess cwd below.
-        self._pre_snakemake_invocation_guards(
-            snakefile_path,
-            dry_run=dry_run,
-            verbose=verbose,
-            working_dir=reprocess_working_dir,
-        )
+        # Reprocess concurrency gate (R3): refuse fast with a WorkflowError —
+        # never input() — when a live orchestration DRIVER for this analysis
+        # exists. Default-safe when no _orchestrator/ sentinel is present (R6),
+        # and coexists with queued/running _submitted/ sim WORKERS (R2). Skipped
+        # for dry runs (planning only — nothing is submitted, no zarr is written).
+        import os
 
-        # Subprocess invocation. Local runs block; slurm runs detach (the run
-        # path's distinction is preserved here).
-        if mode == "local":
+        from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
+
+        driver_id = _osent.new_driver_id()
+        remove_self_sentinel = False
+        if not dry_run:
+            gate_err = self._orchestrator_liveness_gate(
+                analysis_dir=self.analysis_paths.analysis_dir,
+                exclude_driver_id=driver_id,
+            )
+            if gate_err is not None:
+                raise gate_err
+            # Reprocess self-sentinel (R5): write-own-then-scan-others mutual
+            # exclusion vs a second reprocess. Always mode="local"/pid=os.getpid()
+            # — reprocess overrides 1_job_many_srun_tasks -> batch_job but never
+            # allocates its own tmux/sbatch driver, so it never produces a
+            # tmux/sbatch self-sentinel. A blocking-local reprocess removes it in
+            # the finally; a detached Popen reprocess leaves it (reclaimed by the
+            # gate's ps -p {pid} arm once this login-node process exits).
+            _osent.write_orchestrator_sentinel(
+                self.analysis_paths.analysis_dir,
+                driver_id=driver_id,
+                workflow_submission_mode="local",
+                pid=os.getpid(),
+            )
+            remove_self_sentinel = True
+
+        try:
+            # Facade — reconciliation against analysis_dir/_status/_submitted/.
+            # skip_lock_check=True bypasses the toolkit-side input() prompt; the
+            # orchestrator-liveness gate above is the concurrency authority and
+            # --nolock is on the subprocess. Phase 1's at-most-once guard still
+            # protects reprocess from a parallel live sim driver double-submitting.
+            self._pre_snakemake_invocation_guards(
+                snakefile_path,
+                dry_run=dry_run,
+                verbose=verbose,
+                working_dir=reprocess_working_dir,
+                skip_lock_check=True,
+            )
+
+            # Subprocess invocation. Local runs block; slurm runs detach (the run
+            # path's distinction is preserved here).
+            if mode == "local":
+                with open(snakemake_logfile, "w") as log_f:
+                    result = subprocess.run(
+                        cmd_args,
+                        cwd=str(self.analysis_paths.analysis_dir),
+                        stdout=log_f,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        check=False,
+                    )
+                if verbose:
+                    print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
+                if result.returncode != 0:
+                    return {
+                        "success": False,
+                        "mode": "local",
+                        "snakefile_path": snakefile_path,
+                        "job_id": None,
+                        "message": (f"Snakemake reprocess failed. See {snakemake_logfile} for details."),
+                        "snakemake_logfile": snakemake_logfile,
+                    }
+                if verbose:
+                    print("[Snakemake] Reprocess completed successfully", flush=True)
+                self.analysis._refresh_log()
+                return {
+                    "success": True,
+                    "mode": "local",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": "Reprocess completed successfully",
+                    "snakemake_logfile": snakemake_logfile,
+                }
+
+            # slurm path
             with open(snakemake_logfile, "w") as log_f:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     cmd_args,
                     cwd=str(self.analysis_paths.analysis_dir),
                     stdout=log_f,
                     stderr=subprocess.STDOUT,
-                    text=True,
-                    check=False,
+                    start_new_session=True,
                 )
             if verbose:
-                print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
-            if result.returncode != 0:
-                return {
-                    "success": False,
-                    "mode": "local",
-                    "snakefile_path": snakefile_path,
-                    "job_id": None,
-                    "message": (f"Snakemake reprocess failed. See {snakemake_logfile} for details."),
-                    "snakemake_logfile": snakemake_logfile,
-                }
-            if verbose:
-                print("[Snakemake] Reprocess completed successfully", flush=True)
+                print(
+                    f"[Snakemake] Reprocess submitted to background (PID: {proc.pid})",
+                    flush=True,
+                )
+            # Detached driver: leave the self-sentinel for the gate's liveness
+            # reclaim — do NOT remove it in the finally.
+            remove_self_sentinel = False
             self.analysis._refresh_log()
             return {
                 "success": True,
-                "mode": "local",
+                "mode": "slurm",
                 "snakefile_path": snakefile_path,
                 "job_id": None,
-                "message": "Reprocess completed successfully",
+                "message": "Reprocess submitted to SLURM (detached)",
+                "process": proc,
                 "snakemake_logfile": snakemake_logfile,
             }
-
-        # slurm path
-        with open(snakemake_logfile, "w") as log_f:
-            proc = subprocess.Popen(
-                cmd_args,
-                cwd=str(self.analysis_paths.analysis_dir),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        if verbose:
-            print(
-                f"[Snakemake] Reprocess submitted to background (PID: {proc.pid})",
-                flush=True,
-            )
-        self.analysis._refresh_log()
-        return {
-            "success": True,
-            "mode": "slurm",
-            "snakefile_path": snakefile_path,
-            "job_id": None,
-            "message": "Reprocess submitted to SLURM (detached)",
-            "process": proc,
-            "snakemake_logfile": snakemake_logfile,
-        }
+        finally:
+            if remove_self_sentinel:
+                _osent.remove_orchestrator_sentinel(self.analysis_paths.analysis_dir, driver_id)
 
     def _classify_live_sentinels(
         self,
@@ -7272,12 +7338,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         ``--rerun-triggers mtime`` so downstream rules only re-fire when
         their outputs are missing or older than their inputs.
 
-        Per the Phase 2 reprocess deviation (in-flight sidecar comment):
-        the reprocess driver shares ``analysis_dir/.snakemake/`` with the run
-        path. Per-Snakefile locking via the distinct ``Snakefile.reprocess``
-        path provides coexistence safety for local tests + CLI smoke;
-        true coexistence with a concurrent live ``rule simulation_*`` driver
-        is tracked as a Phase 2 follow-up.
+        The reprocess driver shares ``analysis_dir/.snakemake/`` with the run
+        path and uses ``--nolock`` so it coexists with queued/running SLURM
+        sim workers without touching the shared lock; the master
+        ``_status/_orchestrator/`` liveness gate (not the Snakemake lock) is
+        the concurrency authority and refuses fast only when a live
+        orchestration driver for this master analysis exists.
 
         Parameters
         ----------
@@ -7361,6 +7427,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             str(snakefile_path),
             "--rerun-triggers",
             "mtime",
+            "--nolock",
         ]
 
         if mode == "local":
@@ -7383,72 +7450,115 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         if dry_run:
             cmd_args.append("--dry-run")
 
-        # Facade — lock check (shared analysis_dir/.snakemake/ per Phase 2's
-        # deviation) + reconciliation against analysis_dir/_status/_submitted/.
-        # Phase 1's at-most-once guard protects this reprocess from a parallel
-        # live sim driver double-submitting.
-        self._base_builder._pre_snakemake_invocation_guards(
-            snakefile_path,
-            dry_run=dry_run,
-            verbose=verbose,
-            working_dir=analysis_dir,
-        )
+        # Reprocess concurrency gate (R3): refuse fast with a WorkflowError —
+        # never input() — when a live orchestration DRIVER for this master
+        # analysis exists. Default-safe when no _orchestrator/ sentinel is
+        # present (R6), and coexists with queued/running _submitted/ sim
+        # WORKERS (R2). Skipped for dry runs (planning only — nothing is
+        # submitted, no zarr is written).
+        import os
 
-        # Subprocess invocation. Local runs block; slurm runs detach.
-        if mode == "local":
+        from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
+
+        driver_id = _osent.new_driver_id()
+        remove_self_sentinel = False
+        if not dry_run:
+            gate_err = self._base_builder._orchestrator_liveness_gate(
+                analysis_dir=analysis_dir,
+                exclude_driver_id=driver_id,
+            )
+            if gate_err is not None:
+                raise gate_err
+            # Reprocess self-sentinel (R5): write-own-then-scan-others mutual
+            # exclusion vs a second reprocess. Always mode="local"/pid=os.getpid()
+            # — reprocess overrides 1_job_many_srun_tasks -> batch_job but never
+            # allocates its own tmux/sbatch driver, so it never produces a
+            # tmux/sbatch self-sentinel. A blocking-local reprocess removes it in
+            # the finally; a detached Popen reprocess leaves it (reclaimed by the
+            # gate's ps -p {pid} arm once this login-node process exits).
+            _osent.write_orchestrator_sentinel(
+                analysis_dir,
+                driver_id=driver_id,
+                workflow_submission_mode="local",
+                pid=os.getpid(),
+            )
+            remove_self_sentinel = True
+
+        try:
+            # Facade — reconciliation against analysis_dir/_status/_submitted/.
+            # skip_lock_check=True bypasses the toolkit-side input() prompt; the
+            # orchestrator-liveness gate above is the concurrency authority and
+            # --nolock is on the subprocess. Phase 1's at-most-once guard still
+            # protects reprocess from a parallel live sim driver double-submitting.
+            self._base_builder._pre_snakemake_invocation_guards(
+                snakefile_path,
+                dry_run=dry_run,
+                verbose=verbose,
+                working_dir=analysis_dir,
+                skip_lock_check=True,
+            )
+
+            # Subprocess invocation. Local runs block; slurm runs detach.
+            if mode == "local":
+                with open(snakemake_logfile, "w") as log_f:
+                    result = subprocess.run(
+                        cmd_args,
+                        cwd=str(analysis_dir),
+                        stdout=log_f,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        check=False,
+                    )
+                if verbose:
+                    print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
+                if result.returncode != 0:
+                    return {
+                        "success": False,
+                        "mode": "local",
+                        "snakefile_path": snakefile_path,
+                        "job_id": None,
+                        "message": (f"Snakemake sensitivity reprocess failed. See {snakemake_logfile} for details."),
+                        "snakemake_logfile": snakemake_logfile,
+                    }
+                if verbose:
+                    print("[Snakemake] Sensitivity reprocess completed successfully", flush=True)
+                self.sensitivity_analysis._update_master_analysis_log()
+                return {
+                    "success": True,
+                    "mode": "local",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": "Sensitivity reprocess completed successfully",
+                    "snakemake_logfile": snakemake_logfile,
+                }
+
+            # slurm path
             with open(snakemake_logfile, "w") as log_f:
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     cmd_args,
                     cwd=str(analysis_dir),
                     stdout=log_f,
                     stderr=subprocess.STDOUT,
-                    text=True,
-                    check=False,
+                    start_new_session=True,
                 )
             if verbose:
-                print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
-            if result.returncode != 0:
-                return {
-                    "success": False,
-                    "mode": "local",
-                    "snakefile_path": snakefile_path,
-                    "job_id": None,
-                    "message": (f"Snakemake sensitivity reprocess failed. See {snakemake_logfile} for details."),
-                    "snakemake_logfile": snakemake_logfile,
-                }
-            if verbose:
-                print("[Snakemake] Sensitivity reprocess completed successfully", flush=True)
+                print(
+                    f"[Snakemake] Sensitivity reprocess submitted to background (PID: {proc.pid})",
+                    flush=True,
+                )
+            # Detached driver: leave the self-sentinel for the gate's liveness
+            # reclaim — do NOT remove it in the finally.
+            remove_self_sentinel = False
             self.sensitivity_analysis._update_master_analysis_log()
             return {
                 "success": True,
-                "mode": "local",
+                "mode": "slurm",
                 "snakefile_path": snakefile_path,
                 "job_id": None,
-                "message": "Sensitivity reprocess completed successfully",
+                "message": "Sensitivity reprocess submitted to SLURM (detached)",
+                "process": proc,
                 "snakemake_logfile": snakemake_logfile,
             }
-
-        # slurm path
-        with open(snakemake_logfile, "w") as log_f:
-            proc = subprocess.Popen(
-                cmd_args,
-                cwd=str(analysis_dir),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-        if verbose:
-            print(
-                f"[Snakemake] Sensitivity reprocess submitted to background (PID: {proc.pid})",
-                flush=True,
-            )
-        self.sensitivity_analysis._update_master_analysis_log()
-        return {
-            "success": True,
-            "mode": "slurm",
-            "snakefile_path": snakefile_path,
-            "job_id": None,
-            "message": "Sensitivity reprocess submitted to SLURM (detached)",
-            "process": proc,
-            "snakemake_logfile": snakemake_logfile,
-        }
+        finally:
+            if remove_self_sentinel:
+                _osent.remove_orchestrator_sentinel(analysis_dir, driver_id)
