@@ -449,7 +449,11 @@ class TRITONSWMM_sensitivity_analysis:
         # Force-rerun pre-delete (login-node responsibility). Per
         # cleanup-rerun-delete-redesign Phase 4 + R10. Resolves + validates +
         # deletes matched flags before Snakemake plans the reprocess DAG.
-        self.master_analysis._apply_force_rerun(override_force_rerun)
+        # Skipped on dry_run — it deletes flags and clears per-scenario
+        # processing-log records, both filesystem mutations the dry-run
+        # no-destructive-mutation contract forbids.
+        if not dry_run:
+            self.master_analysis._apply_force_rerun(override_force_rerun)
 
         # Resolve invalidation target set. ``None`` → all sub-analyses; explicit
         # list → subset. String-cast preserves alignment with sub_analyses dict
@@ -465,12 +469,19 @@ class TRITONSWMM_sensitivity_analysis:
         # process rules, so process invalidation is treated as consolidate
         # invalidation). "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
+        from TRITON_SWMM_toolkit.du_sentinels import (
+            compute_and_write_scope_sentinel,
+            restamp_parent_sentinels,
+        )
         from TRITON_SWMM_toolkit.utils import fast_rmtree as _fast_rmtree
-        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
 
         master_analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         status_dir = master_analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
+            # Flag deletion is the cheap, rerun-recreated trigger Snakemake's
+            # `--rerun-triggers mtime` keys on; it runs even on dry_run so the
+            # --dry-run DAG preview shows what would re-fire (see the dry-run
+            # no-destructive-mutation stipulation).
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
@@ -478,27 +489,43 @@ class TRITONSWMM_sensitivity_analysis:
             # rule-shell overwrite toggle is retired; runners early-return
             # when the consolidated datatree zarr already exists. This
             # method (called from reprocess) deletes the consolidated
-            # artifacts directly so the rebuild is unconditional. The
-            # parallel force-rerun path uses override_force_rerun which
-            # invalidates per-scenario log records in addition to flags.
-            for sa_id in targets:
-                sub_analysis = self.sub_analyses.get(sa_id)
-                if sub_analysis is None:
-                    continue
-                _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
-                if _sub_zarr is not None and _sub_zarr.exists():
-                    _fast_rmtree(_sub_zarr, analysis_dir=master_analysis_dir)  # PATTERN A
-            _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
-            if _master_zarr is not None and _master_zarr.exists():
-                _fast_rmtree(_master_zarr, analysis_dir=master_analysis_dir)  # PATTERN A
+            # artifacts directly so the rebuild is unconditional. Destructive
+            # — gated behind `if not dry_run:`. To avoid the per-child master
+            # re-walk cliff, each sub-zarr is deleted with analysis_dir=None
+            # (suppresses fast_rmtree's per-call restamp; the kwarg is still
+            # present so the du-system-hardening Phase-1 checker passes), the
+            # affected sub dirs are collected, then each sub scope is restamped
+            # once and the master scope exactly once after the loop.
+            if not dry_run:
+                affected_sub_dirs: set = set()
+                for sa_id in targets:
+                    sub_analysis = self.sub_analyses.get(sa_id)
+                    if sub_analysis is None:
+                        continue
+                    _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
+                    if _sub_zarr is not None and _sub_zarr.exists():
+                        _fast_rmtree(_sub_zarr, analysis_dir=None)  # batched-restamp; restamp below
+                        affected_sub_dirs.add(sub_analysis.analysis_paths.analysis_dir)
+                _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
+                if _master_zarr is not None and _master_zarr.exists():
+                    _fast_rmtree(_master_zarr, analysis_dir=None)  # batched-restamp; restamp below
+                # Batched restamp: each affected sub-analysis scope once, then
+                # the master analysis scope exactly once (replaces N per-child
+                # master re-walks with one).
+                for _sub_dir in affected_sub_dirs:
+                    compute_and_write_scope_sentinel(_sub_dir, scope="sub_analysis")
+                compute_and_write_scope_sentinel(master_analysis_dir, scope="analysis")
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
+            # The report-artifact unlink is the flag-equivalent trigger, so it
+            # runs even on dry_run (see D6); only the DU restamp is gated.
             _report_html = master_analysis_dir / "analysis_report.html"
             _report_zip = master_analysis_dir / "analysis_report.zip"
             _report_html.unlink(missing_ok=True)
             _report_zip.unlink(missing_ok=True)
-            restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
+            if not dry_run:
+                restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
