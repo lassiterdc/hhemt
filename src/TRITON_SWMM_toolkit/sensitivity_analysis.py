@@ -13,6 +13,7 @@ import xarray as xr
 import yaml  # type: ignore
 
 import TRITON_SWMM_toolkit.analysis as anlysis
+from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
@@ -295,28 +296,56 @@ class TRITONSWMM_sensitivity_analysis:
         # dispatch path (matched flags would be absent by now).
         self.master_analysis._apply_force_rerun(override_force_rerun)
 
-        return self._workflow_builder.submit_workflow(
-            mode=mode,
-            process_system_level_inputs=process_system_level_inputs,
-            overwrite_system_inputs=overwrite_system_inputs,
-            compile_TRITON_SWMM=compile_TRITON_SWMM,
-            recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-            prepare_scenarios=prepare_scenarios,
-            overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
-            rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-            process_timeseries=process_timeseries,
-            which=which,
-            override_clear_raw=override_clear_raw,
-            compression_level=compression_level,
-            pickup_where_leftoff=pickup_where_leftoff,
-            wait_for_completion=wait_for_completion,
-            dry_run=dry_run,
-            verbose=verbose,
-            override_hpc_total_nodes=override_hpc_total_nodes,
-            report_formats=report_formats,
-            extra_sbatch_args=extra_sbatch_args,
-            snakemake_diagnostics=snakemake_diagnostics,
+        # Driver-start orchestrator-liveness sentinel (Phase 2), keyed on the
+        # MASTER analysis_dir. This is the sensitivity-master submit path and
+        # always owns its sentinel (the Analysis.submit_workflow guard leaves
+        # _driver_id None there and delegates here). Blocking-local drivers
+        # remove on return; detached drivers leave a durable sentinel reclaimed
+        # by the gate's liveness probes.
+        _master_dir = self.master_analysis.analysis_paths.analysis_dir
+        _eff_mode = self.master_analysis.cfg_analysis.multi_sim_run_method
+        _driver_id = _osent.new_driver_id()
+        _osent.write_orchestrator_sentinel(
+            _master_dir,
+            driver_id=_driver_id,
+            workflow_submission_mode=_eff_mode,
         )
+        try:
+            result = self._workflow_builder.submit_workflow(
+                mode=mode,
+                process_system_level_inputs=process_system_level_inputs,
+                overwrite_system_inputs=overwrite_system_inputs,
+                compile_TRITON_SWMM=compile_TRITON_SWMM,
+                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                prepare_scenarios=prepare_scenarios,
+                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                process_timeseries=process_timeseries,
+                which=which,
+                override_clear_raw=override_clear_raw,
+                compression_level=compression_level,
+                pickup_where_leftoff=pickup_where_leftoff,
+                wait_for_completion=wait_for_completion,
+                dry_run=dry_run,
+                verbose=verbose,
+                override_hpc_total_nodes=override_hpc_total_nodes,
+                report_formats=report_formats,
+                extra_sbatch_args=extra_sbatch_args,
+                snakemake_diagnostics=snakemake_diagnostics,
+            )
+        finally:
+            if _eff_mode == "local":
+                _osent.remove_orchestrator_sentinel(_master_dir, _driver_id)
+
+        if _eff_mode != "local" and isinstance(result, dict):
+            _osent.enrich_orchestrator_sentinel(
+                _master_dir,
+                driver_id=_driver_id,
+                slurm_jobid=result.get("job_id"),
+                tmux_session_name=result.get("session_name"),
+            )
+
+        return result
 
     def _invalidate_processing_log_for_sa_ids(
         self, sa_id_tokens: tuple[str, ...]
