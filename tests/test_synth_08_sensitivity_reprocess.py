@@ -11,7 +11,34 @@ The session-scoped ``synthetic_sensitivity_completed`` fixture
 session to the ``f_consolidate_master_complete.flag`` state; this test
 body then re-invokes reprocess and asserts the master datatree zarr's
 mtime advances.
+
+Phase 3 (reprocess_orchestrator_liveness_gate) adds the sensitivity
+analogues of gate-integration scenarios (a)/(b)/(e) against the master
+``_status/_orchestrator/`` authority dir: reprocess PROCEEDS past
+``_submitted/`` sim-worker sentinels with no live driver, REFUSES fast on a
+live ``_orchestrator/`` driver, and NEVER reaches the interactive
+``input()`` prompt.
 """
+
+import json
+import subprocess
+
+import pytest
+
+from TRITON_SWMM_toolkit import orchestrator_sentinels as osent
+from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
+
+
+def _fake_ps_run(ps_alive):
+    """``subprocess.run`` stub: ``ps -p {pid}`` exits 0 iff pid in ``ps_alive``."""
+
+    def _run(cmd, *a, **k):
+        rc = 1
+        if cmd[:2] == ["ps", "-p"] and int(cmd[2]) in ps_alive:
+            rc = 0
+        return subprocess.CompletedProcess(cmd, rc, b"", b"")
+
+    return _run
 
 
 def test_sensitivity_reprocess_consolidate(synthetic_sensitivity_completed):
@@ -50,3 +77,77 @@ def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_c
     # others were never invalidated).
     for sid in all_sa_ids:
         assert (status_dir / f"e_consolidate_sa-{sid}_complete.flag").exists()
+
+
+def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
+    synthetic_sensitivity_completed,
+):
+    """(a) R2: sensitivity reprocess PROCEEDS when ``_submitted/`` sim-WORKER
+    sentinels are present in the master dir but no live ``_orchestrator/``
+    DRIVER sentinel exists."""
+    sa = synthetic_sensitivity_completed
+    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    submitted = master_dir / "_status" / "_submitted"
+    submitted.mkdir(parents=True, exist_ok=True)
+    worker = submitted / "run_tritonswmm_evt-gatecheck.json"
+    worker.write_text(json.dumps({"slurm_jobid": "999999"}))
+    try:
+        result = sa.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
+        assert result.get("success"), (
+            "Sensitivity reprocess must proceed with _submitted/ workers present and no "
+            f"live _orchestrator/ sentinel; got {result.get('message', '(no message)')!r}. "
+            f"Snakemake log: {result.get('snakemake_logfile')}"
+        )
+    finally:
+        worker.unlink(missing_ok=True)
+
+
+def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(synthetic_sensitivity_completed, monkeypatch):
+    """(b) R3: a live master ``_orchestrator/`` DRIVER sentinel makes the
+    sensitivity reprocess refuse fast with a ``WorkflowError``.
+
+    Tested at the ``submit_reprocess_workflow`` builder level so no per-sa or
+    master flags are invalidated (the facade's pre-invalidation is irrelevant —
+    the gate fires first in submit).
+    """
+    sa = synthetic_sensitivity_completed
+    builder = sa._workflow_builder
+    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    osent.write_orchestrator_sentinel(master_dir, driver_id="live-driver", workflow_submission_mode="local", pid=4242)
+    monkeypatch.setattr("subprocess.run", _fake_ps_run({4242}))
+    try:
+        with pytest.raises(WorkflowError) as excinfo:
+            builder.submit_reprocess_workflow(
+                start_with="consolidate", execution_mode="local", dry_run=False, verbose=False
+            )
+        assert "live orchestration driver" in excinfo.value.stderr
+    finally:
+        osent.remove_orchestrator_sentinel(master_dir, "live-driver")
+
+
+def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(synthetic_sensitivity_completed, monkeypatch):
+    """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
+    UNSET and a stale ``.snakemake/locks/*.lock`` planted on the master dir,
+    the sensitivity reprocess path's ``skip_lock_check=True`` returns before
+    the interactive prompt (``builtins.input`` raises if reached)."""
+    sa = synthetic_sensitivity_completed
+    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
+    locks_dir = master_dir / ".snakemake" / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    stale_lock = locks_dir / "gatecheck.lock"
+    stale_lock.write_text("stale")
+
+    def _boom(*a, **k):
+        raise AssertionError("input() must never be reached on the reprocess path")
+
+    monkeypatch.setattr("builtins.input", _boom)
+    try:
+        result = sa.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
+        assert result.get("success"), (
+            "Sensitivity reprocess must complete without prompting; got "
+            f"{result.get('message', '(no message)')!r}. "
+            f"Snakemake log: {result.get('snakemake_logfile')}"
+        )
+    finally:
+        stale_lock.unlink(missing_ok=True)

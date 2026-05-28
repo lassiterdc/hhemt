@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
+from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
 from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
 from TRITON_SWMM_toolkit.execution import (
@@ -2361,72 +2362,108 @@ class TRITONSWMM_analysis:
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
-        # Force-rerun pre-delete (login-node responsibility per master plan
-        # Strategy). Resolve + validate + delete BEFORE Snakemake plans the DAG
-        # so MTIME-input triggers cascade re-fire automatically.
-        self._apply_force_rerun(override_force_rerun)
-
-        if self.cfg_analysis.toggle_sensitivity_analysis:
-            result = self.sensitivity.submit_workflow(
-                mode=mode,
-                process_system_level_inputs=process_system_level_inputs,
-                overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
-                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-                prepare_scenarios=prepare_scenarios,
-                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                process_timeseries=process_timeseries,
-                which=which,
-                override_clear_raw=override_clear_raw,
-                override_force_rerun=override_force_rerun,
-                compression_level=compression_level,
-                pickup_where_leftoff=pickup_where_leftoff,
-                wait_for_completion=wait_for_completion,
-                dry_run=dry_run,
-                verbose=verbose,
-                override_hpc_total_nodes=override_hpc_total_nodes,
-                report_formats=report_formats,
-                extra_sbatch_args=extra_sbatch_args,
-                snakemake_diagnostics=snakemake_diagnostics,
-            )
-        else:
-            # NOTE: override_force_rerun is NOT threaded into the inner builder
-            # — the pre-delete already happened at this layer
-            # (self._apply_force_rerun above) and the builder's
-            # submit_workflow does not need a runtime force-rerun parameter.
-            result = self._workflow_builder.submit_workflow(
-                mode=mode,
-                process_system_level_inputs=process_system_level_inputs,
-                overwrite_system_inputs=overwrite_system_inputs,
-                compile_TRITON_SWMM=compile_TRITON_SWMM,
-                recompile_if_already_done_successfully=recompile_if_already_done_successfully,
-                prepare_scenarios=prepare_scenarios,
-                overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
-                rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
-                process_timeseries=process_timeseries,
-                which=which,
-                override_clear_raw=override_clear_raw,
-                compression_level=compression_level,
-                pickup_where_leftoff=pickup_where_leftoff,
-                wait_for_completion=wait_for_completion,
-                dry_run=dry_run,
-                verbose=verbose,
-                override_hpc_total_nodes=override_hpc_total_nodes,
-                report_formats=report_formats,
-                extra_sbatch_args=extra_sbatch_args,
-                snakemake_diagnostics=snakemake_diagnostics,
+        # Driver-start orchestrator-liveness sentinel (Phase 2 of the reprocess
+        # concurrency gate). Single-writer per logical driver: a sensitivity
+        # run() delegates below to self.sensitivity.submit_workflow, which writes
+        # its OWN master-keyed sentinel — writing here too would double-write into
+        # the same _status/_orchestrator/ dir for one logical driver, so guard on
+        # NOT sensitivity (sensitivity runs leave _driver_id None here).
+        _driver_id = None
+        _eff_mode = self.cfg_analysis.multi_sim_run_method
+        if not self.cfg_analysis.toggle_sensitivity_analysis:
+            _driver_id = _osent.new_driver_id()
+            _osent.write_orchestrator_sentinel(
+                self.analysis_paths.analysis_dir,
+                driver_id=_driver_id,
+                workflow_submission_mode=_eff_mode,
             )
 
-        if dry_run and result.get("success"):
-            snakemake_logfile = result.get("snakemake_logfile")
-            if snakemake_logfile is not None:
-                report_path = generate_dry_run_report_markdown(
-                    snakemake_logfile=Path(snakemake_logfile),
-                    analysis_dir=self.analysis_paths.analysis_dir,
+        try:
+            # Force-rerun pre-delete (login-node responsibility per master plan
+            # Strategy). Resolve + validate + delete BEFORE Snakemake plans the DAG
+            # so MTIME-input triggers cascade re-fire automatically.
+            self._apply_force_rerun(override_force_rerun)
+
+            if self.cfg_analysis.toggle_sensitivity_analysis:
+                result = self.sensitivity.submit_workflow(
+                    mode=mode,
+                    process_system_level_inputs=process_system_level_inputs,
+                    overwrite_system_inputs=overwrite_system_inputs,
+                    compile_TRITON_SWMM=compile_TRITON_SWMM,
+                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    prepare_scenarios=prepare_scenarios,
+                    overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                    rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                    process_timeseries=process_timeseries,
+                    which=which,
+                    override_clear_raw=override_clear_raw,
+                    override_force_rerun=override_force_rerun,
+                    compression_level=compression_level,
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    wait_for_completion=wait_for_completion,
+                    dry_run=dry_run,
                     verbose=verbose,
+                    override_hpc_total_nodes=override_hpc_total_nodes,
+                    report_formats=report_formats,
+                    extra_sbatch_args=extra_sbatch_args,
+                    snakemake_diagnostics=snakemake_diagnostics,
                 )
-                result["dry_run_report_markdown"] = report_path
+            else:
+                # NOTE: override_force_rerun is NOT threaded into the inner builder
+                # — the pre-delete already happened at this layer
+                # (self._apply_force_rerun above) and the builder's
+                # submit_workflow does not need a runtime force-rerun parameter.
+                result = self._workflow_builder.submit_workflow(
+                    mode=mode,
+                    process_system_level_inputs=process_system_level_inputs,
+                    overwrite_system_inputs=overwrite_system_inputs,
+                    compile_TRITON_SWMM=compile_TRITON_SWMM,
+                    recompile_if_already_done_successfully=recompile_if_already_done_successfully,
+                    prepare_scenarios=prepare_scenarios,
+                    overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
+                    rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
+                    process_timeseries=process_timeseries,
+                    which=which,
+                    override_clear_raw=override_clear_raw,
+                    compression_level=compression_level,
+                    pickup_where_leftoff=pickup_where_leftoff,
+                    wait_for_completion=wait_for_completion,
+                    dry_run=dry_run,
+                    verbose=verbose,
+                    override_hpc_total_nodes=override_hpc_total_nodes,
+                    report_formats=report_formats,
+                    extra_sbatch_args=extra_sbatch_args,
+                    snakemake_diagnostics=snakemake_diagnostics,
+                )
+
+            if dry_run and result.get("success"):
+                snakemake_logfile = result.get("snakemake_logfile")
+                if snakemake_logfile is not None:
+                    report_path = generate_dry_run_report_markdown(
+                        snakemake_logfile=Path(snakemake_logfile),
+                        analysis_dir=self.analysis_paths.analysis_dir,
+                        verbose=verbose,
+                    )
+                    result["dry_run_report_markdown"] = report_path
+        finally:
+            # Blocking-local drivers (this Python process WAS the driver and the
+            # builder call blocked to completion) remove the sentinel on return;
+            # detached drivers leave a durable sentinel reclaimed by the gate's
+            # liveness probes. Only the local arm removes here.
+            if _driver_id is not None and _eff_mode == "local":
+                _osent.remove_orchestrator_sentinel(self.analysis_paths.analysis_dir, _driver_id)
+
+        # Detached drivers: enrich (persist, do not remove) with the driver's
+        # slurm_jobid (single-job) / tmux_session_name (batch_job) so the gate's
+        # sacct/tmux arms can probe it. Skipped for sensitivity runs (_driver_id
+        # is None — the sensitivity-master submit owns its own sentinel).
+        if _driver_id is not None and _eff_mode != "local" and isinstance(result, dict):
+            _osent.enrich_orchestrator_sentinel(
+                self.analysis_paths.analysis_dir,
+                driver_id=_driver_id,
+                slurm_jobid=result.get("job_id"),
+                tmux_session_name=result.get("session_name"),
+            )
 
         return result
 
@@ -2449,9 +2486,10 @@ class TRITONSWMM_analysis:
         reconciliation guard against ``_status/_submitted/`` before
         submitting, so a parallel live sim driver cannot be double-submitted.
         Emits a scope-limited Snakefile at
-        ``{analysis_dir}/Snakefile.reprocess`` and runs it against a
-        sibling ``.snakemake_reprocess/`` working directory so the reprocess
-        driver does not collide with the main ``.snakemake/`` state.
+        ``{analysis_dir}/Snakefile.reprocess`` and runs it against the shared
+        ``.snakemake/`` with ``--nolock``; the ``_status/_orchestrator/``
+        liveness gate (not the Snakemake lock) prevents collision with a live
+        orchestration driver.
 
         Parameters
         ----------
@@ -2608,8 +2646,9 @@ class TRITONSWMM_analysis:
 
         # Delegate to the workflow builder. The submit method writes the
         # reprocess Snakefile and orchestrates the snakemake invocation with
-        # `--directory .snakemake_reprocess --rerun-triggers mtime
-        # --snakefile Snakefile.reprocess`.
+        # `--snakefile Snakefile.reprocess --rerun-triggers mtime --nolock`
+        # against the shared analysis_dir/.snakemake/; the
+        # _status/_orchestrator/ liveness gate is the concurrency authority.
         result = self._workflow_builder.submit_reprocess_workflow(
             start_with=start_with,
             execution_mode=execution_mode,
