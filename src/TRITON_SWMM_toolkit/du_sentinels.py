@@ -72,7 +72,6 @@ def _walk_root_and_breakdown(root: Path) -> tuple[int, dict[str, int], int]:
     per_child: dict[str, int] = {}
     if not root.exists() or not root.is_dir():
         return 0, {}, 0
-    root_resolved = root.resolve()
     for p in root.rglob("*"):
         try:
             if not p.is_file():
@@ -82,8 +81,15 @@ def _walk_root_and_breakdown(root: Path) -> tuple[int, dict[str, int], int]:
             walk_errors += 1
             continue
         try:
-            rel = p.resolve().relative_to(root_resolved)
-        except (OSError, ValueError):
+            # `p` is yielded by `root.rglob("*")` so it is already lexically
+            # rooted at `root`; `relative_to(root)` succeeds without a
+            # per-file realpath() syscall. Dropping `.resolve()` removes the
+            # realpath storm that hung the bulk per-sub-analysis restamp on
+            # large sensitivity trees while preserving byte-total + breakdown
+            # parity (no out-of-scope symlinks in toolkit-produced trees;
+            # rglob does not recurse into symlinked dirs).
+            rel = p.relative_to(root)
+        except ValueError:
             walk_errors += 1
             continue
         if not rel.parts:

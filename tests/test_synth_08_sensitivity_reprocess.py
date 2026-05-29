@@ -151,3 +151,35 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(synthetic_
         )
     finally:
         stale_lock.unlink(missing_ok=True)
+
+
+def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensitivity_completed):
+    """R3/R4: sensitivity.reprocess(dry_run=True, start_with='consolidate') must NOT
+    delete the master or any sub-analysis datatree zarr, nor re-stamp _du.json sentinels."""
+    from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+
+    sa = synthetic_sensitivity_completed
+    master_zarr = sa.analysis_paths.sensitivity_datatree_zarr
+    assert master_zarr is not None and master_zarr.exists(), "fixture precondition: master zarr present"
+    sub_zarrs = [
+        s.analysis_paths.analysis_datatree_zarr
+        for s in sa.sub_analyses.values()
+        if s.analysis_paths.analysis_datatree_zarr is not None
+        and s.analysis_paths.analysis_datatree_zarr.exists()
+    ]
+    assert sub_zarrs, "fixture precondition: at least one sub-analysis zarr present"
+    # Establish a known master-scope _du.json so the no-restamp assertion is
+    # unconditional (R4): without this, an absent sentinel skips the mtime check.
+    master_analysis_dir = sa.master_analysis.analysis_paths.analysis_dir
+    compute_and_write_scope_sentinel(master_analysis_dir, scope="analysis")
+    master_du = master_analysis_dir / "_status" / "_du.json"
+    assert master_du.exists(), "precondition: master-scope _du.json materialized"
+    master_du_mtime0 = master_du.stat().st_mtime_ns
+
+    result = sa.reprocess(start_with="consolidate", execution_mode="local", dry_run=True, verbose=False)
+    assert result.get("success"), f"dry-run sensitivity reprocess failed: {result.get('message')!r}"
+
+    assert master_zarr.exists(), "dry-run must NOT delete the master sensitivity_datatree.zarr"
+    for z in sub_zarrs:
+        assert z.exists(), f"dry-run must NOT delete sub-analysis zarr {z}"
+    assert master_du.stat().st_mtime_ns == master_du_mtime0, "dry-run must NOT re-stamp master _du.json"
