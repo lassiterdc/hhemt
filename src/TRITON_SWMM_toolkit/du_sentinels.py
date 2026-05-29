@@ -31,16 +31,84 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 from pathlib import Path
 from typing import Literal
 
 Scope = Literal["scenario", "sub_analysis", "analysis"]
 
 
-def _walk_root_bytes(root: Path) -> tuple[int, int]:
-    """Return (total_bytes, walk_errors) of all regular files under `root`."""
+def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) -> tuple[int, dict[str, int], int]:
+    """Single-pass os.scandir walk: (total_bytes, per_child_bytes, walk_errors).
+
+    Replaces the prior ``root.rglob("*")`` + ``p.is_file()`` + ``p.stat()``
+    (2 stats/file) pattern with an os.scandir recursion that reads each
+    directory once and takes one ``entry.stat().st_size`` per file (1 stat/file)
+    — roughly halving the GPFS metadata round-trips.
+
+    Parity invariants with the prior implementation (R1 — output MUST be
+    bit-identical on toolkit-produced trees):
+      * Recurses into REAL subdirectories only — ``entry.is_dir(follow_symlinks=
+        False)`` — matching ``Path.rglob``'s documented non-recursion into
+        symlinked directories.
+      * Counts a file iff ``entry.is_file()`` (follow_symlinks=True, matching the
+        prior ``p.is_file()``); size via ``entry.stat().st_size`` (follow_symlinks
+        =True, matching the prior ``p.stat()``).
+      * ``top`` (the top-level child name used for the breakdown and the _status
+        skip) is the immediate child of ``root`` on the path to the file. For a
+        file directly under ``root`` it is the FILE's own name — identical to the
+        prior ``p.relative_to(root).parts[0]``.
+      * When ``skip_status_top``: files whose ``top`` starts with ``"_status"``
+        are skipped (matching ``_walk_root_and_breakdown``); when False, no skip
+        (matching ``_walk_root_bytes``).
+      * ``walk_errors`` increments on any per-entry OSError (is_dir / is_file /
+        stat) AND on a directory that cannot be scandir'd.
+    """
     total = 0
     walk_errors = 0
+    per_child: dict[str, int] = {}
+    # Explicit stack avoids recursion-depth limits on deep trees.
+    # Each item: (dir_path, top_child_name_or_None). top is None only for `root`.
+    stack: list[tuple[Path, str | None]] = [(root, None)]
+    while stack:
+        cur, top = stack.pop()
+        try:
+            scan = os.scandir(cur)
+        except OSError:
+            walk_errors += 1
+            continue
+        with scan:
+            for entry in scan:
+                entry_top = top if top is not None else entry.name
+                try:
+                    is_dir = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    walk_errors += 1
+                    continue
+                if is_dir:
+                    stack.append((Path(entry.path), entry_top))
+                    continue
+                try:
+                    if not entry.is_file():
+                        continue
+                    size = entry.stat().st_size
+                except OSError:
+                    walk_errors += 1
+                    continue
+                if skip_status_top and entry_top.startswith("_status"):
+                    continue
+                total += size
+                if want_breakdown:
+                    per_child[entry_top] = per_child.get(entry_top, 0) + size
+    return total, per_child, walk_errors
+
+
+def _walk_root_bytes(root: Path) -> tuple[int, int]:
+    """Return (total_bytes, walk_errors) of all regular files under `root`.
+
+    Counts every file (NO _status skip) — preserved behavior. Handles a
+    file-root (the only caller path that can pass a file).
+    """
     if not root.exists():
         return 0, 0
     if root.is_file():
@@ -48,58 +116,20 @@ def _walk_root_bytes(root: Path) -> tuple[int, int]:
             return root.stat().st_size, 0
         except OSError:
             return 0, 1
-    for p in root.rglob("*"):
-        try:
-            if p.is_file():
-                total += p.stat().st_size
-        except OSError:
-            walk_errors += 1
-            continue
+    total, _per_child, walk_errors = _scandir_walk(
+        root, want_breakdown=False, skip_status_top=False
+    )
     return total, walk_errors
 
 
 def _walk_root_and_breakdown(root: Path) -> tuple[int, dict[str, int], int]:
-    """Return (total_bytes, per_child_bytes, walk_errors) in a single rglob pass.
+    """Return (total_bytes, per_child_bytes, walk_errors) in a single pass.
 
-    Per SE F-I Flag 1: collapses the prior two-walk path (_walk_bytes_total invoked
-    standalone for the root AND once per child by _walk_sub_path_breakdown) into a
-    single rglob, eliminating the N+1-walk-per-sentinel cost on large sub-analysis
-    trees. Per SE F-I Flag 5: threads walk_errors so consumers can detect partial
-    counts produced by OSError suppression during the walk.
+    Skips `_status*`-prefixed top-level children — preserved behavior.
     """
-    total = 0
-    walk_errors = 0
-    per_child: dict[str, int] = {}
     if not root.exists() or not root.is_dir():
         return 0, {}, 0
-    for p in root.rglob("*"):
-        try:
-            if not p.is_file():
-                continue
-            size = p.stat().st_size
-        except OSError:
-            walk_errors += 1
-            continue
-        try:
-            # `p` is yielded by `root.rglob("*")` so it is already lexically
-            # rooted at `root`; `relative_to(root)` succeeds without a
-            # per-file realpath() syscall. Dropping `.resolve()` removes the
-            # realpath storm that hung the bulk per-sub-analysis restamp on
-            # large sensitivity trees while preserving byte-total + breakdown
-            # parity (no out-of-scope symlinks in toolkit-produced trees;
-            # rglob does not recurse into symlinked dirs).
-            rel = p.relative_to(root)
-        except ValueError:
-            walk_errors += 1
-            continue
-        if not rel.parts:
-            continue
-        top = rel.parts[0]
-        if top.startswith("_status"):
-            continue
-        total += size
-        per_child[top] = per_child.get(top, 0) + size
-    return total, per_child, walk_errors
+    return _scandir_walk(root, want_breakdown=True, skip_status_top=True)
 
 
 def write_du_sentinel(

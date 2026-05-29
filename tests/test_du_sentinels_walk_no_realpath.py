@@ -70,7 +70,69 @@ def test_walk_issues_no_realpath(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         return real_realpath(*args, **kwargs)
 
     # Path.resolve() calls os.path.realpath under the hood in CPython; a stray
-    # .resolve() in the walk would increment this counter.
+    # .resolve() in the walk would increment this counter. The os.scandir
+    # rewrite must remain realpath-free (scandir + is_dir(follow_symlinks=False)
+    # + entry.stat() never resolve).
     monkeypatch.setattr(os.path, "realpath", _counting_realpath)
     du_sentinels._walk_root_and_breakdown(root)
     assert calls["n"] == 0, f"_walk_root_and_breakdown issued {calls['n']} realpath calls; expected 0"
+
+
+def _reference_bytes(root: Path) -> tuple[int, int]:
+    """Independent os.walk reference for _walk_root_bytes: counts ALL files
+    (NO _status skip), recursing into real dirs only (matching rglob)."""
+    total = 0
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            total += (Path(dirpath) / name).stat().st_size
+    return total, 0
+
+
+def test_walk_root_bytes_parity(tmp_path: Path) -> None:
+    """_walk_root_bytes (os.scandir rewrite) is bit-identical to an independent
+    os.walk reference, and — unlike _walk_root_and_breakdown — does NOT skip
+    `_status` children."""
+    root = tmp_path / "scope"
+    _build_tree(root)
+    total, walk_errors = du_sentinels._walk_root_bytes(root)
+    ref_total, ref_errors = _reference_bytes(root)
+    assert total == ref_total
+    assert walk_errors == ref_errors == 0
+    # The _status/_du.json byte is counted by _walk_root_bytes (no skip) but
+    # excluded by _walk_root_and_breakdown (skip). The difference is exactly the
+    # _status subtree's bytes, which proves the skip_status_top asymmetry holds.
+    bd_total, _breakdown, _bd_errors = du_sentinels._walk_root_and_breakdown(root)
+    status_bytes = (root / "_status" / "_du.json").stat().st_size
+    assert total - bd_total == status_bytes
+
+
+def test_walk_root_bytes_file_root(tmp_path: Path) -> None:
+    """_walk_root_bytes handles a file-root (the only caller path that can pass
+    a file) — preserved behavior across the rewrite."""
+    f = tmp_path / "lonely.bin"
+    f.write_bytes(b"q" * 73)
+    total, walk_errors = du_sentinels._walk_root_bytes(f)
+    assert total == 73
+    assert walk_errors == 0
+
+
+def test_walk_skips_symlinked_dir(tmp_path: Path) -> None:
+    """Both walkers recurse into REAL subdirectories only — a symlinked
+    directory is not descended (matching rglob's documented non-recursion).
+    Guards the R1 parity invariant for the os.scandir rewrite."""
+    root = tmp_path / "scope"
+    (root / "real").mkdir(parents=True)
+    (root / "real" / "f.bin").write_bytes(b"a" * 10)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "hidden.bin").write_bytes(b"b" * 999)
+    link = root / "link"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("platform does not support directory symlinks")
+    total, breakdown, walk_errors = du_sentinels._walk_root_and_breakdown(root)
+    # The symlinked dir's contents (999 bytes) must NOT be counted.
+    assert total == 10
+    assert breakdown == {"real": 10}
+    assert walk_errors == 0
