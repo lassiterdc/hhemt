@@ -658,6 +658,16 @@ def reprocess_command(
         "--which",
         help="Processing scope: TRITON | SWMM | both",
     ),
+    regenerate_existing: bool = typer.Option(
+        False,
+        "--regenerate-existing",
+        help=(
+            "Opt in to deleting and rebuilding already-completed content "
+            "(consolidated zarr; at start_with='process', per-scenario "
+            "processed/ dirs). Default: preserve completed content, "
+            "regenerate report+plots only."
+        ),
+    ),
     override_clear_raw: str = typer.Option(
         None,
         "--override-clear-raw",
@@ -735,6 +745,7 @@ def reprocess_command(
             start_with=start_with,  # type: ignore[arg-type]
             execution_mode=execution_mode,  # type: ignore[arg-type]
             which=which,  # type: ignore[arg-type]
+            regenerate_existing=regenerate_existing,
             override_clear_raw=override_clear_raw if override_clear_raw is not None else "none",
             override_force_rerun=override_force_rerun,
             verbose=verbose,

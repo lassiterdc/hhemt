@@ -41,15 +41,50 @@ def _fake_ps_run(ps_alive):
     return _run
 
 
-def test_sensitivity_reprocess_consolidate(synthetic_sensitivity_completed):
-    """sensitivity.reprocess(start_with='consolidate') regenerates the master datatree."""
+def _zarr_mtime_target(zarr):
+    """mtime signal robust to zarr layout: prefer ``.zgroup``; fall back to root."""
+    zgroup = zarr / ".zgroup"
+    return zgroup if zgroup.exists() else zarr
+
+
+def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sensitivity_completed):
+    """Phase 2 FQ1 default (regenerate_existing=False): sensitivity master
+    reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
+    no rebuild, no DU restamp) and re-fires the report."""
     sa = synthetic_sensitivity_completed
     mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
-    mtime0 = mdt.stat().st_mtime
+    mtime_target = _zarr_mtime_target(mdt)
+    mtime0 = mtime_target.stat().st_mtime
     result = sa.reprocess(start_with="consolidate", execution_mode="local")
     assert result["success"], f"reprocess failed: {result.get('message')!r}"
-    assert mdt.stat().st_mtime > mtime0, "master datatree mtime should advance after reprocess"
+    assert mtime_target.stat().st_mtime == mtime0, (
+        "Default sensitivity reprocess(consolidate) must PRESERVE the master "
+        f"datatree zarr (mtime unchanged). target={mtime_target!r}."
+    )
+    # Report re-rendered against the preserved zarr.
+    master_dir = sa.master_analysis.analysis_paths.analysis_dir
+    html = master_dir / "analysis_report.html"
+    zf = master_dir / "analysis_report.zip"
+    assert html.exists() or zf.exists(), (
+        f"Default sensitivity reprocess must re-render the master report; none found at {master_dir}."
+    )
+
+
+def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed):
+    """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
+    deletes and rebuilds the master datatree zarr (mtime advances)."""
+    sa = synthetic_sensitivity_completed
+    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    assert mdt.exists(), "fixture precondition: master zarr present"
+    mtime_target = _zarr_mtime_target(mdt)
+    mtime0 = mtime_target.stat().st_mtime
+    result = sa.reprocess(start_with="consolidate", execution_mode="local", regenerate_existing=True)
+    assert result["success"], f"reprocess(regenerate_existing=True) failed: {result.get('message')!r}"
+    assert mtime_target.stat().st_mtime > mtime0, (
+        "regenerate_existing=True sensitivity reprocess(consolidate) must REBUILD the "
+        f"master datatree zarr (mtime advance). target={mtime_target!r}."
+    )
 
 
 def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_completed):

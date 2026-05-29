@@ -388,6 +388,7 @@ class TRITONSWMM_sensitivity_analysis:
         dry_run: bool = False,
         report_formats: list[str] | None = None,
         *,
+        regenerate_existing: bool = False,
         override_force_rerun: ForceRerunValue | None = None,
     ) -> dict:
         """Master-level reprocess for sensitivity analyses.
@@ -478,25 +479,21 @@ class TRITONSWMM_sensitivity_analysis:
         master_analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         status_dir = master_analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
-            # Flag deletion is the cheap, rerun-recreated trigger Snakemake's
-            # `--rerun-triggers mtime` keys on; it runs even on dry_run so the
-            # --dry-run DAG preview shows what would re-fire (see the dry-run
-            # no-destructive-mutation stipulation).
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
-            # Per cleanup-rerun-delete-redesign Phases 3 + 4, the legacy
-            # rule-shell overwrite toggle is retired; runners early-return
-            # when the consolidated datatree zarr already exists. This
-            # method (called from reprocess) deletes the consolidated
-            # artifacts directly so the rebuild is unconditional. Destructive
-            # — gated behind `if not dry_run:`. To avoid the per-child master
-            # re-walk cliff, each sub-zarr is deleted with analysis_dir=None
-            # (suppresses fast_rmtree's per-call restamp; the kwarg is still
-            # present so the du-system-hardening Phase-1 checker passes), the
-            # affected sub dirs are collected, then each sub scope is restamped
-            # once and the master scope exactly once after the loop.
+            # Report+plot deletion ALWAYS runs (toggle-independent) — the report
+            # regenerates from the preserved zarr on the default path (FQ1 parity).
+            _report_html = master_analysis_dir / "analysis_report.html"
+            _report_zip = master_analysis_dir / "analysis_report.zip"
+            _report_html.unlink(missing_ok=True)
+            _report_zip.unlink(missing_ok=True)
             if not dry_run:
+                restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
+            # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
+            # GPFS work — gate behind regenerate_existing. Default path preserves
+            # the zarrs (consolidate stays inert) and runs NO restamp walk.
+            if regenerate_existing and not dry_run:
                 affected_sub_dirs: set = set()
                 for sa_id in targets:
                     sub_analysis = self.sub_analyses.get(sa_id)
@@ -504,14 +501,11 @@ class TRITONSWMM_sensitivity_analysis:
                         continue
                     _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
                     if _sub_zarr is not None and _sub_zarr.exists():
-                        _fast_rmtree(_sub_zarr, analysis_dir=None)  # batched-restamp; restamp below
+                        _fast_rmtree(_sub_zarr, analysis_dir=None)  # batched-restamp
                         affected_sub_dirs.add(sub_analysis.analysis_paths.analysis_dir)
                 _master_zarr = self.analysis_paths.sensitivity_datatree_zarr
                 if _master_zarr is not None and _master_zarr.exists():
-                    _fast_rmtree(_master_zarr, analysis_dir=None)  # batched-restamp; restamp below
-                # Batched restamp: each affected sub-analysis scope once, then
-                # the master analysis scope exactly once (replaces N per-child
-                # master re-walks with one).
+                    _fast_rmtree(_master_zarr, analysis_dir=None)  # batched-restamp
                 for _sub_dir in affected_sub_dirs:
                     compute_and_write_scope_sentinel(_sub_dir, scope="sub_analysis")
                 compute_and_write_scope_sentinel(master_analysis_dir, scope="analysis")

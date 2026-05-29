@@ -305,6 +305,7 @@ onerror:
     snakefile_content += builder._build_plot_rule_block_per_analysis_summary()
     snakefile_content += builder._build_plot_rule_block_scenario_status_appendix()
     snakefile_content += builder._build_plot_rule_block_errors_and_warnings()
+    snakefile_content += builder._build_plot_rule_block_disk_utilization()
 
     # ---- Export scenario status (always emitted) ----
     snakefile_content += builder._build_export_scenario_status_rule(
@@ -329,6 +330,7 @@ rule render_report:
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
+        "plots/disk_utilization{_ext["disk_utilization"]}",
         "scenario_status.csv",
     output:
         "analysis_report.{{format}}"

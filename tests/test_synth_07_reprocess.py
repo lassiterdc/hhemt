@@ -41,18 +41,21 @@ def _fake_ps_run(ps_alive):
     return _run
 
 
+def _zarr_mtime_target(zarr):
+    """Return a mtime signal robust to zarr layout: prefer the ``.zgroup``
+    sentinel (sensitive to overwrite); fall back to the zarr root."""
+    zgroup_sentinel = zarr / ".zgroup"
+    return zgroup_sentinel if zgroup_sentinel.exists() else zarr
+
+
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_consolidate_refires_datatree_not_sims(synthetic_multisim_completed):
-    """R6 + R7: reprocess(start_with='consolidate') leaves sim flags untouched
-    and regenerates the analysis datatree zarr."""
+def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_completed):
+    """Phase 2 FQ1 default (regenerate_existing=False): reprocess(consolidate)
+    leaves sim flags untouched, PRESERVES the consolidated zarr (mtime
+    unchanged — no rebuild, no DU restamp walk), and re-fires the report."""
     a = synthetic_multisim_completed
     status_dir = a.analysis_paths.analysis_dir / "_status"
 
-    # Capture pre-reprocess state: sim flag file set and a datatree mtime
-    # signal. The zarr is a directory-shaped store, so we read mtime from the
-    # top-level .zgroup / .zarray sentinel file when present (more sensitive
-    # to overwrite than the directory's own mtime, which only changes on
-    # entry add/remove).
     before_run_flags = sorted(status_dir.glob("c_run_*"))
     assert before_run_flags, (
         "Expected synthetic_multisim_completed fixture to have produced c_run_* flags; "
@@ -60,16 +63,12 @@ def test_reprocess_consolidate_refires_datatree_not_sims(synthetic_multisim_comp
     )
     dt = a.analysis_paths.analysis_datatree_zarr
     assert dt is not None and dt.exists(), (
-        "Expected analysis_datatree_zarr to exist after fixture setup; got "
-        f"{dt!r}."
+        f"Expected analysis_datatree_zarr to exist after fixture setup; got {dt!r}."
     )
-    # Capture a mtime signal robust to zarr layout: prefer .zgroup; fall
-    # back to the zarr root's own mtime if the sentinel layout differs.
-    zgroup_sentinel = dt / ".zgroup"
-    mtime_target = zgroup_sentinel if zgroup_sentinel.exists() else dt
+    mtime_target = _zarr_mtime_target(dt)
     mtime0 = mtime_target.stat().st_mtime
 
-    # Re-fire consolidate + downstream.
+    # Default reprocess — must NOT delete/rebuild the zarr.
     result = a.reprocess(start_with="consolidate", execution_mode="local", verbose=False)
     assert result.get("success"), (
         f"reprocess(consolidate) failed: {result.get('message','(no message)')}. "
@@ -84,12 +83,81 @@ def test_reprocess_consolidate_refires_datatree_not_sims(synthetic_multisim_comp
         f"after: {[p.name for p in after_run_flags]!r}."
     )
 
-    # R7: datatree mtime advanced (overwrite re-wrote the zarr).
+    # Phase 2 default: zarr PRESERVED — mtime unchanged (no rebuild).
+    mtime1 = mtime_target.stat().st_mtime
+    assert mtime1 == mtime0, (
+        "Default reprocess(consolidate) must PRESERVE the consolidated zarr "
+        f"(mtime unchanged). mtime0={mtime0!r}, mtime1={mtime1!r}, "
+        f"target={mtime_target!r}."
+    )
+    # Report re-rendered against the preserved zarr.
+    html = a.analysis_paths.analysis_dir / "analysis_report.html"
+    zf = a.analysis_paths.analysis_dir / "analysis_report.zip"
+    assert html.exists() or zf.exists(), (
+        "Default reprocess(consolidate) must re-render the report. "
+        f"Neither analysis_report.{{html,zip}} found at {a.analysis_paths.analysis_dir}."
+    )
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multisim_completed):
+    """Phase 2 regenerate_existing=True: reprocess(consolidate) deletes and
+    rebuilds the consolidated zarr (mtime advances); sim flags untouched."""
+    a = synthetic_multisim_completed
+    status_dir = a.analysis_paths.analysis_dir / "_status"
+
+    before_run_flags = sorted(status_dir.glob("c_run_*"))
+    dt = a.analysis_paths.analysis_datatree_zarr
+    assert dt is not None and dt.exists(), f"fixture precondition: zarr present; got {dt!r}"
+    mtime_target = _zarr_mtime_target(dt)
+    mtime0 = mtime_target.stat().st_mtime
+
+    result = a.reprocess(
+        start_with="consolidate", execution_mode="local", regenerate_existing=True, verbose=False
+    )
+    assert result.get("success"), (
+        f"reprocess(consolidate, regenerate_existing=True) failed: "
+        f"{result.get('message','(no message)')}. Snakemake log: {result.get('snakemake_logfile')}"
+    )
+
+    after_run_flags = sorted(status_dir.glob("c_run_*"))
+    assert before_run_flags == after_run_flags, "Reprocess must not modify the c_run_* flag set."
+
     mtime1 = mtime_target.stat().st_mtime
     assert mtime1 > mtime0, (
-        "Reprocess(start_with='consolidate') must regenerate the analysis "
-        f"datatree zarr. mtime0={mtime0!r}, mtime1={mtime1!r}, "
-        f"target={mtime_target!r}."
+        "regenerate_existing=True reprocess(consolidate) must REBUILD the consolidated "
+        f"zarr (mtime advance). mtime0={mtime0!r}, mtime1={mtime1!r}, target={mtime_target!r}."
+    )
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim_completed):
+    """R4/D5: consolidate_to_datatree treats a present-but-log-incomplete zarr
+    as corrupt and rebuilds it — it must NOT early-return on ``.exists()`` alone."""
+    a = synthetic_multisim_completed
+    zarr = a.analysis_paths.analysis_datatree_zarr
+    assert zarr is not None and zarr.exists(), "fixture precondition: consolidated zarr present"
+
+    # Force the canonical completion signal to False while the zarr stays on disk.
+    a._refresh_log()
+    a.log.datatree_consolidation_complete.set(False)
+    mtime_target = _zarr_mtime_target(zarr)
+    mtime0 = mtime_target.stat().st_mtime
+
+    # .exists()=True but log-complete=False → the early-return must NOT fire;
+    # the zarr is treated as corrupt and rebuilt.
+    a.process.consolidate_to_datatree()
+
+    assert zarr.exists(), "rebuild must leave a valid zarr on disk"
+    mtime1 = mtime_target.stat().st_mtime
+    assert mtime1 > mtime0, (
+        "consolidate_to_datatree must REBUILD a present-but-log-incomplete zarr "
+        f"(mtime advance). mtime0={mtime0!r}, mtime1={mtime1!r}."
+    )
+    # Rebuild re-stamps the completion signal.
+    a._refresh_log()
+    assert a.log.datatree_consolidation_complete.get() is True, (
+        "rebuild must re-set datatree_consolidation_complete=True"
     )
 
 

@@ -35,3 +35,4 @@ non_breaking_allowlist:
   - src/TRITON_SWMM_toolkit/sensitivity_analysis.py
   - src/TRITON_SWMM_toolkit/config/analysis.py
   - src/TRITON_SWMM_toolkit/log.py  # reprocess-orchestrator-liveness-gate Phase 1: additive orchestrator_slurm_jobid LogField (optional, default-empty); non-breaking — older trees read it as empty, no on-disk migration.
+  - src/TRITON_SWMM_toolkit/processing_analysis.py  # reprocess-regeneration-toggle Phase 2 R4: behavior-only early-return re-key (.exists() to .exists() AND datatree_consolidation_complete); the log field already exists and is already set on success — no on-disk layout change.

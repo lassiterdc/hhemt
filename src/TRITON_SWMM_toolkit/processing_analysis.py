@@ -116,10 +116,26 @@ class TRITONSWMM_analysis_post_processing:
                 "analysis_datatree_zarr path is not configured on AnalysisPaths."
             )
 
-        if fname_out.exists():
+        # Per D5: .exists() alone is an unreliable completion signal — a
+        # present-but-corrupt zarr (a write that crashed mid-stream) .exists()
+        # as True. Align with open_datatree()'s canonical signal: "already
+        # consolidated" iff it exists AND datatree_consolidation_complete is True
+        # (set only on a successful full write below). Present-but-incomplete
+        # falls through to a clean rebuild.
+        self._analysis._refresh_log()
+        _log_complete = (
+            hasattr(self._analysis.log, "datatree_consolidation_complete")
+            and self._analysis.log.datatree_consolidation_complete.get() is True
+        )
+        if fname_out.exists() and _log_complete:
             if verbose:
-                print(f"DataTree zarr already present at {fname_out}. Not overwriting.")
+                print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
+        if fname_out.exists() and not _log_complete:
+            from TRITON_SWMM_toolkit.utils import fast_rmtree
+            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            if verbose:
+                print(f"DataTree zarr present at {fname_out} but log incomplete — rebuilding (treating as corrupt).")
 
         start_time = time.time()
         tree_dict: dict[str, xr.Dataset] = {}
