@@ -2962,6 +2962,52 @@ class TRITONSWMM_analysis:
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 
+    def _delete_processed_outputs_for_reprocess(
+        self, start_with: str, *, regenerate_existing: bool, dry_run: bool = False
+    ) -> None:
+        """Delete per-scenario PROCESSED outputs for an opt-in rebuild-from-raw.
+
+        Invoked from ``reprocess`` ONLY when ``start_with == "process"`` AND
+        ``regenerate_existing`` is True. Distinct from ``override_force_rerun``
+        (which OVERWRITES processed zarrs in place by clearing the log so
+        ``_already_written`` returns False, but never deletes the artifact /
+        frees disk). This DELETES so a rebuild-from-raw is clean — required
+        because existing zarrs are suspected to carry bugged simulation-duration
+        calculations. Reuses ``_invalidate_processing_log_for_force_rerun`` for
+        the log half. (Phase 3 — FQ1 single-dir + FQ2.)
+        """
+        if not (start_with == "process" and regenerate_existing):
+            return
+        from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+        # 1) Clear per-scenario per-model processing_log.outputs so the runner's
+        #    _already_written gate returns False and write paths re-execute.
+        #    Scope "all" — a process-stage reprocess rebuilds every scenario.
+        self._invalidate_processing_log_for_force_rerun(
+            ResolvedForceRerunSpec(scope="all", tokens=())
+        )
+        if dry_run:
+            return  # dry-run performs no destructive filesystem mutation
+
+        # 2) Delete the per-scenario PROCESSED artifacts on disk. ALL processed
+        #    outputs (summaries + timeseries, every model family) live under one
+        #    directory: sims/{event_id}/processed/ (scenario.py:62). The raw
+        #    out_triton/out_tritonswmm/out_swmm binaries are SIBLINGS under
+        #    sim_folder (scenario.py:76-80), NOT under processed/, so deleting
+        #    processed/ preserves the rebuild source. Single-dir deletion is
+        #    drift-proof (no ScenarioPaths attr-name maintenance — the prior
+        #    16-attr tuple had wrong names) and is exactly the granularity R8's
+        #    SLURM-offload wraps.
+        analysis_dir = self.analysis_paths.analysis_dir
+        for event_iloc in range(len(self.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            processed_dir = scen.scen_paths.sim_folder / "processed"
+            if processed_dir.exists():
+                fast_rmtree(processed_dir, analysis_dir=analysis_dir)  # PATTERN A
+        # The consolidated zarr is deleted by _invalidate_downstream_flags'
+        # regenerate_existing=True process-arm — no duplicate deletion here.
+
     def _validate_force_rerun_targets(self, resolved_force_rerun) -> None:
         """Validate that requested ``sa_id`` / ``event_iloc`` values exist in the analysis.
 
@@ -3015,8 +3061,8 @@ class TRITONSWMM_analysis:
         slugs via ``compute_event_id_slug`` (V0001's stable event-slug
         invariant); the builder helper consumes only slugs/sa_ids.
         """
-        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
 
         if resolved_force_rerun == "all":
             return ResolvedForceRerunSpec(scope="all", tokens=())

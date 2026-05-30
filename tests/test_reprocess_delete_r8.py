@@ -299,3 +299,33 @@ def test_build_reprocess_delete_snakefile_consolidate_skips_processed(norfolk_mu
 
     assert "rule delete_processed_" not in content
     assert "rule delete_reprocess_zarr_consolidation:" in content
+
+
+def test_reprocess_phase3_self_methods_are_defined_on_class():
+    """Guard against the 'call site lands but method definition does not' failure
+    mode — which compiles + imports cleanly yet AttributeErrors at reprocess time.
+    (This is exactly how a missing `_delete_processed_outputs_for_reprocess` slipped
+    past py_compile + import smoke + the R8 unit tests and only surfaced once the
+    GPU-compile-gated synth suite could finally run reprocess() end-to-end.)"""
+    import inspect
+    import re
+
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    # The specific method that went missing.
+    assert hasattr(TRITONSWMM_analysis, "_delete_processed_outputs_for_reprocess")
+
+    # Generic: every self._method(...) referenced in these Phase-3 bodies must
+    # resolve on the class.
+    for cls, meth in [
+        (TRITONSWMM_analysis, "reprocess"),
+        (TRITONSWMM_sensitivity_analysis, "reprocess"),
+        (SnakemakeWorkflowBuilder, "submit_reprocess_delete_workflow"),
+        (SnakemakeWorkflowBuilder, "_build_reprocess_delete_snakefile_content"),
+    ]:
+        src = inspect.getsource(getattr(cls, meth))
+        called = set(re.findall(r"self\.(_[a-z][a-zA-Z0-9_]*)\(", src))
+        missing = sorted(m for m in called if not hasattr(cls, m))
+        assert not missing, f"{cls.__name__}.{meth} references undefined methods: {missing}"
