@@ -39,6 +39,18 @@ def _df(rows):
     return pd.DataFrame(rows, columns=["sa_id", "group", "n_devices", "wallclock_s"])
 
 
+def _xy(points):
+    """Strip production 3-tuple (n, value, sa_id) provenance triples to (n, value).
+
+    The speedup/efficiency helpers return (n, value, sa_id); the sa_id third element
+    is load-bearing (hover customdata + hybrid annotations, F2/F3 in
+    sensitivity_benchmarking.py). These tests assert the numeric (n, value) contract;
+    the sa_id provenance is asserted separately (test_min_y_at_duplicate_n and
+    test_global_anchor_picks_min_t_when_multiple_at_min_N).
+    """
+    return [(p[0], p[1]) for p in points]
+
+
 # ── Strong speedup: S(N) = t(1) / t(N) ─────────────────────────────────────
 
 
@@ -91,7 +103,9 @@ class TestComputeSpeedup:
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
         pts = sorted(result["hybrid"], key=lambda r: r[0])
         # Anchor: t(1)=10. At N=4 use min wallclock 2.0 → S = 10/2 = 5.0.
-        assert pts == [(1, pytest.approx(1.0)), (4, pytest.approx(5.0))]
+        assert _xy(pts) == [(1, pytest.approx(1.0)), (4, pytest.approx(5.0))]
+        # D2 provenance lock: the N=4 winner is the min-wallclock row, sa_id "c" (t=2.0 < 4.0).
+        assert pts[1][2] == "c"
 
     def test_multiple_groups_independent(self):
         """Each run_mode is anchored to its own t(1); cross-group leakage is forbidden."""
@@ -106,8 +120,8 @@ class TestComputeSpeedup:
         # openmp: S(4) = 20/5 = 4
         # The fact that both end up at 4 is coincidence; the load-bearing assertion is
         # that openmp uses ITS OWN t(1)=20, not mpi's t(1)=10.
-        mpi_pts = dict(result["mpi"])
-        openmp_pts = dict(result["openmp"])
+        mpi_pts = dict(_xy(result["mpi"]))
+        openmp_pts = dict(_xy(result["openmp"]))
         assert mpi_pts[1] == pytest.approx(1.0)
         assert mpi_pts[4] == pytest.approx(4.0)
         assert openmp_pts[1] == pytest.approx(1.0)
@@ -117,7 +131,7 @@ class TestComputeSpeedup:
         """Group with only the N=1 baseline → S(1) = 1.0."""
         df = _df([("a", "serial", 1, 5.0)])
         result = _compute_speedup_per_group(df, t_col="wallclock_s", indep_col="n_devices", group_col="group")
-        assert result["serial"] == [(1, pytest.approx(1.0))]
+        assert _xy(result["serial"]) == [(1, pytest.approx(1.0))]
 
     def test_empty_dataframe(self):
         df = _df([])
@@ -140,7 +154,7 @@ class TestComputeEfficiency:
         result = _compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="strong"
         )
-        for n, e in result["mpi"]:
+        for n, e in _xy(result["mpi"]):
             assert e == pytest.approx(1.0), f"strong E({n}) expected 1.0, got {e}"
 
     def test_strong_efficiency_imperfect(self):
@@ -153,7 +167,7 @@ class TestComputeEfficiency:
         result = _compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="strong"
         )
-        eff = dict(result["mpi"])
+        eff = dict(_xy(result["mpi"]))
         assert eff[1] == pytest.approx(1.0)
         assert eff[2] == pytest.approx(1.8 / 2.0)  # 0.9
         assert eff[4] == pytest.approx(3.5 / 4.0)  # 0.875
@@ -165,9 +179,9 @@ class TestComputeEfficiency:
             ("b", "mpi", 2, 11.0),  # weak: per-device problem fixed; t grew slightly with N
             ("c", "mpi", 4, 12.5),
         ])
-        weak = dict(_compute_efficiency_per_group(
+        weak = dict(_xy(_compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
-        )["mpi"])
+        )["mpi"]))
         assert weak[1] == pytest.approx(1.0)
         assert weak[2] == pytest.approx(10.0 / 11.0)
         assert weak[4] == pytest.approx(10.0 / 12.5)  # 0.8
@@ -178,9 +192,9 @@ class TestComputeEfficiency:
             ("b", "hybrid", 4, 14.0),
             ("c", "hybrid", 4, 12.0),  # min wins
         ])
-        result = dict(_compute_efficiency_per_group(
+        result = dict(_xy(_compute_efficiency_per_group(
             df, t_col="wallclock_s", indep_col="n_devices", group_col="group", mode="weak"
-        )["hybrid"])
+        )["hybrid"]))
         assert result[4] == pytest.approx(10.0 / 12.0)
 
     def test_efficiency_invalid_mode_raises(self):
@@ -222,10 +236,10 @@ class TestGlobalBaselineSpeedup:
         )
         # All four groups should appear (no per-group N=1 anchor required).
         assert set(result.keys()) == {"serial", "mpi", "openmp", "hybrid"}
-        assert dict(result["serial"]) == {1: pytest.approx(1.0)}
-        assert dict(result["mpi"]) == {2: pytest.approx(4.0 / 2.0)}    # 2.0
-        assert dict(result["openmp"]) == {2: pytest.approx(4.0 / 3.0)}  # ≈1.333
-        assert dict(result["hybrid"]) == {4: pytest.approx(4.0 / 1.0)}  # 4.0
+        assert dict(_xy(result["serial"])) == {1: pytest.approx(1.0)}
+        assert dict(_xy(result["mpi"])) == {2: pytest.approx(4.0 / 2.0)}    # 2.0
+        assert dict(_xy(result["openmp"])) == {2: pytest.approx(4.0 / 3.0)}  # ≈1.333
+        assert dict(_xy(result["hybrid"])) == {4: pytest.approx(4.0 / 1.0)}  # 4.0
 
     def test_global_anchor_picks_min_t_when_multiple_at_min_N(self):
         """If multiple groups have N=1 entries, the smallest wallclock among them
@@ -242,8 +256,10 @@ class TestGlobalBaselineSpeedup:
         )
         # Anchor = 4.0. serial @ N=1: 4.0/5.0 = 0.8 (slower than baseline).
         # openmp1 @ N=2: 4.0/2.0 = 2.0.
-        assert dict(result["serial"]) == {1: pytest.approx(0.8)}
-        assert dict(result["openmp1"]) == {1: pytest.approx(1.0), 2: pytest.approx(2.0)}
+        assert dict(_xy(result["serial"])) == {1: pytest.approx(0.8)}
+        assert dict(_xy(result["openmp1"])) == {1: pytest.approx(1.0), 2: pytest.approx(2.0)}
+        # D2 provenance lock: openmp1's N=1 point is the global-anchor row, sa_id "b" (t=4.0).
+        assert {p[0]: p[2] for p in result["openmp1"]}[1] == "b"
 
     def test_global_anchor_includes_groups_without_n1(self):
         """Per-group mode would exclude these; global mode includes them."""
@@ -258,8 +274,8 @@ class TestGlobalBaselineSpeedup:
         )
         assert "mpi" in result
         assert "openmp" in result
-        assert dict(result["mpi"]) == {2: pytest.approx(2.0)}
-        assert dict(result["openmp"]) == {4: pytest.approx(2.5)}
+        assert dict(_xy(result["mpi"])) == {2: pytest.approx(2.0)}
+        assert dict(_xy(result["openmp"])) == {4: pytest.approx(2.5)}
 
     def test_global_efficiency_strong_normalizes_by_N(self):
         """Strong efficiency: anchor / (N × t(N))."""
@@ -272,7 +288,7 @@ class TestGlobalBaselineSpeedup:
             mode="strong", baseline_mode="global",
         )
         # Anchor = 4.0. mpi @ N=2: E = 4.0 / (2 × 2.0) = 1.0 (perfect efficiency).
-        assert dict(result["mpi"]) == {2: pytest.approx(1.0)}
+        assert dict(_xy(result["mpi"])) == {2: pytest.approx(1.0)}
 
     def test_global_efficiency_weak_does_not_normalize_by_N(self):
         df = _df([
@@ -284,7 +300,7 @@ class TestGlobalBaselineSpeedup:
             mode="weak", baseline_mode="global",
         )
         # Anchor = 4.0. mpi @ N=2: E_weak = 4.0 / 2.0 = 2.0.
-        assert dict(result["mpi"]) == {2: pytest.approx(2.0)}
+        assert dict(_xy(result["mpi"])) == {2: pytest.approx(2.0)}
 
     def test_global_baseline_invalid_baseline_mode_raises(self):
         df = _df([("a", "serial", 1, 5.0)])
