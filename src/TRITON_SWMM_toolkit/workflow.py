@@ -5202,7 +5202,11 @@ exit $snakemake_status
             f'        "--max-wait-minutes {wait_walltime_cap_min}"\n\n'
         )
 
-    def _pre_delete_guards(self, *, override_in_flight: bool) -> None:
+    def _pre_delete_guards(
+        self, *, override_in_flight: bool,
+        snakefile_name: str = "Snakefile.delete",
+        working_subdir: str = ".snakemake_delete",
+    ) -> None:
         """Entry guard for the distributed delete workflow.
 
         Mirrors :meth:`_pre_snakemake_invocation_guards` but for the delete
@@ -5221,14 +5225,18 @@ exit $snakemake_status
         """
         analysis_dir = self.analysis_paths.analysis_dir
 
-        # (1) Lock-check scoped to .snakemake_delete/ (C.5).
-        snakefile_delete = analysis_dir / "Snakefile.delete"
+        # (1) Lock-check scoped to the (parametrized) delete namespace (C.5).
+        # Defaults preserve analysis.delete()'s Snakefile.delete + .snakemake_delete/;
+        # the scoped reprocess-delete path passes Snakefile.reprocess_delete +
+        # .snakemake_reprocess_delete/ so the guard inspects the correct lock dir
+        # (F-I Flag 2 — without this the guard would gate on the wrong namespace).
+        snakefile_delete = analysis_dir / snakefile_name
         if snakefile_delete.exists():
             self._check_and_clear_snakemake_lock(
                 snakefile_delete,
                 dry_run=False,
                 verbose=True,
-                working_dir=analysis_dir / ".snakemake_delete",
+                working_dir=analysis_dir / working_subdir,
             )
 
         # (2) Sentinel classification (no reclaim — destructive sentinel
@@ -5386,6 +5394,8 @@ exit $snakemake_status
         *,
         override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
         verbose: bool = True,
+        working_subdir: str = ".snakemake_delete",
+        logfile_name: str = "snakemake_delete.log",
     ) -> dict:
         """Invoke the delete Snakefile via subprocess.
 
@@ -5397,11 +5407,11 @@ exit $snakemake_status
         when-None per the override-prefix convention stipulation).
         """
         analysis_dir = self.analysis_paths.analysis_dir
-        snakemake_dir = analysis_dir / ".snakemake_delete"
+        snakemake_dir = analysis_dir / working_subdir
         snakemake_dir.mkdir(exist_ok=True)
         logs_dir = self.analysis_paths.analysis_log_directory
         logs_dir.mkdir(parents=True, exist_ok=True)
-        logfile = logs_dir / "snakemake_delete.log"
+        logfile = logs_dir / logfile_name
 
         resolved_method = (
             override_multi_sim_run_method
@@ -5467,6 +5477,124 @@ exit $snakemake_status
         return self._submit_delete_snakemake(
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
+        )
+
+    def _build_reprocess_delete_snakefile_content(self, *, start_with: str) -> str:
+        """Build the SCOPED reprocess-delete Snakefile (R8). Non-sensitivity:
+        per-scenario delete_processed_{slug} (processed/-only) when
+        start_with=='process' + one delete_reprocess_consolidation (master zarr).
+        Sensitivity (D-scope Option C — per-sub fan-out mirroring the existing
+        delete_subanalysis_{sa} granularity): one delete_subanalysis_reprocess_{sa}
+        per sub (deletes that sub's processed/ across all events when
+        start_with=='process' + that sub's analysis_datatree.zarr) + one master
+        delete_reprocess_consolidation (sensitivity_datatree.zarr) fanning in on
+        the per-sub flags. Flags → _status/_deleting_reprocess/."""
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        master_dir = str(self.analysis_paths.analysis_dir)
+        python_exe = self.python_executable
+        rules: list[str] = []
+        leaf_flags: list[str] = []
+
+        def _proc_rule(rule_suffix: str, event_id: str, target_analysis_dir: str, flag: str) -> str:
+            return (
+                f"rule delete_processed_{rule_suffix}:\n"
+                f'    output:\n        "{flag}"\n'
+                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"    shell:\n"
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_processed_runner "\n'
+                f'        "--event-id {event_id} --analysis-dir {target_analysis_dir}"\n\n'
+            )
+
+        def _zarr_rule(rule_suffix: str, target_analysis_dir: str, flag: str, inputs: list[str]) -> str:
+            inp = ",\n        ".join(f'"{f}"' for f in inputs)
+            return (
+                f"rule delete_reprocess_zarr_{rule_suffix}:\n"
+                f"    input:\n        {inp if inputs else ''}\n"
+                f'    output:\n        "{flag}"\n'
+                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"    shell:\n"
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_reprocess_zarr_runner "\n'
+                f'        "--analysis-dir {target_analysis_dir}"\n\n'
+            )
+
+        def _subanalysis_rule(rule_suffix: str, sa_id: str, sub_dir: str, flag: str, start_with: str) -> str:
+            # D-scope Option C: ONE rule per sub-analysis (mirrors the existing
+            # delete_subanalysis_{sa} granularity). The runner deletes the sub's
+            # processed/ across ALL its events (only when start_with=='process')
+            # + the sub's analysis_datatree.zarr.
+            proc_arg = " --delete-processed" if start_with == "process" else ""
+            return (
+                f"rule delete_subanalysis_reprocess_{rule_suffix}:\n"
+                f'    output:\n        "{flag}"\n'
+                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"    shell:\n"
+                f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_reprocess_runner "\n'
+                f'        "--sa-id {sa_id} --analysis-dir {sub_dir}{proc_arg}"\n\n'
+            )
+
+        is_sensitivity = getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+        if not is_sensitivity:
+            if start_with == "process":
+                for i in range(len(self.analysis.df_sims)):
+                    eid = compute_event_id_slug(self.analysis._retrieve_weather_indexer_using_integer_index(i))
+                    slug = eid.replace(".", "_").replace("-", "_")
+                    flag = f"{master_dir}/_status/_deleting_reprocess/processed_evt-{eid}.flag"
+                    leaf_flags.append(flag)
+                    rules.append(_proc_rule(slug, eid, master_dir, flag))
+            cons_flag = f"{master_dir}/_status/_deleting_reprocess/reprocess_consolidation.flag"
+            rules.append(_zarr_rule("consolidation", master_dir, cons_flag, leaf_flags))
+        else:
+            # D-scope → Option C: PER-SUB-ANALYSIS fan-out mirroring the EXISTING
+            # _build_delete_sensitivity_snakefile_content granularity
+            # (delete_subanalysis_{sa}, workflow.py:5316) — ONE rule per sub, NOT
+            # per-(sa, event). Each per-sub rule deletes that sub's processed/
+            # (across all its events, only when start_with=='process') + that
+            # sub's analysis_datatree.zarr via delete_subanalysis_reprocess_runner
+            # (item 5b). A master rule then deletes sensitivity_datatree.zarr,
+            # fanning in on the per-sub flags. Rationale (vs the rejected
+            # per-(sa,evt) shape): ~n_sa jobs instead of ~n_sa*n_evt tiny SLURM
+            # jobs (avoids scheduler flood on large suites), and reuses the
+            # validated per-sub rule granularity rather than a novel shape.
+            sub_flags: list[str] = []
+            for sa_id, sub in self.analysis.sensitivity.sub_analyses.items():
+                sub_dir = str(sub.analysis_paths.analysis_dir)
+                sa_slug = str(sa_id).replace(".", "_").replace("-", "_")
+                sub_flag = f"{sub_dir}/_status/_deleting_reprocess/subanalysis_reprocess.flag"
+                sub_flags.append(sub_flag)
+                rules.append(_subanalysis_rule(sa_slug, sa_id, sub_dir, sub_flag, start_with))
+            # master zarr rule (deletes sensitivity_datatree.zarr); fans in on all per-sub flags.
+            master_flag = f"{master_dir}/_status/_deleting_reprocess/reprocess_consolidation.flag"
+            rules.append(_zarr_rule("consolidation", master_dir, master_flag, sub_flags))
+            cons_flag = master_flag
+
+        rule_all = f'rule all:\n    input:\n        "{cons_flag}"\n\n'
+        return rule_all + "".join(rules)
+
+    def submit_reprocess_delete_workflow(
+        self, *, start_with: str, override_in_flight: bool = False,
+        override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
+    ) -> dict:
+        """Submit the SCOPED reprocess-delete workflow (R8). Routes the opt-in
+        consolidated-zarr (+ processed/ when start_with=='process') deletion
+        through the EXISTING delete-executor dispatch so the heavy GPFS deletion
+        offloads to SLURM exactly as analysis.delete() does. Runs
+        _pre_delete_guards first (parametrized to the scoped namespace). Isolated
+        Snakefile.reprocess_delete + .snakemake_reprocess_delete/."""
+        self._pre_delete_guards(
+            override_in_flight=override_in_flight,
+            snakefile_name="Snakefile.reprocess_delete",
+            working_subdir=".snakemake_reprocess_delete",
+        )
+        stale = self.analysis_paths.analysis_dir / "_status" / "_deleting_reprocess"
+        if stale.exists():
+            fast_rmtree(stale)
+        snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
+        snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))
+        return self._submit_delete_snakemake(
+            snakefile, override_multi_sim_run_method=override_multi_sim_run_method,
+            working_subdir=".snakemake_reprocess_delete",
+            logfile_name="snakemake_reprocess_delete.log",
         )
 
     def submit_delete_workflow_sensitivity(

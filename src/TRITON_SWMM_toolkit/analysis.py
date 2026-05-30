@@ -2474,6 +2474,7 @@ class TRITONSWMM_analysis:
         which: "Literal['TRITON','SWMM','both']" = "both",
         *,
         regenerate_existing: bool = False,
+        delete_via_slurm: bool | None = None,
         override_clear_raw: ClearRawValue | None = "none",
         override_force_rerun: ForceRerunValue | None = None,
         verbose: bool = True,
@@ -2512,6 +2513,13 @@ class TRITONSWMM_analysis:
             ``override_``-prefixed: bridges no config field; meaningless on
             ``run()``). Matches the ``prune_settled_markers`` plain-bool
             precedent.
+        delete_via_slurm
+            **None (default) auto-resolves**: route the opt-in deletion through
+            the SLURM ``analysis.delete()`` architecture iff
+            ``multi_sim_run_method`` is an HPC mode (``batch_job`` /
+            ``1_job_many_srun_tasks``); ``local`` → in-process ``fast_rmtree``.
+            Pass ``True`` / ``False`` to force. (CLI exposes
+            ``--delete-via-slurm/--no-delete-via-slurm``.)
         override_clear_raw
             **Hard-default "none"** to preserve historic ``reprocess`` semantics
             (reprocess never auto-clears unless the caller explicitly opts in).
@@ -2592,11 +2600,32 @@ class TRITONSWMM_analysis:
                     ),
                     config_path=str(self.analysis_config_yaml),
                 )
+            # R7 master-level in-flight guard (Phase 3) — refuse processed-output
+            # deletion while live workers may be re-writing the master analysis's
+            # processed dirs. Mirrors the non-sensitivity guard below. (Per-sub
+            # subanalyses/sa_*/_status/_submitted/ recursion is a documented later
+            # refinement; the conservative guard refuses on master presence.)
+            if start_with == "process" and regenerate_existing and not dry_run:
+                submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+                if submitted_dir.exists() and any(submitted_dir.glob("*.json")):
+                    raise ConfigurationError(
+                        field="regenerate_existing",
+                        message=(
+                            "reprocess refuses processed-output deletion "
+                            "(start_with='process', regenerate_existing=True) while "
+                            "_submitted/ sentinels are present in the sensitivity master "
+                            "_status/ — simulations may still be in flight or recently "
+                            "died and could be re-writing the same processed/ directories. "
+                            "Run the reconciliation guard or `scancel` outstanding jobs first."
+                        ),
+                        config_path=str(self.analysis_config_yaml),
+                    )
             return self.sensitivity.reprocess(
                 start_with=start_with,
                 execution_mode=execution_mode,
                 which=which,
                 regenerate_existing=regenerate_existing,
+                delete_via_slurm=delete_via_slurm,
                 override_force_rerun=override_force_rerun,
                 verbose=verbose,
                 dry_run=dry_run,
@@ -2652,8 +2681,43 @@ class TRITONSWMM_analysis:
         # only the destructive consolidated-zarr deletion + DU restamp are
         # skipped (see `reprocess dry_run performs no destructive mutation`
         # stipulation).
+        # Opt-in processed-output deletion (rebuild-from-raw, FQ2). Refuse while
+        # live sim workers may be re-writing the same processed/ dir — mirrors
+        # the clear-raw in-flight guard (analysis.py:2607-2619). reprocess
+        # coexists with live workers generally, but DELETING the artifact a live
+        # worker is writing is unsafe.
+        if start_with == "process" and regenerate_existing and not dry_run:
+            submitted_dir = self.analysis_paths.analysis_dir / "_status" / "_submitted"
+            if submitted_dir.exists() and any(submitted_dir.glob("*.json")):
+                raise ConfigurationError(
+                    field="regenerate_existing",
+                    message=(
+                        "reprocess refuses processed-output deletion "
+                        "(start_with='process', regenerate_existing=True) while "
+                        "_submitted/ sentinels are present — simulations may still be "
+                        "in flight or recently died and could be re-writing the same "
+                        "processed/ directories. Run the reconciliation guard or "
+                        "`scancel` outstanding jobs first."
+                    ),
+                    config_path=str(self.analysis_config_yaml),
+                )
+
+        # R8 routing — computed ONCE; shared by both deletion sites. None
+        # auto-resolves to slurm-offload on HPC modes (user D6 refinement 1).
+        _hpc = self.cfg_analysis.multi_sim_run_method in ("batch_job", "1_job_many_srun_tasks")
+        _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
+        route_delete_via_slurm = (
+            regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
+        )
+        if route_delete_via_slurm:
+            # ONE scoped reprocess-delete workflow handles BOTH the consolidated
+            # zarr(s) AND (start_with=='process') the per-scenario processed/ dirs.
+            self._workflow_builder.submit_reprocess_delete_workflow(
+                start_with=start_with, override_in_flight=False,
+            )
         self._invalidate_downstream_flags(
-            start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
+            start_with, regenerate_existing=regenerate_existing, dry_run=dry_run,
+            skip_destructive_delete=route_delete_via_slurm,
         )
 
         # Force-rerun pre-delete (login-node responsibility). Resolve +
@@ -2664,6 +2728,13 @@ class TRITONSWMM_analysis:
         # contract forbids.
         if not dry_run:
             self._apply_force_rerun(override_force_rerun)
+
+        # Processed-output deletion (Phase 3). When the SLURM offload ran, the
+        # processed/ dirs are already gone — skip the in-process loop.
+        if not route_delete_via_slurm:
+            self._delete_processed_outputs_for_reprocess(
+                start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
+            )
 
         # Delegate to the workflow builder. The submit method writes the
         # reprocess Snakefile and orchestrates the snakemake invocation with
@@ -2818,7 +2889,8 @@ class TRITONSWMM_analysis:
         return True
 
     def _invalidate_downstream_flags(
-        self, start_with: str, *, regenerate_existing: bool = False, dry_run: bool = False
+        self, start_with: str, *, regenerate_existing: bool = False, dry_run: bool = False,
+        skip_destructive_delete: bool = False
     ) -> None:
         """Delete ``_status`` flags / artifacts from ``start_with`` onward.
 
@@ -2862,7 +2934,7 @@ class TRITONSWMM_analysis:
                 for f in sd.glob("d_process_*"):
                     f.unlink(missing_ok=True)
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
-                if not dry_run:
+                if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
                         fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A
@@ -2870,7 +2942,7 @@ class TRITONSWMM_analysis:
         elif start_with == "consolidate":
             if regenerate_existing:
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
-                if not dry_run:
+                if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
                     if _zarr is not None and _zarr.exists():
                         fast_rmtree(_zarr, analysis_dir=analysis_dir)  # PATTERN A

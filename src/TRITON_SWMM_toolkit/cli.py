@@ -668,6 +668,14 @@ def reprocess_command(
             "regenerate report+plots only."
         ),
     ),
+    # Phase 3: R8 SLURM-offload toggle for the opt-in deletion.
+    delete_via_slurm: bool | None = typer.Option(
+        None, "--delete-via-slurm/--no-delete-via-slurm",
+        help=("Offload the opt-in (--regenerate-existing) consolidated-zarr + "
+              "processed/ deletion to SLURM via the analysis.delete() architecture. "
+              "Default (unset): auto — offload when the analysis runs on an HPC "
+              "multi_sim_run_method, in-process fast_rmtree on local."),
+    ),
     override_clear_raw: str = typer.Option(
         None,
         "--override-clear-raw",
@@ -746,6 +754,7 @@ def reprocess_command(
             execution_mode=execution_mode,  # type: ignore[arg-type]
             which=which,  # type: ignore[arg-type]
             regenerate_existing=regenerate_existing,
+            delete_via_slurm=delete_via_slurm,
             override_clear_raw=override_clear_raw if override_clear_raw is not None else "none",
             override_force_rerun=override_force_rerun,
             verbose=verbose,

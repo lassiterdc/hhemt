@@ -389,6 +389,7 @@ class TRITONSWMM_sensitivity_analysis:
         report_formats: list[str] | None = None,
         *,
         regenerate_existing: bool = False,
+        delete_via_slurm: bool | None = None,
         override_force_rerun: ForceRerunValue | None = None,
     ) -> dict:
         """Master-level reprocess for sensitivity analyses.
@@ -493,12 +494,39 @@ class TRITONSWMM_sensitivity_analysis:
             # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
             # GPFS work — gate behind regenerate_existing. Default path preserves
             # the zarrs (consolidate stays inert) and runs NO restamp walk.
-            if regenerate_existing and not dry_run:
+            # R8 routing (D-scope Option C) — computed once from the MASTER
+            # multi_sim_run_method. None auto-resolves to slurm-offload on HPC
+            # modes (D6 refinement 1). When the SLURM path runs, ONE scoped
+            # reprocess-delete workflow fans out per-sub (each sub's processed/
+            # across events + its analysis_datatree.zarr) + a master rule for
+            # sensitivity_datatree.zarr — replacing BOTH the in-process zarr
+            # deletions AND the per-sub processed-output delegation below.
+            _hpc = self.master_analysis.cfg_analysis.multi_sim_run_method in (
+                "batch_job",
+                "1_job_many_srun_tasks",
+            )
+            _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
+            route_delete_via_slurm = (
+                regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
+            )
+            if route_delete_via_slurm:
+                self._workflow_builder._base_builder.submit_reprocess_delete_workflow(
+                    start_with=start_with, override_in_flight=False,
+                )
+            elif regenerate_existing and not dry_run:
+                # In-process path (local / delete_via_slurm=False) — per-sub +
+                # master zarr deletion, plus the Phase-3 per-sub processed-output
+                # delegation (FQ2; sub-analyses own their scenarios).
                 affected_sub_dirs: set = set()
                 for sa_id in targets:
                     sub_analysis = self.sub_analyses.get(sa_id)
                     if sub_analysis is None:
                         continue
+                    # FQ2 processed-output deletion (Phase 3) — delegate to the
+                    # sub-analysis's own helper (sub-analyses own their scenarios).
+                    sub_analysis._delete_processed_outputs_for_reprocess(
+                        start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
+                    )
                     _sub_zarr = sub_analysis.analysis_paths.analysis_datatree_zarr
                     if _sub_zarr is not None and _sub_zarr.exists():
                         _fast_rmtree(_sub_zarr, analysis_dir=None)  # batched-restamp
