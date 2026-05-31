@@ -218,3 +218,42 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     for z in sub_zarrs:
         assert z.exists(), f"dry-run must NOT delete sub-analysis zarr {z}"
     assert master_du.stat().st_mtime_ns == master_du_mtime0, "dry-run must NOT re-stamp master _du.json"
+
+
+def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed):
+    """FIX 1 end-to-end: sensitivity ``reprocess(start_with='process',
+    regenerate_existing=True)`` re-fires the per-sa ``process_*`` rebuild rules
+    AND clears the per-model processing log so the runner actually re-writes the
+    per-scenario summaries — then the consolidate + master_consolidation chain
+    rebuilds ``sensitivity_datatree.zarr`` against the freshly-written summaries
+    (no ``FileNotFoundError``).
+
+    This is the compile-gated regression for the silent-failure mode FIX 1
+    closes: before the fix, ``start_with='process'`` deleted the per-scenario
+    ``processed/`` dir but never cleared ``processing_log.outputs``, so the
+    rebuilt process rule's runner skipped every ``_export_*`` write
+    (``_already_written`` gate, Gotcha #28) and master consolidation then failed
+    to find the per-sa summary it expected. Asserts the master datatree zarr's
+    mtime advances and ``result["success"]`` is True.
+    """
+    sa = synthetic_sensitivity_completed
+    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
+    mtime_target = _zarr_mtime_target(mdt)
+    mtime0 = mtime_target.stat().st_mtime
+
+    result = sa.reprocess(
+        start_with="process",
+        regenerate_existing=True,
+        execution_mode="local",
+    )
+
+    assert result["success"], (
+        "reprocess(start_with='process', regenerate_existing=True) must succeed "
+        f"(consolidate rebuilt against freshly-written summaries); got "
+        f"{result.get('message')!r}. Snakemake log: {result.get('snakemake_logfile')}"
+    )
+    assert mtime_target.stat().st_mtime > mtime0, (
+        "process-stage reprocess(regenerate_existing=True) must REBUILD the master "
+        f"datatree zarr (mtime advance). target={mtime_target!r}."
+    )

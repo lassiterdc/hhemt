@@ -483,6 +483,23 @@ class TRITONSWMM_sensitivity_analysis:
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+            # FIX 1 — cheap invalidation runs on EVERY route (SLURM and
+            # in-process), so the reprocess Snakefile generator emits a
+            # rebuild rule (gate keys on `not d_process_path.exists()`) AND
+            # the rebuilt runner actually re-writes (the _already_written
+            # gate keys on the per-model processing log, Gotcha #28). Only
+            # the heavy processed/+zarr deletion is SLURM-routed below.
+            if start_with == "process" and regenerate_existing and not dry_run:
+                from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+                for sa_id in targets:
+                    sub_analysis = self.sub_analyses.get(sa_id)
+                    if sub_analysis is None:
+                        continue
+                    for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
+                        f.unlink(missing_ok=True)
+                    sub_analysis._invalidate_processing_log_for_force_rerun(
+                        ResolvedForceRerunSpec(scope="all", tokens=())
+                    )
             # Report+plot deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"
@@ -516,14 +533,27 @@ class TRITONSWMM_sensitivity_analysis:
             elif regenerate_existing and not dry_run:
                 # In-process path (local / delete_via_slurm=False) — per-sub +
                 # master zarr deletion, plus the Phase-3 per-sub processed-output
-                # delegation (FQ2; sub-analyses own their scenarios).
+                # delegation (FQ2; sub-analyses own their scenarios). The
+                # delegated helper internally guards on
+                # `start_with == "process"` (analysis.py
+                # _delete_processed_outputs_for_reprocess, ~L2979), so a
+                # consolidate/render reprocess PRESERVES each sub's processed/
+                # (the rebuild source consolidate reads from) — only a
+                # process-stage reprocess deletes it. Do NOT inline the
+                # processed/ rmtree here without that guard: dropping it makes a
+                # consolidate-stage regenerate delete the rebuild source and the
+                # consolidate Snakemake step then fails (FIX-1 Phase-1 regression,
+                # 2026-05-31). For the process stage the per-model LOG-clear
+                # already ran above (FIX 1, hunk 2a) on both routes; the helper's
+                # idempotent re-clear here is harmless.
                 affected_sub_dirs: set = set()
                 for sa_id in targets:
                     sub_analysis = self.sub_analyses.get(sa_id)
                     if sub_analysis is None:
                         continue
                     # FQ2 processed-output deletion (Phase 3) — delegate to the
-                    # sub-analysis's own helper (sub-analyses own their scenarios).
+                    # sub-analysis's own helper (sub-analyses own their scenarios;
+                    # the helper's start_with guard protects consolidate/render).
                     sub_analysis._delete_processed_outputs_for_reprocess(
                         start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
                     )

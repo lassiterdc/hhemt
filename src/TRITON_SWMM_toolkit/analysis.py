@@ -2729,9 +2729,21 @@ class TRITONSWMM_analysis:
         if not dry_run:
             self._apply_force_rerun(override_force_rerun)
 
-        # Processed-output deletion (Phase 3). When the SLURM offload ran, the
-        # processed/ dirs are already gone — skip the in-process loop.
-        if not route_delete_via_slurm:
+        # Processed-output deletion (Phase 3). The per-model PROCESSING-LOG
+        # clear (the _already_written invalidation, Gotcha #28) is CHEAP
+        # (per-scenario JSON rewrites, no GPFS tree walk) and MUST run on
+        # both routes: the SLURM runner deletes processed/ but never clears
+        # log_{model_type}.json, so without this the rebuilt process rule
+        # would emit but _already_written would skip every _export_* write.
+        # The HEAVY processed/+zarr fast_rmtree stays SLURM-routed.
+        if route_delete_via_slurm:
+            # SLURM deleted the artifacts; clear only the per-model log here.
+            if start_with == "process" and regenerate_existing and not dry_run:
+                from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+                self._invalidate_processing_log_for_force_rerun(
+                    ResolvedForceRerunSpec(scope="all", tokens=())
+                )
+        else:
             self._delete_processed_outputs_for_reprocess(
                 start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
             )
