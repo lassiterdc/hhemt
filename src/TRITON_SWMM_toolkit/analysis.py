@@ -2937,9 +2937,13 @@ class TRITONSWMM_analysis:
                         art.unlink(missing_ok=True)
             if not dry_run:
                 # PATTERN B — report+plot deletion shrinks on-disk size; restamp
-                # parent DU sentinels once. Plots are small relative to the zarr,
-                # so this is NOT the GPFS-expensive zarr-deletion restamp.
-                restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)
+                # parent DU sentinels once. FIX 3: on the regenerate_existing
+                # process/consolidate arms a LATER zarr deletion restamps the
+                # tree anyway, so skip the redundant early walk there (the
+                # multi-minute login-node stall). The default
+                # (regenerate_existing=False) path still restamps.
+                if not (start_with in ("process", "consolidate") and regenerate_existing):
+                    restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)
 
         if start_with == "process":
             if regenerate_existing:

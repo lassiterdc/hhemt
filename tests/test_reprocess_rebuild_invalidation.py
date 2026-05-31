@@ -520,3 +520,49 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
     with pytest.raises(ProcessingError, match="no valid timesteps to write"):
         inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
     assert not fname_out.exists()
+
+
+# ---------------------------------------------------------------------------
+# (d) FIX 3 — report-restamp gated on regenerate_existing (compile-free)
+# ---------------------------------------------------------------------------
+
+
+def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
+    """FIX 3 (R6): the early report-restamp must be SKIPPED on the
+    regenerate_existing process/consolidate path (a later zarr deletion
+    restamps the DU tree anyway — gating avoids the redundant multi-minute
+    login-node stat() walk), but must STILL fire on the default
+    regenerate_existing=False path (no later deletion to restamp). Drives
+    TRITONSWMM_analysis._invalidate_downstream_flags directly; the restamp gate
+    is pure routing logic, so no compile is required."""
+    import TRITON_SWMM_toolkit.du_sentinels as du_sentinels
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+
+    inst = object.__new__(TRITONSWMM_analysis)
+    inst.analysis_paths = SimpleNamespace(
+        analysis_dir=tmp_path,
+        analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
+    )
+
+    # restamp_parent_sentinels is imported method-locally from du_sentinels, so
+    # the patch target is the source module (the local import re-fetches it at
+    # call time).
+    restamp_mock = MagicMock()
+    monkeypatch.setattr(du_sentinels, "restamp_parent_sentinels", restamp_mock)
+
+    # regenerate_existing=True: a later zarr deletion restamps -> early restamp SKIPPED.
+    inst._invalidate_downstream_flags(
+        "consolidate", regenerate_existing=True, dry_run=False
+    )
+    assert restamp_mock.call_count == 0, (
+        "report-restamp must be SKIPPED on the regenerate_existing=True path "
+        "(the later deletion restamps the tree anyway)"
+    )
+
+    # regenerate_existing=False (default): no later deletion -> early restamp FIRES.
+    inst._invalidate_downstream_flags(
+        "consolidate", regenerate_existing=False, dry_run=False
+    )
+    assert restamp_mock.call_count == 1, (
+        "report-restamp must FIRE on the default regenerate_existing=False path"
+    )
