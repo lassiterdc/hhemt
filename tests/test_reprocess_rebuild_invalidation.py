@@ -27,15 +27,25 @@ The compile-gated end-to-end rebuild assertion lives in
 
 from __future__ import annotations
 
+import math
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import numpy as np
+import pandas as pd
+import pytest
+import xarray as xr
 
 from TRITON_SWMM_toolkit.constants import (
     process_timeseries_flag_per_sa,
     sa_inputs_fingerprint_flag,
     sim_run_flag_per_sa,
 )
+from TRITON_SWMM_toolkit.exceptions import ProcessingError
 from TRITON_SWMM_toolkit.log import ProcessingEntry
+from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario, compute_event_id_slug
 
 
@@ -365,3 +375,148 @@ def test_reprocess_consolidate_inprocess_preserves_processed(
             "consolidate-stage reprocess must PRESERVE per-scenario processed/ "
             f"(the rebuild source); {proc} was deleted"
         )
+
+
+# ---------------------------------------------------------------------------
+# (c) FIX 2 — append-batch decoupled from load chunk (compile-free, synthetic)
+# ---------------------------------------------------------------------------
+
+
+def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny, nx):
+    """Construct a TRITONSWMM_sim_post_processing via __new__ with only the
+    attributes _export_TRITONSWMM_TRITON_outputs reads, wired to synthetic
+    stand-ins. Instance attributes shadow the class helper methods the export
+    method calls on ``self``."""
+    inst = object.__new__(TRITONSWMM_sim_post_processing)
+    rds_dem = xr.Dataset(coords={"y": np.arange(ny), "x": np.arange(nx)})
+    inst._resolve_clear_raw = lambda override: None
+    inst._validate_path = lambda path, name: fname_out
+    inst._already_written = lambda f: False
+    inst._should_clear_raw_for_model = lambda resolved, model: False
+    inst._analysis = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            TRITON_raw_output_type="bin",
+            TRITON_reporting_timestep_s=60,
+            process_output_target_chunksize_mb=200,
+            process_append_batch_timesteps=batch_timesteps,
+        )
+    )
+    inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
+    inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
+    inst.scen_paths = SimpleNamespace(output_tritonswmm_triton_timeseries=fname_out)
+    inst._scenario = SimpleNamespace(
+        latest_sim_date=lambda model_type, astype: "2020-01-01"
+    )
+    # MagicMock tolerates the post-write log-field accesses (add_sim_processing_entry,
+    # TRITON_timeseries_written.set(...)) without modelling each one.
+    inst.log = MagicMock()
+    return inst
+
+
+def _patch_loaders(monkeypatch, *, df_outputs, ny, nx):
+    """Force the load chunk to floor at 1 timestep and replace the on-disk
+    loaders with synthetic in-memory datasets, so the batched-append loop is
+    exercised without any real TRITON binaries or compiled engine."""
+    import TRITON_SWMM_toolkit.process_simulation as ps
+    import TRITON_SWMM_toolkit.utils as utils
+
+    # estimate_timesteps_per_chunk is imported method-locally from utils, so the
+    # patch target is utils (not the process_simulation namespace).
+    monkeypatch.setattr(utils, "estimate_timesteps_per_chunk", lambda **k: 1)
+    monkeypatch.setattr(ps, "return_fpath_wlevels", lambda fldr, interval: df_outputs)
+    monkeypatch.setattr(
+        ps,
+        "load_triton_output_w_xarray",
+        lambda rds_dem, f, varname, raw_out_type: xr.Dataset(
+            {varname: (("y", "x"), np.zeros((ny, nx)))},
+            coords={"y": np.arange(ny), "x": np.arange(nx)},
+        ),
+    )
+    monkeypatch.setattr(ps, "return_dic_zarr_encodings", lambda ds, comp_level: {})
+    monkeypatch.setattr(ps, "current_datetime_string", lambda: "2020-01-01")
+    monkeypatch.setattr(ps, "convert_datetime_to_str", lambda attrs: attrs)
+    monkeypatch.setattr(ps, "get_file_size_MiB", lambda f: 1.0)
+
+
+def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
+    """With the load chunk floored to 1 timestep (the fine-grid degeneration this
+    fix targets), the batched-append path must emit ceil(N / append_batch_timesteps)
+    zarr writes — NOT one append per timestep — and the resulting store must hold
+    every timestep (no loss across batched appends). R4 + R5 (separate knob)."""
+    n_timesteps = 10
+    batch = 4
+    ny = nx = 4
+
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    src_file = tmp_path / "src.bin"
+    src_file.write_bytes(b"\x00")  # existence is all the loop checks; load is mocked
+    fname_out = tmp_path / "out.zarr"
+
+    columns = ["H", "QX", "QY", "MH"]
+    df_outputs = pd.DataFrame(
+        {col: [src_file] * n_timesteps for col in columns},
+        index=list(range(n_timesteps)),
+    )
+
+    inst = _build_synthetic_post_processing(
+        fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=batch, ny=ny, nx=nx
+    )
+    _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
+
+    # Count actual zarr write/append operations (one per flushed batch).
+    to_zarr_modes = []
+    orig_to_zarr = xr.Dataset.to_zarr
+
+    def _counting_to_zarr(self, *args, **kwargs):
+        to_zarr_modes.append(kwargs.get("mode"))
+        return orig_to_zarr(self, *args, **kwargs)
+
+    monkeypatch.setattr(xr.Dataset, "to_zarr", _counting_to_zarr)
+
+    inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
+
+    expected_appends = math.ceil(n_timesteps / batch)
+    assert len(to_zarr_modes) == expected_appends, (
+        f"expected {expected_appends} batched zarr writes (ceil({n_timesteps}/{batch})), "
+        f"got {len(to_zarr_modes)}: {to_zarr_modes}"
+    )
+    # First write creates the store, the rest append.
+    assert to_zarr_modes[0] == "w"
+    assert all(m == "a" for m in to_zarr_modes[1:])
+
+    # No data loss: every timestep present in the store.
+    ds = xr.open_zarr(fname_out)
+    try:
+        assert ds.sizes["timestep_min"] == n_timesteps
+    finally:
+        ds.close()
+
+
+def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
+    """SE F-I-2 guard: if every chunk is skipped (all source files missing) the
+    zarr store is never created; the tail-flush guard must raise a diagnosable
+    ProcessingError instead of letting zarr.consolidate_metadata fail cryptically
+    on a nonexistent store."""
+    n_timesteps = 5
+    ny = nx = 4
+
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    missing_file = tmp_path / "does_not_exist.bin"  # never created on disk
+    fname_out = tmp_path / "out.zarr"
+
+    columns = ["H", "QX", "QY", "MH"]
+    df_outputs = pd.DataFrame(
+        {col: [missing_file] * n_timesteps for col in columns},
+        index=list(range(n_timesteps)),
+    )
+
+    inst = _build_synthetic_post_processing(
+        fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=4, ny=ny, nx=nx
+    )
+    _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
+
+    with pytest.raises(ProcessingError, match="no valid timesteps to write"):
+        inst._export_TRITONSWMM_TRITON_outputs(verbose=False)
+    assert not fname_out.exists()
