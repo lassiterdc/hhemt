@@ -234,7 +234,11 @@ class analysis_config(cfgBaseModel):
     )
     process_output_target_chunksize_mb: int = Field(
         200,
-        description="Target memory budget (MiB) per chunk for streaming-chunked operations on per-scenario timeseries output. Consumed by both write_timeseries_outputs (raw-to-zarr chunked write at process_simulation.py L544/L736) AND summarize_triton_simulation_results' _streaming_argmax_with_companions helper (per-cell argmax+companion reduction). Default 200 MiB; at the coarsest grids (0.35m) the chunk degenerates to 1 timestep per chunk and the reduction runs O(N_tsteps) chunks — see Gotcha #23.",
+        description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario timeseries output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at process_simulation.py L544/L736) AND summarize_triton_simulation_results' _streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct memory guard, NOT a performance bug, because append granularity is decoupled via process_append_batch_timesteps. See Gotcha #23/#24.",
+    )
+    process_append_batch_timesteps: int = Field(
+        128,
+        description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in write_timeseries_outputs. Decouples zarr-append granularity from the in-memory load-chunk size (process_output_target_chunksize_mb), so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is safe.",
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
