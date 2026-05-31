@@ -506,8 +506,16 @@ class TRITONSWMM_sensitivity_analysis:
             _report_zip = master_analysis_dir / "analysis_report.zip"
             _report_html.unlink(missing_ok=True)
             _report_zip.unlink(missing_ok=True)
-            if not dry_run:
-                restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
+            # FIX 3 — when regenerate_existing (and not dry_run), a LATER
+            # deletion restamps the master _du.json anyway (SLURM route: the
+            # reprocess-delete workflow's per-sub + master rules; in-process
+            # route: compute_and_write_scope_sentinel(master, scope="analysis")
+            # below). The early report-restamp here would otherwise force a
+            # full-tree GPFS stat() walk on the login node before any SLURM
+            # offload — the observed multi-minute stall. The default
+            # (regenerate_existing=False) path still restamps (no later deletion).
+            if not dry_run and not regenerate_existing:
+                restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B (FIX 3 gate)
             # Consolidated-zarr deletion + batched DU restamp are the EXPENSIVE
             # GPFS work — gate behind regenerate_existing. Default path preserves
             # the zarrs (consolidate stays inert) and runs NO restamp walk.
