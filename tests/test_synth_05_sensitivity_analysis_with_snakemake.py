@@ -280,6 +280,191 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
         assert figure.exists(), f"Expected benchmarking figure missing: {figure}"
 
 
+@pytest.mark.skipif(
+    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+)
+@pytest.mark.slow
+def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis):
+    """Regression (reprocess-rebuild-divergence-fix).
+
+    The divergence state is: a per-scenario summary output was deleted, but its
+    ``d_process_*`` completion flag survived. ``reprocess(start_with="process")``
+    must self-heal it — reconcile the flag + per-model processing log against
+    on-disk summary presence — and rebuild the missing summary, REGARDLESS of
+    ``regenerate_existing`` (the May-31 failure ran the default ``False``).
+
+    Asserts:
+    - R1/R2/R4/R6 (rebuild): delete one summary zarr while leaving its
+      ``d_process`` flag → ``reprocess(start_with="process",
+      regenerate_existing=False)`` rebuilds the summary, re-runs consolidate,
+      and reproduces the analysis summaries.
+    - R3 (healthy no-op): every OTHER ``d_process`` flag retains its
+      pre-reprocess mtime (only the divergent pair was unlinked).
+    - First-run idempotence: a SECOND ``reprocess(start_with="process",
+      dry_run=True)`` emits ZERO ``process_sa_*`` rules (the gate is now closed
+      for all events) — asserted via a deterministic Snakefile.reprocess parse.
+    """
+    import shutil
+
+    import TRITON_SWMM_toolkit.analysis as _analysis_mod
+    from TRITON_SWMM_toolkit.constants import (
+        consolidate_subanalysis_flag,
+        process_timeseries_flag_per_sa,
+    )
+    from TRITON_SWMM_toolkit.scenario import (
+        TRITONSWMM_scenario,
+        compute_event_id_slug,
+    )
+
+    # Guard: this regression test is meaningless unless it exercises the SOURCE
+    # under test (the worktree edits), not a stale installed copy. Assert the
+    # loaded analysis module is the worktree's and carries the new self-heal
+    # helper before doing any expensive build/run work.
+    assert hasattr(
+        _analysis_mod.TRITONSWMM_analysis,
+        "_reconcile_stale_process_flags_against_summaries",
+    ), (
+        "self-heal helper missing from the loaded TRITONSWMM_analysis — the test "
+        f"is exercising the wrong source copy: {_analysis_mod.__file__}"
+    )
+
+    # model_type -> consolidate-consumed summary attrs (mirrors the production
+    # self-heal's D3 predicate in analysis.py).
+    _SUMMARY_ATTRS_BY_MODEL = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_summary",
+            "output_tritonswmm_node_summary",
+            "output_tritonswmm_link_summary",
+            "output_tritonswmm_performance_summary",
+        ),
+        "triton": (
+            "output_triton_only_summary",
+            "output_triton_only_performance_summary",
+        ),
+        "swmm": (
+            "output_swmm_only_node_summary",
+            "output_swmm_only_link_summary",
+        ),
+    }
+
+    analysis = synth_sensitivity_analysis
+
+    # ── Arrange: run the full sensitivity workflow to completion so real
+    # summary zarrs exist on disk (mirrors test_snakemake_sensitivity_workflow_
+    # execution). ──────────────────────────────────────────────────────────────
+    result = analysis.submit_workflow(
+        mode="local",
+        process_system_level_inputs=True,
+        overwrite_system_inputs=True,
+        compile_TRITON_SWMM=True,
+        recompile_if_already_done_successfully=True,
+        prepare_scenarios=True,
+        overwrite_scenario_if_already_set_up=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
+        process_timeseries=True,
+        which="both",
+        # Preserve raw sim outputs (out_tritonswmm/*): the reprocess rebuild
+        # re-reads them to regenerate the deleted summary. Clearing raw here
+        # ("all") would delete the rebuild source and make the rebuild assertion
+        # unsatisfiable — that is the separate raw-also-gone case the
+        # _assert_reprocess_rebuild_sources_present preflight guards, not the
+        # divergence-rebuild path this test validates.
+        override_clear_raw="none",
+        compression_level=5,
+        pickup_where_leftoff=False,
+        verbose=True,
+    )
+    assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
+    tst_ut.assert_analysis_summaries_created(analysis)
+
+    master_dir = analysis.analysis_paths.analysis_dir
+    status_dir = master_dir / "_status"
+
+    # Pick one sub-analysis + its first event + its first enabled model, and
+    # resolve a present summary output to delete.
+    # Sub-analyses are owned by the sensitivity manager; the top-level
+    # TRITONSWMM_analysis delegates reprocess() to self.sensitivity.reprocess().
+    # Iterate items() (keys may be int) and string-cast the chosen id for the
+    # flag-token helpers, which validate a str sa_id fragment.
+    sa_items = list(analysis.sensitivity.sub_analyses.items())
+    assert sa_items, "fixture produced no sub-analyses"
+    target_sa_key, sub = sa_items[0]
+    target_sa = str(target_sa_key)
+
+    scen = TRITONSWMM_scenario(0, sub)
+    evt = compute_event_id_slug(
+        sub._retrieve_weather_indexer_using_integer_index(0)
+    )
+    model_type = scen.run.model_types_enabled[0]
+
+    summary_to_delete = None
+    for attr in _SUMMARY_ATTRS_BY_MODEL[model_type]:
+        p = getattr(scen.scen_paths, attr, None)
+        if p is not None and p.exists():
+            summary_to_delete = p
+            break
+    assert summary_to_delete is not None, (
+        f"no present summary output found to delete for model_type={model_type}"
+    )
+
+    flag_path = master_dir / process_timeseries_flag_per_sa(model_type, target_sa, evt)
+    assert flag_path.exists(), f"expected d_process flag present before delete: {flag_path}"
+
+    # Create the divergence: delete the summary, leave the flag.
+    if summary_to_delete.is_dir():
+        shutil.rmtree(summary_to_delete)
+    else:
+        summary_to_delete.unlink()
+    assert not summary_to_delete.exists(), "summary should be deleted"
+    assert flag_path.exists(), (
+        "d_process flag must survive summary deletion (this IS the divergence state)"
+    )
+
+    # Record all d_process flag mtimes for the no-op (R3) arm.
+    pre_mtimes = {
+        f: f.stat().st_mtime for f in status_dir.glob("d_process_*_complete.flag")
+    }
+
+    # ── Act: reprocess on the process path with the DEFAULT
+    # regenerate_existing=False (the configuration that originally failed). ──────
+    analysis.reprocess(
+        start_with="process", execution_mode="local", regenerate_existing=False
+    )
+
+    # ── Assert (rebuild, R1/R2/R4/R6). ─────────────────────────────────────────
+    assert summary_to_delete.exists(), (
+        "self-heal must rebuild the deleted summary on the process path"
+    )
+    consolidate_flag = master_dir / consolidate_subanalysis_flag(target_sa)
+    assert consolidate_flag.exists(), (
+        f"per-sa consolidate flag must be present after reprocess: {consolidate_flag}"
+    )
+    tst_ut.assert_analysis_summaries_created(analysis)
+
+    # ── Assert (healthy no-op, R3): every OTHER d_process flag keeps its
+    # pre-reprocess mtime; only the divergent pair was unlinked + rebuilt. ──────
+    for f, mtime in pre_mtimes.items():
+        if f == flag_path:
+            continue  # the healed flag was unlinked + rebuilt (mtime expected to change)
+        assert f.exists(), f"healthy d_process flag unexpectedly missing: {f}"
+        assert f.stat().st_mtime == mtime, (
+            f"healthy d_process flag mtime changed unexpectedly (should be a no-op): {f}"
+        )
+
+    # ── Assert (first-run idempotence): a SECOND process reprocess (dry-run)
+    # emits ZERO process_sa_ rules — the gate's `not d_process_path.exists()` is
+    # now False for every event. Parse the generated Snakefile.reprocess
+    # (deterministic; does not depend on snakemake dry-run stats formatting). ───
+    analysis.reprocess(start_with="process", execution_mode="local", dry_run=True)
+    snakefile = master_dir / "Snakefile.reprocess"
+    assert snakefile.exists(), f"reprocess Snakefile not generated: {snakefile}"
+    snakefile_text = snakefile.read_text()
+    assert "rule process_sa_" not in snakefile_text, (
+        "steady-state second reprocess must emit zero process_sa_ rules "
+        "(all d_process flags now present)"
+    )
+
+
 # ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
 
 from pathlib import Path as _Path

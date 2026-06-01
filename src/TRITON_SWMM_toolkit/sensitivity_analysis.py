@@ -483,23 +483,27 @@ class TRITONSWMM_sensitivity_analysis:
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
-            # FIX 1 — cheap invalidation runs on EVERY route (SLURM and
-            # in-process), so the reprocess Snakefile generator emits a
-            # rebuild rule (gate keys on `not d_process_path.exists()`) AND
-            # the rebuilt runner actually re-writes (the _already_written
-            # gate keys on the per-model processing log, Gotcha #28). Only
-            # the heavy processed/+zarr deletion is SLURM-routed below.
-            if start_with == "process" and regenerate_existing and not dry_run:
-                from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+            # FIX 2 — divergence self-heal runs on the process path on EVERY
+            # route REGARDLESS of regenerate_existing (D2). Each sub-analysis
+            # reconciles its own d_process flags + per-model processing_log
+            # against on-disk summary presence (D3): where a flag survives but
+            # the enabled-model summary set is absent (the May-31 divergence:
+            # 72 d_process flags vs 0 summary zarrs), unlink the flag + clear
+            # the log so the master generator's emit gate (workflow.py:6684)
+            # re-emits the per-(sa,evt) process rule and _already_written
+            # (Gotcha 28) lets it write. No-op for any sub whose summaries are
+            # all present (healthy). Sub-analyses are full Analysis instances
+            # and own their scenarios (Gotcha 11); the helper resolves the
+            # per-sa flag-token shape from each sub's is_subanalysis context.
+            if start_with == "process" and not dry_run:
                 for sa_id in targets:
                     sub_analysis = self.sub_analyses.get(sa_id)
                     if sub_analysis is None:
                         continue
-                    for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
-                        f.unlink(missing_ok=True)
-                    sub_analysis._invalidate_processing_log_for_force_rerun(
-                        ResolvedForceRerunSpec(scope="all", tokens=())
+                    _reconciled = sub_analysis._reconcile_stale_process_flags_against_summaries(
+                        sa_id=sa_id, master_dir=master_analysis_dir
                     )
+                    sub_analysis._assert_reprocess_rebuild_sources_present(_reconciled)
             # Report+plot deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"

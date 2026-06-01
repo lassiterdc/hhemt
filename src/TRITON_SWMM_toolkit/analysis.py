@@ -2709,6 +2709,16 @@ class TRITONSWMM_analysis:
         route_delete_via_slurm = (
             regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
         )
+        # Divergence self-heal (FIX 2) — fires on the process path REGARDLESS of
+        # regenerate_existing (D2). Reconciles d_process flag + per-model
+        # processing_log against on-disk summary presence: where a flag survives
+        # but the enabled-model summary set is absent (the May-31 divergence),
+        # unlink the flag + clear the log so the workflow.py:6684 emit gate
+        # re-emits the process rule and _already_written (Gotcha 28) lets it
+        # write. No-op when every enabled summary is present (healthy analysis).
+        if start_with == "process" and not dry_run:
+            _reconciled = self._reconcile_stale_process_flags_against_summaries()
+            self._assert_reprocess_rebuild_sources_present(_reconciled)
         if route_delete_via_slurm:
             # ONE scoped reprocess-delete workflow handles BOTH the consolidated
             # zarr(s) AND (start_with=='process') the per-scenario processed/ dirs.
@@ -3125,6 +3135,212 @@ class TRITONSWMM_analysis:
         spec = self._build_force_rerun_spec(resolved)
         self._workflow_builder._delete_flags_for_force_rerun(spec)
         self._invalidate_processing_log_for_force_rerun(spec)
+
+    def _reconcile_stale_process_flags_against_summaries(
+        self, *, sa_id: str | None = None, master_dir: Path | None = None
+    ) -> set[tuple[str, str]]:
+        """Self-heal the reprocess divergence state (FIX 2).
+
+        For each (event_id, model_type) in THIS analysis whose ``d_process``
+        completion flag exists but whose consolidate-consumed summary outputs
+        are absent on disk, delete the flag AND clear the per-model
+        ``processing_log.outputs`` so:
+
+        1. the reprocess generator's emit gate (workflow.py:6684,
+           ``start_with=='process' and not d_process_path.exists()``) re-emits
+           the process rule, and
+        2. the runner's ``_already_written`` gate (process_simulation.py:1175,
+           keyed on ``processing_log.outputs[...].success`` — NOT ``.exists()``,
+           Gotcha 28) returns False so ``_export_*`` actually re-writes.
+
+        Fires UNCONDITIONALLY on the process path regardless of
+        ``regenerate_existing`` (D2). Existence-keyed (D3): no-op for any
+        (evt, model) whose enabled summary set is fully present, so it is a
+        provable no-op on a healthy analysis and cannot delete a present output.
+
+        Works for both non-sensitivity analyses and sub-analyses (sub-analyses
+        are full Analysis instances per Gotcha 11). For a sub-analysis the
+        sensitivity master passes the BARE ``sa_id`` AND ``master_dir`` (the
+        master analysis_dir, whose ``_status/`` holds the per-sa flags); both
+        are required because a sub-analysis's own ``analysis_id`` is the prefixed
+        ``sa_{bare}`` (sensitivity_analysis.py:1607) and its own ``analysis_dir``
+        is ``subanalyses/sa_X/`` (sensitivity_analysis.py:50) — neither matches
+        the gate's bare-``sa_id`` flag under the master ``_status/``
+        (workflow.py:6652/6678; sensitivity_analysis.py:480-498). Non-sensitivity
+        callers pass neither (flags live in this analysis's own ``_status/``).
+        The summary set is never narrowed.
+
+        Returns
+        -------
+        set[tuple[str, str]]
+            The (event_id, model_type) pairs reconciled (flag+log cleared).
+            Empty on a healthy analysis.
+        """
+        # Flag-name helpers live in constants, NOT workflow. There is a per-sa
+        # helper (process_timeseries_flag_per_sa) but NO non-sa variant — the
+        # non-sensitivity d_process flag is built inline by workflow.py:1350 as
+        # "_status/d_process_{model_type}_evt-{event_id}_complete.flag". Verified
+        # against constants.py:179 + workflow.py:1350 (2026-06-01).
+        from TRITON_SWMM_toolkit.constants import (
+            STATUS_DIR_NAME,
+            process_timeseries_flag_per_sa,
+        )
+        from TRITON_SWMM_toolkit.scenario import (
+            TRITONSWMM_scenario,
+            compute_event_id_slug,
+        )
+        from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+
+        _SUMMARY_ATTRS_BY_MODEL = {
+            "tritonswmm": (
+                "output_tritonswmm_triton_summary",
+                "output_tritonswmm_node_summary",
+                "output_tritonswmm_link_summary",
+                "output_tritonswmm_performance_summary",
+            ),
+            "triton": (
+                "output_triton_only_summary",
+                "output_triton_only_performance_summary",
+            ),
+            "swmm": (
+                "output_swmm_only_node_summary",
+                "output_swmm_only_link_summary",
+            ),
+        }
+
+        def _summary_absent(scen, model_type: str) -> bool:
+            for attr in _SUMMARY_ATTRS_BY_MODEL.get(model_type, ()):
+                p = getattr(scen.scen_paths, attr, None)
+                if p is None:
+                    continue
+                if not p.exists():
+                    return True
+            return False
+
+        # sub-analyses: sa_id (BARE) and master_dir (the MASTER analysis_dir,
+        # whose _status/ holds the per-sa flags — sensitivity_analysis.py:480-498)
+        # are threaded from the sensitivity master loop. A sub-analysis's OWN
+        # analysis_dir is subanalyses/sa_X/ (sensitivity_analysis.py:50), which
+        # does NOT hold the per-sa flags, and its cfg_analysis.analysis_id is the
+        # PREFIXED "sa_{bare}" (sensitivity_analysis.py:1607) — deriving the flag
+        # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
+        # silently breaking the rebuild. None/None => non-sensitivity: flags live
+        # in THIS analysis's own _status/.
+        assert (sa_id is None) == (master_dir is None), (
+            "sa_id and master_dir must be passed together (sensitivity) "
+            "or both omitted (non-sensitivity)"
+        )
+        is_sub = sa_id is not None
+
+        reconciled: set[tuple[str, str]] = set()
+        reconciled_event_ids: set[str] = set()
+        for event_iloc in range(len(self.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            evt = compute_event_id_slug(
+                self._retrieve_weather_indexer_using_integer_index(event_iloc)
+            )
+            for model_type in scen.run.model_types_enabled:
+                # Flag name shape MUST match the generator gate's token shape
+                # (workflow.py:6678 for sub-analyses; the non-sa flag for
+                # non-sensitivity) so the unlink hits exactly the flag the gate
+                # checks.
+                if is_sub:
+                    # Per-sa flags live under the MASTER analysis_dir's _status/
+                    # (NOT the sub's own). process_timeseries_flag_per_sa returns
+                    # a "_status/"-prefixed rel path keyed by the BARE sa_id, so
+                    # the base must be master_dir.
+                    # Narrow the Optionals for the type checker; the pre-loop
+                    # assert guarantees sa_id and master_dir are set together on
+                    # the sub-analysis path (is_sub is True iff sa_id is not None).
+                    assert sa_id is not None and master_dir is not None
+                    flag_rel = process_timeseries_flag_per_sa(model_type, sa_id, evt)
+                    flag_path = master_dir / flag_rel
+                else:
+                    # No non-sa helper exists; mirror workflow.py:1350 inline.
+                    # Non-sensitivity flags live in this analysis's own _status/.
+                    flag_rel = (
+                        f"{STATUS_DIR_NAME}/d_process_{model_type}"
+                        f"_evt-{evt}_complete.flag"
+                    )
+                    flag_path = self.analysis_paths.analysis_dir / flag_rel
+                if not flag_path.exists():
+                    continue  # gate already open for this pair — nothing to heal
+                if not _summary_absent(scen, model_type):
+                    continue  # summary present — healthy, no-op
+                # Divergence: flag present, summary absent → heal.
+                flag_path.unlink(missing_ok=True)
+                reconciled.add((evt, model_type))
+                reconciled_event_ids.add(evt)
+
+        if reconciled_event_ids:
+            # Clear per-model processing_log for the reconciled events so
+            # _already_written returns False on the re-emitted rule. Reuse the
+            # event-scoped force-rerun log invalidator (cheap per-scenario JSON
+            # rewrites; no GPFS tree walk).
+            self._invalidate_processing_log_for_force_rerun(
+                ResolvedForceRerunSpec(scope="event", tokens=tuple(reconciled_event_ids))
+            )
+        return reconciled
+
+    def _assert_reprocess_rebuild_sources_present(
+        self, reconciled: set[tuple[str, str]]
+    ) -> None:
+        """Fail-fast (Option B) — for each (event_id, model_type) the process-path
+        self-heal just reconciled (summary absent → flag+log cleared so the rule
+        re-emits), verify the RAW rebuild source (out_triton / out_tritonswmm /
+        out_swmm) still exists. If it is gone, the re-emitted process rule would
+        re-fail deep inside a SLURM job with an opaque FileNotFoundError; raise a
+        clear login-node ConfigurationError instead. No-op when `reconciled` is
+        empty (the healthy-analysis case)."""
+        if not reconciled:
+            return
+        from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+        from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario, compute_event_id_slug
+
+        # triton/tritonswmm raw outputs are DIRECTORIES (ScenarioPaths.out_triton
+        # @paths.py:107, .out_tritonswmm @108). swmm raw outputs are FILES
+        # (swmm_full_out_file @93 .out binary, swmm_full_rpt_file @92 .rpt) —
+        # there is NO ScenarioPaths.out_swmm. Branch the raw-source check on
+        # whether the family writes a dir or a file.
+        _raw_dir_attr = {
+            "triton": "out_triton",
+            "tritonswmm": "out_tritonswmm",
+        }
+
+        def _raw_source_present(scen, model_type: str) -> bool:
+            """True iff the raw rebuild source for this model family is present.
+            Directory model for triton/tritonswmm; file model for swmm."""
+            if model_type in _raw_dir_attr:
+                raw_dir = getattr(scen.scen_paths, _raw_dir_attr[model_type], None)
+                return raw_dir is not None and raw_dir.exists() and any(raw_dir.iterdir())
+            if model_type == "swmm":
+                out_file = getattr(scen.scen_paths, "swmm_full_out_file", None)
+                return out_file is not None and out_file.exists()
+            return False
+
+        missing_sources: list[str] = []
+        for event_iloc in range(len(self.df_sims)):
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            evt = compute_event_id_slug(
+                self._retrieve_weather_indexer_using_integer_index(event_iloc)
+            )
+            for model_type in scen.run.model_types_enabled:
+                if (evt, model_type) not in reconciled:
+                    continue
+                if not _raw_source_present(scen, model_type):
+                    missing_sources.append(f"{model_type}@evt-{evt}")
+        if missing_sources:
+            raise ConfigurationError(
+                field="start_with",
+                message=(
+                    "reprocess(start_with='process') cannot rebuild missing summaries "
+                    f"for {sorted(missing_sources)} — the raw simulation output "
+                    "(out_triton/out_tritonswmm/out_swmm) is also absent, so there is "
+                    "no rebuild source. Re-run the simulations for these scenarios "
+                    "before reprocessing, or restore the raw outputs."
+                ),
+                config_path=str(self.analysis_config_yaml),
+            )
 
     def _invalidate_processing_log_for_force_rerun(
         self, spec: "ResolvedForceRerunSpec"
