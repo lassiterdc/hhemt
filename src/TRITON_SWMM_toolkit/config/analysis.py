@@ -15,6 +15,27 @@ ClearRawValue = Literal["all", "none"] | list[Literal["tritonswmm", "triton", "s
 ForceRerunValue = Literal["all", "none"] | dict[Literal["sa_id", "event_iloc"], list[int | str]]
 
 
+def _read_cgroup_memory_limit_mib() -> float | None:
+    """Best-effort read of the process's cgroup memory ceiling, in MiB.
+
+    Returns None when the limit is unknown or unlimited (so callers fall back to
+    the declared config value). Non-fatal by contract — never raises.
+    """
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(path) as fh:
+                raw = fh.read().strip()
+            if raw in ("max", ""):
+                return None
+            val = int(raw)
+            if val >= 2**62:  # cgroup v1 'unlimited' sentinel near 2**63
+                return None
+            return val / (1024**2)
+        except (OSError, ValueError):
+            continue
+    return None
+
+
 class analysis_config(cfgBaseModel):
     # REQUIRED INPUTS
     analysis_id: Annotated[
@@ -239,6 +260,27 @@ class analysis_config(cfgBaseModel):
     process_append_batch_timesteps: int = Field(
         128,
         description="Number of LOADED timesteps to accumulate before emitting ONE zarr append in write_timeseries_outputs. Decouples zarr-append granularity from the in-memory load-chunk size (process_output_target_chunksize_mb), so fine grids that floor the load chunk to 1 timestep still emit only ceil(N_timesteps / this) appends instead of O(N_timesteps) tiny appends. Independent of the streaming-summary reduction (which does not append). Buffer RSS is additionally byte-capped at 2x the load budget at write time, so raising this is safe.",
+    )
+    process_append_batch_memory_budget_mb: int | None = Field(
+        None,
+        description=(
+            "Memory budget (MiB) governing BOTH the zarr-append batch byte cap in "
+            "write_timeseries_outputs AND the streaming-argmax summary reduction in "
+            "summarize_triton_simulation_results. Distinct from "
+            "process_output_target_chunksize_mb (the small per-LOAD-chunk RSS guard, "
+            "~200 MiB): this larger budget lets fine grids accumulate a bigger pending "
+            "batch / argmax chunk inside the process job's real RAM allocation. When None "
+            "(default), resolved at config-load to a fraction (0.35) of "
+            "hpc_mem_allocation_for_sim_output_processing_mb (the field that sets the "
+            "process rule's SLURM mem_mb), clamped to the actual cgroup limit when "
+            "readable — see the _resolve_process_batch_budget validator. A concrete int "
+            "overrides the fraction but is still ceiling-checked at <= 0.5*job_RAM. The "
+            "0.35 fraction reserves headroom for the peak-RSS inequality 2*B + per_ts "
+            "<= job_RAM (the flush transiently holds the pending batch B, its xr.concat "
+            "copy ~B, and one live load chunk per_ts), accounting for the post-append "
+            "trigger overshoot. Consumed at process_simulation.py write-flush cap and "
+            "argmax budget."
+        ),
     )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
@@ -546,5 +588,36 @@ class analysis_config(cfgBaseModel):
                 f"before in-flight sims can finish; consider raising the wait cap.",
                 UserWarning,
                 stacklevel=2,
+            )
+        return self
+
+    # Fraction of the declared process SLURM allocation used as the append/argmax
+    # budget when process_append_batch_memory_budget_mb is left None. 0.35 keeps
+    # headroom for the xr.concat batch copy (~2x pending) + one live load chunk
+    # inside the declared mem, accounting for the post-append trigger overshoot.
+    _PROCESS_BATCH_BUDGET_FRACTION = 0.35
+
+    @model_validator(mode="after")
+    def _resolve_process_batch_budget(self):
+        declared_job_ram = self.hpc_mem_allocation_for_sim_output_processing_mb
+        if self.process_append_batch_memory_budget_mb is None:
+            self.process_append_batch_memory_budget_mb = round(self._PROCESS_BATCH_BUDGET_FRACTION * declared_job_ram)
+        # R4 guard 1: never exceed half the declared job RAM (the 2*B <= job_RAM inequality).
+        ceiling = round(0.5 * declared_job_ram)
+        if self.process_append_batch_memory_budget_mb > ceiling:
+            raise ValueError(
+                f"process_append_batch_memory_budget_mb "
+                f"({self.process_append_batch_memory_budget_mb}) exceeds 0.5 * "
+                f"hpc_mem_allocation_for_sim_output_processing_mb ({ceiling}); the "
+                f"2*B + per_ts <= job_RAM peak-RSS inequality requires B <= ~0.5*job_RAM."
+            )
+        # R4 guard 2: best-effort clamp to the ACTUAL cgroup limit when readable, so a
+        # SLURM under-allocation (declared > granted) cannot drive the cap above the real
+        # envelope (the declared-vs-actual OOM hazard, D6). No-op once declared == actual.
+        actual = _read_cgroup_memory_limit_mib()
+        if actual is not None:
+            self.process_append_batch_memory_budget_mb = min(
+                self.process_append_batch_memory_budget_mb,
+                round(self._PROCESS_BATCH_BUDGET_FRACTION * actual),
             )
         return self

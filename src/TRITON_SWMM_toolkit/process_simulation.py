@@ -153,6 +153,7 @@ class TRITONSWMM_sim_post_processing:
         from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
 
         memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        flush_budget_MiB = self._analysis.cfg_analysis.process_append_batch_memory_budget_mb
         append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
         # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
         # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
@@ -267,7 +268,7 @@ class TRITONSWMM_sim_post_processing:
             # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
             # F-I-3) so the float64-width assumption stays single-sited.
             pending_bytes_MiB = pending_timesteps * per_ts_MiB
-            if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= 2 * memory_budget_MiB:
+            if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= flush_budget_MiB:
                 ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
                 if first_chunk:
                     if verbose:
@@ -1332,7 +1333,11 @@ class TRITONSWMM_sim_post_processing:
 
         # Summarize
         target_dem_res = self._system.cfg_system.target_dem_resolution
-        chunksize_mb = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        # Argmax reduction batches by the JOB-RAM budget, not the small streaming-LOAD
+        # budget, so fine grids (1 timestep > load budget) batch multiple timesteps per
+        # reduction iteration. The argmax peak (B + running_state) is strictly looser than
+        # the write-side flush peak (2*B + per_ts), so this shared budget is memory-safe here.
+        chunksize_mb = self._analysis.cfg_analysis.process_append_batch_memory_budget_mb
         ds_summary = summarize_triton_simulation_results(
             ds_full,
             self._scenario.event_iloc,
@@ -2002,7 +2007,8 @@ def summarize_triton_simulation_results(
     chunksize_mb : float
         Target memory budget per chunk, in MiB. Passed through to
         ``_streaming_argmax_with_companions``. Typically sourced from
-        ``cfg_analysis.process_output_target_chunksize_mb``.
+        ``cfg_analysis.process_append_batch_memory_budget_mb`` (the job-RAM budget),
+        not the smaller per-LOAD-chunk guard ``process_output_target_chunksize_mb``.
     tstep_dimname : str, optional
         Name of timestep dimension (default: ``"timestep_min"``).
     verbose : bool, optional
