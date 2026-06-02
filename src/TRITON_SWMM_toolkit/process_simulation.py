@@ -276,7 +276,12 @@ class TRITONSWMM_sim_post_processing:
                             f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
                             flush=True,
                         )
-                    encoding = return_dic_zarr_encodings(ds_batch, comp_level)
+                    encoding = return_dic_zarr_encodings(
+                        ds_batch,
+                        comp_level,
+                        store_float32=self._analysis.cfg_analysis.process_store_float32,
+                        time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                    )
                     ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                     ds_batch.attrs["output_creation_date"] = current_datetime_string()
                     ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
@@ -301,7 +306,12 @@ class TRITONSWMM_sim_post_processing:
         if pending_chunks:
             ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
             if first_chunk:
-                encoding = return_dic_zarr_encodings(ds_batch, comp_level)
+                encoding = return_dic_zarr_encodings(
+                    ds_batch,
+                    comp_level,
+                    store_float32=self._analysis.cfg_analysis.process_store_float32,
+                    time_chunk=self._analysis.cfg_analysis.process_timestep_chunk,
+                )
                 ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
                 ds_batch.attrs["output_creation_date"] = current_datetime_string()
                 ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)

@@ -282,6 +282,25 @@ class analysis_config(cfgBaseModel):
             "argmax budget."
         ),
     )
+    process_store_float32: bool = Field(
+        True,
+        description=(
+            "Store per-scenario spatial timeseries (H/QX/QY/MH -> wlevel/velocity) as "
+            "float32 in the processed zarr instead of float64, ~halving on-disk size and "
+            "I/O. Default True. Set False for precision-sensitive analyses (e.g. tight "
+            "mass-balance). Does NOT alter CF attributes — dtype lives in the zarr encoding "
+            "dict, orthogonal to cf_conventions.py. Consumed by utils.return_dic_zarr_encodings."
+        ),
+    )
+    process_timestep_chunk: int | None = Field(
+        None,
+        description=(
+            "Explicit on-disk `timestep_min` zarr chunk size for the per-scenario "
+            "spatial timeseries. When None (default), preserves the current "
+            "first-write-extent chunking behavior. Decouples read-locality from the "
+            "write append-batch size. Consumed by utils.return_dic_zarr_encodings."
+        ),
+    )
     TRITON_raw_output_type: Literal["bin", "asc"] = Field(
         "bin",
         description="TRITON raw output type, asc or bin.",
