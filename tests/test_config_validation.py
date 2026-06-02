@@ -366,3 +366,33 @@ def test_hpc_max_wait_for_inflight_min_warns_when_less_than_total_job_duration(
     cfg["hpc_max_wait_for_inflight_min"] = 120
     with pytest.warns(UserWarning, match="hpc_max_wait_for_inflight_min"):
         analysis_config.model_validate(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — process_append_batch_memory_budget_mb resolver (job-RAM budget)
+# ---------------------------------------------------------------------------
+
+
+def test_process_append_batch_budget_resolves_from_job_ram(tmp_path: Path, monkeypatch):
+    """None resolves to round(0.35 * hpc_mem_allocation_for_sim_output_processing_mb).
+
+    The cgroup reader is monkeypatched to None so the assertion is deterministic
+    regardless of the host's actual cgroup ceiling (which would only clamp lower).
+    """
+    import TRITON_SWMM_toolkit.config.analysis as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "_read_cgroup_memory_limit_mib", lambda: None)
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["hpc_mem_allocation_for_sim_output_processing_mb"] = 12000
+    # process_append_batch_memory_budget_mb left unset (None) -> resolver fills it.
+    model = analysis_config.model_validate(cfg)
+    assert model.process_append_batch_memory_budget_mb == round(0.35 * 12000)  # 4200
+
+
+def test_process_append_batch_budget_ceiling_raises(tmp_path: Path):
+    """A hand-set value exceeding 0.5 * job_RAM raises (R4 guard 1)."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    cfg["hpc_mem_allocation_for_sim_output_processing_mb"] = 12000
+    cfg["process_append_batch_memory_budget_mb"] = 7000  # > 0.5 * 12000 = 6000
+    with pytest.raises(ValidationError, match="exceeds 0.5"):
+        analysis_config.model_validate(cfg)
