@@ -4,14 +4,16 @@ This module intentionally follows a fail-fast strategy:
 - Missing Snakefile => error
 - Missing expected run/simulation rules => error
 - Missing required resource keys (tasks/cpus_per_task) => error
+- When ``strict=False`` (sensitivity tolerance path), missing expected
+  sub-analysis ids are NOT raised — the caller reconciles the partial set.
 
 The parsed outputs are used for workflow diagnostics (intended vs allocated vs actual).
 """
 
 from __future__ import annotations
 
-from pathlib import Path
 import re
+from pathlib import Path
 
 
 class SnakefileParsingError(RuntimeError):
@@ -60,13 +62,9 @@ def _parse_rule_resources(rule_name: str, rule_block: str) -> dict[str, int]:
     gpu_match = _GPU_RE.search(rule_block)
 
     if tasks_match is None:
-        raise SnakefileParsingError(
-            f"Rule '{rule_name}' is missing required Snakemake resource key: tasks"
-        )
+        raise SnakefileParsingError(f"Rule '{rule_name}' is missing required Snakemake resource key: tasks")
     if cpus_match is None:
-        raise SnakefileParsingError(
-            f"Rule '{rule_name}' is missing required Snakemake resource key: cpus_per_task"
-        )
+        raise SnakefileParsingError(f"Rule '{rule_name}' is missing required Snakemake resource key: cpus_per_task")
 
     tasks = int(tasks_match.group(1))
     cpus_per_task = int(cpus_match.group(1))
@@ -114,6 +112,8 @@ def parse_regular_workflow_model_allocations(
 def parse_sensitivity_analysis_workflow_model_allocations(
     snakefile_path: Path,
     expected_subanalysis_ids: list[str] | None = None,
+    *,
+    strict: bool = True,
 ) -> dict[str, dict[str, int]]:
     """Parse per-subanalysis allocations from flattened sensitivity Snakefile.
 
@@ -147,16 +147,14 @@ def parse_sensitivity_analysis_workflow_model_allocations(
 
     if not allocations_by_sa:
         raise SnakefileParsingError(
-            "No sensitivity simulation rules found. Expected rules matching "
-            "'simulation_sa-{sa_id}_evt-{event_id}'."
+            "No sensitivity simulation rules found. Expected rules matching 'simulation_sa-{sa_id}_evt-{event_id}'."
         )
 
-    if expected_subanalysis_ids is not None:
+    if expected_subanalysis_ids is not None and strict:
         missing = sorted(set(expected_subanalysis_ids) - set(allocations_by_sa.keys()))
         if missing:
             raise SnakefileParsingError(
-                "Missing expected sensitivity simulation allocations for subanalysis ids: "
-                f"{missing}"
+                f"Missing expected sensitivity simulation allocations for subanalysis ids: {missing}"
             )
 
     return allocations_by_sa
