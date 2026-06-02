@@ -133,6 +133,196 @@ class TRITONSWMM_sim_post_processing:
     def TRITON_timeseries(self):
         return self._open(self.scen_paths.output_tritonswmm_triton_timeseries)
 
+    def _streaming_chunked_zarr_write(
+        self,
+        df_outputs,
+        rds_dem,
+        fname_out: Path,
+        model_type: Literal["tritonswmm", "triton"],
+        raw_out_type,
+        comp_level: int,
+        *,
+        verbose: bool = False,
+    ) -> None:
+        """Stream TRITON binary outputs into a chunked zarr store via batched
+        appends. Single-sites the load-chunk + flush-byte-cap logic shared by the
+        TRITON-SWMM (model_type='tritonswmm') and TRITON-only (model_type='triton')
+        timeseries paths. The two prior loops differed only in the model_type
+        passed to latest_sim_date(); everything else was byte-identical."""
+        # Phase 1.2: Chunked processing - calculate optimal chunk size
+        from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
+
+        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
+        append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
+        # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
+        # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
+        # encodes the float64 storage width — the single site to revisit if a
+        # float32 storage downcast lands (OE-3 follow-up).
+        per_ts_MiB = (len(df_outputs.columns) * len(rds_dem.y) * len(rds_dem.x) * 8) / (1024**2)
+        n_variables = len(df_outputs.columns)  # H, QX, QY, MH
+
+        chunk_size = estimate_timesteps_per_chunk(
+            rds_dem=rds_dem,
+            n_variables=n_variables,
+            memory_budget_MiB=memory_budget_MiB,
+        )
+        if chunk_size == 1:
+            print(
+                f"[Chunked Processing] WARNING: load chunk floored to 1 timestep "
+                f"(per-timestep ~{per_ts_MiB:.1f} MiB > budget {memory_budget_MiB} MiB). "
+                f"Append granularity decoupled via process_append_batch_timesteps="
+                f"{append_batch_timesteps}; appends will batch regardless.",
+                flush=True,
+            )
+
+        timestep_list = sorted(df_outputs.index.tolist())
+        total_timesteps = len(timestep_list)
+        n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
+
+        if verbose:
+            print(
+                f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB",
+                flush=True,
+            )
+            print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
+            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
+            print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
+
+        # Process in chunks; accumulate into batches to decouple append
+        # granularity from the in-memory load-chunk size.
+        first_chunk = True
+        pending_chunks: list = []
+        pending_timesteps = 0
+
+        for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
+            chunk_end = min(chunk_start + chunk_size, total_timesteps)
+            chunk_timesteps = timestep_list[chunk_start:chunk_end]
+
+            if verbose:
+                print(
+                    f"[Chunked Processing] Processing chunk {chunk_idx + 1}/{n_chunks}: "
+                    f"timesteps {chunk_start}-{chunk_end - 1} ({len(chunk_timesteps)} timesteps)",
+                    flush=True,
+                )
+
+            # Load all variables for this chunk's timesteps
+            lst_ds_vars_chunk = []
+            for varname in df_outputs.columns:
+                files = df_outputs[varname]
+                lst_ds_timesteps = []
+
+                for tstep_min in chunk_timesteps:
+                    if tstep_min not in files.index:
+                        continue
+                    f = files[tstep_min]
+                    if not f.exists():
+                        if verbose:
+                            print(
+                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
+                                flush=True,
+                            )
+                        continue
+
+                    ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
+                    lst_ds_timesteps.append(ds_triton_output)
+
+                if not lst_ds_timesteps:
+                    if verbose:
+                        print(
+                            f"[Chunked Processing] No valid files for {varname} in this chunk",
+                            flush=True,
+                        )
+                    continue
+
+                # Determine valid timesteps (those we actually loaded)
+                valid_timesteps = []
+                for tstep_min in chunk_timesteps:
+                    if tstep_min in files.index:
+                        f_path = files[tstep_min]
+                        if isinstance(f_path, Path) and f_path.exists():
+                            valid_timesteps.append(tstep_min)
+
+                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
+                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
+                lst_ds_vars_chunk.append(ds_var_chunk)
+
+                # Clear per-variable temporaries
+                del lst_ds_timesteps
+                gc.collect()
+
+            if not lst_ds_vars_chunk:
+                if verbose:
+                    print(
+                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
+                        flush=True,
+                    )
+                continue
+
+            ds_chunk = xr.merge(lst_ds_vars_chunk)
+            pending_chunks.append(ds_chunk)
+            pending_timesteps += ds_chunk.sizes["timestep_min"]
+
+            # Flush one zarr append per batch: trigger on the timestep count OR
+            # a byte cap of 2x the load budget so the pending buffer stays
+            # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
+            # F-I-3) so the float64-width assumption stays single-sited.
+            pending_bytes_MiB = pending_timesteps * per_ts_MiB
+            if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= 2 * memory_budget_MiB:
+                ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
+                if first_chunk:
+                    if verbose:
+                        print(
+                            f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
+                            flush=True,
+                        )
+                    encoding = return_dic_zarr_encodings(ds_batch, comp_level)
+                    ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+                    ds_batch.attrs["output_creation_date"] = current_datetime_string()
+                    ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+                    ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                    first_chunk = False
+                else:
+                    if verbose:
+                        print(
+                            f"[Chunked Processing] Appending batch of {pending_timesteps} timesteps to zarr store",
+                            flush=True,
+                        )
+                    ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+                del ds_batch
+                pending_chunks = []
+                pending_timesteps = 0
+
+            # Explicit cleanup
+            del ds_chunk, lst_ds_vars_chunk
+            gc.collect()
+
+        # Flush any remaining pending timesteps (final partial batch)
+        if pending_chunks:
+            ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
+            if first_chunk:
+                encoding = return_dic_zarr_encodings(ds_batch, comp_level)
+                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=model_type, astype="str")
+                ds_batch.attrs["output_creation_date"] = current_datetime_string()
+                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
+                ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
+                first_chunk = False
+            else:
+                ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
+            del ds_batch
+            pending_chunks = []
+
+        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
+        # True), every chunk was skipped — all source output files missing — so
+        # the zarr store was never created with mode="w". Consolidating a
+        # nonexistent store raises a cryptic error; raise a diagnosable signal
+        # instead.
+        if first_chunk:
+            raise ProcessingError(
+                f"write_timeseries_outputs: no valid timesteps to write for "
+                f"{fname_out.name} — every chunk was skipped (all source output "
+                f"files missing?). Zarr store not created; nothing to consolidate."
+            )
+
     def write_timeseries_outputs(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -537,179 +727,11 @@ class TRITONSWMM_sim_post_processing:
                 "Ensure the TRITON-SWMM coupled simulation completed successfully."
             )
 
-        # Phase 1.2: Chunked processing - calculate optimal chunk size
-        from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
-
-        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
-        append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
-        # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
-        # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
-        # encodes the float64 storage width — the single site to revisit if a
-        # float32 storage downcast lands (OE-3 follow-up).
-        per_ts_MiB = (len(df_outputs.columns) * len(rds_dem.y) * len(rds_dem.x) * 8) / (1024**2)
-        n_variables = len(df_outputs.columns)  # H, QX, QY, MH
-
-        chunk_size = estimate_timesteps_per_chunk(
-            rds_dem=rds_dem,
-            n_variables=n_variables,
-            memory_budget_MiB=memory_budget_MiB,
+        self._streaming_chunked_zarr_write(
+            df_outputs, rds_dem, fname_out,
+            model_type="tritonswmm", raw_out_type=raw_out_type,
+            comp_level=comp_level, verbose=verbose,
         )
-        if chunk_size == 1:
-            print(
-                f"[Chunked Processing] WARNING: load chunk floored to 1 timestep "
-                f"(per-timestep ~{per_ts_MiB:.1f} MiB > budget {memory_budget_MiB} MiB). "
-                f"Append granularity decoupled via process_append_batch_timesteps="
-                f"{append_batch_timesteps}; appends will batch regardless.",
-                flush=True,
-            )
-
-        timestep_list = sorted(df_outputs.index.tolist())
-        total_timesteps = len(timestep_list)
-        n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
-
-        if verbose:
-            print(
-                f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB",
-                flush=True,
-            )
-            print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
-            print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
-
-        # Process in chunks; accumulate into batches to decouple append
-        # granularity from the in-memory load-chunk size.
-        first_chunk = True
-        pending_chunks: list = []
-        pending_timesteps = 0
-
-        for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
-            chunk_end = min(chunk_start + chunk_size, total_timesteps)
-            chunk_timesteps = timestep_list[chunk_start:chunk_end]
-
-            if verbose:
-                print(
-                    f"[Chunked Processing] Processing chunk {chunk_idx + 1}/{n_chunks}: "
-                    f"timesteps {chunk_start}-{chunk_end - 1} ({len(chunk_timesteps)} timesteps)",
-                    flush=True,
-                )
-
-            # Load all variables for this chunk's timesteps
-            lst_ds_vars_chunk = []
-            for varname in df_outputs.columns:
-                files = df_outputs[varname]
-                lst_ds_timesteps = []
-
-                for tstep_min in chunk_timesteps:
-                    if tstep_min not in files.index:
-                        continue
-                    f = files[tstep_min]
-                    if not f.exists():
-                        if verbose:
-                            print(
-                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
-                                flush=True,
-                            )
-                        continue
-
-                    ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
-                    lst_ds_timesteps.append(ds_triton_output)
-
-                if not lst_ds_timesteps:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] No valid files for {varname} in this chunk",
-                            flush=True,
-                        )
-                    continue
-
-                # Determine valid timesteps (those we actually loaded)
-                valid_timesteps = []
-                for tstep_min in chunk_timesteps:
-                    if tstep_min in files.index:
-                        f_path = files[tstep_min]
-                        if isinstance(f_path, Path) and f_path.exists():
-                            valid_timesteps.append(tstep_min)
-
-                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
-                lst_ds_vars_chunk.append(ds_var_chunk)
-
-                # Clear per-variable temporaries
-                del lst_ds_timesteps
-                gc.collect()
-
-            if not lst_ds_vars_chunk:
-                if verbose:
-                    print(
-                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
-                        flush=True,
-                    )
-                continue
-
-            ds_chunk = xr.merge(lst_ds_vars_chunk)
-            pending_chunks.append(ds_chunk)
-            pending_timesteps += ds_chunk.sizes["timestep_min"]
-
-            # Flush one zarr append per batch: trigger on the timestep count OR
-            # a byte cap of 2x the load budget so the pending buffer stays
-            # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
-            # F-I-3) so the float64-width assumption stays single-sited.
-            pending_bytes_MiB = pending_timesteps * per_ts_MiB
-            if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= 2 * memory_budget_MiB:
-                ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-                if first_chunk:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
-                            flush=True,
-                        )
-                    encoding = return_dic_zarr_encodings(ds_batch, comp_level)
-                    ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="tritonswmm", astype="str")
-                    ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                    ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                    ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                    first_chunk = False
-                else:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Appending batch of {pending_timesteps} timesteps to zarr store",
-                            flush=True,
-                        )
-                    ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
-                del ds_batch
-                pending_chunks = []
-                pending_timesteps = 0
-
-            # Explicit cleanup
-            del ds_chunk, lst_ds_vars_chunk
-            gc.collect()
-
-        # Flush any remaining pending timesteps (final partial batch)
-        if pending_chunks:
-            ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-            if first_chunk:
-                encoding = return_dic_zarr_encodings(ds_batch, comp_level)
-                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="tritonswmm", astype="str")
-                ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                first_chunk = False
-            else:
-                ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
-            del ds_batch
-            pending_chunks = []
-
-        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
-        # True), every chunk was skipped — all source output files missing — so
-        # the zarr store was never created with mode="w". Consolidating a
-        # nonexistent store raises a cryptic error; raise a diagnosable signal
-        # instead.
-        if first_chunk:
-            raise ProcessingError(
-                f"write_timeseries_outputs: no valid timesteps to write for "
-                f"{fname_out.name} — every chunk was skipped (all source output "
-                f"files missing?). Zarr store not created; nothing to consolidate."
-            )
 
         # Consolidate metadata
         if verbose:
@@ -788,179 +810,11 @@ class TRITONSWMM_sim_post_processing:
                 "Ensure the TRITON-only simulation completed and wrote outputs."
             )
 
-        # Phase 1.2: Chunked processing - calculate optimal chunk size
-        from TRITON_SWMM_toolkit.utils import estimate_timesteps_per_chunk
-
-        memory_budget_MiB = self._analysis.cfg_analysis.process_output_target_chunksize_mb
-        append_batch_timesteps = self._analysis.cfg_analysis.process_append_batch_timesteps
-        # Per-timestep size (float64 H/QX/QY/MH). Computed once; reused by the
-        # floor warning (ANCHOR B) and the batch byte-cap (ANCHOR C). The `* 8`
-        # encodes the float64 storage width — the single site to revisit if a
-        # float32 storage downcast lands (OE-3 follow-up).
-        per_ts_MiB = (len(df_outputs.columns) * len(rds_dem.y) * len(rds_dem.x) * 8) / (1024**2)
-        n_variables = len(df_outputs.columns)
-
-        chunk_size = estimate_timesteps_per_chunk(
-            rds_dem=rds_dem,
-            n_variables=n_variables,
-            memory_budget_MiB=memory_budget_MiB,
+        self._streaming_chunked_zarr_write(
+            df_outputs, rds_dem, fname_out,
+            model_type="triton", raw_out_type=raw_out_type,
+            comp_level=comp_level, verbose=verbose,
         )
-        if chunk_size == 1:
-            print(
-                f"[Chunked Processing] WARNING: load chunk floored to 1 timestep "
-                f"(per-timestep ~{per_ts_MiB:.1f} MiB > budget {memory_budget_MiB} MiB). "
-                f"Append granularity decoupled via process_append_batch_timesteps="
-                f"{append_batch_timesteps}; appends will batch regardless.",
-                flush=True,
-            )
-
-        timestep_list = sorted(df_outputs.index.tolist())
-        total_timesteps = len(timestep_list)
-        n_chunks = (total_timesteps + chunk_size - 1) // chunk_size
-
-        if verbose:
-            print(
-                f"[Chunked Processing] Memory budget: {memory_budget_MiB} MiB",
-                flush=True,
-            )
-            print(f"[Chunked Processing] Timesteps per chunk: {chunk_size}", flush=True)
-            print(f"[Chunked Processing] Total timesteps: {total_timesteps}", flush=True)
-            print(f"[Chunked Processing] Number of chunks: {n_chunks}", flush=True)
-
-        # Process in chunks; accumulate into batches to decouple append
-        # granularity from the in-memory load-chunk size.
-        first_chunk = True
-        pending_chunks: list = []
-        pending_timesteps = 0
-
-        for chunk_idx, chunk_start in enumerate(range(0, total_timesteps, chunk_size)):
-            chunk_end = min(chunk_start + chunk_size, total_timesteps)
-            chunk_timesteps = timestep_list[chunk_start:chunk_end]
-
-            if verbose:
-                print(
-                    f"[Chunked Processing] Processing chunk {chunk_idx + 1}/{n_chunks}: "
-                    f"timesteps {chunk_start}-{chunk_end - 1} ({len(chunk_timesteps)} timesteps)",
-                    flush=True,
-                )
-
-            # Load all variables for this chunk's timesteps
-            lst_ds_vars_chunk = []
-            for varname in df_outputs.columns:
-                files = df_outputs[varname]
-                lst_ds_timesteps = []
-
-                for tstep_min in chunk_timesteps:
-                    if tstep_min not in files.index:
-                        continue
-                    f = files[tstep_min]
-                    if not f.exists():
-                        if verbose:
-                            print(
-                                f"[Chunked Processing] Warning: Missing file {f}, skipping",
-                                flush=True,
-                            )
-                        continue
-
-                    ds_triton_output = load_triton_output_w_xarray(rds_dem, f, varname, raw_out_type)
-                    lst_ds_timesteps.append(ds_triton_output)
-
-                if not lst_ds_timesteps:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] No valid files for {varname} in this chunk",
-                            flush=True,
-                        )
-                    continue
-
-                # Determine valid timesteps
-                valid_timesteps = []
-                for tstep_min in chunk_timesteps:
-                    if tstep_min in files.index:
-                        f_path = files[tstep_min]
-                        if isinstance(f_path, Path) and f_path.exists():
-                            valid_timesteps.append(tstep_min)
-
-                ds_var_chunk = xr.concat(lst_ds_timesteps, dim="timestep_min")
-                ds_var_chunk = ds_var_chunk.assign_coords(timestep_min=valid_timesteps)
-                lst_ds_vars_chunk.append(ds_var_chunk)
-
-                # Clear per-variable temporaries
-                del lst_ds_timesteps
-                gc.collect()
-
-            if not lst_ds_vars_chunk:
-                if verbose:
-                    print(
-                        f"[Chunked Processing] No valid data in chunk {chunk_idx + 1}, skipping",
-                        flush=True,
-                    )
-                continue
-
-            ds_chunk = xr.merge(lst_ds_vars_chunk)
-            pending_chunks.append(ds_chunk)
-            pending_timesteps += ds_chunk.sizes["timestep_min"]
-
-            # Flush one zarr append per batch: trigger on the timestep count OR
-            # a byte cap of 2x the load budget so the pending buffer stays
-            # bounded. pending_bytes_MiB reuses the hoisted per_ts_MiB (SE
-            # F-I-3) so the float64-width assumption stays single-sited.
-            pending_bytes_MiB = pending_timesteps * per_ts_MiB
-            if pending_timesteps >= append_batch_timesteps or pending_bytes_MiB >= 2 * memory_budget_MiB:
-                ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-                if first_chunk:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Creating new zarr store: {fname_out.name}",
-                            flush=True,
-                        )
-                    encoding = return_dic_zarr_encodings(ds_batch, comp_level)
-                    ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="triton", astype="str")
-                    ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                    ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                    ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                    first_chunk = False
-                else:
-                    if verbose:
-                        print(
-                            f"[Chunked Processing] Appending batch of {pending_timesteps} timesteps to zarr store",
-                            flush=True,
-                        )
-                    ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
-                del ds_batch
-                pending_chunks = []
-                pending_timesteps = 0
-
-            # Explicit cleanup
-            del ds_chunk, lst_ds_vars_chunk
-            gc.collect()
-
-        # Flush any remaining pending timesteps (final partial batch)
-        if pending_chunks:
-            ds_batch = xr.concat(pending_chunks, dim="timestep_min") if len(pending_chunks) > 1 else pending_chunks[0]
-            if first_chunk:
-                encoding = return_dic_zarr_encodings(ds_batch, comp_level)
-                ds_batch.attrs["sim_date"] = self._scenario.latest_sim_date(model_type="triton", astype="str")
-                ds_batch.attrs["output_creation_date"] = current_datetime_string()
-                ds_batch.attrs = convert_datetime_to_str(ds_batch.attrs)
-                ds_batch.to_zarr(fname_out, mode="w", encoding=encoding, consolidated=False)
-                first_chunk = False
-            else:
-                ds_batch.to_zarr(fname_out, mode="a", append_dim="timestep_min")
-            del ds_batch
-            pending_chunks = []
-
-        # Guard (SE F-I-2): if no batch was ever written (first_chunk still
-        # True), every chunk was skipped — all source output files missing — so
-        # the zarr store was never created with mode="w". Consolidating a
-        # nonexistent store raises a cryptic error; raise a diagnosable signal
-        # instead.
-        if first_chunk:
-            raise ProcessingError(
-                f"write_timeseries_outputs: no valid timesteps to write for "
-                f"{fname_out.name} — every chunk was skipped (all source output "
-                f"files missing?). Zarr store not created; nothing to consolidate."
-            )
 
         # Consolidate metadata
         if verbose:
