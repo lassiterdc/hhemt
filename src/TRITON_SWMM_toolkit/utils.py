@@ -544,7 +544,9 @@ def parse_triton_log_file(log_file_path: Path) -> dict[str, Any]:
         }
 
 
-def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
+def return_dic_zarr_encodings(
+    ds: xr.Dataset, clevel: int = 5, *, store_float32: bool = False, time_chunk: int | None = None
+) -> dict:
     """
     Create a dictionary of Zarr encodings for an xarray Dataset.
 
@@ -576,7 +578,15 @@ def return_dic_zarr_encodings(ds: xr.Dataset, clevel: int = 5) -> dict:
     for var in ds.data_vars:  # type: ignore
         dtype_kind = ds[var].dtype.kind
         if dtype_kind in {"i", "u", "f"}:  # int / unsigned int / float
-            encoding[var] = {"compressors": compressor}
+            enc = {"compressors": compressor}
+            if store_float32 and dtype_kind == "f":
+                enc["dtype"] = "float32"
+            if time_chunk is not None and "timestep_min" in ds[var].dims:
+                ax = ds[var].dims.index("timestep_min")
+                chunks = list(ds[var].shape)
+                chunks[ax] = time_chunk
+                enc["chunks"] = tuple(chunks)
+            encoding[var] = enc
         # Optionally handle other types if needed
 
     # Handle coordinate encoding
