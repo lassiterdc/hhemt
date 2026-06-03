@@ -465,6 +465,141 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     )
 
 
+@pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems.")
+@pytest.mark.slow
+def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity_analysis):
+    """Regression (sensitivity-consolidation-tolerate-incomplete).
+
+    Reproduces the FUNCTION-LEVEL crash behind the live uva_sensitivity_suite
+    master_consolidation FileNotFoundError: consolidate_sensitivity_datatree
+    raising when one sub-analysis is incomplete (its per-scenario summary was
+    never produced, its analysis_datatree.zarr was never built, and its
+    datatree_consolidation_complete log is False — the real never-consolidated
+    state). This test calls consolidate_sensitivity_datatree directly (the
+    unit-level gate for the function under change); the consolidate_workflow.py
+    call site inherits the True default UNCHANGED under Decision D2, so that
+    default-inheritance wiring is covered by the end-to-end synth_05 run (V2),
+    not by this unit test. Master consolidation must still assemble
+    sensitivity_datatree.zarr over the COMPLETED subset under
+    allow_incomplete=True (the default per Decision D2), skipping the incomplete sub.
+
+    Asserts R2/R4 (tolerant regen over the completed subset; experiment definition
+    preserved in the root `parameters` node) and R3 (fail-fast when allow_incomplete=False).
+    """
+    import shutil
+
+    import xarray as xr
+
+    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+
+    _SUMMARY_ATTRS_BY_MODEL = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_summary",
+            "output_tritonswmm_node_summary",
+            "output_tritonswmm_link_summary",
+            "output_tritonswmm_performance_summary",
+        ),
+        "triton": (
+            "output_triton_only_summary",
+            "output_triton_only_performance_summary",
+        ),
+        "swmm": (
+            "output_swmm_only_node_summary",
+            "output_swmm_only_link_summary",
+        ),
+    }
+
+    analysis = synth_sensitivity_analysis
+
+    # Arrange: full sensitivity run so real per-sub datatrees + master tree exist.
+    result = analysis.submit_workflow(
+        mode="local",
+        process_system_level_inputs=True,
+        overwrite_system_inputs=True,
+        compile_TRITON_SWMM=True,
+        recompile_if_already_done_successfully=True,
+        prepare_scenarios=True,
+        overwrite_scenario_if_already_set_up=True,
+        rerun_swmm_hydro_if_outputs_exist=True,
+        process_timeseries=True,
+        which="both",
+        override_clear_raw="all",
+        compression_level=5,
+        pickup_where_leftoff=False,
+        verbose=True,
+    )
+    assert result["success"], f"Workflow submission failed: {result.get('message', '')}"
+
+    sensitivity = analysis.sensitivity
+    sa_items = list(sensitivity.sub_analyses.items())
+    assert len(sa_items) >= 2, "test needs >=2 sub-analyses (one incomplete, one complete)"
+
+    master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
+    assert master_zarr is not None and master_zarr.exists(), "master tree should exist after full run"
+
+    incomplete_key, incomplete_sub = sa_items[0]
+    complete_key, _complete_sub = sa_items[-1]
+    incomplete_id = str(incomplete_key)
+    complete_id = str(complete_key)
+    prefix = sensitivity.sub_analyses_prefix  # e.g. "sa_"
+
+    # Induce the *never-consolidated* state for the incomplete sub:
+    #   (a) delete one per-scenario summary  -> _retrieve_combined_output raises FileNotFoundError
+    #   (b) delete its analysis_datatree.zarr -> eager pre-build loop attempts a rebuild
+    #   (c) clear datatree_consolidation_complete -> build_sensitivity_datatree's open_datatree
+    #       raises ValueError (the real "never built" branch), caught by its except ValueError.
+    scen = TRITONSWMM_scenario(0, incomplete_sub)
+    model_type = scen.run.model_types_enabled[0]
+    summary_to_delete = None
+    for attr in _SUMMARY_ATTRS_BY_MODEL[model_type]:
+        p = getattr(scen.scen_paths, attr, None)
+        if p is not None and p.exists():
+            summary_to_delete = p
+            break
+    assert summary_to_delete is not None, f"no present summary for model_type={model_type}"
+    if summary_to_delete.is_dir():
+        shutil.rmtree(summary_to_delete)
+    else:
+        summary_to_delete.unlink()
+
+    sub_datatree = incomplete_sub.analysis_paths.analysis_datatree_zarr
+    assert sub_datatree is not None and sub_datatree.exists()
+    shutil.rmtree(sub_datatree)
+
+    incomplete_sub._refresh_log()
+    incomplete_sub.log.datatree_consolidation_complete.set(False)
+
+    # consolidate_sensitivity_datatree early-returns if the master zarr exists.
+    shutil.rmtree(master_zarr)
+
+    # Act: tolerant consolidation (default True; pass explicitly for clarity).
+    out = sensitivity.consolidate_sensitivity_datatree(allow_incomplete=True)
+
+    # Assert R2/R4.
+    assert out.exists(), "master tree must regenerate over the completed subset"
+    tree = xr.open_datatree(out, engine="zarr", consolidated=False)
+    sa_nodes = {c for c in tree.children if c.startswith(prefix)}
+    assert f"{prefix}{incomplete_id}" not in sa_nodes, (
+        f"incomplete sub {prefix}{incomplete_id} must be absent from the master tree nodes"
+    )
+    assert f"{prefix}{complete_id}" in sa_nodes, (
+        f"complete sub {prefix}{complete_id} must be present in the master tree nodes"
+    )
+    assert len(sa_nodes) == len(sa_items) - 1, (
+        "exactly one sub-analysis (the incomplete one) must be absent from the tree nodes"
+    )
+    # The root `parameters` node (experiment definition) still lists every sub-analysis.
+    assert "parameters" in tree.children, "root `parameters` node must be present"
+    assert len(tree["parameters"].to_dataset().to_dataframe()) == len(sensitivity.df_setup), (
+        "root `parameters` Dataset must list every defined sub-analysis"
+    )
+
+    # Assert R3: fail-fast preserved when allow_incomplete=False.
+    shutil.rmtree(out)
+    with pytest.raises((FileNotFoundError, ValueError)):
+        sensitivity.consolidate_sensitivity_datatree(allow_incomplete=False)
+
+
 # ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
 
 from pathlib import Path as _Path
