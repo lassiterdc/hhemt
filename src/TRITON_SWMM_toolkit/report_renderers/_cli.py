@@ -38,7 +38,7 @@ def main() -> None:
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
     # (system.py:25-27, analysis.py:108-109) — pass Paths, not pre-loaded models.
     system = TRITONSWMM_system(args.system_config)
-    analysis = TRITONSWMM_analysis(args.analysis_config, system)
+    analysis = TRITONSWMM_analysis(args.analysis_config, system, is_main_orchestrator=False)
     # Post-F2: report cfg lives inline on cfg_analysis (R1, load-time-required).
     report_cfg = analysis.cfg_analysis.report
 

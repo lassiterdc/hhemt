@@ -413,6 +413,7 @@ def main():
             analysis_config_yaml=args.analysis_config,
             system=system,
             skip_log_update=False,
+            is_main_orchestrator=False,
         )
 
         # Export status
