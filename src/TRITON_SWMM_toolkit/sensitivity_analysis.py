@@ -973,12 +973,26 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         compression_level: int = 5,
         verbose: bool = False,
+        allow_incomplete: bool = True,
     ) -> Path:
         """Build and write the master sensitivity DataTree zarr.
 
         Ensures each sub-analysis has its own consolidated ``analysis_datatree.zarr``
         first, then assembles them into a single hierarchical store at
         ``sensitivity_datatree.zarr``.
+
+        When ``allow_incomplete`` is True (the default), sub-analyses whose
+        per-scenario summaries are not all present on disk are SKIPPED (with a
+        logged warning naming the ``sa_id``) instead of crashing the master
+        assembly with ``FileNotFoundError``/``ValueError``. The skip is
+        whole-sub-analysis because ``_retrieve_combined_output`` concatenates
+        per-scenario summaries along ``event_iloc`` and is all-or-nothing per
+        sub-analysis. Pass ``allow_incomplete=False`` to restore fail-fast.
+
+        NOTE (Decision D2, 2026-06-02, "for now"): the default is ``True`` so
+        reprocess AND canonical runs tolerate partial-completion sensitivity
+        suites by default. To restore strict fail-fast on canonical runs, flip
+        this default back to ``False``.
         """
         fname_out = self.analysis_paths.sensitivity_datatree_zarr
         if fname_out is None:
@@ -995,10 +1009,20 @@ class TRITONSWMM_sensitivity_analysis:
             if sub_path is None:
                 continue
             if not sub_path.exists():
-                sub_analysis.process.consolidate_to_datatree(
-                    compression_level=compression_level,
-                    verbose=verbose,
-                )
+                try:
+                    sub_analysis.process.consolidate_to_datatree(
+                        compression_level=compression_level,
+                        verbose=verbose,
+                    )
+                except (FileNotFoundError, ValueError) as exc:
+                    if not allow_incomplete:
+                        raise
+                    print(
+                        f"[sensitivity-consolidate] Skipping incomplete sub-analysis "
+                        f"{self.sub_analyses_prefix}{sa_id} under allow_incomplete=True: {exc}",
+                        flush=True,
+                    )
+                    continue
 
         tree = self.build_sensitivity_datatree()
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
