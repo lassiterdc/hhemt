@@ -34,6 +34,7 @@ from TRITON_SWMM_toolkit.snakemake_dry_run_report import (
     generate_dry_run_report_markdown,
 )
 from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
+    SnakefileParsingError,
     parse_regular_workflow_model_allocations,
     parse_sensitivity_analysis_workflow_model_allocations,
 )
@@ -309,14 +310,9 @@ class TRITONSWMM_analysis:
             event_id = compute_event_id_slug(ev)
             orphans.append(f"plots/per_sim/{event_id}/peak_flood_depth.png")
             orphans.append(f"plots/per_sim/{event_id}/conduit_flow.png")
-        if (
-            self.cfg_analysis.toggle_sensitivity_analysis
-            and not self.cfg_analysis.is_subanalysis
-        ):
+        if self.cfg_analysis.toggle_sensitivity_analysis and not self.cfg_analysis.is_subanalysis:
             for ind_var in self.sensitivity.independent_vars:
-                orphans.append(
-                    f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg"
-                )
+                orphans.append(f"plots/sensitivity/benchmarking/{ind_var}_vs_total.svg")
         return orphans
 
     def _invoke_snakemake_cleanup_metadata(self, orphan_paths: list[str]) -> None:
@@ -345,7 +341,7 @@ class TRITONSWMM_analysis:
         ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            combined = (result.stdout + "\n" + result.stderr)
+            combined = result.stdout + "\n" + result.stderr
             tail = "\n".join(combined.splitlines()[-50:])
             # Best-effort hygiene: "No Snakefile found" is a benign no-op for
             # analyses whose Snakefile has been removed or never written —
@@ -356,10 +352,7 @@ class TRITONSWMM_analysis:
             raise WorkflowError(
                 phase="cleanup_stale_metadata",
                 return_code=result.returncode,
-                stderr=(
-                    f"snakemake --cleanup-metadata exit {result.returncode}; "
-                    f"last 50 lines:\n{tail}"
-                ),
+                stderr=(f"snakemake --cleanup-metadata exit {result.returncode}; last 50 lines:\n{tail}"),
             )
 
     def _prune_settled_markers(self, *, dry_run: bool = False) -> list[Path]:
@@ -1232,16 +1225,25 @@ class TRITONSWMM_analysis:
             sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
                 expected_subanalysis_ids=expected_sa_ids,
+                strict=False,
             )
             allocations = {
                 model_type: alloc.copy() for model_type in enabled_models for alloc in sa_allocations.values()
             }
-        else:
-            snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+            return allocations, None
+
+        snakefile_path = self.analysis_paths.analysis_dir / "Snakefile"
+        try:
             allocations = parse_regular_workflow_model_allocations(
                 snakefile_path=snakefile_path,
                 enabled_model_types=enabled_models,
             )
+        except SnakefileParsingError as exc:
+            # Regular analysis whose run_* rule was wait-rule-substituted (v2
+            # graceful-rerun) or otherwise absent: tolerate rather than crash the
+            # consolidate/report cascade. Empty allocations → NaN allocation rows
+            # annotated below (R2 parity with the sensitivity branch).
+            return {}, str(exc)
 
         return allocations, None
 
@@ -1824,12 +1826,7 @@ class TRITONSWMM_analysis:
         # have no stale metadata to clean).
         _snakefile = self.analysis_paths.analysis_dir / "Snakefile"
         _metadata_dir = self.analysis_paths.analysis_dir / ".snakemake" / "metadata"
-        if (
-            cleanup_stale_metadata
-            and not from_scratch
-            and _snakefile.exists()
-            and _metadata_dir.exists()
-        ):
+        if cleanup_stale_metadata and not from_scratch and _snakefile.exists() and _metadata_dir.exists():
             orphan_paths = self._enumerate_stale_metadata_paths()
             if orphan_paths:
                 if verbose:
@@ -2706,9 +2703,7 @@ class TRITONSWMM_analysis:
         # auto-resolves to slurm-offload on HPC modes (user D6 refinement 1).
         _hpc = self.cfg_analysis.multi_sim_run_method in ("batch_job", "1_job_many_srun_tasks")
         _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-        route_delete_via_slurm = (
-            regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
-        )
+        route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
         # Divergence self-heal (FIX 2) — fires on the process path REGARDLESS of
         # regenerate_existing (D2). Reconciles d_process flag + per-model
         # processing_log against on-disk summary presence: where a flag survives
@@ -2723,10 +2718,13 @@ class TRITONSWMM_analysis:
             # ONE scoped reprocess-delete workflow handles BOTH the consolidated
             # zarr(s) AND (start_with=='process') the per-scenario processed/ dirs.
             self._workflow_builder.submit_reprocess_delete_workflow(
-                start_with=start_with, override_in_flight=False,
+                start_with=start_with,
+                override_in_flight=False,
             )
         self._invalidate_downstream_flags(
-            start_with, regenerate_existing=regenerate_existing, dry_run=dry_run,
+            start_with,
+            regenerate_existing=regenerate_existing,
+            dry_run=dry_run,
             skip_destructive_delete=route_delete_via_slurm,
         )
 
@@ -2750,9 +2748,8 @@ class TRITONSWMM_analysis:
             # SLURM deleted the artifacts; clear only the per-model log here.
             if start_with == "process" and regenerate_existing and not dry_run:
                 from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
-                self._invalidate_processing_log_for_force_rerun(
-                    ResolvedForceRerunSpec(scope="all", tokens=())
-                )
+
+                self._invalidate_processing_log_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
         else:
             self._delete_processed_outputs_for_reprocess(
                 start_with, regenerate_existing=regenerate_existing, dry_run=dry_run
@@ -2825,15 +2822,13 @@ class TRITONSWMM_analysis:
         missing = expected - actual
         if missing:
             print(
-                f"[delete] {len(missing)} per-rule sentinels missing — "
-                f"preserving analysis_dir for debugging.",
+                f"[delete] {len(missing)} per-rule sentinels missing — preserving analysis_dir for debugging.",
                 flush=True,
             )
             print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
             return
         print(
-            f"[delete] all {len(expected)} per-rule sentinels present — "
-            f"removing analysis_dir.",
+            f"[delete] all {len(expected)} per-rule sentinels present — removing analysis_dir.",
             flush=True,
         )
         fast_rmtree(analysis_dir)
@@ -2911,8 +2906,12 @@ class TRITONSWMM_analysis:
         return True
 
     def _invalidate_downstream_flags(
-        self, start_with: str, *, regenerate_existing: bool = False, dry_run: bool = False,
-        skip_destructive_delete: bool = False
+        self,
+        start_with: str,
+        *,
+        regenerate_existing: bool = False,
+        dry_run: bool = False,
+        skip_destructive_delete: bool = False,
     ) -> None:
         """Delete ``_status`` flags / artifacts from ``start_with`` onward.
 
@@ -3010,9 +3009,7 @@ class TRITONSWMM_analysis:
         # 1) Clear per-scenario per-model processing_log.outputs so the runner's
         #    _already_written gate returns False and write paths re-execute.
         #    Scope "all" — a process-stage reprocess rebuilds every scenario.
-        self._invalidate_processing_log_for_force_rerun(
-            ResolvedForceRerunSpec(scope="all", tokens=())
-        )
+        self._invalidate_processing_log_for_force_rerun(ResolvedForceRerunSpec(scope="all", tokens=()))
         if dry_run:
             return  # dry-run performs no destructive filesystem mutation
 
@@ -3053,9 +3050,7 @@ class TRITONSWMM_analysis:
         if key == "sa_id" and not self.cfg_analysis.toggle_sensitivity_analysis:
             raise ConfigurationError(
                 field="override_force_rerun",
-                message=(
-                    "override_force_rerun.sa_id requires toggle_sensitivity_analysis=True"
-                ),
+                message=("override_force_rerun.sa_id requires toggle_sensitivity_analysis=True"),
             )
         if key == "event_iloc" and self.cfg_analysis.toggle_sensitivity_analysis:
             raise ConfigurationError(
@@ -3101,8 +3096,7 @@ class TRITONSWMM_analysis:
             return ResolvedForceRerunSpec(scope="sa", tokens=tuple(str(v) for v in values))
         # event_iloc → event_id slug per V0001 stable slug invariant.
         slugs = tuple(
-            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc)))
-            for iloc in values
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(int(iloc))) for iloc in values
         )
         return ResolvedForceRerunSpec(scope="event", tokens=slugs)
 
@@ -3126,11 +3120,7 @@ class TRITONSWMM_analysis:
            the write paths actually re-execute. Without (2), step (1) alone
            produces fresh flags but stale outputs.
         """
-        resolved = (
-            override_force_rerun
-            if override_force_rerun is not None
-            else self.cfg_analysis.force_rerun
-        )
+        resolved = override_force_rerun if override_force_rerun is not None else self.cfg_analysis.force_rerun
         self._validate_force_rerun_targets(resolved)
         spec = self._build_force_rerun_spec(resolved)
         self._workflow_builder._delete_flags_for_force_rerun(spec)
@@ -3227,8 +3217,7 @@ class TRITONSWMM_analysis:
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
         assert (sa_id is None) == (master_dir is None), (
-            "sa_id and master_dir must be passed together (sensitivity) "
-            "or both omitted (non-sensitivity)"
+            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
         )
         is_sub = sa_id is not None
 
@@ -3236,9 +3225,7 @@ class TRITONSWMM_analysis:
         reconciled_event_ids: set[str] = set()
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
-            evt = compute_event_id_slug(
-                self._retrieve_weather_indexer_using_integer_index(event_iloc)
-            )
+            evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
             for model_type in scen.run.model_types_enabled:
                 # Flag name shape MUST match the generator gate's token shape
                 # (workflow.py:6678 for sub-analyses; the non-sa flag for
@@ -3258,10 +3245,7 @@ class TRITONSWMM_analysis:
                 else:
                     # No non-sa helper exists; mirror workflow.py:1350 inline.
                     # Non-sensitivity flags live in this analysis's own _status/.
-                    flag_rel = (
-                        f"{STATUS_DIR_NAME}/d_process_{model_type}"
-                        f"_evt-{evt}_complete.flag"
-                    )
+                    flag_rel = f"{STATUS_DIR_NAME}/d_process_{model_type}_evt-{evt}_complete.flag"
                     flag_path = self.analysis_paths.analysis_dir / flag_rel
                 if not flag_path.exists():
                     continue  # gate already open for this pair — nothing to heal
@@ -3282,9 +3266,7 @@ class TRITONSWMM_analysis:
             )
         return reconciled
 
-    def _assert_reprocess_rebuild_sources_present(
-        self, reconciled: set[tuple[str, str]]
-    ) -> None:
+    def _assert_reprocess_rebuild_sources_present(self, reconciled: set[tuple[str, str]]) -> None:
         """Fail-fast (Option B) — for each (event_id, model_type) the process-path
         self-heal just reconciled (summary absent → flag+log cleared so the rule
         re-emits), verify the RAW rebuild source (out_triton / out_tritonswmm /
@@ -3321,9 +3303,7 @@ class TRITONSWMM_analysis:
         missing_sources: list[str] = []
         for event_iloc in range(len(self.df_sims)):
             scen = TRITONSWMM_scenario(event_iloc, self)
-            evt = compute_event_id_slug(
-                self._retrieve_weather_indexer_using_integer_index(event_iloc)
-            )
+            evt = compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(event_iloc))
             for model_type in scen.run.model_types_enabled:
                 if (evt, model_type) not in reconciled:
                     continue
@@ -3342,9 +3322,7 @@ class TRITONSWMM_analysis:
                 config_path=str(self.analysis_config_yaml),
             )
 
-    def _invalidate_processing_log_for_force_rerun(
-        self, spec: "ResolvedForceRerunSpec"
-    ) -> None:
+    def _invalidate_processing_log_for_force_rerun(self, spec: "ResolvedForceRerunSpec") -> None:
         """Invalidate per-scenario log ``processing_log.outputs`` entries
         that match the force-rerun spec.
 
@@ -3415,10 +3393,9 @@ class TRITONSWMM_analysis:
         ``compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))``.
         """
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
         return [
-            compute_event_id_slug(
-                self._retrieve_weather_indexer_using_integer_index(i)
-            )
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))
             for i in range(len(self.df_sims))
         ]
 
@@ -3472,14 +3449,16 @@ class TRITONSWMM_analysis:
             sa_allocations = parse_sensitivity_analysis_workflow_model_allocations(
                 snakefile_path=snakefile_path,
                 expected_subanalysis_ids=expected_sa_ids,
+                strict=False,
             )
             rows: list[dict] = []
             for sa_id, sub_analysis in self.sensitivity.sub_analyses.items():
                 if sa_id not in sa_allocations:
-                    raise ValueError(
-                        "Parsed sensitivity allocations missing subanalysis id: "
-                        f"sa_{sa_id}. Available ids: {sorted(sa_allocations.keys())}"
-                    )
+                    # Sub-analysis set up on disk but absent from the Snakefile's
+                    # simulation_sa_* rules (expected — see bug plan D-b). Emit no
+                    # allocation rows here; df_status's left-merge leaves NaN allocation
+                    # columns which df_status annotates with the parse-error string (R5).
+                    continue
                 alloc = sa_allocations[sa_id]
                 for event_iloc in sub_analysis.df_sims.index:
                     scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
@@ -3512,10 +3491,11 @@ class TRITONSWMM_analysis:
                 }
 
                 if model_type not in model_allocations:
-                    raise ValueError(
-                        "Parsed Snakemake allocations are missing model_type "
-                        f"'{model_type}'. Available keys: {list(model_allocations.keys())}"
-                    )
+                    # parse_error already set on the row above; leave allocation
+                    # columns absent (NaN after DataFrame construction) so the
+                    # regular branch is tolerant (R2).
+                    rows.append(row)
+                    continue
 
                 alloc = model_allocations[model_type]
                 row.update(alloc)
@@ -3638,9 +3618,7 @@ class TRITONSWMM_analysis:
         """Return the analysis-level DU sentinel value, or None if absent."""
         from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
 
-        payload = read_du_sentinel(
-            self.analysis_paths.analysis_dir / "_status" / "_du.json"
-        )
+        payload = read_du_sentinel(self.analysis_paths.analysis_dir / "_status" / "_du.json")
         if payload is None or "disk_utilization_bytes" not in payload:
             return None
         return int(payload["disk_utilization_bytes"])
@@ -3670,15 +3648,20 @@ class TRITONSWMM_analysis:
                 for col in df_status_joined.columns
                 if col.startswith("snakemake_") and col != "snakemake_allocation_parse_error"
             ]
-            if allocation_columns and df_status_joined[allocation_columns].isna().any().any():
-                missing = df_status_joined.loc[
-                    df_status_joined[allocation_columns].isna().any(axis=1),
-                    ["model_type", "scenario_directory", "event_iloc"],
-                ]
-                raise ValueError(
-                    "Missing Snakemake allocations after join for sensitivity status rows. "
-                    f"First missing rows: {missing.head().to_dict(orient='records')}"
-                )
+            if allocation_columns:
+                missing_mask = df_status_joined[allocation_columns].isna().any(axis=1)
+                if missing_mask.any():
+                    # Un-run sub-analyses: present in sensitivity.df_status (full XLSX
+                    # definition) but absent from the parsed Snakefile's simulation_sa_*
+                    # rules (expected per v2 wait-rule substitution / reprocess filtering /
+                    # mid-study XLSX growth — see bug plan D-b). Surface them (R5) instead
+                    # of raising (R1): annotate the parse-error column, leave allocation
+                    # columns NaN.
+                    if "snakemake_allocation_parse_error" not in df_status_joined.columns:
+                        df_status_joined["snakemake_allocation_parse_error"] = None
+                    df_status_joined.loc[missing_mask, "snakemake_allocation_parse_error"] = (
+                        "no simulation_sa_* rule in Snakefile — sub-analysis not run"
+                    )
             return self._reorder_df_status_columns(df_status_joined)
 
         enabled_models_untyped = self._get_enabled_model_types()
@@ -3769,15 +3752,17 @@ class TRITONSWMM_analysis:
                 for col in df_status_joined.columns
                 if col.startswith("snakemake_") and col != "snakemake_allocation_parse_error"
             ]
-            if allocation_columns and df_status_joined[allocation_columns].isna().any().any():
-                missing = df_status_joined.loc[
-                    df_status_joined[allocation_columns].isna().any(axis=1),
-                    ["model_type", "scenario_directory", "event_iloc"],
-                ]
-                raise ValueError(
-                    "Missing Snakemake allocations after join for status rows. "
-                    f"First missing rows: {missing.head().to_dict(orient='records')}"
-                )
+            if allocation_columns:
+                missing_mask = df_status_joined[allocation_columns].isna().any(axis=1)
+                if missing_mask.any():
+                    # Regular analysis whose run_* rule was wait-rule-substituted
+                    # (v2 graceful-rerun) or otherwise absent: surface (R5) instead
+                    # of raising (R1/R9), symmetric with the sensitivity branch.
+                    if "snakemake_allocation_parse_error" not in df_status_joined.columns:
+                        df_status_joined["snakemake_allocation_parse_error"] = None
+                    df_status_joined.loc[missing_mask, "snakemake_allocation_parse_error"] = (
+                        "no run_* rule in Snakefile — model not run"
+                    )
             return self._reorder_df_status_columns(df_status_joined)
 
     # TRITON-SWMM model accessors
