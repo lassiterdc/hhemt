@@ -47,7 +47,7 @@ def main():
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
         system = TRITONSWMM_system(args.system_config)
-        analysis = TRITONSWMM_analysis(args.analysis_config, system)
+        analysis = TRITONSWMM_analysis(args.analysis_config, system, is_main_orchestrator=False)
 
         if analysis.cfg_analysis.toggle_sensitivity_analysis:
             out = analysis.sensitivity.render_report(format=args.format)
