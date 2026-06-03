@@ -803,6 +803,22 @@ def test_fingerprint_payload_includes_system_overlay(
     assert payload["system_overlay"].get("target_dem_resolution") in {1.0, 2.0}
 
 
+def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
+    synth_sensitivity_with_system_overlay,
+):
+    """Accessor unions df_setup with system.* overlay columns (prefixed names retained)."""
+    sens = synth_sensitivity_with_system_overlay.sensitivity
+    # system.* column is dropped from the analysis-filtered df_setup ...
+    assert "system.target_dem_resolution" not in sens.df_setup.columns
+    # ... but present (prefixed) in the overlay-union accessor ...
+    overlay_frame = sens.df_setup_with_system_overlays
+    assert "system.target_dem_resolution" in overlay_frame.columns
+    # ... and the analysis-config columns are preserved too.
+    assert "n_mpi_procs" in overlay_frame.columns
+    # Index parity with df_setup (same sa_ids, same order).
+    assert list(overlay_frame.index) == list(sens.df_setup.index)
+
+
 # ============================================================================
 # Phase 2 of prefixed_column_config_variation — tests
 # ============================================================================

@@ -1121,6 +1121,31 @@ class TRITONSWMM_sensitivity_analysis:
         return seen
 
     @property
+    def df_setup_with_system_overlays(self) -> pd.DataFrame:
+        """`df_setup` unioned with the `system.*` overlay columns from the full frame.
+
+        `df_setup` is filtered to analysis-config columns only (:173-180); the
+        `system.*` overlay columns are retained on `_df_setup_full`. Report
+        renderers that plot a system-axis independent variable
+        (`system.target_dem_resolution`, `system.gpu_hardware`, ...) need both
+        sets in one frame. This accessor unions them on the shared `sa_id`
+        index, preserving the PREFIXED column names so a renderer's
+        `independent_var="system.gpu_hardware"` lookup resolves directly.
+
+        The frame is analysis-columns + system-overlay-columns only — NOT the
+        raw `_df_setup_full` (which also carries `system_config_yaml` and
+        non-overlay annotation columns), keeping the renderer's column
+        membership check scoped to the resolvable independent-var set.
+        """
+        overlay_cols = [c for c in self._df_setup_full.columns if _is_system_overlay_column(c)]
+        if not overlay_cols:
+            return self.df_setup
+        return pd.concat(
+            [self.df_setup, self._df_setup_full.loc[:, overlay_cols]],
+            axis=1,
+        )
+
+    @property
     def independent_vars(self) -> list[str]:
         """BC alias — Phase 2 retains this name for downstream callers that haven't migrated.
 

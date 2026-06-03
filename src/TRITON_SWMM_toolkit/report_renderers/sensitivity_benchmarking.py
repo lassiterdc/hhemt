@@ -97,7 +97,7 @@ def render(
         raise ValueError("report_cfg.sensitivity must be set for benchmarking rendering")
 
     sensitivity = analysis.sensitivity
-    df_setup = sensitivity.df_setup.copy()
+    df_setup = sensitivity.df_setup_with_system_overlays.copy()
 
     df_setup = _ensure_n_devices_column(df_setup, independent_var)
 
