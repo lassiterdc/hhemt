@@ -2455,6 +2455,17 @@ def _per_sim_conduit_flow_sources(wildcards):
                     "latency-wait": 60,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
+                    # Auto-retry jobs that SLURM marks FAILED (e.g. transient
+                    # `srun` step glitches: "Unable to confirm allocation ...
+                    # Invalid job id"). NOTE: this does NOT rescue a job that
+                    # hangs in SLURM state RUNNING after its inner command
+                    # exits — Snakemake waits for that job until its own
+                    # --time wall-limit regardless of restart-times. The
+                    # hung-RUNNING case is a SLURM-infra transient not
+                    # fixable toolkit-side. All reprocess-path rules
+                    # (plot/consolidate/render) are idempotent re-derivations,
+                    # so a retried payload re-run is safe.
+                    "restart-times": 2,
                     "default-resources": [
                         "nodes=1",
                         "mem_mb=2000",
