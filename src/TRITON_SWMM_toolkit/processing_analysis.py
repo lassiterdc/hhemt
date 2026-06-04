@@ -177,11 +177,12 @@ class TRITONSWMM_analysis_post_processing:
         # Write the analysis-level DU sentinel. Compare-and-write semantics in
         # du_sentinels.write_du_sentinel preserve mtime on idempotent re-runs,
         # so consumer rules that declare _du.json as input: are not cascade-rerun.
-        from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
-        compute_and_write_scope_sentinel(
+        from TRITON_SWMM_toolkit.du_sentinels import sum_child_sentinels
+
+        sum_child_sentinels(
             self._analysis.analysis_paths.analysis_dir,
             scope="analysis",
-            include_breakdown=True,
+            child_scope_dirs=["subanalyses", "sims"],
         )
 
         if verbose:

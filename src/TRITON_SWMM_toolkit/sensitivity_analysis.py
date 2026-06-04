@@ -472,8 +472,9 @@ class TRITONSWMM_sensitivity_analysis:
         # invalidation). "render" leaves consolidate flags intact and only
         # invalidates the rendered report artifact.
         from TRITON_SWMM_toolkit.du_sentinels import (
-            compute_and_write_scope_sentinel,
+            decrement_scope_sentinel,
             restamp_parent_sentinels,
+            sum_child_sentinels,
         )
         from TRITON_SWMM_toolkit.utils import fast_rmtree as _fast_rmtree
 
@@ -577,8 +578,8 @@ class TRITONSWMM_sensitivity_analysis:
                 if _master_zarr is not None and _master_zarr.exists():
                     _fast_rmtree(_master_zarr, analysis_dir=None)  # batched-restamp
                 for _sub_dir in affected_sub_dirs:
-                    compute_and_write_scope_sentinel(_sub_dir, scope="sub_analysis")
-                compute_and_write_scope_sentinel(master_analysis_dir, scope="analysis")
+                    sum_child_sentinels(_sub_dir, scope="sub_analysis", child_scope_dirs=["sims"])
+                sum_child_sentinels(master_analysis_dir, scope="analysis", child_scope_dirs=["subanalyses", "sims"])
         elif start_with == "render":
             # No _status flag for render — re-fire by deleting the report
             # artifacts so Snakemake's mtime trigger sees the output as absent.
@@ -586,10 +587,22 @@ class TRITONSWMM_sensitivity_analysis:
             # runs even on dry_run (see D6); only the DU restamp is gated.
             _report_html = master_analysis_dir / "analysis_report.html"
             _report_zip = master_analysis_dir / "analysis_report.zip"
+            # D3 — capture sizes BEFORE unlink so the O(1) decrement has the bytes.
+            _html_bytes = _report_html.stat().st_size if _report_html.exists() else 0
+            _zip_bytes = _report_zip.stat().st_size if _report_zip.exists() else 0
             _report_html.unlink(missing_ok=True)
             _report_zip.unlink(missing_ok=True)
             if not dry_run:
-                restamp_parent_sentinels(_report_html, analysis_dir=master_analysis_dir)  # PATTERN B
+                # D3 — O(1) decrement of the two report children (no plots on the
+                # sensitivity render arm). Mirrors the non-sensitivity render path;
+                # routes through write_du_sentinel (compare-and-write mtime invariant).
+                _child_deltas: dict[str, int] = {}
+                if _html_bytes:
+                    _child_deltas["analysis_report.html"] = _html_bytes
+                if _zip_bytes:
+                    _child_deltas["analysis_report.zip"] = _zip_bytes
+                if _child_deltas:
+                    decrement_scope_sentinel(master_analysis_dir, scope="analysis", child_deltas=_child_deltas)
         else:
             raise ValueError(f"start_with must be one of 'process', 'consolidate', 'render'; got {start_with!r}")
 

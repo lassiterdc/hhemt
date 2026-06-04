@@ -71,9 +71,7 @@ def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(
-    norfolk_sensitivity_analysis, monkeypatch
-):
+def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitivity_analysis, monkeypatch):
     """Sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route deletes every sub's ``d_process_*`` flags AND
     clears every scenario's per-model ``processing_log.outputs`` (FIX 1, hunk 2a)."""
@@ -110,6 +108,25 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(
             scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
             event_id = scen.event_id
             model_types = _seed_scenario_processing_log(scen)
+            # Seed the RAW rebuild source per enabled model so the d5d0084
+            # self-heal's fail-fast guard (_assert_reprocess_rebuild_sources_present,
+            # analysis.py ~L3291) passes: summaries stay ABSENT (so the self-heal
+            # still reconciles + unlinks the d_process flags, which this test
+            # asserts), but the raw out_triton/out_tritonswmm dir (or the swmm
+            # .out FILE) must exist + be non-empty or the guard raises
+            # ConfigurationError before the clear can be observed.
+            for model_type in model_types:
+                if model_type in ("triton", "tritonswmm"):
+                    raw_dir = getattr(
+                        scen.scen_paths,
+                        "out_triton" if model_type == "triton" else "out_tritonswmm",
+                    )
+                    raw_dir.mkdir(parents=True, exist_ok=True)
+                    (raw_dir / "H_0.bin").write_bytes(b"\x00")
+                elif model_type == "swmm":
+                    out_file = scen.scen_paths.swmm_full_out_file
+                    out_file.parent.mkdir(parents=True, exist_ok=True)
+                    out_file.write_bytes(b"\x00")
             for model_type in model_types:
                 flag_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
                 flag_path = master_analysis_dir / flag_rel
@@ -137,9 +154,7 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(
         sa_str = str(sa_id)
         # (a-i) every d_process flag for this sub was deleted.
         remaining = list(status_dir.glob(f"d_process_*_sa-{sa_str}_*"))
-        assert remaining == [], (
-            f"sa {sa_str}: d_process_* flags must all be deleted; found {remaining!r}"
-        )
+        assert remaining == [], f"sa {sa_str}: d_process_* flags must all be deleted; found {remaining!r}"
         # (a-ii) every scenario's per-model processing_log.outputs is empty.
         for event_iloc, model_types in seeded[sa_str]:
             scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
@@ -180,9 +195,7 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
         enabled_models.append("tritonswmm")
     if cfg_system.toggle_swmm_model:
         enabled_models.append("swmm")
-    assert len(enabled_models) == 1, (
-        f"sensitivity fixture must enable exactly one model; got {enabled_models!r}"
-    )
+    assert len(enabled_models) == 1, f"sensitivity fixture must enable exactly one model; got {enabled_models!r}"
     model_type = enabled_models[0]
 
     # Seed: every (sa, event) gets its c_run flag present, d_process ABSENT
@@ -196,9 +209,7 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
         (analysis_dir / fingerprint_rel).parent.mkdir(parents=True, exist_ok=True)
         (analysis_dir / fingerprint_rel).write_text("{}")
         for event_iloc in sub_analysis.df_sims.index:
-            event_id = compute_event_id_slug(
-                sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
-            )
+            event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
             c_run_rel = sim_run_flag_per_sa(model_type, sa_str, event_id)
             d_process_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
             (analysis_dir / c_run_rel).parent.mkdir(parents=True, exist_ok=True)
@@ -217,18 +228,14 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
         sa_rule = sa_str.replace(".", "_").replace("-", "_")
         event_rule = event_id.replace(".", "_").replace("-", "_")
         rule_name = f"process_sa_{sa_rule}_evt_{event_rule}"
-        assert f"rule {rule_name}:" in content, (
-            f"expected reprocess rebuild rule '{rule_name}' in generated content"
-        )
+        assert f"rule {rule_name}:" in content, f"expected reprocess rebuild rule '{rule_name}' in generated content"
 
     # Each per-sa consolidate routes its input through the d_process flag the
     # rebuild rule produces (conditional-process-emit routing), not c_run.
     for sa_id, sub_analysis in analysis.sensitivity.sub_analyses.items():
         sa_str = str(sa_id)
         for event_iloc in sub_analysis.df_sims.index:
-            event_id = compute_event_id_slug(
-                sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
-            )
+            event_id = compute_event_id_slug(sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc))
             d_process_rel = process_timeseries_flag_per_sa(model_type, sa_str, event_id)
             assert f'"{d_process_rel}"' in content, (
                 f"per-sa consolidate input must include d_process flag {d_process_rel!r}"
@@ -263,9 +270,7 @@ def test_reprocess_generator_emits_rebuild_after_invalidation(norfolk_sensitivit
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
-    norfolk_multi_sim_analysis, monkeypatch
-):
+def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_multi_sim_analysis, monkeypatch):
     """Non-sensitivity ``reprocess(start_with='process', regenerate_existing=True)``
     on the SLURM-offload route clears each scenario's per-model
     ``processing_log.outputs`` (FIX 1, CHANGE A1)."""
@@ -321,9 +326,7 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(
 # ---------------------------------------------------------------------------
 
 
-def test_reprocess_consolidate_inprocess_preserves_processed(
-    norfolk_sensitivity_analysis, monkeypatch
-):
+def test_reprocess_consolidate_inprocess_preserves_processed(norfolk_sensitivity_analysis, monkeypatch):
     """A CONSOLIDATE-stage in-process ``reprocess(regenerate_existing=True)`` must
     PRESERVE each sub's per-scenario ``processed/`` — that directory is the
     rebuild source the consolidate stage reads from; only a PROCESS-stage
@@ -399,14 +402,19 @@ def _build_synthetic_post_processing(*, fname_out, raw_dir, batch_timesteps, ny,
             TRITON_reporting_timestep_s=60,
             process_output_target_chunksize_mb=200,
             process_append_batch_timesteps=batch_timesteps,
+            # Fine-grid-processing-perf fields (commits d1bec03 + fba3fdc): the
+            # streaming-chunked-zarr writer reads these at the flush byte-cap
+            # (L156) and the encoding kwargs (L282-283). A large concrete budget
+            # keeps the byte-cap inert so the timestep-count flush trigger governs.
+            process_append_batch_memory_budget_mb=100_000,
+            process_store_float32=True,
+            process_timestep_chunk=None,
         )
     )
     inst._run = SimpleNamespace(raw_triton_output_dir=lambda model_type: raw_dir)
     inst._system = SimpleNamespace(processed_dem_rds=rds_dem)
     inst.scen_paths = SimpleNamespace(output_tritonswmm_triton_timeseries=fname_out)
-    inst._scenario = SimpleNamespace(
-        latest_sim_date=lambda model_type, astype: "2020-01-01"
-    )
+    inst._scenario = SimpleNamespace(latest_sim_date=lambda model_type, astype: "2020-01-01")
     # MagicMock tolerates the post-write log-field accesses (add_sim_processing_entry,
     # TRITON_timeseries_written.set(...)) without modelling each one.
     inst.log = MagicMock()
@@ -432,7 +440,7 @@ def _patch_loaders(monkeypatch, *, df_outputs, ny, nx):
             coords={"y": np.arange(ny), "x": np.arange(nx)},
         ),
     )
-    monkeypatch.setattr(ps, "return_dic_zarr_encodings", lambda ds, comp_level: {})
+    monkeypatch.setattr(ps, "return_dic_zarr_encodings", lambda ds, comp_level, **kwargs: {})
     monkeypatch.setattr(ps, "current_datetime_string", lambda: "2020-01-01")
     monkeypatch.setattr(ps, "convert_datetime_to_str", lambda attrs: attrs)
     monkeypatch.setattr(ps, "get_file_size_MiB", lambda f: 1.0)
@@ -459,9 +467,7 @@ def test_append_batch_decoupled_from_load_chunk(tmp_path, monkeypatch):
         index=list(range(n_timesteps)),
     )
 
-    inst = _build_synthetic_post_processing(
-        fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=batch, ny=ny, nx=nx
-    )
+    inst = _build_synthetic_post_processing(fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=batch, ny=ny, nx=nx)
     _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
 
     # Count actual zarr write/append operations (one per flushed batch).
@@ -512,9 +518,7 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
         index=list(range(n_timesteps)),
     )
 
-    inst = _build_synthetic_post_processing(
-        fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=4, ny=ny, nx=nx
-    )
+    inst = _build_synthetic_post_processing(fname_out=fname_out, raw_dir=raw_dir, batch_timesteps=4, ny=ny, nx=nx)
     _patch_loaders(monkeypatch, df_outputs=df_outputs, ny=ny, nx=nx)
 
     with pytest.raises(ProcessingError, match="no valid timesteps to write"):
@@ -528,13 +532,14 @@ def test_write_timeseries_raises_when_no_valid_timesteps(tmp_path, monkeypatch):
 
 
 def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
-    """FIX 3 (R6): the early report-restamp must be SKIPPED on the
-    regenerate_existing process/consolidate path (a later zarr deletion
-    restamps the DU tree anyway — gating avoids the redundant multi-minute
-    login-node stat() walk), but must STILL fire on the default
-    regenerate_existing=False path (no later deletion to restamp). Drives
-    TRITONSWMM_analysis._invalidate_downstream_flags directly; the restamp gate
-    is pure routing logic, so no compile is required."""
+    """FIX 3 (R6) + Phase-2 D3: on the regenerate_existing process/consolidate
+    path BOTH the early report-restamp AND the O(1) DU decrement are SKIPPED (a
+    later zarr deletion restamps the tree anyway — gating avoids the redundant
+    multi-minute login-node stat() walk). On the default regenerate_existing=False
+    path the O(1) ``decrement_scope_sentinel`` FIRES (Phase 2 replaced the prior
+    ``restamp_parent_sentinels`` full-tree walk with the O(1) decrement). Drives
+    TRITONSWMM_analysis._invalidate_downstream_flags directly; the gate is pure
+    routing logic, so no compile is required."""
     import TRITON_SWMM_toolkit.du_sentinels as du_sentinels
     from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 
@@ -543,26 +548,36 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
         analysis_dir=tmp_path,
         analysis_datatree_zarr=None,  # no zarr -> the destructive delete is a no-op
     )
+    # Seed a non-empty report artifact so the default-path decrement has a
+    # child_delta to subtract (the decrement is `if child_deltas:`-gated).
+    (tmp_path / "analysis_report.html").write_text("<html></html>")
 
-    # restamp_parent_sentinels is imported method-locally from du_sentinels, so
-    # the patch target is the source module (the local import re-fetches it at
-    # call time).
+    # Both helpers are imported method-locally from du_sentinels, so the patch
+    # target is the source module (the local import re-fetches at call time).
     restamp_mock = MagicMock()
+    decrement_mock = MagicMock()
     monkeypatch.setattr(du_sentinels, "restamp_parent_sentinels", restamp_mock)
+    monkeypatch.setattr(du_sentinels, "decrement_scope_sentinel", decrement_mock)
 
-    # regenerate_existing=True: a later zarr deletion restamps -> early restamp SKIPPED.
-    inst._invalidate_downstream_flags(
-        "consolidate", regenerate_existing=True, dry_run=False
+    # regenerate_existing=True: a later zarr deletion restamps -> BOTH skipped.
+    inst._invalidate_downstream_flags("consolidate", regenerate_existing=True, dry_run=False)
+    assert restamp_mock.call_count == 0, "report-restamp must be SKIPPED on the regenerate_existing=True path"
+    assert decrement_mock.call_count == 0, (
+        "O(1) DU decrement must be SKIPPED on the regenerate_existing=True path "
+        "(the later zarr deletion restamps the tree anyway)"
     )
+
+    # Re-seed the report artifact: the regenerate_existing=True call above ran
+    # _delete_report_and_plot_artifacts (the report unlink is unconditional; only
+    # the DU restamp/decrement is gated), so the file is now gone. Re-create it so
+    # the default-path decrement has a non-empty child_delta to subtract.
+    (tmp_path / "analysis_report.html").write_text("<html></html>")
+
+    # regenerate_existing=False (default): no later deletion -> O(1) decrement FIRES,
+    # the legacy full-tree restamp does NOT (Phase 2 D3 replaced it).
+    inst._invalidate_downstream_flags("consolidate", regenerate_existing=False, dry_run=False)
+    assert decrement_mock.call_count == 1, "O(1) DU decrement must FIRE on the default regenerate_existing=False path"
     assert restamp_mock.call_count == 0, (
-        "report-restamp must be SKIPPED on the regenerate_existing=True path "
-        "(the later deletion restamps the tree anyway)"
-    )
-
-    # regenerate_existing=False (default): no later deletion -> early restamp FIRES.
-    inst._invalidate_downstream_flags(
-        "consolidate", regenerate_existing=False, dry_run=False
-    )
-    assert restamp_mock.call_count == 1, (
-        "report-restamp must FIRE on the default regenerate_existing=False path"
+        "the legacy full-tree restamp must NOT fire on the default path "
+        "(Phase 2 D3 replaced it with the O(1) decrement)"
     )

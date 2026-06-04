@@ -2937,22 +2937,44 @@ class TRITONSWMM_analysis:
             """
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            # D3 — capture deleted-artifact sizes BEFORE unlink so the O(1)
+            # decrement has the bytes to subtract (post-unlink stat is impossible).
+            _html_bytes = report_html.stat().st_size if report_html.exists() else 0
+            _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
             report_html.unlink(missing_ok=True)
             report_zip.unlink(missing_ok=True)
             plots_dir = analysis_dir / "plots"
+            plots_total_bytes = 0
             if plots_dir.exists():
+                for _art in plots_dir.rglob("*"):
+                    if _art.is_file():
+                        try:
+                            plots_total_bytes += _art.stat().st_size
+                        except OSError:
+                            pass
                 for art in plots_dir.rglob("*"):
                     if art.is_file():
                         art.unlink(missing_ok=True)
             if not dry_run:
-                # PATTERN B — report+plot deletion shrinks on-disk size; restamp
-                # parent DU sentinels once. FIX 3: on the regenerate_existing
-                # process/consolidate arms a LATER zarr deletion restamps the
-                # tree anyway, so skip the redundant early walk there (the
-                # multi-minute login-node stall). The default
-                # (regenerate_existing=False) path still restamps.
+                # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
+                # full-tree walk. FIX 3: on the regenerate_existing
+                # process/consolidate arms a LATER zarr deletion restamps the tree
+                # anyway, so skip the redundant decrement there (the default
+                # regenerate_existing=False path decrements). Sizes captured above
+                # BEFORE unlink (post-unlink stat is impossible); routes through
+                # write_du_sentinel so the compare-and-write mtime invariant holds.
                 if not (start_with in ("process", "consolidate") and regenerate_existing):
-                    restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)
+                    from TRITON_SWMM_toolkit.du_sentinels import decrement_scope_sentinel
+
+                    child_deltas: dict[str, int] = {}
+                    if _html_bytes:
+                        child_deltas["analysis_report.html"] = _html_bytes
+                    if _zip_bytes:
+                        child_deltas["analysis_report.zip"] = _zip_bytes
+                    if plots_total_bytes:
+                        child_deltas["plots"] = plots_total_bytes
+                    if child_deltas:
+                        decrement_scope_sentinel(analysis_dir, scope="analysis", child_deltas=child_deltas)
 
         if start_with == "process":
             if regenerate_existing:

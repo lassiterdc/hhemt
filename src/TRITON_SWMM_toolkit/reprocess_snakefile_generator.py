@@ -47,9 +47,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from TRITON_SWMM_toolkit.workflow import _resolve_rule_all_extensions
+from TRITON_SWMM_toolkit.workflow import (
+    _resolve_rule_all_extensions,
+    _scenario_summaries_present,
+)
 
 if TYPE_CHECKING:
+    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
     from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 
 
@@ -75,27 +79,30 @@ def _enabled_models(builder: SnakemakeWorkflowBuilder) -> list[str]:
 
 
 def _available_event_ids(
-    analysis_dir: Path,
+    analysis: TRITONSWMM_analysis,
     *,
     enabled_models: list[str],
     all_event_ids: list[str],
 ) -> list[str]:
-    """Filter ``all_event_ids`` to scenarios whose ``c_run_*`` flag exists.
+    """Filter ``all_event_ids`` to events whose per-enabled-model summary files exist.
 
-    A scenario is "available" for reprocess when at least one enabled
-    model's ``_status/c_run_{model}_evt-{event_id}_complete.flag`` exists.
-    Scenarios missing every model's flag are silently dropped from the
-    reprocess Snakefile's ``SIM_IDS`` — re-running them would require the
-    simulation driver, which reprocess explicitly does not invoke.
+    Per-EVENT summary-existence predicate — the non-sensitivity per-event
+    analogue of the sensitivity whole-sub gate. An event is reportable iff
+    EVERY enabled model's per-sim summary exists on disk, mirroring
+    ``processing_analysis._retrieve_combined_output`` (which raises
+    ``FileNotFoundError`` on ANY absent per-mode summary, so the report target
+    is only satisfiable when all enabled modes' summaries are present).
+
+    Replaces the prior ``c_run``-flag predicate, which was a STRICTLY WEAKER
+    signal (Gotcha 34): a sim can have run (``c_run`` present) with its summary
+    absent — e.g. after a ``regenerate_existing`` deletion — which enumerated an
+    unsatisfiable per-sim ``report()`` target and made ``render_report`` raise
+    ``WorkflowError: File ... marked for report but does not exist``. Events
+    missing any enabled model's summary are dropped from the reprocess
+    Snakefile's ``SIM_IDS``. Path-only (no ``TRITONSWMM_scenario`` instantiation)
+    via the shared ``workflow._scenario_summaries_present`` helper.
     """
-    status_dir = analysis_dir / "_status"
-    available: list[str] = []
-    for event_id in all_event_ids:
-        for model in enabled_models:
-            if (status_dir / f"c_run_{model}_evt-{event_id}_complete.flag").exists():
-                available.append(event_id)
-                break
-    return available
+    return [event_id for event_id in all_event_ids if _scenario_summaries_present(analysis, event_id, enabled_models)]
 
 
 def generate_reprocess_snakefile(
@@ -149,10 +156,12 @@ def generate_reprocess_snakefile(
     ]
     iloc_by_event_id = {all_event_ids[i]: i for i in range(n_sims)}
 
-    # Filter to scenarios whose sim flag exists. Reprocess never spawns sims,
-    # so missing flags mean the scenario is silently excluded.
+    # Filter to events whose per-enabled-model summary files exist (the predicate
+    # consolidation/render require). Reprocess never spawns sims; an event whose
+    # summary is absent (c_run-present/summary-absent divergence, Gotcha 34) would
+    # enumerate an unsatisfiable per-sim report target, so it is silently excluded.
     available_event_ids = _available_event_ids(
-        analysis_dir,
+        builder.analysis,
         enabled_models=enabled_models,
         all_event_ids=all_event_ids,
     )

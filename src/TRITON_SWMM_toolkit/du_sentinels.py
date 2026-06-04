@@ -249,6 +249,109 @@ def compute_and_write_scope_sentinel(
     )
 
 
+def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list[str]) -> bool:
+    """Compute a scope's DU by SUMMING child-scope _du.json sentinels + a bounded
+    own-files walk that does NOT recurse into child-scope dirs. Routes through
+    write_du_sentinel (compare-and-write -> mtime preserved on no-change). Missing
+    child sentinel -> bounded walk of THAT child only (never the whole tree).
+
+    R4 byte-identity (Decision D-A, Option A): a child's _du.json (and the
+    _walk_root_and_breakdown fallback) EXCLUDES the child's own top-level
+    _status/ dir (skip_status_top), but a full walk of scope_dir counts
+    child/_status/** under the child's top-level breakdown key (from scope_dir
+    that file's `top` is child_dir_name, not "_status"). So for each child we
+    add back its own _status/ bytes via _walk_root_bytes(child/"_status") — a
+    bounded walk of just that dir (a handful of flag/json files), NEVER the
+    whole subtree. With this correction Σ(child totals + child _status) +
+    own-files walk == _walk_root_and_breakdown(scope_dir) exactly (the parity
+    oracle), at every scope, recursively (scope_dir's OWN top-level _status/
+    stays excluded by the own-files-walk `startswith("_status")` guard, matching
+    the full walk which skips scope_dir's own top-level _status)."""
+    total = 0
+    breakdown: dict[str, int] = {}
+    walk_errors = 0
+    for child_dir_name in child_scope_dirs:
+        child_root = scope_dir / child_dir_name
+        if not child_root.is_dir():
+            continue
+        child_total = 0
+        for child in sorted(child_root.iterdir()):
+            if not child.is_dir():
+                continue
+            sentinel = read_du_sentinel(child / "_status" / "_du.json")
+            if sentinel is not None and "disk_utilization_bytes" in sentinel:
+                child_total += int(sentinel["disk_utilization_bytes"])
+                walk_errors += int(sentinel.get("walk_errors", 0))
+            else:
+                b, _bd, we = _walk_root_and_breakdown(child)
+                child_total += b
+                walk_errors += we
+            # D-A / Option A: add back the child's OWN top-level _status/ bytes
+            # (excluded by both the sentinel and the _walk_root_and_breakdown
+            # fallback), which a full walk of scope_dir attributes to this
+            # child's top-level key. Bounded to child/_status/ only.
+            status_bytes, status_we = _walk_root_bytes(child / "_status")
+            child_total += status_bytes
+            walk_errors += status_we
+        breakdown[child_dir_name] = child_total
+        total += child_total
+    skip = set(child_scope_dirs)
+    for entry in sorted(scope_dir.iterdir()):
+        if entry.name in skip or entry.name.startswith("_status"):
+            continue
+        if entry.is_dir():
+            b, _bd, we = _walk_root_and_breakdown(entry)
+        elif entry.is_file():
+            try:
+                b, we = entry.stat().st_size, 0
+            except OSError:
+                b, we = 0, 1
+        else:
+            continue
+        if b:
+            breakdown[entry.name] = breakdown.get(entry.name, 0) + b
+        total += b
+        walk_errors += we
+    return write_du_sentinel(
+        scope_dir / "_status" / "_du.json",
+        disk_utilization_bytes=total,
+        scope=scope,
+        sub_path_breakdown=breakdown or None,
+        walk_errors=walk_errors,
+    )
+
+
+def decrement_scope_sentinel(scope_dir: Path, *, scope: Scope, child_deltas: dict[str, int]) -> bool:
+    """O(1)/O(children) decrement of a scope's cached total + named breakdown
+    children (no walk). `child_deltas` maps each top-level breakdown child name
+    to the bytes to subtract from BOTH the total and that child (each child by
+    its OWN size — the two report files / the plots subtree have different
+    sizes, so a single shared delta_bytes would be wrong). Used on the reprocess
+    render path where known-size artifacts are deleted then regenerated. No-op if
+    the sentinel is absent. Routes through write_du_sentinel (compare-and-write ->
+    mtime preserved on a 0-delta call)."""
+    payload = read_du_sentinel(scope_dir / "_status" / "_du.json")
+    if payload is None or "disk_utilization_bytes" not in payload:
+        return False
+    total_delta = sum(int(v) for v in child_deltas.values())
+    new_total = max(0, int(payload["disk_utilization_bytes"]) - total_delta)
+    breakdown = dict(payload.get("sub_path_breakdown") or {})
+    for child, delta in child_deltas.items():
+        if child in breakdown:
+            nv = max(0, int(breakdown[child]) - int(delta))
+            if nv == 0:
+                breakdown.pop(child, None)
+            else:
+                breakdown[child] = nv
+    return write_du_sentinel(
+        scope_dir / "_status" / "_du.json",
+        disk_utilization_bytes=new_total,
+        scope=scope,
+        sub_path_breakdown=breakdown or None,
+        walk_errors=int(payload.get("walk_errors", 0)),
+    )
+
+
 def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
     """Re-stamp DU sentinels for every parent scope of `removed_path` up to `analysis_dir`.
 
@@ -273,7 +376,13 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
         sentinel = cur / "_status" / "_du.json"
         if sentinel.exists() or (cur / "_status").exists():
             scope: Scope = _infer_scope(cur, analysis_dir)
-            compute_and_write_scope_sentinel(cur, scope=scope)
+            _child_dirs = (
+                ["sims"] if scope == "sub_analysis" else (["subanalyses", "sims"] if scope == "analysis" else [])
+            )
+            if scope == "scenario" or not _child_dirs:
+                compute_and_write_scope_sentinel(cur, scope=scope)
+            else:
+                sum_child_sentinels(cur, scope=scope, child_scope_dirs=_child_dirs)
         if cur == analysis_dir:
             break
         cur = cur.parent

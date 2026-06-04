@@ -1290,9 +1290,7 @@ class SnakemakeWorkflowBuilder:
         analysis-scope consolidate path; renders a compact HTML table.
         """
         if ctx is None:
-            ctx = self._make_rule_emission_context(
-                static_backend=self._get_report_cfg_static_backend()
-            )
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
 
         spec = RuleSpec(
             rule_name="plot_disk_utilization",
@@ -1450,8 +1448,7 @@ rule consolidate:
         rules that declare it as ``input:`` get Snakemake-tracked mtime semantics.
         """
         input_flags = ", ".join(
-            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"'
-            for model_type in enabled_models
+            f'"_status/d_process_{model_type}_evt-{{event_id}}_complete.flag"' for model_type in enabled_models
         )
         return f'''
 rule consolidate_scenario:
@@ -1849,7 +1846,7 @@ rule run_{model_type}:
             for rule_token in sorted(alive_by_token or {}):
                 if not rule_token.startswith(_prefix):
                     continue
-                event_id = rule_token[len(_prefix):]
+                event_id = rule_token[len(_prefix) :]
                 flag_output_path = f"_status/c_run_{model_type}_evt-{event_id}_complete.flag"
                 run_rule_inputs = (
                     [f"_status/b_prepare_evt-{event_id}_complete.flag"]
@@ -2458,6 +2455,17 @@ def _per_sim_conduit_flow_sources(wildcards):
                     "latency-wait": 60,
                     "max-jobs-per-second": 5,
                     "max-status-checks-per-second": 10,
+                    # Auto-retry jobs that SLURM marks FAILED (e.g. transient
+                    # `srun` step glitches: "Unable to confirm allocation ...
+                    # Invalid job id"). NOTE: this does NOT rescue a job that
+                    # hangs in SLURM state RUNNING after its inner command
+                    # exits — Snakemake waits for that job until its own
+                    # --time wall-limit regardless of restart-times. The
+                    # hung-RUNNING case is a SLURM-infra transient not
+                    # fixable toolkit-side. All reprocess-path rules
+                    # (plot/consolidate/render) are idempotent re-derivations,
+                    # so a retried payload re-run is safe.
+                    "restart-times": 2,
                     "default-resources": [
                         "nodes=1",
                         "mem_mb=2000",
@@ -5102,8 +5110,7 @@ exit $snakemake_status
             else:
                 path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
                 print(
-                    f"[orchestrator-gate] reclaimed stale sentinel "
-                    f"{s.get('driver_id')} (mode={mode}) at {path}",
+                    f"[orchestrator-gate] reclaimed stale sentinel {s.get('driver_id')} (mode={mode}) at {path}",
                     file=sys.stderr,
                     flush=True,
                 )
@@ -5203,7 +5210,9 @@ exit $snakemake_status
         )
 
     def _pre_delete_guards(
-        self, *, override_in_flight: bool,
+        self,
+        *,
+        override_in_flight: bool,
         snakefile_name: str = "Snakefile.delete",
         working_subdir: str = ".snakemake_delete",
     ) -> None:
@@ -5297,8 +5306,8 @@ exit $snakemake_status
                 f"rule delete_scenario_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
-                f'    shell:\n'
+                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"    shell:\n"
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_scenario_runner "\n'
                 f'        "--event-id {event_id} "\n'
                 f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -5312,8 +5321,8 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_scenario_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
-            f'    shell:\n'
+            f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+            f"    shell:\n"
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
         )
@@ -5343,8 +5352,8 @@ exit $snakemake_status
                 f"rule delete_subanalysis_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
-                f'    shell:\n'
+                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"    shell:\n"
                 f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_subanalysis_runner "\n'
                 f'        "--sa-id {sa_id} "\n'
                 f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -5358,8 +5367,8 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_sa_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f'    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n'
-            f'    shell:\n'
+            f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+            f"    shell:\n"
             f'        "{python_exe} -m TRITON_SWMM_toolkit.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
         )
@@ -5572,7 +5581,10 @@ exit $snakemake_status
         return rule_all + "".join(rules)
 
     def submit_reprocess_delete_workflow(
-        self, *, start_with: str, override_in_flight: bool = False,
+        self,
+        *,
+        start_with: str,
+        override_in_flight: bool = False,
         override_multi_sim_run_method: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None,
     ) -> dict:
         """Submit the SCOPED reprocess-delete workflow (R8). Routes the opt-in
@@ -5592,7 +5604,8 @@ exit $snakemake_status
         snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
         snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))
         return self._submit_delete_snakemake(
-            snakefile, override_multi_sim_run_method=override_multi_sim_run_method,
+            snakefile,
+            override_multi_sim_run_method=override_multi_sim_run_method,
             working_subdir=".snakemake_reprocess_delete",
             logfile_name="snakemake_reprocess_delete.log",
         )
@@ -5617,6 +5630,88 @@ exit $snakemake_status
             snakefile_path,
             override_multi_sim_run_method=override_multi_sim_run_method,
         )
+
+
+# ---------------------------------------------------------------------------
+# Report-target completeness predicate (report-target-predicate unification).
+# ---------------------------------------------------------------------------
+# Canonical per-enabled-mode summary FILE STEMS under sims/{event_id}/processed/.
+# Keyed IDENTICALLY to
+# analysis.py::_reconcile_stale_process_flags_against_summaries::
+# _SUMMARY_ATTRS_BY_MODEL — the exact set whose absence makes
+# processing_analysis._retrieve_combined_output raise FileNotFoundError (the
+# predicate consolidate_*_datatree skips on, Gotcha 36). The set is never
+# narrowed (Gotcha 34): a sim's c_run flag can exist with its summary absent,
+# so c_run is a STRICTLY WEAKER signal than summary-existence; enumerating a
+# report target on c_run produces an unsatisfiable target when the summary is
+# missing (the render_report failure this predicate closes). Stems mirror
+# scenario.ScenarioPaths' output_*_summary naming (scenario.py:148-224).
+_SUMMARY_STEMS_BY_MODEL: dict[str, tuple[str, ...]] = {
+    "tritonswmm": (
+        "TRITONSWMM_TRITON_summary",
+        "TRITONSWMM_SWMM_node_summary",
+        "TRITONSWMM_SWMM_link_summary",
+        "TRITONSWMM_perf_summary",
+    ),
+    "triton": (
+        "TRITON_only_summary",
+        "TRITON_only_perf_summary",
+    ),
+    "swmm": (
+        "SWMM_only_node_summary",
+        "SWMM_only_link_summary",
+    ),
+}
+
+
+def _scenario_summaries_present(analysis, event_id: str, enabled_models: list[str]) -> bool:
+    """True iff every enabled model's per-sim summary file exists for ``event_id``.
+
+    Path-only existence probe mirroring
+    ``processing_analysis._retrieve_combined_output``'s test (the predicate
+    ``consolidate_*_datatree`` skips on). It MUST NOT instantiate
+    ``TRITONSWMM_scenario`` — that constructor mkdir's ``processed/``,
+    ``swmm/``, and ``out_swmm/`` as a side effect (scenario.py:63/65/82), so a
+    generation-time read-only probe would create scenario subdirectories and
+    pay the full constructor cost O(subs x events) on every ``analysis.run()``.
+    Paths are derived directly from ``ScenarioPaths``' naming convention
+    (``sims/{event_id}/processed/{stem}.{out_type}``) using the pure
+    ``compute_event_id_slug`` slug the caller already holds. The FULL canonical
+    summary set is required (Gotcha 34) — a narrower set marks a sub COMPLETE
+    that consolidation SKIPS, re-opening the exact render bug.
+    """
+    processed = analysis.analysis_paths.simulation_directory / event_id / "processed"
+    out_type = analysis.cfg_analysis.target_processed_output_type
+    for model in enabled_models:
+        stems = _SUMMARY_STEMS_BY_MODEL.get(model, ())
+        if not stems:
+            return False
+        for stem in stems:
+            if not (processed / f"{stem}.{out_type}").exists():
+                return False
+    return True
+
+
+def _sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) -> bool:
+    """Whole-sub predicate: True iff EVERY scenario in the sub has all summaries.
+
+    Whole-sub (not per-event) because ``consolidate_sensitivity_datatree``'s
+    skip is all-or-nothing per sub-analysis (Gotcha 36 stipulation:
+    ``_retrieve_combined_output`` concatenates per-scenario summaries along
+    ``event_iloc`` and is all-or-nothing per sub). Filtering per-event here
+    would be MORE permissive than consolidation and re-introduce a mismatch.
+    Path-only via ``compute_event_id_slug`` — no ``TRITONSWMM_scenario``
+    instantiation (Note A). A sub-analysis is a full Analysis instance
+    (Gotcha 11), so ``sub_analysis`` is passed directly as ``analysis``.
+    """
+    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+    for event_iloc in sub_analysis.df_sims.index:
+        ev = sub_analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
+        event_id = compute_event_id_slug(ev)
+        if not _scenario_summaries_present(sub_analysis, event_id, enabled_models):
+            return False
+    return True
 
 
 class SensitivityAnalysisWorkflowBuilder:
@@ -6475,27 +6570,53 @@ rule render_report:
             total_n_sims = n_sub_analyses
 
         # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
-        # Option C invariant: only include (sa_id, event_id) pairs whose
-        # c_run_* flag exists on disk. Excluded sub-analyses' events would
-        # otherwise trigger per-sim plot rules whose renderer reads
-        # non-existent per-sa scenario data (the plot rule's only input is
-        # the master consolidation flag, so Snakemake would schedule them
-        # unconditionally and they would fail at render time).
+        # Report-target invariant: only include a sub's (sa_id, event_id) pairs
+        # when the sub passes the shared summary-existence predicate (matches
+        # consolidate_sensitivity_datatree's whole-sub skip, Gotcha 36). The
+        # c_run_* flag is a STRICTLY WEAKER signal (Gotcha 34) — a sim can have
+        # run with its summary absent — so enumerating a per-sim plot/report
+        # target on c_run produces an unsatisfiable target the renderer fails on.
         from TRITON_SWMM_toolkit.constants import sim_run_flag_per_sa
 
         sa_event_pairs_sa: list[str] = []
         sa_event_pairs_evt: list[str] = []
         analysis_dir_for_pairs = self.master_analysis.analysis_paths.analysis_dir
+
+        def _sub_included_for_reprocess(sa_id, sub) -> bool:
+            """Shared sub-inclusion predicate for SA_EVENT_PAIRS, completed_sa_ids,
+            and the per-sa consolidate-emission loop, so the ~6785 equality
+            assertion holds. On the consolidate/render paths a sub is included
+            iff ALL its summaries exist (matches consolidate_sensitivity_datatree's
+            whole-sub skip, Gotcha 36 -> no per-sa consolidate FileNotFoundError:
+            the per-sa consolidate is a pure summary CONSUMER via
+            consolidate_to_datatree/_retrieve_combined_output, which has no
+            per-sub allow_incomplete). On the process path a sub with >=1
+            completed sim (c_run) is ALSO included so its self-healed divergent
+            events get a process rebuild rule: the FIX-2 self-heal
+            (_reconcile_stale_process_flags_against_summaries) unlinked the stale
+            d_process flag at reprocess entry (c_run present, summary absent); the
+            per-EVENT c_run filter in the per-sa loop admits those events; the
+            process-emit gate re-emits their rebuild rule; the per-sa consolidate
+            then runs with --allow-incomplete via the existing
+            had_conditional_process_emit mixed-state path. The start_with
+            disjunct is INERT on the default consolidate/render paths (which have
+            no self-heal — it is guarded on start_with == 'process')."""
+            if _sub_analysis_summaries_complete(sub, enabled_models):
+                return True
+            if start_with == "process":
+                for _evt_iloc in sub.df_sims.index:
+                    _evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(_evt_iloc))
+                    if (analysis_dir_for_pairs / sim_run_flag_per_sa(model_type, str(sa_id), _evt)).exists():
+                        return True
+            return False
+
         try:
             for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
+                if not _sub_included_for_reprocess(sa_id_pair, sub_pair):
+                    continue
                 for event_iloc in sub_pair.df_sims.index:
                     ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
                     event_id_pair = compute_event_id_slug(ev)
-                    c_run_flag_path = analysis_dir_for_pairs / sim_run_flag_per_sa(
-                        model_type, str(sa_id_pair), event_id_pair
-                    )
-                    if not c_run_flag_path.exists():
-                        continue
                     sa_event_pairs_sa.append(str(sa_id_pair))
                     sa_event_pairs_evt.append(event_id_pair)
         except Exception:
@@ -6566,21 +6687,15 @@ onerror:
         from TRITON_SWMM_toolkit.constants import (
             consolidate_subanalysis_flag,
         )
-        from TRITON_SWMM_toolkit.constants import (
-            sim_run_flag_per_sa as _sim_run_flag_per_sa,
-        )
 
-        _analysis_dir_for_consolidation_flags = self.master_analysis.analysis_paths.analysis_dir
         completed_sa_ids: list[str] = []
         for sa_id_check, sub_check in self.sensitivity_analysis.sub_analyses.items():
-            for event_iloc_check in sub_check.df_sims.index:
-                event_id_check = compute_event_id_slug(
-                    sub_check._retrieve_weather_indexer_using_integer_index(event_iloc_check)
-                )
-                c_run_flag_check = _sim_run_flag_per_sa(model_type, str(sa_id_check), event_id_check)
-                if (_analysis_dir_for_consolidation_flags / c_run_flag_check).exists():
-                    completed_sa_ids.append(str(sa_id_check))
-                    break
+            # Shared start_with-aware sub-inclusion predicate (lockstep with
+            # SA_EVENT_PAIRS and the per-sa loop) — keeps the ~6785 equality
+            # assertion true. Summary-existence on consolidate/render;
+            # + rebuildable-on-process. Replaces the prior per-event c_run scan.
+            if _sub_included_for_reprocess(sa_id_check, sub_check):
+                completed_sa_ids.append(str(sa_id_check))
         consolidation_flags = [consolidate_subanalysis_flag(sa_id) for sa_id in completed_sa_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
@@ -6643,13 +6758,24 @@ onerror:
             consolidate_subanalysis_flag,
             process_timeseries_flag_per_sa,
             sa_inputs_fingerprint_flag,
-            sim_run_flag_per_sa,
         )
 
+        # sim_run_flag_per_sa is already imported at method scope (in the
+        # SA_EVENT_PAIRS block above, for the shared _sub_included_for_reprocess
+        # closure); the per-event c_run filter below reuses that binding.
         analysis_dir = self.master_analysis.analysis_paths.analysis_dir
         subanalysis_flags: list[str] = []
 
         for sa_id, sub_analysis in self.sensitivity_analysis.sub_analyses.items():
+            # Lockstep sub-inclusion gate (same shared closure as SA_EVENT_PAIRS
+            # and completed_sa_ids) — keeps the ~6785 equality assertion true. A
+            # summary-absent sub on the consolidate/render path gets NO per-sa
+            # consolidate rule (its consolidate_to_datatree would raise
+            # FileNotFoundError — there is no per-sub allow_incomplete). The
+            # per-EVENT c_run filter below stays on c_run for process rebuild and
+            # is intentionally NOT gated here.
+            if not _sub_included_for_reprocess(sa_id, sub_analysis):
+                continue
             sa_id_rule = str(sa_id).replace(".", "_").replace("-", "_")
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml,
@@ -6775,10 +6901,17 @@ onerror:
 
 '''
 
-        # Sanity assertion: the per-sa loop's subanalysis_flags must match
-        # the up-front completed_sa_ids list — both filter on the same
-        # c_run_* flag predicate. If they diverge, the up-front filter and
-        # the per-sa loop's filter disagree, which is a generator bug.
+        # Sanity assertion: the per-sa loop's subanalysis_flags must match the
+        # up-front completed_sa_ids list — both now gate sub-inclusion on the
+        # SAME shared _sub_included_for_reprocess predicate (whole-sub summary-
+        # existence on consolidate/render; + rebuildable-on-process). Equality
+        # (NOT subset) is the correct invariant: a mismatch in EITHER direction
+        # is the workflow.py line-142 integration risk. Over-count -> the loop
+        # emits a consolidate_{sa} flag rule all does not depend on (orphan
+        # rule). Under-count -> rule all demands a consolidate_subanalysis flag
+        # the loop never emitted -> Snakemake MissingInputException at DAG build.
+        # Both lists iterate sub_analyses.items() in the same order, so the
+        # order-sensitive list == comparison is exact.
         from TRITON_SWMM_toolkit.constants import consolidate_subanalysis_flag as _cons_flag
 
         _expected_subanalysis_flags = [_cons_flag(sa_id) for sa_id in completed_sa_ids]
@@ -6787,7 +6920,9 @@ onerror:
                 "generate_reprocess_master_snakefile_content: per-sa loop's "
                 f"subanalysis_flags={subanalysis_flags!r} does not match the "
                 f"up-front completed_sa_ids derivation={_expected_subanalysis_flags!r}; "
-                "Option C generator invariant violated."
+                "shared sub-inclusion invariant violated — the per-sa consolidate-"
+                "emission gate and the completed_sa_ids gate must both call "
+                "_sub_included_for_reprocess (workflow.py line-142 integration risk)."
             )
 
         # Master consolidation — aggregates the EMITTED per-sa flags into the
