@@ -1,8 +1,8 @@
 """Standalone CLI to render the analysis report.
 
-Invoked from the master Snakefile's ``onsuccess:`` hook so that
-``analysis.run()`` produces the report automatically without requiring a
-separate ``render_report()`` call. Also usable directly from the shell.
+Invoked from ``rule render_report``'s shell command (auto-render-as-rule) so
+that the report is produced automatically as part of the workflow without
+requiring a separate ``render_report()`` call. Also usable directly from the shell.
 
 Usage:
     python -m TRITON_SWMM_toolkit.render_report_runner \\
