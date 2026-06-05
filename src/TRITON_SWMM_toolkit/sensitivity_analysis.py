@@ -684,7 +684,7 @@ class TRITONSWMM_sensitivity_analysis:
             expected.add(delete_dir / f"subanalysis_sa-{sa_id}.flag")
         return expected
 
-    def render_report(self, format: Literal["html", "zip"] = "zip") -> "Path":
+    def render_report(self, format: Literal["html", "zip"] = "zip", *, reprocess: bool = False) -> "Path":
         """Render the master report for the sensitivity analysis.
 
         Idempotent: invokes ``snakemake --report`` against the master Snakefile
@@ -701,6 +701,13 @@ class TRITONSWMM_sensitivity_analysis:
             containing the unbundled report tree (separate HTML + assets);
             no post-process surgery is applied (the zip layout differs from
             the single-file HTML).
+        reprocess : bool, default False
+            When ``True``, render against ``Snakefile.reprocess`` (the filtered
+            reprocess DAG) instead of the production ``Snakefile``, so the
+            ``snakemake --report`` step only expects the figures the reprocess
+            DAG built. Keyword-only; set by the reprocess ``render_report`` rule
+            shell. Default ``False`` keeps the production render path
+            byte-identical.
         """
         import subprocess
         import sys
@@ -708,7 +715,8 @@ class TRITONSWMM_sensitivity_analysis:
         from .exceptions import WorkflowError
 
         master_dir = self.master_analysis.analysis_paths.analysis_dir
-        snakefile = master_dir / "Snakefile"
+        snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
+        snakefile = master_dir / snakefile_name
         out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
         # Re-emit report artifacts from package resources so render_report

@@ -7014,6 +7014,7 @@ rule render_report:
         {self.python_executable} -m TRITON_SWMM_toolkit.render_report_runner \\
             {master_config_args} \\
             --format {{wildcards.format}} \\
+            --reprocess \\
             > {{log}} 2>&1
         """
 '''
