@@ -353,6 +353,7 @@ rule render_report:
         {builder.python_executable} -m TRITON_SWMM_toolkit.render_report_runner \\
             {config_args} \\
             --format {{wildcards.format}} \\
+            --reprocess \\
             > {{log}} 2>&1
         """
 '''

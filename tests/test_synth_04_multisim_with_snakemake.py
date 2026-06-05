@@ -62,6 +62,55 @@ def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis)
     )
 
 
+def _render_report_rule_block(snakefile_content: str) -> str:
+    """Extract the ``rule render_report:`` block from a generated Snakefile string.
+
+    Returns the substring from ``rule render_report:`` up to the next
+    column-0 ``rule `` (or end-of-string), so flag assertions are scoped to the
+    render_report rule's shell rather than matching anywhere in the Snakefile.
+    """
+    marker = "rule render_report:"
+    start = snakefile_content.index(marker)
+    rest = snakefile_content[start:]
+    nxt = rest.find("\nrule ", len(marker))
+    return rest if nxt == -1 else rest[:nxt]
+
+
+def test_reprocess_render_report_rule_carries_reprocess_flag(synth_multi_sim_analysis):
+    """Generation assertion (reprocess-render-report-snakefile-selection, R3/R5).
+
+    Non-sensitivity path: the REPROCESS Snakefile's ``rule render_report`` shell
+    MUST pass ``--reprocess`` to ``render_report_runner`` so ``render_report()``
+    selects ``Snakefile.reprocess``; the PRODUCTION Snakefile's ``rule
+    render_report`` shell MUST NOT (byte-identical production render path).
+    """
+    from TRITON_SWMM_toolkit.reprocess_snakefile_generator import generate_reprocess_snakefile
+
+    builder = synth_multi_sim_analysis._workflow_builder
+
+    reprocess_content = generate_reprocess_snakefile(builder, start_with="render")
+    production_content = builder.generate_snakefile_content(
+        process_system_level_inputs=True,
+        compile_TRITON_SWMM=True,
+        prepare_scenarios=True,
+        process_timeseries=True,
+    )
+
+    reprocess_block = _render_report_rule_block(reprocess_content)
+    production_block = _render_report_rule_block(production_content)
+
+    assert "render_report_runner" in reprocess_block, "reprocess render_report rule must invoke the runner"
+    assert "--reprocess" in reprocess_block, (
+        "non-sensitivity reprocess render_report shell MUST pass --reprocess so render_report() "
+        "selects Snakefile.reprocess (R3/R5)"
+    )
+    assert "render_report_runner" in production_block, "production render_report rule must invoke the runner"
+    assert "--reprocess" not in production_block, (
+        "non-sensitivity production render_report shell MUST NOT pass --reprocess "
+        "(byte-identical production render path; R3/R5)"
+    )
+
+
 def test_snakemake_workflow_config_generation(synth_multi_sim_analysis):
     """
     Test configuration passed to Snakemake.

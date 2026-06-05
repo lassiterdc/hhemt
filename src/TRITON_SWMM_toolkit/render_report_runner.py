@@ -40,6 +40,12 @@ def main():
         default="zip",
         help="Output format (default: zip).",
     )
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Render against Snakefile.reprocess instead of the production Snakefile "
+        "(set by the reprocess-generator render_report rule shells).",
+    )
     args = parser.parse_args()
 
     try:
@@ -50,9 +56,9 @@ def main():
         analysis = TRITONSWMM_analysis(args.analysis_config, system, is_main_orchestrator=False)
 
         if analysis.cfg_analysis.toggle_sensitivity_analysis:
-            out = analysis.sensitivity.render_report(format=args.format)
+            out = analysis.sensitivity.render_report(format=args.format, reprocess=args.reprocess)
         else:
-            out = analysis.render_report(format=args.format)
+            out = analysis.render_report(format=args.format, reprocess=args.reprocess)
 
         logger.info("Rendered report: %s", out)
         print(str(out))
