@@ -1960,7 +1960,7 @@ class TRITONSWMM_analysis:
             message=result_dict.get("message", ""),
         )
 
-    def render_report(self, format: "Literal['html','zip']" = "zip") -> "Path":
+    def render_report(self, format: "Literal['html','zip']" = "zip", *, reprocess: bool = False) -> "Path":
         """Render the report from already-completed workflow outputs.
 
         Idempotent: invokes ``snakemake --report`` against the existing Snakefile
@@ -1975,6 +1975,13 @@ class TRITONSWMM_analysis:
             React-bundle post-process surgery. ``"zip"`` produces
             ``analysis_report.zip`` containing the unbundled report tree;
             no post-process surgery is applied.
+        reprocess : bool, default False
+            When ``True``, render against ``Snakefile.reprocess`` (the filtered
+            reprocess DAG) instead of the production ``Snakefile``, so the
+            ``snakemake --report`` step only expects the figures the reprocess
+            DAG built. Keyword-only; set by the reprocess ``render_report`` rule
+            shell. Default ``False`` keeps the production render path
+            byte-identical.
 
         Returns
         -------
@@ -1986,7 +1993,8 @@ class TRITONSWMM_analysis:
 
         from .exceptions import WorkflowError
 
-        snakefile = self.analysis_paths.analysis_dir / "Snakefile"
+        snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
+        snakefile = self.analysis_paths.analysis_dir / snakefile_name
         out = self.analysis_paths.analysis_dir / f"analysis_report.{format}"
         css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
         # Re-emit report artifacts (report.css + workflow_description template)

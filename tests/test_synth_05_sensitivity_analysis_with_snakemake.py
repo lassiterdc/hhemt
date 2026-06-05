@@ -99,6 +99,50 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
     assert len(master_snakefile_path.read_text()) > 100
 
 
+def _render_report_rule_block(snakefile_content: str) -> str:
+    """Extract the ``rule render_report:`` block from a generated Snakefile string.
+
+    Returns the substring from ``rule render_report:`` up to the next
+    column-0 ``rule `` (or end-of-string), so flag assertions are scoped to the
+    render_report rule's shell rather than matching anywhere in the Snakefile.
+    """
+    marker = "rule render_report:"
+    start = snakefile_content.index(marker)
+    rest = snakefile_content[start:]
+    nxt = rest.find("\nrule ", len(marker))
+    return rest if nxt == -1 else rest[:nxt]
+
+
+def test_reprocess_render_report_rule_carries_reprocess_flag(synth_sensitivity_analysis):
+    """Generation assertion (reprocess-render-report-snakefile-selection, R3/R5).
+
+    The REPROCESS master Snakefile's ``rule render_report`` shell MUST pass
+    ``--reprocess`` to ``render_report_runner`` so ``render_report()`` selects
+    ``Snakefile.reprocess``; the PRODUCTION master Snakefile's ``rule
+    render_report`` shell MUST NOT (keeping the production render path
+    byte-identical). Guards against the synergy refactor silently dropping the
+    flag.
+    """
+    builder = synth_sensitivity_analysis.sensitivity._workflow_builder
+
+    reprocess_content = builder.generate_reprocess_master_snakefile_content(which="both", start_with="render")
+    production_content = builder.generate_master_snakefile_content(which="both", compression_level=5)
+
+    reprocess_block = _render_report_rule_block(reprocess_content)
+    production_block = _render_report_rule_block(production_content)
+
+    assert "render_report_runner" in reprocess_block, "reprocess render_report rule must invoke the runner"
+    assert "--reprocess" in reprocess_block, (
+        "reprocess master render_report shell MUST pass --reprocess so render_report() "
+        "selects Snakefile.reprocess (R3/R5)"
+    )
+    assert "render_report_runner" in production_block, "production render_report rule must invoke the runner"
+    assert "--reprocess" not in production_block, (
+        "production master render_report shell MUST NOT pass --reprocess "
+        "(byte-identical production render path; R3/R5)"
+    )
+
+
 def test_phase3_master_snakefile_emits_per_target_setup_rules(
     synth_sensitivity_analysis,
 ):
@@ -873,4 +917,121 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     )
     assert generated_dir not in called, (
         f"fast_rmtree was called on _generated/ in runner-subprocess mode: {called}"
+    )
+
+
+@pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems.")
+@pytest.mark.slow
+def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analysis):
+    """Behavioral regression (reprocess-render-report-snakefile-selection, R4).
+
+    Reproduces the live uva_sensitivity_suite failure: ``reprocess(start_with=
+    "render")`` over a PARTIAL-completion sensitivity suite hard-failed because
+    ``render_report()`` ran ``snakemake --report`` against the PRODUCTION
+    Snakefile (which enumerates ``report()`` targets for EVERY defined sub,
+    including a never-completed one), so the report engine's existence gate
+    (``report/__init__.py``) aborted on the first absent ``report()``-flagged
+    figure with a ``WorkflowError``. The fix routes the reprocess render to
+    ``Snakefile.reprocess`` (Gotcha 37 filters report targets to the completed
+    subset), so the report renders over exactly the completed subset.
+
+    Makes the differential real: deletes one sub's per-scenario summary (so the
+    reprocess generator's summary-existence filter EXCLUDES it from
+    ``Snakefile.reprocess``) AND its per-sim report figures under the master
+    ``plots/`` tree (so the UNFIXED production-Snakefile path would raise
+    ``WorkflowError`` on the missing figure). With the fix, ``reprocess(
+    start_with="render")`` reads ``Snakefile.reprocess``, never enumerates the
+    deleted figures, and re-renders ``analysis_report.zip`` over the completed
+    subset with no error.
+    """
+    import shutil
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+
+    _SUMMARY_ATTRS_BY_MODEL = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_summary",
+            "output_tritonswmm_node_summary",
+            "output_tritonswmm_link_summary",
+            "output_tritonswmm_performance_summary",
+        ),
+        "triton": (
+            "output_triton_only_summary",
+            "output_triton_only_performance_summary",
+        ),
+        "swmm": (
+            "output_swmm_only_node_summary",
+            "output_swmm_only_link_summary",
+        ),
+    }
+
+    analysis = synth_sensitivity_analysis
+
+    # Arrange: full local sensitivity run WITH a report config so per-sim
+    # figures + the master report are materialized for every sub.
+    analysis.run(
+        from_scratch=True,
+        execution_mode="local",
+        report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7),
+        report_formats=["zip"],
+        verbose=True,
+    )
+
+    sensitivity = analysis.sensitivity
+    sa_items = list(sensitivity.sub_analyses.items())
+    assert len(sa_items) >= 2, "test needs >=2 sub-analyses (one incomplete, one complete)"
+
+    master_dir = sensitivity.master_analysis.analysis_paths.analysis_dir
+    report_zip = master_dir / "analysis_report.zip"
+    assert report_zip.exists(), "master analysis_report.zip should exist after the full run"
+
+    incomplete_key, incomplete_sub = sa_items[0]
+    incomplete_id = str(incomplete_key)
+
+    # (a) Delete one per-scenario summary so the reprocess generator's
+    #     summary-existence filter (Gotcha 37) EXCLUDES this sub from
+    #     Snakefile.reprocess's report-target enumeration.
+    scen = TRITONSWMM_scenario(0, incomplete_sub)
+    model_type = scen.run.model_types_enabled[0]
+    summary_to_delete = None
+    for attr in _SUMMARY_ATTRS_BY_MODEL[model_type]:
+        p = getattr(scen.scen_paths, attr, None)
+        if p is not None and p.exists():
+            summary_to_delete = p
+            break
+    assert summary_to_delete is not None, f"no present summary for model_type={model_type}"
+    if summary_to_delete.is_dir():
+        shutil.rmtree(summary_to_delete)
+    else:
+        summary_to_delete.unlink()
+
+    # (b) Delete the incomplete sub's per-sim report figures so the UNFIXED
+    #     production-Snakefile render path would raise WorkflowError on the
+    #     missing report()-flagged figure. Figures live at
+    #     plots/sensitivity/per_sim/sa-{id}/{event_id}/*.{html,png}.
+    incomplete_fig_dir = master_dir / "plots" / "sensitivity" / "per_sim" / f"sa-{incomplete_id}"
+    assert incomplete_fig_dir.exists(), (
+        f"precondition: incomplete sub per-sim figures must exist after the full run: {incomplete_fig_dir}"
+    )
+    shutil.rmtree(incomplete_fig_dir)
+
+    # Act: reprocess the RENDER stage. With the fix this reads
+    # Snakefile.reprocess (completed subset only); pre-fix it read the
+    # production Snakefile and raised WorkflowError on the deleted figure.
+    reprocess_result = analysis.reprocess(
+        start_with="render",
+        execution_mode="local",
+        report_formats=["zip"],
+        verbose=True,
+    )
+
+    # Assert R4: render succeeds over the completed subset, no WorkflowError.
+    assert reprocess_result["success"], (
+        "reprocess(start_with='render') over a partial-completion suite must render the "
+        f"report over the completed subset with no WorkflowError; got "
+        f"{reprocess_result.get('message')!r}. Snakemake log: {reprocess_result.get('snakemake_logfile')}"
+    )
+    assert report_zip.exists() and report_zip.stat().st_size > 0, (
+        "master analysis_report.zip must exist after the reprocess render"
     )
