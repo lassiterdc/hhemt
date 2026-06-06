@@ -582,16 +582,16 @@ class TRITONSWMM_system:
     @staticmethod
     def _emit_libstdcpp_ld_preamble_lines() -> list:
         # Ensure conda env's libstdc++ resolves at RUNTIME for build-time tool
-        # invocations (libstdc++ ABI fix). gcc/12.4.0 module's libstdc++ maxes at
-        # GLIBCXX_3.4.30, but the conda env's libgdal/libmuparser need GLIBCXX_3.4.31+.
+        # invocations (libstdc++ ABI fix). The HPC compiler module's libstdc++ may
+        # max out below the conda env's libgdal/libmuparser requirement (GLIBCXX_3.4.31+).
         # NOTE: this LD_LIBRARY_PATH export does NOT fix the triton.exe LINK — the
         # link failure is the C++ driver's implicit -lstdc++ resolving the missing
         # `libstdc++.so` dev symlink (conda ships .so.6 only); that is handled by the
         # -l:libstdc++.so.6 linker flag in cmake_flags (see _libstdcpp_linker_flag_fragment).
         return [
             "# Ensure conda env's libstdc++ resolves at runtime for build-time tools (ABI fix)",
-            "# Required because gcc/12.4.0 module's libstdc++ maxes at GLIBCXX_3.4.30 but",
-            "# the conda env's libgdal/libmuparser need GLIBCXX_3.4.31+.",
+            "# Required because the HPC compiler module's libstdc++ may max out below",
+            "# the conda env's libgdal/libmuparser requirement (GLIBCXX_3.4.31+).",
             'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"',
             "",
         ]
