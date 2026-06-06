@@ -92,6 +92,35 @@ def _to_native_attr(value):
     return value
 
 
+def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) -> None:
+    """FIX-2b — regenerate_existing rebuild parity (restores f31a0eb's
+    unconditional per-sa d_process unlink that d5d0084 dropped).
+
+    The existence-keyed self-heal (_reconcile_stale_process_flags_against_summaries)
+    repairs a PRE-EXISTING divergence (summaries already absent at reprocess
+    entry — the regenerate_existing=False case). It is a NO-OP on the
+    regenerate_existing=True path because the per-sa summaries are still present
+    at self-heal time; the deletion that creates the divergence runs LATER
+    (_delete_processed_outputs_for_reprocess / the SLURM reprocess-delete
+    workflow). So for regenerate_existing the stale d_process flag would survive,
+    the master generator's emit gate (workflow.py:6810, `not d_process_path.exists()`)
+    would skip the rebuild rule, and consolidate would fan in against the
+    just-deleted summary -> the silent-partial / FileNotFoundError class. Unlink
+    the per-sa d_process flags unconditionally on this arm so the gate re-emits
+    the rule. The per-model LOG-clear (Gate 2, Gotcha 28) is handled by the later
+    _delete_processed_outputs_for_reprocess (scope="all"); only the flag (Gate 1)
+    is cleared here. Mirrors the non-sensitivity arm's blanket unlink at
+    analysis.py:2989.
+
+    Extracted to a free function so the fast (no-compile, no-fixture-mutation)
+    unit test exercises EXACTLY this loop against a synthetic _status/ dir without
+    entering reprocess()'s destructive body (D1 Option A).
+    """
+    for sa_id in targets:
+        for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
+            f.unlink(missing_ok=True)
+
+
 class TRITONSWMM_sensitivity_analysis:
     """
     Manages sensitivity analysis by creating and orchestrating multiple sub-analyses.
@@ -484,13 +513,58 @@ class TRITONSWMM_sensitivity_analysis:
             for sa_id in targets:
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+            # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
+            # fail-fast that converts the SILENT-partial-master-tree hazard into a
+            # clear ConfigurationError. On start_with="consolidate" the generator's
+            # _sub_included_for_reprocess (Gotcha 37) SILENTLY EXCLUDES any sub whose
+            # summaries are absent, and master consolidation's allow_incomplete=True
+            # default (Gotcha 36) then assembles the master tree over the COMPLETED
+            # subset and returns success — so a sub whose sim completed (c_run
+            # present) but whose summary was deleted is silently dropped from
+            # sensitivity_datatree.zarr with only a buried log warning. This is the
+            # symmetric analogue of the process-stage
+            # _assert_reprocess_rebuild_sources_present preflight. Fires ONLY on the
+            # divergence signature (c_run present AND summary absent) so Gotcha 36's
+            # tolerance for genuinely-never-ran subs is preserved. Read-only (no
+            # flag/mtime touch — zero rerun-trigger surface).
+            if start_with == "consolidate" and not dry_run:
+                from TRITON_SWMM_toolkit.constants import sim_run_flag_per_sa
+                from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+                from TRITON_SWMM_toolkit.workflow import _scenario_summaries_present
+
+                _enabled = self.master_analysis._get_enabled_model_types()
+                _diverged: list[str] = []
+                for sa_id in targets:
+                    sub = self.sub_analyses.get(sa_id)
+                    if sub is None:
+                        continue
+                    for _evt_iloc in sub.df_sims.index:
+                        _evt = compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(_evt_iloc))
+                        _c_run = master_analysis_dir / sim_run_flag_per_sa(_enabled[0], str(sa_id), _evt)
+                        if _c_run.exists() and not _scenario_summaries_present(sub, _evt, _enabled):
+                            _diverged.append(f"{self.sub_analyses_prefix}{sa_id}@evt-{_evt}")
+                if _diverged:
+                    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+                    raise ConfigurationError(
+                        field="start_with",
+                        message=(
+                            "reprocess(start_with='consolidate') cannot consolidate "
+                            f"{sorted(_diverged)} — the simulation completed (c_run flag "
+                            "present) but the per-scenario summary outputs are absent, so "
+                            "the master consolidation would silently drop these "
+                            "sub-analyses from sensitivity_datatree.zarr. Re-run with "
+                            "start_with='process', regenerate_existing=True to rebuild the "
+                            "missing summaries first."
+                        ),
+                    )
             # FIX 2 — divergence self-heal runs on the process path on EVERY
             # route REGARDLESS of regenerate_existing (D2). Each sub-analysis
             # reconciles its own d_process flags + per-model processing_log
             # against on-disk summary presence (D3): where a flag survives but
             # the enabled-model summary set is absent (the May-31 divergence:
             # 72 d_process flags vs 0 summary zarrs), unlink the flag + clear
-            # the log so the master generator's emit gate (workflow.py:6684)
+            # the log so the master generator's emit gate (workflow.py:6810)
             # re-emits the per-(sa,evt) process rule and _already_written
             # (Gotcha 28) lets it write. No-op for any sub whose summaries are
             # all present (healthy). Sub-analyses are full Analysis instances
@@ -505,6 +579,12 @@ class TRITONSWMM_sensitivity_analysis:
                         sa_id=sa_id, master_dir=master_analysis_dir
                     )
                     sub_analysis._assert_reprocess_rebuild_sources_present(_reconciled)
+            # FIX 2b — regenerate_existing rebuild parity (D1 Option A: logic in the
+            # extracted free function so the fast unit test exercises it without
+            # entering reprocess()'s destructive body). Gated on the
+            # regenerate_existing arm; no-op otherwise.
+            if start_with == "process" and regenerate_existing and not dry_run:
+                _unlink_dprocess_flags_for_regenerate(targets, status_dir)
             # Report+plot deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"
@@ -1019,10 +1099,34 @@ class TRITONSWMM_sensitivity_analysis:
         if fname_out is None:
             raise ValueError("sensitivity_datatree_zarr path is not configured on AnalysisPaths.")
 
-        if fname_out.exists():
+        # Per D5/R8: bare .exists() is an unreliable completion signal — a
+        # present-but-corrupt sensitivity_datatree.zarr (a write that crashed
+        # mid-stream) .exists() as True, and would be returned as a healthy
+        # result. Align with the master log's canonical signal: "already
+        # consolidated" iff it exists AND sensitivity_datatree_consolidation_complete
+        # is True (set only on a successful full write below). Present-but-incomplete
+        # falls through to a clean rebuild. This is the master-sensitivity analogue
+        # of consolidate_to_datatree's D5 log-keyed early-return; do NOT touch the
+        # read-path .exists() guard in open_sensitivity_datatree (a read-path
+        # existence check is correct).
+        self.master_analysis._refresh_log()
+        _log_complete = (
+            hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete")
+            and self.master_analysis.log.sensitivity_datatree_consolidation_complete.get() is True
+        )
+        if fname_out.exists() and _log_complete:
             if verbose:
-                print(f"Sensitivity DataTree zarr already present at {fname_out}. Not overwriting.")
+                print(f"Sensitivity DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
+        if fname_out.exists() and not _log_complete:
+            from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+            fast_rmtree(fname_out, analysis_dir=self.analysis_paths.analysis_dir)
+            if verbose:
+                print(
+                    f"Sensitivity DataTree zarr present at {fname_out} but log incomplete — "
+                    "rebuilding (treating as corrupt)."
+                )
 
         # Ensure each sub-analysis has its analysis_datatree.zarr built.
         for sa_id, sub_analysis in self.sub_analyses.items():

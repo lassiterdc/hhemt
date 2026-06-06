@@ -60,14 +60,26 @@ def write_status_flag(
     """
     flag_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1. Write the bare flag (zero-byte, Snakemake-visible).
-    fd, tmp = tempfile.mkstemp(prefix=".tmp.flag.", suffix="", dir=flag_path.parent)
-    try:
-        os.close(fd)
-        os.replace(tmp, flag_path)
-    except Exception:
-        Path(tmp).unlink(missing_ok=True)
-        raise
+    # 1. Write the bare flag (zero-byte, Snakemake-visible) — compare-and-write.
+    # The bare flag carries no payload, so its mere existence IS byte-equality:
+    # re-writing an already-present flag would only bump its mtime, firing the
+    # downstream consolidate rule's MTIME trigger on every steady-state reprocess
+    # (the Gotcha 17/29 spurious-cascade class). Skip the whole mkstemp/replace
+    # block when the flag already exists so its mtime is preserved (this also
+    # avoids leaking a `.tmp.flag.*` temp file on every no-op reprocess). A
+    # legitimate rebuild always starts from an ABSENT flag: force-rerun deletes
+    # `_status/*.flag` markers first (Gotcha 28) and missing-output reruns are
+    # trigger-independent, so the freshly-written flag gets a new mtime and the
+    # downstream cascade fires correctly. The sidecar payload (step 2) is NOT a
+    # Snakemake output and continues to be rewritten freely.
+    if not flag_path.exists():
+        fd, tmp = tempfile.mkstemp(prefix=".tmp.flag.", suffix="", dir=flag_path.parent)
+        try:
+            os.close(fd)
+            os.replace(tmp, flag_path)
+        except Exception:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
     # 2. Write the sidecar payload (decoupled mtime).
     sidecar = flag_path.with_suffix(flag_path.suffix + ".json")

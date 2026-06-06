@@ -252,6 +252,13 @@ class TRITONSWMM_analysis_post_processing:
                     f"Summary file not found: {summary_file}. "
                     f"Run timeseries processing with summary creation before consolidating."
                 )
+            # (R8) Defense-in-depth backstop. With the Phase-2 positive completion
+            # marker gating the upstream generator emit (the d_process flag is
+            # written only after all enabled-model summaries land), this raise is
+            # unreachable on the happy path. Kept because the bare .exists() here is
+            # acceptable AS A BACKSTOP once a positive DAG-enforced marker gates
+            # upstream — it converts any residual out-of-band divergence into a clear
+            # named error rather than a cryptic xr.open_dataset failure.
 
             open_kwargs = {
                 "chunks": "auto",

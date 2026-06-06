@@ -355,6 +355,48 @@ def main():
             scenario.log.refresh()
             logger.info(f"Full timeseries cleared for scenario {args.event_iloc}")
 
+        # (R6 positive completion marker) Gate the d_process flag write on THIS
+        # model's summary files actually existing on disk. The d_process flag is
+        # per-(model_type, sa_id, event_id) — each runner processes one
+        # args.model_type and writes one per-model flag — so gate on THIS model
+        # only; gating on other models' summaries would fail spuriously because
+        # each model's runner is an independent rule. This strengthens the flag's
+        # meaning from "the process stage ran" (the existing log-field checks
+        # above) to "the summaries are present on disk", making the flag/summary
+        # divergence class structurally unrepresentable: the flag can never exist
+        # while a summary is absent. The map is duplicated from
+        # analysis.py::_reconcile_stale_process_flags_against_summaries; DRYing
+        # _SUMMARY_ATTRS_BY_MODEL across its production-adjacent copies is a
+        # recorded follow-up, deliberately not folded into this fix.
+        _SUMMARY_ATTRS_BY_MODEL = {
+            "tritonswmm": (
+                "output_tritonswmm_triton_summary",
+                "output_tritonswmm_node_summary",
+                "output_tritonswmm_link_summary",
+                "output_tritonswmm_performance_summary",
+            ),
+            "triton": (
+                "output_triton_only_summary",
+                "output_triton_only_performance_summary",
+            ),
+            "swmm": (
+                "output_swmm_only_node_summary",
+                "output_swmm_only_link_summary",
+            ),
+        }
+        _missing_summaries = []
+        for _attr in _SUMMARY_ATTRS_BY_MODEL.get(args.model_type, ()):
+            _summary_path = getattr(scenario.scen_paths, _attr, None)
+            if _summary_path is not None and not _summary_path.exists():
+                _missing_summaries.append(str(_summary_path))
+        if _missing_summaries:
+            logger.error(
+                f"Refusing to write the d_process completion flag for model "
+                f"'{args.model_type}' scenario {args.event_iloc}: expected "
+                f"summary outputs are absent on disk: {_missing_summaries}"
+            )
+            return 1
+
         _emit_runner_flag(args)
         return 0
 
