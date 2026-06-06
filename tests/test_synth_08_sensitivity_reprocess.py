@@ -28,6 +28,8 @@ import pytest
 from TRITON_SWMM_toolkit import orchestrator_sentinels as osent
 from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
+pytestmark = [pytest.mark.requires_snakemake_subprocess]
+
 
 def _fake_ps_run(ps_alive):
     """``subprocess.run`` stub: ``ps -p {pid}`` exits 0 iff pid in ``ps_alive``."""
