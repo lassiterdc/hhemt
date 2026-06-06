@@ -1165,6 +1165,17 @@ class SnakemakeWorkflowBuilder:
             # tasks_per_gpu=0 suppresses --ntasks-per-gpu in the executor's gpu_job
             # branch so the mpi/--ntasks path is the sole task-count driver.
             block += ",\n        tasks_per_gpu=0"
+            # --exclusive upgrades the partial-node CPU grant to whole-node so the
+            # job's per-node core grant covers every GPU's gres.conf affinity range.
+            # Without it a gres-mode N-GPU sbatch holds only cpus_per_task*N cores and
+            # SLURM's step-side GPU-binding gate (_set_step_gres_bit_alloc, fed the
+            # job's per-node core grant) silently excludes GPUs whose topo cores lie
+            # outside that partial grant -> only N/2 of N GPUs bind (sa_36 0%-util).
+            # slurm_extra is the snakemake-executor-plugin-slurm passthrough; the bare
+            # exclusive=True resource key is NOT recognized. Empirically validated 8/8
+            # on UVA gpu-a6000 + gpu-a100-80 (Matrix C/D). See knowledge doc
+            # slurm/single_vs_per_task_gres_binding_on_shared_affinity_topology.md.
+            block += ',\n        slurm_extra="--exclusive"'
 
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":

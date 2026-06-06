@@ -34,6 +34,7 @@ def test_gres_multi_gpu_routes_through_mpi_ntasks_path(synth_multi_sim_builder):
     assert "tasks=2," in block            # one task per requested GPU (not the MPI tasks=4)
     assert "tasks_per_gpu=0" in block
     assert 'gres="gpu:a6000:2"' in block
+    assert 'slurm_extra="--exclusive"' in block
     # gres mode never emits the bare `gpu=N` resource line (gpus-mode only).
     # Match the resource LINE (newline + indent + `gpu=`) so this does not
     # collide with the `tasks_per_gpu=0` substring.
@@ -51,6 +52,7 @@ def test_single_gpu_gres_unchanged(synth_multi_sim_builder):
     assert "mpi=True" not in block
     assert "tasks_per_gpu" not in block
     assert 'gres="gpu:a6000:1"' in block
+    assert "slurm_extra" not in block
 
 
 def test_frontier_gpus_mode_unchanged(synth_multi_sim_builder):
@@ -66,6 +68,7 @@ def test_frontier_gpus_mode_unchanged(synth_multi_sim_builder):
     assert "mpi=True" not in block
     assert "tasks_per_gpu" not in block
     assert "gres=" not in block
+    assert "slurm_extra" not in block
 
 
 def test_cpu_mpi_unchanged(synth_multi_sim_builder):
@@ -76,6 +79,7 @@ def test_cpu_mpi_unchanged(synth_multi_sim_builder):
     assert "mpi=True" in block
     assert "tasks_per_gpu" not in block
     assert "gpu" not in block and "gres" not in block
+    assert "slurm_extra" not in block
 
 
 def test_cpu_non_mpi_unchanged(synth_multi_sim_builder):
@@ -85,3 +89,4 @@ def test_cpu_non_mpi_unchanged(synth_multi_sim_builder):
     assert "tasks=2," in block
     assert "mpi=True" not in block
     assert "tasks_per_gpu" not in block
+    assert "slurm_extra" not in block
