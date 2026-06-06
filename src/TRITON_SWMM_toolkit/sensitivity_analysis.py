@@ -92,6 +92,35 @@ def _to_native_attr(value):
     return value
 
 
+def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) -> None:
+    """FIX-2b — regenerate_existing rebuild parity (restores f31a0eb's
+    unconditional per-sa d_process unlink that d5d0084 dropped).
+
+    The existence-keyed self-heal (_reconcile_stale_process_flags_against_summaries)
+    repairs a PRE-EXISTING divergence (summaries already absent at reprocess
+    entry — the regenerate_existing=False case). It is a NO-OP on the
+    regenerate_existing=True path because the per-sa summaries are still present
+    at self-heal time; the deletion that creates the divergence runs LATER
+    (_delete_processed_outputs_for_reprocess / the SLURM reprocess-delete
+    workflow). So for regenerate_existing the stale d_process flag would survive,
+    the master generator's emit gate (workflow.py:6810, `not d_process_path.exists()`)
+    would skip the rebuild rule, and consolidate would fan in against the
+    just-deleted summary -> the silent-partial / FileNotFoundError class. Unlink
+    the per-sa d_process flags unconditionally on this arm so the gate re-emits
+    the rule. The per-model LOG-clear (Gate 2, Gotcha 28) is handled by the later
+    _delete_processed_outputs_for_reprocess (scope="all"); only the flag (Gate 1)
+    is cleared here. Mirrors the non-sensitivity arm's blanket unlink at
+    analysis.py:2989.
+
+    Extracted to a free function so the fast (no-compile, no-fixture-mutation)
+    unit test exercises EXACTLY this loop against a synthetic _status/ dir without
+    entering reprocess()'s destructive body (D1 Option A).
+    """
+    for sa_id in targets:
+        for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
+            f.unlink(missing_ok=True)
+
+
 class TRITONSWMM_sensitivity_analysis:
     """
     Manages sensitivity analysis by creating and orchestrating multiple sub-analyses.
@@ -505,6 +534,12 @@ class TRITONSWMM_sensitivity_analysis:
                         sa_id=sa_id, master_dir=master_analysis_dir
                     )
                     sub_analysis._assert_reprocess_rebuild_sources_present(_reconciled)
+            # FIX 2b — regenerate_existing rebuild parity (D1 Option A: logic in the
+            # extracted free function so the fast unit test exercises it without
+            # entering reprocess()'s destructive body). Gated on the
+            # regenerate_existing arm; no-op otherwise.
+            if start_with == "process" and regenerate_existing and not dry_run:
+                _unlink_dprocess_flags_for_regenerate(targets, status_dir)
             # Report+plot deletion ALWAYS runs (toggle-independent) — the report
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"

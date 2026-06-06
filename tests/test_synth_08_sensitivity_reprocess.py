@@ -257,3 +257,62 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed):
         "process-stage reprocess(regenerate_existing=True) must REBUILD the master "
         f"datatree zarr (mtime advance). target={mtime_target!r}."
     )
+
+
+def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_path):
+    """R2/R5 fast guard (no compile, no fixture mutation): the extracted FIX-2b
+    free function unlinks every per-sa d_process_* flag for the named targets and
+    leaves non-target / non-d_process flags intact. This is the seconds-scale
+    tripwire for the d5d0084 re-removal class — it exercises EXACTLY the loop that
+    commit dropped, with zero coupling to reprocess()'s destructive body (D1
+    Option A)."""
+    from TRITON_SWMM_toolkit.sensitivity_analysis import (
+        _unlink_dprocess_flags_for_regenerate,
+    )
+
+    status_dir = tmp_path / "_status"
+    status_dir.mkdir()
+    # Two target sa_ids with d_process flags, plus decoys that MUST survive.
+    (status_dir / "d_process_tritonswmm_sa-0_evt-a_complete.flag").touch()
+    (status_dir / "d_process_tritonswmm_sa-1_evt-b_complete.flag").touch()
+    (status_dir / "d_process_tritonswmm_sa-2_evt-c_complete.flag").touch()  # not a target
+    (status_dir / "c_run_tritonswmm_sa-0_evt-a_complete.flag").touch()  # not d_process
+    (status_dir / "e_consolidate_sa-0_complete.flag").touch()  # not d_process
+
+    _unlink_dprocess_flags_for_regenerate(["0", "1"], status_dir)
+
+    survivors = sorted(p.name for p in status_dir.glob("*.flag"))
+    assert survivors == [
+        "c_run_tritonswmm_sa-0_evt-a_complete.flag",
+        "d_process_tritonswmm_sa-2_evt-c_complete.flag",
+        "e_consolidate_sa-0_complete.flag",
+    ], f"free function must unlink only target d_process flags; survivors={survivors}"
+
+
+@pytest.fixture
+def synth_partial_state_analysis(synthetic_sensitivity_completed):
+    """A completed synth sensitivity analysis with ONE sub-analysis induced into
+    the summary-absent partial state (its d_process/c_run flags left intact),
+    for conditional-process-emit regression coverage (R5)."""
+    from tests.fixtures.test_case_builder import induce_incomplete_subanalysis
+
+    sa = synthetic_sensitivity_completed
+    target_sa_id = sorted(sa.sub_analyses)[0]
+    induce_incomplete_subanalysis(sa, target_sa_id, delete_master_tree=True)
+    return sa, target_sa_id
+
+
+@pytest.mark.requires_snakemake_subprocess
+def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analysis):
+    """R5 (local-Snakemake run, NOT a fast unit test — launches a real reprocess
+    subprocess; the genuinely-fast R5 guard is the monkeypatch-based unlink test
+    above): a process-stage reprocess over a partial-state sensitivity analysis
+    rebuilds the induced-incomplete sub and succeeds (the conditional process-emit
+    path fires only for the incomplete sub; complete subs are untouched)."""
+    sa, target_sa_id = synth_partial_state_analysis
+    result = sa.reprocess(start_with="process", regenerate_existing=True, execution_mode="local")
+    assert result["success"], (
+        f"conditional-emit reprocess over partial state must succeed; got {result.get('message')!r}"
+    )
+    mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
+    assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"

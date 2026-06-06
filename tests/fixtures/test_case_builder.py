@@ -459,3 +459,60 @@ class retrieve_synth_TRITON_SWMM_test_case:
             import shutil
             src = Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
             shutil.copy(src, self.system_directory / "report_config.yaml")
+
+
+def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True):
+    """Induce the flag-present / summary-absent (or summary-absent generally)
+    partial-completion state for ONE sub-analysis of a completed sensitivity
+    analysis, for reprocess regression coverage.
+
+    Deletes, for the named ``sa_id``:
+      * every per-enabled-model per-scenario summary file (the set the self-heal
+        keys on — TRITONSWMM_*_summary.zarr etc.),
+      * the sub's ``analysis_datatree.zarr``,
+      * the sub's consolidation log-success record (so completion is not
+        falsely reported),
+    and (when ``delete_master_tree``) the master ``sensitivity_datatree.zarr``
+    plus ``f_consolidate_master_complete.flag`` so the next reprocess rebuilds.
+    Leaves the sub's ``d_process_*`` and ``c_run_*`` flags INTACT — that is the
+    divergence state under test. Returns the list of deleted summary paths.
+    """
+    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from TRITON_SWMM_toolkit.utils import fast_rmtree
+
+    _SUMMARY_ATTRS_BY_MODEL = {
+        "tritonswmm": (
+            "output_tritonswmm_triton_summary",
+            "output_tritonswmm_node_summary",
+            "output_tritonswmm_link_summary",
+            "output_tritonswmm_performance_summary",
+        ),
+        "triton": ("output_triton_only_summary", "output_triton_only_performance_summary"),
+        "swmm": ("output_swmm_only_node_summary", "output_swmm_only_link_summary"),
+    }
+    sub = sensitivity.sub_analyses[sa_id]
+    deleted = []
+    enabled_models = sub._get_enabled_model_types()
+    for event_iloc in sub.df_sims.index:
+        scen = TRITONSWMM_scenario(event_iloc, sub)
+        for model_type in enabled_models:
+            for attr in _SUMMARY_ATTRS_BY_MODEL.get(model_type, ()):
+                p = getattr(scen.scen_paths, attr, None)
+                if p is not None and p.exists():
+                    fast_rmtree(p) if p.is_dir() else p.unlink()
+                    deleted.append(p)
+    sub_tree = sub.analysis_paths.analysis_datatree_zarr
+    if sub_tree is not None and sub_tree.exists():
+        fast_rmtree(sub_tree)
+    # Clear the sub's consolidation log-success so completion is not falsely
+    # reported (mirrors the self-heal's two-layer flag+log invalidation).
+    sub._refresh_log()
+    if hasattr(sub.log, "datatree_consolidation_complete"):
+        sub.log.datatree_consolidation_complete.set(False)
+    if delete_master_tree:
+        master = sensitivity.master_analysis
+        mtree = master.analysis_paths.sensitivity_datatree_zarr
+        if mtree is not None and mtree.exists():
+            fast_rmtree(mtree)
+        (master.analysis_paths.analysis_dir / "_status" / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
+    return deleted
