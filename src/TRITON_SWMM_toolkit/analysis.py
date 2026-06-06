@@ -1777,8 +1777,12 @@ class TRITONSWMM_analysis:
             )
 
         if from_scratch:
-            # remove analysis folder
-            fast_rmtree(self.cfg_analysis.analysis_dir)
+            # remove analysis folder. Use the DERIVED analysis_paths.analysis_dir
+            # (never None) — NOT the raw cfg_analysis.analysis_dir Optional field,
+            # which defaults None and made fast_rmtree(None) crash here. Every
+            # other analysis_dir reference in this module already uses the derived
+            # path; this site was the lone holdout.
+            fast_rmtree(self.analysis_paths.analysis_dir)
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
         # follow-up plan per D-EVENT-PARITY).
@@ -2485,6 +2489,7 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         dry_run: bool = False,
         prune_settled_markers: bool = True,
+        report_formats: list[Literal["html", "zip"]] | None = None,
     ) -> dict:
         """Re-run downstream stages against existing sim outputs.
 
@@ -2634,6 +2639,7 @@ class TRITONSWMM_analysis:
                 override_force_rerun=override_force_rerun,
                 verbose=verbose,
                 dry_run=dry_run,
+                report_formats=report_formats,
             )
 
         if would_clear:
@@ -3299,11 +3305,15 @@ class TRITONSWMM_analysis:
     def _assert_reprocess_rebuild_sources_present(self, reconciled: set[tuple[str, str]]) -> None:
         """Fail-fast (Option B) — for each (event_id, model_type) the process-path
         self-heal just reconciled (summary absent → flag+log cleared so the rule
-        re-emits), verify the RAW rebuild source (out_triton / out_tritonswmm /
-        out_swmm) still exists. If it is gone, the re-emitted process rule would
-        re-fail deep inside a SLURM job with an opaque FileNotFoundError; raise a
-        clear login-node ConfigurationError instead. No-op when `reconciled` is
-        empty (the healthy-analysis case)."""
+        re-emits), verify the RAW rebuild source the summary aggregation actually
+        consumes is present: for triton/tritonswmm the top-level raw dir
+        (out_triton / out_tritonswmm with its H/QX/QY/MH binaries) AND the
+        per-checkpoint ``out_{model}/performance`` subdir (R9 — a clear_raw'd-then-
+        reprocess can strip ``performance/`` while leaving the top-level dir
+        non-empty); for swmm the swmm_full_out_file. If a consumed source is gone,
+        the re-emitted process rule would re-fail deep inside a SLURM job with an
+        opaque FileNotFoundError; raise a clear login-node ConfigurationError
+        instead. No-op when `reconciled` is empty (the healthy-analysis case)."""
         if not reconciled:
             return
         from TRITON_SWMM_toolkit.exceptions import ConfigurationError
@@ -3324,7 +3334,20 @@ class TRITONSWMM_analysis:
             Directory model for triton/tritonswmm; file model for swmm."""
             if model_type in _raw_dir_attr:
                 raw_dir = getattr(scen.scen_paths, _raw_dir_attr[model_type], None)
-                return raw_dir is not None and raw_dir.exists() and any(raw_dir.iterdir())
+                if raw_dir is None or not raw_dir.exists() or not any(raw_dir.iterdir()):
+                    return False
+                # (R9) The summary aggregation consumes the per-checkpoint
+                # performance{N}.txt set under out_{model}/performance (the V0008
+                # groupby(level='Rank').diff() over the merged checkpoint set —
+                # process_simulation._export_performance_tseries ->
+                # _aggregate_perf_tseries, which raises if the performance dir is
+                # absent; see the `clear raw triton outputs deferred until last
+                # allocation` stipulation). A clear_raw'd-then-reprocess can strip
+                # performance/ while leaving the top-level raw H/QX/QY/MH dir
+                # non-empty, so check the actually-consumed subdir too — fail fast
+                # at the login node instead of deep in a SLURM rebuild.
+                perf_dir = raw_dir / "performance"
+                return perf_dir.exists() and any(perf_dir.iterdir())
             if model_type == "swmm":
                 out_file = getattr(scen.scen_paths, "swmm_full_out_file", None)
                 return out_file is not None and out_file.exists()

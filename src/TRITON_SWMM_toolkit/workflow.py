@@ -6807,6 +6807,18 @@ onerror:
                 if not c_run_path.exists():
                     # Sim never completed → exclude from DAG for this reprocess.
                     continue
+                # (R10) Architecture note — the emit gate below and the
+                # consolidate-input routing at the d_process/c_run append sites
+                # are CORRECT. The reprocess rebuild rule's correctness under
+                # --rerun-triggers comes from (i) the deleted/absent d_process
+                # output (missing-output reruns are trigger-independent) plus
+                # (ii) the downstream consolidate_sa_* consuming the d_process
+                # flag as input: — NOT from any declared dependency on the
+                # deleted summary zarr. The d5d0084 regression was an UPSTREAM
+                # stale-flag survival on the sensitivity regenerate_existing
+                # reprocess arm (fixed in sensitivity_analysis.py), NOT a defect
+                # in this gate. Do not add a summary-zarr input: here — it would
+                # break the rerun semantics.
                 if start_with == "process" and not d_process_path.exists():
                     # Conditional process emit: this (sa_id, event_id) needs
                     # process_timeseries re-fired. Build the rule and route
