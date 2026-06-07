@@ -310,3 +310,48 @@ def test_plotly_alias_rebind_rejected() -> None:
     assert any(
         "alias" in v.lower() or "go_alias" in v for v in violations
     ), f"Expected violation for non-`go` Plotly alias; got {violations}"
+
+
+# ============================================================================
+# ADR-6 Gate-B: static declared-check — reject literal-empty source_paths
+# ============================================================================
+
+
+def _emit_call_source_paths_arg(tree: ast.AST) -> list[ast.AST]:
+    """Return the source_paths argument node of each emit_plot_with_sources call.
+
+    Matches `emit_plot_with_sources(...)` called as a bare imported name; the
+    source_paths argument is the `source_paths=` keyword if present, else the
+    third positional argument.
+    """
+    args: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "emit_plot_with_sources"
+        ):
+            kw = {k.arg: k.value for k in node.keywords}
+            if "source_paths" in kw:
+                args.append(kw["source_paths"])
+            elif len(node.args) >= 3:
+                args.append(node.args[2])
+    return args
+
+
+@pytest.mark.parametrize("path", _renderer_files(), ids=lambda p: p.name)
+def test_renderer_declares_nonliteral_empty_sources(path: Path) -> None:
+    """Reject a renderer whose emit_plot_with_sources call passes a literal
+    empty list/tuple as source_paths (ADR-6 Gate-B, the static half). A
+    runtime-dynamic empty (closure returns []) is caught by the render-time
+    gate (Gate-A in _figure_emission), not here."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for arg in _emit_call_source_paths_arg(tree):
+        is_empty_literal = (
+            isinstance(arg, (ast.List, ast.Tuple)) and len(arg.elts) == 0
+        )
+        assert not is_empty_literal, (
+            f"{path.name}: emit_plot_with_sources called with a literal "
+            f"empty source_paths. Pass real sources or, for a genuinely "
+            f"source-less figure, pass allow_empty_sources=True."
+        )

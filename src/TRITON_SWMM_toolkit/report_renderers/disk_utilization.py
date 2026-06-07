@@ -72,7 +72,9 @@ def render(
                 "<p class='du-missing'>Disk utilization sentinel absent — "
                 "re-run processing to populate <code>_status/_du.json</code>.</p>"
             )
-            source_paths: list[Path] = []
+            # Declare the expected source unconditionally (ADR-6 D3): _status/_du.json
+            # is the named source even when the sentinel is absent.
+            source_paths: list[Path] = [sentinel_path]
         else:
             total = int(analysis_sentinel.get("disk_utilization_bytes", 0))
             breakdown = analysis_sentinel.get("sub_path_breakdown", {}) or {}
