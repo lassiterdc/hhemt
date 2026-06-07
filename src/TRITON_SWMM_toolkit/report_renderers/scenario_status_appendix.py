@@ -88,7 +88,11 @@ def render(
         df, report_cfg, csv_present, analysis_id, weather_event_indices
     )
 
-    source_paths: list[Path] = [csv_path] if csv_present else []
+    # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
+    # is the canonical source even when absent — _validate_source_path accepts
+    # non-existent paths, so the info-icon names the expected CSV rather than the
+    # render-time provenance gate tripping on an empty source_paths.
+    source_paths: list[Path] = [csv_path]
 
     return emit_plot_with_sources(
         html_text,

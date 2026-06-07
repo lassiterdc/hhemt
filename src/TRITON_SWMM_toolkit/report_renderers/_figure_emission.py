@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import matplotlib.pyplot as plt
 
+from TRITON_SWMM_toolkit.exceptions import ProcessingError
+
 if TYPE_CHECKING:
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog
 
@@ -144,6 +146,8 @@ def emit_plot_with_sources(
     preview_dpi: int = 100,
     manifest_data: dict[str, Any] | None = None,
     provenance: ProvenanceLog | None = None,
+    *,
+    allow_empty_sources: bool = False,
 ) -> Path:
     """Save fig to output_path with source paths embedded as figure metadata.
 
@@ -212,6 +216,23 @@ def emit_plot_with_sources(
     ``output_format: "html"``, skips preview-PNG emission (Snakemake renders
     HTML in iframes directly), and does not call ``plt.close``.
     """
+    # Provenance gate (ADR-6 Gate-A): materialize source_paths once (so a
+    # one-shot generator is neither mis-evaluated as falsy nor exhausted by
+    # the branch below) and reject an empty set unless the caller explicitly
+    # opts out for a genuinely source-less figure (pure schematic/legend).
+    source_paths = list(source_paths)
+    if not source_paths and not allow_empty_sources:
+        raise ProcessingError(
+            operation="provenance gate (ADR-6): figure declares no data sources",
+            filepath=output_path,
+            reason=(
+                "emit_plot_with_sources was called with empty source_paths. "
+                "Every figure must declare its data sources so they surface "
+                "through the report info-icon (system-design O-b / TO-1). If "
+                "this figure genuinely has no data source (pure schematic), "
+                "pass allow_empty_sources=True explicitly."
+            ),
+        )
     # Branch on figure type. The HTML-string branch writes the HTML verbatim
     # and emits a manifest sidecar; no preview-PNG sibling, no matplotlib
     # state to close. The matplotlib-Figure branch is the legacy path.

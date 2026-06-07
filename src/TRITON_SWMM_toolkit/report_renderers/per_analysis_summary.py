@@ -153,15 +153,14 @@ def render(
 
         df = pd.DataFrame(rows, columns=["Metric", "Value"])
 
-    # Source-path declarations identical to legacy matplotlib renderer. Regular
-    # multisim mode reads scenario_status.csv; sensitivity-master mode reads
-    # nothing from disk (per-sa counts come from in-memory sub_analyses).
-    source_paths: list[Path] = []
     scenario_status_csv_path = (
         Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
     )
-    if scenario_status_csv_path.exists():
-        source_paths.append(scenario_status_csv_path)
+    # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
+    # is the named source even when absent (sensitivity-master mode derives counts
+    # from in-memory sub_analyses). _validate_source_path accepts non-existent
+    # paths, so this surfaces the expected CSV rather than tripping Gate-A.
+    source_paths: list[Path] = [scenario_status_csv_path]
 
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     rel_sources = [
