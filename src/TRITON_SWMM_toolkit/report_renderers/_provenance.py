@@ -38,15 +38,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
+
+from ..config.viz_vocabulary import EncodingChannel as _Channel
 
 if TYPE_CHECKING:
     import xarray as xr
-
-
-_Channel = Literal[
-    "x", "y", "z", "color", "size", "linewidth", "alpha", "hatch", "gid", "other",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +59,7 @@ class ProvenanceRef:
 
 @dataclass(frozen=True, slots=True)
 class ChannelEntry:
-    channel: _Channel
+    channel: _Channel | str
     ref: ProvenanceRef
     encoding: dict[str, Any] = field(default_factory=dict)
 
@@ -110,17 +107,15 @@ class _ArtistBuilder:
 
     def add_channel(
         self,
-        channel: _Channel,
+        channel: _Channel | str,
         ref: ProvenanceRef,
         **encoding: Any,
     ) -> None:
-        self._record.channels.append(
-            ChannelEntry(channel=channel, ref=ref, encoding=dict(encoding))
-        )
+        self._record.channels.append(ChannelEntry(channel=channel, ref=ref, encoding=dict(encoding)))
 
     def add_xarray_channel(
         self,
-        channel: _Channel,
+        channel: _Channel | str,
         da: xr.DataArray,
         *,
         selection: dict[str, Any] | None = None,
@@ -145,7 +140,7 @@ class _ArtistBuilder:
 
     def add_swmm_channel(
         self,
-        channel: _Channel,
+        channel: _Channel | str,
         *,
         swmm_inp: Path | str,
         kind: str,
