@@ -25,6 +25,15 @@ import yaml  # type: ignore
 
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
+from TRITON_SWMM_toolkit.report_plot_ids import (
+    _OUTPUT_EXT_BY_RENDERER,
+)
+from TRITON_SWMM_toolkit.report_plot_ids import (
+    output_ext_for as _output_ext_for,
+)
+from TRITON_SWMM_toolkit.report_plot_ids import (
+    plot_output_template as _plot_output_template,
+)
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
 from TRITON_SWMM_toolkit.utils import fast_rmtree
 
@@ -201,36 +210,13 @@ class RuleSpec:
     additional_inputs: tuple[str, ...] = ()
 
 
-_OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
-    # Plotly chart-renderer outputs are interactive HTML emitted via pio.to_html;
-    # extension must be .html so Snakemake's report engine sets mime_type=text/html
-    # and dispatches each figure via <iframe> (which loads HTML correctly under
-    # both HTTP and file:// double-click). A .svg extension here triggers
-    # mime_type=image/svg+xml and an <img> dispatch that fails to parse HTML.
-    "system_overview": {"matplotlib": ".png", "plotly": ".html"},
-    "per_sim_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
-    "per_sim_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
-    "per_sim_per_sa_peak_flood_depth": {"matplotlib": ".png", "plotly": ".html"},
-    "per_sim_per_sa_conduit_flow": {"matplotlib": ".png", "plotly": ".html"},
-    "sensitivity_benchmarking": {"matplotlib": ".png", "plotly": ".html"},
-    "per_analysis_summary": {"matplotlib": ".html", "plotly": ".html"},
-    "scenario_status_appendix": {"matplotlib": ".html", "plotly": ".html"},
-    "errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
-    # Disk utilization is a table renderer — emits HTML unconditionally
-    # (no matplotlib raster branch). Matches per_analysis_summary /
-    # scenario_status_appendix / errors_and_warnings.
-    "disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
-}
-
-
-def _output_ext_for(static_backend: Literal["matplotlib", "plotly"], renderer_module: str) -> str:
-    """Return the output extension for a renderer under the given static backend.
-
-    See VMS-5 in the Phase 2 plan doc. Three-place output_ext coupling:
-    rule output path, rule report() first arg, and rule_all / render_report
-    input lists must all use this same extension.
-    """
-    return _OUTPUT_EXT_BY_RENDERER[renderer_module][static_backend]
+# ADR-2 (reporting-system_canonical-plot-id): _OUTPUT_EXT_BY_RENDERER, the
+# canonical-plot-ID grammar (_plot_output_template), and _output_ext_for are the
+# single source of truth for figure stems, lifted into the dedicated
+# `report_plot_ids` module (the layout-relevant artifact; see
+# _layout_relevant_files.yaml) and imported at module top. They remain
+# accessible as workflow.* names so the bundle/reprocess generators' existing
+# `from TRITON_SWMM_toolkit.workflow import _output_ext_for` keeps working.
 
 
 def _resolve_rule_all_extensions(
@@ -314,6 +300,18 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     # and --output. Each emitted on its own indented continuation line.
     extra_flags_block = "".join(f"            {flag} \\\n" for flag in spec.extra_cli_flags)
 
+    # ADR-2 OE-2: constrain each output wildcard to the enforced charset
+    # ^[A-Za-z0-9_.]+$ so the "." within-segment separator of a canonical plot
+    # ID can never be mis-inferred as a greedy multi-segment wildcard match if
+    # two figures ever share a directory. Derived from spec.wildcards (empty for
+    # the singleton no-wildcard rules). Mirrors render_report's
+    # `wildcard_constraints: format="zip|html"`.
+    if spec.wildcards:
+        _wc_lines = "\n".join(f'        {w}="[A-Za-z0-9_.]+",' for w in spec.wildcards)
+        wildcard_constraints_block = f"    wildcard_constraints:\n{_wc_lines}\n"
+    else:
+        wildcard_constraints_block = ""
+
     # Plot-rule shell uses literal "python" (the rule's conda: env
     # provides the interpreter); only setup / run / process / consolidate
     # / render_report rules use ctx.python_executable's full path.
@@ -322,7 +320,7 @@ rule {spec.rule_name}:
     {input_block}
     output:
         {output_block}
-    params:
+{wildcard_constraints_block}    params:
 {params_block}
     log: "{spec.log_path_template}"
     conda: "{ctx.conda_env_path}"
@@ -1680,6 +1678,22 @@ rule consolidate_scenario:
         # inputs MUST match or Snakemake's DAG planner cannot resolve the wildcards.
         _ext = _resolve_rule_all_extensions(self._get_report_cfg_static_backend())
 
+        # ADR-2 (OE-1 anti-drift): the rule_all + render_report input stems for
+        # the per-sim figures derive from the SAME single-source helper as the
+        # rule OUTPUTS, so a future stem-grammar change in report_plot_ids cannot
+        # desync inputs from outputs (-> MissingInputException / Gotcha 37/39).
+        # {event_id} stays a literal Snakemake wildcard for the emitted expand().
+        _pfd_per_sim = _plot_output_template(
+            renderer_kind="peak_flood_depth",
+            subdir="plots/per_sim/{event_id}",
+            event_id="{event_id}",
+        ).replace("__OUTPUT_EXT__", _ext["per_sim_peak_flood_depth"])
+        _cf_per_sim = _plot_output_template(
+            renderer_kind="conduit_flow",
+            subdir="plots/per_sim/{event_id}",
+            event_id="{event_id}",
+        ).replace("__OUTPUT_EXT__", _ext["per_sim_conduit_flow"])
+
         _formats = report_formats if report_formats is not None else ["zip"]
         render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
@@ -1714,8 +1728,8 @@ rule all:
         "scenario_status.csv",
         "workflow_summary.md",
         "plots/system_overview{_ext["system_overview"]}",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        expand("{_pfd_per_sim}", event_id=SIM_IDS),
+        expand("{_cf_per_sim}", event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
@@ -1967,8 +1981,8 @@ rule run_{model_type}:
 rule render_report:
     input:
         "plots/system_overview{_ext["system_overview"]}",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        expand("{_pfd_per_sim}", event_id=SIM_IDS),
+        expand("{_cf_per_sim}", event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
@@ -2359,7 +2373,11 @@ def _per_sim_conduit_flow_sources(wildcards):
             rule_name="plot_per_sim_peak_flood_depth",
             renderer_module="per_sim_peak_flood_depth",
             input_flags=("_status/e_consolidate_complete.flag",),
-            output_path_template="plots/per_sim/{event_id}/peak_flood_depth__OUTPUT_EXT__",
+            output_path_template=_plot_output_template(
+                renderer_kind="peak_flood_depth",
+                subdir="plots/per_sim/{event_id}",
+                event_id="{event_id}",
+            ),
             source_paths=(),
             wildcards=("event_id",),
             extra_cli_flags=("--event-iloc {params.event_iloc}",),
@@ -2377,7 +2395,11 @@ def _per_sim_conduit_flow_sources(wildcards):
             rule_name="plot_per_sim_conduit_flow",
             renderer_module="per_sim_conduit_flow",
             input_flags=("_status/e_consolidate_complete.flag",),
-            output_path_template="plots/per_sim/{event_id}/conduit_flow__OUTPUT_EXT__",
+            output_path_template=_plot_output_template(
+                renderer_kind="conduit_flow",
+                subdir="plots/per_sim/{event_id}",
+                event_id="{event_id}",
+            ),
             source_paths=(),
             wildcards=("event_id",),
             extra_cli_flags=("--event-iloc {params.event_iloc}",),
@@ -6036,20 +6058,36 @@ onerror:
         if sa_event_pairs_sa:
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
+            # ADR-2 OE-1: per-sa input stems derive from the single-source helper
+            # so a future stem-grammar change cannot desync them from the outputs.
+            _pfd_sa = _plot_output_template(
+                renderer_kind="peak_flood_depth",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ).replace("__OUTPUT_EXT__", _e_pfd)
+            _cf_sa = _plot_output_template(
+                renderer_kind="conduit_flow",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ).replace("__OUTPUT_EXT__", _e_cf)
             rule_all_inputs.append(
-                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/peak_flood_depth{_e_pfd}", '
-                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+                f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
             rule_all_inputs.append(
-                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/conduit_flow{_e_cf}", '
-                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+                f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
         if _independent_vars:
             _e_bench = _ext["sensitivity_benchmarking"]
-            rule_all_inputs.append(
-                f'expand("plots/sensitivity/benchmarking/{{independent_var}}_vs_total{_e_bench}", '
-                f"independent_var={_independent_vars!r})"
-            )
+            # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
+            # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
+            _bench_path = _plot_output_template(
+                renderer_kind="benchmarking",
+                subdir="plots/sensitivity/benchmarking",
+                descriptor="{independent_var}.vs.total",
+            ).replace("__OUTPUT_EXT__", _e_bench)
+            rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
         # planner re-fires the render whenever any plot output is newer than
@@ -6720,20 +6758,36 @@ onerror:
         if sa_event_pairs_sa:
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
+            # ADR-2 OE-1: per-sa input stems derive from the single-source helper
+            # so a future stem-grammar change cannot desync them from the outputs.
+            _pfd_sa = _plot_output_template(
+                renderer_kind="peak_flood_depth",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ).replace("__OUTPUT_EXT__", _e_pfd)
+            _cf_sa = _plot_output_template(
+                renderer_kind="conduit_flow",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ).replace("__OUTPUT_EXT__", _e_cf)
             rule_all_inputs.append(
-                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/peak_flood_depth{_e_pfd}", '
-                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+                f'expand("{_pfd_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
             rule_all_inputs.append(
-                f'expand("plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/conduit_flow{_e_cf}", '
-                "zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)"
+                f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
         if _independent_vars:
             _e_bench = _ext["sensitivity_benchmarking"]
-            rule_all_inputs.append(
-                f'expand("plots/sensitivity/benchmarking/{{independent_var}}_vs_total{_e_bench}", '
-                f"independent_var={_independent_vars!r})"
-            )
+            # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
+            # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
+            _bench_path = _plot_output_template(
+                renderer_kind="benchmarking",
+                subdir="plots/sensitivity/benchmarking",
+                descriptor="{independent_var}.vs.total",
+            ).replace("__OUTPUT_EXT__", _e_bench)
+            rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
             rule_all_inputs.append(f'"analysis_report.{_fmt}"')
@@ -7092,7 +7146,11 @@ def _sensitivity_source_paths(wildcards):
             rule_name="plot_sensitivity_benchmarking",
             renderer_module="sensitivity_benchmarking",
             input_flags=("_status/f_consolidate_master_complete.flag",),
-            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total__OUTPUT_EXT__",
+            output_path_template=_plot_output_template(
+                renderer_kind="benchmarking",
+                subdir="plots/sensitivity/benchmarking",
+                descriptor="{independent_var}.vs.total",
+            ),
             source_paths=(),
             wildcards=("independent_var",),
             extra_cli_flags=("--independent-var {wildcards.independent_var}",),
@@ -7176,7 +7234,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             rule_name="plot_per_sim_per_sa_peak_flood_depth",
             renderer_module="per_sim_per_sa_peak_flood_depth",
             input_flags=("_status/f_consolidate_master_complete.flag",),
-            output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__OUTPUT_EXT__",
+            output_path_template=_plot_output_template(
+                renderer_kind="peak_flood_depth",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ),
             source_paths=(),
             wildcards=("sa_id", "event_id"),
             extra_cli_flags=(
@@ -7204,7 +7267,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             rule_name="plot_per_sim_per_sa_conduit_flow",
             renderer_module="per_sim_per_sa_conduit_flow",
             input_flags=("_status/f_consolidate_master_complete.flag",),
-            output_path_template="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__OUTPUT_EXT__",
+            output_path_template=_plot_output_template(
+                renderer_kind="conduit_flow",
+                subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                sa_id="{sa_id}",
+                event_id="{event_id}",
+            ),
             source_paths=(),
             wildcards=("sa_id", "event_id"),
             extra_cli_flags=(
