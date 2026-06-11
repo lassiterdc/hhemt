@@ -28,6 +28,7 @@ from typing import Literal
 
 import yaml
 
+from TRITON_SWMM_toolkit.report_plot_ids import plot_output_template as _plot_output_template
 from TRITON_SWMM_toolkit.workflow import (
     RuleEmissionContext,
     RuleSpec,
@@ -37,12 +38,7 @@ from TRITON_SWMM_toolkit.workflow import (
     _output_ext_for,
 )
 
-
-_RENDER_REPORT_RESOURCES_YAML = (
-    "        mem_mb=2000,\n"
-    "        time_min=30,\n"
-    "        cpus_per_task=1,"
-)
+_RENDER_REPORT_RESOURCES_YAML = "        mem_mb=2000,\n        time_min=30,\n        cpus_per_task=1,"
 
 
 def generate_regeneration_snakefile(
@@ -66,17 +62,13 @@ def generate_regeneration_snakefile(
         cfg_analysis=cfg_analysis,
     )
     preamble = _build_preamble()
-    config_block = _build_config_block(
-        cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity
-    )
+    config_block = _build_config_block(cfg_analysis=cfg_analysis, is_sensitivity=is_sensitivity)
     report_directive = 'report: "report/workflow_description.rst"\n'
 
     plot_output_paths = tuple(
         f'"{p}"'
         for spec in rule_specs
-        for p in _expand_wildcards_to_existing_files(
-            _resolve_output_path(spec, ctx), bundle_root
-        )
+        for p in _expand_wildcards_to_existing_files(_resolve_output_path(spec, ctx), bundle_root)
     )
     render_report_targets = ('"analysis_report.html"', '"analysis_report.zip"')
     status_flags = _status_flags_for(is_sensitivity, cfg_analysis)
@@ -94,14 +86,16 @@ def generate_regeneration_snakefile(
         resources_yaml=_RENDER_REPORT_RESOURCES_YAML,
     )
 
-    return "\n".join([
-        preamble,
-        config_block,
-        report_directive,
-        rule_all_block,
-        plot_rule_blocks,
-        render_report_block,
-    ])
+    return "\n".join(
+        [
+            preamble,
+            config_block,
+            report_directive,
+            rule_all_block,
+            plot_rule_blocks,
+            render_report_block,
+        ]
+    )
 
 
 def write_regeneration_snakefile(
@@ -136,10 +130,7 @@ def _make_rule_emission_context(
         python_executable="python",
         log_dir_rel="_logs",
         conda_env_path="",
-        config_args_str=(
-            "--system-config cfg_system.yaml \\\n"
-            "            --analysis-config cfg_analysis.yaml"
-        ),
+        config_args_str=("--system-config cfg_system.yaml \\\n            --analysis-config cfg_analysis.yaml"),
         is_sensitivity=is_sensitivity,
         static_backend=static_backend,
     )
@@ -167,23 +158,25 @@ def _harvest_rule_specs(
     # system_overview (always emitted; source_paths from manifest sidecar if present)
     so_sidecar = plots_dir / "system_overview.manifest.json"
     so_sources = _load_source_paths(so_sidecar)
-    specs.append(RuleSpec(
-        rule_name="plot_system_overview",
-        renderer_module="system_overview",
-        input_flags=(),  # bundle-side regen-only: no status flag input
-        output_path_template="plots/system_overview__OUTPUT_EXT__",
-        source_paths=tuple(so_sources),
-        wildcards=(),
-        extra_cli_flags=(),
-        extra_params=(),
-        report_kwargs={
-            "caption": "report/captions/system_map.rst",
-            "category": "System Information",
-            "labels": '{"figure": "System map"}',
-        },
-        resources_yaml="mem_mb=2000, time_min=10",
-        log_path_template="_logs/plots/system_overview.log",
-    ))
+    specs.append(
+        RuleSpec(
+            rule_name="plot_system_overview",
+            renderer_module="system_overview",
+            input_flags=(),  # bundle-side regen-only: no status flag input
+            output_path_template="plots/system_overview__OUTPUT_EXT__",
+            source_paths=tuple(so_sources),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/system_map.rst",
+                "category": "System Information",
+                "labels": '{"figure": "System map"}',
+            },
+            resources_yaml="mem_mb=2000, time_min=10",
+            log_path_template="_logs/plots/system_overview.log",
+        )
+    )
 
     # per_sim rules (wildcarded on event_id). Regen-mode: plot files
     # already exist in the bundle; the rules exist only as metadata for
@@ -195,48 +188,53 @@ def _harvest_rule_specs(
             ("per_sim_peak_flood_depth", "peak_flood_depth"),
             ("per_sim_conduit_flow", "conduit_flow"),
         ]:
-            specs.append(RuleSpec(
-                rule_name=f"plot_{renderer}",
-                renderer_module=renderer,
-                input_flags=(),
-                output_path_template=f"plots/per_sim/{{event_id}}/{figname}__OUTPUT_EXT__",
-                source_paths=(),
-                wildcards=("event_id",),
-                extra_cli_flags=(),
-                extra_params=(),
-                report_kwargs={
-                    "caption": f"report/captions/per_sim_{figname}.rst",
-                    "category": "Per Simulation Results",
-                    "labels": (
-                        '{"event_id": "{event_id}", "figure": "'
-                        + figname.replace("_", " ").title() + '"}'
+            specs.append(
+                RuleSpec(
+                    rule_name=f"plot_{renderer}",
+                    renderer_module=renderer,
+                    input_flags=(),
+                    output_path_template=_plot_output_template(
+                        renderer_kind=figname,
+                        subdir="plots/per_sim/{event_id}",
+                        event_id="{event_id}",
                     ),
-                },
-                resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template=f"_logs/plots/per_sim_{figname}_{{event_id}}.log",
-            ))
+                    source_paths=(),
+                    wildcards=("event_id",),
+                    extra_cli_flags=(),
+                    extra_params=(),
+                    report_kwargs={
+                        "caption": f"report/captions/per_sim_{figname}.rst",
+                        "category": "Per Simulation Results",
+                        "labels": ('{"event_id": "{event_id}", "figure": "' + figname.replace("_", " ").title() + '"}'),
+                    },
+                    resources_yaml="mem_mb=4000, time_min=15",
+                    log_path_template=f"_logs/plots/per_sim_{figname}_{{event_id}}.log",
+                )
+            )
 
     # per_analysis_summary (always emitted)
     pa_sidecar = plots_dir / "per_analysis" / "summary_table.manifest.json"
     pa_sources = _load_source_paths(pa_sidecar)
-    specs.append(RuleSpec(
-        rule_name="plot_per_analysis_summary_table",
-        renderer_module="per_analysis_summary",
-        input_flags=(),
-        output_path_template="plots/per_analysis/summary_table__OUTPUT_EXT__",
-        source_paths=tuple(pa_sources),
-        wildcards=(),
-        extra_cli_flags=(),
-        extra_params=(),
-        report_kwargs={
-            "caption": "report/captions/per_analysis_summary_table.rst",
-            "category": "Workflow Status",
-            "subcategory": "Workflow Health Summary",
-            "labels": '{"figure": "Summary table"}',
-        },
-        resources_yaml="mem_mb=2000, time_min=5",
-        log_path_template="_logs/plots/per_analysis_summary_table.log",
-    ))
+    specs.append(
+        RuleSpec(
+            rule_name="plot_per_analysis_summary_table",
+            renderer_module="per_analysis_summary",
+            input_flags=(),
+            output_path_template="plots/per_analysis/summary_table__OUTPUT_EXT__",
+            source_paths=tuple(pa_sources),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/per_analysis_summary_table.rst",
+                "category": "Workflow Status",
+                "subcategory": "Workflow Health Summary",
+                "labels": '{"figure": "Summary table"}',
+            },
+            resources_yaml="mem_mb=2000, time_min=5",
+            log_path_template="_logs/plots/per_analysis_summary_table.log",
+        )
+    )
 
     # scenario_status_appendix and errors_and_warnings: always emitted per
     # Notes item 5 fallback option (source_paths=() when sidecar missing).
@@ -256,73 +254,85 @@ def _harvest_rule_specs(
     ]:
         sidecar = plots_dir / (output_subpath + ".manifest.json")
         sources = _load_source_paths(sidecar) if sidecar.exists() else []
-        specs.append(RuleSpec(
-            rule_name=f"plot_{renderer}",
-            renderer_module=renderer,
-            input_flags=(),
-            output_path_template=f"{output_subpath}__OUTPUT_EXT__",
-            source_paths=tuple(sources),
-            wildcards=(),
-            extra_cli_flags=(),
-            extra_params=(),
-            report_kwargs={
-                "caption": f"report/captions/{renderer}.rst",
-                **category_kwargs,
-                "labels": f'{{"figure": "{fig_label}"}}',
-            },
-            resources_yaml="mem_mb=1000, time_min=5",
-            log_path_template=f"_logs/plots/{renderer}.log",
-        ))
+        specs.append(
+            RuleSpec(
+                rule_name=f"plot_{renderer}",
+                renderer_module=renderer,
+                input_flags=(),
+                output_path_template=f"{output_subpath}__OUTPUT_EXT__",
+                source_paths=tuple(sources),
+                wildcards=(),
+                extra_cli_flags=(),
+                extra_params=(),
+                report_kwargs={
+                    "caption": f"report/captions/{renderer}.rst",
+                    **category_kwargs,
+                    "labels": f'{{"figure": "{fig_label}"}}',
+                },
+                resources_yaml="mem_mb=1000, time_min=5",
+                log_path_template=f"_logs/plots/{renderer}.log",
+            )
+        )
 
     # Sensitivity-master additional rules (stub-shaped — see per_sim
     # rationale: plots exist on disk, rules are metadata only).
     if is_sensitivity:
-        specs.append(RuleSpec(
-            rule_name="plot_sensitivity_benchmarking",
-            renderer_module="sensitivity_benchmarking",
-            input_flags=(),
-            output_path_template="plots/sensitivity/benchmarking/{independent_var}_vs_total__OUTPUT_EXT__",
-            source_paths=(),
-            wildcards=("independent_var",),
-            extra_cli_flags=(),
-            extra_params=(),
-            report_kwargs={
-                "caption": "report/captions/sensitivity_benchmarking.rst",
-                "category": "Key Results",
-                "subcategory": "Benchmarking",
-                "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"}',
-            },
-            resources_yaml="mem_mb=4000, time_min=10",
-            log_path_template="_logs/plots/sensitivity_benchmarking_{independent_var}.log",
-        ))
+        specs.append(
+            RuleSpec(
+                rule_name="plot_sensitivity_benchmarking",
+                renderer_module="sensitivity_benchmarking",
+                input_flags=(),
+                output_path_template=_plot_output_template(
+                    renderer_kind="benchmarking",
+                    subdir="plots/sensitivity/benchmarking",
+                    descriptor="{independent_var}.vs.total",
+                ),
+                source_paths=(),
+                wildcards=("independent_var",),
+                extra_cli_flags=(),
+                extra_params=(),
+                report_kwargs={
+                    "caption": "report/captions/sensitivity_benchmarking.rst",
+                    "category": "Key Results",
+                    "subcategory": "Benchmarking",
+                    "labels": '{"independent_var": "{independent_var}", "figure": "vs Total runtime"}',
+                },
+                resources_yaml="mem_mb=4000, time_min=10",
+                log_path_template="_logs/plots/sensitivity_benchmarking_{independent_var}.log",
+            )
+        )
         for renderer_local, figname in [
             ("per_sim_per_sa_peak_flood_depth", "peak_flood_depth"),
             ("per_sim_per_sa_conduit_flow", "conduit_flow"),
         ]:
-            specs.append(RuleSpec(
-                rule_name=f"plot_{renderer_local}",
-                renderer_module=renderer_local,
-                input_flags=(),
-                output_path_template=(
-                    f"plots/sensitivity/per_sim/sa-{{sa_id}}/{{event_id}}/{figname}__OUTPUT_EXT__"
-                ),
-                source_paths=(),
-                wildcards=("sa_id", "event_id"),
-                extra_cli_flags=(),
-                extra_params=(),
-                report_kwargs={
-                    "caption": f"report/captions/per_sim_{figname}.rst",
-                    "category": "Per Simulation Results",
-                    "labels": (
-                        '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "'
-                        + figname.replace("_", " ").title() + '"}'
+            specs.append(
+                RuleSpec(
+                    rule_name=f"plot_{renderer_local}",
+                    renderer_module=renderer_local,
+                    input_flags=(),
+                    output_path_template=_plot_output_template(
+                        renderer_kind=figname,
+                        subdir="plots/sensitivity/per_sim/sa-{sa_id}/{event_id}",
+                        sa_id="{sa_id}",
+                        event_id="{event_id}",
                     ),
-                },
-                resources_yaml="mem_mb=4000, time_min=15",
-                log_path_template=(
-                    f"_logs/plots/per_sim_per_sa_{figname}_sa-{{sa_id}}_{{event_id}}.log"
-                ),
-            ))
+                    source_paths=(),
+                    wildcards=("sa_id", "event_id"),
+                    extra_cli_flags=(),
+                    extra_params=(),
+                    report_kwargs={
+                        "caption": f"report/captions/per_sim_{figname}.rst",
+                        "category": "Per Simulation Results",
+                        "labels": (
+                            '{"sa_id": "{sa_id}", "event_id": "{event_id}", "figure": "'
+                            + figname.replace("_", " ").title()
+                            + '"}'
+                        ),
+                    },
+                    resources_yaml="mem_mb=4000, time_min=15",
+                    log_path_template=(f"_logs/plots/per_sim_per_sa_{figname}_sa-{{sa_id}}_{{event_id}}.log"),
+                )
+            )
 
     return tuple(specs)
 
@@ -353,7 +363,7 @@ def _build_preamble() -> str:
         "format_sources_rst as _fmt_sources_rst\n"
         "\n"
         "try:\n"
-        '    from importlib.metadata import version as _pkg_version\n'
+        "    from importlib.metadata import version as _pkg_version\n"
         '    _toolkit_version = _pkg_version("TRITON_SWMM_toolkit")\n'
         "except Exception:\n"
         '    _toolkit_version = "unknown"\n'
@@ -424,10 +434,7 @@ def _expand_wildcards_to_existing_files(template: str, bundle_root: Path) -> tup
     sidecars = sorted(bundle_root.glob(manifest_glob))
     if not sidecars:
         return (template,)
-    return tuple(
-        str(s.relative_to(bundle_root)).removesuffix(".manifest.json") + ext
-        for s in sidecars
-    )
+    return tuple(str(s.relative_to(bundle_root)).removesuffix(".manifest.json") + ext for s in sidecars)
 
 
 def _status_flags_for(is_sensitivity: bool, cfg_analysis: dict) -> tuple[str, ...]:

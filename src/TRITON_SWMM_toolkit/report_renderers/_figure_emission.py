@@ -127,10 +127,13 @@ def add_panel_label(ax, label: str) -> None:
     figure's specific data-extent.
     """
     ax.text(
-        -0.02, 1.05, label,
+        -0.02,
+        1.05,
+        label,
         transform=ax.transAxes,
         fontsize=11,
-        va="bottom", ha="right",
+        va="bottom",
+        ha="right",
         zorder=10,
         clip_on=False,
     )
@@ -323,6 +326,11 @@ def _emit_manifest_sidecar(output_path: Path, manifest_payload: dict[str, Any]) 
     formatting conventions in a single place.
     """
     manifest_path = output_path.parent / f"{output_path.stem}.manifest.json"
+    # ADR-2: the canonical plot ID IS the figure-output stem; stamp it as a
+    # first-class manifest field so the report info-icon displays it and
+    # per-plot static configs key on it. Equal to the stem by construction, so
+    # harvest_source_paths' stem-keying and the manifest field never drift.
+    manifest_payload.setdefault("plot_id", output_path.stem)
     manifest_path.write_text(
         json.dumps(manifest_payload, indent=2, default=str),
         encoding="utf-8",
@@ -354,9 +362,7 @@ def _emit_html_with_sources(
     analysis_root = str(analysis_dir.resolve())
     for _p in source_paths:
         _validate_source_path(_p, analysis_dir=analysis_dir)
-    rel_sources = [
-        os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths
-    ]
+    rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
     manifest_payload: dict[str, Any] = {
@@ -446,26 +452,28 @@ def collect_per_sim_source_paths(
             },
             {
                 "path": master_weather,
-                "variables": ["time", rainfall_datavar] + (
-                    [storm_tide_datavar] if storm_tide_datavar else []
-                ),
+                "variables": ["time", rainfall_datavar] + ([storm_tide_datavar] if storm_tide_datavar else []),
             },
         ]
         if dem_rel_path:
             # No sub-bullets: the DEM is read as a single raster (no indexer
             # enumeration); descriptive prose belongs in the caption body, not
             # under the source bullet.
-            sources.append({
-                "path": dem_rel_path,
-                "variables": [],
-            })
+            sources.append(
+                {
+                    "path": dem_rel_path,
+                    "variables": [],
+                }
+            )
         if watershed_rel_path:
             # No sub-bullets: the polygon is a single shape used for masking +
             # boundary overlay; no enumerable indexers.
-            sources.append({
-                "path": watershed_rel_path,
-                "variables": [],
-            })
+            sources.append(
+                {
+                    "path": watershed_rel_path,
+                    "variables": [],
+                }
+            )
         return sources
     if renderer_kind == "conduit_flow":
         sources = [
@@ -479,9 +487,7 @@ def collect_per_sim_source_paths(
             },
             {
                 "path": master_weather,
-                "variables": ["time", rainfall_datavar] + (
-                    [storm_tide_datavar] if storm_tide_datavar else []
-                ),
+                "variables": ["time", rainfall_datavar] + ([storm_tide_datavar] if storm_tide_datavar else []),
             },
         ]
         if dem_rel_path:
@@ -489,9 +495,7 @@ def collect_per_sim_source_paths(
         if watershed_rel_path:
             sources.append({"path": watershed_rel_path, "variables": []})
         return sources
-    raise ValueError(
-        f"unknown renderer_kind {renderer_kind!r}; expected 'peak_flood_depth' or 'conduit_flow'"
-    )
+    raise ValueError(f"unknown renderer_kind {renderer_kind!r}; expected 'peak_flood_depth' or 'conduit_flow'")
 
 
 def collect_sensitivity_source_paths(
@@ -539,16 +543,16 @@ def collect_sensitivity_source_paths(
     # `/sa_{id}/tritonswmm/performance.Total` is unavailable (SWMM-only mode
     # has no TRITON-SWMM coupled tree branch).
     for rpt_rel in swmm_only_rpt_rel_paths or []:
-        sources.append({
-            "path": rpt_rel,
-            "variables": ["Total elapsed time (parsed via parse_total_elapsed)"],
-        })
+        sources.append(
+            {
+                "path": rpt_rel,
+                "variables": ["Total elapsed time (parsed via parse_total_elapsed)"],
+            }
+        )
     return sources
 
 
-def harvest_source_paths(
-    plots_dir: Path, analysis_dir: Path
-) -> dict[str, list[Path]]:
+def harvest_source_paths(plots_dir: Path, analysis_dir: Path) -> dict[str, list[Path]]:
     """Walk ``*.manifest.json`` sidecars under ``plots_dir``; return source
     paths keyed by output figure stem.
 
@@ -593,7 +597,7 @@ def harvest_source_paths(
             and rel_parts[1] == "per_sim"
             and rel_parts[2].startswith("sa-")
         ):
-            sa_wildcard = rel_parts[2][len("sa-"):]
+            sa_wildcard = rel_parts[2][len("sa-") :]
             sa_id_rule = sa_wildcard.replace(".", "_").replace("-", "_")
             emit_analysis_dir = master_root / "subanalyses" / f"sa_{sa_id_rule}"
         rel_paths = manifest.get("source_paths_relative", [])
@@ -608,7 +612,4 @@ def harvest_source_paths(
                         p = (emit_analysis_dir / p).resolve()
                     paths.append(p)
         sources_by_renderer.setdefault(figure_stem, []).extend(paths)
-    return {
-        name: list(dict.fromkeys(paths))
-        for name, paths in sources_by_renderer.items()
-    }
+    return {name: list(dict.fromkeys(paths)) for name, paths in sources_by_renderer.items()}

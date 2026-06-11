@@ -570,8 +570,19 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
         event_id = compute_event_id_slug(ev)
-        assert (plots_dir / "per_sim" / event_id / f"peak_flood_depth{pfd_ext}").exists()
-        assert (plots_dir / "per_sim" / event_id / f"conduit_flow{cf_ext}").exists()
+        # ADR-2: figures carry the canonical plot ID as their stem
+        # (peak_flood_depth__evt.{event_id}); the manifest carries the same id as
+        # a first-class plot_id field, equal to the stem by construction (R2/R4).
+        import json
+
+        pfd_stem = f"peak_flood_depth__evt.{event_id}"
+        cf_stem = f"conduit_flow__evt.{event_id}"
+        assert (plots_dir / "per_sim" / event_id / f"{pfd_stem}{pfd_ext}").exists()
+        assert (plots_dir / "per_sim" / event_id / f"{cf_stem}{cf_ext}").exists()
+        pfd_manifest = json.loads(
+            (plots_dir / "per_sim" / event_id / f"{pfd_stem}.manifest.json").read_text()
+        )
+        assert pfd_manifest["plot_id"] == pfd_stem
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
