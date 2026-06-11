@@ -1137,6 +1137,14 @@ class SnakemakeWorkflowBuilder:
         # Single-GPU gres (gpus_total==1), Frontier gpus-mode, and CPU jobs are
         # IMMUNE and keep their existing emission byte-identically.
         gres_multi_gpu = gpus_total >= 2 and gpu_alloc_mode == "gres"
+        # --exclusive (whole-node hold) is correct ONLY when the sim wants every GPU
+        # on the node. For a strict subset (2 <= n_gpus < gpus_per_node) we allocate
+        # exactly n_gpus GPUs + cpus_per_task=1 (no carve), which binds correctly on
+        # both UVA gpu-a6000 and gpu-a100-80 (empirically confirmed 2026-06-10 — see
+        # knowledge doc single_vs_per_task_gres_binding_on_shared_affinity_topology.md
+        # Appendix B.10). gpus_total >= gpus_per_node_config also covers multi-node
+        # full-GPU sims (e.g. n_gpus=16 on 8-GPU nodes).
+        full_node_gpu = gres_multi_gpu and gpus_per_node_config >= 1 and gpus_total >= gpus_per_node_config
 
         # For GPU jobs: set tasks=1 (1 task per GPU, SLURM executor uses --ntasks-per-gpu)
         # For non-GPU jobs: set tasks=<actual MPI rank count>
@@ -1163,17 +1171,20 @@ class SnakemakeWorkflowBuilder:
             # tasks_per_gpu=0 suppresses --ntasks-per-gpu in the executor's gpu_job
             # branch so the mpi/--ntasks path is the sole task-count driver.
             block += ",\n        tasks_per_gpu=0"
-            # --exclusive upgrades the partial-node CPU grant to whole-node so the
-            # job's per-node core grant covers every GPU's gres.conf affinity range.
-            # Without it a gres-mode N-GPU sbatch holds only cpus_per_task*N cores and
-            # SLURM's step-side GPU-binding gate (_set_step_gres_bit_alloc, fed the
-            # job's per-node core grant) silently excludes GPUs whose topo cores lie
-            # outside that partial grant -> only N/2 of N GPUs bind (sa_36 0%-util).
-            # slurm_extra is the snakemake-executor-plugin-slurm passthrough; the bare
-            # exclusive=True resource key is NOT recognized. Empirically validated 8/8
-            # on UVA gpu-a6000 + gpu-a100-80 (Matrix C/D). See knowledge doc
-            # slurm/single_vs_per_task_gres_binding_on_shared_affinity_topology.md.
-            block += ',\n        slurm_extra="--exclusive"'
+            # --exclusive (whole-node hold) is emitted ONLY for a full-node GPU sim
+            # (n_gpus >= gpus_per_node — single full node or multi-node full-GPU). It
+            # upgrades the grant to whole-node so every GPU's gres.conf affinity cores
+            # are held -> all N bind (the sa_36 fix; Matrix C/D + knowledge doc
+            # single_vs_per_task_gres_binding_on_shared_affinity_topology.md).
+            # For a STRICT SUBSET (2 <= n_gpus < gpus_per_node) --exclusive is OMITTED:
+            # the partial-node grant (gres/gpu=N, cpus_per_task=1) binds all N GPUs on
+            # both a6000 and a100 (Appendix B.10, 2026-06-10), and holding the whole
+            # node would strand the unused GPUs and trip the RC 0%-util auto-cancel.
+            # Do NOT carve cpus_per_task for subsets — the per-GPU carve half-binds
+            # a100 (B.10/B.3). slurm_extra is the executor passthrough; the bare
+            # exclusive=True resource key is NOT recognized.
+            if full_node_gpu:
+                block += ',\n        slurm_extra="--exclusive"'
 
         if gpus_total > 0:
             if gpu_alloc_mode == "gpus":

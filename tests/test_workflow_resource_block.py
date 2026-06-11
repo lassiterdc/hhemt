@@ -34,11 +34,40 @@ def test_gres_multi_gpu_routes_through_mpi_ntasks_path(synth_multi_sim_builder):
     assert "tasks=2," in block            # one task per requested GPU (not the MPI tasks=4)
     assert "tasks_per_gpu=0" in block
     assert 'gres="gpu:a6000:2"' in block
-    assert 'slurm_extra="--exclusive"' in block
+    # Strict subset (gpus_total=2 < gpus_per_node_config=8): NO --exclusive (partial-node).
+    assert "slurm_extra" not in block
     # gres mode never emits the bare `gpu=N` resource line (gpus-mode only).
     # Match the resource LINE (newline + indent + `gpu=`) so this does not
     # collide with the `tasks_per_gpu=0` substring.
     assert "\n        gpu=" not in block
+
+
+def test_gres_full_node_gpu_keeps_exclusive(synth_multi_sim_builder):
+    """Full-node gres (gpus_total >= gpus_per_node_config): --exclusive IS emitted."""
+    b = synth_multi_sim_builder._workflow_builder
+    block = _block(
+        b, tasks=8, gpus_total=8, gpus_per_node_config=8,
+        gpu_hardware="a6000", gpu_alloc_mode="gres", mpi=False,
+    )
+    assert "mpi=True" in block
+    assert "tasks=8," in block
+    assert "tasks_per_gpu=0" in block
+    assert 'gres="gpu:a6000:8"' in block
+    assert 'slurm_extra="--exclusive"' in block
+
+
+def test_gres_subset_4gpu_no_exclusive(synth_multi_sim_builder):
+    """Strict subset (gpus_total=4 < gpus_per_node_config=8): NO --exclusive, task-triple intact."""
+    b = synth_multi_sim_builder._workflow_builder
+    block = _block(
+        b, tasks=4, gpus_total=4, gpus_per_node_config=8,
+        gpu_hardware="a6000", gpu_alloc_mode="gres", mpi=False,
+    )
+    assert "mpi=True" in block
+    assert "tasks=4," in block
+    assert "tasks_per_gpu=0" in block
+    assert 'gres="gpu:a6000:4"' in block
+    assert "slurm_extra" not in block
 
 
 def test_single_gpu_gres_unchanged(synth_multi_sim_builder):
