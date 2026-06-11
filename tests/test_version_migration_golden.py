@@ -4,6 +4,7 @@ Parametrized over every (from_version, to_version) pair with committed
 fixtures on both sides. As migrations land in Phase 5, the parametrize list
 expands.
 """
+
 from __future__ import annotations
 
 import json
@@ -114,10 +115,7 @@ def test_v0_to_v1_unknown_slug_skipped(tmp_path: Path, caplog: pytest.LogCapture
     runner.run_migration(work, target=1, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     assert (sims / "9-orphan_slug").exists()
     assert (sims / "event_id.0").exists()
-    assert any(
-        r.levelname == "WARNING" and "unexpected slug" in r.getMessage()
-        for r in caplog.records
-    )
+    assert any(r.levelname == "WARNING" and "unexpected slug" in r.getMessage() for r in caplog.records)
 
 
 def _discover_fixture_pairs() -> list[tuple[int, int]]:
@@ -142,14 +140,11 @@ def _discover_fixture_pairs() -> list[tuple[int, int]]:
 def test_pair_round_trip(from_v: int, to_v: int, tmp_path: Path) -> None:
     work = _copy_fixture(f"v{from_v}", tmp_path)
     expected = FIXTURE_ROOT / f"v{to_v}"
-    runner.run_migration(
-        work, target=to_v, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
-    )
+    runner.run_migration(work, target=to_v, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     expected_files = _walk_relative(expected) - {"_version.json"}
     actual_files = _walk_relative(work) - {"_version.json"}
     assert expected_files == actual_files, (
-        f"v{from_v} -> v{to_v} mismatch: "
-        f"missing={expected_files - actual_files}, extra={actual_files - expected_files}"
+        f"v{from_v} -> v{to_v} mismatch: missing={expected_files - actual_files}, extra={actual_files - expected_files}"
     )
 
 
@@ -171,9 +166,7 @@ def test_pair_round_trip_idempotent(from_v: int, to_v: int, tmp_path: Path) -> N
     runner.run_migration(work, target=to_v, apply=True, cfg_paths=cfg)
     state_second = json.loads((work / "_version.json").read_text())
     tree_second = _walk_relative(work)
-    assert len(state_second["migration_history"]) == len(
-        state_first["migration_history"]
-    )
+    assert len(state_second["migration_history"]) == len(state_first["migration_history"])
     assert tree_first == tree_second
 
 
@@ -223,9 +216,7 @@ def test_v0001_tolerates_mixed_completion_state(tmp_path: Path) -> None:
 
 
 @pytest.mark.slow
-def test_v0_to_v1_against_norfolk_sensitivity_analysis_fixture(
-    norfolk_sensitivity_analysis, tmp_path: Path
-) -> None:
+def test_v0_to_v1_against_norfolk_sensitivity_analysis_fixture(norfolk_sensitivity_analysis, tmp_path: Path) -> None:
     """Integration test: backport the live norfolk_sensitivity_analysis tree
     to v0 form, run V0001, assert the original tree shape is restored."""
     analysis_dir = norfolk_sensitivity_analysis.analysis_paths.analysis_dir
@@ -268,10 +259,9 @@ def test_v5_to_v6_pins_fingerprint_mtime_to_prepare_flag_reference(tmp_path: Pat
     # simulating the failure mode where `analysis.run(dry_run=True)` was
     # invoked after the breaking feature landed but before V0006 ran.
     fp = status_dir / "sa-0_inputs.json"
-    fp.write_text(
-        '{"__schema_version__":1,"fields":{"cpus_per_sim":1,"n_omp_threads":1,"run_mode":"serial"}}\n'
-    )
+    fp.write_text('{"__schema_version__":1,"fields":{"cpus_per_sim":1,"n_omp_threads":1,"run_mode":"serial"}}\n')
     import os
+
     bumped_mtime = 1_800_000_000.0  # represents "today's wall-clock"
     os.utime(fp, (bumped_mtime, bumped_mtime))
 
@@ -282,9 +272,7 @@ def test_v5_to_v6_pins_fingerprint_mtime_to_prepare_flag_reference(tmp_path: Pat
     prepare_flag_mtime = 1_700_000_000.0  # represents "original May 13 run"
     os.utime(prepare_flag, (prepare_flag_mtime, prepare_flag_mtime))
 
-    runner.run_migration(
-        work, target=6, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
-    )
+    runner.run_migration(work, target=6, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
 
     new_mtime = fp.stat().st_mtime
     assert abs(new_mtime - prepare_flag_mtime) < 1.0, (
@@ -325,9 +313,7 @@ def test_v6_to_v7_clears_snakemake_metadata_with_backup(tmp_path: Path) -> None:
     fake_record = metadata_dir / "fake_rule_record.json"
     fake_record.write_text('{"input_set": ["_status/a_setup_complete.flag"]}\n')
 
-    runner.run_migration(
-        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
-    )
+    runner.run_migration(work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
 
     assert not metadata_dir.exists(), (
         "V0007 must remove .snakemake/metadata/ after backing it up; the "
@@ -336,12 +322,9 @@ def test_v6_to_v7_clears_snakemake_metadata_with_backup(tmp_path: Path) -> None:
     )
     backup_dir = work / ".snakemake" / "metadata.bak.V0007"
     assert backup_dir.is_dir(), (
-        "V0007 must back up the cleared metadata to "
-        ".snakemake/metadata.bak.V0007 for audit + recovery"
+        "V0007 must back up the cleared metadata to .snakemake/metadata.bak.V0007 for audit + recovery"
     )
-    assert (backup_dir / "fake_rule_record.json").is_file(), (
-        "Backup must contain the original metadata files"
-    )
+    assert (backup_dir / "fake_rule_record.json").is_file(), "Backup must contain the original metadata files"
     # And the flag rename must have happened
     assert not legacy_flag.exists()
     assert (work / "_status" / "a_setup_target_0_complete.flag").is_file()
@@ -360,9 +343,7 @@ def test_v6_to_v7_metadata_clear_idempotent_on_rerun(tmp_path: Path) -> None:
     (metadata_dir / "original.json").write_text("original")
 
     # First run: clear + backup
-    runner.run_migration(
-        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
-    )
+    runner.run_migration(work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     backup_dir = work / ".snakemake" / "metadata.bak.V0007"
     assert backup_dir.is_dir()
     original_backup_content = (backup_dir / "original.json").read_text()
@@ -375,11 +356,57 @@ def test_v6_to_v7_metadata_clear_idempotent_on_rerun(tmp_path: Path) -> None:
     # Second run: must NOT overwrite the existing backup. The primitive's
     # short-circuit means metadata_dir is left alone too (re-clear would
     # require a new backup_label).
-    runner.run_migration(
-        work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work)
-    )
+    runner.run_migration(work, target=7, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     # Backup retained with original content
     assert (backup_dir / "original.json").read_text() == "original"
     # And the second backup-conflict short-circuit means the post-migration
     # metadata is not destroyed
     assert (metadata_dir / "new_post_migration.json").read_text() == "regenerated"
+
+
+def test_v9_to_v10_backfills_plot_id_and_orphans_old_stem_figures(
+    tmp_path: Path,
+) -> None:
+    """V0010 backfills the canonical ``plot_id`` into a figure manifest (derived
+    from the manifest's ``plots/`` path) and orphan-deletes the old-stem figure
+    siblings, leaving the manifest as the regenerated figure's provenance anchor.
+
+    The committed golden fixtures are intentionally plots-less, so the
+    parametrized ``test_pair_round_trip`` exercises only V0010's no-op path (a
+    plots-less analysis tree is unchanged by V0010, hence the v10 fixture is
+    file-set-identical to v9). This test pre-places a minimal ``plots/`` subtree
+    -- the established ``test_v5_to_v6`` / ``test_v6_to_v7`` pattern of seeding a
+    copied fixture -- to exercise V0010's actual backfill + orphan-sweep logic,
+    which the file-SET round-trip walk cannot (it ignores file content, and a
+    committed post-migration fixture would have to carry the FileLock ``.lock``
+    artifact ``log_add_field`` leaves on disk).
+    """
+    work = _copy_fixture("v9", tmp_path)
+    # Pre-place a v9-form per-sim figure: renderer-kind-only stem, event_id in the
+    # directory path, manifest WITHOUT plot_id, plus the old-stem figure siblings.
+    event_dir = work / "plots" / "per_sim" / "event_id.0"
+    event_dir.mkdir(parents=True)
+    manifest_path = event_dir / "peak_flood_depth.manifest.json"
+    manifest_path.write_text(json.dumps({"renderer_module": "per_sim_peak_flood_depth"}))
+    figure = event_dir / "peak_flood_depth.png"
+    figure.write_bytes(b"\x89PNG\r\n\x1a\n")  # non-empty
+    preview = event_dir / "peak_flood_depth.preview.png"
+    preview.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    runner.run_migration(work, target=10, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
+
+    # Backfill: plot_id == canonical id derived from the manifest's plots/ path
+    # (renderer-kind stem + evt.{event_id from the directory}), NOT re-minted via
+    # workflow.py -- so the migration carries no drift surface with the renderer.
+    migrated = json.loads(manifest_path.read_text())
+    assert migrated["plot_id"] == "peak_flood_depth__evt.event_id.0"
+    # Orphan-sweep: old-stem figure siblings removed; manifest retained.
+    assert not figure.exists()
+    assert not preview.exists()
+    assert manifest_path.exists()
+
+    # Idempotent on the mutation path: re-running V0010 leaves plot_id stable and
+    # does not error on the already-removed figures (guarded_remove no-ops).
+    runner.run_migration(work, target=10, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
+    assert json.loads(manifest_path.read_text())["plot_id"] == "peak_flood_depth__evt.event_id.0"
+    assert not figure.exists()

@@ -77,7 +77,7 @@ def test_snakemake_sensitivity_workflow_generation_and_write(
         ],
     )
     assert (
-        'expand("plots/sensitivity/benchmarking/{independent_var}_vs_total.html"'
+        'expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html"'
         in master_snakefile_content
     ), "rule all must wildcard-expand benchmarking HTML figures over independent_var (plotly backend default)"
     tst_ut.assert_snakefile_has_flags(
@@ -320,7 +320,7 @@ def test_snakemake_sensitivity_workflow_execution(synth_sensitivity_analysis):
 
     analysis_dir = analysis.analysis_paths.analysis_dir
     for indep_var in ("n_devices",):
-        figure = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"{indep_var}_vs_total.html"
+        figure = analysis_dir / "plots" / "sensitivity" / "benchmarking" / f"benchmarking__{indep_var}.vs.total.html"
         assert figure.exists(), f"Expected benchmarking figure missing: {figure}"
 
 
@@ -668,7 +668,7 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
     master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
     bench_dir = master_dir / "plots" / "sensitivity" / "benchmarking"
     assert bench_dir.exists()
-    assert any(bench_dir.glob("*_vs_total.html"))
+    assert any(bench_dir.glob("benchmarking__*.vs.total.html"))
 
     # R13: no per-sub-analysis report
     for sa_id, sub in analysis.sensitivity.sub_analyses.items():

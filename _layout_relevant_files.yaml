@@ -12,6 +12,7 @@ layout_relevant:
     - src/TRITON_SWMM_toolkit/processing_analysis.py
     - src/TRITON_SWMM_toolkit/cf_conventions.py
     - src/TRITON_SWMM_toolkit/sensitivity_analysis.py
+    - src/TRITON_SWMM_toolkit/report_plot_ids.py  # reporting-system_canonical-plot-id (ADR-2): the canonical plot-ID grammar + per-renderer extension map. Figure stems ARE the plot IDs; a change here changes on-disk figure filenames (C-LAYOUT) and must bump LAYOUT_VERSION + ship a V{NNNN} migration. workflow.py consumes this module but is intentionally NOT layout-relevant (highest-churn file; would flood Check-B with false positives).
   globs:
     - "src/TRITON_SWMM_toolkit/config/**/*.py"
     - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"

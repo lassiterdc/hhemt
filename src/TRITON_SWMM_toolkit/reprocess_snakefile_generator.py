@@ -47,6 +47,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from TRITON_SWMM_toolkit.report_plot_ids import plot_output_template as _plot_output_template
 from TRITON_SWMM_toolkit.workflow import (
     _resolve_rule_all_extensions,
     _scenario_summaries_present,
@@ -196,6 +197,20 @@ def generate_reprocess_snakefile(
     report_formats: list[str] = ["zip"]
     render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in report_formats)
 
+    # ADR-2 (OE-1 anti-drift): the reprocess rule_all / render_report per-sim
+    # input stems derive from the same single-source helper as the rule OUTPUTS,
+    # so a future stem-grammar change cannot desync inputs from outputs.
+    _pfd_per_sim = _plot_output_template(
+        renderer_kind="peak_flood_depth",
+        subdir="plots/per_sim/{event_id}",
+        event_id="{event_id}",
+    ).replace("__OUTPUT_EXT__", _ext["per_sim_peak_flood_depth"])
+    _cf_per_sim = _plot_output_template(
+        renderer_kind="conduit_flow",
+        subdir="plots/per_sim/{event_id}",
+        event_id="{event_id}",
+    ).replace("__OUTPUT_EXT__", _ext["per_sim_conduit_flow"])
+
     # Determine which `which` value to pass to consolidate's shell based on
     # which models are enabled (mirror generate_snakefile_content's logic).
     if "tritonswmm" in enabled_models:
@@ -243,8 +258,8 @@ rule all:
         "scenario_status.csv",
         "workflow_summary.md",
         "plots/system_overview{_ext["system_overview"]}",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        expand("{_pfd_per_sim}", event_id=SIM_IDS),
+        expand("{_cf_per_sim}", event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"{render_targets_in_rule_all},
@@ -334,8 +349,8 @@ onerror:
 rule render_report:
     input:
         "plots/system_overview{_ext["system_overview"]}",
-        expand("plots/per_sim/{{event_id}}/peak_flood_depth{_ext["per_sim_peak_flood_depth"]}", event_id=SIM_IDS),
-        expand("plots/per_sim/{{event_id}}/conduit_flow{_ext["per_sim_conduit_flow"]}",     event_id=SIM_IDS),
+        expand("{_pfd_per_sim}", event_id=SIM_IDS),
+        expand("{_cf_per_sim}", event_id=SIM_IDS),
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
