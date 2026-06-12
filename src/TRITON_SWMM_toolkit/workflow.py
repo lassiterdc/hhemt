@@ -35,6 +35,16 @@ from TRITON_SWMM_toolkit.report_plot_ids import (
     plot_output_template as _plot_output_template,
 )
 from TRITON_SWMM_toolkit.report_renderers._figure_emission import format_sources_rst
+
+# SLURM-liveness primitives live in the leaf module so wait_for_sentinel_runner
+# can import them without importing this Snakemake-builder surface. Re-exported
+# here for backward compatibility — every existing _slurm_job_is_live /
+# _sacct_states_batched / _SACCT_DEAD_STATES reference resolves unchanged.
+from TRITON_SWMM_toolkit.slurm_liveness import (  # noqa: F401
+    _SACCT_DEAD_STATES,
+    _sacct_states_batched,
+    _slurm_job_is_live,
+)
 from TRITON_SWMM_toolkit.utils import fast_rmtree
 
 if TYPE_CHECKING:
@@ -446,122 +456,12 @@ def _sanitize_rule_name(token: str) -> str:
 _COMMENT_RULE_PREFIXES: tuple[str, ...] = ("rule_run_", "rule_simulation_sa_")
 
 
-def _slurm_job_is_live(job_id: str, *, timeout_s: float = 10.0) -> bool:
-    """True if ``job_id`` is PENDING/RUNNING/etc. in squeue.
-
-    squeue is authoritative for live jobs (sacct gaps cannot hide a live job).
-    Absent from squeue → treated as not-live (stale). Callers using this for
-    the at-most-once-execution guard should reclaim the sentinel when this
-    returns False.
-
-    On ``subprocess.TimeoutExpired`` (controller unresponsive) returns False
-    and emits a stderr warning — the caller's at-most-once guard treats
-    unknown state as not-live, which is the safe direction (a real live job
-    that's skipped here would simply be queued and Snakemake would re-detect
-    it on the next submit; the alternative — blocking ``submit_workflow()``
-    indefinitely on a hung controller — is strictly worse).
-    """
-    _LIVE = {
-        "PENDING",
-        "RUNNING",
-        "CONFIGURING",
-        "COMPLETING",
-        "REQUEUED",
-        "RESIZING",
-        "SUSPENDED",
-    }
-    try:
-        r = subprocess.run(
-            ["squeue", "-j", job_id, "-h", "-o", "%T"],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired:
-        print(
-            f"[reconcile] WARNING: squeue {job_id} timed out after {timeout_s}s — treating as not-live",
-            file=sys.stderr,
-            flush=True,
-        )
-        return False
-    if r.returncode == 0 and r.stdout.strip():
-        return r.stdout.strip().split()[0] in _LIVE
-    return False
-
-
-# Terminal sacct State codes that mean the job is gone. Anything NOT in this
-# set AND present in sacct is treated as alive (still in the scheduler).
-_SACCT_DEAD_STATES: frozenset[str] = frozenset(
-    {
-        "COMPLETED",
-        "FAILED",
-        "CANCELLED",
-        "TIMEOUT",
-        "OUT_OF_MEMORY",
-        "NODE_FAIL",
-        "BOOT_FAIL",
-        "DEADLINE",
-        "PREEMPTED",
-        "REVOKED",
-        "SPECIAL_EXIT",
-    }
-)
-
-
-def _sacct_states_batched(job_ids: list[str], *, timeout_s: float = 30.0) -> dict[str, tuple[str, str, str]]:
-    """Batched sacct probe: ONE call for N job-ids (R5 scheduler-politeness).
-
-    Returns ``{job_id: (state, exit_code, reason)}`` for every job-id that
-    sacct returned a row for. Job-ids ABSENT from the result map are UNKNOWN
-    (purged from the accounting DB, or job-id reuse gap) and must be handled
-    by the caller's mtime-age fallback — never silently treated as alive.
-
-    ``CANCELLED by <uid>`` is normalized to ``CANCELLED``. On subprocess
-    timeout or non-zero return, returns an EMPTY map — every job-id then falls
-    to UNKNOWN, which the caller's mtime-age tiebreak resolves safely.
-    """
-    if not job_ids:
-        return {}
-    try:
-        r = subprocess.run(
-            ["sacct", "-j", ",".join(job_ids), "-n", "-P", "-X", "-o", "JobIDRaw,State,ExitCode,Reason"],
-            capture_output=True,
-            text=True,
-            timeout=timeout_s,
-        )
-    except subprocess.TimeoutExpired:
-        print(
-            f"[reconcile] WARNING: sacct batched probe ({len(job_ids)} jobs) "
-            f"timed out after {timeout_s}s — all unresolved job-ids fall to "
-            f"UNKNOWN (mtime-age tiebreak applies)",
-            file=sys.stderr,
-            flush=True,
-        )
-        return {}
-    except FileNotFoundError:
-        # sacct not on PATH (local mode, or a misconfigured HPC env). Same
-        # "probe could not resolve state" outcome as a timeout: return an empty
-        # map so every job-id falls to UNKNOWN and the mtime-age tiebreak
-        # resolves it safely. Surfaced once per reconcile so a genuinely-missing
-        # sacct on HPC stays visible.
-        print(
-            f"[reconcile] WARNING: sacct not found on PATH — batched probe "
-            f"({len(job_ids)} jobs) skipped; all unresolved job-ids fall to "
-            f"UNKNOWN (mtime-age tiebreak applies)",
-            file=sys.stderr,
-            flush=True,
-        )
-        return {}
-    if r.returncode != 0:
-        return {}
-    out: dict[str, tuple[str, str, str]] = {}
-    for line in r.stdout.splitlines():
-        parts = line.split("|")
-        if len(parts) < 4:
-            continue
-        jid, state, exit_code, reason = parts[0], parts[1], parts[2], parts[3]
-        out[jid] = (state.split()[0], exit_code, reason)
-    return out
+# SLURM-liveness primitives (_slurm_job_is_live, _SACCT_DEAD_STATES,
+# _sacct_states_batched) now live in the leaf module slurm_liveness.py and are
+# re-exported at the top of this file (see the import near the module header),
+# so every reference below resolves unchanged. They were extracted so the
+# lightweight wait_for_sentinel_runner.py subprocess can import them without
+# importing this Snakemake-builder surface.
 
 
 def _max_plausible_job_lifetime_min(cfg_analysis, *, slack_min: int = 30) -> int:
@@ -1874,10 +1774,11 @@ rule run_{model_type}:
             # resolution (Snakemake docs § Handling Ambiguous Rules).
             # R-WAITCAP: cap the wait-rule poll at the waited-on sim's own
             # walltime+slack, bounded above by the optional override ceiling.
-            wait_walltime_cap_min = min(
-                _max_plausible_job_lifetime_min(self.cfg_analysis),
-                self.cfg_analysis.hpc_max_wait_for_inflight_min,
-            )
+            # The wait-rule now detects job death in-loop (SLURM-liveness probe
+            # in wait_for_sentinel_runner.py), so the cap is a pure backstop —
+            # the operator's hpc_max_wait_for_inflight_min ceiling directly, not
+            # the old walltime-derived min(). Queue-time is no longer truncated.
+            wait_walltime_cap_min = self.cfg_analysis.hpc_max_wait_for_inflight_min
             _prefix = f"run_{model_type}_evt-"
             for rule_token in sorted(alive_by_token or {}):
                 if not rule_token.startswith(_prefix):
@@ -6308,10 +6209,7 @@ onerror:
                         rule_token=_sentinel_token,
                         flag_output_path=sim_outflag,
                         run_rule_inputs=[upstream_flag, f"_status/sa-{sa_id}_inputs.json"],
-                        wait_walltime_cap_min=min(
-                            _max_plausible_job_lifetime_min(sub_analysis.cfg_analysis),
-                            sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
-                        ),
+                        wait_walltime_cap_min=sub_analysis.cfg_analysis.hpc_max_wait_for_inflight_min,
                         analysis_dir_override=(alive_token_to_dir or {}).get(
                             _sentinel_token, str(sub_analysis.analysis_paths.analysis_dir)
                         ),
