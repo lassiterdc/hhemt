@@ -197,7 +197,13 @@ class Bundle:
         from TRITON_SWMM_toolkit.workflow import _emit_report_artifacts
 
         static_backend = self._read_static_backend()
-        _emit_report_artifacts(self._root)
+        from TRITON_SWMM_toolkit.config.brand_theme import DEFAULT_BRAND_THEME
+        from TRITON_SWMM_toolkit.config.loaders import load_brand_theme
+        from TRITON_SWMM_toolkit.workflow import _brand_theme_css_map
+
+        _bt = self._cfg_analysis.brand_theme if self._cfg_analysis else None
+        _theme = load_brand_theme(self._root / _bt) if _bt else DEFAULT_BRAND_THEME
+        _emit_report_artifacts(self._root, brand_theme=_brand_theme_css_map(_theme))
         write_regeneration_snakefile(self._root, static_backend=static_backend)
 
         # Defense-in-depth stale-lock check (per Decision 3.1A). CLI does
@@ -288,18 +294,26 @@ class Bundle:
             apply_post_process_surgery,
             apply_post_process_surgery_to_zip,
         )
+
+        # Navbar upper-left brand text from the bundled theme (D-6/D-9), defaulting
+        # to the bundle's analysis_id; None falls back to the historical literal.
+        _navbar = _theme.upper_left_text or (
+            self._cfg_analysis.analysis_id if self._cfg_analysis else None
+        )
         try:
             if format == "html":
                 output_path.write_text(
                     apply_post_process_surgery(
                         output_path.read_text(),
                         bundle_mode=True,
+                        navbar_text=_navbar,
                     )
                 )
             else:
                 apply_post_process_surgery_to_zip(
                     output_path,
                     bundle_mode=True,
+                    navbar_text=_navbar,
                 )
         except Exception:
             pass

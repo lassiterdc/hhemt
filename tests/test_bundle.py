@@ -24,6 +24,7 @@ import pytest
 import yaml
 
 from TRITON_SWMM_toolkit.bundle import Bundle
+from TRITON_SWMM_toolkit.bundle._emit import _rewrite_paths_to_relative
 from TRITON_SWMM_toolkit.bundle._path_policy import (
     _PATH_FIELD_POLICY,
     PathPolicy,
@@ -112,6 +113,17 @@ def _assert_field_conforms(
             f"{field_name}: IS_NONE_ACCEPTABLE but value is {value!r}"
         )
         return
+    if policy is PathPolicy.BUNDLE_RELATIVE_LIST:
+        # list[Path] field — value is a (possibly empty) list; every
+        # element must be a non-absolute (bundle-relative) path string.
+        assert isinstance(value, list), (
+            f"{field_name}: BUNDLE_RELATIVE_LIST but value is {value!r}"
+        )
+        for elem in value:
+            assert not Path(elem).is_absolute(), (
+                f"{field_name}: absolute path leaked into bundle list: {elem!r}"
+            )
+        return
     if value is None:
         # OR_NONE policy permits None; bare BUNDLE_RELATIVE on a None
         # value would be a misconfiguration on a required Path field.
@@ -163,6 +175,51 @@ def test_all_path_fields_have_policy() -> None:
         f"_PATH_FIELD_POLICY entries with no matching Pydantic Path "
         f"field: {extra}"
     )
+
+
+def test_static_plot_configs_list_rewritten_to_relative(tmp_path: Path) -> None:
+    """A non-empty ``static_plot_configs`` list[Path] must be rewritten
+    element-wise to its bundle-relative form (BUNDLE_RELATIVE_LIST policy).
+
+    The empty default ([]) masks the list-handling branch at fixture-emit
+    time — this test exercises the non-empty path that would otherwise leak
+    absolute paths into the bundle.
+    """
+    analysis_dir = tmp_path / "analysis"
+    plots_dir = analysis_dir / "static_plots"
+    plots_dir.mkdir(parents=True)
+    abs_a = plots_dir / "plot_a.yaml"
+    abs_b = plots_dir / "plot_b.yaml"
+    abs_a.touch()
+    abs_b.touch()
+
+    cfg_dict = {"static_plot_configs": [str(abs_a), str(abs_b)]}
+    result = _rewrite_paths_to_relative(
+        cfg_dict,
+        analysis_config,
+        analysis_dir=analysis_dir,
+        system_directory=tmp_path / "system",
+    )
+
+    rewritten = result.cfg_dict["static_plot_configs"]
+    assert rewritten == ["static_plots/plot_a.yaml", "static_plots/plot_b.yaml"], (
+        f"list elements not rewritten to analysis-dir-relative form: {rewritten!r}"
+    )
+    for elem in rewritten:
+        assert not Path(elem).is_absolute()
+    # The policy was exercised — recorded in the per-policy invariants.
+    assert "static_plot_configs" in result.invariants[PathPolicy.BUNDLE_RELATIVE_LIST.value]
+
+
+def test_static_plot_configs_empty_list_rewrites_to_empty(tmp_path: Path) -> None:
+    """The empty-default ([]) path returns [] under BUNDLE_RELATIVE_LIST."""
+    result = _rewrite_paths_to_relative(
+        {"static_plot_configs": []},
+        analysis_config,
+        analysis_dir=tmp_path / "analysis",
+        system_directory=tmp_path / "system",
+    )
+    assert result.cfg_dict["static_plot_configs"] == []
 
 
 def test_bundle_class_is_not_analysis_subclass() -> None:

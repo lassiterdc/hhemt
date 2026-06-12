@@ -1588,6 +1588,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
+        override_brand_theme: "Path | None" = None,
         report_formats: list[Literal["html", "zip"]] | None = None,
         cleanup_orphans: bool = False,
         cleanup_stale_metadata: bool = True,
@@ -1726,7 +1727,7 @@ class TRITONSWMM_analysis:
 
         import time
 
-        from .config.loaders import yaml_to_model
+        from .config.loaders import load_brand_theme, yaml_to_model
         from .config.report import (
             report_config as ReportConfigModel,
         )
@@ -1759,6 +1760,50 @@ class TRITONSWMM_analysis:
         sa_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
         validate_sensitivity_independent_vars(cfg_report, sa_csv)
         self._cfg_report = cfg_report
+
+        # Pre-run brand-theme resolution (ADR-7 layer 2 — 3-step, fail-fast).
+        from .config.brand_theme import DEFAULT_BRAND_THEME
+        from .config.brand_theme import brand_theme as BrandThemeModel
+
+        if override_brand_theme is not None:
+            override_brand_theme = Path(override_brand_theme)
+            try:
+                resolved_theme = yaml_to_model(override_brand_theme, BrandThemeModel)
+            except Exception as e:
+                raise ConfigurationError(
+                    field="brand_theme",
+                    message=f"Failed to load/validate {override_brand_theme}: {e}",
+                    config_path=override_brand_theme,
+                ) from e
+        elif self.cfg_analysis.brand_theme is not None:
+            resolved_theme = load_brand_theme(self.cfg_analysis.brand_theme)
+        else:
+            resolved_theme = DEFAULT_BRAND_THEME
+        self._brand_theme = resolved_theme
+
+        # D-5: source the HTML-table brand-derived defaults from the resolved
+        # theme via model_validate overlay (NOT setattr — per the per-row-config-
+        # overlay stipulation). Semantic pass/fail + th/body text colors stay frozen.
+        _t = self._brand_theme
+        _table_overlay = {
+            "primary_color": _t.primary_color,
+            "cell_border_color": _t.neutral_medium,
+            "row_alt_bg_color": _t.neutral_light,
+            "row_hover_bg_color": _t.accent_color,
+        }
+        self._cfg_report = type(self._cfg_report).model_validate(
+            {
+                **self._cfg_report.model_dump(),
+                "errors_and_warnings": {
+                    **self._cfg_report.errors_and_warnings.model_dump(),
+                    **_table_overlay,
+                },
+                "scenario_status_appendix": {
+                    **self._cfg_report.scenario_status_appendix.model_dump(),
+                    **_table_overlay,
+                },
+            }
+        )
 
         # Pre-run transfer validation — fail fast before submitting the workflow
         if transfer_config is not None:
@@ -2001,10 +2046,30 @@ class TRITONSWMM_analysis:
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
         out = self.analysis_paths.analysis_dir / f"analysis_report.{format}"
         css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
+        # Brand-theme resolution (ADR-7 layer 2). The dominant render path is
+        # render_report_runner.main() → a FRESH TRITONSWMM_analysis(..., is_main_
+        # orchestrator=False) that never had run() called, so self._brand_theme
+        # (set only in run()) does NOT exist on it. Resolve once here via
+        # getattr-fallback and serve BOTH the CSS emit below and the navbar
+        # surgery later (D-6; plan-review SE Flag 1).
+        from .config.brand_theme import DEFAULT_BRAND_THEME
+        from .config.loaders import load_brand_theme
+        from .workflow import _brand_theme_css_map
+
+        _theme = getattr(self, "_brand_theme", None)
+        if _theme is None:
+            _theme = (
+                load_brand_theme(self.cfg_analysis.brand_theme)
+                if self.cfg_analysis.brand_theme is not None
+                else DEFAULT_BRAND_THEME
+            )
         # Re-emit report artifacts (report.css + workflow_description template)
         # from package resources so render_report picks up edits made to the
         # source-tree report_templates/ since the analysis was last run.
-        _emit_report_artifacts(self.analysis_paths.analysis_dir)
+        _emit_report_artifacts(
+            self.analysis_paths.analysis_dir,
+            brand_theme=_brand_theme_css_map(_theme),
+        )
         # --cores 1 is required by Snakemake's CLI even though --report is a
         # post-execution render that does not execute rules.
         cmd = [
@@ -2043,11 +2108,16 @@ class TRITONSWMM_analysis:
             apply_post_process_surgery_to_zip,
         )
 
+        # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
+        # defaulting to analysis_id when None (D-6). _theme is resolved above.
+        _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
         try:
             if format == "html":
-                out.write_text(apply_post_process_surgery(out.read_text()))
+                out.write_text(
+                    apply_post_process_surgery(out.read_text(), navbar_text=_navbar)
+                )
             else:
-                apply_post_process_surgery_to_zip(out)
+                apply_post_process_surgery_to_zip(out, navbar_text=_navbar)
         except Exception:
             pass
         if format != "html":

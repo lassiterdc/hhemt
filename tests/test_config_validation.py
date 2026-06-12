@@ -396,3 +396,39 @@ def test_process_append_batch_budget_ceiling_raises(tmp_path: Path):
     cfg["process_append_batch_memory_budget_mb"] = 7000  # > 0.5 * 12000 = 6000
     with pytest.raises(ValidationError, match="exceeds 0.5"):
         analysis_config.model_validate(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — static_plot_configs layer-4 field (V-8 / R-7)
+# ---------------------------------------------------------------------------
+
+
+def test_static_plot_configs_defaults_to_empty(tmp_path: Path):
+    """An analysis_config without `static_plot_configs` loads with the
+    strict-safe empty default (yamls written before the field load cleanly)."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    loaded = analysis_config.model_validate(cfg)
+    assert loaded.static_plot_configs == []
+
+
+def test_static_plot_configs_existent_list_validates(tmp_path: Path):
+    """A list of existent paths validates and is normalized to Path objects."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    p1 = _touch(tmp_path / "plots" / "plot_a.yaml")
+    p2 = _touch(tmp_path / "plots" / "plot_b.yaml")
+    cfg["static_plot_configs"] = [str(p1), str(p2)]
+    loaded = analysis_config.model_validate(cfg)
+    assert loaded.static_plot_configs == [Path(p1), Path(p2)]
+    assert all(isinstance(p, Path) for p in loaded.static_plot_configs)
+
+
+def test_static_plot_configs_nonexistent_path_raises(tmp_path: Path):
+    """A list element that does not exist raises at config-load (R-7 / V-8) —
+    the dedicated list-aware validator, since the base `*` validator only
+    existence-checks scalar Path fields."""
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    existent = _touch(tmp_path / "plots" / "plot_a.yaml")
+    missing = tmp_path / "plots" / "does_not_exist.yaml"
+    cfg["static_plot_configs"] = [str(existent), str(missing)]
+    with pytest.raises(ValidationError, match="static_plot_configs path does not exist"):
+        analysis_config.model_validate(cfg)

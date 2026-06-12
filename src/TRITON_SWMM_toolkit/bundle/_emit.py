@@ -95,6 +95,7 @@ def emit_bundle(
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
+        _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
         _write_bundle_manifest(
             staging,
@@ -247,6 +248,22 @@ def _apply_policy(
         # Reserved for future runtime-derived fields. Pass through
         # unchanged in Phase 1.
         return value
+    if policy is PathPolicy.BUNDLE_RELATIVE_LIST:
+        # list[Path] field (e.g. static_plot_configs). A None or empty
+        # list serializes to []. Otherwise rewrite each element through
+        # the same absolute-to-relative logic as the scalar policy — the
+        # scalar branch below only handles a single str and would pass a
+        # list through unrewritten (absolute paths leaking into the bundle).
+        if not value:
+            return []
+        return [
+            _rewrite_absolute_to_relative(
+                elem,
+                analysis_root=analysis_root,
+                system_root=system_root,
+            )
+            for elem in value
+        ]
     if value is None:
         if policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE:
             return None
@@ -290,6 +307,37 @@ def _rewrite_absolute_to_relative(
         return str(Path("external") / pr.name)
     except (ValueError, OSError):
         return value
+
+
+def _emit_resolved_brand_theme(analysis: TRITONSWMM_analysis, staging: Path) -> None:
+    """D-9: serialize the RESOLVED brand theme into the bundle and repoint the
+    bundled cfg_analysis.yaml::brand_theme at it, so regenerate_report reproduces
+    the deploying lab's colors instead of an unresolvable HPC-side path.
+
+    R-6: source the RESOLVED theme (self._brand_theme, set by run() from the
+    explicit-override -> cfg-field -> default ladder) so a run(override_brand_theme=)
+    override survives into the bundle. getattr-fallback to the cfg field/default
+    covers a fresh-instance bundle emit that never had run() called (mirrors the
+    render_report EDIT 3c pattern).
+    """
+    import yaml
+
+    from ..config.brand_theme import DEFAULT_BRAND_THEME
+    from ..config.loaders import load_brand_theme
+
+    resolved = getattr(analysis, "_brand_theme", None)
+    if resolved is None:
+        cfg_brand = analysis.cfg_analysis.brand_theme
+        resolved = load_brand_theme(cfg_brand) if cfg_brand is not None else DEFAULT_BRAND_THEME
+    (staging / "brand_theme.resolved.yaml").write_text(
+        yaml.safe_dump(resolved.model_dump(mode="json"), sort_keys=False)
+    )
+    # Repoint the already-written bundled cfg_analysis.yaml at the sidecar so the
+    # consume-side load_brand_theme(cfg_analysis.brand_theme) resolves locally.
+    cfg_path = staging / "cfg_analysis.yaml"
+    cfg_dict = yaml.safe_load(cfg_path.read_text())
+    cfg_dict["brand_theme"] = "brand_theme.resolved.yaml"
+    cfg_path.write_text(yaml.safe_dump(cfg_dict, sort_keys=False))
 
 
 def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None:

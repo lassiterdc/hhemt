@@ -799,9 +799,24 @@ class TRITONSWMM_sensitivity_analysis:
         snakefile = master_dir / snakefile_name
         out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
+        # Brand-theme resolution (ADR-7 layer 2) — symmetric to
+        # analysis.render_report. The render_report_runner path builds a FRESH
+        # instance without _brand_theme; resolve once via getattr-fallback to
+        # serve BOTH the CSS emit and the navbar surgery (D-6; plan-review SE Flag 1).
+        from .config.brand_theme import DEFAULT_BRAND_THEME
+        from .config.loaders import load_brand_theme
+        from .workflow import _brand_theme_css_map
+
+        _theme = getattr(self, "_brand_theme", None)
+        if _theme is None:
+            _theme = (
+                load_brand_theme(self.cfg_analysis.brand_theme)
+                if self.cfg_analysis.brand_theme is not None
+                else DEFAULT_BRAND_THEME
+            )
         # Re-emit report artifacts from package resources so render_report
         # picks up edits made to the source-tree report_templates/.
-        _emit_report_artifacts(master_dir)
+        _emit_report_artifacts(master_dir, brand_theme=_brand_theme_css_map(_theme))
         cmd = [
             sys.executable,
             "-m",
@@ -838,11 +853,16 @@ class TRITONSWMM_sensitivity_analysis:
             apply_post_process_surgery_to_zip,
         )
 
+        # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
+        # defaulting to analysis_id when None (D-6). _theme is resolved above.
+        _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
         try:
             if format == "html":
-                out.write_text(apply_post_process_surgery(out.read_text()))
+                out.write_text(
+                    apply_post_process_surgery(out.read_text(), navbar_text=_navbar)
+                )
             else:
-                apply_post_process_surgery_to_zip(out)
+                apply_post_process_surgery_to_zip(out, navbar_text=_navbar)
         except Exception:
             pass
         if format != "html":

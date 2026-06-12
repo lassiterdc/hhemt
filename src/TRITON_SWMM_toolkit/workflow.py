@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
 
@@ -392,7 +393,22 @@ rule all:
 """
 
 
-def _emit_report_artifacts(dest_root: Path) -> None:
+def _brand_theme_css_map(theme) -> "dict[str, str]":
+    """Map a resolved brand_theme model -> report.css.j2 placeholder names."""
+    return {
+        "uva_blue": theme.primary_color,
+        "uva_orange": theme.accent_color,
+        "uva_light_gray": theme.neutral_light,
+        "uva_medium_gray": theme.neutral_medium,
+        "uva_text_gray": theme.text_muted,
+        "uva_link_blue": theme.link_color,
+    }
+
+
+def _emit_report_artifacts(
+    dest_root: Path,
+    brand_theme: "Mapping[str, str] | None" = None,
+) -> None:
     """Copy report_templates/ -> {dest_root}/report/.
 
     Uses importlib.resources for package-resource resolution (robust across
@@ -400,6 +416,13 @@ def _emit_report_artifacts(dest_root: Path) -> None:
     only when importlib.resources is unavailable. Requires report_templates/
     to ship as package data under src/TRITON_SWMM_toolkit/ via pyproject.toml's
     [tool.setuptools.package-data] entry.
+
+    ``brand_theme`` is a mapping of report.css.j2 placeholder name (uva_blue,
+    uva_orange, uva_light_gray, uva_medium_gray, uva_text_gray, uva_link_blue)
+    -> hex string. When ``None``, the code-frozen UVA default reproduces the
+    pre-branding output byte-for-byte. report.css.j2 is rendered with
+    ``string.Template.safe_substitute`` (NOT jinja2) so CSS rule braces and the
+    inline data-URI SVG masks pass through untouched.
 
     The Jinja2 workflow_description.rst.j2 template is renamed to
     workflow_description.rst on copy because Snakemake's report engine
@@ -419,7 +442,20 @@ def _emit_report_artifacts(dest_root: Path) -> None:
 
     dst_report = dest_root / "report"
     dst_report.mkdir(parents=True, exist_ok=True)
-    (dst_report / "report.css").write_text((src_templates / "report.css").read_text())
+    from string import Template as _StrTemplate
+
+    if brand_theme is None:
+        brand_theme = {
+            "uva_blue": "#232D4B",
+            "uva_orange": "#E57200",
+            "uva_light_gray": "#F1F1EF",
+            "uva_medium_gray": "#DADADA",
+            "uva_text_gray": "#666666",
+            "uva_link_blue": "#495E9D",
+        }
+    _css_src = (src_templates / "report.css.j2").read_text()
+    _css_rendered = _StrTemplate(_css_src).safe_substitute(brand_theme)
+    (dst_report / "report.css").write_text(_css_rendered)
     captions_dst = dst_report / "captions"
     captions_dst.mkdir(exist_ok=True)
     for cap in (src_templates / "captions").glob("*.rst"):

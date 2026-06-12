@@ -712,6 +712,10 @@ class _HtmlTableStyleBase(cfgBaseModel):
     font_family: str = Field(_HtmlTableStyle_DEFAULT_FONT_FAMILY)
     body_padding_px: int = Field(12)
     body_text_color: str = Field("#333")
+    # Brand-derived defaults below are OVERRIDDEN from the resolved brand_theme at
+    # analysis.run() (D-5, analysis.py); the literals here are the no-theme-context
+    # fallback so a bare report_config() still constructs. th_text_color/body_text_color
+    # and the ErrorsAndWarningsConfig semantic pass/fail colors are NOT theme-driven.
     primary_color: str = Field("#232D4B")
     th_text_color: str = Field("white")
     th_font_weight: int = Field(600)
