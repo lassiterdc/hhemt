@@ -4,13 +4,17 @@
  * Primary: UVA Blue (#232D4B); Accent: UVA Orange (#E57200); supporting
  * neutrals + link blue for tabular and link contexts.
  */
+/* Rendered from the brand theme via string.Template (NOT jinja2 — the
+ * .j2 extension is the repo convention shared with workflow_description.rst.j2).
+ * Placeholders use the braced dollar-name form so adjacent CSS punctuation is
+ * unambiguous. CSS rule braces { } are NOT placeholders under string.Template. */
 :root {
-    --uva-blue: #232D4B;
-    --uva-orange: #E57200;
-    --uva-light-gray: #F1F1EF;
-    --uva-medium-gray: #DADADA;
-    --uva-text-gray: #666666;
-    --uva-link-blue: #495E9D;
+    --uva-blue: ${uva_blue};
+    --uva-orange: ${uva_orange};
+    --uva-light-gray: ${uva_light_gray};
+    --uva-medium-gray: ${uva_medium_gray};
+    --uva-text-gray: ${uva_text_gray};
+    --uva-link-blue: ${uva_link_blue};
 }
 
 /* Navbar brand: keep the colored bar but emit no brand text. The empty
@@ -201,7 +205,7 @@ table.table-auto tbody tr:has(td.text-right > div.inline-flex) td:first-child::b
     height: 1em;
     margin-right: 0.5em;
     vertical-align: -0.15em;
-    background-color: #E57200;
+    background-color: ${uva_orange};
     -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='black' stroke-width='2'><path stroke-linecap='round' stroke-linejoin='round' d='M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z'/></svg>");
     -webkit-mask-size: contain;
     -webkit-mask-repeat: no-repeat;

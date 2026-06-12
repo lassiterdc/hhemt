@@ -52,7 +52,7 @@ class PathPolicy(str, Enum):
 
 
 # Per-field policy table. Keys must mirror the Pydantic field names on
-# system_config (12 entries) and analysis_config (8 entries) verbatim.
+# system_config (12 entries) and analysis_config (9 entries) verbatim.
 _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     # ---- system_config (12 Path fields) -------------------------------
     "system_directory": PathPolicy.FORCED_DOT,
@@ -67,7 +67,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "subcatchment_raingage_mapping": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "triton_swmm_configuration_template": PathPolicy.BUNDLE_RELATIVE,
-    # ---- analysis_config (8 Path fields) ------------------------------
+    # ---- analysis_config (9 Path fields) ------------------------------
     "weather_timeseries": PathPolicy.BUNDLE_RELATIVE,
     "python_path": PathPolicy.IS_NONE_ACCEPTABLE,
     "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
@@ -76,6 +76,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "weather_events_to_simulate": PathPolicy.BUNDLE_RELATIVE,
     "analysis_dir": PathPolicy.FORCED_DOT,
     "master_analysis_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
 }
 
 

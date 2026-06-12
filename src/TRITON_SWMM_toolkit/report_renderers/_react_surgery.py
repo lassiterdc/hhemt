@@ -78,6 +78,7 @@ _CLICK_DELEGATE = """
 def apply_post_process_surgery(
     html_text: str,
     bundle_mode: bool = False,
+    navbar_text: str | None = None,
 ) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
 
@@ -87,7 +88,11 @@ def apply_post_process_surgery(
     Replacements applied:
       1. Browser-tab title "Snakemake Report" -> empty
       2. Drop the About menu item from the bundled JS (CSS-only hide infeasible)
-      3. Replace bold "Snakemake" navbar span -> "TRITON-SWMM Toolkit"
+      3. Replace bold "Snakemake" navbar span -> ``navbar_text`` (the report's
+         upper-left brand text). When ``navbar_text`` is ``None``, the historical
+         literal "TRITON-SWMM Toolkit" is used (byte-identical for non-passing
+         callers). The facades source it from brand_theme.upper_left_text (ADR-7),
+         defaulting to analysis_id.
       4. Patch category-sort comparator -> hardcoded category order
       5. Inject "Simulation Health (placeholder)" entry into categories dict
       6. Patch showCategory to auto-pop the first figure (setTimeout firstBtn.click)
@@ -123,13 +128,15 @@ def apply_post_process_surgery(
     )
 
     # 3. Navbar span text
+    _navbar = "TRITON-SWMM Toolkit" if navbar_text is None else navbar_text
+    _navbar = _navbar.replace("\\", "\\\\").replace('"', '\\"')  # JS-literal safe
     html_text = html_text.replace(
         'e(\n                        "span",\n'
         '                        { className: "font-bold mx-1" },\n'
         '                        "Snakemake"\n                    )',
         'e(\n                        "span",\n'
         '                        { className: "font-bold mx-1" },\n'
-        '                        "TRITON-SWMM Toolkit"\n                    )',
+        '                        "' + _navbar + '"\n                    )',
     )
 
     # 4. Category-sort comparator
@@ -195,6 +202,7 @@ def apply_post_process_surgery(
 def apply_post_process_surgery_to_zip(
     zip_path,
     bundle_mode: bool = False,
+    navbar_text: str | None = None,
 ) -> None:
     """Apply post-process surgery to `analysis_report/report.html` inside a zip.
 
@@ -232,6 +240,7 @@ def apply_post_process_surgery_to_zip(
         modified = apply_post_process_surgery(
             inner_html.read_text(),
             bundle_mode=bundle_mode,
+            navbar_text=navbar_text,
         )
         inner_html.write_text(modified)
         # Re-zip. shutil.make_archive writes `<base>.zip` from `root_dir`.

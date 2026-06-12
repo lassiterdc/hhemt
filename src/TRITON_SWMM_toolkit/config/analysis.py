@@ -352,6 +352,22 @@ class analysis_config(cfgBaseModel):
         ),
     )
 
+    brand_theme: Path | None = Field(
+        None,
+        description=(
+            "Optional path to a brand-theme YAML (ADR-7 layer 2 — institutional "
+            "identity: report.css :root palette + HTML-table primary/accent + "
+            "navbar upper-left text). When None (default), the code-frozen "
+            "DEFAULT_BRAND_THEME (config/brand_theme.py) applies. Mirrors the "
+            "sensitivity_analysis / storm_tide_boundary_line_gis path-field "
+            "precedent. Callers may pass an explicit `override_brand_theme=` Path "
+            "to `analysis.run()` to override for one invocation, mirroring the "
+            "`report_config=` runtime-override precedent. Automatically "
+            "per-sub-analysis overlayable via an `analysis.brand_theme` "
+            "sensitivity column."
+        ),
+    )
+
     # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
     clear_raw: ClearRawValue = Field(
         "none",
