@@ -608,3 +608,96 @@ def test_prune_settled_markers_lists_and_unlinks_only_settled(synth_multi_sim_an
     assert not settled_failed.exists()
     assert live_completed.exists()
     assert live_submitted.exists()
+
+
+class TestWaitRuleInLoopLiveness:
+    """In-loop SLURM-liveness probe + cap-decoupling regression (wait-rule
+    in-loop-liveness plan). Fast — no compile/sim; monkeypatches squeue/sacct."""
+
+    def test_job_is_dead_confirmed_live_squeue_returns_false(self, monkeypatch):
+        """Tier 1: squeue reports a live state -> not dead (keep waiting)."""
+        from TRITON_SWMM_toolkit import slurm_liveness as sl
+
+        monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: True)
+        # sacct must not even be consulted when squeue says live
+        monkeypatch.setattr(
+            sl, "_sacct_states_batched", lambda ids, **k: pytest.fail("sacct called though squeue live")
+        )
+        assert sl.job_is_dead_confirmed("123") is False
+
+    def test_job_is_dead_confirmed_absent_then_terminal_returns_true(self, monkeypatch):
+        """Tier 2: squeue absent + sacct terminal -> dead."""
+        from TRITON_SWMM_toolkit import slurm_liveness as sl
+
+        monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
+        monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {"123": ("CANCELLED", "0:0", "None")})
+        assert sl.job_is_dead_confirmed("123") is True
+
+    def test_job_is_dead_confirmed_absent_then_unknown_returns_false(self, monkeypatch):
+        """Tier 2: squeue absent + sacct NO row (UNKNOWN) -> not confirmed dead."""
+        from TRITON_SWMM_toolkit import slurm_liveness as sl
+
+        monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
+        monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {})
+        assert sl.job_is_dead_confirmed("123") is False
+
+    def test_job_is_dead_confirmed_absent_then_nonterminal_returns_false(self, monkeypatch):
+        """Tier 2: squeue absent + sacct non-terminal (still scheduled) -> alive."""
+        from TRITON_SWMM_toolkit import slurm_liveness as sl
+
+        monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
+        monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {"123": ("PENDING", "0:0", "Priority")})
+        assert sl.job_is_dead_confirmed("123") is False
+
+    def test_workflow_reexports_resolve(self):
+        """R11: workflow.py re-exports resolve to the leaf-module objects."""
+        from TRITON_SWMM_toolkit import slurm_liveness
+        from TRITON_SWMM_toolkit import workflow as w
+
+        assert w._slurm_job_is_live is slurm_liveness._slurm_job_is_live
+        assert w._sacct_states_batched is slurm_liveness._sacct_states_batched
+        assert w._SACCT_DEAD_STATES is slurm_liveness._SACCT_DEAD_STATES
+
+    def test_config_default_is_field_max(self):
+        """R8: the inflight-wait cap default is the 1-week field max."""
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+
+        assert analysis_config.model_fields["hpc_max_wait_for_inflight_min"].default == 10080
+
+    def test_validate_inflight_wait_vs_total_runtime_removed(self):
+        """R9: the vestigial warn-only validator is gone (no warning on a low cap)."""
+        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+
+        assert not hasattr(analysis_config, "_validate_inflight_wait_vs_total_runtime")
+
+    def test_wait_runner_writes_failed_on_confirmed_death(self, tmp_path, monkeypatch):
+        """R4: probe-confirmed death writes _failed (not c_run flag) + unlinks
+        the submitted sentinel + returns 1, without touching the completion flag."""
+        import json as _json
+
+        from TRITON_SWMM_toolkit import slurm_liveness
+        from TRITON_SWMM_toolkit import wait_for_sentinel_runner as wr
+
+        # Force the time-gated probe to fire on loop cycle 1 (default 300 s gate
+        # would otherwise poll for a week with no marker present).
+        monkeypatch.setattr(wr, "_PROBE_INTERVAL_S", 0)
+
+        status = tmp_path / "_status"
+        (status / "_submitted").mkdir(parents=True)
+        (status / "_completed").mkdir()
+        (status / "_failed").mkdir()
+        token = "run_tritonswmm_evt-0-evt.0"
+        (status / "_submitted" / f"{token}.json").write_text(_json.dumps({"slurm_jobid": "999"}))
+        monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/squeue")
+        monkeypatch.setattr(slurm_liveness, "job_is_dead_confirmed", lambda jid: True)
+        monkeypatch.setattr(
+            "sys.argv",
+            ["wait_for_sentinel_runner", "--rule-token", token, "--flag-output",
+             str(status / f"c_run_{token}.flag"), "--analysis-dir", str(tmp_path),
+             "--max-wait-minutes", "10080"],
+        )
+        rc = wr.main()
+        assert rc == 1
+        assert (status / "_failed" / f"{token}.json").exists()
+        assert not (status / "_submitted" / f"{token}.json").exists()
+        assert not (status / f"c_run_{token}.flag").exists()  # D-Q1: never write the flag

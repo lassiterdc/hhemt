@@ -358,16 +358,6 @@ def test_hpc_max_wait_for_inflight_min_field_bounds(value, should_raise, tmp_pat
         assert result.hpc_max_wait_for_inflight_min == value
 
 
-def test_hpc_max_wait_for_inflight_min_warns_when_less_than_total_job_duration(
-    tmp_path: Path,
-):
-    cfg = _minimal_analysis_config_dict(tmp_path)
-    cfg["hpc_total_job_duration_min"] = 720
-    cfg["hpc_max_wait_for_inflight_min"] = 120
-    with pytest.warns(UserWarning, match="hpc_max_wait_for_inflight_min"):
-        analysis_config.model_validate(cfg)
-
-
 # ---------------------------------------------------------------------------
 # Phase 2 — process_append_batch_memory_budget_mb resolver (job-RAM budget)
 # ---------------------------------------------------------------------------
