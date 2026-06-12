@@ -33,6 +33,18 @@ class PathPolicy(str, Enum):
     """If the field is ``None``, preserve as ``None``; otherwise apply
     ``BUNDLE_RELATIVE`` semantics."""
 
+    BUNDLE_RELATIVE_LIST = "bundle_relative_list"
+    """``list[Path]`` field: apply ``BUNDLE_RELATIVE`` semantics element-wise.
+
+    A ``None`` or empty list serializes to ``[]``. Each element is routed
+    through the same absolute-to-relative rewrite as the scalar
+    ``BUNDLE_RELATIVE`` policy (``analysis_root`` first, then
+    ``system_root``, then ``external/{filename}`` fallback). Required for
+    ``static_plot_configs``: the scalar policies only handle a single
+    ``str`` value and would pass a non-empty list through unrewritten,
+    leaking absolute paths into the bundle.
+    """
+
     FORCED_DOT = "forced_dot"
     """Set to ``"."`` unconditionally. Bundle invariant:
     ``bundle_root == {system_directory|analysis_dir}`` at consume."""
@@ -52,7 +64,7 @@ class PathPolicy(str, Enum):
 
 
 # Per-field policy table. Keys must mirror the Pydantic field names on
-# system_config (12 entries) and analysis_config (9 entries) verbatim.
+# system_config (12 entries) and analysis_config (10 entries) verbatim.
 _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     # ---- system_config (12 Path fields) -------------------------------
     "system_directory": PathPolicy.FORCED_DOT,
@@ -67,7 +79,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "subcatchment_raingage_mapping": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "triton_swmm_configuration_template": PathPolicy.BUNDLE_RELATIVE,
-    # ---- analysis_config (9 Path fields) ------------------------------
+    # ---- analysis_config (10 Path fields) -----------------------------
     "weather_timeseries": PathPolicy.BUNDLE_RELATIVE,
     "python_path": PathPolicy.IS_NONE_ACCEPTABLE,
     "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
@@ -77,6 +89,7 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "analysis_dir": PathPolicy.FORCED_DOT,
     "master_analysis_cfg_yaml": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "brand_theme": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+    "static_plot_configs": PathPolicy.BUNDLE_RELATIVE_LIST,
 }
 
 

@@ -348,7 +348,17 @@ class analysis_config(cfgBaseModel):
             "renderer parameters including `interactive.static_backend`. A "
             "cfg_analysis.yaml file without a `report:` block raises pydantic "
             "ValidationError at load time. Callers may still pass an explicit "
-            "`report_config=` argument to `analysis.run()` to override."
+            "`report_config=` argument to `analysis.run()` to override. "
+            "This inline field IS ADR-7 reporting-config layer 3 "
+            "(report-composition): the frozen-default-field whose optional "
+            "runtime override is the `report_config=` Path kwarg on run() "
+            "(resolved at analysis.py:1746-1757). Layer-3 precedence: explicit "
+            "`report_config=` Path > inline cfg_analysis.report. It is "
+            "deliberately INLINE (not a path field) per the post-F2 decision "
+            "recorded above; ADR-7's 'path field' wording describes the default "
+            "shape it imagined, not a functional contract — the inline-default + "
+            "path-override form satisfies ADR-7's 'frozen-default-field + "
+            "optional runtime override' requirement."
         ),
     )
 
@@ -365,6 +375,23 @@ class analysis_config(cfgBaseModel):
             "`report_config=` runtime-override precedent. Automatically "
             "per-sub-analysis overlayable via an `analysis.brand_theme` "
             "sensitivity column."
+        ),
+    )
+
+    static_plot_configs: list[Path] = Field(
+        default_factory=list,
+        description=(
+            "ADR-7 reporting-config layer 4: per-plot static-config YAML paths. "
+            "Each path is a standalone publication-static plot spec. Default [] "
+            "(no static plots) — strict-safe; old yamls load cleanly. Each element "
+            "is existence-validated at config-load via a dedicated "
+            "@field_validator('static_plot_configs') (the base * validator "
+            "cfgBaseModel._check_paths_exist only existence-checks SCALAR Path fields "
+            "and passes list[Path] through, so a list-aware validator is required). "
+            "REFERENCE + VALIDATION ONLY in this plan: the static_plots() generation "
+            "this field triggers is built downstream in "
+            "reporting-system_static-plots-entrypoint-and-distribution; the field is "
+            "inert (settable but unconsumed) until that plan lands."
         ),
     )
 
@@ -392,6 +419,24 @@ class analysis_config(cfgBaseModel):
             "default."
         ),
     )
+
+    # VALIDATION - PATH-LIST EXISTENCE
+    @field_validator("static_plot_configs", mode="after")
+    @classmethod
+    def _check_static_plot_configs_exist(cls, v: "list[Path]") -> "list[Path]":
+        """Element-wise existence check for the layer-4 static-plot config list.
+
+        The base ``*`` validator ``_check_paths_exist`` only handles scalar
+        ``Path`` values and silently passes a ``list[Path]`` through, so list
+        elements need their own existence validation (R-7 / V-8).
+        """
+        normed: list[Path] = []
+        for elem in v:
+            p = Path(elem).expanduser()
+            if not p.exists():
+                raise ValueError(f"static_plot_configs path does not exist: {p}")
+            normed.append(p)
+        return normed
 
     # VALIDATION - STRING REQUIREMENTS
     @field_validator("analysis_id")

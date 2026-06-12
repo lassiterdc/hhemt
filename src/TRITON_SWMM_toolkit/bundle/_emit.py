@@ -248,6 +248,22 @@ def _apply_policy(
         # Reserved for future runtime-derived fields. Pass through
         # unchanged in Phase 1.
         return value
+    if policy is PathPolicy.BUNDLE_RELATIVE_LIST:
+        # list[Path] field (e.g. static_plot_configs). A None or empty
+        # list serializes to []. Otherwise rewrite each element through
+        # the same absolute-to-relative logic as the scalar policy — the
+        # scalar branch below only handles a single str and would pass a
+        # list through unrewritten (absolute paths leaking into the bundle).
+        if not value:
+            return []
+        return [
+            _rewrite_absolute_to_relative(
+                elem,
+                analysis_root=analysis_root,
+                system_root=system_root,
+            )
+            for elem in value
+        ]
     if value is None:
         if policy is PathPolicy.BUNDLE_RELATIVE_OR_NONE:
             return None
