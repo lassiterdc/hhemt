@@ -316,6 +316,59 @@ def emit_plot_with_sources(
     return output_path
 
 
+def emit_data_artifact_with_sources(
+    artifact_path: Path,
+    source_paths: Iterable[Path],
+    analysis_dir: Path,
+    *,
+    plot_id: str | None = None,
+    manifest_data: dict[str, Any] | None = None,
+    allow_empty_sources: bool = False,
+) -> Path:
+    """Emit a ``<stem>.manifest.json`` sidecar for an already-written data artifact.
+
+    The data sibling of :func:`emit_plot_with_sources`: ``artifact_path`` (a
+    ``.zarr`` store, ``.nc``, or ``.csv`` the caller has ALREADY written) is made a
+    first-class ``harvest_source_paths`` provenance source by emitting a manifest
+    sidecar in the same ``_figure_emission`` schema. No figure is rendered and no
+    preview PNG is written. The ADR-6 Gate-A empty-sources check applies (a data
+    artifact must declare the raw sources it was derived from, unless
+    ``allow_empty_sources=True``).
+
+    Returns ``artifact_path`` unchanged, for chaining.
+    """
+    source_paths = list(source_paths)
+    if not source_paths and not allow_empty_sources:
+        raise ProcessingError(
+            operation="provenance gate (ADR-6): data artifact declares no data sources",
+            filepath=artifact_path,
+            reason=(
+                "emit_data_artifact_with_sources was called with empty source_paths. "
+                "Every derived EDA artifact must declare the data sources it was "
+                "derived from (system-design O-b). Pass allow_empty_sources=True only "
+                "for a genuinely source-less artifact."
+            ),
+        )
+    analysis_root = str(Path(analysis_dir).resolve())
+    for _p in source_paths:
+        _validate_source_path(_p, analysis_dir=analysis_dir)
+    rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
+    manifest_payload: dict[str, Any] = {
+        "artifact_path": str(artifact_path),
+        "output_format": "data",
+        "full_res_path": str(artifact_path),
+        "preview_path": None,
+        "source_paths_relative": rel_sources,
+        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    if plot_id is not None:
+        manifest_payload["plot_id"] = plot_id
+    if manifest_data:
+        manifest_payload["renderer_data"] = manifest_data
+    _emit_manifest_sidecar(artifact_path, manifest_payload)
+    return artifact_path
+
+
 def _emit_manifest_sidecar(output_path: Path, manifest_payload: dict[str, Any]) -> Path:
     """Single-source-of-truth writer for ``<stem>.manifest.json`` siblings.
 
