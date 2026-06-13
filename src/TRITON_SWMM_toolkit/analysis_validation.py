@@ -139,9 +139,7 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
                 details.append(row)
     passed = failed_count == 0
     summary = (
-        f"All {total} scenarios set up"
-        if passed
-        else f"Scenario setup failed for {failed_count} of {total} scenarios"
+        f"All {total} scenarios set up" if passed else f"Scenario setup failed for {failed_count} of {total} scenarios"
     )
     return CheckResult(name="Scenarios setup", level="aggregate", passed=passed, summary=summary, details=details)
 
@@ -166,11 +164,7 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
                     row["sa_id"] = f"sa_{sa_id}"
                 details.append(row)
     passed = failed_count == 0
-    summary = (
-        f"All {total} scenarios ran"
-        if passed
-        else f"Simulation failed for {failed_count} of {total} scenarios"
-    )
+    summary = f"All {total} scenarios ran" if passed else f"Simulation failed for {failed_count} of {total} scenarios"
     return CheckResult(name="Scenarios ran", level="aggregate", passed=passed, summary=summary, details=details)
 
 
@@ -229,9 +223,7 @@ def check_timeseries_processed(
                 continue
     passed = failed_count == 0
     summary = (
-        "All timeseries processed"
-        if passed
-        else f"Timeseries processing failed for {failed_count} per-model entries"
+        "All timeseries processed" if passed else f"Timeseries processing failed for {failed_count} per-model entries"
     )
     return CheckResult(name="Timeseries processed", level="aggregate", passed=passed, summary=summary, details=details)
 
@@ -290,9 +282,16 @@ def check_scenario_status_csv(analysis: TRITONSWMM_analysis) -> CheckResult:
             details=[{"detail": f"read error: {e}"}],
         )
     required = [
-        "scenario_setup", "run_completed", "scenario_directory",
-        "actual_nTasks", "actual_omp_threads", "actual_gpus",
-        "actual_total_gpus", "actual_gpu_backend", "actual_build_type", "perf_Total",
+        "scenario_setup",
+        "run_completed",
+        "scenario_directory",
+        "actual_nTasks",
+        "actual_omp_threads",
+        "actual_gpus",
+        "actual_total_gpus",
+        "actual_gpu_backend",
+        "actual_build_type",
+        "perf_Total",
     ]
     missing_cols = [c for c in required if c not in df.columns]
     if missing_cols:
@@ -341,11 +340,46 @@ def check_resource_usage(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckResult]:
+    """Read EDA verdict JSONs from ``{analysis_dir}/eda/*.verdict.json`` (graceful-absent).
+
+    The ADR-9 EDA layer (``eda.check_cross_sim_identity`` et al.) persists each
+    verdict as a ``dataclasses.asdict(CheckResult)`` JSON. This reads them back so
+    the report's Errors-and-Warnings section surfaces EDA pass/fail families. Absent
+    ``eda/`` dir or unreadable files → empty list (the report is unchanged from a
+    non-EDA'd analysis).
+    """
+    import json
+
+    eda_dir = Path(analysis.analysis_paths.analysis_dir) / "eda"
+    if not eda_dir.is_dir():
+        return []
+    verdicts: list[CheckResult] = []
+    for vf in sorted(eda_dir.glob("*.verdict.json")):
+        try:
+            payload = json.loads(vf.read_text())
+            verdicts.append(
+                CheckResult(
+                    name=payload["name"],
+                    level=payload["level"],
+                    passed=payload["passed"],
+                    summary=payload["summary"],
+                    details=payload.get("details", []),
+                )
+            )
+        except (OSError, KeyError, ValueError):
+            continue
+    return verdicts
+
+
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all 7 checks; return aggregated ValidationReport.
 
     Order matches the existing `assert_analysis_workflow_completed_successfully`
     chain so the report's check ordering matches what pytest displays.
+
+    Persisted EDA verdicts (``{analysis_dir}/eda/*.verdict.json``, ADR-9) are
+    appended after the 7 core checks so the renderer surfaces them by ``level``.
     """
     return ValidationReport(
         checks=[
@@ -357,4 +391,5 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_scenario_status_csv(analysis),
             check_resource_usage(analysis),
         ]
+        + _read_persisted_eda_verdicts(analysis)
     )
