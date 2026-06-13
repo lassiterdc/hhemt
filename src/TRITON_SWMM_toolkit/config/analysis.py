@@ -145,17 +145,19 @@ class analysis_config(cfgBaseModel):
         ),
     )
     hpc_max_wait_for_inflight_min: int = Field(
-        480,
+        10080,
         ge=60,
         le=10080,
         description=(
-            "OVERRIDE CEILING (minutes) on the v2 wait-on-sentinel rule's poll "
-            "cap. As of v2-post-death-recovery-hardening, the wait-rule cap is "
-            "DERIVED per-rule from the waited-on sim's own walltime "
-            "(hpc_total_job_duration_min + 30 min slack); this field caps that "
-            "derived value from above (min(derived, this)). Default 480 (8h). "
-            "Bounds: 60 (1h) to 10080 (1 week). Set below the job walltime only "
-            "to force an earlier give-up on a still-running wait."
+            "Backstop cap (minutes) on the v2 wait-on-sentinel rule's poll loop. "
+            "As of the wait-rule in-loop-liveness change, the wait-rule detects "
+            "job death in-loop (per-job squeue/sacct probe every ~5 min) and "
+            "writes a _failed marker on confirmed death, so this cap is now a "
+            "pure safety backstop (NOT walltime-derived) — it fires only if a "
+            "job is stuck-but-alive past the cap. Default 10080 (1 week, the "
+            "field max) makes waits effectively indefinite, safe because in-loop "
+            "detection — not the timer — terminates a dead-job wait. Bounds: 60 "
+            "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
         ),
     )
     # local run constraints
@@ -651,24 +653,6 @@ class analysis_config(cfgBaseModel):
                     "force_rerun.event_iloc requires toggle_sensitivity_analysis=False; "
                     "sensitivity-toggled analyses must use force_rerun.sa_id instead"
                 )
-        return self
-
-    @model_validator(mode="after")
-    def _validate_inflight_wait_vs_total_runtime(self):
-        if (
-            self.hpc_max_wait_for_inflight_min is not None
-            and self.hpc_total_job_duration_min is not None
-            and self.hpc_max_wait_for_inflight_min < self.hpc_total_job_duration_min
-        ):
-            import warnings
-
-            warnings.warn(
-                f"hpc_max_wait_for_inflight_min={self.hpc_max_wait_for_inflight_min} is less than "
-                f"hpc_total_job_duration_min={self.hpc_total_job_duration_min}. Wait-rule will time out "
-                f"before in-flight sims can finish; consider raising the wait cap.",
-                UserWarning,
-                stacklevel=2,
-            )
         return self
 
     # Fraction of the declared process SLURM allocation used as the append/argmax
