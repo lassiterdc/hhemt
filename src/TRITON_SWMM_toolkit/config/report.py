@@ -27,6 +27,7 @@ class HydrologyPanelConfig(cfgBaseModel):
     Defaults match the prior `_RAIN_COLOR` / `_BC_LINE_COLOR` constants in
     `_hydrology_panel.py` lines 23-24.
     """
+
     rain_color: str = Field(
         "#03152e",
         description=(
@@ -68,6 +69,7 @@ class HydrologyPanelConfig(cfgBaseModel):
 
 class PerSimMapConfig(cfgBaseModel):
     """Shared map formatting across per_sim_peak_flood_depth + per_sim_conduit_flow."""
+
     depth_cmap: str = Field("YlGnBu")
     depth_under_color: str = Field("white")
     depth_vmin: float = Field(
@@ -123,10 +125,7 @@ class PerSimMapConfig(cfgBaseModel):
     )
     wse_clip_quantile_lower: float = Field(
         0.01,
-        description=(
-            "Lower-quantile clip on WSE colorbar (computed across wetted "
-            "cells)."
-        ),
+        description=("Lower-quantile clip on WSE colorbar (computed across wetted " "cells)."),
     )
     utilization_cmap: str = Field("Blues")
     peak_flow_cmap: str = Field("Reds")
@@ -161,6 +160,7 @@ class PerSimMapConfig(cfgBaseModel):
 
 class HydraulicsPanelStyle(cfgBaseModel):
     """system_overview hydraulics panel formatting."""
+
     junction_fill: str = Field("#1f77b4")
     outfall_fill: str = Field("#d62728")
     junction_marker_size: float = Field(70.0)
@@ -177,6 +177,7 @@ class HydraulicsPanelStyle(cfgBaseModel):
 
 class HydrologyMapPanelStyle(cfgBaseModel):
     """system_overview hydrology panel formatting."""
+
     subcatchment_edge_color: str = Field("#d62728")
     subcatchment_hatch: str = Field("////")
     subcatchment_linewidth: float = Field(1.0)
@@ -190,6 +191,7 @@ class HydrologyMapPanelStyle(cfgBaseModel):
 
 class ElevationPanelStyle(cfgBaseModel):
     """system_overview DEM panel formatting."""
+
     cmap: str = Field(
         "cividis",
         description=(
@@ -253,14 +255,10 @@ class SystemMapConfig(cfgBaseModel):
     )
     fig_width_min_factor: float = Field(
         1.6,
-        description=(
-            "Minimum figure-width multiplier on `h`. Verbatim `1.6` "
-            "system_overview.py line 73."
-        ),
+        description=("Minimum figure-width multiplier on `h`. Verbatim `1.6` " "system_overview.py line 73."),
     )
     subplots_adjust: dict = Field(
-        default_factory=lambda: {"left": 0.04, "right": 0.97, "top": 0.92,
-                                 "bottom": 0.20, "wspace": 0.04},
+        default_factory=lambda: {"left": 0.04, "right": 0.97, "top": 0.92, "bottom": 0.20, "wspace": 0.04},
         description="`fig.subplots_adjust` kwargs — verbatim system_overview.py lines 77-78.",
     )
     legend_loc: str = Field("upper center")
@@ -343,7 +341,7 @@ class InteractiveBackendConfig(cfgBaseModel):
         "cdn",
         description=(
             "Plotly JS bundling. 'cdn' writes a plain <script src=\"https://"
-            "cdn.plot.ly/plotly-<version>.min.js\"> tag (no SRI integrity "
+            'cdn.plot.ly/plotly-<version>.min.js"> tag (no SRI integrity '
             "attribute — plotly.py 6.x does NOT emit SRI by default, and the "
             "per-version SHA-256 maintenance is out of scope for this "
             "renderer; see follow-up idea in scratch). Tiny HTML files, "
@@ -371,7 +369,7 @@ class InteractiveBackendConfig(cfgBaseModel):
     )
 
     @model_validator(mode="after")
-    def _check_interactive_consistency(self) -> "InteractiveBackendConfig":
+    def _check_interactive_consistency(self) -> InteractiveBackendConfig:
         """Cross-field rules for InteractiveBackendConfig.
 
         Rule 1 (CDN-inside-ZIP orphan): if `report_html_mode == "zip"`, a CDN
@@ -481,8 +479,7 @@ class TableInteractiveConfig(cfgBaseModel):
     visible_columns_default: list[str] | None = Field(
         None,
         description=(
-            "Column slugs to mark visible:true initially. None means all "
-            "visible. User toggles via headerMenu."
+            "Column slugs to mark visible:true initially. None means all " "visible. User toggles via headerMenu."
         ),
     )
     header_filter: bool = Field(
@@ -519,16 +516,13 @@ class TableInteractiveConfig(cfgBaseModel):
             return v
         if not re.fullmatch(r"[A-Za-z0-9_.\-]+", v):
             raise ValueError(
-                f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ "
-                f"(Tabulator localStorage-key safe)."
+                f"persistence_id={v!r} must match ^[A-Za-z0-9_.\\-]+$ " f"(Tabulator localStorage-key safe)."
             )
         return v
 
     @field_validator("visible_columns_default")
     @classmethod
-    def _visible_columns_charset(
-        cls, v: list[str] | None
-    ) -> list[str] | None:
+    def _visible_columns_charset(cls, v: list[str] | None) -> list[str] | None:
         if v is None:
             return v
         for col in v:
@@ -555,6 +549,7 @@ class TableInteractiveConfig(cfgBaseModel):
         from TRITON_SWMM_toolkit.report_renderers._tabulator_defaults import (
             sanitize_persistence_id,
         )
+
         effective = self.persistence_id or sanitize_persistence_id(analysis_id)
         if not effective or effective == "_":
             return None
@@ -565,12 +560,8 @@ class PerSimConfig(cfgBaseModel):
     map: PerSimMapConfig = Field(default_factory=PerSimMapConfig)
     hydrology_panel: HydrologyPanelConfig = Field(default_factory=HydrologyPanelConfig)
     peak_flood_depth: PerSimFigureSpec = Field(default_factory=PerSimFigureSpec)
-    conduit_flow: PerSimFigureSpec = Field(
-        default_factory=lambda: PerSimFigureSpec(cmap="plasma", vmax_quantile=0.95)
-    )
-    interactive: PerSimMapInteractiveConfig = Field(
-        default_factory=PerSimMapInteractiveConfig
-    )
+    conduit_flow: PerSimFigureSpec = Field(default_factory=lambda: PerSimFigureSpec(cmap="plasma", vmax_quantile=0.95))
+    interactive: PerSimMapInteractiveConfig = Field(default_factory=PerSimMapInteractiveConfig)
 
 
 class PerAnalysisSummaryConfig(cfgBaseModel):
@@ -609,13 +600,10 @@ class PerAnalysisSummaryConfig(cfgBaseModel):
         description="Constant additional figure height. Verbatim `0.7` line 150.",
     )
     figure_width_inches: float = Field(8.0)
-    interactive: TableInteractiveConfig = Field(
-        default_factory=TableInteractiveConfig
-    )
+    interactive: TableInteractiveConfig = Field(default_factory=TableInteractiveConfig)
 
 
 class SensitivityReportConfig(cfgBaseModel):
-    mode: Literal["benchmarking"] = Field("benchmarking")
     independent_vars: list[str] = Field(
         ...,
         description=(
@@ -626,6 +614,31 @@ class SensitivityReportConfig(cfgBaseModel):
             "output paths."
         ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _rewrite_legacy_mode_key(cls, data):
+        """One-cycle config-format compat: the ADR-5 ReportingSet registry
+        retired SensitivityReportConfig.mode; set selection now lives on
+        report_config.reporting_set. A pre-conversion report_config.yaml may
+        still carry sensitivity: {mode: benchmarking, ...}. Strip the legacy key
+        with an actionable DeprecationWarning rather than letting extra="forbid"
+        raise an opaque extra_forbidden error. Remove next cycle."""
+        if isinstance(data, dict) and "mode" in data:
+            import warnings
+
+            data = {k: v for k, v in data.items() if k != "mode"}
+            warnings.warn(
+                "report_config.sensitivity.mode is retired (ADR-5 ReportingSet "
+                "registry). Reporting-set selection now lives on "
+                "report_config.reporting_set (default 'benchmarking' for "
+                "sensitivity analyses). The legacy `mode:` key is ignored this "
+                "cycle and will be rejected in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        return data
+
     dependent_var: str = Field(
         "performance.Total",
         description=(
@@ -661,8 +674,14 @@ class SensitivityReportConfig(cfgBaseModel):
     line_width: float = Field(1.0)
     palette: tuple[str, ...] = Field(
         (
-            "#0072B2", "#E69F00", "#009E73", "#CC79A7",
-            "#56B4E9", "#D55E00", "#F0E442", "#000000",
+            "#0072B2",
+            "#E69F00",
+            "#009E73",
+            "#CC79A7",
+            "#56B4E9",
+            "#D55E00",
+            "#F0E442",
+            "#000000",
         ),
         description="Okabe-Ito CVD-safe palette — verbatim `_OKABE_ITO` lines 54-63.",
     )
@@ -709,6 +728,7 @@ _HtmlTableStyle_DEFAULT_FONT_FAMILY = '-apple-system, BlinkMacSystemFont, "Segoe
 
 class _HtmlTableStyleBase(cfgBaseModel):
     """Shared HTML-table styling fields used by both sidebar/appendix HTML renderers."""
+
     font_family: str = Field(_HtmlTableStyle_DEFAULT_FONT_FAMILY)
     body_padding_px: int = Field(12)
     body_text_color: str = Field("#333")
@@ -743,6 +763,7 @@ td.fail {{ color: {fail_text_color}; font-weight: {th_font_weight}; text-align: 
 
 class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
     """HTML inline-style overrides for the errors_and_warnings sidebar."""
+
     pass_text_color: str = Field("#1F7A1F")
     fail_text_color: str = Field("#B11E1E")
     pass_bg_color: str = Field("#DDEEDD")
@@ -761,18 +782,13 @@ class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
 
     def render_inline_css(self) -> str:
         fields = self.model_dump()
-        return (
-            _HTML_TABLE_STYLE_TEMPLATE.format(**fields)
-            + _ERRORS_AND_WARNINGS_EXTRA_CSS.format(**fields)
-        )
+        return _HTML_TABLE_STYLE_TEMPLATE.format(**fields) + _ERRORS_AND_WARNINGS_EXTRA_CSS.format(**fields)
 
 
 class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     """HTML inline-style overrides for the scenario_status_appendix renderer."""
 
-    interactive: TableInteractiveConfig = Field(
-        default_factory=TableInteractiveConfig
-    )
+    interactive: TableInteractiveConfig = Field(default_factory=TableInteractiveConfig)
 
     def render_inline_css(self) -> str:
         return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive"}))
@@ -782,15 +798,9 @@ class report_config(cfgBaseModel):
     figure_defaults: FigureDefaults = Field(default_factory=FigureDefaults)
     system_map: SystemMapConfig = Field(default_factory=SystemMapConfig)
     per_sim: PerSimConfig = Field(default_factory=PerSimConfig)
-    per_analysis_summary: PerAnalysisSummaryConfig = Field(
-        default_factory=PerAnalysisSummaryConfig
-    )
-    errors_and_warnings: ErrorsAndWarningsConfig = Field(
-        default_factory=ErrorsAndWarningsConfig
-    )
-    scenario_status_appendix: ScenarioStatusAppendixConfig = Field(
-        default_factory=ScenarioStatusAppendixConfig
-    )
+    per_analysis_summary: PerAnalysisSummaryConfig = Field(default_factory=PerAnalysisSummaryConfig)
+    errors_and_warnings: ErrorsAndWarningsConfig = Field(default_factory=ErrorsAndWarningsConfig)
+    scenario_status_appendix: ScenarioStatusAppendixConfig = Field(default_factory=ScenarioStatusAppendixConfig)
     sensitivity: SensitivityReportConfig | None = Field(
         None,
         description=(
@@ -798,9 +808,20 @@ class report_config(cfgBaseModel):
             "main analyses. Cross-field validation occurs at analysis.run() entry."
         ),
     )
-    interactive: InteractiveBackendConfig = Field(
-        default_factory=InteractiveBackendConfig
+    reporting_set: str = Field(
+        "default",
+        description=(
+            "ADR-5/ADR-7 layer-3 active reporting-set selector. Names an entry in "
+            "the ReportingSet registry (report_renderers/_reporting_sets.py). The "
+            "sentinel 'default' resolves at analysis.run() entry to 'benchmarking' "
+            "when toggle_sensitivity_analysis is True, else to the standard set. "
+            "Validated against the registry at run-entry (NOT at field-construction "
+            "time — that would create a config.report -> report_renderers import "
+            "cycle). A future named set is selected by writing its registered name "
+            "here, with no code edit (TO-8)."
+        ),
     )
+    interactive: InteractiveBackendConfig = Field(default_factory=InteractiveBackendConfig)
 
 
 def validate_sensitivity_independent_vars(
@@ -828,7 +849,7 @@ def validate_sensitivity_independent_vars(
                     "report_config.sensitivity must be set for sensitivity analyses. "
                     f"Detected sensitivity CSV at {sensitivity_csv_path}. "
                     "Add a sensitivity: block to report_config.yaml with at least "
-                    "mode: benchmarking and independent_vars: [<CSV column names>]."
+                    "independent_vars: [<CSV column names>]."
                 ),
                 config_path=None,
             )
@@ -844,9 +865,7 @@ def validate_sensitivity_independent_vars(
             config_path=None,
         )
 
-    bad_charset = [
-        v for v in cfg.sensitivity.independent_vars if not _WILDCARD_SAFE.match(v)
-    ]
+    bad_charset = [v for v in cfg.sensitivity.independent_vars if not _WILDCARD_SAFE.match(v)]
     if bad_charset:
         raise ConfigurationError(
             field="sensitivity.independent_vars",
@@ -869,10 +888,7 @@ def validate_sensitivity_independent_vars(
     # independent_vars even though they are not literal CSV columns. Keep this
     # list aligned with sensitivity_benchmarking._ensure_n_devices_column().
     derived_columns = {"n_devices"}
-    missing = [
-        v for v in cfg.sensitivity.independent_vars
-        if v not in csv_columns and v not in derived_columns
-    ]
+    missing = [v for v in cfg.sensitivity.independent_vars if v not in csv_columns and v not in derived_columns]
     if missing:
         raise ConfigurationError(
             field="sensitivity.independent_vars",
@@ -883,6 +899,71 @@ def validate_sensitivity_independent_vars(
             ),
             config_path=None,
         )
+
+
+def resolve_active_reporting_set_name(
+    cfg: report_config,
+    *,
+    is_sensitivity: bool,
+) -> str:
+    """Resolve the active reporting-set NAME, CSV-free (F-B-1).
+
+    `cfg.reporting_set == "default"` resolves to "benchmarking" when
+    is_sensitivity else "default" (the standard set). A non-"default" value is
+    taken verbatim. The resolved name is validated against the ReportingSet
+    registry (imported LAZILY here so this module never imports report_renderers
+    at module load — that would create the cycle config.report ->
+    report_renderers._reporting_sets -> config.report). Returns the resolved set
+    name.
+
+    This is the CSV-free resolver: it performs no sensitivity-CSV
+    cross-validation, so it is safe to call from the render-without-run() path
+    (analysis.render_report's surgery block) where no sensitivity CSV is
+    available. validate_active_reporting_set delegates name resolution here and
+    layers the run-entry CSV cross-validation on top.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._reporting_sets import (  # lazy: cycle-break
+        REPORTING_SETS,
+    )
+
+    name = cfg.reporting_set
+    if name == "default":
+        name = "benchmarking" if is_sensitivity else "default"
+    if name not in REPORTING_SETS:
+        raise ConfigurationError(
+            field="reporting_set",
+            message=(
+                f"report_config.reporting_set='{cfg.reporting_set}' resolves to "
+                f"unknown set '{name}'. Registered sets: {sorted(REPORTING_SETS)}."
+            ),
+            config_path=None,
+        )
+    return name
+
+
+def validate_active_reporting_set(
+    cfg: report_config,
+    *,
+    is_sensitivity: bool,
+    sensitivity_csv_path: Path | None,
+) -> str:
+    """Resolve and validate the active reporting set at analysis.run() entry.
+
+    Delegates name resolution + registry validation to
+    resolve_active_reporting_set_name (CSV-free). For a set whose validator_key
+    is "benchmarking", layers the run-entry CSV cross-validation by delegating to
+    validate_sensitivity_independent_vars (ADR-5: benchmarking's validation IS
+    that function). Returns the resolved set name for the caller to thread to the
+    renderer CLI / surgery.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._reporting_sets import (  # lazy: cycle-break
+        REPORTING_SETS,
+    )
+
+    name = resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
+    if REPORTING_SETS[name].validator_key == "benchmarking":
+        validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
+    return name
 
 
 DEFAULT_REPORT_CONFIG = report_config()
