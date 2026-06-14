@@ -58,6 +58,12 @@ def _build_case(
         "gpu_compilation_backend": "CUDA",
         "gpu_hardware": "a6000",
         "target_dem_resolution": 3.5,
+        # HPC module set the generated compile/run scripts must `module load` (system.py:663):
+        # without it the field defaults to None, no `module load` is emitted, and `nvcc` is
+        # absent on the standard-partition build node -> GPU compile aborts at `which nvcc`.
+        # Mirrors the tested UVA platform default (constants.py UVA_DEFAULT_PLATFORM_CONFIG):
+        # GCC 11.4 + CUDA 12.4 is a compatible nvcc/host-compiler pairing.
+        "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/11.4.0_4.1.4 cuda/12.4.1",
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
