@@ -119,3 +119,21 @@ def test_cpu_non_mpi_unchanged(synth_multi_sim_builder):
     assert "mpi=True" not in block
     assert "tasks_per_gpu" not in block
     assert "slurm_extra" not in block
+
+
+def test_resolution_helpers_none_fallback_is_byte_identical(synth_multi_sim_builder):
+    """Phase 2 (R2): with cfg_hpc_system None, the batch_job resolution helpers
+    return the EXACT legacy reads, so emission is byte-identical to pre-Phase-2.
+
+    The synth test case threads no --hpc-system-config, so cfg_hpc_system is
+    None here — exercising the fallback branch of each helper.
+    """
+    b = synth_multi_sim_builder._workflow_builder
+    assert b.cfg_hpc_system is None
+    assert b._resolve_account() == b.cfg_analysis.hpc_account
+    assert b._resolve_gpu_alloc_mode() == (
+        b.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+    )
+    assert b._resolve_gpus_per_node(b.cfg_analysis.hpc_ensemble_partition) == (
+        b.cfg_analysis.hpc_gpus_per_node or 0
+    )

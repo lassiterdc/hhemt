@@ -345,7 +345,7 @@ def _validate_model_selection(cfg: system_config, result: ValidationResult):
 # ============================================================================
 
 
-def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
+def validate_analysis_config(cfg: analysis_config, cfg_hpc_system: Any | None = None) -> ValidationResult:
     """Validate analysis configuration.
 
     Checks:
@@ -372,7 +372,7 @@ def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
     _validate_toggle_dependencies_analysis(cfg, result)
 
     # HPC sanity checks (section 5)
-    _validate_hpc_configuration(cfg, result)
+    _validate_hpc_configuration(cfg, result, cfg_hpc_system=cfg_hpc_system)
 
 
     return result
@@ -804,8 +804,18 @@ def _validate_per_sa_system_configs(
                     break  # First divergence per pair is enough.
 
 
-def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
-    """Validate HPC configuration sanity."""
+def _validate_hpc_configuration(
+    cfg: analysis_config,
+    result: ValidationResult,
+    cfg_hpc_system: Any | None = None,
+):
+    """Validate HPC configuration sanity.
+
+    ``cfg_hpc_system`` (typed ``Any`` to avoid a circular import from
+    ``config.hpc_system``) is the per-HPC-system config when supplied; when it
+    is ``None`` the Phase-2 per-partition runtime preflight is skipped so the
+    validation result is byte-identical to today (R2).
+    """
     method = cfg.multi_sim_run_method
 
     if method == "1_job_many_srun_tasks":
@@ -872,6 +882,79 @@ def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
                 current_value=None,
                 fix_hint="Set hpc_login_node to your specific login node (e.g., 'login1.hpc.virginia.edu')",
             )
+
+    # Phase 2 (R5): per-rule runtime <= partition max_runtime preflight.
+    # Net-new bound; no native enforcement exists (snakemake FQ3). Gated on
+    # batch_job mode AND a present cfg_hpc_system, so when no hpc_system_config
+    # is supplied this is a no-op (R2 byte-identity). Phase 3 adds the
+    # 1_job_many_srun_tasks `hpc_total_job_duration_min` bound separately.
+    if method == "batch_job" and cfg_hpc_system is not None:
+        # Per-rule (runtime_min, partition) pairs mirror the batch_job emitter
+        # in workflow.py: sim rules target hpc_ensemble_partition; setup/prep/
+        # process/consolidate target hpc_setup_and_analysis_processing_partition.
+        # The literal runtimes (30/120/30) mirror the workflow.py emitter
+        # constants verbatim; an emitter runtime edit must update both.
+        sim_partition = cfg.hpc_ensemble_partition
+        proc_partition = cfg.hpc_setup_and_analysis_processing_partition
+        # (rule_label, partition_name, requested_runtime_min, is_hardcoded_literal)
+        per_rule_runtimes = [
+            (
+                "simulation (run_triton/run_tritonswmm/run_swmm)",
+                sim_partition,
+                cfg.hpc_time_min_per_sim or 30,
+                False,
+            ),
+            ("setup", proc_partition, cfg.hpc_runtime_min_for_setup, False),
+            ("scenario preparation", proc_partition, 30, True),
+            ("output processing", proc_partition, 120, True),
+            ("consolidation", proc_partition, 30, True),
+        ]
+        for rule_label, partition_name, requested, is_literal in per_rule_runtimes:
+            if partition_name is None or requested is None:
+                continue  # partition/field-presence errors already emitted above
+            spec = cfg_hpc_system.partitions.get(partition_name)
+            if spec is None:
+                result.add_error(
+                    field="hpc_system.partitions",
+                    message=(
+                        f"Rule '{rule_label}' targets partition "
+                        f"'{partition_name}', which is not declared in the "
+                        f"hpc_system_config partitions block."
+                    ),
+                    current_value=partition_name,
+                    fix_hint=(
+                        f"Add a '{partition_name}' entry to the hpc_system_config "
+                        f"partitions block, or change the analysis_config partition "
+                        f"field to a declared partition: "
+                        f"{sorted(cfg_hpc_system.partitions)}"
+                    ),
+                )
+                continue
+            cap = spec.max_runtime
+            if cap is not None and requested > cap:
+                if is_literal:
+                    fix = (
+                        f"The '{rule_label}' rule uses a fixed {requested}-min "
+                        f"runtime estimate. Raise partition '{partition_name}' "
+                        f"max_runtime to >= {requested} in hpc_system_config (or "
+                        f"assign this rule a partition with a higher cap)."
+                    )
+                else:
+                    fix = (
+                        f"Reduce the requested runtime, raise partition "
+                        f"'{partition_name}' max_runtime to >= {requested} in "
+                        f"hpc_system_config, or choose a partition with a higher cap."
+                    )
+                result.add_error(
+                    field=f"hpc_system.partitions.{partition_name}.max_runtime",
+                    message=(
+                        f"Rule '{rule_label}' requests {requested} min on "
+                        f"partition '{partition_name}', exceeding its "
+                        f"max_runtime cap of {cap} min."
+                    ),
+                    current_value=requested,
+                    fix_hint=fix,
+                )
 
 
 # ============================================================================
@@ -1228,6 +1311,7 @@ def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
     report_cfg: Optional[Any] = None,
+    cfg_hpc_system: Any | None = None,
 ) -> ValidationResult:
     """Run full preflight validation on system and analysis configs.
 
@@ -1242,6 +1326,10 @@ def preflight_validate(
             ``interactive.enabled=True`` but ``plotly`` / ``datashader``
             fail to import). Typed as ``Any`` to avoid a circular import
             from ``config.report``.
+        cfg_hpc_system: Optional per-HPC-system config. When provided, the
+            Phase-2 per-partition runtime preflight runs (errors when a per-rule
+            runtime exceeds its partition's ``max_runtime`` cap). Typed as
+            ``Any`` to avoid a circular import from ``config.hpc_system``.
 
     Returns:
         ValidationResult with all errors and warnings
@@ -1259,7 +1347,7 @@ def preflight_validate(
     result.merge(sys_result)
 
     # Validate analysis config
-    analysis_result = validate_analysis_config(cfg_analysis)
+    analysis_result = validate_analysis_config(cfg_analysis, cfg_hpc_system=cfg_hpc_system)
     result.merge(analysis_result)
 
     # Validate data cross-consistency

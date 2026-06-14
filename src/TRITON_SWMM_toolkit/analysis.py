@@ -432,6 +432,7 @@ class TRITONSWMM_analysis:
         return preflight_validate(
             cfg_system=self._system.cfg_system,
             cfg_analysis=self.cfg_analysis,
+            cfg_hpc_system=self.cfg_hpc_system,
         )
 
     def _refresh_log(self):
