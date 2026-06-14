@@ -276,3 +276,6 @@ test_data/norfolk_coastal_flooding/triton/*
 # this rule; if needed, transfer the sidecar manually.
 # Matches agentic-workspace policy (commit 26beb3830, 2026-04-16).
 /sidecars/
+
+# synth compute-config experiment generated artifacts (D3)
+scripts/experiments/_generated/
