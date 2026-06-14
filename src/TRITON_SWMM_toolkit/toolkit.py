@@ -98,6 +98,7 @@ class Toolkit:
         cls,
         system_config: str | Path,
         analysis_config: str | Path,
+        hpc_system_config: str | Path | None = None,
         validate: bool = True,
     ) -> "Toolkit":
         """Create Toolkit instance from configuration files.
@@ -110,6 +111,10 @@ class Toolkit:
         Args:
             system_config: Path to system configuration YAML file
             analysis_config: Path to analysis configuration YAML file
+            hpc_system_config: Optional path to the per-HPC-system configuration
+                YAML file (``hpc_system_config.yaml``). When None (default),
+                behavior is byte-identical to today — the HPC config consumers
+                wire in later phases.
             validate: Whether to run preflight validation (default: True).
                 Raises ConfigurationError if validation fails.
 
@@ -137,7 +142,11 @@ class Toolkit:
 
         # Load system and analysis
         system = TRITONSWMM_system(Path(system_config))
-        analysis = TRITONSWMM_analysis(Path(analysis_config), system)
+        analysis = TRITONSWMM_analysis(
+            Path(analysis_config),
+            system,
+            hpc_system_config_yaml=(Path(hpc_system_config) if hpc_system_config is not None else None),
+        )
         system._analysis = analysis  # Link back
 
         # Run preflight validation if requested

@@ -5,8 +5,7 @@ profiles from the tests_and_case_studies.yaml catalog file.
 
 The catalog provides:
 - Discoverable testcase and case-study definitions
-- Shared HPC/runtime parameter defaults
-- Profile-specific overrides with 6-tier precedence resolution
+- Per-profile system/analysis configuration file path resolution
 """
 
 from pathlib import Path
@@ -18,77 +17,17 @@ import yaml
 from .exceptions import ConfigurationError, CLIValidationError
 
 
-class HPCSettings(BaseModel):
-    """HPC resource configuration settings.
-
-    Supports SLURM-based cluster execution with resource allocation
-    parameters. None values indicate unspecified (use lower-precedence defaults).
-    """
-
-    platform_config: Optional[str] = None
-    scheduler: Optional[str] = "slurm"
-    partition: Optional[str] = None
-    account: Optional[str] = None
-    qos: Optional[str] = None
-    nodes: Optional[int] = Field(None, ge=1)
-    ntasks_per_node: Optional[int] = Field(None, ge=1)
-    cpus_per_task: Optional[int] = Field(None, ge=1)
-    gpus_per_node: Optional[int] = Field(None, ge=0)
-    walltime: Optional[str] = None
-
-    @field_validator("walltime")
-    @classmethod
-    def validate_walltime_format(cls, v: Optional[str]) -> Optional[str]:
-        """Validate walltime is in HH:MM:SS format."""
-        if v is None:
-            return v
-
-        import re
-
-        if not re.match(r"^\d{2}:\d{2}:\d{2}$", v):
-            raise ValueError(
-                f"Invalid walltime format: {v}. Must be HH:MM:SS (e.g., 01:30:00)"
-            )
-        return v
-
-
-class WorkflowSettings(BaseModel):
-    """Workflow execution settings.
-
-    Controls Snakemake workflow behavior and model/processing scope.
-    None values indicate unspecified (use lower-precedence defaults).
-    """
-
-    jobs: Optional[int] = Field(None, ge=1)
-    which: Optional[str] = Field(
-        None, pattern=r"^(TRITON|SWMM|both)$"
-    )  # TODO - which always (to the best of my memory) always refers to which model outputs to process. We should change the name of this parameter to which_outputs everywhere in the code base for clarity.
-    model: Optional[str] = Field(
-        None, pattern=r"^(auto|triton|swmm|tritonswmm)$"
-    )  # TODO: model and model_type are being used interchangeably. We should change them all to which_model or model_type
-
-
-class ProfileDefaults(BaseModel):
-    # TODO - generally default values can hide users from choices they should be making intentionaly; I'd like to remove the use of deafults where possible.
-    """Top-level defaults section of catalog."""
-
-    hpc: HPCSettings = Field(default_factory=HPCSettings)
-    workflow: WorkflowSettings = Field(default_factory=WorkflowSettings)
-
-
 class ProfileEntry(BaseModel):
     """Individual testcase or case-study profile entry.
 
-    Each profile entry specifies configuration file paths and optional
-    HPC/workflow overrides that merge with catalog defaults.
+    Each profile entry specifies the system/analysis configuration file paths
+    for a discoverable testcase or case-study.
     """
 
     description: str
     case_root: Optional[Path] = None
     system_config: Path
     analysis_config: Path
-    hpc: Optional[HPCSettings] = None
-    workflow: Optional[WorkflowSettings] = None
     event_ilocs: Optional[List[int]] = None
 
     @field_validator("system_config", "analysis_config", mode="before")
@@ -105,13 +44,11 @@ class ProfileCatalog(BaseModel):
 
     Attributes:
         version: Schema version (currently only v1 supported)
-        defaults: Shared default HPC/workflow settings
         testcases: Dictionary of testcase profiles by name
         case_studies: Dictionary of case-study profiles by name
     """
 
     version: int = Field(..., ge=1, le=1)
-    defaults: ProfileDefaults = Field(default_factory=ProfileDefaults)
     testcases: Dict[str, ProfileEntry] = Field(default_factory=dict)
     case_studies: Dict[str, ProfileEntry] = Field(default_factory=dict)
 
@@ -296,87 +233,3 @@ def list_case_studies(catalog: ProfileCatalog) -> List[tuple[str, str]]:
         norfolk_coastal_flooding: Reference case-study workflow
     """
     return [(name, entry.description) for name, entry in catalog.case_studies.items()]
-
-
-def merge_hpc_settings(
-    *sources: Optional[HPCSettings], cli_overrides: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """Merge HPC settings from multiple sources with None-aware semantics.
-
-    Sources are processed in precedence order (lowest to highest). None values
-    are skipped (do not overwrite lower-precedence values).
-
-    Args:
-        *sources: Variable number of HPCSettings objects in precedence order
-        cli_overrides: Optional dict of CLI argument overrides (highest precedence)
-
-    Returns:
-        Merged HPC settings dict with None values filtered out
-
-    Example:
-        >>> defaults = HPCSettings(nodes=1, partition=None)
-        >>> profile = HPCSettings(nodes=2, partition="debug")
-        >>> cli = {"partition": "standard", "walltime": "01:00:00"}
-        >>> result = merge_hpc_settings(defaults, profile, cli_overrides=cli)
-        >>> result == {"nodes": 2, "partition": "standard", "walltime": "01:00:00"}
-        True
-    """
-    merged = {}
-
-    # Merge Pydantic model sources
-    for source in sources:
-        if source is None:
-            continue
-        for field_name, value in source.model_dump(exclude_none=True).items():
-            if value is not None:
-                merged[field_name] = value
-
-    # Apply CLI overrides (highest precedence)
-    if cli_overrides:
-        for key, value in cli_overrides.items():
-            if value is not None:
-                merged[key] = value
-
-    return merged
-
-
-def merge_workflow_settings(
-    *sources: Optional[WorkflowSettings], cli_overrides: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
-    """Merge workflow settings from multiple sources with None-aware semantics.
-
-    Sources are processed in precedence order (lowest to highest). None values
-    are skipped (do not overwrite lower-precedence values).
-
-    Args:
-        *sources: Variable number of WorkflowSettings objects in precedence order
-        cli_overrides: Optional dict of CLI argument overrides (highest precedence)
-
-    Returns:
-        Merged workflow settings dict with None values filtered out
-
-    Example:
-        >>> defaults = WorkflowSettings(jobs=1, which="both")
-        >>> profile = WorkflowSettings(jobs=4)
-        >>> cli = {"which": "TRITON"}
-        >>> result = merge_workflow_settings(defaults, profile, cli_overrides=cli)
-        >>> result == {"jobs": 4, "which": "TRITON"}
-        True
-    """
-    merged = {}
-
-    # Merge Pydantic model sources
-    for source in sources:
-        if source is None:
-            continue
-        for field_name, value in source.model_dump(exclude_none=True).items():
-            if value is not None:
-                merged[field_name] = value
-
-    # Apply CLI overrides (highest precedence)
-    if cli_overrides:
-        for key, value in cli_overrides.items():
-            if value is not None:
-                merged[key] = value
-
-    return merged
