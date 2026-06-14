@@ -1506,6 +1506,7 @@ def report_from_bundle_command(
     for fmt in ("html", "zip"):
         prior = bundle_root / f"analysis_report.{fmt}"
         if prior.exists():
+            # EXEMPT-DU: bundle-root
             prior.unlink()
 
     locks_dir = bundle_root / ".snakemake" / "locks"
@@ -1516,6 +1517,7 @@ def report_from_bundle_command(
         )
         from TRITON_SWMM_toolkit.utils import fast_rmtree
 
+        # EXEMPT-DU: lock-file-cleanup
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 

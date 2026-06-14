@@ -118,6 +118,7 @@ def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) 
     """
     for sa_id in targets:
         for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
+            # EXEMPT-DU: status-flag
             f.unlink(missing_ok=True)
 
 
@@ -511,7 +512,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_dir = master_analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
             for sa_id in targets:
+                # EXEMPT-DU: status-flag
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
+            # EXEMPT-DU: status-flag
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
             # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
             # fail-fast that converts the SILENT-partial-master-tree hazard into a
@@ -589,7 +592,9 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"
             _report_zip = master_analysis_dir / "analysis_report.zip"
+            # EXEMPT-DU: du-handled-by-decrement
             _report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             _report_zip.unlink(missing_ok=True)
             # FIX 3 — when regenerate_existing (and not dry_run), a LATER
             # deletion restamps the master _du.json anyway (SLURM route: the
@@ -670,7 +675,9 @@ class TRITONSWMM_sensitivity_analysis:
             # D3 — capture sizes BEFORE unlink so the O(1) decrement has the bytes.
             _html_bytes = _report_html.stat().st_size if _report_html.exists() else 0
             _zip_bytes = _report_zip.stat().st_size if _report_zip.exists() else 0
+            # EXEMPT-DU: du-handled-by-decrement
             _report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             _report_zip.unlink(missing_ok=True)
             if not dry_run:
                 # D3 — O(1) decrement of the two report children (no plots on the
@@ -721,6 +728,7 @@ class TRITONSWMM_sensitivity_analysis:
         # 1. Clear any stale sentinels from a prior failed delete attempt.
         stale_dir = analysis_dir / "_status" / "_deleting"
         if stale_dir.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale_dir)
 
         # 2. Submit the distributed sensitivity-delete workflow. Guards run
@@ -749,6 +757,7 @@ class TRITONSWMM_sensitivity_analysis:
             f"removing analysis_dir.",
             flush=True,
         )
+        # EXEMPT-DU: full-analysis-root-wipe
         fast_rmtree(analysis_dir)
 
     def _enumerate_expected_delete_sentinels(self) -> set[Path]:
@@ -1617,6 +1626,7 @@ class TRITONSWMM_sensitivity_analysis:
         for p in result["status_flags"]:
             if verbose:
                 print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
+            # EXEMPT-DU: status-flag
             p.unlink()
         result["sensitivity_datatree_removed"] = False
         result["master_flag_removed"] = False
@@ -1637,6 +1647,7 @@ class TRITONSWMM_sensitivity_analysis:
                         f"[cleanup-orphans] Unlinking master-consolidation flag {master_flag}",
                         flush=True,
                     )
+                # EXEMPT-DU: status-flag
                 master_flag.unlink()
                 result["master_flag_removed"] = True
         return result
@@ -1671,7 +1682,7 @@ class TRITONSWMM_sensitivity_analysis:
         generated_dir = analysis_dir / "_generated"
 
         if is_main_orchestrator:
-            fast_rmtree(generated_dir, missing_ok=True)
+            fast_rmtree(generated_dir, missing_ok=True, analysis_dir=analysis_dir)  # PATTERN A (_generated is DU-counted; not _status*-prefixed)
             generated_dir.mkdir(parents=True, exist_ok=True)
 
         has_yaml_col = "system_config_yaml" in df_setup_full.columns

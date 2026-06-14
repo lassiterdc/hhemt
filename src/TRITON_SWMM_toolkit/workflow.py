@@ -652,6 +652,7 @@ class SnakemakeWorkflowBuilder:
             for sub in ("locks", "incomplete"):
                 target = snakemake_state / sub
                 if target.exists():
+                    # EXEMPT-DU: lock-file-cleanup
                     fast_rmtree(target)
             (snakemake_state / "log").mkdir(parents=True, exist_ok=True)
             return
@@ -989,8 +990,10 @@ class SnakemakeWorkflowBuilder:
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
 
         for flag_path in matched_flags:
+            # EXEMPT-DU: status-flag
             flag_path.unlink(missing_ok=True)
             sidecar = flag_path.with_suffix(flag_path.suffix + ".json")
+            # EXEMPT-DU: status-flag
             sidecar.unlink(missing_ok=True)
 
     def _build_resource_block(
@@ -4906,6 +4909,7 @@ exit $snakemake_status
                     flush=True,
                 )
                 if reclaim_dead:
+                    # EXEMPT-DU: status-flag
                     s.unlink(missing_ok=True)
                 continue
             except OSError as _e:
@@ -4917,6 +4921,7 @@ exit $snakemake_status
             if jid and _slurm_job_is_live(jid):
                 alive.append((s.stem, jid))
             elif reclaim_dead:
+                # EXEMPT-DU: status-flag
                 s.unlink(missing_ok=True)  # DEAD/stale → reclaim
         return alive
 
@@ -4964,6 +4969,7 @@ exit $snakemake_status
             failed = failed_dir / f"{rule_token}.json"
             if completed.exists() or failed.exists():
                 if reclaim_completed:
+                    # EXEMPT-DU: status-flag
                     s.unlink(missing_ok=True)
                 continue
             try:
@@ -5018,6 +5024,7 @@ exit $snakemake_status
             if row is not None:
                 state, _exit, reason = row
                 if state in _SACCT_DEAD_STATES:
+                    # EXEMPT-DU: status-flag
                     sentinel.unlink(missing_ok=True)
                     cleared.append(_ClearedToken(rule_token, jid, state, reason))
                 else:
@@ -5028,6 +5035,7 @@ exit $snakemake_status
             except OSError:
                 age_s = max_plausible_s + 1
             if age_s >= max_plausible_s:
+                # EXEMPT-DU: status-flag
                 sentinel.unlink(missing_ok=True)
                 cleared.append(_ClearedToken(rule_token, jid or "(no jobid)", "UNKNOWN", "purged/age-exceeded"))
             else:
@@ -5089,6 +5097,7 @@ exit $snakemake_status
             if alive:
                 live.append(f"{s.get('driver_id')} (mode={mode})")
             else:
+                # EXEMPT-DU: status-flag
                 path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
                 print(
                     f"[orchestrator-gate] reclaimed stale sentinel {s.get('driver_id')} (mode={mode}) at {path}",
@@ -5581,6 +5590,7 @@ exit $snakemake_status
         )
         stale = self.analysis_paths.analysis_dir / "_status" / "_deleting_reprocess"
         if stale.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale)
         snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
         snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))

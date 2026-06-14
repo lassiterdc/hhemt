@@ -58,6 +58,7 @@ def _write_failed_marker_and_reclaim(status_dir: Path, rule_token: str, job_id: 
     tmp = marker.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     os.replace(tmp, marker)
+    # EXEMPT-DU: status-flag
     (status_dir / "_submitted" / f"{rule_token}.json").unlink(missing_ok=True)
 
 

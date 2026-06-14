@@ -380,6 +380,7 @@ def main():
                 _completed_tmp.write_text(json.dumps(_payload))
                 os.replace(_completed_tmp, _completed_marker)
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 
