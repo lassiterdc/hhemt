@@ -44,3 +44,4 @@ non_breaking_allowlist:
   # mode->reporting_set rewrite. Config-schema only — no figure-stem rename, no
   # on-disk output-dir change. Non-breaking; no LAYOUT_VERSION bump / migration.
   - src/TRITON_SWMM_toolkit/config/report.py  # reporting-system config-layering-and-branding D-5: _HtmlTableStyleBase brand defaults overridden from brand_theme at run(); additive/behavior-only — no on-disk layout change.
+  - src/TRITON_SWMM_toolkit/config/static_plots.py  # reporting-system_publication-static-config-schema (ADR-4): new publication static-plot Pydantic config family. Pure in-memory config schema — no on-disk layout, no figure stem, no zarr/log/path change. Non-breaking (mirrors viz_vocabulary.py / brand_theme.py).
