@@ -550,6 +550,11 @@ class SnakemakeWorkflowBuilder:
         self.analysis = analysis
         self.cfg_analysis = analysis.cfg_analysis
         self.system = analysis._system
+        # Phase 2 (R3): the per-HPC-system config (None when no
+        # --hpc-system-config was supplied). The batch_job emitter resolution
+        # helpers prefer it when present and fall back to the legacy
+        # cfg_analysis/cfg_system reads otherwise (byte-identical when None).
+        self.cfg_hpc_system = analysis.cfg_hpc_system
         self.analysis_paths = analysis.analysis_paths
         # Prefer an explicit interpreter path for generated shell commands.
         # If analysis stores a generic command ("python"/"python3"), use
@@ -1157,6 +1162,44 @@ class SnakemakeWorkflowBuilder:
         # for the legacy peer-file path resolution.
         return self.cfg_analysis.report.interactive.static_backend
 
+    def _resolve_account(self) -> str | None:
+        """Phase-2 (R3): SLURM account default-resource.
+
+        Prefer cfg_hpc_system.default_account when the new config is present;
+        else fall back to the EXACT legacy read (cfg_analysis.hpc_account) so
+        that cfg_hpc_system is None reproduces today's emission byte-for-byte.
+        """
+        if self.cfg_hpc_system is not None:
+            return self.cfg_hpc_system.default_account
+        return self.cfg_analysis.hpc_account
+
+    def _resolve_gpu_alloc_mode(self) -> Literal["gres", "gpus"]:
+        """Phase-2 (R3): gres-vs-gpus GPU allocation channel.
+
+        Prefer cfg_hpc_system.gpu_allocation_flavor; else the legacy
+        cfg_system.preferred_slurm_option_for_allocating_gpus. The legacy
+        ``or "gpus"`` default is preserved on BOTH branches so a None on either
+        source resolves identically.
+        """
+        if self.cfg_hpc_system is not None and self.cfg_hpc_system.gpu_allocation_flavor is not None:
+            return self.cfg_hpc_system.gpu_allocation_flavor
+        return self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+
+    def _resolve_gpus_per_node(self, partition_name: str | None) -> int:
+        """Phase-2 (R3): per-node GPU topology for the given (sim) partition.
+
+        Prefer the PartitionSpec.gpus_per_node of the named partition when
+        cfg_hpc_system is present AND the partition is declared AND it carries a
+        gpus_per_node value; else the legacy cfg_analysis.hpc_gpus_per_node.
+        Both branches apply the legacy ``or 0`` so a None resolves to 0
+        identically (the _build_resource_block contract: 0 == no GPU topology).
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.gpus_per_node is not None:
+                return spec.gpus_per_node
+        return self.cfg_analysis.hpc_gpus_per_node or 0
+
     def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
         module-level rule helpers (_emit_plot_rule, _emit_render_report_rule,
@@ -1531,8 +1574,12 @@ rule consolidate_scenario:
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
-        gpus_per_node_config = self.cfg_analysis.hpc_gpus_per_node or 0
-        gpu_alloc_mode = self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+        # Phase 2 (R3): prefer the partition-sourced GPU topology + allocation
+        # flavor from cfg_hpc_system when present; byte-identical legacy reads
+        # when absent. The sim rules target hpc_ensemble_partition (1591/1772),
+        # so the topology is keyed on that partition's PartitionSpec.
+        gpus_per_node_config = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
+        gpu_alloc_mode = self._resolve_gpu_alloc_mode()
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
@@ -2463,14 +2510,13 @@ def _per_sim_conduit_flow_sources(wildcards):
                         "mem_mb=2000",
                         "runtime=30",
                         f"slurm_partition={slurm_partition}",
-                        f"slurm_account={self.cfg_analysis.hpc_account}",
+                        f"slurm_account={self._resolve_account()}",
                     ],
-                    "slurm": {
-                        "sbatch": {
-                            "partition": "{resources.slurm_partition}",
-                            "account": "{resources.slurm_account}",
-                        }
-                    },
+                    # NOTE: the legacy `slurm: {sbatch: {...}}` block was deleted
+                    # in Phase 2 — it is a `--cluster`-generic-executor key shape
+                    # the modern `executor: slurm` plugin ignores (slurm_partition/
+                    # slurm_account come from default-resources above); snakemake 9's
+                    # profile parser silently drops it. (snakemake FQ2 open-finding 2.)
                 }
             )
 

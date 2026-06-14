@@ -196,3 +196,46 @@ def test_analysis_validate_raise_if_invalid(norfolk_multi_sim_analysis):
 
     # If we get here, validation passed (no ConfigurationError raised)
     assert True
+
+
+def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis, tmp_path):
+    """Phase 2 (R5): a per-rule runtime exceeding the partition max_runtime cap
+    surfaces a preflight error naming the partition; cfg_hpc_system=None is a no-op.
+    """
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+
+    a = synth_multi_sim_analysis
+    cfg_sys = a._system.cfg_system
+    cfg_analysis = a.cfg_analysis
+    # Force batch_job + partitions so the per-rule runtime bound is reachable.
+    cfg_analysis.multi_sim_run_method = "batch_job"
+    cfg_analysis.hpc_ensemble_partition = "tiny"
+    cfg_analysis.hpc_setup_and_analysis_processing_partition = "tiny"
+    cfg_analysis.hpc_account = "acct"
+    cfg_analysis.hpc_max_simultaneous_sims = 4
+    cfg_analysis.hpc_total_job_duration_min = 60
+
+    # Baseline: no hpc_system_config -> the new per-partition bound is skipped
+    # (R2 no-op). No max_runtime error is produced.
+    base = preflight_validate(cfg_sys, cfg_analysis)
+    assert not any("max_runtime" in e.message for e in base.errors)
+
+    # With a cap (5 min) below the fixed 30/60/120-min rule runtimes, the bound fires.
+    hpc_yaml = tmp_path / "hpc_system_config.yaml"
+    hpc_yaml.write_text(
+        _yaml.safe_dump(
+            {
+                "system_name": "tiny-cluster",
+                "default_account": "acct",
+                "partitions": {"tiny": {"max_runtime": 5}},
+            }
+        )
+    )
+    cfg_hpc = load_hpc_system_config(hpc_yaml)
+
+    result = preflight_validate(cfg_sys, cfg_analysis, cfg_hpc_system=cfg_hpc)
+    assert not result.is_valid
+    msgs = " ".join(e.message for e in result.errors)
+    assert "max_runtime" in msgs and "tiny" in msgs

@@ -897,3 +897,59 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     assert "du-table" in du_html, (
         f"Disk Utilization card did not render the populated table; got: {du_html[:200]!r}"
     )
+
+
+def _set_batch_job_fields(cfg_analysis, *, account="legacy_acct"):
+    """Set the minimum analysis_config fields generate_snakemake_config('slurm')
+    requires (the synth case defaults them to None)."""
+    cfg_analysis.hpc_ensemble_partition = "gpu"
+    cfg_analysis.hpc_max_simultaneous_sims = 4
+    cfg_analysis.hpc_account = account
+
+
+def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path):
+    """Phase 2 (R3): generate_snakemake_config('slurm') sources slurm_account from
+    cfg_hpc_system.default_account and emits no dead `slurm:` block."""
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+
+    analysis = synth_multi_sim_analysis
+    _set_batch_job_fields(analysis.cfg_analysis, account="legacy_acct")
+
+    hpc_yaml = tmp_path / "hpc_system_config.yaml"
+    hpc_yaml.write_text(
+        _yaml.safe_dump(
+            {
+                "system_name": "synth-cluster",
+                "default_account": "synth_acct",
+                "gpu_allocation_flavor": "gres",
+                # max_runtime large so the §preflight does not fire here.
+                "partitions": {"gpu": {"max_runtime": 100000, "gpus_per_node": 8}},
+            }
+        )
+    )
+    analysis.cfg_hpc_system = load_hpc_system_config(hpc_yaml)
+    analysis._workflow_builder.cfg_hpc_system = analysis.cfg_hpc_system
+
+    cfg = analysis._workflow_builder.generate_snakemake_config(mode="slurm")
+    default_res = cfg["default-resources"]
+    # Account sourced from cfg_hpc_system.default_account, NOT the legacy hpc_account.
+    assert "slurm_account=synth_acct" in default_res
+    assert "slurm_account=legacy_acct" not in default_res
+    assert "slurm_partition=gpu" in default_res
+    # The dead `slurm: {sbatch: {...}}` block is deleted (Phase 2).
+    assert "slurm" not in cfg
+
+
+def test_slurm_config_none_hpc_system_is_byte_identical(synth_multi_sim_analysis):
+    """Phase 2 (R2): with cfg_hpc_system None, slurm_account falls back to the
+    legacy cfg_analysis.hpc_account read (byte-identical to pre-Phase-2)."""
+    analysis = synth_multi_sim_analysis
+    _set_batch_job_fields(analysis.cfg_analysis, account="legacy_acct")
+    assert analysis._workflow_builder.cfg_hpc_system is None
+
+    cfg = analysis._workflow_builder.generate_snakemake_config(mode="slurm")
+    default_res = cfg["default-resources"]
+    assert "slurm_account=legacy_acct" in default_res  # legacy read preserved
+    assert "slurm" not in cfg  # dead block deleted regardless of config presence
