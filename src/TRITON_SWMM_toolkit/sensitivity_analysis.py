@@ -1146,6 +1146,11 @@ class TRITONSWMM_sensitivity_analysis:
         if fname_out.exists() and _log_complete:
             if verbose:
                 print(f"Sensitivity DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
+            # Ensure the master analysis-scope DU sentinel exists even on the
+            # already-consolidated early-return path. This materializes the
+            # sentinel on trees consolidated before this write site existed, and
+            # is cheap/idempotent via compare-and-write.
+            self._write_master_du_sentinel()
             return fname_out
         if fname_out.exists() and not _log_complete:
             from TRITON_SWMM_toolkit.utils import fast_rmtree
@@ -1184,9 +1189,38 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis._refresh_log()
         if hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete"):
             self.master_analysis.log.sensitivity_datatree_consolidation_complete.set(True)
+
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
+        self._write_master_du_sentinel()
         return fname_out
+
+    def _write_master_du_sentinel(self) -> None:
+        """Write the master analysis-scope ``_du.json`` DU sentinel.
+
+        The sensitivity mirror of the multisim analysis-scope write in
+        ``processing_analysis.py`` (``consolidate_to_datatree``): the sensitivity
+        master-consolidate path is otherwise the ONLY consolidation path that
+        never writes an analysis-scope ``_du.json``, leaving the master root
+        unsentineled so a ``delete --dry-run`` falls back to a full tree walk.
+
+        Uses ``sum_child_sentinels`` (Gotcha 38 / the DU-rollup decision): the
+        master total is the Σ of the per-sub ``_du.json`` sentinels (written by
+        the D6 fold) + a bounded own-files walk excluding the child-scope dirs —
+        NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
+        largest tree in the system. Ordering is structurally safe: the
+        ``master_consolidation`` rule fans in on every per-sub completion flag,
+        so all per-sub sentinels exist before this runs. Compare-and-write keeps
+        the call idempotent (mtime preserved on unchanged bytes), so it is safe
+        to invoke on the already-consolidated early-return path too.
+        """
+        from TRITON_SWMM_toolkit.du_sentinels import sum_child_sentinels
+
+        sum_child_sentinels(
+            self.master_analysis.analysis_paths.analysis_dir,
+            scope="analysis",
+            child_scope_dirs=["subanalyses", "sims"],
+        )
 
     def open_sensitivity_datatree(self) -> "xr.DataTree":
         """Open the consolidated sensitivity DataTree zarr lazily."""
