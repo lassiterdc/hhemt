@@ -21,7 +21,7 @@ import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
 
-from ._matrix_builder import write_clean_matrix_csv
+from ._matrix_builder import write_clean_matrix_csv, write_resume_matrix_csv
 
 _GENERATED = Path(__file__).parent / "_generated"  # gitignored (D3)
 
@@ -127,5 +127,25 @@ def clean_case(start_from_scratch: bool = False, system_directory: str | None = 
     )
 
 
-def resume_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:  # body in Phase 2
-    raise NotImplementedError("resume_case lands in Phase 2")
+def resume_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:
+    """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
+
+    Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
+    ``"/project/***REMOVED***/***REMOVED***/norfolk/synth_compute_config/synth_cc_resume"``.
+    """
+    _GENERATED.mkdir(parents=True, exist_ok=True)
+    csv = _GENERATED / "resume_matrix.csv"
+    write_resume_matrix_csv(csv)
+    # NOTE: resume completion is driven by REPEATED DRIVER RE-INVOCATION in Phase 3
+    # (analysis.run(from_scratch=False, ...) re-plans the v2 wait-rules and re-dispatches the
+    # walltime-killed simulation_sa_* rules from the latest config_NNNN.cfg checkpoint — Gotcha 30,
+    # master A5), NOT a config knob. hpc_max_wait_for_inflight_min already defaults to its 10080
+    # max (config/analysis.py:147) and is the v2 wait-rule poll backstop, NOT the Snakemake
+    # restart-times cap; setting it here was a no-op against the wrong knob and is removed.
+    return _build_case(
+        analysis_name="synth_cc_resume",
+        sensitivity_csv=csv,
+        start_from_scratch=start_from_scratch,
+        resume=True,
+        system_directory=system_directory,
+    )

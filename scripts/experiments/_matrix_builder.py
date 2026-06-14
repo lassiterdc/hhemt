@@ -84,5 +84,10 @@ def write_clean_matrix_csv(path: Path) -> None:
     df.to_csv(path, index=False)
 
 
-def write_resume_matrix_csv(path: Path) -> None:  # body added in Phase 2 (short walltime + retry knob)
-    raise NotImplementedError("resume matrix lands in Phase 2")
+def write_resume_matrix_csv(path: Path) -> None:
+    """Resume demo: hpc_time_min_per_sim = 1 (GPU rows) / 2 (CPU rows) forces a mid-sim kill (slurm rec)."""
+    rows = _rows(_CLEAN_CONFIGS, walltime_min=None)  # None => per-row below: 1 if n_gpus else 2
+    for r in rows:
+        r["hpc_time_min_per_sim"] = 1 if r["n_gpus"] else 2
+        assert r["hpc_time_min_per_sim"] <= 2  # slurm walltime tripwire (R5)
+    pd.DataFrame(rows, columns=_COLS).to_csv(path, index=False)
