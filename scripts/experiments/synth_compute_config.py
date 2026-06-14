@@ -69,6 +69,12 @@ def _build_case(
         # gompi/11.4.0_4.1.4 (GCC 11.4 / GLIBCXX_3.4.29), is too old. cuda/12.8.0 supports
         # GCC <=14 (cuda/12.4.1 caps at GCC 13). GCC 14.2 already builds the CPU backend OK.
         "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/14.2.0_5.0.7 cuda/12.8.0",
+        # GPU SLURM allocation mode. Unset -> defaults to "gpus" (Frontier --gpus-per-task=1,
+        # run_simulation.py:651), which on UVA's gres allocation fails at sim launch:
+        # "srun: fatal: --gpus-per-task is mutually exclusive with ... SLURM_NTASKS_PER_GPU".
+        # UVA requires "gres" (UVA_DEFAULT_PLATFORM_CONFIG). This is the last cfg_system field
+        # the hand-built dict was missing vs PlatformConfig.to_system_dict().
+        "preferred_slurm_option_for_allocating_gpus": "gres",
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
