@@ -10,7 +10,6 @@ sub-analysis with status counts.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -59,55 +58,39 @@ def render(
         per_sa_rows = []
         for sa_id, sub in analysis.sensitivity.sub_analyses.items():
             n = len(sub.df_sims.index)
-            n_succ = sum(
-                1 for i in sub.df_sims.index if _is_scenario_successful(sub, i)
-            )
-            n_pend = sum(
-                1 for i in sub.df_sims.index if _is_scenario_pending(sub, i)
-            )
+            n_succ = sum(1 for i in sub.df_sims.index if _is_scenario_successful(sub, i))
+            n_pend = sum(1 for i in sub.df_sims.index if _is_scenario_pending(sub, i))
             n_fail = n - n_succ - n_pend
-            per_sa_rows.append({
-                "sub-analysis": sa_id,
-                "n sims": n,
-                "successful": n_succ,
-                "pending": n_pend,
-                "failed": n_fail,
-            })
+            per_sa_rows.append(
+                {
+                    "sub-analysis": sa_id,
+                    "n sims": n,
+                    "successful": n_succ,
+                    "pending": n_pend,
+                    "failed": n_fail,
+                }
+            )
         df = pd.DataFrame(per_sa_rows)
     else:
         n_sims = len(analysis.df_sims.index)
         # Prefer scenario_status.csv (written by export_scenario_status.py as
         # Snakemake onsuccess/onerror hook). Fall back to per-log iteration
         # if the CSV is missing.
-        scenario_status_csv = (
-            Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
-        )
+        scenario_status_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
         if scenario_status_csv.exists():
             status_df = pd.read_csv(scenario_status_csv)
-            success_per_event = status_df.groupby("event_iloc")[
-                "run_completed"
-            ].all()
+            success_per_event = status_df.groupby("event_iloc")["run_completed"].all()
             n_successful = int(success_per_event.sum())
-            failed_mask = (
-                ~status_df["run_completed"].fillna(False).astype(bool)
-            ) & status_df["scenario_setup"].fillna(False).astype(bool)
+            failed_mask = (~status_df["run_completed"].fillna(False).astype(bool)) & status_df["scenario_setup"].fillna(
+                False
+            ).astype(bool)
             failed_events = status_df[failed_mask]["event_iloc"].unique()
-            failed_events = [
-                e for e in failed_events if not success_per_event.get(e, False)
-            ]
+            failed_events = [e for e in failed_events if not success_per_event.get(e, False)]
             n_failed = len(failed_events)
             n_pending = max(0, n_sims - n_successful - n_failed)
         else:
-            n_successful = sum(
-                1
-                for i in analysis.df_sims.index
-                if _is_scenario_successful(analysis, i)
-            )
-            n_pending = sum(
-                1
-                for i in analysis.df_sims.index
-                if _is_scenario_pending(analysis, i)
-            )
+            n_successful = sum(1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i))
+            n_pending = sum(1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i))
             n_failed = n_sims - n_successful - n_pending
 
         n_weather_events = len(analysis.df_sims.index)
@@ -118,15 +101,10 @@ def render(
         if is_sensitivity:
             n_sa_rows = len(analysis.sensitivity.df_setup.index)
             expected_total = n_weather_events * n_sa_rows
-            expected_label = (
-                f"Expected total (derived: {n_weather_events} events "
-                f"× {n_sa_rows} sa rows)"
-            )
+            expected_label = f"Expected total (derived: {n_weather_events} events × {n_sa_rows} sa rows)"
         else:
             expected_total = n_weather_events
-            expected_label = (
-                f"Expected total (derived: {n_weather_events} weather events)"
-            )
+            expected_label = f"Expected total (derived: {n_weather_events} weather events)"
 
         rows = []
         if "n_sims" in metrics:
@@ -140,40 +118,30 @@ def render(
             rows.append(("Failed", n_failed))
         if "enabled_model_types" in metrics:
             enabled = analysis._get_enabled_model_types()
-            rows.append(
-                ("Enabled model types", ", ".join(enabled) if enabled else "(none)")
-            )
+            rows.append(("Enabled model types", ", ".join(enabled) if enabled else "(none)"))
         if "sensitivity_mode" in metrics:
             sensitivity_cfg = getattr(report_cfg, "sensitivity", None)
-            mode = (
-                getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
-            )
+            mode = getattr(sensitivity_cfg, "mode", None) if sensitivity_cfg else None
             if mode is not None:
                 rows.append(("Sensitivity analysis mode", str(mode)))
 
         df = pd.DataFrame(rows, columns=["Metric", "Value"])
 
-    scenario_status_csv_path = (
-        Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
-    )
+    scenario_status_csv_path = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
     # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
     # is the named source even when absent (sensitivity-master mode derives counts
     # from in-memory sub_analyses). _validate_source_path accepts non-existent
     # paths, so this surfaces the expected CSV rather than tripping Gate-A.
     source_paths: list[Path] = [scenario_status_csv_path]
 
-    analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
-    rel_sources = [
-        os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths
-    ]
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import _relativize
+
+    rel_sources = _relativize(source_paths, analysis.analysis_paths.analysis_dir)
 
     with prov.artist(
         axes_id="ax_summary",
         kind="table",
-        note=(
-            "per-analysis workflow-health table "
-            "(status counts + enabled model types) — Tabulator data grid"
-        ),
+        note=("per-analysis workflow-health table (status counts + enabled model types) — Tabulator data grid"),
     ) as a:
         for rel in rel_sources:
             a.add_channel(
@@ -182,10 +150,7 @@ def render(
                     source_path=rel,
                     variable="run_completed",
                     attrs={},
-                    transform=(
-                        "aggregated by event_iloc to derive "
-                        "successful/pending/failed counts"
-                    ),
+                    transform=("aggregated by event_iloc to derive successful/pending/failed counts"),
                 ),
             )
 
@@ -228,7 +193,9 @@ def _build_tabulator_html(df: pd.DataFrame, report_cfg: report_config) -> str:
     )
 
     js_mode = getattr(
-        getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn",
+        getattr(report_cfg, "interactive", None),
+        "tabulator_js_mode",
+        "cdn",
     )
 
     return build_html_document(
@@ -243,13 +210,9 @@ def _build_tabulator_html(df: pd.DataFrame, report_cfg: report_config) -> str:
 
 def _is_scenario_successful(analysis, event_iloc: int) -> bool:
     scen = analysis._retrieve_sim_runs(event_iloc)._scenario
-    return all(
-        scen.model_run_completed(mt) for mt in analysis._get_enabled_model_types()
-    )
+    return all(scen.model_run_completed(mt) for mt in analysis._get_enabled_model_types())
 
 
 def _is_scenario_pending(analysis, event_iloc: int) -> bool:
     scen = analysis._retrieve_sim_runs(event_iloc)._scenario
-    return not any(
-        scen.model_run_completed(mt) for mt in analysis._get_enabled_model_types()
-    )
+    return not any(scen.model_run_completed(mt) for mt in analysis._get_enabled_model_types())
