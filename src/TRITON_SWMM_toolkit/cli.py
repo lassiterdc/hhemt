@@ -107,6 +107,15 @@ def run_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     # ═══════════════════════════════════════════════════════════════
     # Execution Control
     # ═══════════════════════════════════════════════════════════════
@@ -375,7 +384,9 @@ def run_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(
+            analysis_config, system, hpc_system_config_yaml=hpc_system_config
+        )
         system._analysis = analysis  # Link back
 
         if not quiet:
@@ -522,6 +533,15 @@ def cleanup_orphans_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
@@ -560,7 +580,9 @@ def cleanup_orphans_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(
+            analysis_config, system, hpc_system_config_yaml=hpc_system_config
+        )
         system._analysis = analysis
 
         if not analysis.cfg_analysis.toggle_sensitivity_analysis:
@@ -638,6 +660,15 @@ def reprocess_command(
         ...,
         "--analysis-config",
         help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -746,7 +777,9 @@ def reprocess_command(
             raise typer.Exit(2)
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(
+            analysis_config, system, hpc_system_config_yaml=hpc_system_config
+        )
         system._analysis = analysis
 
         result = analysis.reprocess(
@@ -796,6 +829,15 @@ def delete_command(
         ...,
         "--analysis-config",
         help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -862,7 +904,9 @@ def delete_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(
+            analysis_config, system, hpc_system_config_yaml=hpc_system_config
+        )
         system._analysis = analysis
 
         if skip_preview:

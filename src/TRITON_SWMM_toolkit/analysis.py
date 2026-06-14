@@ -15,7 +15,7 @@ import pandas as pd
 
 from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
-from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+from TRITON_SWMM_toolkit.config.loaders import load_analysis_config, load_hpc_system_config
 from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
     SerialExecutor,
@@ -92,6 +92,7 @@ class TRITONSWMM_analysis:
         skip_log_update: bool = False,
         verbose: bool = True,
         is_main_orchestrator: bool = True,
+        hpc_system_config_yaml: Path | None = None,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -112,11 +113,23 @@ class TRITONSWMM_analysis:
         verbose : bool, optional
             If True, print a resume status summary when prior ``_status/`` flags
             are detected (default: True)
+        hpc_system_config_yaml : Path, optional
+            Path to the per-HPC-system configuration YAML
+            (``hpc_system_config.yaml``). Loaded ONCE here into
+            ``self.cfg_hpc_system`` (None when the path is absent). Consumers
+            (the SLURM emitters / preflight) wire in later phases; with the
+            argument absent, behavior is byte-identical to today (default: None).
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
+        # Load the per-HPC-system config ONCE (R2). Store BEFORE any
+        # _get_config_args read so the direct attribute read is always safe.
+        self.hpc_system_config_yaml = hpc_system_config_yaml
+        self.cfg_hpc_system = (
+            load_hpc_system_config(hpc_system_config_yaml) if hpc_system_config_yaml is not None else None
+        )
         if cfg_analysis.analysis_dir:
             analysis_dir = cfg_analysis.analysis_dir
         else:

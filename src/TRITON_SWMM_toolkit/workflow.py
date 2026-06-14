@@ -922,6 +922,7 @@ class SnakemakeWorkflowBuilder:
         self,
         analysis_config_yaml: Path | None = None,
         system_config_yaml: Path | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ) -> str:
         """
         Generate common config path arguments.
@@ -934,6 +935,12 @@ class SnakemakeWorkflowBuilder:
             If provided, use this system config instead of self.system.system_config_yaml.
             Threaded by SensitivityAnalysisWorkflowBuilder so each sub-analysis rule
             invokes its runner script with the correct per-SA system config (Phase 3).
+        hpc_system_config_yaml : Path | None
+            If provided, use this HPC-system config instead of
+            self.analysis.hpc_system_config_yaml. Emitted as ``--hpc-system-config``
+            only when an HPC config is present (the analysis attribute is None when
+            no ``hpc_system_config.yaml`` was supplied) — so the emitted string is
+            byte-identical to today when the third config is absent.
 
         Returns
         -------
@@ -942,7 +949,11 @@ class SnakemakeWorkflowBuilder:
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
         system_cfg = system_config_yaml or self.system.system_config_yaml
-        return f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
+        hpc_cfg = hpc_system_config_yaml or self.analysis.hpc_system_config_yaml
+        base = f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
+        if hpc_cfg is not None:
+            base += f" \\\n            --hpc-system-config {hpc_cfg}"
+        return base
 
     def _delete_flags_for_force_rerun(
         self,

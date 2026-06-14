@@ -63,6 +63,13 @@ def main() -> int:
         help="Path to analysis configuration YAML file",
     )
     parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        required=False,
+        default=None,
+        help="Optional path to the per-HPC-system configuration YAML file",
+    )
+    parser.add_argument(
         "--process-system-inputs",
         action="store_true",
         default=False,
@@ -131,6 +138,9 @@ def main() -> int:
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
+    if args.hpc_system_config is not None and not args.hpc_system_config.exists():
+        logger.error(f"HPC system config not found: {args.hpc_system_config}")
+        return 2
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -147,6 +157,7 @@ def main() -> int:
         analysis = TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
+            hpc_system_config_yaml=args.hpc_system_config,
             skip_log_update=False,
             is_main_orchestrator=False,
         )
