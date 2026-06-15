@@ -364,6 +364,7 @@ class TRITON_SWMM_example:
         validate=False,
     ):
         if target.exists() and download_if_exists:
+            # EXEMPT-DU: test-example-fixture
             fast_rmtree(target)
         if target.exists() and not download_if_exists:
             return
@@ -393,6 +394,7 @@ class TRITON_SWMM_example:
                 print("Bag is invalid!")
 
         outdir = unzipped_folder.rename(target)
+        # EXEMPT-DU: test-example-fixture
         zip_path.unlink()
 
     @classmethod
