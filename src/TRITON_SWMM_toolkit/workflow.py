@@ -873,6 +873,7 @@ class SnakemakeWorkflowBuilder:
                 if row is not None:
                     state, _exit, _reason = row
                     if state in _SACCT_DEAD_STATES:
+                        # EXEMPT-DU: status-dir-cleanup
                         qpath.unlink(missing_ok=True)  # dead -> re-run
                         continue
                     recovered.append((tok, jid))  # alive (toolkit-owns)
@@ -884,6 +885,7 @@ class SnakemakeWorkflowBuilder:
             except OSError:
                 age_s = max_plausible_s + 1
             if age_s >= max_plausible_s:
+                # EXEMPT-DU: status-dir-cleanup
                 qpath.unlink(missing_ok=True)  # stale orphan -> re-run (R12)
                 continue
             recovered.append((tok, jid or ""))  # held on presence (F1-O3)
