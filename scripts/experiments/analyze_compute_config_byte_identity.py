@@ -138,6 +138,26 @@ def case_final_hashes(case_dir: str) -> dict[str, str]:
     return hashes
 
 
+def resume_count_by_sa(case_dir: str) -> dict[str, int]:
+    """Per-sa_id count of genuine hotstart resumes for a case.
+
+    Counts ``"Resuming tritonswmm from hotstart"`` occurrences across each sim's rule log
+    (the simulation_sa rule redirects run_simulation stdout there, run_simulation.py:382).
+    0 = the sim ran in a single allocation (never killed); >=1 = it was walltime-killed
+    and auto-resumed that many times — the DoD-#3 evidence. Uses ``find`` (no globstar
+    dependency) so it is robust to where the analysis log dir sits under the case dir.
+    """
+    out: dict[str, int] = {}
+    for sa_id in completed_sa_ids(case_dir):
+        raw = _ssh(
+            f"find {case_dir} -type f -name 'simulation_sa_{sa_id}_evt*.log' "
+            f"-exec grep -c 'Resuming tritonswmm from hotstart' {{}} + 2>/dev/null "
+            f"| awk -F: '{{s+=$NF}} END {{print s+0}}'"
+        ).strip()
+        out[sa_id] = int(raw or 0)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Report rendering
 # ---------------------------------------------------------------------------
@@ -145,6 +165,7 @@ def render_report(
     clean_hashes: Mapping[str, str],
     resume_hashes: Mapping[str, str] | None,
     out_path: str,
+    resume_case_dir: str | None = None,
 ) -> None:
     """Fill ``_report_template.md`` with the byte-group + clean-vs-resume findings.
 
@@ -163,6 +184,10 @@ def render_report(
     if resume_hashes is not None:
         cmp = compare_clean_vs_resume(clean_hashes, resume_hashes)
         body += f"\n## Clean-vs-resume\n\n- matched: {cmp['matched']}\n- diverged: {cmp['diverged']}\n"
+    if resume_case_dir is not None:
+        rc = resume_count_by_sa(resume_case_dir)
+        body += "\n## Resume counts (genuine hotstart resumes per sim)\n\n"
+        body += "".join(f"- {sid}: {rc.get(sid, 0)}\n" for sid in sorted(rc))
     Path(out_path).write_text(body, encoding="utf-8")
 
 
@@ -184,7 +209,12 @@ def main() -> None:
         print(f"clean-vs-resume diverged: {cmp['diverged']}")
 
     if args.report_out:
-        render_report(clean_hashes, resume_hashes, args.report_out)
+        render_report(
+            clean_hashes,
+            resume_hashes,
+            args.report_out,
+            resume_case_dir=case_dirs["resume"] if "resume" in args.case else None,
+        )
         print(f"report written: {args.report_out}")
 
 

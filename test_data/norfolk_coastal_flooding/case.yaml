@@ -1,2 +1,7 @@
 case_name: "norfolk case study"
 res_identifier: "a4aace329b8c401a93e94ce2a761fe1b"
+resource_version: null
+description: "Norfolk, VA coastal compound-flood case study (DEM, weather, SWMM model inputs)."
+citation: "https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
+host: "hydroshare"
+manifest: {}

@@ -39,5 +39,10 @@ non_breaking_allowlist:
   - src/TRITON_SWMM_toolkit/processing_analysis.py  # reprocess-regeneration-toggle Phase 2 R4: behavior-only early-return re-key (.exists() to .exists() AND datatree_consolidation_complete); the log field already exists and is already set on success — no on-disk layout change.
   - src/TRITON_SWMM_toolkit/config/viz_vocabulary.py  # reporting-system frozen-viz-vocabulary: new frozen plotting-vocabulary module (project token enums + Annotated registry-validator aliases). Pure in-memory config code — no on-disk layout, no zarr/log/path schema. Non-breaking.
   - src/TRITON_SWMM_toolkit/config/brand_theme.py  # reporting-system config-layering-and-branding: new ADR-7 layer-2 brand-theme Pydantic model (6 colors + upper_left_text, MplColor-typed). Pure in-memory config schema — no on-disk layout. Non-breaking.
+  - src/TRITON_SWMM_toolkit/config/case_manifest.py  # case-study-hosting-conventions: new ADR-12 CaseManifest Pydantic model (case.yaml schema — case_name/res_identifier/resource_version/description/citation/sha256 manifest/host). Pure in-memory config schema — no on-disk layout, no zarr/log/path schema. Non-breaking.
+  # reporting-system_named-reporting-sets: retires SensitivityReportConfig.mode
+  # (dead Literal) + adds report_config.reporting_set selector + before-validator
+  # mode->reporting_set rewrite. Config-schema only — no figure-stem rename, no
+  # on-disk output-dir change. Non-breaking; no LAYOUT_VERSION bump / migration.
   - src/TRITON_SWMM_toolkit/config/report.py  # reporting-system config-layering-and-branding D-5: _HtmlTableStyleBase brand defaults overridden from brand_theme at run(); additive/behavior-only — no on-disk layout change.
   - src/TRITON_SWMM_toolkit/config/static_plots.py  # reporting-system_publication-static-config-schema (ADR-4): new publication static-plot Pydantic config family. Pure in-memory config schema — no on-disk layout, no figure stem, no zarr/log/path change. Non-breaking (mirrors viz_vocabulary.py / brand_theme.py).

@@ -25,14 +25,53 @@ from ._matrix_builder import write_clean_matrix_csv, write_resume_matrix_csv
 
 _GENERATED = Path(__file__).parent / "_generated"  # gitignored (D3)
 
-# 3.5 m native (identity, no resample); enlarged grid for non-degenerate 2-3 GPU decomp (D4)
+# 3.5 m native (identity, no resample); enlarged grid for non-degenerate 2-3 GPU decomp (D4).
+# Compound coastal-pluvial event + longer runtime (2026-06-15): a triangular rain burst +
+# a base tide sinusoid with a co-peaking triangular surge, then a long drainage tail. Shared
+# by clean AND resume (via _params_for_resolution) so the two cases are forcing-identical;
+# only their per-sim WALLTIME differs (clean = full alloc; resume = 1-min floor -> kills ->
+# hotstart-resume). sim_duration is sized so the per-sim wallclock crosses the 1-min floor so
+# resume's kills actually fire — TUNE empirically (measure the simulate-rule Elapsed -> 60-120 s).
 _EXPERIMENT_PARAMS = dataclasses.replace(
     SyntheticModelParams(),
     cell_size_m=3.5,
     n_cols=64,
     n_rows=120,
-    sim_duration_min=30,
+    sim_duration_min=1440,        # 24 h event — TUNE: smallest sim_duration whose FASTEST
+                                  # GPU config's clean SLURM Elapsed is ~2-4 min (> the 1-min
+                                  # walltime floor so resume kills fire), measured in step C4.
+    rainfall_peak_min=120,        # rain + surge peak at 2 h
+    rainfall_duration_min=720,    # rain over 0..12 h (rise to 2 h, fall to 12 h), then dry
+    rainfall_peak_mm_per_hr=100.0,
+    stormsurge_peak_m=1.0,        # +1 m surge on the base tide, co-peaking with the rain
+    reporting_timestep_s=600.0,   # 10-min dumps -> ~288 over 48 h (manageable output)
+    compound_event=True,
 )
+
+# Fixed physical domain (m), preserved across resolutions so a model at any cell
+# size is the SAME watershed (224 m × 420 m) — only the grid density changes.
+_DOMAIN_WIDTH_M = _EXPERIMENT_PARAMS.n_cols * _EXPERIMENT_PARAMS.cell_size_m   # 224.0
+_DOMAIN_HEIGHT_M = _EXPERIMENT_PARAMS.n_rows * _EXPERIMENT_PARAMS.cell_size_m  # 420.0
+
+
+def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
+    """Return `_EXPERIMENT_PARAMS` re-gridded to `cell_size_m`, preserving the
+    physical domain (n_cols/n_rows scale inversely with cell size).
+
+    The generator (`geometry.py` / `swmm_template.py`) is fully grid-driven, so
+    any resolution builds and passes the `rim==DEM` and deadlock-safety tripwires.
+    A FINER resolution → more cells → longer per-sim wallclock (the lever for
+    making the resume sweep's sims exceed the 1-min SLURM walltime floor so a
+    kill is actually forced). NOTE: the byte-identity clean-vs-resume comparison
+    requires BOTH cases at the SAME resolution — pass the same `cell_size_m` to
+    `clean_case` and `resume_case`. Coarser than ~n_rows/`_N_COUPLING_NODES`
+    will trip the interior-too-small assertion in `_node_matrix_rows`.
+    """
+    n_cols = max(round(_DOMAIN_WIDTH_M / cell_size_m), 1)
+    n_rows = max(round(_DOMAIN_HEIGHT_M / cell_size_m), 1)
+    return dataclasses.replace(
+        _EXPERIMENT_PARAMS, cell_size_m=cell_size_m, n_cols=n_cols, n_rows=n_rows
+    )
 
 
 @dataclasses.dataclass
@@ -42,7 +81,8 @@ class _Case:
 
 
 def _build_case(
-    *, analysis_name: str, sensitivity_csv: Path, start_from_scratch: bool, resume: bool, system_directory: str | None
+    *, analysis_name: str, sensitivity_csv: Path, start_from_scratch: bool, resume: bool,
+    system_directory: str | None, cell_size_m: float = 3.5,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -57,7 +97,9 @@ def _build_case(
     system_cfg = {
         "gpu_compilation_backend": "CUDA",
         "gpu_hardware": "a6000",
-        "target_dem_resolution": 3.5,
+        # Match the native synth grid resolution (no resample). Tracks cell_size_m
+        # so a re-gridded model keeps identity DEM handling.
+        "target_dem_resolution": cell_size_m,
         # HPC module set the generated compile/run scripts must `module load` (system.py:663):
         # without it the field is None, no `module load` is emitted, and the build node lacks
         # both `nvcc` and a new-enough libstdc++ -> GPU compile fails (first nvcc-not-found,
@@ -81,7 +123,7 @@ def _build_case(
 
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
-        params=_EXPERIMENT_PARAMS,
+        params=_params_for_resolution(cell_size_m),
         sensitivity_csv=sensitivity_csv,
         toggle_tritonswmm_model=True,
         toggle_triton_model=False,
@@ -101,6 +143,10 @@ def _build_case(
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
+            # Snakemake restart-times: high for resume so a walltime-killed sim auto-resumes
+            # to completion within ONE analysis.run() (no manual re-run loop); 2 for clean
+            # (clean has a single-allocation walltime and is never killed).
+            "hpc_restart_times": 20 if resume else 2,
             # base partitions REQUIRED for SLURM resource-block generation (workflow.py:1044):
             # the sim resource block reads hpc_ensemble_partition (CSV overrides it per-row);
             # setup/prepare/process/consolidate jobs read hpc_setup_and_analysis_processing_partition.
@@ -126,8 +172,15 @@ def _build_case(
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
 
 
-def clean_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:
-    """Clean determinism experiment: single 3.5m res, 28-config sweep, single-allocation walltime.
+def clean_case(
+    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5
+) -> _Case:
+    """Clean determinism experiment: 28-config sweep, single-allocation walltime.
+
+    ``cell_size_m`` sets the synth DEM resolution (default 3.5 m, physical domain
+    preserved). Use a FINER value (e.g. 1.75) to lengthen per-sim wallclock — but
+    pass the SAME ``cell_size_m`` to ``resume_case`` or the byte-identity
+    clean-vs-resume comparison breaks (different grids → trivially "diverged").
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/quinnlab/dcl3nd/norfolk/synth_compute_config/synth_cc_clean"``.
@@ -141,18 +194,31 @@ def clean_case(start_from_scratch: bool = False, system_directory: str | None = 
         start_from_scratch=start_from_scratch,
         resume=False,
         system_directory=system_directory,
+        cell_size_m=cell_size_m,
     )
 
 
-def resume_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:
+def resume_case(
+    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5,
+    runtime_min_by_sa: dict[str, float] | None = None,
+) -> _Case:
     """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
+
+    ``cell_size_m`` MUST match the value passed to ``clean_case`` (same grid → the
+    byte-identity clean-vs-resume comparison is valid). A finer resolution makes
+    sims run long enough that the 1-min SLURM walltime actually kills them, so the
+    hotstart-resume path is genuinely exercised (DoD #3).
+
+    ``runtime_min_by_sa``: per-``sa_id`` full-completion wallclock (minutes) measured
+    from the CLEAN sweep; sizes each backend's resume walltime to ~T/3 so the kill
+    fires and completion lands within ``hpc_restart_times`` from a single ``.run()``.
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/quinnlab/dcl3nd/norfolk/synth_compute_config/synth_cc_resume"``.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
-    write_resume_matrix_csv(csv)
+    write_resume_matrix_csv(csv, runtime_min_by_sa=runtime_min_by_sa)
     # NOTE: resume completion is driven by REPEATED DRIVER RE-INVOCATION in Phase 3
     # (analysis.run(from_scratch=False, ...) re-plans the v2 wait-rules and re-dispatches the
     # walltime-killed simulation_sa_* rules from the latest config_NNNN.cfg checkpoint — Gotcha 30,
@@ -165,4 +231,5 @@ def resume_case(start_from_scratch: bool = False, system_directory: str | None =
         start_from_scratch=start_from_scratch,
         resume=True,
         system_directory=system_directory,
+        cell_size_m=cell_size_m,
     )
