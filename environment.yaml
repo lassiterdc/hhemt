@@ -37,6 +37,7 @@ dependencies:
   - dask
   - matplotlib
   - seaborn
+  - jinja2
   - sparse
   - pint
   - bagit
