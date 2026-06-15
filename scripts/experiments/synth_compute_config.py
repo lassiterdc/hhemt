@@ -59,11 +59,22 @@ def _build_case(
         "gpu_hardware": "a6000",
         "target_dem_resolution": 3.5,
         # HPC module set the generated compile/run scripts must `module load` (system.py:663):
-        # without it the field defaults to None, no `module load` is emitted, and `nvcc` is
-        # absent on the standard-partition build node -> GPU compile aborts at `which nvcc`.
-        # Mirrors the tested UVA platform default (constants.py UVA_DEFAULT_PLATFORM_CONFIG):
-        # GCC 11.4 + CUDA 12.4 is a compatible nvcc/host-compiler pairing.
-        "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/11.4.0_4.1.4 cuda/12.4.1",
+        # without it the field is None, no `module load` is emitted, and the build node lacks
+        # both `nvcc` and a new-enough libstdc++ -> GPU compile fails (first nvcc-not-found,
+        # then a GLIBCXX ABI link error in CMake's TryCompile).
+        # gompi/14.2.0_5.0.7 = GCC 14.2, whose libstdc++ provides GLIBCXX_3.4.33 — clears the
+        # conda env's GLIBCXX_3.4.30+ floor that CMake's TryCompile needs (it runs before the
+        # project's conda-libstdc++ link flag applies). The previously-working set
+        # gcc/12.4.0+openmpi/4.1.4+cuda/12.2.2 is no longer on Rivanna; the only other bundle,
+        # gompi/11.4.0_4.1.4 (GCC 11.4 / GLIBCXX_3.4.29), is too old. cuda/12.8.0 supports
+        # GCC <=14 (cuda/12.4.1 caps at GCC 13). GCC 14.2 already builds the CPU backend OK.
+        "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/14.2.0_5.0.7 cuda/12.8.0",
+        # GPU SLURM allocation mode. Unset -> defaults to "gpus" (Frontier --gpus-per-task=1,
+        # run_simulation.py:651), which on UVA's gres allocation fails at sim launch:
+        # "srun: fatal: --gpus-per-task is mutually exclusive with ... SLURM_NTASKS_PER_GPU".
+        # UVA requires "gres" (UVA_DEFAULT_PLATFORM_CONFIG). This is the last cfg_system field
+        # the hand-built dict was missing vs PlatformConfig.to_system_dict().
+        "preferred_slurm_option_for_allocating_gpus": "gres",
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory

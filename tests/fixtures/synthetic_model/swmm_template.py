@@ -119,16 +119,65 @@ Units      None
 # cols right of J3, producing diagonal C1/C2 covering 4 cols × 9 rows each.
 # J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
 # stem of the Y. dummy_outfall stays disconnected at col 7.
-_NODES = [
-    ("J1",             3,  22),   # upstream-left  (S1 drains here)
-    ("J2",            11,  22),   # upstream-right (S2 drains here)
-    ("J3",             7,  13),   # middle (S3 drains here; J1+J2 merge here)
-    ("J4",             7,   4),   # just upstream of sea wall — culvert outlet
-    ("sewer_outflow",  7,   2),   # JUNCTION in dropoff/BC zone (terminal node)
-    ("dummy_outfall",  7,  26),   # disconnected SWMM outfall, required for
-                                  # parsing. Same col as the rest so the Y
-                                  # stem extends to the top of the figure.
-]
+# Number of in-line coupling junctions. MUST be >= the largest MPI rank count
+# the experiment matrix exercises (8, from scripts/experiments/_matrix_builder.py
+# _CLEAN_CONFIGS mpi=8 / hybrid rows) so that under a row-strip static
+# decomposition EVERY rank owns >= 1 coupling node and participates in the
+# TRITON-SWMM ENSIFY_COMM_WORLD collective. Fewer nodes than ranks => a
+# node-free top rank => coupling-collective deadlock (triton.h:2363-2404).
+# (2026-06-14: replaced the hardcoded-for-16x30 _NODES list with this
+# n_rows-driven generator — the old list clustered all nodes in the bottom
+# ~22% of the 64x120 experiment grid, deadlocking every multi-rank run.)
+_N_COUPLING_NODES = 8
+
+
+def _centerline_col(params) -> int:
+    """Interior centerline column for the conduit chain."""
+    return (params.n_cols - 1) // 2
+
+
+def _node_matrix_rows(params) -> list[int]:
+    """Matrix-row (0=top) of each in-line coupling junction.
+
+    Rule (triton-specialist 2026-06-14): one node per band of size
+    ``floor(n_rows / _N_COUPLING_NODES)``, centered in its band, so the max
+    inter-node row gap INCLUDING the top edge (row 0 -> first node) and the
+    bottom edge (last node -> southern BC) is <= the band size. For
+    n_rows=120, N=8 => band=15 => matrix-rows {7,22,37,52,67,82,97,112}.
+    """
+    n = _N_COUPLING_NODES
+    band = params.n_rows // n
+    rows = [band // 2 + i * band for i in range(n)]
+    # Deadlock-safety invariant (fail loud on an unsafe future grid):
+    gaps = (
+        [rows[0]]
+        + [rows[i] - rows[i - 1] for i in range(1, n)]
+        + [(params.n_rows - 1) - rows[-1]]
+    )
+    assert max(gaps) <= band, (
+        f"node row gaps {gaps} exceed band {band}; a row-strip rank would own "
+        f"zero coupling nodes -> TRITON-SWMM coupling deadlock"
+    )
+    return rows
+
+
+def _nodes(params):
+    """``(name, col, row_from_bottom)`` for the in-line N->S coupling chain.
+
+    Node 0 is northernmost (top); node ``_N_COUPLING_NODES-1`` is southernmost
+    (``sewer_outflow``, the terminal junction whose rim surcharge feeds TRITON's
+    2-D solver toward the southern boundary condition). All chain nodes sit on
+    the conduit centerline column. ``dummy_outfall`` is the disconnected
+    SWMM-required OUTFALL, parked one cell off-centerline at the northern end so
+    it never joins the chain.
+    """
+    col = _centerline_col(params)
+    mrs = _node_matrix_rows(params)
+    rfb = [params.n_rows - 1 - mr for mr in mrs]  # matrix-row -> row_from_bottom
+    names = [f"J{i + 1}" for i in range(len(mrs) - 1)] + ["sewer_outflow"]
+    nodes = [(names[i], col, rfb[i]) for i in range(len(mrs))]
+    nodes.append(("dummy_outfall", max(col - 2, 1), rfb[0]))  # disconnected
+    return nodes
 
 # Node-type partition: nodes whose names appear in `_OUTFALL_NAMES` go into
 # the [OUTFALLS] section; everything else in `_NODES` is a junction. Allows
@@ -164,14 +213,13 @@ _OUTFALL_NAMES = {"dummy_outfall"}
 #   J4     rim 0.500, depth 1.100, invert −0.600   C3     (−0.104 − −0.600)/30 = 1.65 %
 #   sewer  rim 0.500, depth 1.400, invert −0.900   C4     (−0.600 − −0.900)/20 = 1.50 %
 #   dummy_outfall depth 0.500 (disconnected; rim auto-pins to DEM at its cell).
-_NODE_DEPTHS_M = {
-    "sewer_outflow": 1.400,
-    "J4":            1.100,
-    "J3":            0.800,
-    "J1":            0.500,
-    "J2":            0.500,
-    "dummy_outfall": 0.500,
-}
+# 2026-06-14: emptied to the uniform 0.5 m fallback (_JUNCTION_DEPTH_M) for the
+# n_rows-driven 8-node chain — the per-name depths above were tuned for the
+# retired 5-node 16x30 layout and no longer correspond to the new node names.
+# With a uniform depth, inverts follow the DEM corridor slope (rim==DEM,
+# invert = rim - 0.5). Tune per-node here if the review plots show conduit
+# slopes outside the 1-3% target (see the main-agent tuning guide).
+_NODE_DEPTHS_M: dict[str, float] = {}
 # Backwards-compat default for any code path that still imports
 # `_JUNCTION_DEPTH_M` (now a fallback for nodes not in `_NODE_DEPTHS_M`).
 _JUNCTION_DEPTH_M = 0.5
@@ -194,7 +242,7 @@ def max_node_rim_elev(params) -> float:
 
     return float(max(
         dem_elev_at(params, col, row_from_bottom)
-        for _name, col, row_from_bottom in _NODES
+        for _name, col, row_from_bottom in _nodes(params)
     ))
 
 # (name, from_node, to_node, length_m). C4 is the culvert that crosses the
@@ -219,12 +267,19 @@ def max_node_rim_elev(params) -> float:
 #   C2: (1.30 - 0.85) / 30 = 1.50 %
 #   C3: (0.85 - 0.40) / 30 = 1.50 %
 #   C4: (0.40 - 0.00) / 20 = 2.00 %
-_CONDUITS = [
-    ("C1", "J1", "J3",            30.0),
-    ("C2", "J2", "J3",            30.0),
-    ("C3", "J3", "J4",            30.0),
-    ("C4", "J4", "sewer_outflow", 20.0),
-]
+def _conduits(params):
+    """Linear N->S conduit chain J1 -> J2 -> ... -> sewer_outflow.
+
+    One reach between consecutive chain nodes. Friction length is fixed at 30 m
+    (decoupled from the actual cell distance — SWMM dynamic-wave routing treats
+    [CONDUITS].Length as a friction parameter); the per-reach slope derives from
+    the DEM-pinned inverts (rim==DEM along the sloped corridor).
+    """
+    chain = [n for n, _c, _r in _nodes(params) if n != "dummy_outfall"]
+    return [
+        (f"C{i + 1}", chain[i], chain[i + 1], 30.0)
+        for i in range(len(chain) - 1)
+    ]
 
 # Iter-6 peak_flood_depth (2026-04-28): bumped 0.1 → 0.2 m so 30-min sim
 # with BC peak 5 m can deliver enough backwater volume to flood the
@@ -244,17 +299,27 @@ _CONDUIT_DIAMETER_M = 1.0
 # Polygons are 5×5 cell rectangles. They overlap the Y corridor (intended)
 # and the side walls (visual artifact, ignored — SWMM routing uses the
 # [SUBCATCHMENTS] Outlet field, not polygon coordinates).
-_SUBCATCHMENT_POLYGON_CELL_BOUNDS = {
-    "S1": (1, 21, 5, 25),    # 5×5, upstream-left, drains to J1 (col 3, row 22)
-    "S2": (9, 21, 13, 25),   # 5×5, upstream-right, drains to J2 (col 11, row 22)
-    "S3": (5, 12, 9, 16),    # 5×5, middle (around J3), drains to J3 (col 7, row 13)
-}
+# 2026-06-14: param-driven. 3 subcatchments draining to the first 3 chain
+# junctions (J1/J2/J3), each a 5x5-cell polygon centered on its outlet node so
+# it overlaps the now-full-height conduit corridor. (Was hardcoded for the
+# retired 16x30 layout.)
+def _subcatchments(params):
+    """``(subcatchment_name, outlet_node_name)`` for S1/S2/S3 -> J1/J2/J3."""
+    chain = [(n, c, r) for n, c, r in _nodes(params) if n != "dummy_outfall"]
+    return [(f"S{i + 1}", chain[i][0]) for i in range(3)]
 
-_SUBCATCHMENTS = [
-    ("S1", "J1"),
-    ("S2", "J2"),
-    ("S3", "J3"),
-]
+
+def _subcatchment_polygon_cell_bounds(params) -> dict[str, tuple[int, int, int, int]]:
+    """5x5-cell ``(cmin, rmin, cmax, rmax)`` polygon centered on each
+    subcatchment's outlet node, clamped to the interior (>= 1)."""
+    chain = [(n, c, r) for n, c, r in _nodes(params) if n != "dummy_outfall"]
+    bounds: dict[str, tuple[int, int, int, int]] = {}
+    for i in range(3):
+        _name, col, rfb = chain[i]
+        cmin = max(col - 2, 1)
+        rmin = max(rfb - 2, 1)
+        bounds[f"S{i + 1}"] = (cmin, rmin, cmin + 4, rmin + 4)
+    return bounds
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +367,7 @@ def _junctions_df(params) -> pd.DataFrame:
     of how deep its invert sits below)."""
     from .geometry import dem_elev_at
 
-    rows = [(n, c, r) for n, c, r in _NODES if n not in _OUTFALL_NAMES]
+    rows = [(n, c, r) for n, c, r in _nodes(params) if n not in _OUTFALL_NAMES]
     depths = [_node_depth(n) for n, _, _ in rows]
     inverts = [
         round(dem_elev_at(params, c, r) - d, 3)
@@ -327,7 +392,7 @@ def _outfalls_df(params) -> pd.DataFrame:
     `dummy_outfall` is in `_OUTFALL_NAMES`; all other nodes are junctions."""
     from .geometry import dem_elev_at
 
-    rows = [(n, c, r) for n, c, r in _NODES if n in _OUTFALL_NAMES]
+    rows = [(n, c, r) for n, c, r in _nodes(params) if n in _OUTFALL_NAMES]
     inverts = []
     for name, c, r in rows:
         rim = dem_elev_at(params, c, r)
@@ -342,40 +407,42 @@ def _outfalls_df(params) -> pd.DataFrame:
     )
 
 
-def _conduits_df() -> pd.DataFrame:
+def _conduits_df(params) -> pd.DataFrame:
+    conduits = _conduits(params)
     return pd.DataFrame(
         {
-            "InletNode":  [from_node for _, from_node, _, _ in _CONDUITS],
-            "OutletNode": [to_node for _, _, to_node, _ in _CONDUITS],
-            "Length":     [length for _, _, _, length in _CONDUITS],
-            "Roughness":  [0.013 for _ in _CONDUITS],
-            "InOffset":   [0 for _ in _CONDUITS],
-            "OutOffset":  [0 for _ in _CONDUITS],
-            "InitFlow":   [0 for _ in _CONDUITS],
-            "MaxFlow":    [0 for _ in _CONDUITS],
+            "InletNode":  [from_node for _, from_node, _, _ in conduits],
+            "OutletNode": [to_node for _, _, to_node, _ in conduits],
+            "Length":     [length for _, _, _, length in conduits],
+            "Roughness":  [0.013 for _ in conduits],
+            "InOffset":   [0 for _ in conduits],
+            "OutOffset":  [0 for _ in conduits],
+            "InitFlow":   [0 for _ in conduits],
+            "MaxFlow":    [0 for _ in conduits],
         },
-        index=pd.Index([name for name, *_ in _CONDUITS], name="Name"),
+        index=pd.Index([name for name, *_ in conduits], name="Name"),
     )
 
 
-def _xsections_df() -> pd.DataFrame:
+def _xsections_df(params) -> pd.DataFrame:
+    conduits = _conduits(params)
     return pd.DataFrame(
         {
-            "Shape":   ["CIRCULAR" for _ in _CONDUITS],
-            "Geom1":   [_CONDUIT_DIAMETER_M for _ in _CONDUITS],
-            "Geom2":   [0 for _ in _CONDUITS],
-            "Geom3":   [0 for _ in _CONDUITS],
-            "Geom4":   [0 for _ in _CONDUITS],
-            "Barrels": [1 for _ in _CONDUITS],
+            "Shape":   ["CIRCULAR" for _ in conduits],
+            "Geom1":   [_CONDUIT_DIAMETER_M for _ in conduits],
+            "Geom2":   [0 for _ in conduits],
+            "Geom3":   [0 for _ in conduits],
+            "Geom4":   [0 for _ in conduits],
+            "Barrels": [1 for _ in conduits],
         },
-        index=pd.Index([name for name, *_ in _CONDUITS], name="Link"),
+        index=pd.Index([name for name, *_ in conduits], name="Link"),
     )
 
 
-def _inflows_df() -> pd.DataFrame:
+def _inflows_df(params) -> pd.DataFrame:
     """One FLOW inflow entry per junction so TRITON-SWMM's coupling layer
     reads the full set of coupling nodes from [INFLOWS]. Excludes outfalls."""
-    names = [n for n, *_ in _NODES if n not in _OUTFALL_NAMES]
+    names = [n for n, *_ in _nodes(params) if n not in _OUTFALL_NAMES]
     return pd.DataFrame(
         {
             "Constituent": ["FLOW" for _ in names],
@@ -400,7 +467,7 @@ def _coordinates_df(params) -> pd.DataFrame:
     xs = []
     ys = []
     names = []
-    for name, col, row in _NODES:
+    for name, col, row in _nodes(params):
         x, y = pt(col, row)
         names.append(name)
         xs.append(x)
@@ -420,8 +487,9 @@ def _subcatchments_df(params) -> pd.DataFrame:
     # ensure every downstream conduit reaches >= max-over-full flow. The earlier
     # 80/20/60 split was for visual variety, retained as the comment for record.
     perc_imperv_map = {"S1": 100, "S2": 100, "S3": 100}
-    names = [s for s, _ in _SUBCATCHMENTS]
-    outlets = [outlet for _, outlet in _SUBCATCHMENTS]
+    subs = _subcatchments(params)
+    names = [s for s, _ in subs]
+    outlets = [outlet for _, outlet in subs]
     areas_ha = []
     widths_m = []
     for name in names:
@@ -447,29 +515,31 @@ def _subcatchments_df(params) -> pd.DataFrame:
 
 
 def _subareas_df(params) -> pd.DataFrame:
+    subs = _subcatchments(params)
     return pd.DataFrame(
         {
-            "N-Imperv":  [params.impervious_mannings for _ in _SUBCATCHMENTS],
-            "N-Perv":    [params.pervious_mannings for _ in _SUBCATCHMENTS],
-            "S-Imperv":  [0.05 for _ in _SUBCATCHMENTS],
-            "S-Perv":    [0.05 for _ in _SUBCATCHMENTS],
-            "PctZero":   [25 for _ in _SUBCATCHMENTS],
-            "RouteTo":   ["OUTLET" for _ in _SUBCATCHMENTS],
+            "N-Imperv":  [params.impervious_mannings for _ in subs],
+            "N-Perv":    [params.pervious_mannings for _ in subs],
+            "S-Imperv":  [0.05 for _ in subs],
+            "S-Perv":    [0.05 for _ in subs],
+            "PctZero":   [25 for _ in subs],
+            "RouteTo":   ["OUTLET" for _ in subs],
         },
-        index=pd.Index([s for s, _ in _SUBCATCHMENTS], name="Subcatchment"),
+        index=pd.Index([s for s, _ in subs], name="Subcatchment"),
     )
 
 
-def _infiltration_df() -> pd.DataFrame:
+def _infiltration_df(params) -> pd.DataFrame:
+    subs = _subcatchments(params)
     return pd.DataFrame(
         {
-            "MaxRate":  [3.0 for _ in _SUBCATCHMENTS],
-            "MinRate":  [0.5 for _ in _SUBCATCHMENTS],
-            "Decay":    [4.0 for _ in _SUBCATCHMENTS],
-            "DryTime":  [7 for _ in _SUBCATCHMENTS],
-            "MaxInfil": [0 for _ in _SUBCATCHMENTS],
+            "MaxRate":  [3.0 for _ in subs],
+            "MinRate":  [0.5 for _ in subs],
+            "Decay":    [4.0 for _ in subs],
+            "DryTime":  [7 for _ in subs],
+            "MaxInfil": [0 for _ in subs],
         },
-        index=pd.Index([s for s, _ in _SUBCATCHMENTS], name="Subcatchment"),
+        index=pd.Index([s for s, _ in subs], name="Subcatchment"),
     )
 
 
@@ -481,7 +551,7 @@ def _subcatchment_world_bounds(params, name: str) -> tuple[float, float, float, 
     DEM cell boundaries, not cell centers.
     """
     cs = params.cell_size_m
-    cmin, rmin, cmax, rmax = _SUBCATCHMENT_POLYGON_CELL_BOUNDS[name]
+    cmin, rmin, cmax, rmax = _subcatchment_polygon_cell_bounds(params)[name]
     return (
         params.xllcorner + cmin * cs,
         params.yllcorner + rmin * cs,
@@ -496,7 +566,7 @@ def _polygons_df(params) -> pd.DataFrame:
     """
     rows: list[dict] = []
     index: list[str] = []
-    for name, _ in _SUBCATCHMENTS:
+    for name, _ in _subcatchments(params):
         xmin, ymin, xmax, ymax = _subcatchment_world_bounds(params, name)
         verts = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
         for vx, vy in verts:
@@ -588,13 +658,13 @@ def _write_variant(
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
     if include_hydraulics:
-        m.inp.conduits = _conduits_df()
-        m.inp.xsections = _xsections_df()
-        m.inp.inflows = _inflows_df()
+        m.inp.conduits = _conduits_df(params)
+        m.inp.xsections = _xsections_df(params)
+        m.inp.inflows = _inflows_df(params)
     if include_hydrology:
         m.inp.subcatchments = _subcatchments_df(params)
         m.inp.subareas = _subareas_df(params)
-        m.inp.infiltration = _infiltration_df()
+        m.inp.infiltration = _infiltration_df(params)
         m.inp.polygons = _polygons_df(params)
     m.inp.save()
     _inject_double_comment_separators(dest)
@@ -618,11 +688,12 @@ def build_templates(params, cache_dir: Path):
 
 
 def build_subcatchment_raingage_mapping(params, dest: Path) -> Path:
+    subs = _subcatchments(params)
     df = pd.DataFrame(
         {
-            "subcatchment_id": [s for s, _ in _SUBCATCHMENTS],
-            "raingage_id":     ["RG_synth" for _ in _SUBCATCHMENTS],
-            "mrms_col":        ["RG_synth" for _ in _SUBCATCHMENTS],
+            "subcatchment_id": [s for s, _ in subs],
+            "raingage_id":     ["RG_synth" for _ in subs],
+            "mrms_col":        ["RG_synth" for _ in subs],
         }
     )
     df.to_csv(dest, index=False)

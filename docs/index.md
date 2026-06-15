@@ -2,9 +2,10 @@
 
 Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations across local machines and HPC clusters.
 
-- [Installation](installation.md)
-- [Usage](usage.md)
-- [API Reference](api.md)
+- [Tutorials](tutorials/index.md)
+- [How-To Guides](how-to/index.md)
+- [Reference](reference/index.md)
+- [Explanation](explanation/index.md)
 
 ## Template update workflow
 

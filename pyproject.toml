@@ -58,6 +58,12 @@ hpc = [
     "snakemake-executor-plugin-slurm>=0.10",
     "snakemake-executor-plugin-slurm-jobstep>=0.2",
 ]
+docs = [
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "mkdocs-htmlproofer-plugin",
+]
 
 [project.urls]
 bugs = "https://github.com/lassiterdc/TRITON_SWMM_toolkit/issues"
@@ -85,9 +91,6 @@ select = [
 
 [tool.uv]
 package = true
-
-[tool.esbonio.sphinx]
-buildCommand = ["sphinx-build", "-b", "html", "docs", "docs/_build"]
 
 [tool.setuptools.package-data]
 TRITON_SWMM_toolkit = [
