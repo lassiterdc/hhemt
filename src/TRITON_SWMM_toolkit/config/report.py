@@ -788,7 +788,16 @@ class ErrorsAndWarningsConfig(_HtmlTableStyleBase):
 class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
     """HTML inline-style overrides for the scenario_status_appendix renderer."""
 
-    interactive: TableInteractiveConfig = Field(default_factory=TableInteractiveConfig)
+    # The scenario_status_appendix is a wide (~39-col) provenance grid the user
+    # browses by scrolling, so default it to continuous virtual-scroll
+    # (pagination_size=0) rather than the shared 50-rows/page TableInteractiveConfig
+    # default — the table_height ("70vh") engages Tabulator's virtual DOM over the
+    # full dataset. per_analysis_summary keeps the paged default. Override the
+    # pagination_size only; all other TableInteractiveConfig defaults are inherited.
+    # (named-reporting-sets P2 — folded in per user request.)
+    interactive: TableInteractiveConfig = Field(
+        default_factory=lambda: TableInteractiveConfig(pagination_size=0),
+    )
 
     def render_inline_css(self) -> str:
         return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive"}))
