@@ -2861,8 +2861,14 @@ echo ""
         gpu_cli_arg = ""
 
         if n_gpus_per_sim > 0:
-            gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
-            assert isinstance(gpus_per_node, int), (
+            # Phase-3 (R4): per-node GPU topology for the sbatch --gres header.
+            # Prefer cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node;
+            # else the legacy cfg_analysis.hpc_gpus_per_node. The `> 0` guard
+            # preserves the original assert's intent (GPUs requested ⇒ a positive
+            # per-node count is required) — _resolve_gpus_per_node resolves an
+            # absent value to 0, which is a misconfiguration in the GPU branch.
+            gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
                 "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
@@ -2903,8 +2909,8 @@ echo ""
                     str(self.cfg_analysis.hpc_ensemble_partition),
                 ),
                 "--account": (
-                    "cfg_analysis.hpc_account",
-                    str(self.cfg_analysis.hpc_account),
+                    "cfg_hpc_system.default_account (or cfg_analysis.hpc_account)",
+                    str(self._resolve_account()),
                 ),
                 "--nodes": (
                     "cfg_analysis.hpc_total_nodes (or override_hpc_total_nodes runtime kwarg)",
@@ -2927,7 +2933,8 @@ echo ""
             if gpu_directive:
                 gres_value = gpu_directive.replace("#SBATCH ", "").strip()
                 config_emitted_directives["--gres"] = (
-                    "cfg_analysis.hpc_gpus_per_node + cfg_system.gpu_hardware",
+                    "cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node "
+                    "(or cfg_analysis.hpc_gpus_per_node) + cfg_system.gpu_hardware",
                     gres_value,
                 )
             for cfg_arg in self.cfg_analysis.additional_SBATCH_params or []:
@@ -2955,7 +2962,7 @@ echo ""
         script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_workflow
 #SBATCH --partition={self.cfg_analysis.hpc_ensemble_partition}
-#SBATCH --account={self.cfg_analysis.hpc_account}
+#SBATCH --account={self._resolve_account()}
 #SBATCH --nodes={total_nodes}
 #SBATCH --exclusive
 {gpu_directive}#SBATCH --time={estimated_time}

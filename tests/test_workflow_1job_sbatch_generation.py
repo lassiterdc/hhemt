@@ -404,3 +404,63 @@ def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
 
     with pytest.raises(ConfigurationError, match="extra_sbatch_args is only valid"):
         workflow_builder.submit_workflow(extra_sbatch_args=["--qos=debug"])
+
+
+def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
+    """Phase 3 (R4): when cfg_hpc_system is present, the sbatch --account is
+    sourced from cfg_hpc_system.default_account (via _resolve_account), not the
+    legacy cfg_analysis.hpc_account."""
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    # A distinct account on the new config proves which source the header used.
+    assert analysis.cfg_analysis.hpc_account == "test_account"
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="hpc_sys_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120)},
+    )
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir
+    )
+    script_content = script_path.read_text()
+
+    assert "#SBATCH --account=hpc_sys_account" in script_content
+    assert "--account=test_account" not in script_content
+
+
+def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
+    """Phase 3 (R4): when cfg_hpc_system is present, the --gres per-node GPU count
+    is sourced from PartitionSpec.gpus_per_node of the ensemble partition (via
+    _resolve_gpus_per_node), overriding the legacy cfg_analysis.hpc_gpus_per_node.
+    gpu_hardware still comes from cfg_system (its MOVE is deferred to Phase 4)."""
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_with_gpus
+    # cfg_analysis says 8/node; the partition spec says 4/node and must win.
+    assert analysis.cfg_analysis.hpc_gpus_per_node == 8
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="hpc_sys_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4)},
+    )
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir
+    )
+    script_content = script_path.read_text()
+
+    assert "--gres=gpu:a100:4" in script_content, "per-node count must come from PartitionSpec (4)"
+    assert "--gres=gpu:a100:8" not in script_content, "legacy cfg_analysis value (8) must not win"
+    assert "TOTAL_GPUS=$((SLURM_JOB_NUM_NODES * 4))" in script_content
