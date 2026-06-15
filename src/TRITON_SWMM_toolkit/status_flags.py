@@ -78,6 +78,7 @@ def write_status_flag(
             os.close(fd)
             os.replace(tmp, flag_path)
         except Exception:
+            # EXEMPT-DU: status-flag
             Path(tmp).unlink(missing_ok=True)
             raise
 
@@ -103,6 +104,7 @@ def write_status_flag(
             json.dump(payload, fh, indent=2)
         os.replace(tmp, sidecar)
     except Exception:
+        # EXEMPT-DU: status-flag
         Path(tmp).unlink(missing_ok=True)
         raise
 
