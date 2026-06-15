@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>{{ title }}</title>
+  {# Plotly bundle is carried inside figure_divs[0] (emitted in <body>) — no head injection. #}
+  {# Tabulator delivered via CDN for the EDA datasets table (interim, per DECISION-1 Option A / SPAWN). #}
+  {# Inline TabulatorFull bundling is the spawned reporting-system_inline-tabulator plan's deliverable;  #}
+  {# when it lands, the EDA assembler routes the datasets table through the shared                        #}
+  {# _tabulator_defaults.build_html_document inline path and this hand-rolled block is removed.           #}
+  <link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/css/tabulator.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.4.0/dist/js/tabulator.min.js"></script>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 1rem 2rem; }
+    h1 { color: {{ brand.primary_color | default('#232D4B') }}; }
+    .eda-figure { margin: 2rem 0; }
+    .eda-datasets { margin: 2rem 0; }
+  </style>
+</head>
+<body>
+  <h1>{{ title }}</h1>
+  {% for div in figure_divs %}
+  <div class="eda-figure">{{ div | safe }}</div>
+  {% endfor %}
+  {% for table in tables %}
+  <div class="eda-datasets">
+    <h2>{{ table.title }}</h2>
+    <div id="eda-table-{{ loop.index }}"></div>
+    <script>
+      new Tabulator("#eda-table-{{ loop.index }}", {
+        layout: "fitColumns", headerFilter: true,
+        columns: [{% for c in table.columns %}{title:"{{ c }}", field:"c{{ loop.index0 }}", headerFilter:"input"},{% endfor %}],
+        data: [{% for row in table.rows %}{ {% for cell in row %}"c{{ loop.index0 }}":"{{ cell }}",{% endfor %} },{% endfor %}],
+      });
+    </script>
+  </div>
+  {% endfor %}
+</body>
+</html>
