@@ -67,10 +67,17 @@ class SyntheticModelParams:
                                 # "peak" name is retained for backward compat
                                 # with the catalog; weather.py now treats it
                                 # as a constant value (no triangular shape).
-    rainfall_peak_min: int = 10  # legacy field; ignored under iter-9 constant rainfall
+    rainfall_peak_min: int = 10  # minutes from start to PEAK rainfall (the triangle's
+                                 # time-to-peak when rainfall_duration_min is set; ignored under constant rain)
     stormtide_mean_m: float = 2.0
     stormtide_amplitude_m: float = 0.8
     stormtide_period_h: float = 12.0
+    # Compound coastal-pluvial event shaping (2026-06-15). When set, the synth weather
+    # becomes a realistic storm: a triangular rain burst + a base tide sinusoid with a
+    # triangular surge co-peaking with the rain, then recession/drainage.
+    rainfall_duration_min: int | None = None  # None=constant rain; else triangular window, peak at rainfall_peak_min
+    stormsurge_peak_m: float = 0.0  # triangular surge added to base tide (0=none), peaks at rainfall_peak_min
+    compound_event: bool = False  # True: event 0 = rain + tide+surge; False: legacy (0 hydro/1 BC/2 both)
     manhole_diameter_m: float = 1.2  # iter-18 (2026-04-29): reverted from
                                      # iter-14's 2.0 m back to the toolkit
                                      # default 1.2 m per user request.
