@@ -164,28 +164,41 @@ def assemble_eda_report(
     *,
     cfg_analysis: analysis_config,
     eda_cfg: eda_config,
+    figures: list[FigureSpec] | None = None,
 ) -> Path:
     """Harvest plots/eda/ and emit {root}/eda_report/eda_report.html.
 
     Reads the rendered EDA-plot HTML fragments + their declared source datasets
     (via harvest_source_paths over {root}/plots/eda), builds the FigureSpec +
     TableSpec lists, calls render_scrollable_report, and writes the doc.
+
+    ``figures`` fast-path (SE Flag 1): when supplied (including an empty list),
+    the harvest + rebuild step is skipped entirely and the datasets table is
+    omitted. ``analysis.eda()`` passes ``figures=[]`` on the non-sensitivity
+    skip branch — where ``eda/<plot_id>.zarr`` does not exist, so the default
+    ``_figures_from_plots_eda`` rebuild (which opens that zarr) would crash.
+    Default (``figures is None``) preserves the harvest-from-disk behavior.
     """
-    plots_eda = root / "plots" / "eda"
-    sources_by_stem = harvest_source_paths(plots_eda, root)  # {stem: [Path, ...]}
-    figures = _figures_from_plots_eda(root, eda_cfg=eda_cfg)  # rebuilds from eda/<plot_id>.zarr
-    datasets_table = TableSpec(
-        title="EDA datasets",
-        columns=["Plot", "Dataset"],
-        rows=[
-            [stem, str(p.relative_to(root)) if p.is_relative_to(root) else str(p)]
-            for stem, paths in sorted(sources_by_stem.items())
-            for p in paths
-        ],
-    )
+    if figures is None:
+        plots_eda = root / "plots" / "eda"
+        sources_by_stem = harvest_source_paths(plots_eda, root)  # {stem: [Path, ...]}
+        figures = _figures_from_plots_eda(root, eda_cfg=eda_cfg)  # rebuilds from eda/<plot_id>.zarr
+        tables = [
+            TableSpec(
+                title="EDA datasets",
+                columns=["Plot", "Dataset"],
+                rows=[
+                    [stem, str(p.relative_to(root)) if p.is_relative_to(root) else str(p)]
+                    for stem, paths in sorted(sources_by_stem.items())
+                    for p in paths
+                ],
+            )
+        ]
+    else:
+        tables = []
     html = render_scrollable_report(
         figures,
-        [datasets_table],
+        tables,
         title=f"EDA report — {cfg_analysis.analysis_id}",
         plotly_js_mode=eda_cfg.plotly_js_mode,
         # cdn interim per DECISION-1 Option A (SPAWN); the spawned inline plan

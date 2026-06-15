@@ -541,6 +541,13 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
     ``.snakemake_reprocess/.snakemake/incomplete/``) directories from prior
     interrupted runs are silently cleared before yielding, mirroring the
     Phase 2 fixture pattern (``synthetic_multisim_completed``).
+
+    Canonical EDA-loop fixture (ADR-9/ADR-10). EDA functions
+    (check_cross_sim_identity, analysis.eda()) take a TRITONSWMM_analysis;
+    pass synthetic_sensitivity_completed.master_analysis (NOT the fixture object
+    itself, which is the sensitivity wrapper). Warm-cache precondition: the first
+    session invocation against a clean cache pays the full compile + run +
+    consolidate cost; a cold-cache run appears to hang for minutes.
     """
     import shutil
 

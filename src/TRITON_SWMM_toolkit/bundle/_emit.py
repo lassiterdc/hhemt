@@ -27,8 +27,9 @@ import contextlib
 import json
 import shutil
 import subprocess
-import zipfile
 import tempfile
+import warnings
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -115,23 +116,36 @@ def _harvest_and_copy_sources(
     staging: Path,
 ) -> None:
     """Copy each declared source path into the staging dir, preserving
-    its relative position under analysis_dir."""
+    its relative position under analysis_dir.
+
+    A declared source that does not exist on disk is SKIPPED (with a warning),
+    not fatal. ADR-6 D3 lets renderers declare an expected source unconditionally
+    even when it is legitimately absent — e.g. ``disk_utilization`` declares
+    ``_status/_du.json`` and renders a "re-run processing to populate" placeholder
+    when the sentinel is missing (a normal state for a sensitivity master, whose
+    consolidate path does not write the analysis-scope DU sentinel). Hard-raising
+    on such a source made ``bundle_report_data()`` crash on every sensitivity
+    master. The skip keeps the emit side consistent with the declare side; the
+    warning preserves auditability (a source that vanished after render shows up
+    here rather than failing silently)."""
     for paths in sources_by_renderer.values():
         for src in paths:
             try:
                 rel = src.resolve().relative_to(analysis_dir.resolve())
             except ValueError:
                 rel = Path("external") / src.name
+            if not src.exists():
+                warnings.warn(
+                    f"Bundle harvest: declared source {rel} does not exist on disk; "
+                    f"skipping it (ADR-6 D3 permits renderers to declare an expected "
+                    f"source unconditionally even when absent, e.g. _status/_du.json "
+                    f"on a sensitivity master). If this source was expected to be "
+                    f"present, it may have been removed after render_report().",
+                    stacklevel=2,
+                )
+                continue
             dest = staging / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            if not src.exists():
-                raise FileNotFoundError(
-                    f"Bundle harvest declared source path {src} but the file does "
-                    f"not exist. The renderer's manifest sidecar declared this "
-                    f"source via emit_plot_with_sources; data corruption between "
-                    f"render_report() completion and bundle emission is the most "
-                    f"likely cause."
-                )
             if src.is_dir():
                 shutil.copytree(src, dest, dirs_exist_ok=True)
             else:
