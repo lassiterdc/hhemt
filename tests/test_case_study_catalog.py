@@ -100,7 +100,10 @@ def test_uva_benchmarking_factory_populates_report_sensitivity(
     assert sens.independent_vars == expected_independent_vars, (
         f"{factory_name}: independent_vars={sens.independent_vars} (expected {expected_independent_vars})"
     )
-    assert sens.mode == "benchmarking", f"{factory_name}: mode={sens.mode} (expected 'benchmarking')"
+    # NOTE: SensitivityReportConfig.mode retired (ADR-5 ReportingSet registry).
+    # Reporting-set selection now lives on report_config.reporting_set, which
+    # resolves to the "benchmarking" set at analysis.run() entry for sensitivity
+    # analyses — there is no per-config `mode` field to assert.
 
     # On-disk cfg_analysis.yaml assertion
     cfg_path = Path(analysis.analysis_config_yaml)
@@ -113,5 +116,4 @@ def test_uva_benchmarking_factory_populates_report_sensitivity(
         f"{factory_name}: cfg_analysis.yaml::report.sensitivity is null on disk — "
         "the dominant write-site bug has regressed."
     )
-    assert on_disk_sens.get("mode") == "benchmarking"
     assert on_disk_sens.get("independent_vars") == expected_independent_vars

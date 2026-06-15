@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
 
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
+from TRITON_SWMM_toolkit.config.eda import eda_config
 
 # One-way import: config/analysis.py imports report_config; config/report.py
 # must not import from config/analysis.py to avoid circular import.
@@ -174,6 +175,18 @@ class analysis_config(cfgBaseModel):
     hpc_time_min_per_sim: int | None = Field(
         60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
+    )
+    hpc_restart_times: int = Field(
+        2,
+        ge=0,
+        description=(
+            "Snakemake `restart-times` for the SLURM executor: how many times a "
+            "FAILED/TIMEOUT job is auto-resubmitted before the workflow gives up. "
+            "A walltime kill is a TIMEOUT (retriable). Default 2 (legacy). For the "
+            "hotstart-resume sweep set this high (e.g. 20) so a walltime-killed sim "
+            "is re-dispatched enough times to complete from its latest config_NNNN.cfg "
+            "checkpoint within ONE analysis.run() — no manual re-invocation loop."
+        ),
     )
     hpc_max_simultaneous_sims: int | None = Field(
         None,
@@ -394,6 +407,18 @@ class analysis_config(cfgBaseModel):
             "this field triggers is built downstream in "
             "reporting-system_static-plots-entrypoint-and-distribution; the field is "
             "inert (settable but unconsumed) until that plan lands."
+        ),
+    )
+
+    eda: eda_config = Field(
+        default_factory=eda_config,
+        description=(
+            "Optional inline EDA-loop config (ADR-10): selects which EDA plots "
+            "appear in the standalone eda_report.html. Default member set (the "
+            "cross-sim byte-identity plot) applies when absent. Deliberately INLINE "
+            "(not a path field) so it travels in cfg_analysis.yaml and Bundle.eda() "
+            "reads it with zero extra carry/repoint wiring — the same rationale as "
+            "the `report` field above. Runtime override via eda(override_eda_config=<Path>)."
         ),
     )
 

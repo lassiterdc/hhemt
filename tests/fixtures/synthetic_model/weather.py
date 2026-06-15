@@ -9,19 +9,43 @@ import pandas as pd
 import xarray as xr
 
 
-def _triangular_hyetograph(params) -> np.ndarray:
-    """Iter-9 peak_flood_depth (2026-04-28): now returns a CONSTANT
-    `rainfall_peak_mm_per_hr` value at every minute, not a triangular pulse.
-    Function name retained for backward compat with any callers; the value
-    in `params.rainfall_peak_mm_per_hr` is now treated as the constant
-    intensity (100 mm/hr by default) rather than the peak of a triangle.
-    `params.rainfall_peak_min` is ignored.
+def _triangle(t: np.ndarray, t_peak: float, t_end: float, peak_val: float) -> np.ndarray:
+    """Triangular pulse on the minute axis `t`: 0 at t=0, linear up to `peak_val`
+    at `t_peak`, linear down to 0 at `t_end`, then 0. Used for both the rain burst
+    and the storm surge so they share a peak time and recede together."""
+    out = np.zeros_like(t, dtype=np.float32)
+    rise = (t > 0) & (t <= t_peak)
+    out[rise] = peak_val * (t[rise] / max(float(t_peak), 1.0))
+    fall = (t > t_peak) & (t <= t_end)
+    out[fall] = peak_val * (1.0 - (t[fall] - t_peak) / max(float(t_end - t_peak), 1.0))
+    return out
 
-    Returned in mm/hr at 1-minute resolution.
+
+def _triangular_hyetograph(params) -> np.ndarray:
+    """Rainfall in mm/hr at 1-min resolution.
+
+    If `rainfall_duration_min` is None: CONSTANT `rainfall_peak_mm_per_hr` for the
+    whole sim (legacy behavior). Otherwise a TRIANGULAR burst — 0 ->
+    `rainfall_peak_mm_per_hr` at `rainfall_peak_min` -> 0 at `rainfall_duration_min`,
+    then dry (the recession/drainage tail).
     """
     dur = params.sim_duration_min
-    rate = params.rainfall_peak_mm_per_hr
-    return np.full(dur + 1, rate, dtype=np.float32)
+    peak = params.rainfall_peak_mm_per_hr
+    if params.rainfall_duration_min is None:
+        return np.full(dur + 1, peak, dtype=np.float32)
+    t = np.arange(dur + 1, dtype=np.float32)
+    return _triangle(t, params.rainfall_peak_min, params.rainfall_duration_min, peak)
+
+
+def _storm_surge(params) -> np.ndarray:
+    """Triangular storm surge (m) added to the base tide. Peaks `stormsurge_peak_m`
+    at `rainfall_peak_min` (co-peaking with the rain) and recedes to 0 by
+    `rainfall_duration_min`. Zeros when no surge / no rain window is configured."""
+    dur = params.sim_duration_min
+    if params.stormsurge_peak_m <= 0 or params.rainfall_duration_min is None:
+        return np.zeros(dur + 1, dtype=np.float32)
+    t = np.arange(dur + 1, dtype=np.float32)
+    return _triangle(t, params.rainfall_peak_min, params.rainfall_duration_min, params.stormsurge_peak_m)
 
 
 def _sinusoidal_stormtide(params) -> np.ndarray:
@@ -49,28 +73,26 @@ def build_weather(params, dest: Path) -> Path:
     rain_events = np.broadcast_to(rain, (_N_SYNTH_EVENTS, len(rain))).copy()
     tide_events = np.broadcast_to(tide, (_N_SYNTH_EVENTS, len(tide))).copy()
 
-    # Iter-8 of `per_sim_peak_flood_depth` (2026-04-28): user-requested switch
-    # from a triangular BC to a constant BC. Events 0/1/2 still show distinct
-    # flooding mechanisms — hydrology-only vs storm-tide-only vs both — but
-    # the BC is now flat at `bc_active_level` for the full sim duration so
-    # the system has time to equilibrate to its steady-state water surfaces.
-    #
-    # BC water level convention (iter-15, 2026-04-29): peak BC head 3.0 → 2.0 m
-    # to pair with the flattened upstream DEM (post-swale rims now 1.0 m
-    # everywhere upstream). BC = 2 m → equilibrium surface flood depth above
-    # every interior junction = BC − rim = 1.0 m, which sits in the depth
-    # colorbar's [0.50, 1.00] bin.
-    #   event 0 (hydro only)   : water_level = 0.0 (no BC forcing); rain on
-    #   event 1 (BC only)      : water_level = 2.0 m constant; rain = 0
-    #   event 2 (both)         : water_level = 2.0 m constant; rain on
-    bc_active_level_m = 2.0
-    if _N_SYNTH_EVENTS >= 1:
-        tide_events[0, :] = np.zeros_like(tide, dtype=tide.dtype)
-    if _N_SYNTH_EVENTS >= 2:
-        rain_events[1, :] = np.zeros_like(rain, dtype=rain.dtype)
-        tide_events[1, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
-    if _N_SYNTH_EVENTS >= 3:
-        tide_events[2, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
+    if params.compound_event:
+        # 2026-06-15 compound coastal-pluvial event (the experiment runs only
+        # event 0): rain_events[0] already carries the triangular rain burst;
+        # event 0's water level = base tide sinusoid + triangular storm surge
+        # (co-peaking with the rain at rainfall_peak_min), receding to base-tide
+        # for the drainage tail. Other events keep the base broadcast (unused).
+        tide_events[0, :] = tide + _storm_surge(params)
+    else:
+        # Legacy event structure (other catalog cases):
+        #   event 0 (hydro only) : water_level = 0.0 (no BC); rain on
+        #   event 1 (BC only)    : water_level = 2.0 m constant; rain = 0
+        #   event 2 (both)       : water_level = 2.0 m constant; rain on
+        bc_active_level_m = 2.0
+        if _N_SYNTH_EVENTS >= 1:
+            tide_events[0, :] = np.zeros_like(tide, dtype=tide.dtype)
+        if _N_SYNTH_EVENTS >= 2:
+            rain_events[1, :] = np.zeros_like(rain, dtype=rain.dtype)
+            tide_events[1, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
+        if _N_SYNTH_EVENTS >= 3:
+            tide_events[2, :] = np.full_like(tide, bc_active_level_m, dtype=tide.dtype)
 
     ds = xr.Dataset(
         data_vars={

@@ -29,10 +29,14 @@ def main() -> None:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
-    parser.add_argument("--sa-id", type=str, default=None,
-                        help="sub-analysis id (sensitivity master scope only); when present, the renderer "
-                             "receives the resolved sub-analysis instead of the master analysis, so per-sim "
-                             "renderers can operate on per-sa-scoped scenario data.")
+    parser.add_argument(
+        "--sa-id",
+        type=str,
+        default=None,
+        help="sub-analysis id (sensitivity master scope only); when present, the renderer "
+        "receives the resolved sub-analysis instead of the master analysis, so per-sim "
+        "renderers can operate on per-sa-scoped scenario data.",
+    )
     args = parser.parse_args()
 
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
@@ -56,8 +60,7 @@ def main() -> None:
         sub_analyses = analysis.sensitivity.sub_analyses
         if args.sa_id not in sub_analyses:
             raise ValueError(
-                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; "
-                f"available: {sorted(sub_analyses.keys())}"
+                f"--sa-id={args.sa_id!r} not found in master's sub_analyses; available: {sorted(sub_analyses.keys())}"
             )
         target_analysis = sub_analyses[args.sa_id]
 
@@ -67,7 +70,14 @@ def main() -> None:
         kwargs["event_iloc"] = args.event_iloc
     if args.independent_var is not None:
         kwargs["independent_var"] = args.independent_var
-    module.render(target_analysis, report_cfg, args.output, **kwargs)
+    from TRITON_SWMM_toolkit.report_renderers._provenance_audit import audit_renderer_io
+
+    with audit_renderer_io(
+        args.output,
+        target_analysis.analysis_paths.analysis_dir,
+        renderer_name=args.renderer,
+    ):
+        module.render(target_analysis, report_cfg, args.output, **kwargs)
 
 
 if __name__ == "__main__":

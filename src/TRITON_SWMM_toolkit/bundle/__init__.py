@@ -22,12 +22,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from TRITON_SWMM_toolkit.bundle._emit import (
     _get_toolkit_git_sha,
     emit_bundle,
 )
+
+if TYPE_CHECKING:
+    from TRITON_SWMM_toolkit.eda import EdaReportResult
 from TRITON_SWMM_toolkit.subprocess_utils import run_subprocess_with_tee
 from TRITON_SWMM_toolkit.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -154,6 +157,31 @@ class Bundle:
         """Resolve a bundle-relative path to an absolute path under
         ``bundle.root``."""
         return (self._root / rel).resolve()
+
+    def eda(self, *, plots_only: bool = True) -> EdaReportResult:
+        """Regenerate the EDA report locally from the bundled data (ADR-10).
+
+        Delegates to the SAME eda/ free functions analysis.eda() uses, passing
+        bundle.root as root and the bundled cfg. plots_only=True is the only
+        supported mode — a Bundle has no source datatree, so calc cannot run;
+        the EDA datasets (eda/<plot_id>.zarr) and rendered plots were carried into
+        the bundle by the harvest chain when analysis.eda() ran pre-bundle.
+        """
+        from TRITON_SWMM_toolkit.eda import (
+            EdaReportResult,
+            assemble_eda_report,
+            render_eda_plots,
+        )
+
+        if not plots_only:
+            raise ValueError(
+                "Bundle.eda() supports only plots_only=True — a bundle carries no "
+                "source datatree, so the EDA calc stage cannot run."
+            )
+        eda_cfg = self._cfg_analysis.eda
+        plot_paths = render_eda_plots(self._root, cfg_analysis=self._cfg_analysis, eda_cfg=eda_cfg)
+        report_path = assemble_eda_report(self._root, cfg_analysis=self._cfg_analysis, eda_cfg=eda_cfg)
+        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=[])
 
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
         # Resolution (post-F2 rev v2): cfg_analysis.report is required by
