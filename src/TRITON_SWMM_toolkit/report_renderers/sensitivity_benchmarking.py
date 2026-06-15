@@ -201,12 +201,15 @@ def render(
             efficiency_all = None
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
-        # F1: GPU hardware suffix from cfg_system.gpu_hardware (e.g., "gpu (a6000)").
-        # When the experiment introduces per-row GPU hardware variation (system.gpu_hardware
-        # overlay column), the canonical generalization is to derive the suffix per-sa_id
-        # from df_setup["gpu_hardware"] instead — captured as a Phase-2 follow-up in the
-        # Figure spec. Single-field path covers today's single-hardware experiments.
-        gpu_hw = getattr(getattr(analysis._system, "cfg_system", None), "gpu_hardware", None)
+        # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
+        # was retired off system_config to the partition axis; resolve it from the master
+        # ensemble partition's PartitionSpec. When the experiment introduces per-row GPU
+        # hardware variation, the canonical generalization is to derive the suffix per-sa_id
+        # from each sub-analysis's resolved partition — captured as a Phase-2 follow-up in
+        # the Figure spec. Single-partition path covers today's single-hardware experiments.
+        from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target
+
+        gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
         gpu_legend_suffix = f" ({gpu_hw})" if gpu_hw else ""
         # F-FU-6 / Q1: speedup panel range mode. Read from report_cfg if present,
         # default to `full_ideal`. Surface via kwarg for caller override (e.g.,

@@ -760,18 +760,17 @@ def _validate_per_sa_system_configs(
     # require agreement on every non-dedup-key cfg_system field within a group.
     if not loaded_by_path:
         return
+    # Phase-4 (4c): gpu_hardware/gpu_compilation_backend were retired off system_config
+    # (now partition-axis-derived), so they are no longer per-sub-YAML consistency
+    # dimensions here — the compile-dedup gpu pairing lives in
+    # sensitivity_analysis._build_unique_system_targets. The remaining system_config
+    # dedup dimension is target_dem_resolution.
     groups: dict[tuple, list[tuple[Path, system_config]]] = {}
     for path, loaded in loaded_by_path.items():
-        key = (
-            loaded.target_dem_resolution,
-            loaded.gpu_hardware,
-            loaded.gpu_compilation_backend,
-        )
+        key = (loaded.target_dem_resolution,)
         groups.setdefault(key, []).append((path, loaded))
     dedup_key_fields = {
         "target_dem_resolution",
-        "gpu_hardware",
-        "gpu_compilation_backend",
     }
     for entries in groups.values():
         if len(entries) < 2:

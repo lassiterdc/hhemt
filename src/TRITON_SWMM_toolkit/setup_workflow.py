@@ -70,6 +70,17 @@ def main() -> int:
         help="Optional path to the per-HPC-system configuration YAML file",
     )
     parser.add_argument(
+        "--target-partition",
+        type=str,
+        required=False,
+        default=None,
+        help=(
+            "Phase-4 (4c): partition whose PartitionSpec GPU hardware/backend is "
+            "resolved + injected into TRITONSWMM_system for compilation (the ensemble "
+            "/ sim partition — the binary's run target). Optional; absent => CPU/no-GPU."
+        ),
+    )
+    parser.add_argument(
         "--process-system-inputs",
         action="store_true",
         default=False,
@@ -146,12 +157,26 @@ def main() -> int:
         # Import here to avoid import errors if dependencies are missing
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+        from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+        from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target, resolve_additional_modules
+        from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 
         # Log workflow context for traceability
         log_workflow_context(logger)
 
         logger.info(f"Loading system configuration from {args.system_config}")
-        system = TRITONSWMM_system(args.system_config)
+        # Phase-4 (4c): resolve GPU hardware/backend + module list from the
+        # per-HPC-system config + the target (ensemble/sim) partition, and inject
+        # them into TRITONSWMM_system (they were retired off system_config).
+        cfg_hpc = load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
+        gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, args.target_partition)
+        additional_modules = resolve_additional_modules(cfg_hpc)
+        system = TRITONSWMM_system(
+            args.system_config,
+            gpu_hardware=gpu_hardware,
+            gpu_compilation_backend=gpu_compilation_backend,
+            additional_modules=additional_modules,
+        )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
         analysis = TRITONSWMM_analysis(
@@ -161,6 +186,22 @@ def main() -> int:
             skip_log_update=False,
             is_main_orchestrator=False,
         )
+
+        # Fail-loud guard (Phase-4 4c): a GPU run whose target partition resolves no
+        # gpu_compilation_backend would silently skip the GPU build (gpu_suffix="",
+        # build_dir_gpu=None). Convert that into a named preflight error rather than a
+        # silent CPU-only compile that later fails the GPU sims.
+        if getattr(analysis.cfg_analysis, "n_gpus", 0) and not gpu_compilation_backend:
+            raise ConfigurationError(
+                field="hpc_ensemble_partition",
+                message=(
+                    f"GPU run requested (n_gpus={getattr(analysis.cfg_analysis, 'n_gpus', 0)}) "
+                    f"but target partition '{args.target_partition}' declares no "
+                    f"gpu_compilation_backend in the hpc_system_config. Declare "
+                    f"gpu_hardware + gpu_compilation_backend on that partition's PartitionSpec."
+                ),
+                config_path=str(args.hpc_system_config) if args.hpc_system_config else None,
+            )
         any_compile = (
             args.compile_triton_swmm or args.compile_triton_only or args.compile_swmm
         )
@@ -202,7 +243,7 @@ def main() -> int:
                 if len(system.available_backends) == 0:
                     logger.error("TRITON-SWMM: No backends compiled successfully")
                     logger.error(f"CPU log:\n{system.retrieve_compilation_log('cpu')}")
-                    if system.cfg_system.gpu_compilation_backend:
+                    if system.gpu_compilation_backend:
                         logger.error(
                             f"GPU log:\n{system.retrieve_compilation_log('gpu')}"
                         )
@@ -233,7 +274,7 @@ def main() -> int:
             logger.info("Compiling TRITON-only (no SWMM coupling)...")
             try:
                 backends = []
-                if system.cfg_system.gpu_compilation_backend:
+                if system.gpu_compilation_backend:
                     backends = ["cpu", "gpu"]
                 else:
                     backends = ["cpu"]
@@ -249,7 +290,7 @@ def main() -> int:
                     logger.error("TRITON-only CPU compilation failed")
                     return 1
                 if (
-                    system.cfg_system.gpu_compilation_backend
+                    system.gpu_compilation_backend
                     and not system.compilation_triton_only_gpu_successful
                 ):
                     logger.error("TRITON-only GPU compilation failed")

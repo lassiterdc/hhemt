@@ -152,12 +152,8 @@ def test_resolution_helpers_read_hpc_system_config(synth_multi_sim_builder):
     assert b._resolve_cpus_per_node("test_partition") == 40
     assert b._resolve_gpu_hardware("test_partition") == "a6000"
     # gpu_allocation_flavor + additional_modules are unset in the example config,
-    # so these still fall through to the legacy reads (4a keeps the fallbacks;
-    # 4c removes them). Assert the fall-through equals the legacy source.
-    assert b._resolve_gpu_alloc_mode() == (
-        b.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
-    )
-    assert (
-        b._resolve_additional_modules()
-        == b.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
-    )
+    # gpu_allocation_flavor + additional_modules are unset in the example config.
+    # 4c removed the legacy cfg_system fallbacks, so these resolve to the no-config
+    # defaults: "gpus" for the alloc mode, None for the module string.
+    assert b._resolve_gpu_alloc_mode() == "gpus"
+    assert b._resolve_additional_modules() is None

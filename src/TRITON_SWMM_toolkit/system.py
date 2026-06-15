@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -87,17 +88,38 @@ def _assert_dem_integrity(fpath_raster):
 
 
 class TRITONSWMM_system:
-    def __init__(self, system_config_yaml: Path) -> None:
+    def __init__(
+        self,
+        system_config_yaml: Path,
+        *,
+        gpu_hardware: str | None = None,
+        gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None,
+        additional_modules: str | None = None,
+    ) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
+
+        # Phase-4 (4c, DI): gpu_hardware / gpu_compilation_backend /
+        # additional_modules moved off system_config to the partition axis
+        # (PartitionSpec) and hpc_system_config. They are constructor-injected,
+        # resolved via config.hpc_system.resolve_gpu_target +
+        # resolve_additional_modules at the GPU-compile runner construction sites.
+        # The signature is intentionally PERMISSIVE (None defaults) so the ~24
+        # render/status/processing construction sites that need no GPU info keep
+        # working; only the 3 GPU-compile sites (setup_workflow, run_simulation_runner,
+        # per-UniqueSystemTarget) inject resolved values. Do NOT tighten to required
+        # — see the guard-presence test (would re-break the construction sites).
+        self.gpu_hardware = gpu_hardware
+        self.gpu_compilation_backend = gpu_compilation_backend
+        self.additional_modules = additional_modules
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
         swmm_dir = self.cfg_system.SWMM_software_directory
 
         gpu_suffix = (
-            f"_{self.cfg_system.gpu_hardware}"
-            if self.cfg_system.gpu_compilation_backend and self.cfg_system.gpu_hardware
+            f"_{self.gpu_hardware}"
+            if self.gpu_compilation_backend and self.gpu_hardware
             else ""
         )
         # Initialize paths with backend split
@@ -108,25 +130,25 @@ class TRITONSWMM_system:
             TRITONSWMM_build_dir_cpu=tritonswmm_dir / "build_tritonswmm_cpu",
             TRITONSWMM_build_dir_gpu=(
                 tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}"
-                if self.cfg_system.gpu_compilation_backend
+                if self.gpu_compilation_backend
                 else None
             ),
             # TRITON-only build dirs (no SWMM coupling)
             TRITON_build_dir_cpu=tritonswmm_dir / "build_triton_cpu",
             TRITON_build_dir_gpu=(
-                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}" if self.cfg_system.gpu_compilation_backend else None
+                tritonswmm_dir / f"build_triton_gpu{gpu_suffix}" if self.gpu_compilation_backend else None
             ),
             # SWMM standalone build dir
             SWMM_build_dir=(swmm_dir if (self.cfg_system.toggle_swmm_model and swmm_dir) else None),
             # Compilation artifacts (shared across build types)
             compilation_script_cpu=system_dir / "compile_cpu.sh",
             compilation_script_gpu=(
-                system_dir / f"compile_gpu{gpu_suffix}.sh" if self.cfg_system.gpu_compilation_backend else None
+                system_dir / f"compile_gpu{gpu_suffix}.sh" if self.gpu_compilation_backend else None
             ),
             compilation_logfile_cpu=(tritonswmm_dir / "build_tritonswmm_cpu" / "compilation.log"),
             compilation_logfile_gpu=(
                 tritonswmm_dir / f"build_tritonswmm_gpu{gpu_suffix}" / "compilation.log"
-                if self.cfg_system.gpu_compilation_backend
+                if self.gpu_compilation_backend
                 else None
             ),
             # Backwards compatibility aliases (point to TRITON-SWMM CPU versions)
@@ -488,7 +510,7 @@ class TRITONSWMM_system:
         # Determine which backends to compile
         if backends is None:
             backends = ["cpu"]
-            if self.cfg_system.gpu_compilation_backend:
+            if self.gpu_compilation_backend:
                 backends.append("gpu")
 
         # Download TRITON-SWMM source if needed (shared across backends)
@@ -514,7 +536,7 @@ class TRITONSWMM_system:
                     verbose=verbose,
                 )
             elif backend == "gpu":
-                if self.cfg_system.gpu_compilation_backend is None:
+                if self.gpu_compilation_backend is None:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
                         message="GPU backend requested but gpu_compilation_backend not set.\n"
@@ -523,14 +545,14 @@ class TRITONSWMM_system:
                     )
 
                 # Determine Kokkos flag based on config
-                if self.cfg_system.gpu_compilation_backend == "HIP":
+                if self.gpu_compilation_backend == "HIP":
                     cmake_backend_flag = "-DKokkos_ENABLE_HIP=ON"
-                elif self.cfg_system.gpu_compilation_backend == "CUDA":
+                elif self.gpu_compilation_backend == "CUDA":
                     cmake_backend_flag = "-DKokkos_ENABLE_CUDA=ON"
                 else:
                     raise ConfigurationError(
                         field="gpu_compilation_backend",
-                        message=f"Invalid value '{self.cfg_system.gpu_compilation_backend}'.\n"
+                        message=f"Invalid value '{self.gpu_compilation_backend}'.\n"
                         "  Must be 'HIP' or 'CUDA'.",
                         config_path=self.system_config_yaml,
                     )
@@ -662,8 +684,8 @@ class TRITONSWMM_system:
         ]
 
         # Optional: Load HPC modules
-        if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules = self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        if self.additional_modules:
+            modules = self.additional_modules
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
@@ -684,7 +706,7 @@ class TRITONSWMM_system:
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
-        if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
+        if backend == "gpu" and self.gpu_compilation_backend == "CUDA":
             bash_script_lines.extend(
                 [
                     "MPICXX=$(which mpic++)",
@@ -712,7 +734,7 @@ class TRITONSWMM_system:
         else:
             # GPU: Enable GPU backend, disable OpenMP for Kokkos
             # Still need -fopenmp for SWMM which unconditionally finds OpenMP
-            if self.cfg_system.gpu_compilation_backend == "CUDA":
+            if self.gpu_compilation_backend == "CUDA":
                 triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
                 cmake_flags = (
                     "-DTRITON_IGNORE_MACHINE_FILES=ON "
@@ -844,7 +866,7 @@ class TRITONSWMM_system:
 
     def _resolve_cuda_arch_flags(self) -> tuple[str, str]:
         """Resolve TRITON_ARCH and Kokkos arch flag based on gpu_hardware."""
-        gpu_hardware = (self.cfg_system.gpu_hardware or "").lower()
+        gpu_hardware = (self.gpu_hardware or "").lower()
         if not gpu_hardware:
             raise ConfigurationError(
                 field="gpu_hardware",
@@ -889,7 +911,7 @@ class TRITONSWMM_system:
             # Print all available backends
             print("=== CPU Backend Compilation Log ===", flush=True)
             print(self.retrieve_compilation_log("cpu"), flush=True)
-            if self.cfg_system.gpu_compilation_backend:
+            if self.gpu_compilation_backend:
                 print("\n=== GPU Backend Compilation Log ===", flush=True)
                 print(self.retrieve_compilation_log("gpu"), flush=True)
         if backend == "gpu":
@@ -933,7 +955,7 @@ class TRITONSWMM_system:
         # Determine which backends to compile
         if backends is None:
             backends = ["cpu"]
-            if self.cfg_system.gpu_compilation_backend:
+            if self.gpu_compilation_backend:
                 backends.append("gpu")
 
         # Download TRITON source if needed (shared across backends)
@@ -957,7 +979,7 @@ class TRITONSWMM_system:
                     verbose=verbose,
                 )
             elif backend == "gpu":
-                if self.cfg_system.gpu_compilation_backend is None:
+                if self.gpu_compilation_backend is None:
                     raise ValueError("GPU backend requested but gpu_compilation_backend not set in config.")
                 self._compile_triton_only_backend(
                     backend="gpu",
@@ -1008,8 +1030,8 @@ class TRITONSWMM_system:
         ]
 
         # Optional: Load HPC modules
-        if self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc:
-            modules = self.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        if self.additional_modules:
+            modules = self.additional_modules
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
@@ -1030,7 +1052,7 @@ class TRITONSWMM_system:
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
-        if backend == "gpu" and self.cfg_system.gpu_compilation_backend == "CUDA":
+        if backend == "gpu" and self.gpu_compilation_backend == "CUDA":
             bash_script_lines.extend(
                 [
                     "MPICXX=$(which mpic++)",
@@ -1054,7 +1076,7 @@ class TRITONSWMM_system:
             )
         else:
             # GPU backend
-            if self.cfg_system.gpu_compilation_backend == "HIP":
+            if self.gpu_compilation_backend == "HIP":
                 cmake_backend_flag = "-DKokkos_ENABLE_HIP=ON"
                 cmake_flags = (
                     "-DTRITON_IGNORE_MACHINE_FILES=ON "
@@ -1063,7 +1085,7 @@ class TRITONSWMM_system:
                     "-DCMAKE_CXX_FLAGS='-O3' "
                     '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
-            elif self.cfg_system.gpu_compilation_backend == "CUDA":
+            elif self.gpu_compilation_backend == "CUDA":
                 triton_arch, kokkos_arch_flag = self._resolve_cuda_arch_flags()
                 cmake_flags = (
                     "-DTRITON_IGNORE_MACHINE_FILES=ON "
@@ -1080,7 +1102,7 @@ class TRITONSWMM_system:
                     '-DCMAKE_CXX_STANDARD_LIBRARIES="' + self._libstdcpp_linker_flag_fragment() + '"'
                 )
             else:
-                raise ValueError(f"Invalid gpu_compilation_backend: {self.cfg_system.gpu_compilation_backend}")
+                raise ValueError(f"Invalid gpu_compilation_backend: {self.gpu_compilation_backend}")
 
         # Build commands - KEY DIFFERENCE: -DTRITON_ENABLE_SWMM=OFF
         bash_script_lines.extend(
@@ -1195,7 +1217,7 @@ class TRITONSWMM_system:
         Returns True if TRITON-only (CPU and GPU if configured) compiled successfully.
         For individual backend checks, use compilation_triton_only_cpu_successful and compilation_triton_only_gpu_successful.
         """
-        if self.cfg_system.gpu_compilation_backend:
+        if self.gpu_compilation_backend:
             return self.compilation_triton_only_cpu_successful and self.compilation_triton_only_gpu_successful
         else:
             return self.compilation_triton_only_cpu_successful
@@ -1419,7 +1441,7 @@ class TRITONSWMM_system:
         Returns True if CPU backend (and GPU if configured) compiled successfully.
         For individual backend checks, use compilation_cpu_successful and compilation_gpu_successful.
         """
-        if self.cfg_system.gpu_compilation_backend:
+        if self.gpu_compilation_backend:
             success = self.compilation_cpu_successful and self.compilation_gpu_successful
         else:
             success = self.compilation_cpu_successful
@@ -1449,7 +1471,7 @@ class TRITONSWMM_system:
         else:
             print("✗ CPU backend: NOT COMPILED", flush=True)
 
-        if self.cfg_system.gpu_compilation_backend is None:
+        if self.gpu_compilation_backend is None:
             print("  GPU backend: NOT REQUESTED", flush=True)
         elif self.compilation_gpu_successful:
             print("✓ GPU backend: COMPILED SUCCESSFULLY", flush=True)
@@ -1468,7 +1490,7 @@ class TRITONSWMM_system:
             else:
                 print("✗ CPU backend: NOT COMPILED", flush=True)
 
-            if self.cfg_system.gpu_compilation_backend is None:
+            if self.gpu_compilation_backend is None:
                 print("  GPU backend: NOT REQUESTED", flush=True)
             elif self.compilation_triton_only_gpu_successful:
                 print("✓ GPU backend: COMPILED SUCCESSFULLY", flush=True)

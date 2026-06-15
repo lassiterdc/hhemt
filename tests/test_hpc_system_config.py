@@ -143,3 +143,38 @@ def test_check_runtime_no_cap_partition_imposes_no_limit():
     cfg = hpc_system_config.model_validate(d)
     # no max_runtime declared -> no cap enforced
     cfg.check_runtime_within_cap("uncapped", 999999)
+
+
+@pytest.mark.parametrize(
+    "retired_key, retired_val",
+    [
+        ("gpu_hardware", "a100"),
+        ("gpu_compilation_backend", "CUDA"),
+        ("preferred_slurm_option_for_allocating_gpus", "gres"),
+        ("additional_modules_needed_to_run_TRITON_SWMM_on_hpc", "cuda/12.4"),
+    ],
+)
+def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val):
+    """Phase-4 (4c): the system_config pop-and-warn shim (folded into
+    validate_toggle_dependencies) lets an un-migrated YAML carrying any of the four
+    retired HPC keys LOAD with a DeprecationWarning instead of being rejected by
+    extra="forbid". The retired key is dropped (the field no longer exists)."""
+    from pathlib import Path
+
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_system_config
+
+    # A known-good system config (the shipped template) + a retired HPC key.
+    template = Path("test_data/norfolk_coastal_flooding/template_system_config.yaml")
+    base = load_system_config(template)
+    d = base.model_dump(mode="json")
+    assert _yaml  # imported for symmetry with the YAML-load path
+    d[retired_key] = retired_val
+
+    cfg_type = type(base)
+    with pytest.warns(DeprecationWarning, match=retired_key):
+        cfg = cfg_type.model_validate(d)
+    # Popped, not rejected, and the field genuinely no longer exists on the model.
+    assert not hasattr(cfg, retired_key)
+    assert retired_key not in cfg_type.model_fields

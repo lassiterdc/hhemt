@@ -107,6 +107,17 @@ def main():
         help="Optional path to the per-HPC-system configuration YAML file",
     )
     parser.add_argument(
+        "--target-partition",
+        type=str,
+        required=False,
+        default=None,
+        help=(
+            "Phase-4 (4c): partition whose PartitionSpec GPU hardware/backend is "
+            "resolved + injected into TRITONSWMM_system (the ensemble/sim partition "
+            "this sim runs on). Optional; absent => CPU/no-GPU."
+        ),
+    )
+    parser.add_argument(
         "--model-type",
         type=str,
         choices=["triton", "tritonswmm", "swmm"],
@@ -180,12 +191,24 @@ def main():
         from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
         from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
         from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+        from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+        from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target, resolve_additional_modules
 
         # Log workflow context for traceability
         log_workflow_context(logger)
 
         logger.info(f"Loading system configuration from {args.system_config}")
-        system = TRITONSWMM_system(args.system_config)
+        # Phase-4 (4c): resolve + inject GPU hardware/backend + modules from the
+        # per-HPC-system config + the target (sim) partition (retired off system_config).
+        cfg_hpc = load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
+        gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, args.target_partition)
+        additional_modules = resolve_additional_modules(cfg_hpc)
+        system = TRITONSWMM_system(
+            args.system_config,
+            gpu_hardware=gpu_hardware,
+            gpu_compilation_backend=gpu_compilation_backend,
+            additional_modules=additional_modules,
+        )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
         analysis = TRITONSWMM_analysis(

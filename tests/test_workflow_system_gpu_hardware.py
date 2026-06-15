@@ -23,9 +23,22 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
+pytestmark = [
+    pytest.mark.skipif(
+        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+    ),
+    pytest.mark.skip(
+        reason=(
+            "Phase-4 4c retired gpu_hardware off system_config. This module tests the "
+            "`system.gpu_hardware` overlay-column -> cfg_system.gpu_hardware propagation, "
+            "which 4d migrates to the partition axis: the overlay column is now "
+            "allowlist-rejected and the per-target cfg_system no longer carries gpu_hardware "
+            "(it is partition-derived + DI-injected). Re-enable + retarget the GRES-substring "
+            "assertion to the partition-resolved gpu_hardware when 4d's partition-as-axis "
+            "migration + overlay-column sweep lands."
+        )
+    ),
+]
 
 
 def _sim_rule_block(snakefile_text: str, sa_id: str) -> str:

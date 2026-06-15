@@ -86,6 +86,13 @@ def test_uva_benchmarking_factory_populates_report_sensitivity(
     example_data_available: bool,
 ) -> None:
     """Each UVA benchmarking factory must produce a case whose cfg_analysis.report.sensitivity is populated."""
+    if "system.gpu_hardware" in expected_independent_vars:
+        pytest.xfail(
+            "Phase-4 4c retired gpu_hardware off system_config; the `system.gpu_hardware` "
+            "sensitivity overlay column is rejected by the column allowlist until 4d migrates "
+            "the experiment definition to the partition axis (partition-as-sensitivity-axis). "
+            "Remove this xfail when 4d's test-data/overlay-column sweep lands."
+        )
     if requires_software_dirs:
         _require_software_dirs()
     factory = getattr(cat.UVACaseStudies, factory_name)

@@ -130,6 +130,8 @@ class hpc_system_config(BaseModel):
     default_execution_mode: Literal["local", "batch_job", "1_job_many_srun_tasks"] | None = None
     gpu_allocation_flavor: Literal["gres", "gpus"] | None = None  # EXTENSION (chooses native channel)
     additional_modules: list[str] | None = None
+    max_concurrent_jobs: int | None = None  # EXTENSION (D-D): cluster-throughput cap; new home
+    #                                          for the retired analysis_config.hpc_max_simultaneous_sims
     partitions: dict[str, PartitionSpec]
     executor_profile_extras: dict = Field(
         default_factory=dict,
@@ -183,3 +185,45 @@ class hpc_system_config(BaseModel):
                 ),
                 config_path=None,
             )
+
+
+def resolve_gpu_target(
+    cfg_hpc_system: hpc_system_config | None,
+    partition_name: str | None,
+) -> tuple[str | None, str | None]:
+    """Resolve ``(gpu_hardware, gpu_compilation_backend)`` for a partition.
+
+    Phase-4 (D1 Option-A / VMS-2a): GPU hardware + compilation backend live on
+    ``PartitionSpec`` (per-partition), no longer on ``system_config``. This free
+    function is the single resolution point used at ``TRITONSWMM_system``
+    construction + the GPU-compile runners to inject those values.
+
+    Returns ``(None, None)`` when no HPC-system config is present, no partition
+    is named, the partition is undeclared, or the partition declares no GPU —
+    i.e. the CPU / render-only path. Partition existence (for non-GPU concerns)
+    is validated separately by ``check_runtime_within_cap`` / preflight.
+    """
+    if cfg_hpc_system is None or partition_name is None:
+        return (None, None)
+    spec = cfg_hpc_system.partitions.get(partition_name)
+    if spec is None:
+        return (None, None)
+    return (spec.gpu_hardware, spec.gpu_compilation_backend)
+
+
+def resolve_additional_modules(
+    cfg_hpc_system: hpc_system_config | None,
+) -> str | None:
+    """Resolve the space-joined `module load` string from the HPC-system config.
+
+    Phase-4 (4c, D-E / OE-1): `additional_modules` moved off `system_config` to
+    `hpc_system_config.additional_modules` (a `list[str]`), but the compile/runtime
+    consumers emit `f"module load {modules}"` expecting a space-joined `str`. This
+    free function is the single join site, usable at the GPU-compile runner
+    construction sites that have no `SnakemakeWorkflowBuilder` instance. Module
+    names are space-free, so the join is lossless. Returns `None` (no `module load`
+    line) when no config is present or no modules are declared.
+    """
+    if cfg_hpc_system is not None and cfg_hpc_system.additional_modules:
+        return " ".join(cfg_hpc_system.additional_modules)
+    return None

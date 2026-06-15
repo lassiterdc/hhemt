@@ -48,7 +48,17 @@ def norfolk_1job_with_gpus():
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
     analysis.cfg_analysis.hpc_gpus_per_node = 8  # Frontier-like
-    analysis._system.cfg_system.gpu_hardware = "a100"
+    # Phase-4 (4c): gpu_hardware resolves from the ensemble partition's PartitionSpec
+    # (retired off system_config). The partition omits gpus_per_node so the per-node
+    # count still falls back to cfg_analysis.hpc_gpus_per_node (its retirement is 4d) —
+    # this keeps test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus meaningful.
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="test_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100")},
+    )
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
@@ -449,7 +459,9 @@ def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",
         default_account="hpc_sys_account",
-        partitions={"test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4)},
+        partitions={
+            "test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4, gpu_hardware="a100")
+        },
     )
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)

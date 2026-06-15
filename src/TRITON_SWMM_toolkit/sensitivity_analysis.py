@@ -16,6 +16,7 @@ import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
+from TRITON_SWMM_toolkit.config.hpc_system import resolve_additional_modules, resolve_gpu_target
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
@@ -1804,14 +1805,38 @@ class TRITONSWMM_sensitivity_analysis:
             else:
                 cfg = self._system.cfg_system
 
+            # Phase-4 (4c, FQ6): gpu_hardware/gpu_compilation_backend were retired off
+            # system_config; derive the compile-dedup pair from the partition axis. The
+            # key STAYS hardware-derived (two same-hardware partitions collapse to one
+            # build target) — NOT partition-name-keyed. In 4c (pre partition-as-axis
+            # overlay) the partition is uniformly the master ensemble partition; the
+            # per-row partition generalization is a 4d refinement of this same derivation.
+            _gpu_hardware, _gpu_backend = resolve_gpu_target(
+                self.master_analysis.cfg_hpc_system,
+                self.master_analysis.cfg_analysis.hpc_ensemble_partition,
+            )
             key = (
                 cfg.target_dem_resolution,
-                cfg.gpu_hardware,
-                cfg.gpu_compilation_backend,
+                _gpu_hardware,
+                _gpu_backend,
             )
             if key not in groups:
                 groups[key] = {"cfg": cfg, "sa_ids": []}
             groups[key]["sa_ids"].append(sa_id_str)
+
+        # Phase-4 (4c): GPU hardware/backend + modules are injected into each target
+        # system (retired off system_config), resolved from the master ensemble
+        # partition (uniform in 4c). The master self._system represents that same
+        # ensemble target, so populate its injected attrs too (so the reuse branch
+        # below is GPU-correct, not a None-injected CPU system).
+        _gpu_hardware, _gpu_backend = resolve_gpu_target(
+            self.master_analysis.cfg_hpc_system,
+            self.master_analysis.cfg_analysis.hpc_ensemble_partition,
+        )
+        _modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
+        self._system.gpu_hardware = _gpu_hardware
+        self._system.gpu_compilation_backend = _gpu_backend
+        self._system.additional_modules = _modules
 
         targets: list[UniqueSystemTarget] = []
         for target_id, group in enumerate(groups.values()):
@@ -1829,7 +1854,12 @@ class TRITONSWMM_sensitivity_analysis:
             if cfg.model_dump_json() == self._system.cfg_system.model_dump_json():
                 target_system = self._system
             else:
-                target_system = TRITONSWMM_system(generated_yaml)
+                target_system = TRITONSWMM_system(
+                    generated_yaml,
+                    gpu_hardware=_gpu_hardware,
+                    gpu_compilation_backend=_gpu_backend,
+                    additional_modules=_modules,
+                )
             targets.append(
                 UniqueSystemTarget(
                     target_id=target_id,
