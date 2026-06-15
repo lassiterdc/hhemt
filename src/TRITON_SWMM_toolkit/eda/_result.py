@@ -11,7 +11,7 @@ a ``CheckResult`` (imported, not re-defined) so the persist+merge in
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from TRITON_SWMM_toolkit.analysis_validation import CheckResult
@@ -25,3 +25,17 @@ class EdaResult:
     artifact_path: Path | None = None
     plot_id: str | None = None
     skipped: bool = False
+
+
+@dataclass(frozen=True)
+class EdaReportResult:
+    """Return value of analysis.eda() / Bundle.eda() (the facade layer).
+
+    Carries the three artifact classes the facade produces: the assembled doc,
+    the rendered EDA plots, and the calc-stage verdicts (empty on Bundle.eda,
+    which skips calc).
+    """
+
+    report_path: Path
+    plot_paths: list[Path] = field(default_factory=list)
+    verdicts: list[CheckResult] = field(default_factory=list)

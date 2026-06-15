@@ -51,6 +51,7 @@ from TRITON_SWMM_toolkit.workflow import (
 
 if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
+    from .eda import EdaReportResult
     from .orchestration import WorkflowResult, WorkflowStatus
     from .system import TRITONSWMM_system
     from .workflow import ResolvedForceRerunSpec  # noqa: F401
@@ -602,6 +603,43 @@ class TRITONSWMM_analysis:
         from TRITON_SWMM_toolkit.bundle import emit_bundle
 
         return emit_bundle(self, output_path)
+
+    def eda(self, *, override_eda_config: "Path | None" = None) -> "EdaReportResult":
+        """Run the in-process EDA loop: calc -> plots -> doc (ADR-10).
+
+        A LIGHTER non-Snakemake facade. Resolves the EDA config (override-or-cfg
+        per the override_ convention), runs the calc members, renders the EDA
+        plots under plots/eda/, and assembles eda_report/eda_report.html. Returns
+        an EdaReportResult. Bundle carriage: run this BEFORE bundle_report_data()
+        so the EDA plots' declared eda/<plot_id>.zarr sources are harvested into
+        the bundle (the plots emit under plots/eda/ and declare the zarr as a
+        source); bundling before eda() silently omits EDA content.
+        """
+        from TRITON_SWMM_toolkit.config.eda import eda_config
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        from TRITON_SWMM_toolkit.eda import (
+            EdaReportResult,
+            assemble_eda_report,
+            check_cross_sim_identity,
+            render_eda_plots,
+        )
+
+        eda_cfg = (
+            yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
+        )
+        root = Path(self.analysis_paths.analysis_dir)
+        verdict_result = check_cross_sim_identity(self)
+        verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
+        # Non-sensitivity analyses produce no eda/<plot_id>.zarr artifact (the
+        # cross-sim check skips and writes nothing), so render_eda_plots would
+        # open a non-existent zarr. Skip rendering and assemble a figureless doc
+        # via the figures fast-path (SE Flag 1).
+        if verdict_result.skipped or verdict_result.artifact_path is None:
+            report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, figures=[])
+            return EdaReportResult(report_path=report_path, plot_paths=[], verdicts=verdicts)
+        plot_paths = render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
 
     @staticmethod
     def _handle_destination_conflict(
