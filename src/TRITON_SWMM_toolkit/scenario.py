@@ -708,10 +708,12 @@ class TRITONSWMM_scenario:
         _analysis_dir = self._analysis.analysis_paths.analysis_dir
         if target_link.exists() or target_link.is_symlink():
             if target_link.is_symlink() or target_link.is_file():
+                # EXEMPT-DU: system-dir
                 target_link.unlink()
             elif target_link.is_dir():
                 utils.fast_rmtree(target_link, analysis_dir=_analysis_dir)  # PATTERN A
             else:
+                # EXEMPT-DU: system-dir
                 target_link.unlink()
 
         target_link.parent.mkdir(parents=True, exist_ok=True)

@@ -380,6 +380,7 @@ class TRITONSWMM_analysis:
         settled = sorted(settled)
         if not dry_run:
             for m in settled:
+                # EXEMPT-DU: status-flag
                 m.unlink(missing_ok=True)
         return settled
 
@@ -1865,6 +1866,7 @@ class TRITONSWMM_analysis:
             # which defaults None and made fast_rmtree(None) crash here. Every
             # other analysis_dir reference in this module already uses the derived
             # path; this site was the lone holdout.
+            # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(self.analysis_paths.analysis_dir)
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
@@ -2926,6 +2928,7 @@ class TRITONSWMM_analysis:
         # tree.
         stale_dir = analysis_dir / "_status" / "_deleting"
         if stale_dir.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale_dir)
 
         # 2. Submit the distributed delete workflow. The workflow builder's
@@ -2953,6 +2956,7 @@ class TRITONSWMM_analysis:
             f"[delete] all {len(expected)} per-rule sentinels present — removing analysis_dir.",
             flush=True,
         )
+        # EXEMPT-DU: full-analysis-root-wipe
         fast_rmtree(analysis_dir)
 
     def _enumerate_expected_delete_sentinels(self) -> set[Path]:
@@ -3063,7 +3067,9 @@ class TRITONSWMM_analysis:
             # decrement has the bytes to subtract (post-unlink stat is impossible).
             _html_bytes = report_html.stat().st_size if report_html.exists() else 0
             _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             plots_dir = analysis_dir / "plots"
             plots_total_bytes = 0
@@ -3076,6 +3082,7 @@ class TRITONSWMM_analysis:
                             pass
                 for art in plots_dir.rglob("*"):
                     if art.is_file():
+                        # EXEMPT-DU: du-handled-by-decrement
                         art.unlink(missing_ok=True)
             if not dry_run:
                 # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
@@ -3101,7 +3108,9 @@ class TRITONSWMM_analysis:
         if start_with == "process":
             if regenerate_existing:
                 for f in sd.glob("d_process_*"):
+                    # EXEMPT-DU: status-flag
                     f.unlink(missing_ok=True)
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3110,6 +3119,7 @@ class TRITONSWMM_analysis:
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3124,7 +3134,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             if not dry_run:
                 restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
@@ -3396,6 +3408,7 @@ class TRITONSWMM_analysis:
                 if not _summary_absent(scen, model_type):
                     continue  # summary present — healthy, no-op
                 # Divergence: flag present, summary absent → heal.
+                # EXEMPT-DU: status-flag
                 flag_path.unlink(missing_ok=True)
                 reconciled.add((evt, model_type))
                 reconciled_event_ids.add(evt)

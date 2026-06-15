@@ -929,6 +929,7 @@ class MigrationContext:
         if src_path.is_dir():
             shutil.rmtree(src_path)
         else:
+            # EXEMPT-DU: migration-primitive
             src_path.unlink()
         if not replacement.exists():
             raise RuntimeError(

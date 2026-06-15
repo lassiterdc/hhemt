@@ -226,6 +226,13 @@ def main():
                 )
             )
             os.replace(_tmp, _sentinel)
+            # mechanism (b): the worker has started → the submitter-side _queued/
+            # sentinel for this token is superseded by _submitted/. Unlink it so the
+            # two artifact classes stay mutually exclusive. (A worker hard-killed
+            # before this line leaves an orphan _queued/ that the reconcile ages out
+            # via the mtime fail-safe / treats as non-authoritative — never acted on.)
+            # EXEMPT-DU: status-dir-cleanup
+            (Path(analysis_dir) / "_status" / "_queued" / f"{_rule_token}.json").unlink(missing_ok=True)
             _completed_dir = Path(analysis_dir) / "_status" / "_completed"
             _failed_dir = Path(analysis_dir) / "_status" / "_failed"
             _completed_dir.mkdir(parents=True, exist_ok=True)
@@ -380,6 +387,7 @@ def main():
                 _completed_tmp.write_text(json.dumps(_payload))
                 os.replace(_completed_tmp, _completed_marker)
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 
