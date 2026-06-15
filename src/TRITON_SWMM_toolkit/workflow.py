@@ -2445,8 +2445,12 @@ def _per_sim_conduit_flow_sources(wildcards):
                     # hung-RUNNING case is a SLURM-infra transient not
                     # fixable toolkit-side. All reprocess-path rules
                     # (plot/consolidate/render) are idempotent re-derivations,
-                    # so a retried payload re-run is safe.
-                    "restart-times": 2,
+                    # so a retried payload re-run is safe. A walltime kill is a
+                    # SLURM TIMEOUT (a terminal FAILED state, not hung-RUNNING),
+                    # so it IS rescued by restart-times — this is what drives the
+                    # hotstart-resume sweep's automatic completion. Sourced from
+                    # cfg_analysis.hpc_restart_times (default 2; resume sets it high).
+                    "restart-times": self.cfg_analysis.hpc_restart_times,
                     "default-resources": [
                         "nodes=1",
                         "mem_mb=2000",

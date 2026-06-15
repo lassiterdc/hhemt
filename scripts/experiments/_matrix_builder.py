@@ -84,10 +84,29 @@ def write_clean_matrix_csv(path: Path) -> None:
     df.to_csv(path, index=False)
 
 
-def write_resume_matrix_csv(path: Path) -> None:
-    """Resume demo: hpc_time_min_per_sim = 1 (GPU rows) / 2 (CPU rows) forces a mid-sim kill (slurm rec)."""
-    rows = _rows(_CLEAN_CONFIGS, walltime_min=None)  # None => per-row below: 1 if n_gpus else 2
+def write_resume_matrix_csv(
+    path: Path,
+    *,
+    runtime_min_by_sa: dict[str, float] | None = None,
+    kill_divisor: int = 3,
+    min_walltime_min: int = 1,
+) -> None:
+    """Resume sweep: per-backend walltime sized to force a mid-sim kill AND complete
+    within ``restart-times`` from ONE ``analysis.run()``.
+
+    For each row, ``hpc_time_min_per_sim = max(min_walltime_min, round(T_sa / kill_divisor))``
+    where ``T_sa`` is that backend's measured full-completion wallclock (minutes) from the
+    CLEAN sweep (SLURM ``Elapsed`` via sacct, or ``out_tritonswmm/performance.txt`` Total),
+    keyed by ``sa_id``. With ``kill_divisor=3`` each sim is killed ~2x and finishes on
+    attempt ~3; set ``hpc_restart_times`` comfortably above
+    ``ceil(max(T_sa) / min_walltime_min)`` so even a worst-case slow backend completes.
+    When ``runtime_min_by_sa`` is None (off-cluster dry-run only), fall back to a
+    conservative GPU=4 min / CPU=18 min estimate by row type — REPLACE with real
+    clean-sweep numbers before the production resume run.
+    """
+    runtimes = runtime_min_by_sa or {}
+    rows = _rows(_CLEAN_CONFIGS, walltime_min=None)
     for r in rows:
-        r["hpc_time_min_per_sim"] = 1 if r["n_gpus"] else 2
-        assert r["hpc_time_min_per_sim"] <= 2  # slurm walltime tripwire (R5)
+        t_full = runtimes.get(r["sa_id"], 4.0 if r["n_gpus"] else 18.0)
+        r["hpc_time_min_per_sim"] = max(min_walltime_min, round(t_full / kill_divisor))
     pd.DataFrame(rows, columns=_COLS).to_csv(path, index=False)

@@ -175,6 +175,18 @@ class analysis_config(cfgBaseModel):
         60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
+    hpc_restart_times: int = Field(
+        2,
+        ge=0,
+        description=(
+            "Snakemake `restart-times` for the SLURM executor: how many times a "
+            "FAILED/TIMEOUT job is auto-resubmitted before the workflow gives up. "
+            "A walltime kill is a TIMEOUT (retriable). Default 2 (legacy). For the "
+            "hotstart-resume sweep set this high (e.g. 20) so a walltime-killed sim "
+            "is re-dispatched enough times to complete from its latest config_NNNN.cfg "
+            "checkpoint within ONE analysis.run() — no manual re-invocation loop."
+        ),
+    )
     hpc_max_simultaneous_sims: int | None = Field(
         None,
         description="Maximum number of concurrent simulations. "
