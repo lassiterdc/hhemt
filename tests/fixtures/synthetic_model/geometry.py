@@ -75,9 +75,28 @@ _UPSTREAM_BOT_ELEV = 1.0
 #                        the channel band; `_WALL_ELEV` outside the band
 #   matrix_row 26      : sea-wall row (_WALL_ELEV)
 #   matrix_row 27..29  : dropoff/BC zone (_POST_DROPOFF_ELEV)
-_INTERIOR_TOP_MR = 2
-_PRE_DROPOFF_LAST_MR = 25
-_SEA_WALL_MR = 26
+# 2026-06-14: region boundaries are now derived from n_rows so the active
+# sloped corridor spans nearly the full grid height. Previously hardcoded for
+# the retired 16x30 footprint (`_PRE_DROPOFF_LAST_MR=25`, `_SEA_WALL_MR=26`),
+# which on the 64x120 experiment grid left matrix-rows 27..n_rows-1 a dead-flat
+# BC zone — every coupling node fell outside the conveying corridor -> coupling
+# deadlock. Layout now:
+#   matrix-row 0.._WALL_THICKNESS-1            : top wall
+#   _INTERIOR_TOP_MR.._pre_dropoff_last_mr     : sloped active corridor
+#                                                (Y-corridor cells; else wall)
+#   _sea_wall_mr(params)                       : sea-wall row
+#   n_rows-1                                   : dropoff / southern BC exit row
+_INTERIOR_TOP_MR = _WALL_THICKNESS  # first row below the top wall
+
+
+def _pre_dropoff_last_mr(params) -> int:
+    """Last matrix-row of the sloped active corridor (2 rows above the bottom)."""
+    return params.n_rows - 3
+
+
+def _sea_wall_mr(params) -> int:
+    """Sea-wall matrix-row (1 row above the southern BC exit row)."""
+    return params.n_rows - 2
 
 # Iter-7 peak_flood_depth (2026-04-28): every grid cell touching a 5-m buffer
 # around any conduit centerline is lowered by `_CONDUIT_BUFFER_LOWERING_M`.
@@ -98,16 +117,16 @@ def _conduit_network(params):
     from shapely.geometry import LineString
     from shapely.ops import unary_union
 
-    from .swmm_template import _CONDUITS, _NODES
+    from .swmm_template import _conduits, _nodes
 
     cs = params.cell_size_m
     node_xy = {
         name: (cs * (col + 0.5), cs * (row_from_bottom + 0.5))
-        for name, col, row_from_bottom in _NODES
+        for name, col, row_from_bottom in _nodes(params)
     }
     lines = [
         LineString([node_xy[from_node], node_xy[to_node]])
-        for _name, from_node, to_node, _length in _CONDUITS
+        for _name, from_node, to_node, _length in _conduits(params)
     ]
     if not lines:
         return None
@@ -160,12 +179,12 @@ def _buffered_cells(params) -> frozenset:
     return frozenset(cells)
 
 
-def _interior_gradient_elev(matrix_row: int) -> float:
+def _interior_gradient_elev(params, matrix_row: int) -> float:
     """Linear surface gradient from `_UPSTREAM_TOP_ELEV` at
     `_INTERIOR_TOP_MR` down to `_UPSTREAM_BOT_ELEV` at
-    `_PRE_DROPOFF_LAST_MR`. Cells inside the Y corridor return this elev
+    `_pre_dropoff_last_mr(params)`. Cells inside the Y corridor return this elev
     (minus swale lowering if applicable); cells outside are walls."""
-    span = _PRE_DROPOFF_LAST_MR - _INTERIOR_TOP_MR
+    span = _pre_dropoff_last_mr(params) - _INTERIOR_TOP_MR
     frac = (matrix_row - _INTERIOR_TOP_MR) / float(span)
     return float(_UPSTREAM_TOP_ELEV - (_UPSTREAM_TOP_ELEV - _UPSTREAM_BOT_ELEV) * frac)
 
@@ -189,17 +208,17 @@ def dem_elev_at(params, col: int, row_from_bottom: int) -> float:
     if col < _WALL_THICKNESS or col >= n_cols - _WALL_THICKNESS:
         return _WALL_ELEV
     # Sea-wall row: interior peak between gradual slope and dropoff (iter 2).
-    if matrix_row == _SEA_WALL_MR:
+    if matrix_row == _sea_wall_mr(params):
         return _WALL_ELEV
     # Iter-11 base elevation:
     #   - dropoff zone (matrix_row > _SEA_WALL_MR): constant `_POST_DROPOFF_ELEV`
     #     (0.0m); buffer-lowering does NOT apply here (early return).
     #   - upstream interior, INSIDE Y corridor: linear sloped gradient
     #   - upstream interior, OUTSIDE Y corridor: WALL (Option B Y-shaped channel)
-    if matrix_row > _SEA_WALL_MR:
+    if matrix_row > _sea_wall_mr(params):
         return float(_POST_DROPOFF_ELEV)
     if (col, row_from_bottom) in _y_corridor_cells(params):
-        base = _interior_gradient_elev(matrix_row)
+        base = _interior_gradient_elev(params, matrix_row)
     else:
         return _WALL_ELEV
     # Iter-7 buffer-lowering: swale cells (within ~5 m of conduit centerline)
