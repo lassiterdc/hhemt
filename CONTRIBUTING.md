@@ -112,3 +112,17 @@ Workflow skills (available globally, invoke by name):
 - `/implementation-plan` — design a complete plan before coding
 - `/proceed-with-implementation` — preflight check before implementing a plan
 - `/qaqc-and-commit` — post-implementation QA review and commit
+
+---
+
+## Docstring standard
+
+Public methods and modules use **NumPy-style docstrings** (the `numpydoc`
+`Parameters`/`Returns`/`Raises` section convention). The documentation site
+(`mkdocs build`) renders these via the `mkdocstrings` Python handler configured
+with `docstring_style: numpy`, so a docstring that follows this convention is
+rendered correctly in the API reference with no further annotation.
+
+Backfilling docstrings onto currently-undocumented public methods is tracked
+separately (it depends on the public-API surface designation); contributors
+adding NEW public methods should include a NumPy-style docstring at authoring time.
