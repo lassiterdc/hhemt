@@ -263,6 +263,16 @@ class ResourceManager:
         # ----------------------------
         # Read basic SLURM allocation
         # ----------------------------
+        # Phase-3 (hpc-system-profile-config) decision — DO NOT replace these
+        # realized-allocation reads with cfg_hpc_system topology fields
+        # (gpus_per_node / cpus_per_node). In 1_job_many_srun_tasks mode the
+        # workflow runs INSIDE the allocation, so SLURM_* reflects what was
+        # GRANTED, while the config topology is only what was REQUESTED in the
+        # sbatch header. They diverge under override_hpc_total_nodes, partial-
+        # node grants, and SLURM rounding — and preferring the requested value
+        # here would oversubscribe the srun pool. The topology fields feed the
+        # sbatch header in workflow._generate_single_job_submission_script; this
+        # method reads the resulting allocation back (snakemake-specialist FQ2).
         num_nodes = int(os.environ.get("SLURM_JOB_NUM_NODES", 1))
         cpus_per_task = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
         cpus_on_node = int(os.environ.get("SLURM_CPUS_ON_NODE", 0))

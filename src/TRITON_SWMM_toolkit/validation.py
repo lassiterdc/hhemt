@@ -956,6 +956,52 @@ def _validate_hpc_configuration(
                     fix_hint=fix,
                 )
 
+    # Phase 3 (R5): one-big-job total-job-duration <= partition max_runtime.
+    # The `#SBATCH --time` the 1_job_many_srun_tasks script emits
+    # (_generate_single_job_submission_script) is hpc_total_job_duration_min on
+    # the hpc_ensemble_partition; a request exceeding the partition cap is the
+    # most common cryptic whole-allocation SLURM rejection (snakemake FQ3). The
+    # bound is net-new (no native enforcement) and gated on a present
+    # cfg_hpc_system, so cfg_hpc_system is None is a no-op (R2 byte-identity).
+    if method == "1_job_many_srun_tasks" and cfg_hpc_system is not None:
+        partition_name = cfg.hpc_ensemble_partition
+        requested = cfg.hpc_total_job_duration_min
+        if partition_name is not None and requested is not None:
+            spec = cfg_hpc_system.partitions.get(partition_name)
+            if spec is None:
+                result.add_error(
+                    field="hpc_system.partitions",
+                    message=(
+                        f"The 1_job_many_srun_tasks allocation targets partition "
+                        f"'{partition_name}', which is not declared in the "
+                        f"hpc_system_config partitions block."
+                    ),
+                    current_value=partition_name,
+                    fix_hint=(
+                        f"Add a '{partition_name}' entry to the hpc_system_config "
+                        f"partitions block, or change hpc_ensemble_partition to a "
+                        f"declared partition: {sorted(cfg_hpc_system.partitions)}"
+                    ),
+                )
+            else:
+                cap = spec.max_runtime
+                if cap is not None and requested > cap:
+                    result.add_error(
+                        field=f"hpc_system.partitions.{partition_name}.max_runtime",
+                        message=(
+                            f"The 1_job_many_srun_tasks allocation requests "
+                            f"{requested} min (hpc_total_job_duration_min) on "
+                            f"partition '{partition_name}', exceeding its "
+                            f"max_runtime cap of {cap} min."
+                        ),
+                        current_value=requested,
+                        fix_hint=(
+                            f"Reduce hpc_total_job_duration_min, raise partition "
+                            f"'{partition_name}' max_runtime to >= {requested} in "
+                            f"hpc_system_config, or choose a partition with a higher cap."
+                        ),
+                    )
+
 
 # ============================================================================
 # Data Cross-Consistency Validators

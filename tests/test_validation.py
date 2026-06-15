@@ -239,3 +239,45 @@ def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis,
     assert not result.is_valid
     msgs = " ".join(e.message for e in result.errors)
     assert "max_runtime" in msgs and "tiny" in msgs
+
+
+def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_analysis, tmp_path):
+    """Phase 3 (R5): a 1_job_many_srun_tasks hpc_total_job_duration_min exceeding
+    the ensemble partition's max_runtime cap surfaces a preflight error naming the
+    partition; cfg_hpc_system=None is a no-op (R2 byte-identity).
+    """
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+
+    a = synth_multi_sim_analysis
+    cfg_sys = a._system.cfg_system
+    cfg_analysis = a.cfg_analysis
+    # Force 1_job_many_srun_tasks + a partition so the one-big-job bound is reachable.
+    cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
+    cfg_analysis.hpc_ensemble_partition = "tiny"
+    cfg_analysis.hpc_total_nodes = 2
+    cfg_analysis.hpc_total_job_duration_min = 60
+
+    # Baseline: no hpc_system_config -> the one-big-job bound is skipped (R2 no-op).
+    base = preflight_validate(cfg_sys, cfg_analysis)
+    assert not any("max_runtime" in e.message for e in base.errors)
+
+    # With a cap (5 min) below the requested 60-min duration, the bound fires.
+    hpc_yaml = tmp_path / "hpc_system_config.yaml"
+    hpc_yaml.write_text(
+        _yaml.safe_dump(
+            {
+                "system_name": "tiny-cluster",
+                "default_account": "acct",
+                "partitions": {"tiny": {"max_runtime": 5}},
+            }
+        )
+    )
+    cfg_hpc = load_hpc_system_config(hpc_yaml)
+
+    result = preflight_validate(cfg_sys, cfg_analysis, cfg_hpc_system=cfg_hpc)
+    assert not result.is_valid
+    msgs = " ".join(e.message for e in result.errors)
+    assert "max_runtime" in msgs and "tiny" in msgs
+    assert "1_job_many_srun_tasks" in msgs
