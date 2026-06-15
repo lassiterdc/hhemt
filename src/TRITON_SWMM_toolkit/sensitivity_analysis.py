@@ -377,9 +377,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         return result
 
-    def _invalidate_processing_log_for_sa_ids(
-        self, sa_id_tokens: tuple[str, ...]
-    ) -> None:
+    def _invalidate_processing_log_for_sa_ids(self, sa_id_tokens: tuple[str, ...]) -> None:
         """Per-sa_id dispatch for processing-log invalidation under
         ``override_force_rerun={"sa_id": [...]}``.
 
@@ -621,12 +619,11 @@ class TRITONSWMM_sensitivity_analysis:
                 "1_job_many_srun_tasks",
             )
             _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-            route_delete_via_slurm = (
-                regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
-            )
+            route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
             if route_delete_via_slurm:
                 self._workflow_builder._base_builder.submit_reprocess_delete_workflow(
-                    start_with=start_with, override_in_flight=False,
+                    start_with=start_with,
+                    override_in_flight=False,
                 )
             elif regenerate_existing and not dry_run:
                 # In-process path (local / delete_via_slurm=False) — per-sub +
@@ -746,15 +743,13 @@ class TRITONSWMM_sensitivity_analysis:
         missing = expected - actual
         if missing:
             print(
-                f"[delete] {len(missing)} per-sa-rule sentinels missing — "
-                f"preserving analysis_dir for debugging.",
+                f"[delete] {len(missing)} per-sa-rule sentinels missing — " f"preserving analysis_dir for debugging.",
                 flush=True,
             )
             print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
             return
         print(
-            f"[delete] all {len(expected)} per-sa-rule sentinels present — "
-            f"removing analysis_dir.",
+            f"[delete] all {len(expected)} per-sa-rule sentinels present — " f"removing analysis_dir.",
             flush=True,
         )
         # EXEMPT-DU: full-analysis-root-wipe
@@ -865,13 +860,52 @@ class TRITONSWMM_sensitivity_analysis:
         # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
         # defaulting to analysis_id when None (D-6). _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
+        # Resolve the active set's category_order. render_report() is dominantly
+        # invoked from render_report_runner.main() on a FRESH analysis that never
+        # called run() (see the _brand_theme getattr-fallback above for the
+        # identical hazard), so self._active_reporting_set may not exist. getattr-
+        # fallback to a config-only resolution (no CSV cross-validation at render
+        # time) mirroring the _theme fallback above. Never let the bare attribute
+        # AttributeError be swallowed by the surrounding `except Exception: pass`.
+        _active_set = getattr(self, "_active_reporting_set", None)
+        if _active_set is None:
+            # render-without-run() fallback. Fail SOFT (SE F-I-3): the render path
+            # bypasses validate_active_reporting_set, so a stale/unknown
+            # reporting_set would raise here and surface as an opaque Snakemake
+            # rule failure. Degrade to the historical "default" sidebar order + a
+            # one-line warning instead of crashing the render rule.
+            import logging
+
+            from .config.report import resolve_active_reporting_set_name
+            from .report_renderers._reporting_sets import get_reporting_set
+
+            try:
+                _cfg_report = getattr(self, "_cfg_report", None)
+                if _cfg_report is None:
+                    _cfg_report = self.cfg_analysis.report
+                _set_name = resolve_active_reporting_set_name(
+                    _cfg_report,
+                    is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
+                )
+                _active_set = get_reporting_set(_set_name)
+            except Exception as _e:
+                logging.getLogger(__name__).warning(
+                    "render-path reporting_set resolution failed (%s); " "falling back to 'default' category order",
+                    _e,
+                )
+                _active_set = get_reporting_set("default")
+        _category_order = list(_active_set.category_order)
         try:
             if format == "html":
                 out.write_text(
-                    apply_post_process_surgery(out.read_text(), navbar_text=_navbar)
+                    apply_post_process_surgery(
+                        out.read_text(),
+                        navbar_text=_navbar,
+                        category_order=_category_order,
+                    )
                 )
             else:
-                apply_post_process_surgery_to_zip(out, navbar_text=_navbar)
+                apply_post_process_surgery_to_zip(out, navbar_text=_navbar, category_order=_category_order)
         except Exception:
             pass
         if format != "html":
@@ -2117,9 +2151,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sa_id, sub_analysis in self.sub_analyses.items():
-            assert sub_analysis.cfg_analysis.is_subanalysis, (
-                "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
-            )
+            assert (
+                sub_analysis.cfg_analysis.is_subanalysis
+            ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
             sub_df_status = sub_analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[sa_id, :]
