@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 if __name__ == "__main__":
