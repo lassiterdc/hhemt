@@ -17,9 +17,14 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 import xarray as xr
 
-from TRITON_SWMM_toolkit.report_renderers._provenance_audit import _capture_reads
+from TRITON_SWMM_toolkit.exceptions import ProcessingError
+from TRITON_SWMM_toolkit.report_renderers._provenance_audit import (
+    _capture_reads,
+    assert_reads_subset_declared,
+)
 
 
 def test_capture_reads_records_python_open():
@@ -61,3 +66,27 @@ def test_capture_reads_misses_h5netcdf_c_open():
             ds.close()
         # h5netcdf opens via C-level H5Fopen -> no Python "open" event fired.
         assert os.path.realpath(nc) not in captured
+
+
+# A synthetic absolute root that is NOT under sys.prefix / tempfile.gettempdir() /
+# mpl-data / the output dir, so the Tier-2 incidental prefixes cannot mask the
+# Tier-1 same-stem-sibling clause being exercised here. These paths need not exist
+# on disk -- the predicate is pure path arithmetic (resolve()/parent/stem/suffix).
+_SYNTH_DATA_DIR = Path("/audit_test_root_xyz/data")
+_SYNTH_OUTPUT = Path("/audit_test_root_xyz/out/fig.html")
+
+
+def test_same_stem_sibling_rpt_is_subtracted():
+    """A `<dir>/hydro.rpt` read IS covered by a declared `<dir>/hydro.inp` sibling."""
+    declared = {_SYNTH_DATA_DIR / "hydro.inp"}
+    actual = {_SYNTH_DATA_DIR / "hydro.rpt"}
+    # Must NOT raise: the swmmio .rpt sidecar is a same-stem sibling of the .inp.
+    assert_reads_subset_declared(actual, declared, _SYNTH_OUTPUT)
+
+
+def test_unrelated_sibling_rpt_is_not_subtracted():
+    """A `<dir>/unrelated.rpt` is NOT subtracted (proves same-stem, not parent-dir)."""
+    declared = {_SYNTH_DATA_DIR / "hydro.inp"}
+    actual = {_SYNTH_DATA_DIR / "unrelated.rpt"}
+    with pytest.raises(ProcessingError):
+        assert_reads_subset_declared(actual, declared, _SYNTH_OUTPUT)

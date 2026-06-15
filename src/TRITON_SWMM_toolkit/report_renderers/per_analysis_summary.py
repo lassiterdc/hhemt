@@ -54,13 +54,49 @@ def render(
 
     metrics = report_cfg.per_analysis_summary.metrics
 
+    # Track the sim-log FILES actually read this render so the declared source_paths
+    # match the audited read surface (Class-Y sibling fix, FQ4). Status counts come
+    # either from scenario_status.csv (no log reads) OR from per-scenario log
+    # iteration (_is_scenario_successful/_pending -> model_run_completed reads
+    # {dir}/logs/sims/model_*.log). We declare the specific model_*.log FILES (a bare
+    # directory source is rejected by _validate_source_path — only files/zarr stores
+    # are allowed) ONLY on the branches that read them, keeping the declared set tight
+    # (a CSV-present non-sensitivity render declares just the CSV). Follow-up: make
+    # scenario_status.csv authoritative so the sensitivity-master + fallback paths
+    # stop reading logs entirely.
+    log_source_files: list[Path] = []
+
     if is_sensitivity_master:
+        # CSV-authoritative (matches the non-sensitivity branch + both specialists' FQ4
+        # recommendation): when the master scenario_status.csv is present, derive per-sa
+        # status counts from it (columns: sa_id, event_iloc, model_type, run_completed,
+        # scenario_setup) — no log reads, declared set = just the CSV. Fall back to
+        # _is_scenario_successful (which reads per-scenario logs) only when the CSV is
+        # absent at render time; for sensitivity those logs live at the SHARED
+        # {system_dir}/logs/sims level (filenames carry sa_{id}_evt{n}), so declare that
+        # file set there (not under each sub dir).
+        master_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
+        use_csv = master_csv.exists()
+        status_df = pd.read_csv(master_csv) if use_csv else None
+        if not use_csv:
+            sys_logs = Path(analysis._system.cfg_system.system_directory) / "logs" / "sims"
+            log_source_files.extend(sorted(sys_logs.glob("model_*.log")))
         per_sa_rows = []
         for sa_id, sub in analysis.sensitivity.sub_analyses.items():
             n = len(sub.df_sims.index)
-            n_succ = sum(1 for i in sub.df_sims.index if _is_scenario_successful(sub, i))
-            n_pend = sum(1 for i in sub.df_sims.index if _is_scenario_pending(sub, i))
-            n_fail = n - n_succ - n_pend
+            if use_csv:
+                sa_rows = status_df[status_df["sa_id"].astype(str) == str(sa_id)]
+                succ_by_event = sa_rows.groupby("event_iloc")["run_completed"].all()
+                n_succ = int(succ_by_event.sum())
+                setup_by_event = sa_rows.groupby("event_iloc")["scenario_setup"].any()
+                n_fail = sum(
+                    1 for e in setup_by_event.index if setup_by_event.get(e, False) and not succ_by_event.get(e, False)
+                )
+                n_pend = max(0, n - n_succ - n_fail)
+            else:
+                n_succ = sum(1 for i in sub.df_sims.index if _is_scenario_successful(sub, i))
+                n_pend = sum(1 for i in sub.df_sims.index if _is_scenario_pending(sub, i))
+                n_fail = n - n_succ - n_pend
             per_sa_rows.append(
                 {
                     "sub-analysis": sa_id,
@@ -89,6 +125,11 @@ def render(
             n_failed = len(failed_events)
             n_pending = max(0, n_sims - n_successful - n_failed)
         else:
+            # Fallback: no scenario_status.csv -> derive counts by reading per-scenario
+            # logs ({analysis_dir}/logs/sims/model_*.log); declare those files.
+            log_source_files.extend(
+                sorted((Path(analysis.analysis_paths.analysis_dir) / "logs" / "sims").glob("model_*.log"))
+            )
             n_successful = sum(1 for i in analysis.df_sims.index if _is_scenario_successful(analysis, i))
             n_pending = sum(1 for i in analysis.df_sims.index if _is_scenario_pending(analysis, i))
             n_failed = n_sims - n_successful - n_pending
@@ -132,7 +173,7 @@ def render(
     # is the named source even when absent (sensitivity-master mode derives counts
     # from in-memory sub_analyses). _validate_source_path accepts non-existent
     # paths, so this surfaces the expected CSV rather than tripping Gate-A.
-    source_paths: list[Path] = [scenario_status_csv_path]
+    source_paths: list[Path] = [scenario_status_csv_path, *log_source_files]
 
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import _relativize
 
