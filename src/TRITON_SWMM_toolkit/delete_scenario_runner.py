@@ -78,6 +78,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if scenario_dir.exists():
             print(f"[delete] removing {scenario_dir}", flush=True)
+            # EXEMPT-DU: delete-workflow-leaf
             fast_rmtree(scenario_dir)
         else:
             logger.warning(
@@ -96,6 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 

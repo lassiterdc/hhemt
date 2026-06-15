@@ -28,3 +28,15 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  # DU-sentinel mutation-site restamp discipline (scripts/check_du_sentinel_sites.py)
+  # Flags fast_rmtree(...) missing analysis_dir= and .unlink() not adjacent-followed
+  # by restamp_parent_sentinels(...), unless the site carries # EXEMPT-DU: {category}.
+  - repo: local
+    hooks:
+      - id: check-du-sentinel-sites
+        name: DU-sentinel mutation-site restamp check
+        entry: python scripts/check_du_sentinel_sites.py
+        language: system
+        pass_filenames: false
+        always_run: true

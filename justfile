@@ -10,6 +10,7 @@ qa:
     uv run --python=3.13 --extra test ruff check . --fix
     uv run --python=3.13 --extra test ruff check --select I --fix .
     uv run --python=3.13 --extra test ty check .
+    python scripts/check_du_sentinel_sites.py
     uv run --python=3.13 --extra test pytest .
 
 # Run all the tests for all the supported Python versions
