@@ -136,27 +136,69 @@ def _centerline_col(params) -> int:
     return (params.n_cols - 1) // 2
 
 
+def _row_strips(n_rows: int, n_ranks: int) -> list[tuple[int, int]]:
+    """SLURM-style row-strip decomposition of ``n_rows`` matrix-rows over
+    ``n_ranks`` ranks: each rank owns ``floor(n_rows/n_ranks)`` or one more
+    consecutive rows (the remainder lands in the first ranks). Returns
+    inclusive ``(first_matrix_row, last_matrix_row)`` per rank, top to bottom.
+    This mirrors the static row-strip decomposition TRITON applies, so the
+    deadlock-safety check below tests the ACTUAL rank ownership rather than a
+    proxy band heuristic.
+    """
+    base, rem = divmod(n_rows, n_ranks)
+    strips: list[tuple[int, int]] = []
+    start = 0
+    for r in range(n_ranks):
+        height = base + (1 if r < rem else 0)
+        strips.append((start, start + height - 1))
+        start += height
+    return strips
+
+
 def _node_matrix_rows(params) -> list[int]:
     """Matrix-row (0=top) of each in-line coupling junction.
 
-    Rule (triton-specialist 2026-06-14): one node per band of size
-    ``floor(n_rows / _N_COUPLING_NODES)``, centered in its band, so the max
-    inter-node row gap INCLUDING the top edge (row 0 -> first node) and the
-    bottom edge (last node -> southern BC) is <= the band size. For
-    n_rows=120, N=8 => band=15 => matrix-rows {7,22,37,52,67,82,97,112}.
+    Placement (2026-06-15): one node per row-strip of the LARGEST MPI rank
+    count the experiment matrix exercises (``_N_COUPLING_NODES`` == R_max == 8,
+    from scripts/experiments/_matrix_builder.py). Node ``i`` sits at the center
+    of the ``i``-th of N equal row-strips, clamped into the active DEM corridor
+    ``[_INTERIOR_TOP_MR, _pre_dropoff_last_mr]`` so no node lands on a wall /
+    sea-wall row. This directly guarantees the deadlock-safety property: under a
+    row-strip static decomposition into R_max ranks every rank owns >= 1
+    coupling node and participates in the TRITON-SWMM ENSIFY_COMM_WORLD
+    collective (triton.h:2363-2404). For n_rows=120 this yields the canonical
+    matrix-rows {7,22,37,52,67,82,97,112} (byte-identical to the prior
+    band-stride formula, which only coincided with this when n_rows % N == 0).
+
+    Why row-strip-centered, not band-stride: the prior ``band//2 + i*band``
+    formula left an ``n_rows % N``-sized node-free tail at the bottom (e.g.
+    n_rows=30 => nodes end at row 22, leaving rows 23..29 node-free), which both
+    failed at the test default AND genuinely deadlocked R=4/R=8. The proxy
+    invariant ``max(gap) <= band`` also passed configs that deadlocked, because
+    it equals the true property only when n_rows % N == 0.
     """
+    from .geometry import _INTERIOR_TOP_MR, _pre_dropoff_last_mr
+
     n = _N_COUPLING_NODES
-    band = params.n_rows // n
-    rows = [band // 2 + i * band for i in range(n)]
-    # Deadlock-safety invariant (fail loud on an unsafe future grid):
-    gaps = (
-        [rows[0]]
-        + [rows[i] - rows[i - 1] for i in range(1, n)]
-        + [(params.n_rows - 1) - rows[-1]]
-    )
-    assert max(gaps) <= band, (
-        f"node row gaps {gaps} exceed band {band}; a row-strip rank would own "
-        f"zero coupling nodes -> TRITON-SWMM coupling deadlock"
+    top = _INTERIOR_TOP_MR
+    bottom = _pre_dropoff_last_mr(params)
+    strips = _row_strips(params.n_rows, n)
+    rows = [min(max((a + b) // 2, top), bottom) for (a, b) in strips]
+
+    # Deadlock-safety invariant (fail loud on an unsafe future grid): under the
+    # R_max row-strip decomposition EVERY rank must own >= 1 coupling node.
+    rowset = set(rows)
+    for (a, b) in strips:
+        assert any(a <= x <= b for x in rowset), (
+            f"row-strip ({a},{b}) of n_rows={params.n_rows} owns zero coupling "
+            f"nodes (placed at {rows}) -> a row-strip rank would skip the "
+            f"TRITON-SWMM coupling collective -> deadlock"
+        )
+    # Corridor confinement collapses distinct strip centers into one row only on
+    # a pathologically small grid; fail loud rather than emit duplicate nodes.
+    assert len(rowset) == n, (
+        f"coupling-node rows collided after corridor clamp: {rows} "
+        f"(n_rows={params.n_rows} too small for {n} distinct corridor rows)"
     )
     return rows
 
