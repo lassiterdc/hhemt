@@ -34,6 +34,31 @@ _EXPERIMENT_PARAMS = dataclasses.replace(
     sim_duration_min=30,
 )
 
+# Fixed physical domain (m), preserved across resolutions so a model at any cell
+# size is the SAME watershed (224 m × 420 m) — only the grid density changes.
+_DOMAIN_WIDTH_M = _EXPERIMENT_PARAMS.n_cols * _EXPERIMENT_PARAMS.cell_size_m   # 224.0
+_DOMAIN_HEIGHT_M = _EXPERIMENT_PARAMS.n_rows * _EXPERIMENT_PARAMS.cell_size_m  # 420.0
+
+
+def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
+    """Return `_EXPERIMENT_PARAMS` re-gridded to `cell_size_m`, preserving the
+    physical domain (n_cols/n_rows scale inversely with cell size).
+
+    The generator (`geometry.py` / `swmm_template.py`) is fully grid-driven, so
+    any resolution builds and passes the `rim==DEM` and deadlock-safety tripwires.
+    A FINER resolution → more cells → longer per-sim wallclock (the lever for
+    making the resume sweep's sims exceed the 1-min SLURM walltime floor so a
+    kill is actually forced). NOTE: the byte-identity clean-vs-resume comparison
+    requires BOTH cases at the SAME resolution — pass the same `cell_size_m` to
+    `clean_case` and `resume_case`. Coarser than ~n_rows/`_N_COUPLING_NODES`
+    will trip the interior-too-small assertion in `_node_matrix_rows`.
+    """
+    n_cols = max(round(_DOMAIN_WIDTH_M / cell_size_m), 1)
+    n_rows = max(round(_DOMAIN_HEIGHT_M / cell_size_m), 1)
+    return dataclasses.replace(
+        _EXPERIMENT_PARAMS, cell_size_m=cell_size_m, n_cols=n_cols, n_rows=n_rows
+    )
+
 
 @dataclasses.dataclass
 class _Case:
@@ -42,7 +67,8 @@ class _Case:
 
 
 def _build_case(
-    *, analysis_name: str, sensitivity_csv: Path, start_from_scratch: bool, resume: bool, system_directory: str | None
+    *, analysis_name: str, sensitivity_csv: Path, start_from_scratch: bool, resume: bool,
+    system_directory: str | None, cell_size_m: float = 3.5,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -57,7 +83,9 @@ def _build_case(
     system_cfg = {
         "gpu_compilation_backend": "CUDA",
         "gpu_hardware": "a6000",
-        "target_dem_resolution": 3.5,
+        # Match the native synth grid resolution (no resample). Tracks cell_size_m
+        # so a re-gridded model keeps identity DEM handling.
+        "target_dem_resolution": cell_size_m,
         # HPC module set the generated compile/run scripts must `module load` (system.py:663):
         # without it the field is None, no `module load` is emitted, and the build node lacks
         # both `nvcc` and a new-enough libstdc++ -> GPU compile fails (first nvcc-not-found,
@@ -81,7 +109,7 @@ def _build_case(
 
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
-        params=_EXPERIMENT_PARAMS,
+        params=_params_for_resolution(cell_size_m),
         sensitivity_csv=sensitivity_csv,
         toggle_tritonswmm_model=True,
         toggle_triton_model=False,
@@ -126,8 +154,15 @@ def _build_case(
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
 
 
-def clean_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:
-    """Clean determinism experiment: single 3.5m res, 28-config sweep, single-allocation walltime.
+def clean_case(
+    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5
+) -> _Case:
+    """Clean determinism experiment: 28-config sweep, single-allocation walltime.
+
+    ``cell_size_m`` sets the synth DEM resolution (default 3.5 m, physical domain
+    preserved). Use a FINER value (e.g. 1.75) to lengthen per-sim wallclock — but
+    pass the SAME ``cell_size_m`` to ``resume_case`` or the byte-identity
+    clean-vs-resume comparison breaks (different grids → trivially "diverged").
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/***REMOVED***/***REMOVED***/norfolk/synth_compute_config/synth_cc_clean"``.
@@ -141,11 +176,19 @@ def clean_case(start_from_scratch: bool = False, system_directory: str | None = 
         start_from_scratch=start_from_scratch,
         resume=False,
         system_directory=system_directory,
+        cell_size_m=cell_size_m,
     )
 
 
-def resume_case(start_from_scratch: bool = False, system_directory: str | None = None) -> _Case:
+def resume_case(
+    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5
+) -> _Case:
     """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
+
+    ``cell_size_m`` MUST match the value passed to ``clean_case`` (same grid → the
+    byte-identity clean-vs-resume comparison is valid). A finer resolution makes
+    sims run long enough that the 1-min SLURM walltime actually kills them, so the
+    hotstart-resume path is genuinely exercised (DoD #3).
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/***REMOVED***/***REMOVED***/norfolk/synth_compute_config/synth_cc_resume"``.
@@ -165,4 +208,5 @@ def resume_case(start_from_scratch: bool = False, system_directory: str | None =
         start_from_scratch=start_from_scratch,
         resume=True,
         system_directory=system_directory,
+        cell_size_m=cell_size_m,
     )
