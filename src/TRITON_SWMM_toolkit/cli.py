@@ -814,6 +814,56 @@ def reprocess_command(
         raise typer.Exit(10)
 
 
+@app.command(name="eda")
+def eda_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to system configuration YAML file",
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to analysis configuration YAML file",
+    ),
+    override_eda_config: Path = typer.Option(
+        None,
+        "--override-eda-config",
+        help="Runtime override for cfg_analysis.eda (a YAML path).",
+    ),
+):
+    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html."""
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+        result = analysis.eda(override_eda_config=override_eda_config)
+        console.print(f"[green]EDA report written:[/green] {result.report_path}")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(5)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
 @app.command(name="delete")
 def delete_command(
     system_config: Path = typer.Option(

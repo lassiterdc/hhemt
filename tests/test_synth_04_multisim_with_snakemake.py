@@ -536,7 +536,8 @@ def test_snakemake_workflow_concurrency_and_process_monitoring(
 
 # ─── Phase 7: Snakemake report integration tests ───────────────────────────────
 
-from pathlib import Path as _Path
+from pathlib import Path as _Path  # noqa: E402
+
 _SYNTH_MULTISIM_REPORT_CONFIG = (
     _Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_multisim_report_config.yaml"
 )
@@ -953,3 +954,136 @@ def test_slurm_config_none_hpc_system_is_byte_identical(synth_multi_sim_analysis
     default_res = cfg["default-resources"]
     assert "slurm_account=legacy_acct" in default_res  # legacy read preserved
     assert "slurm" not in cfg  # dead block deleted regardless of config presence
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_renderer_provenance_audit_passes_for_all_multisim_renderers(synth_multi_sim_analysis_cached):
+    """The renderer-IO provenance audit fires and PASSES for every multisim renderer.
+
+    Regression guard for the Phase-3 silent-drift bugs: if a renderer opens an
+    undeclared file, ``audit_renderer_io`` raises ``ProcessingError`` inside the
+    renderer subprocess and that plot rule fails, leaving its ``report()``-flagged
+    figure missing — which makes ``render_report()`` raise (Gotcha 39). So a
+    successful ``render_report()`` is the audit-passed-for-every-renderer signal.
+
+    The plot artifacts are deleted before the second ``run()`` to FORCE a fresh
+    render through the audited ``_cli`` subprocess path: the ``_cached`` fixture's
+    on-disk cache key is the swmm-topology SHA, not the renderer source, so a
+    renderer-source regression would otherwise reuse stale (pre-regression) plots
+    and the always-on audit would never re-fire.
+    """
+    import os
+    import shutil
+    from pathlib import Path
+
+    os.environ.pop("TRITON_SWMM_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
+
+    plots_dir = analysis.analysis_paths.analysis_dir / "plots"
+    shutil.rmtree(plots_dir, ignore_errors=True)
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
+
+    out_html = analysis.render_report(format="html")
+    assert out_html.exists() and out_html.stat().st_size > 0, (
+        "render_report failed after a forced fresh render — likely an audit "
+        f"ProcessingError in a renderer subprocess; inspect plot-rule logs under {plots_dir}"
+    )
+    manifests = list(plots_dir.rglob("*.manifest.json"))
+    assert manifests, f"no manifest sidecars under {plots_dir} (plot rules did not re-run)"
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+@pytest.mark.parametrize(
+    "renderer_module, backing_file_relpath",
+    [
+        ("per_analysis_summary", "scenario_status.csv"),
+        ("scenario_status_appendix", "scenario_status.csv"),
+        ("disk_utilization", "_status/_du.json"),
+        # Option D (Class-Y resolution): errors_and_warnings reads the persisted
+        # validation_report.json, NOT eda/*.verdict.json — its graceful-absent +
+        # declare-unconditionally contract is the Option-D analog of the original
+        # eda-present provenance guard.
+        ("errors_and_warnings", "validation_report.json"),
+    ],
+)
+def test_render_survives_missing_backing_file(
+    synth_multi_sim_analysis_cached, renderer_module, backing_file_relpath, tmp_path
+):
+    """ADR-6 D3 regression: a conditional-source renderer declares its expected
+    source UNCONDITIONALLY, so ``render()`` succeeds (no ProcessingError) and the
+    manifest still names the source even when the backing file is absent.
+
+    Test-isolation note: ``synth_multi_sim_analysis_cached`` is session-scoped AND
+    persists on disk across pytest processes, so a bare ``unlink`` would pollute the
+    shared cache for subsequent tests/runs (some of the deleted files —
+    ``validation_report.json``, ``_status/_du.json`` — are side-effect writes a
+    resume ``run()`` does NOT regenerate). We snapshot the file's bytes, delete,
+    assert the graceful render, then restore in a ``finally`` so the cache is left
+    byte-identical regardless of assertion outcome.
+    """
+    import importlib
+    import json
+    import shutil
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG
+    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
+    backing = Path(analysis.analysis_paths.analysis_dir) / backing_file_relpath
+    backup = tmp_path / f"backup_{backing.name}"
+    had_file = backing.exists()
+    if had_file:
+        shutil.copy2(backing, backup)
+        backing.unlink()
+    try:
+        assert not backing.exists()
+
+        mod = importlib.import_module(f"TRITON_SWMM_toolkit.report_renderers.{renderer_module}")
+        backend = analysis._workflow_builder._get_report_cfg_static_backend()
+        out = tmp_path / f"out{_output_ext_for(backend, renderer_module)}"
+        returned = mod.render(analysis, DEFAULT_REPORT_CONFIG, out)
+        assert returned == out and out.exists()
+        manifest = json.loads((out.parent / f"{out.stem}.manifest.json").read_text())
+        assert any(backing_file_relpath in s for s in manifest["source_paths_relative"]), (
+            f"{renderer_module}: manifest dropped the expected source after deletion"
+        )
+    finally:
+        if had_file:
+            backing.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(backup, backing)
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_errors_and_warnings_declares_exactly_validation_report(
+    synth_multi_sim_analysis_cached, tmp_path
+):
+    """Option D (Class-Y resolution) core regression guard: errors_and_warnings
+    reads ONLY the persisted ``validation_report.json`` — NOT validate_analysis()'s
+    whole-analysis-tree surface — so its declared source set is EXACTLY
+    ``{validation_report.json}``. Locks the renderer against reverting to an
+    in-render ``validate_analysis()`` call, which would balloon the declared set
+    (spanning analysis_dir + system_dir) and break render-bundle fidelity.
+    """
+    import importlib
+    import json
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG
+    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+
+    analysis = synth_multi_sim_analysis_cached
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
+
+    mod = importlib.import_module("TRITON_SWMM_toolkit.report_renderers.errors_and_warnings")
+    backend = analysis._workflow_builder._get_report_cfg_static_backend()
+    out = tmp_path / f"out{_output_ext_for(backend, 'errors_and_warnings')}"
+    mod.render(analysis, DEFAULT_REPORT_CONFIG, out)
+    manifest = json.loads((out.parent / f"{out.stem}.manifest.json").read_text())
+    declared = set(manifest["source_paths_relative"])
+    assert declared == {"validation_report.json"}, (
+        "errors_and_warnings must declare EXACTLY validation_report.json under the "
+        f"Option D Class-Y resolution (no validate_analysis() whole-tree read); got {declared}"
+    )

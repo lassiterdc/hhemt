@@ -20,37 +20,41 @@ The replacements are idempotent: reapplying does not double-inject
 
 from __future__ import annotations
 
-_CATEGORY_ORDER = {
-    "Workflow Status": 1,
-    "Errors and Warnings": 2,
-    "Key Results": 3,
-    "System Information": 4,
-    "Simulation Health (placeholder)": 5,
-    "Per Simulation Results": 6,
-}
+# Historical default category order (used when no category_order is passed —
+# byte-identical for non-passing callers, mirroring navbar_text's None default).
+_DEFAULT_CATEGORY_ORDER = (
+    "Workflow Status",
+    "Errors and Warnings",
+    "Key Results",
+    "System Information",
+    "Simulation Health (placeholder)",
+    "Per Simulation Results",
+)
 
-_ORDER_JS = "{" + ", ".join(f'"{k}": {v}' for k, v in _CATEGORY_ORDER.items()) + "}"
+
+def _order_js(category_order: tuple[str, ...] | list[str]) -> str:
+    """Build the JS ORDER-dict literal from an ordered category list (1-indexed)."""
+    body = ", ".join(f'"{k}": {i}' for i, k in enumerate(category_order, start=1))
+    return "{" + body + "}"
+
 
 _PLACEHOLDER_INJECT = ', "Simulation Health (placeholder)": {"Reserved": []}'
 
-_SHOW_CATEGORY_OLD = (
-    'this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n'
-    '    }'
-)
+_SHOW_CATEGORY_OLD = "this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n" "    }"
 
 _SHOW_CATEGORY_NEW = (
-    'this.setView({ navbarMode: mode, category: category, subcategory: subcategory });\n'
-    '        setTimeout(function(){\n'
+    "this.setView({ navbarMode: mode, category: category, subcategory: subcategory });\n"
+    "        setTimeout(function(){\n"
     '            var tbl = document.querySelector("table.table-auto");\n'
-    '            if (!tbl) return;\n'
+    "            if (!tbl) return;\n"
     '            var firstRow = tbl.querySelector("tbody tr");\n'
-    '            if (!firstRow) return;\n'
+    "            if (!firstRow) return;\n"
     '            var actionDiv = firstRow.querySelector("td.text-right > div.inline-flex");\n'
-    '            if (!actionDiv) return;\n'
+    "            if (!actionDiv) return;\n"
     '            var firstBtn = actionDiv.querySelector("a, button");\n'
-    '            if (firstBtn) firstBtn.click();\n'
-    '        }, 80);\n'
-    '    }'
+    "            if (firstBtn) firstBtn.click();\n"
+    "        }, 80);\n"
+    "    }"
 )
 
 _CLICK_DELEGATE = """
@@ -79,6 +83,7 @@ def apply_post_process_surgery(
     html_text: str,
     bundle_mode: bool = False,
     navbar_text: str | None = None,
+    category_order: list[str] | None = None,
 ) -> str:
     """Apply all React-bundle post-process replacements and return modified text.
 
@@ -93,7 +98,9 @@ def apply_post_process_surgery(
          literal "TRITON-SWMM Toolkit" is used (byte-identical for non-passing
          callers). The facades source it from brand_theme.upper_left_text (ADR-7),
          defaulting to analysis_id.
-      4. Patch category-sort comparator -> hardcoded category order
+      4. Patch category-sort comparator -> config-driven category order
+         (``category_order``; None falls back to the historical default,
+         byte-identical for non-passing callers)
       5. Inject "Simulation Health (placeholder)" entry into categories dict
       6. Patch showCategory to auto-pop the first figure (setTimeout firstBtn.click)
       7. Inject row-click delegate at LAST `</body>` so clicks anywhere on a
@@ -117,9 +124,7 @@ def apply_post_process_surgery(
     """
     # 1. Browser-tab title
     if "<title>Snakemake Report</title>" in html_text:
-        html_text = html_text.replace(
-            "<title>Snakemake Report</title>", "<title></title>"
-        )
+        html_text = html_text.replace("<title>Snakemake Report</title>", "<title></title>")
 
     # 2. Drop About menu item
     html_text = html_text.replace(
@@ -139,11 +144,16 @@ def apply_post_process_surgery(
         '                        "' + _navbar + '"\n                    )',
     )
 
-    # 4. Category-sort comparator
-    html_text = html_text.replace(
-        "(a, b) => a.localeCompare(b)",
-        f"(a, b) => {{const ORDER = {_ORDER_JS}; return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}}",
+    # 4. Category-sort comparator. category_order is config-driven (ADR-5);
+    # None falls back to the historical default (byte-identical for non-passing
+    # callers). Idempotent: after the first pass the localeCompare literal is
+    # gone, so re-application is a no-op.
+    _order_js_literal = _order_js(category_order or _DEFAULT_CATEGORY_ORDER)
+    _comparator = (
+        f"(a, b) => {{const ORDER = {_order_js_literal}; "
+        "return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}"
     )
+    html_text = html_text.replace("(a, b) => a.localeCompare(b)", _comparator)
 
     # 5. Placeholder category injection (idempotent: check before injecting)
     if _PLACEHOLDER_INJECT[2:] not in html_text:
@@ -161,9 +171,7 @@ def apply_post_process_surgery(
     if _CLICK_DELEGATE not in html_text:
         _last_body = html_text.rfind("</body>")
         if _last_body != -1:
-            html_text = (
-                html_text[:_last_body] + _CLICK_DELEGATE + html_text[_last_body:]
-            )
+            html_text = html_text[:_last_body] + _CLICK_DELEGATE + html_text[_last_body:]
 
     # 8. Force initial App view to "metadata" (workflow_description landing).
     # App.constructor's original logic: default "rulegraph", promote to
@@ -203,6 +211,7 @@ def apply_post_process_surgery_to_zip(
     zip_path,
     bundle_mode: bool = False,
     navbar_text: str | None = None,
+    category_order: list[str] | None = None,
 ) -> None:
     """Apply post-process surgery to `analysis_report/report.html` inside a zip.
 
@@ -241,6 +250,7 @@ def apply_post_process_surgery_to_zip(
             inner_html.read_text(),
             bundle_mode=bundle_mode,
             navbar_text=navbar_text,
+            category_order=category_order,
         )
         inner_html.write_text(modified)
         # Re-zip. shutil.make_archive writes `<base>.zip` from `root_dir`.

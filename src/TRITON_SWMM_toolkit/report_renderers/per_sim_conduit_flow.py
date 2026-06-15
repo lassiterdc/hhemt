@@ -52,8 +52,11 @@ def render(
     )
     if static_backend == "plotly":
         return _render_plotly_branch(
-            analysis, report_cfg, output_path,
-            event_iloc=event_iloc, prov=prov,
+            analysis,
+            report_cfg,
+            output_path,
+            event_iloc=event_iloc,
+            prov=prov,
         )
 
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
@@ -76,10 +79,7 @@ def render(
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
     tree = analysis.process.open_datatree()
     if link_group not in tree.groups:
-        raise AssertionError(
-            f"consolidated tree missing expected group {link_group}; available: "
-            f"{sorted(tree.groups)}"
-        )
+        raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
     peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
@@ -95,10 +95,7 @@ def render(
     # [CONDUITS] + [COORDINATES] sections); the prior version of this code read
     # `swmm_hydro_inp` which is the hydrology-only variant (no [CONDUITS]) and
     # produced a blank figure (iter-2 user feedback 2026-04-27).
-    inp_path = Path(
-        getattr(proc.scen_paths, "swmm_hydraulics_inp", None)
-        or proc.scen_paths.swmm_full_inp
-    )
+    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits
@@ -127,7 +124,9 @@ def render(
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
     hydro_data = load_event_hydrology_data(
-        weather_path, analysis.cfg_analysis, weather_event_indexers,
+        weather_path,
+        analysis.cfg_analysis,
+        weather_event_indexers,
     )
 
     # Subiteration 9.4 C7-parity-2 — load DEM bounds (same source peak_flood_depth
@@ -138,11 +137,18 @@ def render(
     # DEMs (synth fixture is 150m × 300m → map_aspect=0.5), the two figures had
     # different overall widths and panels popped between toggles.
     import rioxarray as rxr  # noqa: PLC0415
+
     sys_paths = analysis._system.sys_paths
     _dem_bounds_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
-    map_bounds = _dem_bounds_da.rio.bounds() if _dem_bounds_da.rio.crs is not None else (
-        float(_dem_bounds_da.x.min()), float(_dem_bounds_da.y.min()),
-        float(_dem_bounds_da.x.max()), float(_dem_bounds_da.y.max()),
+    map_bounds = (
+        _dem_bounds_da.rio.bounds()
+        if _dem_bounds_da.rio.crs is not None
+        else (
+            float(_dem_bounds_da.x.min()),
+            float(_dem_bounds_da.y.min()),
+            float(_dem_bounds_da.x.max()),
+            float(_dem_bounds_da.y.max()),
+        )
     )
     map_aspect = (map_bounds[2] - map_bounds[0]) / max(map_bounds[3] - map_bounds[1], 1e-9)
     # Subiteration 9.4 — pin h to peak_flood_depth's value (cfg.figsize_inches
@@ -158,7 +164,9 @@ def render(
     gs_util_cbar = gs_util[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     gs_peak_cbar = gs_peak[1, 0].subgridspec(1, 3, width_ratios=list(map_cfg.cbar_inner_width_ratios))
     gs_hydro_outer = outer[0, 2].subgridspec(
-        2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1],
+        2,
+        1,
+        height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1],
     )
     gs_hydro_inner = gs_hydro_outer[0, 0].subgridspec(2, 1, height_ratios=[1, 1])
     ax1 = fig.add_subplot(gs_util[0, 0])
@@ -171,11 +179,13 @@ def render(
     # Relpaths against analysis_dir for provenance-record portability.
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     link_summary_rel = os.path.relpath(
-        str(Path(link_summary_path).resolve()), analysis_root,
+        str(Path(link_summary_path).resolve()),
+        analysis_root,
     )
     inp_rel = os.path.relpath(str(inp_path.resolve()), analysis_root)
     weather_rel = os.path.relpath(
-        str(Path(weather_path).resolve()), analysis_root,
+        str(Path(weather_path).resolve()),
+        analysis_root,
     )
 
     # Two-colormap design (iter-2 user feedback): non-overlapping single-color
@@ -186,13 +196,30 @@ def render(
     PEAK_FLOW_CMAP = map_cfg.peak_flow_cmap
     peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [
-        (ax1, cax_util, max_over_full, max_over_full_name, max_over_full_attrs,
-         "max / full flow", 0.0, 1.0, UTILIZATION_CMAP, "ax_utilization"),
-        (ax2, cax_peak, peak_flow, peak_flow_name, peak_flow_attrs,
-         units.flow_axis_label(),
-         (float(cfg.vmin) if cfg.vmin is not None else 0.0),
-         peak_flow_vmax,
-         PEAK_FLOW_CMAP, "ax_peak_flow"),
+        (
+            ax1,
+            cax_util,
+            max_over_full,
+            max_over_full_name,
+            max_over_full_attrs,
+            "max / full flow",
+            0.0,
+            1.0,
+            UTILIZATION_CMAP,
+            "ax_utilization",
+        ),
+        (
+            ax2,
+            cax_peak,
+            peak_flow,
+            peak_flow_name,
+            peak_flow_attrs,
+            units.flow_axis_label(),
+            (float(cfg.vmin) if cfg.vmin is not None else 0.0),
+            peak_flow_vmax,
+            PEAK_FLOW_CMAP,
+            "ax_peak_flow",
+        ),
     ]
     for ax, cax, values, var_name, var_attrs, label, vmin, vmax, cmap_name, axes_id in panels:
         cmap = plt.get_cmap(cmap_name)
@@ -205,30 +232,53 @@ def render(
         for lid, ((x1, y1), (x2, y2)) in coords_by_id.items():
             val = float(values_by_id.get(lid, 0.0))
             with prov.artist(
-                axes_id=axes_id, kind="line2d",
+                axes_id=axes_id,
+                kind="line2d",
                 note=f"conduit {lid}",
             ) as a:
                 a.add_swmm_channel(
-                    "x", swmm_inp=inp_rel, kind="conduit_coords", link_id=str(lid),
+                    "x",
+                    swmm_inp=inp_rel,
+                    kind="conduit_coords",
+                    link_id=str(lid),
                 )
                 a.add_swmm_channel(
-                    "y", swmm_inp=inp_rel, kind="conduit_coords", link_id=str(lid),
+                    "y",
+                    swmm_inp=inp_rel,
+                    kind="conduit_coords",
+                    link_id=str(lid),
                 )
                 a.add_channel(
                     "color",
                     _link_summary_ref(
-                        link_summary_rel, var_name, var_attrs, lid, event_iloc,
+                        link_summary_rel,
+                        var_name,
+                        var_attrs,
+                        lid,
+                        event_iloc,
                     ),
-                    cmap=cmap_name, vmin=vmin, vmax=vmax,
+                    cmap=cmap_name,
+                    vmin=vmin,
+                    vmax=vmax,
                 )
                 # Black boundary underneath (iter-2 user feedback) — slightly
                 # wider than the colored line for a thin black outline.
-                ax.plot([x1, x2], [y1, y2], color=map_cfg.conduit_outline_color,
-                        linewidth=map_cfg.conduit_outline_width,
-                        solid_capstyle="round", zorder=2)
-                ax.plot([x1, x2], [y1, y2], color=cmap(norm(val)),
-                        linewidth=map_cfg.conduit_value_width,
-                        solid_capstyle="round", zorder=3)
+                ax.plot(
+                    [x1, x2],
+                    [y1, y2],
+                    color=map_cfg.conduit_outline_color,
+                    linewidth=map_cfg.conduit_outline_width,
+                    solid_capstyle="round",
+                    zorder=2,
+                )
+                ax.plot(
+                    [x1, x2],
+                    [y1, y2],
+                    color=cmap(norm(val)),
+                    linewidth=map_cfg.conduit_value_width,
+                    solid_capstyle="round",
+                    zorder=3,
+                )
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
         sm.set_array([])
         cb = fig.colorbar(sm, cax=cax, orientation="horizontal")
@@ -242,6 +292,7 @@ def render(
     ax2.tick_params(axis="y", labelleft=False)
     ax2.set_ylabel("")
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+
     target_crs = resolve_target_crs(analysis, report_cfg)
     crs = target_crs.to_epsg()
     ax1.set_xlabel(units.easting_axis_label(crs), fontsize=map_cfg.axis_label_fontsize)
@@ -265,6 +316,7 @@ def render(
     import geopandas as gpd  # noqa: PLC0415
 
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceRef
+
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_rel = os.path.relpath(str(Path(watershed_shp).resolve()), analysis_root)
     watershed_gdf = gpd.read_file(watershed_shp)
@@ -277,16 +329,21 @@ def render(
         for ax in (ax1, ax2):
             if watershed_gdf.crs is not None and _dem_bounds_da.rio.crs is not None:
                 watershed_gdf.to_crs(_dem_bounds_da.rio.crs).boundary.plot(
-                    ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
+                    ax=ax,
+                    color=map_cfg.watershed_overlay_color,
+                    linewidth=map_cfg.watershed_overlay_width,
                 )
             else:
                 watershed_gdf.boundary.plot(
-                    ax=ax, color=map_cfg.watershed_overlay_color, linewidth=map_cfg.watershed_overlay_width,
+                    ax=ax,
+                    color=map_cfg.watershed_overlay_color,
+                    linewidth=map_cfg.watershed_overlay_width,
                 )
 
     # C6 — Event hydrology panel on the right (delegated to shared helper).
     draw_event_hydrology_panel(
-        ax_rain, ax_bc,
+        ax_rain,
+        ax_bc,
         hydro_data=hydro_data,
         weather_rel_path=weather_rel,
         event_iloc=event_iloc,
@@ -301,11 +358,16 @@ def render(
     add_panel_label(ax_rain, "(c)")
 
     source_paths: list[Path] = [
-        Path(link_summary_path), inp_path, Path(weather_path),
-        Path(sys_paths.dem_processed), Path(watershed_shp),
+        Path(link_summary_path),
+        inp_path,
+        Path(weather_path),
+        Path(sys_paths.dem_processed),
+        Path(watershed_shp),
     ]
     return emit_plot_with_sources(
-        fig, output_path, source_paths,
+        fig,
+        output_path,
+        source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
         dpi=report_cfg.figure_defaults.savefig_dpi,
         output_format="svg" if output_path.suffix == ".svg" else "png",
@@ -345,7 +407,9 @@ def _link_summary_ref(source_rel: str, var_name, var_attrs, link_id, event_iloc)
 
 
 def _emit_model_type_skip_placeholder(
-    output_path: Path, message: str, dpi: int,
+    output_path: Path,
+    message: str,
+    dpi: int,
 ) -> Path:
     """Centered-text figure explaining a model-type skip (Gotcha 5).
 
@@ -361,19 +425,20 @@ def _emit_model_type_skip_placeholder(
     return output_path
 
 
-def _render_plotly_branch(
+def _build_conduit_flow_figure(
     analysis,
     report_cfg,
     output_path: Path,
     *,
     event_iloc: int,
     prov,
-) -> Path:
-    """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
-    map + peak-flow map + event hydrology. Geometric layout parity with
-    `_render_plotly_branch` in per_sim_peak_flood_depth.py (same 2x3 specs grid).
-    Informationally congruent with the matplotlib branch — no hover refinement,
-    no max_over_full filter slider, no legend-click magnitude-class toggling.
+):
+    """Figure-construction half of `_render_plotly_branch`, extracted verbatim so a
+    test can obtain the `go.Figure` before HTML serialization. On the normal path
+    returns `(fig, plotly_config, link_summary_path, inp_path, weather_path,
+    sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS)`.
+    On the model-type-skip path it returns the placeholder `Path` early (original
+    control flow preserved).
     """
     import geopandas as gpd
     import matplotlib.cm as mcm
@@ -382,9 +447,6 @@ def _render_plotly_branch(
 
     # Side-effect import: registers `triton_journal` Plotly template.
     from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
-        emit_plot_with_sources,
-    )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
@@ -418,10 +480,7 @@ def _render_plotly_branch(
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
     tree = analysis.process.open_datatree()
     if link_group not in tree.groups:
-        raise AssertionError(
-            f"consolidated tree missing expected group {link_group}; available: "
-            f"{sorted(tree.groups)}"
-        )
+        raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
     max_over_full_da = ds_links["max_over_full_flow"].sel(event_iloc=event_iloc)
     peak_flow_da = ds_links["max_flow_cms"].sel(event_iloc=event_iloc)
@@ -433,10 +492,7 @@ def _render_plotly_branch(
     peak_flow_attrs = dict(peak_flow_da.attrs)
     peak_flow_name = peak_flow_da.name
 
-    inp_path = Path(
-        getattr(proc.scen_paths, "swmm_hydraulics_inp", None)
-        or proc.scen_paths.swmm_full_inp
-    )
+    inp_path = Path(getattr(proc.scen_paths, "swmm_hydraulics_inp", None) or proc.scen_paths.swmm_full_inp)
     model = swmmio.Model(str(inp_path))
     coords_df = model.inp.coordinates
     conduits_df = model.inp.conduits
@@ -456,7 +512,9 @@ def _render_plotly_branch(
     weather_event_indexers = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
     weather_path = Path(analysis.cfg_analysis.weather_timeseries)
     hydro_data = load_event_hydrology_data(
-        weather_path, analysis.cfg_analysis, weather_event_indexers,
+        weather_path,
+        analysis.cfg_analysis,
+        weather_event_indexers,
     )
     times_min = hydro_data["times_min"]
     # Phase 3 inheritance (F-I-7): hydrology x-axis in HOURS from event start.
@@ -470,9 +528,15 @@ def _render_plotly_branch(
 
     sys_paths = analysis._system.sys_paths
     _dem_da = rxr.open_rasterio(sys_paths.dem_processed).squeeze()
-    dem_bounds_raw = _dem_da.rio.bounds() if _dem_da.rio.crs is not None else (
-        float(_dem_da.x.min()), float(_dem_da.y.min()),
-        float(_dem_da.x.max()), float(_dem_da.y.max()),
+    dem_bounds_raw = (
+        _dem_da.rio.bounds()
+        if _dem_da.rio.crs is not None
+        else (
+            float(_dem_da.x.min()),
+            float(_dem_da.y.min()),
+            float(_dem_da.x.max()),
+            float(_dem_da.y.max()),
+        )
     )
 
     # Phase 3 inheritance (F-I-5): cross-figure bounds parity with system_overview
@@ -482,7 +546,10 @@ def _render_plotly_branch(
     hydro_model = swmmio.Model(str(hydro_inp))
     hydraulics_model = swmmio.Model(str(hydraulics_inp))
     bounds = compute_padded_square_bounds(
-        dem_bounds_raw, hydro_model, hydraulics_model, padding_frac=0.02,
+        dem_bounds_raw,
+        hydro_model,
+        hydraulics_model,
+        padding_frac=0.02,
     )
 
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
@@ -490,19 +557,23 @@ def _render_plotly_branch(
 
     analysis_root = str(Path(analysis.analysis_paths.analysis_dir).resolve())
     link_summary_rel = os.path.relpath(
-        str(Path(link_summary_path).resolve()), analysis_root,
+        str(Path(link_summary_path).resolve()),
+        analysis_root,
     )
     inp_rel = os.path.relpath(str(inp_path.resolve()), analysis_root)
     weather_rel = os.path.relpath(
-        str(Path(weather_path).resolve()), analysis_root,
+        str(Path(weather_path).resolve()),
+        analysis_root,
     )
     watershed_rel = os.path.relpath(
-        str(Path(watershed_shp).resolve()), analysis_root,
+        str(Path(watershed_shp).resolve()),
+        analysis_root,
     )
 
     # ---- Build figure ---------------------------------------------------
     fig = make_subplots(
-        rows=2, cols=3,
+        rows=2,
+        cols=3,
         specs=[
             [{"rowspan": 2}, {"rowspan": 2}, {}],
             [None, None, {}],
@@ -527,26 +598,31 @@ def _render_plotly_branch(
     N_BINS = 20
     panels = [
         {
-            "col": 1, "axes_id": "ax_utilization_plotly",
-            "values": max_over_full, "var_name": max_over_full_name,
+            "col": 1,
+            "axes_id": "ax_utilization_plotly",
+            "values": max_over_full,
+            "var_name": max_over_full_name,
             "var_attrs": max_over_full_attrs,
-            "label": "max / full flow", "vmin": 0.0, "vmax": 1.0,
-            "cmap_name": UTILIZATION_CMAP, "colorbar_x": 0.16,
+            "label": "max / full flow",
+            "vmin": 0.0,
+            "vmax": 1.0,
+            "cmap_name": UTILIZATION_CMAP,
+            "colorbar_x": 0.16,
         },
         {
-            "col": 2, "axes_id": "ax_peak_flow_plotly",
-            "values": peak_flow, "var_name": peak_flow_name,
+            "col": 2,
+            "axes_id": "ax_peak_flow_plotly",
+            "values": peak_flow,
+            "var_name": peak_flow_name,
             "var_attrs": peak_flow_attrs,
             "label": units.flow_axis_label(),
             "vmin": float(cfg.vmin) if cfg.vmin is not None else 0.0,
             "vmax": _resolve_peak_flow_vmax(peak_flow, cfg),
-            "cmap_name": PEAK_FLOW_CMAP, "colorbar_x": 0.52,
+            "cmap_name": PEAK_FLOW_CMAP,
+            "colorbar_x": 0.52,
         },
     ]
-    values_by_id_per_panel = {
-        p["axes_id"]: dict(zip(link_ids, p["values"], strict=True))
-        for p in panels
-    }
+    values_by_id_per_panel = {p["axes_id"]: dict(zip(link_ids, p["values"], strict=True)) for p in panels}
     for p in panels:
         cmap = mcm.get_cmap(p["cmap_name"])
         norm = _MplNormalize(vmin=p["vmin"], vmax=p["vmax"])
@@ -556,9 +632,7 @@ def _render_plotly_branch(
         # cmap). /design-figure iteration may swap binned-traces for a single
         # WebGL trace with per-segment color via go.Scattergl + line.color.
         bin_edges = np.linspace(p["vmin"], p["vmax"], N_BINS + 1)
-        bin_to_conduits: dict[int, list[tuple[str, tuple, tuple, float]]] = {
-            i: [] for i in range(N_BINS)
-        }
+        bin_to_conduits: dict[int, list[tuple[str, tuple, tuple, float]]] = {i: [] for i in range(N_BINS)}
         for lid, ((x1, y1), (x2, y2)) in coords_by_id.items():
             val = float(values_by_id_per_panel[p["axes_id"]].get(lid, 0.0))
             bin_idx = int(np.clip(np.searchsorted(bin_edges, val, side="right") - 1, 0, N_BINS - 1))
@@ -579,7 +653,8 @@ def _render_plotly_branch(
                 xs.extend([p_in[0], p_out[0], None])
                 ys.extend([p_in[1], p_out[1], None])
             with prov.artist(
-                axes_id=p["axes_id"], kind="line2d",
+                axes_id=p["axes_id"],
+                kind="line2d",
                 note=(
                     f"conduit lines (bin {bin_idx}/{N_BINS}, "
                     f"mid_val={mid_val:.3f}, n={len(conduits_in_bin)}) — "
@@ -591,53 +666,77 @@ def _render_plotly_branch(
                 # binned trace's prov block).
                 for lid_inner, _, _, _ in conduits_in_bin:
                     a.add_swmm_channel(
-                        "x", swmm_inp=inp_rel, kind="conduit_coords",
+                        "x",
+                        swmm_inp=inp_rel,
+                        kind="conduit_coords",
                         link_id=str(lid_inner),
                     )
                     a.add_swmm_channel(
-                        "y", swmm_inp=inp_rel, kind="conduit_coords",
+                        "y",
+                        swmm_inp=inp_rel,
+                        kind="conduit_coords",
                         link_id=str(lid_inner),
                     )
                     a.add_channel(
                         "color",
                         _link_summary_ref(
-                            link_summary_rel, p["var_name"], p["var_attrs"],
-                            lid_inner, event_iloc,
+                            link_summary_rel,
+                            p["var_name"],
+                            p["var_attrs"],
+                            lid_inner,
+                            event_iloc,
                         ),
-                        cmap=p["cmap_name"], vmin=p["vmin"], vmax=p["vmax"],
+                        cmap=p["cmap_name"],
+                        vmin=p["vmin"],
+                        vmax=p["vmax"],
                     )
                 fig.add_trace(
                     go.Scatter(
-                        x=xs, y=ys, mode="lines",
+                        x=xs,
+                        y=ys,
+                        mode="lines",
                         line=dict(color=color_hex, width=map_cfg.conduit_value_width),
                         name=f"{p['label']} bin {bin_idx}",
-                        legendgroup=p["axes_id"], showlegend=False,
+                        legendgroup=p["axes_id"],
+                        showlegend=False,
                         hoverinfo="skip",
                     ),
-                    row=1, col=p["col"],
+                    row=1,
+                    col=p["col"],
                 )
         # Add an invisible scatter trace to drive the colorbar (Plotly trick:
         # a marker trace with colorscale + cmin/cmax + showscale=True emits a
         # colorbar even when its data points are all NaN).
         with prov.artist(
-            axes_id=p["axes_id"], kind="image",
+            axes_id=p["axes_id"],
+            kind="image",
             note=f"colorbar for {p['label']}",
         ):
             fig.add_trace(
                 go.Scatter(
-                    x=[None], y=[None], mode="markers",
+                    x=[None],
+                    y=[None],
+                    mode="markers",
                     marker=dict(
                         colorscale=_mpl_cmap_to_plotly_colorscale(p["cmap_name"]),
-                        cmin=p["vmin"], cmax=p["vmax"],
-                        showscale=True, color=[p["vmin"]],
+                        cmin=p["vmin"],
+                        cmax=p["vmax"],
+                        showscale=True,
+                        color=[p["vmin"]],
                         colorbar=dict(
-                            title=p["label"], orientation="h",
-                            y=-0.22, len=0.30, x=p["colorbar_x"], thickness=12,
+                            title=p["label"],
+                            orientation="h",
+                            y=-0.22,
+                            len=0.30,
+                            x=p["colorbar_x"],
+                            thickness=12,
                         ),
                     ),
-                    showlegend=False, hoverinfo="skip",
+                    showlegend=False,
+                    hoverinfo="skip",
                 ),
-                row=1, col=p["col"],
+                row=1,
+                col=p["col"],
             )
 
     # ---- Watershed boundary overlay on both maps ------------------------
@@ -656,75 +755,95 @@ def _render_plotly_branch(
             ws_x.extend(list(xs_geom) + [None])
             ws_y.extend(list(ys_geom) + [None])
     watershed_ref = ProvenanceRef(
-        source_path=watershed_rel, variable="watershed_polygon", attrs={},
+        source_path=watershed_rel,
+        variable="watershed_polygon",
+        attrs={},
     )
     for col_idx, axes_id in ((1, "ax_utilization_plotly"), (2, "ax_peak_flow_plotly")):
         with prov.artist(
-            axes_id=axes_id, kind="patch",
+            axes_id=axes_id,
+            kind="patch",
             note="watershed boundary overlay",
         ) as a:
             a.add_channel("x", watershed_ref)
             a.add_channel("y", watershed_ref)
             fig.add_trace(
                 go.Scatter(
-                    x=ws_x, y=ws_y, mode="lines",
-                    line=dict(color=map_cfg.watershed_overlay_color,
-                              width=map_cfg.watershed_overlay_width),
-                    hoverinfo="skip", showlegend=False, name="watershed",
+                    x=ws_x,
+                    y=ws_y,
+                    mode="lines",
+                    line=dict(color=map_cfg.watershed_overlay_color, width=map_cfg.watershed_overlay_width),
+                    hoverinfo="skip",
+                    showlegend=False,
+                    name="watershed",
                 ),
-                row=1, col=col_idx,
+                row=1,
+                col=col_idx,
             )
 
     # ---- Hydrology panel (rainfall row 1 + BC water level row 2) --------
     rain_units = units.rainfall_provenance_units(analysis.cfg_analysis.rainfall_units)
     bc_units = (
         units.bc_provenance_units(analysis.cfg_analysis.storm_tide_units)
-        if analysis.cfg_analysis.storm_tide_units else ""
+        if analysis.cfg_analysis.storm_tide_units
+        else ""
     )
     rain_ref = ProvenanceRef(
-        source_path=weather_rel, variable=rain_var,
-        attrs=rain_attrs, selection={"event_iloc": int(event_iloc)},
+        source_path=weather_rel,
+        variable=rain_var,
+        attrs=rain_attrs,
+        selection={"event_iloc": int(event_iloc)},
     )
     panel_cfg = report_cfg.per_sim.hydrology_panel
     with prov.artist(
-        axes_id="ax_rain_plotly", kind="bar",
+        axes_id="ax_rain_plotly",
+        kind="bar",
         note="rainfall time series (event hydrology — top sub-panel)",
     ) as a:
         a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
         fig.add_trace(
             go.Bar(
-                x=times_hr, y=rainfall,
+                x=times_hr,
+                y=rainfall,
                 marker=dict(color=panel_cfg.rain_color),
-                name="rainfall", showlegend=False,
+                name="rainfall",
+                showlegend=False,
                 hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
             ),
-            row=1, col=3,
+            row=1,
+            col=3,
         )
     bc_ref = ProvenanceRef(
         source_path=weather_rel,
         variable=bc_var if bc_var is not None else "",
-        attrs=bc_attrs, selection={"event_iloc": int(event_iloc)},
+        attrs=bc_attrs,
+        selection={"event_iloc": int(event_iloc)},
     )
     with prov.artist(
-        axes_id="ax_bc_plotly", kind="line2d",
+        axes_id="ax_bc_plotly",
+        kind="line2d",
         note="boundary condition water level (event hydrology — bottom sub-panel)",
     ) as a:
         a.add_channel("x", bc_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", bc_ref, units=bc_units)
         fig.add_trace(
             go.Scatter(
-                x=times_hr, y=bc_water_level, mode="lines",
-                line=dict(color=panel_cfg.bc_line_color,
-                          width=panel_cfg.bc_line_width),
-                name="bc_water_level", showlegend=False,
+                x=times_hr,
+                y=bc_water_level,
+                mode="lines",
+                line=dict(color=panel_cfg.bc_line_color, width=panel_cfg.bc_line_width),
+                name="bc_water_level",
+                showlegend=False,
                 hovertemplate="t: %{x:.2f} hr<br>BC: %{y:.3f} m<extra></extra>",
             ),
-            row=2, col=3,
+            row=2,
+            col=3,
         )
 
     # ---- Axes setup -----------------------------------------------------
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
+
     target_crs = resolve_target_crs(analysis, report_cfg)
     crs_for_labels = target_crs.to_epsg()
     # Phase 3 inheritance (F-I-10): link col-2 map axes to col-1 via `matches=`
@@ -733,13 +852,16 @@ def _render_plotly_branch(
         x_kwargs = dict(
             range=[bounds[0], bounds[2]],
             title_text=units.easting_axis_label(crs_for_labels),
-            row=1, col=col,
+            row=1,
+            col=col,
         )
         y_kwargs = dict(
             range=[bounds[1], bounds[3]],
-            scaleanchor=f"x{col}", scaleratio=1.0,
+            scaleanchor=f"x{col}",
+            scaleratio=1.0,
             title_text=units.northing_axis_label(crs_for_labels) if col == 1 else None,
-            row=1, col=col,
+            row=1,
+            col=col,
         )
         if col == 2:
             x_kwargs["matches"] = "x"
@@ -749,21 +871,27 @@ def _render_plotly_branch(
     # Phase 3 inheritance (F-I-7): hydrology x-axes now in hours from event start.
     fig.update_xaxes(
         range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text="", row=1, col=3,
+        title_text="",
+        row=1,
+        col=3,
     )
     fig.update_yaxes(
         title_text=units.rainfall_axis_label(analysis.cfg_analysis.rainfall_units),
-        row=1, col=3,
+        row=1,
+        col=3,
     )
     fig.update_xaxes(
         range=[float(times_hr[0]), float(times_hr[-1])],
-        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS, row=2, col=3,
+        title_text=units.TIME_AXIS_FROM_EVENT_START_HOURS,
+        row=2,
+        col=3,
     )
     fig.update_yaxes(
         title_text=units.bc_water_level_axis_label(
             analysis.cfg_analysis.storm_tide_units or "m",
         ),
-        row=2, col=3,
+        row=2,
+        col=3,
     )
 
     # ---- Emit -----------------------------------------------------------
@@ -771,38 +899,96 @@ def _render_plotly_branch(
         "displayModeBar": True,
         "displaylogo": False,
         "modeBarButtonsToRemove": [
-            "lasso2d", "select2d", "autoScale2d",
-            "hoverCompareCartesian", "hoverClosestCartesian",
+            "lasso2d",
+            "select2d",
+            "autoScale2d",
+            "hoverCompareCartesian",
+            "hoverClosestCartesian",
             "toggleSpikelines",
         ],
         "toImageButtonOptions": {
-            "format": "svg", "filename": "conduit_flow", "scale": 2,
+            "format": "svg",
+            "filename": "conduit_flow",
+            "scale": 2,
         },
     }
+    return (
+        fig, plotly_config, link_summary_path, inp_path, weather_path,
+        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+    )
+
+
+def _render_plotly_branch(
+    analysis,
+    report_cfg,
+    output_path: Path,
+    *,
+    event_iloc: int,
+    prov,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
+    map + peak-flow map + event hydrology. Geometric layout parity with
+    `_render_plotly_branch` in per_sim_peak_flood_depth.py (same 2x3 specs grid).
+    Informationally congruent with the matplotlib branch — no hover refinement,
+    no max_over_full filter slider, no legend-click magnitude-class toggling.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+
+    _built = _build_conduit_flow_figure(
+        analysis, report_cfg, output_path,
+        event_iloc=event_iloc, prov=prov,
+    )
+    if isinstance(_built, Path):
+        return _built
+    (
+        fig, plotly_config, link_summary_path, inp_path, weather_path,
+        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+    ) = _built
+
     html_text = pio.to_html(
-        fig, include_plotlyjs=report_cfg.interactive.plotly_js_mode,
-        full_html=True, config=plotly_config,
+        fig,
+        include_plotlyjs=report_cfg.interactive.plotly_js_mode,
+        full_html=True,
+        config=plotly_config,
     )
 
     source_paths: list[Path] = [
-        Path(link_summary_path), inp_path, Path(weather_path),
-        Path(sys_paths.dem_processed), Path(watershed_shp),
+        Path(link_summary_path),
+        inp_path,
+        Path(weather_path),
+        Path(sys_paths.dem_processed),
+        Path(watershed_shp),
+        # _resolve_inp_sources returns the ANALYSIS-canonical .inp pair (= event 0's);
+        # hydraulics_inp differs from the per-event inp_path for events != 0, so declare
+        # both. (hydro_inp has a distinct stem; the same-stem-sibling clause does not
+        # cover hydraulics_inp sitting under event 0's dir.)
+        Path(hydro_inp),
+        Path(hydraulics_inp),
     ]
 
     try:
         fig.write_image(
             output_path.with_suffix(".svg"),
-            engine="kaleido", width=1400, height=600, scale=1,
+            engine="kaleido",
+            width=1400,
+            height=600,
+            scale=1,
         )
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
+
         logging.getLogger(__name__).warning(
             "Kaleido SVG export skipped for %s: %s",
-            output_path.with_suffix(".svg"), exc,
+            output_path.with_suffix(".svg"),
+            exc,
         )
 
     return emit_plot_with_sources(
-        html_text, output_path, source_paths,
+        html_text,
+        output_path,
+        source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
         output_format="html",
         manifest_data={
@@ -819,6 +1005,7 @@ def _render_plotly_branch(
 def _mpl_cmap_to_plotly_colorscale(cmap_name: str, n_samples: int = 32) -> list:
     """Return a Plotly-compatible colorscale list sampled from a matplotlib cmap."""
     import matplotlib.cm as mcm
+
     cmap = mcm.get_cmap(cmap_name)
     return [
         [

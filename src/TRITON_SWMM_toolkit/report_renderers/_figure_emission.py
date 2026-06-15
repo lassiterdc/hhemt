@@ -70,7 +70,7 @@ def _validate_source_path(path: str | Path, *, analysis_dir: str | Path | None =
     xarray's ``open_zarr`` / ``open_dataset`` as a single logical dataset,
     so the path-as-directory is an implementation detail rather than an
     enumerable file collection. All other directory-as-source emissions
-    raise ``ValueError`` so future regressions are caught at render time.
+    raise ``ProcessingError`` so future regressions are caught at render time.
     Non-existent paths are accepted (the collector may emit a path on a
     different filesystem or a path the renderer will create).
     """
@@ -82,13 +82,31 @@ def _validate_source_path(path: str | Path, *, analysis_dir: str | Path | None =
     # Allow zarr directories (suffix or marker file present).
     if p.suffix == ".zarr" or (p / ".zattrs").exists() or (p / ".zgroup").exists() or (p / ".zarray").exists():
         return str(path)
-    raise ValueError(
-        f"Directory-as-source rejected (Iter 8 agenda item 4): {path!r} resolves "
-        f"to a directory ({p}) that is NOT a zarr store. Source paths must be "
-        f"files (or zarr stores); arbitrary directories are not plottable. "
-        f"Either fix the collector to point at the specific file inside this "
-        f"directory, or expand the directory to its enclosed files."
+    raise ProcessingError(
+        operation="provenance: directory-as-source rejected (Iter 8 agenda item 4)",
+        filepath=p,
+        reason=(
+            f"{path!r} resolves to a directory ({p}) that is NOT a zarr store. "
+            f"Source paths must be files (or zarr stores); arbitrary directories "
+            f"are not plottable. Fix the collector to point at the specific file, "
+            f"or expand the directory to its enclosed files."
+        ),
     )
+
+
+def _relativize(source_paths, analysis_dir) -> list[str]:
+    """Validate each source path, then return analysis_dir-relative strings.
+
+    Single source of truth for the provenance relpath transform used by both
+    branches of :func:`emit_plot_with_sources`, by :func:`emit_data_artifact_with_sources`,
+    and by renderer modules that build their own per-artist ``ProvenanceRef.source_path``
+    channels. Validate-then-relativize order is load-bearing: ``_validate_source_path``
+    raises on a directory-as-source, and that must surface before relativization.
+    """
+    analysis_root = str(Path(analysis_dir).resolve())
+    for _p in source_paths:
+        _validate_source_path(_p, analysis_dir=analysis_dir)
+    return [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
 
 
 def per_sim_map_ticks(bounds: tuple[float, float, float, float]) -> tuple[list[float], list[float]]:
@@ -249,13 +267,7 @@ def emit_plot_with_sources(
             provenance=provenance,
         )
     # Fall-through: matplotlib Figure branch (existing behavior unchanged below).
-    analysis_root = str(analysis_dir.resolve())
-    # Reject directory-as-source per Iter 8 agenda item 4 — all plottable data
-    # lives in files. Catches future regressions where a collector emits a
-    # `.parent` or directory path by mistake.
-    for _p in source_paths:
-        _validate_source_path(_p, analysis_dir=analysis_dir)
-    rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
+    rel_sources = _relativize(source_paths, analysis_dir)
     # PNG accepts arbitrary tEXt keys; SVG metadata is restricted to the
     # Dublin Core element set (matplotlib backend_svg validates against it
     # and ValueErrors on unknown keys). "Source" is in Dublin Core; "Software"
@@ -349,10 +361,7 @@ def emit_data_artifact_with_sources(
                 "for a genuinely source-less artifact."
             ),
         )
-    analysis_root = str(Path(analysis_dir).resolve())
-    for _p in source_paths:
-        _validate_source_path(_p, analysis_dir=analysis_dir)
-    rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
+    rel_sources = _relativize(source_paths, analysis_dir)
     manifest_payload: dict[str, Any] = {
         "artifact_path": str(artifact_path),
         "output_format": "data",
@@ -412,10 +421,7 @@ def _emit_html_with_sources(
     figure_size_inches, preview_size_bytes) are explicitly ``None`` so
     consumers see a uniform key set across branches.
     """
-    analysis_root = str(analysis_dir.resolve())
-    for _p in source_paths:
-        _validate_source_path(_p, analysis_dir=analysis_dir)
-    rel_sources = [os.path.relpath(str(Path(p).resolve()), analysis_root) for p in source_paths]
+    rel_sources = _relativize(source_paths, analysis_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
     manifest_payload: dict[str, Any] = {

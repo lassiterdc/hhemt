@@ -21,7 +21,6 @@ Example:
     system = test_case.system
 """
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -38,20 +37,14 @@ from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from tests.fixtures import worktree_slug
 
-# Compiled TRITON-SWMM artifacts are reused across all worktrees because the
-# git URL/branch/CMake config does not vary per worktree. A single shared cache
-# dir holds the canonical _software/ tree; each worktree's runs_root/_software
-# is a symlink to it so start_from_scratch wipes inside a worktree never touch
-# the shared compile output. The shared cache lives at the legacy pre-Phase-1
-# location (sibling of per-worktree runs_root subdirs, not nested under any of
-# them) so binaries built before Phase 1 keep their baked RPATHs valid and no
-# recompile is forced by the per-worktree migration. Friction history:
-# `# Implementation friction > ## Phase 1 — per_worktree_isolation > ### shared
-# artifact cache name vs legacy RPATHs (2026-05-17T13:20)` in main scratch.
-_SHARED_ARTIFACT_CACHE = (
-    Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
-    / "synthetic_test_runs"
-)
+# NOTE: the former _SHARED_ARTIFACT_CACHE cross-worktree _software symlink was
+# removed because CMake build dirs are non-relocatable — sharing the build tier
+# across worktrees stamped CMakeCache.txt::CMAKE_HOME_DIRECTORY and triton.exe's
+# RPATH with whichever worktree configured last, and concurrent cross-worktree
+# compiles corrupted each other's build + shared compilation.log (CompilationError
+# rc=1 on fresh fixture rebuilds). Each worktree now owns a per-worktree real
+# _software dir (see TestCaseBuilder.__init__). platformdirs is still imported —
+# it is used to root the per-worktree runs_root below.
 
 
 class retrieve_TRITON_SWMM_test_case:
@@ -266,8 +259,6 @@ class retrieve_TRITON_SWMM_test_case:
 # Synthetic-model variant
 # ============================================================================
 
-import platformdirs  # noqa: E402
-
 from tests.fixtures.synthetic_model import (  # noqa: E402
     DEFAULT_PARAMS,
     SyntheticModelParams,
@@ -311,35 +302,34 @@ class retrieve_synth_TRITON_SWMM_test_case:
             / worktree_slug()
         )
         self.system_directory = runs_root / analysis_name
-        # Compiled TRITON binaries are reused across worktrees via a symlink
-        # to a shared artifact cache; the cache lives outside any worktree-
-        # scoped runs_root so start_from_scratch wipes of the analysis
-        # workspace never touch the compile output.
+        # _software is a per-worktree REAL directory (NOT a symlink to a shared
+        # cross-worktree cache). The build tier MUST NOT be shared across
+        # worktrees: CMake build dirs are non-relocatable (absolute paths baked
+        # into CMakeCache.txt and into triton.exe's RPATH), so a shared build
+        # dir is stamped by whichever worktree configured it last and corrupted
+        # by concurrent cross-worktree compiles — producing CompilationError
+        # (rc=1) on a fresh fixture rebuild even though "Build finished" appears
+        # in the (shared, race-overwritten) compilation.log. Each worktree owns
+        # its own _software so its build dir and compilation.log are private and
+        # its RPATH is stable. The source checkout (git clone) is namespace-
+        # invariant but is nested above the build dirs in the toolkit's path
+        # layout (system.py nests build_tritonswmm_cpu/ INSIDE the software
+        # dir), so sharing only the source would require a system.py paths
+        # change; here we keep _software fully per-worktree (one clone+compile
+        # per worktree first build, persisted across sessions under the
+        # worktree-slug runs_root and skipped by system.py's not-exists() clone
+        # gate thereafter).
         self._software_root = runs_root / "_software"
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
         runs_root.mkdir(parents=True, exist_ok=True)
-        software_target = _SHARED_ARTIFACT_CACHE / "_software"
-        # Pre-Phase-1 caches at synthetic_test_runs/_software/ are NOT migrated:
-        # binaries built before Phase 1 have absolute RPATHs baked into them
-        # pointing at the legacy location (e.g., triton.exe's RPATH carries
-        # `.../synthetic_test_runs/_software/triton/.../swmm/src/solver`), so
-        # moving the tree would break runtime library resolution. First runs
-        # after Phase 1 pay a one-time fresh compile cost; subsequent runs (in
-        # this and other worktrees) reuse the populated shared cache.
-        software_target.mkdir(parents=True, exist_ok=True)
+        # Evict any pre-existing cross-worktree symlink so we never inherit a
+        # foreign-namespaced build dir; do NOT delete a pre-existing real
+        # _software (preserve this worktree's own compiled binaries).
         if self._software_root.is_symlink():
-            if self._software_root.resolve() != software_target.resolve():
-                self._software_root.unlink()
-                os.symlink(software_target, self._software_root, target_is_directory=True)
-        elif self._software_root.exists():
-            # Pre-existing real directory from before the symlink scheme — leave
-            # it in place rather than destroy compile artifacts. Subsequent
-            # fresh-worktree runs land on the symlink path naturally.
-            pass
-        else:
-            os.symlink(software_target, self._software_root, target_is_directory=True)
+            self._software_root.unlink()
+        self._software_root.mkdir(parents=True, exist_ok=True)
 
         self._write_configs(
             n_events=n_events,

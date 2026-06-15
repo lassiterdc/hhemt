@@ -195,6 +195,195 @@ def test_validate_sensitivity_fails_when_block_present_but_no_csv(tmp_path: Path
         validate_sensitivity_independent_vars(cfg, None)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1 (P1a) — named-reporting-sets: registry + reporting_set selector + D4
+# ---------------------------------------------------------------------------
+
+
+def test_reporting_sets_registry_imports_cleanly():
+    """Registry smoke (no import cycle): REPORTING_SETS holds exactly the
+    shipped sets and benchmarking carries its run-entry validator key."""
+    from TRITON_SWMM_toolkit.report_renderers._reporting_sets import (
+        REPORTING_SETS,
+        get_reporting_set,
+    )
+
+    assert set(REPORTING_SETS) == {"default", "benchmarking"}
+    assert get_reporting_set("benchmarking").validator_key == "benchmarking"
+    assert get_reporting_set("default").validator_key == "none"
+
+
+def test_reporting_set_field_defaults_to_default():
+    from TRITON_SWMM_toolkit.config.report import report_config
+
+    assert report_config().reporting_set == "default"
+
+
+def test_legacy_mode_key_rewritten_with_deprecation_warning():
+    """R3 — a pre-conversion report_config.yaml carrying
+    sensitivity.mode: benchmarking loads with a DeprecationWarning and the
+    legacy `mode` key dropped (no extra_forbidden), independent_vars retained."""
+    from TRITON_SWMM_toolkit.config.report import report_config
+
+    with pytest.warns(DeprecationWarning, match="report_config.sensitivity.mode is retired"):
+        cfg = report_config.model_validate({"sensitivity": {"mode": "benchmarking", "independent_vars": ["x"]}})
+    assert cfg.sensitivity is not None
+    assert cfg.sensitivity.independent_vars == ["x"]
+    assert not hasattr(cfg.sensitivity, "mode")
+
+
+def test_resolve_active_reporting_set_name_sentinel_resolution():
+    """The 'default' sentinel resolves to 'benchmarking' for sensitivity
+    analyses and to the standard 'default' set otherwise (CSV-free)."""
+    from TRITON_SWMM_toolkit.config.report import (
+        report_config,
+        resolve_active_reporting_set_name,
+    )
+
+    cfg = report_config()  # reporting_set == "default"
+    assert resolve_active_reporting_set_name(cfg, is_sensitivity=False) == "default"
+    assert resolve_active_reporting_set_name(cfg, is_sensitivity=True) == "benchmarking"
+
+
+def test_resolve_active_reporting_set_name_explicit_value_taken_verbatim():
+    from TRITON_SWMM_toolkit.config.report import (
+        report_config,
+        resolve_active_reporting_set_name,
+    )
+
+    cfg = report_config(reporting_set="benchmarking")
+    # Explicit value is honored regardless of is_sensitivity.
+    assert resolve_active_reporting_set_name(cfg, is_sensitivity=False) == "benchmarking"
+
+
+def test_resolve_active_reporting_set_name_unknown_raises():
+    """R2 — an unknown reporting_set raises ConfigurationError naming the
+    registered sets (CSV-free resolver; this is what the render-path fail-soft
+    catches before degrading to 'default')."""
+    from TRITON_SWMM_toolkit.config.report import (
+        report_config,
+        resolve_active_reporting_set_name,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    cfg = report_config(reporting_set="does_not_exist")
+    with pytest.raises(ConfigurationError) as exc:
+        resolve_active_reporting_set_name(cfg, is_sensitivity=False)
+    msg = str(exc.value)
+    assert "does_not_exist" in msg
+    assert "benchmarking" in msg and "default" in msg  # registered sets named
+
+
+def test_validate_active_reporting_set_unknown_raises():
+    """R2 — validate_active_reporting_set surfaces the same unknown-set error
+    at run-entry."""
+    from TRITON_SWMM_toolkit.config.report import (
+        report_config,
+        validate_active_reporting_set,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    cfg = report_config(reporting_set="nope")
+    with pytest.raises(ConfigurationError, match="nope"):
+        validate_active_reporting_set(cfg, is_sensitivity=False, sensitivity_csv_path=None)
+
+
+def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path):
+    """The 'benchmarking' set's validator_key routes run-entry validation to
+    validate_sensitivity_independent_vars — a missing CSV column raises."""
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_active_reporting_set,
+    )
+    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+
+    csv_path = tmp_path / "sa.csv"
+    pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
+    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads", "missing_col"]))
+    # reporting_set "default" + is_sensitivity True -> "benchmarking" -> CSV check.
+    with pytest.raises(ConfigurationError, match="missing_col"):
+        validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+
+
+def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
+    """Happy path: resolves to 'benchmarking' for a sensitivity analysis whose
+    independent_vars all match the CSV, and returns that name."""
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.config.report import (
+        SensitivityReportConfig,
+        report_config,
+        validate_active_reporting_set,
+    )
+
+    csv_path = tmp_path / "sa.csv"
+    pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
+    cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["n_omp_threads"]))
+    name = validate_active_reporting_set(cfg, is_sensitivity=True, sensitivity_csv_path=csv_path)
+    assert name == "benchmarking"
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 (P1a) — _react_surgery category_order threading (FQ2)
+# ---------------------------------------------------------------------------
+
+
+def test_react_surgery_order_js_none_default_is_byte_identical():
+    """FQ2 byte-identity: the None-default (historical) ORDER literal is exactly
+    the pre-refactor hardcoded comparator dict, so non-passing callers see no
+    change in the rendered HTML."""
+    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+        _DEFAULT_CATEGORY_ORDER,
+        _order_js,
+    )
+
+    expected = (
+        '{"Workflow Status": 1, "Errors and Warnings": 2, "Key Results": 3, '
+        '"System Information": 4, "Simulation Health (placeholder)": 5, '
+        '"Per Simulation Results": 6}'
+    )
+    assert _order_js(_DEFAULT_CATEGORY_ORDER) == expected
+
+
+def test_react_surgery_threads_config_driven_category_order():
+    """A config-driven category_order produces a 1-indexed ORDER literal in the
+    surgered comparator (not the alphabetical fallback)."""
+    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+        apply_post_process_surgery,
+    )
+
+    html = "sort((a, b) => a.localeCompare(b))"
+    custom_order = ["Key Results", "Workflow Status", "Errors and Warnings"]
+    out = apply_post_process_surgery(html, category_order=custom_order)
+    assert "a.localeCompare(b)" in out  # kept as the tie-breaker
+    assert '"Key Results": 1' in out
+    assert '"Workflow Status": 2' in out
+    assert '"Errors and Warnings": 3' in out
+    # The bare alphabetical comparator must be gone (config order applied).
+    assert "(a, b) => a.localeCompare(b)" not in out
+
+
+def test_react_surgery_none_default_matches_hardcoded_comparator():
+    """Render regression: with category_order=None the surgered comparator is
+    byte-identical to the historical hardcoded comparator (the standard sidebar
+    order). This is the render-path observable for the default set."""
+    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+        apply_post_process_surgery,
+    )
+
+    html = "sort((a, b) => a.localeCompare(b))"
+    out = apply_post_process_surgery(html)  # no category_order -> historical default
+    assert (
+        '(a, b) => {const ORDER = {"Workflow Status": 1, "Errors and Warnings": 2, '
+        '"Key Results": 3, "System Information": 4, '
+        '"Simulation Health (placeholder)": 5, "Per Simulation Results": 6}; '
+        "return (ORDER[a] ?? 99) - (ORDER[b] ?? 99) || a.localeCompare(b);}"
+    ) in out
+
+
 def test_report_artifacts_not_in_globus_exclude_patterns():
     """Flag 14 — R12 automated Globus-exclude audit."""
     from TRITON_SWMM_toolkit.config.globus import DEFAULT_EXCLUDE_PATTERNS
