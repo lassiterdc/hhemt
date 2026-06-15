@@ -47,6 +47,27 @@ _TABULATOR_CSS_CDN = (
 
 _PERSISTENCE_ID_CHARSET_RE = re.compile(r"[^A-Za-z0-9_.\-]")
 
+# Per-column fixed-width bounds (px). Explicit widths make every column
+# `widthFixed` so fitDataStretch's layout pass skips reinitializeWidth
+# (fitDataStretch.js:9) — the structural fix for the headerSort+remeasure
+# alignment toggle. The +56 reserves room for the .tabulator-sortable
+# sort-arrow padding (padding-right: 25px) plus the titleFormatter's
+# filter-trigger ▾ button and status badge.
+_COL_WIDTH_MIN_PX = 90
+_COL_WIDTH_MAX_PX = 320
+_COL_WIDTH_PX_PER_CHAR = 9
+_COL_WIDTH_CHROME_PX = 56
+
+
+def _estimate_column_width_px(title: str) -> int:
+    """Estimate a fixed pixel width for a column from its header title.
+
+    Header-title-length driven (the filter UI + horizontal scroll cover
+    over-long body values). Clamped to [_COL_WIDTH_MIN_PX, _COL_WIDTH_MAX_PX].
+    """
+    raw = _COL_WIDTH_PX_PER_CHAR * len(str(title)) + _COL_WIDTH_CHROME_PX
+    return max(_COL_WIDTH_MIN_PX, min(_COL_WIDTH_MAX_PX, raw))
+
 
 # -----------------------------------------------------------------------------
 # Filter-builder JS — compound per-column header filter (titleFormatter pattern)
@@ -815,6 +836,12 @@ def build_columns_spec(
     for col in df.columns:
         col_str = str(col)
         col_spec: dict = {"title": col_str, "field": col_str}
+        # Explicit width -> widthFixed=true at column init (Column.js:871-873),
+        # so fitDataStretch skips reinitializeWidth (fitDataStretch.js:9). This
+        # is the structural fix for the headerSort-remeasure alignment toggle;
+        # it also preserves the wide-readable horizontal-scroll layout (vs the
+        # fitColumns collapse rejected at iter-1v2).
+        col_spec["width"] = _estimate_column_width_px(col_str)
         if header_filter:
             dtype = dtype_for_dataframe_column(df[col])
             # Sentinel strings here are replaced by literal JS expressions in

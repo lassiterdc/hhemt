@@ -425,19 +425,20 @@ def _emit_model_type_skip_placeholder(
     return output_path
 
 
-def _render_plotly_branch(
+def _build_conduit_flow_figure(
     analysis,
     report_cfg,
     output_path: Path,
     *,
     event_iloc: int,
     prov,
-) -> Path:
-    """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
-    map + peak-flow map + event hydrology. Geometric layout parity with
-    `_render_plotly_branch` in per_sim_peak_flood_depth.py (same 2x3 specs grid).
-    Informationally congruent with the matplotlib branch — no hover refinement,
-    no max_over_full filter slider, no legend-click magnitude-class toggling.
+):
+    """Figure-construction half of `_render_plotly_branch`, extracted verbatim so a
+    test can obtain the `go.Figure` before HTML serialization. On the normal path
+    returns `(fig, plotly_config, link_summary_path, inp_path, weather_path,
+    sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS)`.
+    On the model-type-skip path it returns the placeholder `Path` early (original
+    control flow preserved).
     """
     import geopandas as gpd
     import matplotlib.cm as mcm
@@ -446,9 +447,6 @@ def _render_plotly_branch(
 
     # Side-effect import: registers `triton_journal` Plotly template.
     from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
-        emit_plot_with_sources,
-    )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
@@ -914,6 +912,41 @@ def _render_plotly_branch(
             "scale": 2,
         },
     }
+    return (
+        fig, plotly_config, link_summary_path, inp_path, weather_path,
+        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+    )
+
+
+def _render_plotly_branch(
+    analysis,
+    report_cfg,
+    output_path: Path,
+    *,
+    event_iloc: int,
+    prov,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 3-panel figure with utilization
+    map + peak-flow map + event hydrology. Geometric layout parity with
+    `_render_plotly_branch` in per_sim_peak_flood_depth.py (same 2x3 specs grid).
+    Informationally congruent with the matplotlib branch — no hover refinement,
+    no max_over_full filter slider, no legend-click magnitude-class toggling.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+
+    _built = _build_conduit_flow_figure(
+        analysis, report_cfg, output_path,
+        event_iloc=event_iloc, prov=prov,
+    )
+    if isinstance(_built, Path):
+        return _built
+    (
+        fig, plotly_config, link_summary_path, inp_path, weather_path,
+        sys_paths, watershed_shp, max_over_full, peak_flow, coords_by_id, N_BINS,
+    ) = _built
+
     html_text = pio.to_html(
         fig,
         include_plotlyjs=report_cfg.interactive.plotly_js_mode,

@@ -626,7 +626,7 @@ def render(
     )
 
 
-def _render_plotly_branch(
+def _build_peak_flood_depth_figure(
     analysis,
     report_cfg,
     output_path: Path,
@@ -634,20 +634,18 @@ def _render_plotly_branch(
     event_iloc: int,
     triton_group: str,
     prov,
-) -> Path:
-    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
-    WSE raster + event hydrology (rainfall bars + BC water level line).
-    Informationally congruent with the matplotlib branch — no animation,
-    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
-    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+):
+    """Figure-construction seam for the Plotly peak-flood-depth render.
+
+    Builds the `go.Figure` and computes the locals the emission portion of
+    `_render_plotly_branch` needs, returning them as a tuple. Extracted
+    verbatim from `_render_plotly_branch` (pure-extraction refactor) so a test
+    can obtain the figure object before HTML serialization.
     """
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
 
     # Side-effect import: registers `triton_journal` Plotly template at import time.
     from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
-        emit_plot_with_sources,
-    )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
@@ -946,6 +944,7 @@ def _render_plotly_branch(
                 line=dict(width=0),
                 hoverinfo="skip",
                 showlegend=False,
+                legendgroup="dry",
                 name="dry_watershed_depth",
             ),
             row=1,
@@ -1030,6 +1029,7 @@ def _render_plotly_branch(
                 line=dict(width=0),
                 hoverinfo="skip",
                 showlegend=False,
+                legendgroup="dry",
                 name="dry_watershed_wse",
             ),
             row=1,
@@ -1102,6 +1102,7 @@ def _render_plotly_branch(
                 ),
                 name=f"≤ {map_cfg.dry_threshold_m:g} m (dry)",
                 showlegend=True,
+                legendgroup="dry",
                 hoverinfo="skip",
             ),
             row=1,
@@ -1288,6 +1289,65 @@ def _render_plotly_branch(
         col=3,
     )
 
+    return (
+        fig,
+        triton_summary_path,
+        watershed_shp,
+        sys_paths,
+        weather_path,
+        da_masked,
+        cell_count,
+        bc_water_level,
+        wse_min,
+        wse_max,
+        rainfall,
+        map_cfg,
+        use_datashader,
+    )
+
+
+def _render_plotly_branch(
+    analysis,
+    report_cfg,
+    output_path: Path,
+    *,
+    event_iloc: int,
+    triton_group: str,
+    prov,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
+    WSE raster + event hydrology (rainfall bars + BC water level line).
+    Informationally congruent with the matplotlib branch — no animation,
+    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
+    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+
+    (
+        fig,
+        triton_summary_path,
+        watershed_shp,
+        sys_paths,
+        weather_path,
+        da_masked,
+        cell_count,
+        bc_water_level,
+        wse_min,
+        wse_max,
+        rainfall,
+        map_cfg,
+        use_datashader,
+    ) = _build_peak_flood_depth_figure(
+        analysis,
+        report_cfg,
+        output_path,
+        event_iloc=event_iloc,
+        triton_group=triton_group,
+        prov=prov,
+    )
+
     # ---- Emit -----------------------------------------------------------
     plotly_config = {
         "displayModeBar": True,
@@ -1313,6 +1373,10 @@ def _render_plotly_branch(
         config=plotly_config,
     )
 
+    # SWMM .inp sources for ADR-6 provenance. The builder consumes these for its
+    # swmmio.Model construction; only the resolved paths are needed in the caller
+    # scope, so re-calling the pure path resolver (no model build) is cheap.
+    hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
     source_paths: list[Path] = [
         Path(triton_summary_path),
         Path(watershed_shp),
