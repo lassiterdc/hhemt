@@ -1378,6 +1378,52 @@ class SnakemakeWorkflowBuilder:
                 return spec.gpus_per_node
         return self.cfg_analysis.hpc_gpus_per_node or 0
 
+    def _resolve_cpus_per_node(self, partition_name: str | None) -> int | None:
+        """Phase-4 (4a, unconsumed): per-node CPU topology for the given partition.
+
+        Prefer the PartitionSpec.cpus_per_node of the named partition when
+        cfg_hpc_system is present AND the partition is declared AND it carries a
+        cpus_per_node value; else the legacy cfg_analysis.hpc_cpus_per_node.
+        Added additive/unconsumed in 4a (byte-identical); consumers wire when the
+        legacy fallback is removed in 4d.
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.cpus_per_node is not None:
+                return spec.cpus_per_node
+        return self.cfg_analysis.hpc_cpus_per_node
+
+    def _resolve_gpu_hardware(self, partition_name: str | None) -> str | None:
+        """Phase-4 (4a, unconsumed): the GPU arch string for the given partition.
+
+        Prefer the PartitionSpec.gpu_hardware of the named partition (D1 Option-A:
+        gpu_hardware lives on the partition spec) when cfg_hpc_system is present
+        AND the partition is declared AND it carries a gpu_hardware value; else
+        the legacy cfg_system.gpu_hardware. Added additive/unconsumed in 4a
+        (byte-identical); the 34 system.py reads switch to the DI'd attribute in
+        4c and this builder helper resolves the per-partition value to inject.
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.gpu_hardware is not None:
+                return spec.gpu_hardware
+        return self.system.cfg_system.gpu_hardware
+
+    def _resolve_additional_modules(self) -> str | None:
+        """Phase-4 (4a, unconsumed): the `module load` argument string.
+
+        Prefer cfg_hpc_system.additional_modules (a ``list[str]``) joined on a
+        single space into the ``str`` the `module load {modules}` emitters expect
+        (module names are space-free, so the join is lossless — D1 str↔list
+        bridge); else the legacy cfg_system field (already a space-joined str).
+        Returns None when neither source supplies modules so the existing
+        ``if modules:`` guards stay byte-identical. Added additive/unconsumed in
+        4a; consumers wire when the legacy fields are removed in 4c.
+        """
+        if self.cfg_hpc_system is not None and self.cfg_hpc_system.additional_modules:
+            return " ".join(self.cfg_hpc_system.additional_modules)
+        return self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+
     def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
         module-level rule helpers (_emit_plot_rule, _emit_render_report_rule,

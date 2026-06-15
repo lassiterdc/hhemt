@@ -98,6 +98,7 @@ class GetTS_TestCases:
         n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
         TRITON_reporting_timestep_s=cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
         test_system_dirname=cnst.TEST_SYSTEM_DIRNAME,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """
         Internal helper to create Norfolk test cases.
@@ -152,6 +153,7 @@ class GetTS_TestCases:
             start_from_scratch=start_from_scratch,
             additional_analysis_configs=final_analysis_configs,
             additional_system_configs=final_system_configs,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
         return nrflk_test
 
@@ -570,7 +572,10 @@ class Local_TestCases:
 
     @classmethod
     def retrieve_norfolk_cpu_config_sensitivity_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+        cls,
+        start_from_scratch: bool = False,
+        download_if_exists: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity"
@@ -586,6 +591,7 @@ class Local_TestCases:
             download_if_exists=download_if_exists,
             n_events=1,
             analysis_overrides=analysis_overrides,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
 
     @classmethod
@@ -657,7 +663,10 @@ class Local_TestCases:
 
     @classmethod
     def retrieve_norfolk_multi_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+        cls,
+        start_from_scratch: bool = False,
+        download_if_exists: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local multi-simulation test with 2 events."""
         analysis_name = "multi_sim"
@@ -673,6 +682,7 @@ class Local_TestCases:
             download_if_exists=download_if_exists,
             n_events=2,
             system_overrides=system_overrides,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
 
     # ========== Multi-Model Test Cases ==========

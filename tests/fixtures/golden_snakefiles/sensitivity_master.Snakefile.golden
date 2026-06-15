@@ -41,6 +41,7 @@ onerror:
         python -m TRITON_SWMM_toolkit.export_scenario_status \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             > /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/export_scenario_status.log 2>&1
     """)
 
@@ -66,6 +67,7 @@ rule setup_target_0:
         python -m TRITON_SWMM_toolkit.setup_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --compile-triton-swmm \
@@ -99,6 +101,7 @@ rule prepare_sa_0_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
@@ -131,6 +134,7 @@ rule simulation_sa_0_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --sa-id 0 \
             --pickup-where-leftoff \
@@ -161,6 +165,7 @@ rule process_sa_0_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
@@ -190,6 +195,7 @@ rule consolidate_sa_0:
         python -m TRITON_SWMM_toolkit.consolidate_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_0/sa_0.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
@@ -219,6 +225,7 @@ rule prepare_sa_1_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
@@ -250,6 +257,7 @@ rule simulation_sa_1_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --sa-id 1 \
             --pickup-where-leftoff \
@@ -280,6 +288,7 @@ rule process_sa_1_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
@@ -309,6 +318,7 @@ rule consolidate_sa_1:
         python -m TRITON_SWMM_toolkit.consolidate_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_1/sa_1.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
@@ -338,6 +348,7 @@ rule prepare_sa_2_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
@@ -370,6 +381,7 @@ rule simulation_sa_2_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --sa-id 2 \
             --pickup-where-leftoff \
@@ -400,6 +412,7 @@ rule process_sa_2_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
@@ -429,6 +442,7 @@ rule consolidate_sa_2:
         python -m TRITON_SWMM_toolkit.consolidate_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_2/sa_2.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
@@ -458,6 +472,7 @@ rule prepare_sa_3_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             \
             \
             --flag-output {output} \
@@ -489,6 +504,7 @@ rule simulation_sa_3_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --sa-id 3 \
             --pickup-where-leftoff \
@@ -519,6 +535,7 @@ rule process_sa_3_evt_event_id_0:
             --event-iloc 0 \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --model-type tritonswmm \
             --which both \
             \
@@ -548,6 +565,7 @@ rule consolidate_sa_3:
         python -m TRITON_SWMM_toolkit.consolidate_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/subanalyses/sa_3/sa_3.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --which both \
             --compression-level 5 \
             --flag-output {output} \
@@ -574,6 +592,7 @@ rule master_consolidation:
         python -m TRITON_SWMM_toolkit.consolidate_workflow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --consolidate-sensitivity-analysis-outputs \
             --which both \
             --compression-level 5 \
@@ -603,6 +622,7 @@ rule plot_system_overview:
         python -m TRITON_SWMM_toolkit.report_renderers._cli system_overview \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -629,6 +649,7 @@ rule plot_per_analysis_summary_table:
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_analysis_summary \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -656,6 +677,7 @@ rule plot_scenario_status_appendix:
         python -m TRITON_SWMM_toolkit.report_renderers._cli scenario_status_appendix \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -683,6 +705,7 @@ rule plot_errors_and_warnings:
         python -m TRITON_SWMM_toolkit.report_renderers._cli errors_and_warnings \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -708,6 +731,7 @@ rule plot_disk_utilization:
         python -m TRITON_SWMM_toolkit.report_renderers._cli disk_utilization \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -733,6 +757,7 @@ rule export_scenario_status:
         /home/dcl3nd/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.export_scenario_status \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             > {log} 2>&1
         """
 
@@ -787,6 +812,7 @@ rule plot_per_sim_per_sa_peak_flood_depth:
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_peak_flood_depth \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --sa-id {wildcards.sa_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
@@ -818,6 +844,7 @@ rule plot_per_sim_per_sa_conduit_flow:
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_conduit_flow \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --sa-id {wildcards.sa_id} \
             --event-iloc {params.event_iloc} \
             --output {output} \
@@ -852,6 +879,7 @@ rule render_report:
         python -m TRITON_SWMM_toolkit.render_report_runner \
             --system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
             --analysis-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config /home/dcl3nd/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/tests/fixtures/hpc_system_config_test.yaml \
             --format {wildcards.format} \
             > {log} 2>&1
         """

@@ -86,6 +86,7 @@ class retrieve_TRITON_SWMM_test_case:
         start_from_scratch: bool = False,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ):
         """
         Initialize test case from system configuration.
@@ -178,7 +179,9 @@ class retrieve_TRITON_SWMM_test_case:
             )
         )
         # update analysis
-        self.analysis = TRITONSWMM_analysis(cfg_anlysys_yaml, self.system)
+        self.analysis = TRITONSWMM_analysis(
+            cfg_anlysys_yaml, self.system, hpc_system_config_yaml=hpc_system_config_yaml
+        )
         # Link analysis back to system
         self.system._analysis = self.analysis
 
