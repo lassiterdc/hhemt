@@ -34,6 +34,15 @@ from TRITON_SWMM_toolkit.workflow import (  # noqa: E402
 
 GOLDENS_DIR = Path(__file__).parent / "fixtures" / "golden_snakefiles"
 
+# Phase 4 (4a — byte-identity foundation): thread an hpc_system_config into the
+# byte-identity cases so cfg_hpc_system is non-None BEFORE the legacy
+# None-fallbacks in the resolution helpers are deleted in 4c/4d (those helpers
+# are called unconditionally during Snakefile generation). The Norfolk cases are
+# LOCAL mode with all hpc_* selectors null, so the config is byte-identity-neutral
+# (its partition is never looked up; default_account appears only in the profile
+# config.yaml, not the Snakefile). See the example config's header for the rationale.
+EXAMPLE_HPC_CONFIG = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
+
 # Pin sys.executable for byte-identity comparison: pytest's shebang resolves
 # to `python3.11` whereas direct invocation resolves to `python`. The
 # captured goldens use `python` (symlink-preserved); pin to match.
@@ -61,7 +70,9 @@ def _unified_diff_excerpt(want: str, got: str, max_lines: int = 80) -> str:
 def test_multi_sim_snakefile_byte_identity() -> None:
     """Source-side multi-sim Snakefile byte-identical to golden."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False, download_if_exists=False
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
@@ -72,7 +83,9 @@ def test_multi_sim_snakefile_byte_identity() -> None:
 def test_master_snakefile_byte_identity() -> None:
     """Source-side sensitivity-master Snakefile byte-identical to golden."""
     tc = Local_TestCases.retrieve_norfolk_cpu_config_sensitivity_case(
-        start_from_scratch=False, download_if_exists=False
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     sens = TRITONSWMM_sensitivity_analysis(tc.analysis)
     builder = SensitivityAnalysisWorkflowBuilder(sens)
@@ -103,7 +116,9 @@ def test_process_rules_emit_group_directive() -> None:
     Snakemake's DAG planner collapses them into a single per-event job-group,
     deduplicating subprocess-startup overhead (Phase 3b, R8)."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False, download_if_exists=False
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()
@@ -124,7 +139,9 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
     rules) stays within a sane ceiling (architecture Gotcha 9 for Snakemake;
     Phase 3b, R8). This is a static check on the emitted Snakefile."""
     tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
-        start_from_scratch=False, download_if_exists=False
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
     )
     builder = SnakemakeWorkflowBuilder(tc.analysis)
     got = builder.generate_snakefile_content()

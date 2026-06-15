@@ -121,19 +121,43 @@ def test_cpu_non_mpi_unchanged(synth_multi_sim_builder):
     assert "slurm_extra" not in block
 
 
-def test_resolution_helpers_none_fallback_is_byte_identical(synth_multi_sim_builder):
-    """Phase 2 (R2): with cfg_hpc_system None, the batch_job resolution helpers
-    return the EXACT legacy reads, so emission is byte-identical to pre-Phase-2.
+def test_resolution_helpers_read_hpc_system_config(synth_multi_sim_builder):
+    """Phase 4 (4a): with cfg_hpc_system present, the resolution helpers read the
+    new per-HPC-system config (default_account + per-partition topology) instead
+    of the legacy cfg_analysis/cfg_system reads.
 
-    The synth test case threads no --hpc-system-config, so cfg_hpc_system is
-    None here — exercising the fallback branch of each helper.
+    This is the byte-identity foundation for 4c/4d: those phases delete the
+    None-fallback branch of each helper, so every Snakefile-generating path must
+    resolve through a non-None cfg_hpc_system first. The (4a-additive) helpers
+    _resolve_gpu_hardware / _resolve_cpus_per_node / _resolve_additional_modules
+    are exercised here too. A fresh builder is constructed and its cfg_hpc_system
+    is overridden locally so the session-scoped fixture's other consumers (the
+    GPU-branch tests above, which call _build_resource_block directly) are
+    unaffected.
     """
-    b = synth_multi_sim_builder._workflow_builder
-    assert b.cfg_hpc_system is None
-    assert b._resolve_account() == b.cfg_analysis.hpc_account
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    example = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
+    b = SnakemakeWorkflowBuilder(synth_multi_sim_builder)
+    b.cfg_hpc_system = load_hpc_system_config(example)
+
+    # default_account is read from the new config (a distinctive value the legacy
+    # null hpc_account could not produce — proving the cfg_hpc_system branch fired).
+    assert b._resolve_account() == b.cfg_hpc_system.default_account == "test_alloc"
+    # Per-partition topology is read from the named PartitionSpec.
+    assert b._resolve_gpus_per_node("test_partition") == 8
+    assert b._resolve_cpus_per_node("test_partition") == 40
+    assert b._resolve_gpu_hardware("test_partition") == "a6000"
+    # gpu_allocation_flavor + additional_modules are unset in the example config,
+    # so these still fall through to the legacy reads (4a keeps the fallbacks;
+    # 4c removes them). Assert the fall-through equals the legacy source.
     assert b._resolve_gpu_alloc_mode() == (
         b.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
     )
-    assert b._resolve_gpus_per_node(b.cfg_analysis.hpc_ensemble_partition) == (
-        b.cfg_analysis.hpc_gpus_per_node or 0
+    assert (
+        b._resolve_additional_modules()
+        == b.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
     )
