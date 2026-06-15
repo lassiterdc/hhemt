@@ -75,6 +75,7 @@ class CaseStudyBuilder:
         anlysys_dir = self.system.cfg_system.system_directory / analysis_name
 
         if start_from_scratch and anlysys_dir.exists():
+            # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(anlysys_dir)
         anlysys_dir.mkdir(parents=True, exist_ok=True)
 
