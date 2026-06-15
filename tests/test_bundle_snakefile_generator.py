@@ -32,6 +32,7 @@ REGEN_RULE_SET = {
     "plot_per_analysis_summary_table",
     "plot_scenario_status_appendix",
     "plot_errors_and_warnings",
+    "plot_disk_utilization",  # P1b: registry-driven bundle now emits it (drift-fix)
     "plot_sensitivity_benchmarking",
     "plot_per_sim_per_sa_peak_flood_depth",
     "plot_per_sim_per_sa_conduit_flow",
@@ -75,19 +76,14 @@ def _extract_rule_names(text: str) -> set[str]:
     "bundle_fixture",
     ["multi_sim_bundle", "sensitivity_bundle"],
 )
-def test_regeneration_scoped_rule_set(
-    bundle_fixture: str, request: pytest.FixtureRequest
-) -> None:
+def test_regeneration_scoped_rule_set(bundle_fixture: str, request: pytest.FixtureRequest) -> None:
     """Emitted rules are a subset of REGEN_RULE_SET; no NON_REGEN_RULES."""
     bundle = request.getfixturevalue(bundle_fixture)
     text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
     rule_names = _extract_rule_names(text)
-    assert rule_names.issubset(REGEN_RULE_SET), (
-        f"Unexpected rules emitted: {rule_names - REGEN_RULE_SET}"
-    )
+    assert rule_names.issubset(REGEN_RULE_SET), f"Unexpected rules emitted: {rule_names - REGEN_RULE_SET}"
     assert not (rule_names & NON_REGEN_RULES), (
-        f"Forbidden simulation/processing rules emitted: "
-        f"{rule_names & NON_REGEN_RULES}"
+        f"Forbidden simulation/processing rules emitted: " f"{rule_names & NON_REGEN_RULES}"
     )
 
 
@@ -95,9 +91,24 @@ def test_regeneration_scoped_rule_set(
     "bundle_fixture",
     ["multi_sim_bundle", "sensitivity_bundle"],
 )
-def test_no_absolute_paths_in_rule_shells(
-    bundle_fixture: str, request: pytest.FixtureRequest
-) -> None:
+def test_disk_utilization_rule_present(bundle_fixture: str, request: pytest.FixtureRequest) -> None:
+    """P1b BUNDLE DRIFT NOTE: the registry-driven bundle now emits
+    plot_disk_utilization, closing the pre-P1b source-vs-bundle drift where the
+    source-side multisim/master generators emitted disk_utilization but the bundle
+    did not (regeneration-only metadata; no analysis rerun)."""
+    bundle = request.getfixturevalue(bundle_fixture)
+    text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
+    assert "plot_disk_utilization" in _extract_rule_names(text), (
+        "disk_utilization rule missing from the regeneration Snakefile — the "
+        "registry-driven harvest should emit it for every shipped set."
+    )
+
+
+@pytest.mark.parametrize(
+    "bundle_fixture",
+    ["multi_sim_bundle", "sensitivity_bundle"],
+)
+def test_no_absolute_paths_in_rule_shells(bundle_fixture: str, request: pytest.FixtureRequest) -> None:
     """No /sfs/ /scratch/ /work/ /home/ substrings anywhere in the emitted text."""
     bundle = request.getfixturevalue(bundle_fixture)
     text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
@@ -118,12 +129,9 @@ def test_static_backend_controls_output_ext(
     expected_ext_for_system_overview: str,
 ) -> None:
     """static_backend toggles per-renderer output_ext at the rule's output: site."""
-    text = generate_regeneration_snakefile(
-        multi_sim_bundle, static_backend=static_backend
-    )
+    text = generate_regeneration_snakefile(multi_sim_bundle, static_backend=static_backend)
     pattern = (
-        r"rule\s+plot_system_overview:.*?output:.*?"
-        rf"\"plots/system_overview\{expected_ext_for_system_overview}\""
+        r"rule\s+plot_system_overview:.*?output:.*?" rf"\"plots/system_overview\{expected_ext_for_system_overview}\""
     )
     assert re.search(pattern, text, re.DOTALL), (
         f"Expected system_overview output {expected_ext_for_system_overview!r} "
@@ -202,8 +210,13 @@ def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> N
         (
             "sensitivity_bundle",
             [
-                '"analysis_id"', '"toolkit_version"', '"n_sims"', '"is_sensitivity"',
-                '"n_sub_analyses"', '"independent_vars"', '"report"',
+                '"analysis_id"',
+                '"toolkit_version"',
+                '"n_sims"',
+                '"is_sensitivity"',
+                '"n_sub_analyses"',
+                '"independent_vars"',
+                '"report"',
             ],
         ),
     ],
@@ -217,18 +230,14 @@ def test_jinja2_config_keys_covered(
     bundle = request.getfixturevalue(bundle_fixture)
     text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
     for key in expected_keys:
-        assert f"config[{key}]" in text, (
-            f"Missing config[{key}] assignment in {bundle_fixture}"
-        )
+        assert f"config[{key}]" in text, f"Missing config[{key}] assignment in {bundle_fixture}"
 
 
 @pytest.mark.parametrize(
     "bundle_fixture",
     ["multi_sim_bundle", "sensitivity_bundle"],
 )
-def test_render_report_inputs_match_rule_all_plot_outputs(
-    bundle_fixture: str, request: pytest.FixtureRequest
-) -> None:
+def test_render_report_inputs_match_rule_all_plot_outputs(bundle_fixture: str, request: pytest.FixtureRequest) -> None:
     """render_report's input list must be the plot-output subset of rule all's input list."""
     bundle = request.getfixturevalue(bundle_fixture)
     text = generate_regeneration_snakefile(bundle, static_backend="matplotlib")
@@ -255,9 +264,7 @@ def test_render_report_inputs_match_rule_all_plot_outputs(
     "bundle_fixture",
     ["multi_sim_bundle", "sensitivity_bundle"],
 )
-def test_top_level_report_directive_present(
-    bundle_fixture: str, request: pytest.FixtureRequest
-) -> None:
+def test_top_level_report_directive_present(bundle_fixture: str, request: pytest.FixtureRequest) -> None:
     """The top-level report: directive is required for snakemake --report
     to render the Jinja2 workflow_description template.
     """
@@ -267,10 +274,7 @@ def test_top_level_report_directive_present(
 
 
 def _extract_input_block(text: str, rule_name: str) -> str:
-    pattern = (
-        rf"rule\s+{re.escape(rule_name)}:\s*\n\s*input:"
-        r"(.*?)(?=\n\s*(?:output:|onsuccess:|onerror:|rule\s))"
-    )
+    pattern = rf"rule\s+{re.escape(rule_name)}:\s*\n\s*input:" r"(.*?)(?=\n\s*(?:output:|onsuccess:|onerror:|rule\s))"
     match = re.search(pattern, text, re.DOTALL)
     if not match:
         raise AssertionError(f"Rule {rule_name!r} not found in emitted text")

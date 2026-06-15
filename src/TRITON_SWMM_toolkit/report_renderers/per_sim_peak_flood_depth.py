@@ -600,7 +600,7 @@ def render(
 
 
 
-def _render_plotly_branch(
+def _build_peak_flood_depth_figure(
     analysis,
     report_cfg,
     output_path: Path,
@@ -608,20 +608,18 @@ def _render_plotly_branch(
     event_iloc: int,
     triton_group: str,
     prov,
-) -> Path:
-    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
-    WSE raster + event hydrology (rainfall bars + BC water level line).
-    Informationally congruent with the matplotlib branch — no animation,
-    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
-    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+):
+    """Figure-construction seam for the Plotly peak-flood-depth render.
+
+    Builds the `go.Figure` and computes the locals the emission portion of
+    `_render_plotly_branch` needs, returning them as a tuple. Extracted
+    verbatim from `_render_plotly_branch` (pure-extraction refactor) so a test
+    can obtain the figure object before HTML serialization.
     """
     from TRITON_SWMM_toolkit.config.report import resolve_target_crs
 
     # Side-effect import: registers `triton_journal` Plotly template at import time.
     from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
-    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
-        emit_plot_with_sources,
-    )
     from TRITON_SWMM_toolkit.report_renderers._hydrology_panel import (
         load_event_hydrology_data,
     )
@@ -893,7 +891,7 @@ def _render_plotly_branch(
                 x=ws_fill_x, y=ws_fill_y,
                 fill="toself", fillcolor=map_cfg.dry_fill_color,
                 mode="lines", line=dict(width=0),
-                hoverinfo="skip", showlegend=False, name="dry_watershed_depth",
+                hoverinfo="skip", showlegend=False, legendgroup="dry", name="dry_watershed_depth",
             ),
             row=1, col=1,
         )
@@ -956,7 +954,7 @@ def _render_plotly_branch(
                 x=ws_fill_x, y=ws_fill_y,
                 fill="toself", fillcolor=map_cfg.dry_fill_color,
                 mode="lines", line=dict(width=0),
-                hoverinfo="skip", showlegend=False, name="dry_watershed_wse",
+                hoverinfo="skip", showlegend=False, legendgroup="dry", name="dry_watershed_wse",
             ),
             row=1, col=2,
         )
@@ -1007,7 +1005,7 @@ def _render_plotly_branch(
                 marker=dict(color=map_cfg.dry_fill_color, symbol="square", size=12,
                             line=dict(color="darkgrey", width=0.5)),
                 name=f"≤ {map_cfg.dry_threshold_m:g} m (dry)",
-                showlegend=True, hoverinfo="skip",
+                showlegend=True, legendgroup="dry", hoverinfo="skip",
             ),
             row=1, col=1,
         )
@@ -1156,6 +1154,65 @@ def _render_plotly_branch(
             analysis.cfg_analysis.storm_tide_units or "m",
         ),
         row=2, col=3,
+    )
+
+    return (
+        fig,
+        triton_summary_path,
+        watershed_shp,
+        sys_paths,
+        weather_path,
+        da_masked,
+        cell_count,
+        bc_water_level,
+        wse_min,
+        wse_max,
+        rainfall,
+        map_cfg,
+        use_datashader,
+    )
+
+
+def _render_plotly_branch(
+    analysis,
+    report_cfg,
+    output_path: Path,
+    *,
+    event_iloc: int,
+    triton_group: str,
+    prov,
+) -> Path:
+    """Plotly MV port (pre-/design-figure): static 3-panel figure with depth raster +
+    WSE raster + event hydrology (rainfall bars + BC water level line).
+    Informationally congruent with the matplotlib branch — no animation,
+    no per-cell hover, no layer-toggle UX. Datashader pre-rasterization fires
+    when the depth-frame cell count exceeds `report_cfg.per_sim.interactive.datashader_threshold_cells`.
+    """
+    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+        emit_plot_with_sources,
+    )
+
+    (
+        fig,
+        triton_summary_path,
+        watershed_shp,
+        sys_paths,
+        weather_path,
+        da_masked,
+        cell_count,
+        bc_water_level,
+        wse_min,
+        wse_max,
+        rainfall,
+        map_cfg,
+        use_datashader,
+    ) = _build_peak_flood_depth_figure(
+        analysis,
+        report_cfg,
+        output_path,
+        event_iloc=event_iloc,
+        triton_group=triton_group,
+        prov=prov,
     )
 
     # ---- Emit -----------------------------------------------------------
