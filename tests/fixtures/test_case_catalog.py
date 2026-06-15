@@ -75,11 +75,11 @@ class GetTS_TestCases:
     Provides factory methods to create test cases with:
     - Synthetic weather data
     - Short simulation durations
-    - Platform-specific HPC configurations (via PlatformConfig)
+    - Platform-specific HPC configurations (via analysis/system overlay dicts)
     - Isolated test directories
 
-    Platform-specific methods use centralized PlatformConfig instances from
-    TRITON_SWMM_toolkit._testing.platform_configs to eliminate configuration duplication.
+    Platform-specific methods apply centralized analysis/system overlay dicts
+    (defined in case_study_catalog.py) to eliminate configuration duplication.
 
     Caching Strategy:
         Use start_from_scratch=False to reuse processed inputs from previous runs,
@@ -111,8 +111,8 @@ class GetTS_TestCases:
         """
         Internal helper to create Norfolk test cases.
 
-        Supports both old-style (additional_*_configs) and new-style (platform_config + overrides)
-        for backward compatibility during refactoring.
+        Applies a base analysis/system overlay (analysis_overlay / system_overlay),
+        then per-call overrides (analysis_overrides / system_overrides) take precedence.
 
         Args:
             analysis_name: Name for the test analysis
@@ -121,12 +121,12 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s: Reporting interval in seconds
             start_from_scratch: Whether to reprocess inputs
             download_if_exists: Whether to re-download HydroShare data
-            platform_config: PlatformConfig instance (new style)
-            analysis_overrides: Analysis config overrides (new style)
-            system_overrides: System config overrides (new style)
-            additional_analysis_configs: Analysis configs (old style)
-            additional_system_configs: System configs (old style)
+            analysis_overlay: Base analysis-config overlay dict
+            system_overlay: Base system-config overlay dict
+            analysis_overrides: Per-call analysis-config overrides (win over the overlay)
+            system_overrides: Per-call system-config overrides (win over the overlay)
             example_data_dir: Override for data directory location
+            hpc_system_config_yaml: Optional path to an hpc_system_config YAML
 
         Returns:
             retrieve_TRITON_SWMM_test_case instance with configured system
