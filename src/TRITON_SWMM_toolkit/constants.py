@@ -1,8 +1,3 @@
-import os
-from pathlib import Path
-
-from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
-
 # Re-exports from version_migration.constants so the CI Check A
 # (Phase 4 scripts/check_layout_version.py) can grep without importing.
 from TRITON_SWMM_toolkit.version_migration.constants import (  # noqa: F401
@@ -51,45 +46,6 @@ CASE_SYSTEM_DIRNAME = "cases"
 TEST_N_REPORTING_TSTEPS_PER_SIM = 12
 TEST_TRITON_REPORTING_TIMESTEP_S = 10
 
-# Platform presets
-FRONTIER_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
-    name="frontier",
-    hpc_ensemble_partition="batch",  # or batch or extended
-    hpc_setup_and_analysis_processing_partition="batch",
-    hpc_account="***REMOVED***",  # "***REMOVED***",
-    multi_sim_run_method="1_job_many_srun_tasks",
-    additional_modules="PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a miniforge3/23.11.0-0 libfabric/1.22.0",
-    gpu_compilation_backend="HIP",
-    hpc_gpus_per_node=8,
-    hpc_cpus_per_node=64,
-    toggle_triton_model=False,
-    toggle_tritonswmm_model=True,
-    toggle_swmm_model=False,
-    target_processed_output_type="zarr",  # nc
-    preferred_slurm_option_for_allocating_gpus="gpus",  # gres
-)
-
-UVA_DEFAULT_PLATFORM_CONFIG = PlatformConfig(
-    name="uva",
-    hpc_ensemble_partition="standard",
-    hpc_setup_and_analysis_processing_partition="standard",
-    hpc_account="***REMOVED***",
-    multi_sim_run_method="batch_job",
-    additional_modules="miniforge gompi/11.4.0_4.1.4 cuda/12.4.1",
-    gpu_compilation_backend="CUDA",
-    gpu_hardware="a6000",  # a100
-    hpc_gpus_per_node=8,
-    example_data_dir=Path("/scratch") / os.getenv("USER", "unknown") / "triton_swmm_toolkit_data",
-    toggle_triton_model=False,
-    toggle_tritonswmm_model=True,
-    toggle_swmm_model=False,
-    hpc_max_simultaneous_sims=1000,
-    hpc_total_job_duration_min=60 * 8,
-    preferred_slurm_option_for_allocating_gpus="gres",  #  gpus
-    target_processed_output_type="zarr",  # nc
-    hpc_login_node="login1.hpc.virginia.edu",
-)
-
 # Globus endpoint identifiers
 # UUIDs are stable public identifiers for Globus collections.
 # Find them at app.globus.org > Collections > search by name.
@@ -111,7 +67,7 @@ LAPTOP_GLOBUS_COLLECTION_NAME = "personal_laptop"
 LAPTOP_GLOBUS_COLLECTION_UUID = "***REMOVED***"
 
 # System-name-to-endpoint mapping for PostRunTransferConfig.
-# Keys are system names matching PlatformConfig.name values.
+# Keys are system names ("uva", "frontier") used by PostRunTransferConfig.
 # Values are (source_uuid, scratch_base, needs_data_access, session_domain) tuples.
 # needs_data_access: whether the endpoint requires a data_access dependent
 #   scope at auth time.  UVA (Globus 5 mapped collection) does; OLCF DTN does not.

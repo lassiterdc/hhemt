@@ -17,14 +17,12 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 import platformdirs
 import pytest
 
 import TRITON_SWMM_toolkit.constants as cnst
-
 from tests.fixtures import worktree_slug
 
 # Import from test fixtures
@@ -32,10 +30,18 @@ from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
     retrieve_TRITON_SWMM_test_case,
 )
+from TRITON_SWMM_toolkit.case_study_catalog import (
+    _FRONTIER_ANALYSIS_OVERLAY,
+    _FRONTIER_SYSTEM_OVERLAY,
+    _UVA_ANALYSIS_OVERLAY,
+    _UVA_SYSTEM_OVERLAY,
+)
 from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
-if TYPE_CHECKING:
-    from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
+# UVA HPC example-data dir (was the retired UVA platform preset's
+# example_data_dir). The literal $USER scratch path is the Phase-5
+# anonymization-scrub target.
+_UVA_EXAMPLE_DATA_DIR = Path("/scratch") / os.getenv("USER", "unknown") / "triton_swmm_toolkit_data"
 
 
 def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
@@ -92,7 +98,9 @@ class GetTS_TestCases:
         analysis_name: str,
         start_from_scratch: bool,
         download_if_exists=False,
-        platform_config: Optional["PlatformConfig"] = None,
+        analysis_overlay: dict | None = None,
+        system_overlay: dict | None = None,
+        example_data_dir: Path | None = None,
         analysis_overrides: dict | None = None,
         system_overrides: dict | None = None,
         n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
@@ -124,20 +132,11 @@ class GetTS_TestCases:
             retrieve_TRITON_SWMM_test_case instance with configured system
         """
 
-        example_data_dir = None
-        if platform_config is not None:
-            if platform_config.example_data_dir:
-                example_data_dir = platform_config.example_data_dir
-            analysis_overrides = analysis_overrides or {}
-            system_overrides = system_overrides or {}
-            final_analysis_configs = (
-                platform_config.to_analysis_dict() | analysis_overrides
-            )
-            final_system_configs = platform_config.to_system_dict() | system_overrides
-        else:
-            # When platform_config is None, use overrides directly or empty dicts
-            final_analysis_configs = analysis_overrides or {}
-            final_system_configs = system_overrides or {}
+        # Example-platform overlay is the base; per-call overrides win (same
+        # precedence as the retired PlatformConfig.to_*_dict() | overrides).
+        # example_data_dir is now an explicit param (was a UVA-preset field).
+        final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
+        final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
         example = NorfolkIreneExample.load(
             download_if_exists=download_if_exists, example_data_dir=example_data_dir
@@ -191,7 +190,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=8,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
         )
 
@@ -221,7 +222,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
         )
 
@@ -263,7 +266,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -306,7 +311,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -349,7 +356,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -392,7 +401,9 @@ class UVA_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -434,7 +445,9 @@ class UVA_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -467,7 +480,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=20,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -494,7 +508,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=20,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -527,7 +542,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -559,7 +575,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import Literal
 
 import yaml
 
@@ -8,6 +8,7 @@ from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
 from TRITON_SWMM_toolkit.config.analysis import analysis_config
 from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
 from TRITON_SWMM_toolkit.config.report import report_config as report_config_model
+from TRITON_SWMM_toolkit.config.system import system_config
 from TRITON_SWMM_toolkit.examples import (
     NorfolkIreneExample,
     NorfolkObservedExample,
@@ -16,8 +17,56 @@ from TRITON_SWMM_toolkit.examples import (
 from TRITON_SWMM_toolkit.system import TRITONSWMM_system
 from TRITON_SWMM_toolkit.utils import fast_rmtree
 
-if TYPE_CHECKING:
-    from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
+# Example HPC platform overlays (Phase-4 4b: inlined from the retired
+# platform_configs.PlatformConfig presets — the data is preserved, only the
+# PlatformConfig dataclass is deleted). The literal account/module/login values
+# are the Phase-5 anonymization-scrub target (see the public-release
+# anonymization plan + the `private identifier occurrences in public tree`
+# knowledge doc). 4c/4d will prune the retiring/moving keys (gpu_*,
+# additional_modules_*, preferred_slurm_option_*, hpc_account, hpc_login_node,
+# hpc_gpus_per_node, hpc_cpus_per_node, hpc_max_simultaneous_sims) from these
+# dicts as those fields retire. None-valued preset keys are omitted (a None
+# setattr/overlay is a no-op against the field default).
+_UVA_ANALYSIS_OVERLAY: dict = {
+    "hpc_ensemble_partition": "standard",
+    "hpc_setup_and_analysis_processing_partition": "standard",
+    "hpc_account": "***REMOVED***",
+    "multi_sim_run_method": "batch_job",
+    "hpc_gpus_per_node": 8,
+    "hpc_max_simultaneous_sims": 1000,
+    "hpc_total_job_duration_min": 60 * 8,
+    "target_processed_output_type": "zarr",
+    "hpc_login_node": "login1.hpc.virginia.edu",
+}
+_UVA_SYSTEM_OVERLAY: dict = {
+    "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/11.4.0_4.1.4 cuda/12.4.1",
+    "gpu_compilation_backend": "CUDA",
+    "gpu_hardware": "a6000",
+    "toggle_triton_model": False,
+    "toggle_tritonswmm_model": True,
+    "toggle_swmm_model": False,
+    "preferred_slurm_option_for_allocating_gpus": "gres",
+}
+_FRONTIER_ANALYSIS_OVERLAY: dict = {
+    "hpc_ensemble_partition": "batch",
+    "hpc_setup_and_analysis_processing_partition": "batch",
+    "hpc_account": "***REMOVED***",
+    "multi_sim_run_method": "1_job_many_srun_tasks",
+    "hpc_gpus_per_node": 8,
+    "hpc_cpus_per_node": 64,
+    "target_processed_output_type": "zarr",
+}
+_FRONTIER_SYSTEM_OVERLAY: dict = {
+    "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": (
+        "PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a "
+        "miniforge3/23.11.0-0 libfabric/1.22.0"
+    ),
+    "gpu_compilation_backend": "HIP",
+    "toggle_triton_model": False,
+    "toggle_tritonswmm_model": True,
+    "toggle_swmm_model": False,
+    "preferred_slurm_option_for_allocating_gpus": "gpus",
+}
 
 
 class all_examples:
@@ -38,7 +87,8 @@ class CaseStudyBuilder:
         analysis_name: str,
         start_from_scratch: bool,
         case_system_dirname: str = cnst.CASE_SYSTEM_DIRNAME,
-        platform_config: Optional["PlatformConfig"] = None,
+        analysis_overlay: dict | None = None,
+        system_overlay: dict | None = None,
         analysis_overrides: dict | None = None,
         system_overrides: dict | None = None,
         report_config_yaml: Path | None = None,
@@ -54,21 +104,17 @@ class CaseStudyBuilder:
         self.system = example.system
         self.analysis = example.analysis
 
-        # define analysis and system configs
-        if platform_config is not None:
-            analysis_overrides = analysis_overrides or {}
-            system_overrides = system_overrides or {}
-            final_analysis_configs = platform_config.to_analysis_dict() | analysis_overrides
-            final_system_configs = platform_config.to_system_dict() | system_overrides
-        else:
-            # When platform_config is None, use overrides directly or empty dicts
-            final_analysis_configs = analysis_overrides or {}
-            final_system_configs = system_overrides or {}
+        # define analysis and system configs. The example-platform overlay is the
+        # base; per-call overrides win (same precedence as the retired
+        # PlatformConfig.to_*_dict() | overrides).
+        final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
+        final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
-        # Fix mutable default arguments
-
-        for key, val in final_system_configs.items():
-            setattr(self.system.cfg_system, key, val)
+        # Per the per-row-overlay-uses-model_validate stipulation: re-validate the
+        # overlaid system config rather than raw-setattr (which skipped validation).
+        self.system.cfg_system = system_config.model_validate(
+            {**self.system.cfg_system.model_dump(), **final_system_configs}
+        )
 
         # update system directory
         self.system.cfg_system.system_directory = self.system.cfg_system.system_directory.parent / case_system_dirname
@@ -106,11 +152,11 @@ class CaseStudyBuilder:
         if report_config_yaml is not None:
             cfg_analysis.report = yaml_to_model(Path(report_config_yaml), report_config_model)
 
-        # add additional fields
-        for key, val in final_analysis_configs.items():
-            setattr(cfg_analysis, key, val)
-
-        cfg_analysis = analysis_config.model_validate(cfg_analysis)
+        # add additional fields (per-row-overlay-uses-model_validate stipulation:
+        # one validating overlay, not setattr-then-validate).
+        cfg_analysis = analysis_config.model_validate(
+            {**cfg_analysis.model_dump(), **final_analysis_configs}
+        )
         # write analysis as yaml
         cfg_anlysys_yaml = anlysys_dir / "cfg_analysis.yaml"
         cfg_anlysys_yaml.write_text(
@@ -164,7 +210,8 @@ class UVACaseStudies:
             download_if_exists=download_if_exists,
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
             case_system_dirname="case_og_dem_res_3.7m",
@@ -204,7 +251,8 @@ class UVACaseStudies:
             download_if_exists=download_if_exists,
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
             report_config_yaml=report_config_yaml,
@@ -244,7 +292,8 @@ class UVACaseStudies:
             download_if_exists=download_if_exists,
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
             report_config_yaml=report_config_yaml,
@@ -284,7 +333,8 @@ class UVACaseStudies:
             download_if_exists=download_if_exists,
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
             report_config_yaml=report_config_yaml,
@@ -324,7 +374,8 @@ class FrontierCaseStudies:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
             report_config_yaml=report_config_yaml,
         )
