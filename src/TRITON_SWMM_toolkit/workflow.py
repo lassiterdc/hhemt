@@ -522,7 +522,138 @@ class _ClearedToken(NamedTuple):
     reason: str
 
 
-class SnakemakeWorkflowBuilder:
+class _ReportingSetDispatchMixin:
+    """Registry-driven plot-rule dispatcher shared by the multisim and
+    sensitivity-master/reprocess generators (P1b / TO-8).
+
+    Replaces the hardcoded `_build_plot_rule_block_*` call lists (duplicated
+    across `generate_snakefile_content`, `generate_master_snakefile_content`, and
+    `generate_reprocess_master_snakefile_content`) with one dispatcher that
+    iterates the active reporting set's `renderer_selection`. `SnakemakeWorkflowBuilder`
+    and `SensitivityAnalysisWorkflowBuilder` are composition-related (the
+    sensitivity builder holds a `_base_builder`), not inheritance-related, so the
+    dispatcher lives in a mixin both inherit: `getattr(self, "_base_builder", self)`
+    resolves the five common builders to the base builder when `self` is the
+    sensitivity builder and to `self` when `self` is the base builder; the two
+    conditional builders (per_sim_per_sa, sensitivity_benchmarking) live only on
+    the sensitivity builder and resolve via getattr.
+    """
+
+    # Predicate-key -> predicate over the per-call predicate_inputs dict. The
+    # values (independent_vars, sa_event_pairs_sa) are METHOD-LOCALs inside the
+    # master/reprocess generators (NOT instance attributes), threaded in via
+    # predicate_inputs; getattr-on-self would always be None. (F-I-2)
+    _RENDERER_PREDICATES = {
+        "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
+        "has_sa_event_pairs": lambda inp: bool(inp.get("sa_event_pairs_sa")),
+    }
+
+    def _resolve_active_reporting_set(self, analysis):
+        """Resolve ``analysis``'s active ReportingSet (TO-8 dispatch source).
+
+        `_active_reporting_set` is set only at analysis.run() entry (F-B-1), so a
+        generate-without-run() path (e.g. the byte-identity test, which configures
+        but never runs the analysis; render_report_runner on a fresh instance)
+        must fall back to the CSV-free name resolver — mirroring the established
+        getattr-fallback in `analysis.render_report`'s category-order block. The
+        fallback resolves to the SAME set the run-entry attr would hold (default
+        for multisim, benchmarking for sensitivity), preserving byte-identity (R6).
+        """
+        active = getattr(analysis, "_active_reporting_set", None)
+        if active is not None:
+            return active
+        from TRITON_SWMM_toolkit.config.report import resolve_active_reporting_set_name
+        from TRITON_SWMM_toolkit.report_renderers._reporting_sets import get_reporting_set
+
+        cfg_report = getattr(analysis, "_cfg_report", None)
+        if cfg_report is None:
+            cfg_report = analysis.cfg_analysis.report
+        name = resolve_active_reporting_set_name(
+            cfg_report,
+            is_sensitivity=analysis.cfg_analysis.toggle_sensitivity_analysis,
+        )
+        return get_reporting_set(name)
+
+    def _builder_call_kwargs(self, builder_key, input_flag, ctx, inputs):
+        """Resolve the exact kwargs for one builder_key (Option A — the 8
+        `_build_plot_rule_block_*` builders are LEFT UNCHANGED, so their
+        heterogeneous signatures are honored here rather than normalized). Keeps
+        R6 byte-identity free: no builder body is touched, so the proof reduces to
+        "the resolver yields the historical call args."
+        """
+        if builder_key in (
+            "system_overview",
+            "per_analysis_summary",
+            "scenario_status_appendix",
+            "errors_and_warnings",
+            "disk_utilization",
+        ):
+            return {"input_flag": input_flag, "ctx": ctx}
+        if builder_key in ("per_sim", "per_sim_per_sa"):
+            return {"ctx": ctx}  # wildcard over event_id; no input_flag in signature
+        if builder_key == "sensitivity_benchmarking":
+            # positional independent_vars, forwarded from predicate_inputs (the
+            # value the master/reprocess call sites already thread); NO input_flag.
+            return {"independent_vars": inputs["independent_vars"], "ctx": ctx}
+        raise KeyError(f"unknown builder_key for call-kwargs resolution: {builder_key!r}")
+
+    def _emit_active_set_plot_rules(
+        self,
+        reporting_set,
+        *,
+        input_flag: str,
+        ctx: "RuleEmissionContext | None" = None,
+        predicate_inputs: dict | None = None,
+        interleave_after_unconditional=None,
+    ) -> str:
+        """Emit every plot rule for the active reporting set, in set order (TO-8).
+
+        The set's `renderer_selection` is the single source of which renderers fire
+        and in what order; each entry names a builder method (by key) and an
+        optional predicate_key gating conditional renderers (benchmarking, per_sa).
+        `input_flag` is threaded per generator (multisim: e_consolidate_complete;
+        master/reprocess: f_consolidate_master_complete).
+
+        `interleave_after_unconditional` (B-i hook) is a zero-arg callable flushed
+        ONCE immediately before the first predicate-keyed entry — so the export
+        rule lands BETWEEN the unconditional and conditional renderers at
+        master/reprocess, byte-matching the pre-refactor emission order. Multisim
+        (no conditional entries) passes None and keeps a trailing export sibling.
+        """
+        base = getattr(self, "_base_builder", self)
+        builders = {
+            "system_overview": base._build_plot_rule_block_system_overview,
+            "per_sim": base._build_plot_rule_block_per_sim,
+            "per_analysis_summary": base._build_plot_rule_block_per_analysis_summary,
+            "scenario_status_appendix": base._build_plot_rule_block_scenario_status_appendix,
+            "errors_and_warnings": base._build_plot_rule_block_errors_and_warnings,
+            "disk_utilization": base._build_plot_rule_block_disk_utilization,
+            "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
+            "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
+        }
+        out = ""
+        inputs = predicate_inputs or {}
+        interleaved = False
+        for sel in reporting_set.renderer_selection:
+            if sel.predicate_key is not None:
+                # First conditional entry: flush the interleave hook (export rule)
+                # so it lands BETWEEN the unconditional and conditional renderers.
+                # Flushed BEFORE the predicate check — matching today's
+                # unconditional export emission (the export fires regardless of
+                # whether the first conditional renderer's predicate passes).
+                if interleave_after_unconditional is not None and not interleaved:
+                    out += interleave_after_unconditional()
+                    interleaved = True
+                if not self._RENDERER_PREDICATES[sel.predicate_key](inputs):
+                    continue
+            builder = builders[sel.builder_key]
+            if builder is None:  # conditional builder absent on the base builder
+                continue
+            out += builder(**self._builder_call_kwargs(sel.builder_key, input_flag, ctx, inputs))
+        return out
+
+
+class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     """
     Builder class for generating and executing Snakemake workflows.
 
@@ -1910,12 +2041,18 @@ rule run_{model_type}:
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
         )
-        snakefile_content += self._build_plot_rule_block_system_overview()
-        snakefile_content += self._build_plot_rule_block_per_sim()
-        snakefile_content += self._build_plot_rule_block_per_analysis_summary()
-        snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
-        snakefile_content += self._build_plot_rule_block_errors_and_warnings()
-        snakefile_content += self._build_plot_rule_block_disk_utilization()
+        # Registry-driven plot-rule dispatch (P1b / TO-8): the active set's
+        # renderer_selection (default → the six common renderers in order) is the
+        # single source of which renderers fire. Replaces the hardcoded call list.
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.analysis),
+            input_flag="_status/e_consolidate_complete.flag",
+        )
+        # export_scenario_status: set-invariant, non-figure workflow rule
+        # (scenario_status.csv + a top-level localrules:); intentionally NOT a
+        # renderer_selection entry (Option B); emitted as a dispatcher sibling in
+        # its historical trailing position (multisim has no conditional renderers,
+        # so no interleave hook).
         snakefile_content += self._build_export_scenario_status_rule(
             input_flag="_status/e_consolidate_complete.flag",
         )
@@ -2402,9 +2539,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
-            "local_cpu_cores_for_workflow must be specified for local runs"
-        )
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
             config.update(
                 {
@@ -2425,9 +2562,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            assert isinstance(max_concurrent, int), (
-                "hpc_max_simultaneous_sims is required for generate_snakemake_config"
-            )
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -2632,9 +2769,9 @@ echo ""
 
         if n_gpus_per_sim > 0:
             gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
-            assert isinstance(gpus_per_node, int), (
-                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            )
+            assert isinstance(
+                gpus_per_node, int
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self.system.cfg_system.gpu_hardware
             if gpu_hardware:
@@ -5695,7 +5832,7 @@ def _sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) ->
     return True
 
 
-class SensitivityAnalysisWorkflowBuilder:
+class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
     """
     Builder class for generating and executing Snakemake workflows for sensitivity analysis.
 
@@ -6386,33 +6523,27 @@ onerror:
         """
 '''
 
-        # Append system_overview + per_analysis_summary rules at master scope (match rule_all above).
-        # Master uses f_consolidate_master_complete.flag (NOT the multisim e_consolidate_complete flag).
-        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_scenario_status_appendix(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+        # Registry-driven plot-rule dispatch at master scope (P1b / TO-8). The
+        # benchmarking set drives the five common renderers + the two conditional
+        # sensitivity renderers (per_sim_per_sa, sensitivity_benchmarking), gated
+        # by predicate_key against the method-local sa_event_pairs_sa /
+        # _independent_vars threaded in via predicate_inputs. The export rule is a
+        # set-invariant non-figure rule (Option B — NOT a renderer_selection
+        # entry); the B-i interleave hook flushes it BETWEEN the unconditional and
+        # conditional renderers, byte-matching the pre-refactor emission order.
+        # Master uses f_consolidate_master_complete.flag (NOT the multisim
+        # e_consolidate_complete flag).
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.master_analysis),
             input_flag="_status/f_consolidate_master_complete.flag",
+            predicate_inputs={
+                "independent_vars": _independent_vars,
+                "sa_event_pairs_sa": sa_event_pairs_sa,
+            },
+            interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
+                input_flag="_status/f_consolidate_master_complete.flag",
+            ),
         )
-        # Per-sa per-event plot rules (Iteration 7 Change 3b — "show all" parity).
-        # Only emit when sa_event_pairs are populated (best-effort guarded above).
-        if sa_event_pairs_sa:
-            snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
-
-        if _independent_vars:
-            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
 
         # Render-report rule (replaces the broken onsuccess auto-render approach).
         # Single rule wildcarded on `format` — Snakemake fires it once per
@@ -6983,30 +7114,22 @@ onerror:
         """
 '''
 
-        # Plot + export + render rules — reuse the same helper methods as the
-        # production master so the rendered report set is byte-equivalent.
-        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_scenario_status_appendix(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+        # Plot + export + render rules — registry-driven dispatch (P1b / TO-8),
+        # identical to the production master (same benchmarking set + B-i
+        # interleave hook), so the rendered report set is byte-equivalent. The
+        # dispatcher running the SAME set on both surfaces makes the
+        # historically hand-maintained "byte-equivalent" guarantee structural.
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.master_analysis),
             input_flag="_status/f_consolidate_master_complete.flag",
+            predicate_inputs={
+                "independent_vars": _independent_vars,
+                "sa_event_pairs_sa": sa_event_pairs_sa,
+            },
+            interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
+                input_flag="_status/f_consolidate_master_complete.flag",
+            ),
         )
-        if sa_event_pairs_sa:
-            snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
-        if _independent_vars:
-            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
 
         # Render-report rule (wildcarded over format=zip|html), matching the
         # production master generator.
