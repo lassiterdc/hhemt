@@ -51,6 +51,7 @@ from TRITON_SWMM_toolkit.workflow import (
 
 if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
+    from .eda import EdaReportResult
     from .orchestration import WorkflowResult, WorkflowStatus
     from .system import TRITONSWMM_system
     from .workflow import ResolvedForceRerunSpec  # noqa: F401
@@ -379,6 +380,7 @@ class TRITONSWMM_analysis:
         settled = sorted(settled)
         if not dry_run:
             for m in settled:
+                # EXEMPT-DU: status-flag
                 m.unlink(missing_ok=True)
         return settled
 
@@ -601,6 +603,43 @@ class TRITONSWMM_analysis:
         from TRITON_SWMM_toolkit.bundle import emit_bundle
 
         return emit_bundle(self, output_path)
+
+    def eda(self, *, override_eda_config: "Path | None" = None) -> "EdaReportResult":
+        """Run the in-process EDA loop: calc -> plots -> doc (ADR-10).
+
+        A LIGHTER non-Snakemake facade. Resolves the EDA config (override-or-cfg
+        per the override_ convention), runs the calc members, renders the EDA
+        plots under plots/eda/, and assembles eda_report/eda_report.html. Returns
+        an EdaReportResult. Bundle carriage: run this BEFORE bundle_report_data()
+        so the EDA plots' declared eda/<plot_id>.zarr sources are harvested into
+        the bundle (the plots emit under plots/eda/ and declare the zarr as a
+        source); bundling before eda() silently omits EDA content.
+        """
+        from TRITON_SWMM_toolkit.config.eda import eda_config
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        from TRITON_SWMM_toolkit.eda import (
+            EdaReportResult,
+            assemble_eda_report,
+            check_cross_sim_identity,
+            render_eda_plots,
+        )
+
+        eda_cfg = (
+            yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
+        )
+        root = Path(self.analysis_paths.analysis_dir)
+        verdict_result = check_cross_sim_identity(self)
+        verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
+        # Non-sensitivity analyses produce no eda/<plot_id>.zarr artifact (the
+        # cross-sim check skips and writes nothing), so render_eda_plots would
+        # open a non-existent zarr. Skip rendering and assemble a figureless doc
+        # via the figures fast-path (SE Flag 1).
+        if verdict_result.skipped or verdict_result.artifact_path is None:
+            report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, figures=[])
+            return EdaReportResult(report_path=report_path, plot_paths=[], verdicts=verdicts)
+        plot_paths = render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
 
     @staticmethod
     def _handle_destination_conflict(
@@ -1827,6 +1866,7 @@ class TRITONSWMM_analysis:
             # which defaults None and made fast_rmtree(None) crash here. Every
             # other analysis_dir reference in this module already uses the derived
             # path; this site was the lone holdout.
+            # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(self.analysis_paths.analysis_dir)
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
@@ -2888,6 +2928,7 @@ class TRITONSWMM_analysis:
         # tree.
         stale_dir = analysis_dir / "_status" / "_deleting"
         if stale_dir.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale_dir)
 
         # 2. Submit the distributed delete workflow. The workflow builder's
@@ -2915,6 +2956,7 @@ class TRITONSWMM_analysis:
             f"[delete] all {len(expected)} per-rule sentinels present — removing analysis_dir.",
             flush=True,
         )
+        # EXEMPT-DU: full-analysis-root-wipe
         fast_rmtree(analysis_dir)
 
     def _enumerate_expected_delete_sentinels(self) -> set[Path]:
@@ -3025,7 +3067,9 @@ class TRITONSWMM_analysis:
             # decrement has the bytes to subtract (post-unlink stat is impossible).
             _html_bytes = report_html.stat().st_size if report_html.exists() else 0
             _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             plots_dir = analysis_dir / "plots"
             plots_total_bytes = 0
@@ -3038,6 +3082,7 @@ class TRITONSWMM_analysis:
                             pass
                 for art in plots_dir.rglob("*"):
                     if art.is_file():
+                        # EXEMPT-DU: du-handled-by-decrement
                         art.unlink(missing_ok=True)
             if not dry_run:
                 # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
@@ -3063,7 +3108,9 @@ class TRITONSWMM_analysis:
         if start_with == "process":
             if regenerate_existing:
                 for f in sd.glob("d_process_*"):
+                    # EXEMPT-DU: status-flag
                     f.unlink(missing_ok=True)
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3072,6 +3119,7 @@ class TRITONSWMM_analysis:
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3086,7 +3134,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             if not dry_run:
                 restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
@@ -3358,6 +3408,7 @@ class TRITONSWMM_analysis:
                 if not _summary_absent(scen, model_type):
                     continue  # summary present — healthy, no-op
                 # Divergence: flag present, summary absent → heal.
+                # EXEMPT-DU: status-flag
                 flag_path.unlink(missing_ok=True)
                 reconciled.add((evt, model_type))
                 reconciled_event_ids.add(evt)

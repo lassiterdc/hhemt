@@ -16,6 +16,7 @@ The sacct-parsing path is covered by its own test that monkeypatches
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -28,7 +29,17 @@ def _write_sentinel(analysis_dir, name, jobid):
     return path
 
 
-def test_reconcile_returns_alive_set_for_live_duplicate(synthetic_multisim_builder):
+def _write_queued(analysis_dir, name, jobid):
+    """Mechanism (b) _queued/ sentinel (submitter-side, pre-worker-start). Payload
+    mirrors _write_queued_sentinels: top-level rule_token + slurm_jobid, NO timestamp."""
+    d = analysis_dir / "_status" / "_queued"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{name}.json"
+    path.write_text(json.dumps({"rule_token": name, "slurm_jobid": jobid}, sort_keys=True))
+    return path
+
+
+def test_reconcile_returns_alive_set_for_live_duplicate(monkeypatch, synthetic_multisim_builder):
     """Phase 2: v2 reconcile RETURNS the alive set for an in-flight sim — it does NOT raise.
 
     A submitted sentinel with no completed/failed marker is classified ALIVE.
@@ -36,6 +47,12 @@ def test_reconcile_returns_alive_set_for_live_duplicate(synthetic_multisim_build
     the v1 abort semantics no longer exist — graceful rerun substitutes wait-rules.
     """
     import tests.utils_for_testing as tst_ut
+
+    # R9 hermeticity: pin the sacct seam so the fake jobid cannot collide with a
+    # real accounting row on a login node (where a DEAD State for that id would
+    # mass-reclaim the freshly-written sentinel). Empty states → UNKNOWN bucket →
+    # the fresh sentinel's recent mtime keeps it alive deterministically.
+    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda job_ids, **kw: {})
 
     b = synthetic_multisim_builder
     _write_sentinel(b.analysis_paths.analysis_dir, "run_tritonswmm_evt-test", "999001")
@@ -98,7 +115,7 @@ def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multis
     assert jids == {"9001"}  # live + comment-matched; 9002 completed; malformed skipped
 
 
-def test_reconcile_returns_sensitivity_sentinel_in_alive_set(synthetic_multisim_builder):
+def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthetic_multisim_builder):
     """Phase 2: a sensitivity sentinel (simulation_sa_{id}_evt-{id}) with no marker is
     returned in the alive set keyed on its full stem; v2 does not raise.
 
@@ -106,6 +123,10 @@ def test_reconcile_returns_sensitivity_sentinel_in_alive_set(synthetic_multisim_
     Guards the sa_id-keyed token (no collision with the multisim pattern) under v2
     return-alive semantics.
     """
+    # R9 hermeticity: pin the sacct seam (see the sibling reconcile test) so the
+    # fake jobid is host-independent — UNKNOWN bucket + fresh mtime → alive.
+    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda job_ids, **kw: {})
+
     b = synthetic_multisim_builder
     s = _write_sentinel(b.analysis_paths.analysis_dir, "simulation_sa_alpha_evt-0", "777001")
     alive = b._reconcile_inflight_submissions()
@@ -537,6 +558,38 @@ def test_classify_stale_via_sacct_dead_alive_and_mtime_tiebreak(monkeypatch, syn
     assert dead_rec.job_id == "100"
 
 
+def test_classify_stale_via_sacct_aliased_jobid_not_mass_dead(monkeypatch, synthetic_multisim_builder):
+    """R4 F2 srun-step job-id-aliasing guard: under 1_job_many_srun_tasks N tokens
+    share one allocation $SLURM_JOB_ID, so `sacct -X` returns ONE allocation-summary
+    row. A terminal allocation State must NOT mass-classify all aliased tokens DEAD —
+    the guard refuses to classify any jobid shared by >=2 marker-less tokens from the
+    shared row, falling through to the mtime fail-safe. Two fresh sentinels sharing
+    jobid 555 + a monkeypatched TIMEOUT row → both remain alive (mtime-fresh),
+    neither reclaimed. (Empirically required — probe P4b.)"""
+    b = synthetic_multisim_builder
+    analysis_dir = b.analysis_paths.analysis_dir
+    s1 = _write_sentinel(analysis_dir, "run_tritonswmm_evt-a", "555")
+    s2 = _write_sentinel(analysis_dir, "run_tritonswmm_evt-b", "555")
+
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda job_ids, **kw: {"555": ("TIMEOUT", "0:1", "TimeLimit")},  # terminal allocation row
+    )
+
+    marker_less = [
+        ("run_tritonswmm_evt-a", "555"),
+        ("run_tritonswmm_evt-b", "555"),
+    ]
+    still_alive, cleared = b._classify_stale_via_sacct(marker_less)
+
+    # Neither token reclaimed from the shared TIMEOUT allocation row (F2 guard).
+    assert cleared == []
+    alive_tokens = {t for t, _ in still_alive}
+    assert alive_tokens == {"run_tritonswmm_evt-a", "run_tritonswmm_evt-b"}
+    assert s1.exists()  # preserved — fell through to mtime fail-safe, fresh
+    assert s2.exists()
+
+
 def test_classify_stale_via_sacct_empty_input_is_zero_call_noop(monkeypatch, synthetic_multisim_builder):
     """R5 scheduler-politeness: the common all-markers case (empty marker-less
     residual) short-circuits to a zero-call no-op — sacct is never invoked."""
@@ -564,6 +617,185 @@ def test_max_plausible_job_lifetime_never_below_walltime(synthetic_multisim_buil
     derived = w._max_plausible_job_lifetime_min(cfg, slack_min=30)
     assert derived == cfg.hpc_total_job_duration_min + 30
     assert derived >= cfg.hpc_total_job_duration_min
+
+
+# ----------------------------------------------------------------------------
+# Stage B — mechanism (b) PENDING-recovery (R1, R2, R3, R5, R6, R8, R12)
+# ----------------------------------------------------------------------------
+
+
+def test_planned_sim_tokens_are_model_event_cross_product(synthetic_multisim_builder):
+    """R2: _planned_sim_tokens enumerates run_{model}_evt-{event} for the
+    enabled-model x event cross-product, byte-identical to the runner's _rule_token
+    (literal evt- hyphen). The writer source for the _queued/ set."""
+    b = synthetic_multisim_builder
+    tokens = b._planned_sim_tokens()
+    assert tokens, "expected a non-empty planned sim-token set"
+    assert len(tokens) == len(set(tokens))  # no duplicates
+    for t in tokens:
+        assert t.startswith("run_") and "_evt-" in t and "_evt_" not in t
+
+
+def test_write_queued_sentinels_payload_and_compare_and_write(synthetic_multisim_builder):
+    """R2/R12/SE Flag 3: the writer emits {rule_token, slurm_jobid} (top-level jobid
+    key, NO timestamp), and compare-and-write PRESERVES mtime on a byte-identical
+    re-write so the mtime fail-safe measures age-since-first-submit; a changed jobid
+    rewrites (bumps mtime)."""
+    import os
+    import time
+
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    toks = ["run_tritonswmm_evt-x", "run_tritonswmm_evt-y"]
+    b._write_queued_sentinels(toks, "555", ad)
+    qx = ad / "_status" / "_queued" / "run_tritonswmm_evt-x.json"
+    payload = json.loads(qx.read_text())
+    assert payload["rule_token"] == "run_tritonswmm_evt-x"
+    assert payload["slurm_jobid"] == "555"  # top-level key for the wait-runner fallback
+    assert "written_at" not in payload  # no timestamp → compare-and-write can match
+    # age the file, then re-write identical payload → mtime preserved
+    old = time.time() - 10_000
+    os.utime(qx, (old, old))
+    aged = qx.stat().st_mtime
+    b._write_queued_sentinels(toks, "555", ad)
+    assert qx.stat().st_mtime == aged, "identical re-write must preserve mtime"
+    # changed jobid → rewrite → mtime bumps, payload updates
+    b._write_queued_sentinels(toks, "999", ad)
+    assert qx.stat().st_mtime != aged
+    assert json.loads(qx.read_text())["slurm_jobid"] == "999"
+
+
+def test_pending_recovery_executor_owns_held_on_presence(monkeypatch, synthetic_multisim_builder):
+    """R1/R3/R6: a fresh _queued/ token with jobid=null (executor-owns-sbatch) and no
+    _submitted/ is held alive on PRESENCE — no sacct call (jobid-null)."""
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda ids, **k: pytest.fail("sacct must NOT be called for jobid-null pending tokens"),
+    )
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    _write_queued(ad, "run_tritonswmm_evt-pending", None)
+    alive = b._reconcile_inflight_submissions()
+    assert ("run_tritonswmm_evt-pending", "") in alive
+
+
+def test_pending_recovery_orphan_queued_ages_out(synthetic_multisim_builder):
+    """R12: a stale orphan _queued/ (older than _max_plausible_job_lifetime_min) is NOT
+    held and is unlinked (re-runs), even though presence alone would hold a fresh one."""
+    import os
+    import time
+
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    q = _write_queued(ad, "run_tritonswmm_evt-stale", None)
+    old = time.time() - 100 * 24 * 3600  # 100 days — beyond any walltime+slack cap
+    os.utime(q, (old, old))
+    alive = b._reconcile_inflight_submissions()
+    assert all(t != "run_tritonswmm_evt-stale" for t, _ in alive)
+    assert not q.exists()  # stale orphan reclaimed
+
+
+def test_pending_recovery_toolkit_owns_dead_drops_alive_holds(monkeypatch, synthetic_multisim_builder):
+    """R1: toolkit-owns-sbatch (_queued/ jobid present) → sacct-classify; a DEAD job
+    drops its _queued/ (re-runs), a still-PENDING job is held."""
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    _write_queued(ad, "run_tritonswmm_evt-dead", "100")
+    _write_queued(ad, "run_tritonswmm_evt-live", "200")
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda ids, **k: {"100": ("CANCELLED", "0:0", "JobKilled"), "200": ("PENDING", "0:0", "Priority")},
+    )
+    alive = {t for t, _ in b._reconcile_inflight_submissions()}
+    assert "run_tritonswmm_evt-live" in alive  # PENDING → held
+    assert "run_tritonswmm_evt-dead" not in alive  # DEAD → dropped
+    assert not (ad / "_status" / "_queued" / "run_tritonswmm_evt-dead.json").exists()
+
+
+def test_pending_recovery_aliased_jobid_not_mass_dropped(monkeypatch, synthetic_multisim_builder):
+    """R4 (F2 guard in the _queued/ recovery): two pending tokens sharing one allocation
+    jobid + a terminal allocation row are NOT dropped — they fall through to the mtime
+    fail-safe and (fresh) are held."""
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    _write_queued(ad, "run_tritonswmm_evt-a", "777")
+    _write_queued(ad, "run_tritonswmm_evt-b", "777")
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda ids, **k: {"777": ("TIMEOUT", "0:0", "TimeLimit")},
+    )
+    alive = {t for t, _ in b._reconcile_inflight_submissions()}
+    assert {"run_tritonswmm_evt-a", "run_tritonswmm_evt-b"} <= alive
+
+
+def test_pending_recovery_token_keyed_dedup_submitted_wins(monkeypatch, synthetic_multisim_builder):
+    """SE Flag 2: when BOTH a _submitted/ and a _queued/ exist for one logical token
+    (hard-kill between os.replace and the _queued/ unlink), the token appears in the
+    alive set exactly once, with the _submitted/-derived concrete jobid (not "")."""
+    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda ids, **k: {})
+    b = synthetic_multisim_builder
+    ad = b.analysis_paths.analysis_dir
+    _write_sentinel(ad, "run_tritonswmm_evt-both", "300")  # worker started (jobid 300)
+    _write_queued(ad, "run_tritonswmm_evt-both", "300")  # stale queued sibling
+    alive = b._reconcile_inflight_submissions()
+    matches = [(t, j) for t, j in alive if t == "run_tritonswmm_evt-both"]
+    assert matches == [("run_tritonswmm_evt-both", "300")]  # exactly once, jobid wins
+
+
+def test_fresh_analysis_fast_path_no_sacct_with_no_queued(monkeypatch, synthetic_multisim_builder):
+    """R6: a genuinely-fresh analysis (no _submitted/, no _queued/) fast-returns []
+    with NO sacct call."""
+    monkeypatch.setattr(
+        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        lambda ids, **k: pytest.fail("sacct must NOT be called on a fresh analysis"),
+    )
+    assert synthetic_multisim_builder._reconcile_inflight_submissions() == []
+
+
+def test_wait_runner_reads_queued_jobid_fallback(tmp_path):
+    """R8: _read_submitted_jobid falls back to _queued/{token}.json when no _submitted/
+    sentinel exists, so the in-loop liveness probe re-enables for a PENDING-recovered
+    wait-rule. A null _queued/ jobid yields None (probe stays disabled, executor-owns)."""
+    from TRITON_SWMM_toolkit import wait_for_sentinel_runner as wr
+
+    status = tmp_path / "_status"
+    (status / "_queued").mkdir(parents=True)
+    (status / "_queued" / "run_tritonswmm_evt-q.json").write_text(
+        json.dumps({"rule_token": "run_tritonswmm_evt-q", "slurm_jobid": "888"})
+    )
+    assert wr._read_submitted_jobid(status, "run_tritonswmm_evt-q") == "888"
+    (status / "_queued" / "run_tritonswmm_evt-n.json").write_text(
+        json.dumps({"rule_token": "run_tritonswmm_evt-n", "slurm_jobid": None})
+    )
+    assert wr._read_submitted_jobid(status, "run_tritonswmm_evt-n") is None
+
+
+def test_sensitivity_pending_recovery_per_sub_dir(synth_sensitivity_builder):
+    """R5 sensitivity parity: the sensitivity writer enumerates per-(sa_id, event) tokens
+    under EACH sub's own _status/_queued/, and _reconcile_sensitivity_alive recovers them
+    with the correct per-sub --analysis-dir mapping (SM Flag 2)."""
+    sens = synth_sensitivity_builder.sensitivity
+    swb = sens._workflow_builder
+    swb._write_queued_sentinels_sensitivity(None)  # executor-owns (jobid null)
+
+    # Every sub got per-(sa_id, event) _queued/ sentinels with the literal evt- token.
+    any_written = False
+    for sa_id, sub in sens.sub_analyses.items():
+        qdir = sub.analysis_paths.analysis_dir / "_status" / "_queued"
+        for q in qdir.glob("*.json"):
+            any_written = True
+            assert q.stem.startswith(f"simulation_sa_{sa_id}_evt-")
+    assert any_written, "expected sensitivity _queued/ sentinels written under sub dirs"
+
+    # Recovery returns them in the alive set with each wait-rule's --analysis-dir set to
+    # the sub dir where its markers actually land.
+    alive_by_token, alive_token_to_dir = swb._reconcile_sensitivity_alive()
+    assert alive_by_token, "expected recovered sensitivity pending tokens"
+    for tok, jid in alive_by_token.items():
+        assert tok.startswith("simulation_sa_") and "_evt-" in tok
+        assert jid == ""  # executor-owns held-on-presence
+        # the dir mapping points at a real sub dir containing this token's _queued/
+        assert (Path(alive_token_to_dir[tok]) / "_status" / "_queued" / f"{tok}.json").exists()
 
 
 def test_prune_settled_markers_lists_and_unlinks_only_settled(synth_multi_sim_analysis):
@@ -692,9 +924,17 @@ class TestWaitRuleInLoopLiveness:
         monkeypatch.setattr(slurm_liveness, "job_is_dead_confirmed", lambda jid: True)
         monkeypatch.setattr(
             "sys.argv",
-            ["wait_for_sentinel_runner", "--rule-token", token, "--flag-output",
-             str(status / f"c_run_{token}.flag"), "--analysis-dir", str(tmp_path),
-             "--max-wait-minutes", "10080"],
+            [
+                "wait_for_sentinel_runner",
+                "--rule-token",
+                token,
+                "--flag-output",
+                str(status / f"c_run_{token}.flag"),
+                "--analysis-dir",
+                str(tmp_path),
+                "--max-wait-minutes",
+                "10080",
+            ],
         )
         rc = wr.main()
         assert rc == 1

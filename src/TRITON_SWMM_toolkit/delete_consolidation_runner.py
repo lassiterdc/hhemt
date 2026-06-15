@@ -99,8 +99,10 @@ def main(argv: list[str] | None = None) -> int:
             if path.exists():
                 print(f"[delete-consolidation] removing {path}", flush=True)
                 if path.is_dir():
+                    # EXEMPT-DU: delete-workflow-leaf
                     fast_rmtree(path)
                 else:
+                    # EXEMPT-DU: delete-workflow-leaf
                     path.unlink()
 
         # Delete _status/ contents EXCEPT _status/_deleting/ (which holds the
@@ -114,8 +116,10 @@ def main(argv: list[str] | None = None) -> int:
                 if child.name == "_deleting":
                     continue
                 if child.is_dir():
+                    # EXEMPT-DU: status-dir-cleanup
                     fast_rmtree(child)
                 else:
+                    # EXEMPT-DU: status-dir-cleanup
                     child.unlink()
 
         # Emit the consolidation sentinel.
@@ -127,6 +131,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 

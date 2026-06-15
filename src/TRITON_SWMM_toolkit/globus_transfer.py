@@ -236,6 +236,7 @@ class GlobusTransferManager:
 
         if force_login:
             # Wipe the cached file so stale/wrong-identity tokens are not reused.
+            # EXEMPT-DU: outside-analysis-tree
             token_file.unlink(missing_ok=True)
 
         # Try to load cached tokens first (skipped when force_login wiped the file)

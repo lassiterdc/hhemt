@@ -1001,6 +1001,7 @@ def write_zarr_then_netcdf(
     write_netcdf(ds, fname_out, compression_level, chunks)
     # delete zarr
     try:
+        # EXEMPT-DU: transient-intermediate
         fast_rmtree(f"{fname_out}.zarr")
     except Exception as e:
         print(f"Could not remove zarr folder {fname_out}.zarr due to error {e}")

@@ -68,6 +68,12 @@ def _make_proc(out_dir_attr: str, out_dir_path: Path, swmm_out_file: Path | None
     proc = TRITONSWMM_sim_post_processing.__new__(TRITONSWMM_sim_post_processing)
     proc.scen_paths = scen_paths
     proc.log = log
+    # The PATTERN-A/B restamp edits in process_simulation.py read
+    # self._analysis.analysis_paths.analysis_dir; point it at the parent of the
+    # seeded out_dir so restamp_parent_sentinels no-ops (no _status/ tree there).
+    proc._analysis = SimpleNamespace(
+        analysis_paths=SimpleNamespace(analysis_dir=out_dir_path.parent)
+    )
     return proc
 
 

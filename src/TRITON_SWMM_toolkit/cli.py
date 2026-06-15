@@ -781,6 +781,56 @@ def reprocess_command(
         raise typer.Exit(10)
 
 
+@app.command(name="eda")
+def eda_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to system configuration YAML file",
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to analysis configuration YAML file",
+    ),
+    override_eda_config: Path = typer.Option(
+        None,
+        "--override-eda-config",
+        help="Runtime override for cfg_analysis.eda (a YAML path).",
+    ),
+):
+    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html."""
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+        result = analysis.eda(override_eda_config=override_eda_config)
+        console.print(f"[green]EDA report written:[/green] {result.report_path}")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(5)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
 @app.command(name="delete")
 def delete_command(
     system_config: Path = typer.Option(
@@ -993,6 +1043,130 @@ def _print_delete_dry_run_summary(analysis) -> None:
     total_size = analysis_total
     console.print(f"  Analysis-level artifacts: {_fmt(analysis_level_size)}")
     console.print(f"  [bold]Total to be removed:[/bold] {_fmt(total_size)}")
+
+
+@app.command(name="cleanup-orphan-delete-sentinels")
+def cleanup_orphan_delete_sentinels_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="List dead orphan delete-sentinels without removing (default) or "
+        "remove them with --apply",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Required with --apply to actually remove dead sentinels",
+    ),
+):
+    """Clear known-dead orphan ``_status/_submitted/delete_*.json`` sentinels.
+
+    A rolled-back or aborted ``delete`` run can leave ``delete_*.json`` submitted
+    sentinels behind. These block a subsequent ``delete`` (whose live-SLURM guard
+    refuses while any submitted sentinel is present) even though their recorded
+    SLURM jobs are long dead. This command classifies each delete-sentinel by
+    SLURM job liveness via the same ``_classify_live_sentinels`` primitive the
+    delete preflight uses, and (with ``--apply --force``) removes only the dead
+    ones — a targeted alternative to the blunt ``delete --override-in-flight``.
+
+    Unlike ``cleanup-orphans`` (sensitivity-only), this works on both sensitivity
+    and non-sensitivity analyses. Refuses by default; ``--apply`` requires
+    ``--force``.
+
+    Examples:
+
+        # List dead/alive delete-sentinels (nothing removed)
+        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+            --analysis-config analysis.yaml
+
+        # Remove the dead ones
+        $ triton-swmm cleanup-orphan-delete-sentinels --system-config system.yaml \\
+            --analysis-config analysis.yaml --apply --force
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+
+        if not dry_run and not force:
+            console_err.print(
+                "[bold red]Error:[/bold red] --apply requires --force to confirm removal."
+            )
+            raise typer.Exit(2)
+
+        submitted_dir = analysis.analysis_paths.analysis_dir / "_status" / "_submitted"
+        delete_sentinels = (
+            sorted(submitted_dir.glob("delete_*.json")) if submitted_dir.exists() else []
+        )
+
+        if not delete_sentinels:
+            console.print(
+                "[green]No delete-sentinels found under _status/_submitted/.[/green]"
+            )
+            raise typer.Exit(0)
+
+        # Reuse the delete preflight's liveness primitive. reclaim_dead=False on a
+        # dry-run (classify only, leave on disk); reclaim_dead=True under --apply
+        # (unlink the dead/corrupt ones in-place). The returned list is the ALIVE
+        # set of (sentinel_stem, slurm_jobid) tuples.
+        builder = analysis._workflow_builder
+        alive = builder._classify_live_sentinels(
+            delete_sentinels, reclaim_dead=(not dry_run)
+        )
+        alive_stems = {stem for stem, _jid in alive}
+        dead = [s for s in delete_sentinels if s.stem not in alive_stems]
+
+        console.print(
+            f"[bold]Orphan delete-sentinel cleanup for[/bold] "
+            f"{analysis.analysis_paths.analysis_dir}"
+        )
+        verb = "would remove" if dry_run else "removed"
+        console.print(
+            f"  {len(delete_sentinels)} delete-sentinel(s): "
+            f"{len(dead)} dead ({verb}), {len(alive)} alive (retained)."
+        )
+        for s in dead:
+            console.print(f"  [yellow]dead[/yellow]   {s.name}")
+        for stem, jid in alive:
+            console.print(f"  [green]alive[/green]  {stem} (slurm_jobid={jid})")
+
+        if dry_run and dead:
+            console.print(
+                "[yellow]Dry-run only — nothing removed. "
+                "Re-run with --apply --force to remove the dead sentinels.[/yellow]"
+            )
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
 
 
 @app.command(name="cleanup-stale-metadata")
@@ -1506,6 +1680,7 @@ def report_from_bundle_command(
     for fmt in ("html", "zip"):
         prior = bundle_root / f"analysis_report.{fmt}"
         if prior.exists():
+            # EXEMPT-DU: bundle-root
             prior.unlink()
 
     locks_dir = bundle_root / ".snakemake" / "locks"
@@ -1516,6 +1691,7 @@ def report_from_bundle_command(
         )
         from TRITON_SWMM_toolkit.utils import fast_rmtree
 
+        # EXEMPT-DU: lock-file-cleanup
         fast_rmtree(locks_dir)
         locks_dir.mkdir(parents=True, exist_ok=True)
 

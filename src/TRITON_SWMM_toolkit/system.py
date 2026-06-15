@@ -442,6 +442,7 @@ class TRITONSWMM_system:
             Path(tmp_path_str).replace(fpath_raster)
         except Exception:
             try:
+                # EXEMPT-DU: system-dir
                 Path(tmp_path_str).unlink(missing_ok=True)
             except Exception:
                 pass
@@ -569,6 +570,7 @@ class TRITONSWMM_system:
 
         # Remove existing directory
         if TRITONSWMM_software_directory.exists():
+            # EXEMPT-DU: system-dir
             ut.fast_rmtree(TRITONSWMM_software_directory)
 
         # Clone and checkout
