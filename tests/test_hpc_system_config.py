@@ -178,3 +178,39 @@ def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, reti
     # Popped, not rejected, and the field genuinely no longer exists on the model.
     assert not hasattr(cfg, retired_key)
     assert retired_key not in cfg_type.model_fields
+
+
+@pytest.mark.parametrize(
+    "retired_key, retired_val",
+    [
+        ("hpc_account", "acct"),
+        ("hpc_login_node", "login1.example.edu"),
+        ("hpc_gpus_per_node", 8),
+        ("hpc_cpus_per_node", 64),
+        ("python_path", "/opt/conda/bin/python"),
+        ("hpc_max_simultaneous_sims", 32),
+    ],
+)
+def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, retired_val):
+    """Phase-4 (4d): the analysis_config pop-and-warn shim (folded into
+    check_consistency) lets an un-migrated YAML carrying any of the six retired HPC
+    fields LOAD with a DeprecationWarning instead of being rejected by
+    extra="forbid". The retired key is dropped (the field no longer exists); the two
+    partition selectors are KEPT."""
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.config.analysis import analysis_config
+    from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+
+    template = Path("test_data/norfolk_coastal_flooding/template_analysis_config.yaml")
+    base = load_analysis_config(template)
+    d = base.model_dump(mode="json")
+    d[retired_key] = retired_val
+
+    with pytest.warns(DeprecationWarning, match=retired_key):
+        cfg = analysis_config.model_validate(d)
+    assert not hasattr(cfg, retired_key)
+    assert retired_key not in analysis_config.model_fields
+    # The two partition SELECTORS are KEPT (D-A).
+    assert "hpc_ensemble_partition" in analysis_config.model_fields
+    assert "hpc_setup_and_analysis_processing_partition" in analysis_config.model_fields

@@ -845,12 +845,14 @@ def _validate_hpc_configuration(
                 fix_hint="Set hpc_total_job_duration_min (e.g., 720 for 12 hours)",
             )
 
-        if cfg.hpc_max_simultaneous_sims is None or cfg.hpc_max_simultaneous_sims < 1:
+        # Phase-4 (4d): hpc_max_simultaneous_sims moved to hpc_system_config.max_concurrent_jobs.
+        _max_concurrent = cfg_hpc_system.max_concurrent_jobs if cfg_hpc_system is not None else None
+        if _max_concurrent is None or _max_concurrent < 1:
             result.add_error(
-                field="analysis.hpc_max_simultaneous_sims",
+                field="hpc_system_config.max_concurrent_jobs",
                 message="Required for multi_sim_run_method='batch_job'",
-                current_value=cfg.hpc_max_simultaneous_sims,
-                fix_hint="Set hpc_max_simultaneous_sims (e.g., 32)",
+                current_value=_max_concurrent,
+                fix_hint="Set hpc_system_config.max_concurrent_jobs (e.g., 32)",
             )
 
         if not cfg.hpc_ensemble_partition:
@@ -861,25 +863,32 @@ def _validate_hpc_configuration(
                 fix_hint="Set hpc_ensemble_partition",
             )
 
-        if not cfg.hpc_account:
+        # Phase-4 (4d): account + login_node moved to hpc_system_config.
+        _account = cfg_hpc_system.default_account if cfg_hpc_system is not None else None
+        if not _account:
             result.add_error(
-                field="analysis.hpc_account",
+                field="hpc_system_config.default_account",
                 message="Required for multi_sim_run_method='batch_job'",
-                current_value=cfg.hpc_account,
-                fix_hint="Set hpc_account",
+                current_value=_account,
+                fix_hint="Set hpc_system_config.default_account",
             )
 
-        if not cfg.hpc_login_node:
+        _login_node = cfg_hpc_system.login_node if cfg_hpc_system is not None else None
+        if not _login_node:
             result.add_warning(
-                field="analysis.hpc_login_node",
+                field="hpc_system_config.login_node",
                 message=(
-                    "hpc_login_node is not set. If your cluster uses round-robin login load balancing "
-                    "(e.g., login.hpc.virginia.edu routes to different nodes), tmux reattach commands "
-                    "may not work from a new SSH session. The toolkit will auto-detect and store the "
-                    "submission node hostname as a fallback, but setting hpc_login_node explicitly is recommended."
+                    "hpc_system_config.login_node is not set. If your cluster uses round-robin login "
+                    "load balancing (e.g., login.hpc.virginia.edu routes to different nodes), tmux "
+                    "reattach commands may not work from a new SSH session. The toolkit will auto-detect "
+                    "and store the submission node hostname as a fallback, but setting login_node "
+                    "explicitly is recommended."
                 ),
                 current_value=None,
-                fix_hint="Set hpc_login_node to your specific login node (e.g., 'login1.hpc.virginia.edu')",
+                fix_hint=(
+                    "Set hpc_system_config.login_node to your specific login node "
+                    "(e.g., 'login1.hpc.virginia.edu')"
+                ),
             )
 
     # Phase 2 (R5): per-rule runtime <= partition max_runtime preflight.

@@ -1,5 +1,6 @@
 import math
 import re
+import warnings
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -99,23 +100,12 @@ class analysis_config(cfgBaseModel):
         None,
         description="This is the job duration when multi_sim_run_method = 1_job_many_srun_tasks",
     )
-    # TODO - hpc_gpus_per_node should be used in the 1 big job approach and in the batch job approach
-    # TODO - hpc_cpus_per_node should be used in a similar way. With both these arguments,
-    # specifying n_nodes should no longer be necessary.
-    hpc_gpus_per_node: int | None = Field(
-        None,
-        description=(
-            "GPUs per node on the HPC cluster. Required when using GPUs with "
-            "multi_sim_run_method = 1_job_many_srun_tasks or batch_job. "
-            "Used to populate per-node GPU allocation for Snakemake and to "
-            "generate --gres or --gpus-per-node directives."
-        ),
-    )
-    hpc_cpus_per_node: int | None = Field(
-        None,
-        description="CPUs per node on the HPC cluster. Required for dry runs using "
-        "multi_sim_run_method = 1_job_many_srun_tasks.",
-    )
+    # Phase-4 (4d, hpc-system-profile-config): hpc_gpus_per_node + hpc_cpus_per_node
+    # RETIRED off analysis_config. Per-node GPU/CPU topology now lives per-partition
+    # on PartitionSpec.gpus_per_node / .cpus_per_node, resolved via the workflow
+    # builder's _resolve_gpus_per_node / _resolve_cpus_per_node from the named
+    # partition. A pop-and-warn shim (check_consistency, below) lets un-migrated
+    # YAMLs still load. REMOVE the shim after <release>.
     hpc_mem_allocation_for_sim_output_processing_mb: int = Field(
         12000,
         description="Memory allocation for creating simulation time series.",
@@ -188,13 +178,15 @@ class analysis_config(cfgBaseModel):
             "checkpoint within ONE analysis.run() — no manual re-invocation loop."
         ),
     )
-    hpc_max_simultaneous_sims: int | None = Field(
-        None,
-        description="Maximum number of concurrent simulations. "
-        "NOTE: Not required for multi_sim_run_method=1_job_many_srun_tasks "
-        "(concurrency determined dynamically from SLURM allocation). "
-        "Required for setting an upper limit on the number of concurrent jobs submitted using sbatch for multi_sim_run_method=batch_job",
-    )
+    # Phase-4 (4d): hpc_max_simultaneous_sims RETIRED off analysis_config — it MOVED
+    # to hpc_system_config.max_concurrent_jobs (D-D: a cluster-throughput cap belongs
+    # on the per-HPC-system config, not the per-analysis config). Readers resolve it
+    # from cfg_hpc_system.max_concurrent_jobs. Popped by the check_consistency shim.
+    #
+    # KEPT (D-A): the two partition SELECTORS stay on analysis_config — they are the
+    # partition-NAME axis lookup keys the resolution helpers + preflight read to index
+    # cfg_hpc_system.partitions[name], and partition-as-sensitivity-axis requires them
+    # as the per-CSV-row overlay column. They are NOT retired despite the hpc_* prefix.
     hpc_ensemble_partition: str | None = Field(
         None,
         description="SLURM partition name (e.g., 'standard', 'gpu', 'high-memory') for running simulations. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
@@ -203,23 +195,11 @@ class analysis_config(cfgBaseModel):
         None,
         description="SLURM partition name for simulation setup and analysis output consolidation (single node, single core processing). Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_account: str | None = Field(
-        None,
-        description="SLURM allocation/account name. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
-    )
-    hpc_login_node: str | None = Field(
-        None,
-        description=(
-            "Specific HPC login node hostname for tmux session reattach (e.g., 'login1.hpc.virginia.edu'). "
-            "Only needed if the cluster uses round-robin login load balancing. "
-            "If unset, the toolkit auto-detects and stores the submission node hostname at launch time. "
-            "When set, reattach hints will use ssh to this node directly."
-        ),
-    )
-    python_path: Path | None = Field(
-        None,
-        description="Optional path to Python executable (e.g., /home/user/.conda/envs/myenv/bin/python). If provided, this will be used instead of 'python' in SLURM scripts. Useful for specifying a conda environment's Python on HPC systems.",
-    )
+    # Phase-4 (4d): hpc_account, hpc_login_node, python_path RETIRED off analysis_config.
+    # account -> hpc_system_config.default_account (via _resolve_account); login_node ->
+    # hpc_system_config.login_node; python_path -> sys.executable fallback (no
+    # hpc_system_config home — re-add if a cluster needs a bespoke interpreter).
+    # Popped by the check_consistency shim.
     additional_SBATCH_params: list[str] | None = Field(
         None,
         description="Optional list of SBATCH arguments (omit #SBATCH). Really only relevant for when multi_sim_run_method = 1_job_many_srun_tasks.",
@@ -563,14 +543,35 @@ class analysis_config(cfgBaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_consistency(cls, values):
+        # REMOVE after <release>: Phase-4 (4d) pop-and-warn shim for the 6 retired
+        # analysis_config HPC fields (moved to hpc_system_config.max_concurrent_jobs /
+        # default_account / login_node, the partition-axis PartitionSpec topology, and
+        # sys.executable). Pop-and-DROP so un-migrated YAMLs still load (extra="forbid"
+        # would else reject). The two partition selectors are KEPT (D-A).
+        if isinstance(values, dict):
+            for _k in (
+                "hpc_account",
+                "hpc_login_node",
+                "hpc_gpus_per_node",
+                "hpc_cpus_per_node",
+                "python_path",
+                "hpc_max_simultaneous_sims",
+            ):
+                if _k in values:
+                    values.pop(_k)
+                    warnings.warn(
+                        f"analysis_config field '{_k}' is retired (moved to the "
+                        f"per-HPC-system config / partition axis / sys.executable). "
+                        f"It is ignored. Remove it from your analysis config YAML.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
         mode = values.get("run_mode")
         mpi = values.get("n_mpi_procs")
         omp = values.get("n_omp_threads")
         gpus = values.get("n_gpus")
         nodes = values.get("n_nodes")
         multi_sim_method = values.get("multi_sim_run_method")
-        hpc_gpus_per_node = values.get("hpc_gpus_per_node")
-        hpc_max_simultaneous_sims = values.get("hpc_max_simultaneous_sims")
         hpc_total_job_duration_min = values.get("hpc_total_job_duration_min")
         hpc_time_min_per_sim = values.get("hpc_time_min_per_sim")
 
@@ -642,13 +643,11 @@ class analysis_config(cfgBaseModel):
                     f"Each node requires at least one MPI rank to run on it."
                 )
 
-            if multi_sim_method in {"1_job_many_srun_tasks", "batch_job"} and not hpc_gpus_per_node:
-                raise ValueError(
-                    "hpc_gpus_per_node is required when using GPUs with batch_job or 1_job_many_srun_tasks"
-                )
-
-        if multi_sim_method == "batch_job" and (hpc_max_simultaneous_sims is None or hpc_max_simultaneous_sims < 1):
-            raise ValueError("hpc_max_simultaneous_sims is required and must be > 0 for multi_sim_run_method=batch_job")
+            # Phase-4 (4d): the hpc_gpus_per_node requirement (GPU mode) is retired
+            # here — per-node GPU topology is resolved from the ensemble partition's
+            # PartitionSpec and the workflow emitter asserts a positive count at
+            # Snakefile-generation time. The hpc_max_simultaneous_sims requirement
+            # (batch_job) moved to hpc_system_config.max_concurrent_jobs validation.
 
         if multi_sim_method == "batch_job" and (hpc_total_job_duration_min is None or hpc_total_job_duration_min < 1):
             raise ValueError(

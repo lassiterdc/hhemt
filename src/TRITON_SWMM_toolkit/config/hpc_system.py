@@ -211,6 +211,26 @@ def resolve_gpu_target(
     return (spec.gpu_hardware, spec.gpu_compilation_backend)
 
 
+def resolve_gpus_per_node(
+    cfg_hpc_system: hpc_system_config | None,
+    partition_name: str | None,
+) -> int | None:
+    """Resolve a partition's per-node GPU count from its PartitionSpec.
+
+    Phase-4 (4d): per-node GPU topology moved off analysis_config.hpc_gpus_per_node
+    to PartitionSpec.gpus_per_node. This free function is the resolution point for
+    sites that have no SnakemakeWorkflowBuilder instance (analysis.py + the
+    sensitivity builder's per-sub read). Returns None when no config / no partition /
+    undeclared / no gpus_per_node on the spec; callers apply their own `or 0`/`or 1`.
+    """
+    if cfg_hpc_system is None or partition_name is None:
+        return None
+    spec = cfg_hpc_system.partitions.get(partition_name)
+    if spec is None:
+        return None
+    return spec.gpus_per_node
+
+
 def resolve_additional_modules(
     cfg_hpc_system: hpc_system_config | None,
 ) -> str | None:

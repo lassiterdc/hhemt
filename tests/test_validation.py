@@ -213,8 +213,8 @@ def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis,
     cfg_analysis.multi_sim_run_method = "batch_job"
     cfg_analysis.hpc_ensemble_partition = "tiny"
     cfg_analysis.hpc_setup_and_analysis_processing_partition = "tiny"
-    cfg_analysis.hpc_account = "acct"
-    cfg_analysis.hpc_max_simultaneous_sims = 4
+    # Phase-4 (4d): account + max-concurrent moved to hpc_system_config; the batch_job
+    # presence checks now read them there (this test exercises the max_runtime bound).
     cfg_analysis.hpc_total_job_duration_min = 60
 
     # Baseline: no hpc_system_config -> the new per-partition bound is skipped

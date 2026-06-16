@@ -900,12 +900,12 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     )
 
 
-def _set_batch_job_fields(cfg_analysis, *, account="legacy_acct"):
-    """Set the minimum analysis_config fields generate_snakemake_config('slurm')
-    requires (the synth case defaults them to None)."""
+def _set_batch_job_fields(cfg_analysis):
+    """Set the minimum KEPT analysis_config field generate_snakemake_config('slurm')
+    requires (the synth case defaults it to None). Phase-4 (4d): account +
+    max-concurrent moved to hpc_system_config; only the partition selector stays
+    on analysis_config."""
     cfg_analysis.hpc_ensemble_partition = "gpu"
-    cfg_analysis.hpc_max_simultaneous_sims = 4
-    cfg_analysis.hpc_account = account
 
 
 def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path):
@@ -916,7 +916,7 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
     from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
 
     analysis = synth_multi_sim_analysis
-    _set_batch_job_fields(analysis.cfg_analysis, account="legacy_acct")
+    _set_batch_job_fields(analysis.cfg_analysis)
 
     hpc_yaml = tmp_path / "hpc_system_config.yaml"
     hpc_yaml.write_text(
@@ -925,6 +925,7 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
                 "system_name": "synth-cluster",
                 "default_account": "synth_acct",
                 "gpu_allocation_flavor": "gres",
+                "max_concurrent_jobs": 4,
                 # max_runtime large so the §preflight does not fire here.
                 "partitions": {"gpu": {"max_runtime": 100000, "gpus_per_node": 8}},
             }
@@ -943,17 +944,17 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
     assert "slurm" not in cfg
 
 
-def test_slurm_config_none_hpc_system_is_byte_identical(synth_multi_sim_analysis):
-    """Phase 2 (R2): with cfg_hpc_system None, slurm_account falls back to the
-    legacy cfg_analysis.hpc_account read (byte-identical to pre-Phase-2)."""
+def test_slurm_config_requires_hpc_system_config(synth_multi_sim_analysis):
+    """Phase-4 (4d): slurm mode now REQUIRES hpc_system_config — the concurrency cap
+    (max_concurrent_jobs) and account live there, with NO legacy cfg_analysis fallback.
+    With cfg_hpc_system None, generate_snakemake_config('slurm') asserts on the missing
+    max_concurrent_jobs (replacing the prior Phase-2 byte-identity-on-None behavior)."""
     analysis = synth_multi_sim_analysis
-    _set_batch_job_fields(analysis.cfg_analysis, account="legacy_acct")
+    _set_batch_job_fields(analysis.cfg_analysis)
     assert analysis._workflow_builder.cfg_hpc_system is None
 
-    cfg = analysis._workflow_builder.generate_snakemake_config(mode="slurm")
-    default_res = cfg["default-resources"]
-    assert "slurm_account=legacy_acct" in default_res  # legacy read preserved
-    assert "slurm" not in cfg  # dead block deleted regardless of config presence
+    with pytest.raises(AssertionError, match="max_concurrent_jobs"):
+        analysis._workflow_builder.generate_snakemake_config(mode="slurm")
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")

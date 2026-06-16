@@ -26,7 +26,11 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import yaml  # type: ignore
 
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
-from TRITON_SWMM_toolkit.config.hpc_system import resolve_additional_modules, resolve_gpu_target
+from TRITON_SWMM_toolkit.config.hpc_system import (
+    resolve_additional_modules,
+    resolve_gpu_target,
+    resolve_gpus_per_node,
+)
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
@@ -1487,13 +1491,14 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     def _resolve_account(self) -> str | None:
         """Phase-2 (R3): SLURM account default-resource.
 
-        Prefer cfg_hpc_system.default_account when the new config is present;
-        else fall back to the EXACT legacy read (cfg_analysis.hpc_account) so
-        that cfg_hpc_system is None reproduces today's emission byte-for-byte.
+        Returns cfg_hpc_system.default_account when the per-HPC-system config is
+        present; else None (Phase-4 4d: the legacy cfg_analysis.hpc_account is
+        retired — a LOCAL analysis has no account and emits none, byte-identical
+        to the prior null read).
         """
         if self.cfg_hpc_system is not None:
             return self.cfg_hpc_system.default_account
-        return self.cfg_analysis.hpc_account
+        return None
 
     def _resolve_gpu_alloc_mode(self) -> Literal["gres", "gpus"]:
         """Phase-2 (R3): gres-vs-gpus GPU allocation channel.
@@ -1515,30 +1520,30 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         Prefer the PartitionSpec.gpus_per_node of the named partition when
         cfg_hpc_system is present AND the partition is declared AND it carries a
-        gpus_per_node value; else the legacy cfg_analysis.hpc_gpus_per_node.
-        Both branches apply the legacy ``or 0`` so a None resolves to 0
-        identically (the _build_resource_block contract: 0 == no GPU topology).
+        gpus_per_node value; else 0 (Phase-4 4d: the legacy
+        cfg_analysis.hpc_gpus_per_node is retired; 0 == no GPU topology per the
+        _build_resource_block contract).
         """
         if self.cfg_hpc_system is not None and partition_name is not None:
             spec = self.cfg_hpc_system.partitions.get(partition_name)
             if spec is not None and spec.gpus_per_node is not None:
                 return spec.gpus_per_node
-        return self.cfg_analysis.hpc_gpus_per_node or 0
+        return 0
 
     def _resolve_cpus_per_node(self, partition_name: str | None) -> int | None:
         """Phase-4 (4a, unconsumed): per-node CPU topology for the given partition.
 
         Prefer the PartitionSpec.cpus_per_node of the named partition when
         cfg_hpc_system is present AND the partition is declared AND it carries a
-        cpus_per_node value; else the legacy cfg_analysis.hpc_cpus_per_node.
-        Added additive/unconsumed in 4a (byte-identical); consumers wire when the
-        legacy fallback is removed in 4d.
+        cpus_per_node value; else None (Phase-4 4d: the legacy
+        cfg_analysis.hpc_cpus_per_node is retired; the `not isinstance(..., int)`
+        guard at the one-big-job dry-run preserves graceful-skip on None).
         """
         if self.cfg_hpc_system is not None and partition_name is not None:
             spec = self.cfg_hpc_system.partitions.get(partition_name)
             if spec is not None and spec.cpus_per_node is not None:
                 return spec.cpus_per_node
-        return self.cfg_analysis.hpc_cpus_per_node
+        return None
 
     def _resolve_gpu_hardware(self, partition_name: str | None) -> str | None:
         """Phase-4 (4a, unconsumed): the GPU arch string for the given partition.
@@ -2871,10 +2876,12 @@ def _per_sim_conduit_flow_sources(wildcards):
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
-            max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
+            # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
+            max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for "
+                "generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -4143,8 +4150,9 @@ echo "=========================================="
 """
 
             account_directive = ""
-            if self.cfg_analysis.hpc_account:
-                account_directive = f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
+            _account = self._resolve_account()
+            if _account:
+                account_directive = f"#SBATCH --account={_account}\n"
 
             # Create SLURM efficiency report directory and set timestamped filename
             efficiency_report_dir = self.analysis.analysis_paths.analysis_log_directory / "slurm_efficiency_report"
@@ -4555,7 +4563,9 @@ exit $snakemake_status
 
             # Determine the node to use in reattach commands:
             # prefer explicit config value, fall back to auto-detected hostname
-            reattach_node = self.cfg_analysis.hpc_login_node or submission_node
+            # Phase-4 (4d): login_node moved to hpc_system_config.login_node.
+            _login_node = self.cfg_hpc_system.login_node if self.cfg_hpc_system else None
+            reattach_node = _login_node or submission_node
 
             # Build node-pinned reattach commands (required when cluster uses
             # round-robin login load balancers, e.g. login.hpc.virginia.edu)
@@ -5944,7 +5954,8 @@ exit $snakemake_status
             config_dir = self.write_snakemake_config(config, mode="slurm")
             cmd_args += ["--executor", "slurm", "--profile", str(config_dir)]
         else:
-            cmd_args += ["--cores", str(self.cfg_analysis.hpc_max_simultaneous_sims or 1)]
+            _max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
+            cmd_args += ["--cores", str(_max_concurrent or 1)]
         if verbose:
             print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
         with open(logfile, "w") as log_f:
@@ -6641,7 +6652,12 @@ onerror:
             n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
-            gpus_per_node_config = sub_analysis.cfg_analysis.hpc_gpus_per_node or 0
+            gpus_per_node_config = (
+                resolve_gpus_per_node(
+                    sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition
+                )
+                or 0
+            )
             cpus_per_sim = n_mpi * n_omp
             run_mode = sub_analysis.cfg_analysis.run_mode
 

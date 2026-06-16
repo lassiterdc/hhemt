@@ -23,14 +23,21 @@ def norfolk_1job_analysis():
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
-    analysis.cfg_analysis.hpc_cpus_per_node = 32  # Required for dry-run validation
     analysis.cfg_analysis.n_gpus = 0  # CPU-only
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "test_partition"
     analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition = "test_partition"
-    analysis.cfg_analysis.hpc_account = "test_account"
-    analysis.cfg_analysis.hpc_max_simultaneous_sims = 10
+    # Phase-4 (4d): account/max-concurrent/cpus_per_node moved to hpc_system_config /
+    # the partition's PartitionSpec (retired off analysis_config).
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="test_account",
+        max_concurrent_jobs=10,
+        partitions={"test_partition": PartitionSpec(max_runtime=120, cpus_per_node=32)},
+    )
     analysis.cfg_analysis.local_cpu_cores_for_workflow = 4
 
     # Update in_slurm flag (normally set at __init__ time)
