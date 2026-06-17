@@ -129,8 +129,8 @@ def check_scenarios_setup(analysis: TRITONSWMM_analysis) -> CheckResult:
     for sa_id, sub in _iter_subanalyses_or_self(analysis):
         n = int(sub.n_scenarios)
         total += n
-        if not sub.all_scenarios_created:
-            failed = list(sub.scenarios_not_created)
+        if not sub._all_scenarios_created:
+            failed = list(sub._scenarios_not_created)
             failed_count += len(failed)
             for p in failed:
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "scenario not created"}
@@ -155,8 +155,8 @@ def check_scenarios_run(analysis: TRITONSWMM_analysis) -> CheckResult:
         except Exception:
             n = 0
         total += n
-        if not sub.all_sims_run:
-            failed = list(sub.scenarios_not_run)
+        if not sub._all_sims_run:
+            failed = list(sub._scenarios_not_run)
             failed_count += len(failed)
             for p in failed:
                 row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": "simulation did not complete"}

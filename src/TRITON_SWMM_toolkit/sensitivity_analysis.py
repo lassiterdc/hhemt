@@ -31,6 +31,9 @@ if TYPE_CHECKING:
     from .system import TRITONSWMM_system
 
 
+__all__ = ["TRITONSWMM_sensitivity_analysis"]
+
+
 @dataclass
 class UniqueSystemTarget:
     target_id: int
@@ -1086,7 +1089,7 @@ class TRITONSWMM_sensitivity_analysis:
         compression_level: int = 5,
     ):
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
-            sub_analysis.consolidate_analysis_outputs(
+            sub_analysis._consolidate_analysis_outputs(
                 verbose=verbose,
                 compression_level=compression_level,
             )
@@ -1099,9 +1102,9 @@ class TRITONSWMM_sensitivity_analysis:
         success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
-                success = success and sub_analysis.tritonswmm_triton_analysis_summary_created
+                success = success and sub_analysis._tritonswmm_triton_analysis_summary_created
             elif cfg_sys.toggle_triton_model:
-                success = success and sub_analysis.triton_only_analysis_summary_created
+                success = success and sub_analysis._triton_only_analysis_summary_created
         return success
 
     @property
@@ -1111,11 +1114,11 @@ class TRITONSWMM_sensitivity_analysis:
         link_success = True
         for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
-                node_success = node_success and sub_analysis.tritonswmm_node_analysis_summary_created
-                link_success = link_success and sub_analysis.tritonswmm_link_analysis_summary_created
+                node_success = node_success and sub_analysis._tritonswmm_node_analysis_summary_created
+                link_success = link_success and sub_analysis._tritonswmm_link_analysis_summary_created
             elif cfg_sys.toggle_swmm_model:
-                node_success = node_success and sub_analysis.swmm_only_node_analysis_summary_created
-                link_success = link_success and sub_analysis.swmm_only_link_analysis_summary_created
+                node_success = node_success and sub_analysis._swmm_only_node_analysis_summary_created
+                link_success = link_success and sub_analysis._swmm_only_link_analysis_summary_created
         return node_success and link_success
 
     def consolidate_outputs(
@@ -1365,15 +1368,15 @@ class TRITONSWMM_sensitivity_analysis:
 
     @property
     def tritonswmm_SWMM_node_summary(self):
-        return self.master_analysis.tritonswmm_SWMM_node_summary
+        return self.master_analysis._tritonswmm_SWMM_node_summary
 
     @property
     def tritonswmm_SWMM_link_summary(self):
-        return self.master_analysis.tritonswmm_SWMM_link_summary
+        return self.master_analysis._tritonswmm_SWMM_link_summary
 
     @property
     def tritonswmm_TRITON_summary(self):
-        return self.master_analysis.tritonswmm_TRITON_summary
+        return self.master_analysis._tritonswmm_TRITON_summary
 
     # @property
     # def TRITONSWMM_runtimes(self):
@@ -2330,7 +2333,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_scenarios_created = True
         for key, sub_analysis in self.sub_analyses.items():
-            all_scenarios_created = all_scenarios_created and sub_analysis.all_scenarios_created
+            all_scenarios_created = all_scenarios_created and sub_analysis._all_scenarios_created
         return all_scenarios_created is True
 
     @property
@@ -2345,7 +2348,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_sims_run = True
         for key, sub_analysis in self.sub_analyses.items():
-            all_sims_run = all_sims_run and sub_analysis.all_sims_run
+            all_sims_run = all_sims_run and sub_analysis._all_sims_run
         return all_sims_run is True
 
     @property
@@ -2361,7 +2364,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_TRITON_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
             all_TRITON_timeseries_processed = (
-                all_TRITON_timeseries_processed and sub_analysis.all_TRITON_timeseries_processed
+                all_TRITON_timeseries_processed and sub_analysis._all_TRITON_timeseries_processed
             )
         return all_TRITON_timeseries_processed is True
 
@@ -2378,7 +2381,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_SWMM_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
             all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed and sub_analysis.all_SWMM_timeseries_processed
+                all_SWMM_timeseries_processed and sub_analysis._all_SWMM_timeseries_processed
             )
         return all_SWMM_timeseries_processed is True
 
@@ -2396,7 +2399,7 @@ class TRITONSWMM_sensitivity_analysis:
         for key, sub_analysis in self.sub_analyses.items():
             all_TRITONSWMM_performance_timeseries_processed = (
                 all_TRITONSWMM_performance_timeseries_processed
-                and sub_analysis.all_TRITONSWMM_performance_timeseries_processed
+                and sub_analysis._all_TRITONSWMM_performance_timeseries_processed
             )
         return all_TRITONSWMM_performance_timeseries_processed is True
 
@@ -2404,21 +2407,21 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITONSWMM_performance_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            lst_scens += sub_analysis.TRITONSWMM_performance_time_series_not_processed
+            lst_scens += sub_analysis._TRITONSWMM_performance_time_series_not_processed
         return lst_scens
 
     @property
     def TRITON_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            lst_scens += sub_analysis.TRITON_time_series_not_processed
+            lst_scens += sub_analysis._TRITON_time_series_not_processed
         return lst_scens
 
     @property
     def SWMM_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            lst_scens += sub_analysis.SWMM_time_series_not_processed
+            lst_scens += sub_analysis._SWMM_time_series_not_processed
         return lst_scens
 
     @property
@@ -2434,7 +2437,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_raw_TRITON_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
             all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared and sub_analysis.all_raw_TRITON_outputs_cleared
+                all_raw_TRITON_outputs_cleared and sub_analysis._all_raw_TRITON_outputs_cleared
             )
         return all_raw_TRITON_outputs_cleared is True
 
@@ -2451,7 +2454,7 @@ class TRITONSWMM_sensitivity_analysis:
         all_raw_SWMM_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
             all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared and sub_analysis.all_raw_SWMM_outputs_cleared
+                all_raw_SWMM_outputs_cleared and sub_analysis._all_raw_SWMM_outputs_cleared
             )
         return all_raw_SWMM_outputs_cleared is True
 

@@ -108,7 +108,7 @@ def _mutate_log_field(log_path: Path, field_name: str, new_value) -> None:
 def inject_scenario_setup_failure(scenario_dir: Path) -> None:
     """Mutate scenario_prep_log.json to set scenario_creation_complete = False
     AND delete the entire scenario directory (the most reliable way to make
-    `analysis.scenarios_not_created` flag this scenario, since the analysis
+    `analysis._scenarios_not_created` flag this scenario, since the analysis
     re-detects scenario state from on-disk presence at construction)."""
     if scenario_dir.exists():
         shutil.rmtree(scenario_dir)
