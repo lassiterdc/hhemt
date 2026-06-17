@@ -17,6 +17,10 @@ Snakemake rule for the EDA loop.
 from __future__ import annotations
 
 from TRITON_SWMM_toolkit.eda._plotting import render_eda_plots
+from TRITON_SWMM_toolkit.eda._promote import (
+    promote_eda_plot_to_static_config,
+    register_eda_plot_in_reporting_set,
+)
 from TRITON_SWMM_toolkit.eda._report import assemble_eda_report
 from TRITON_SWMM_toolkit.eda._result import EdaReportResult, EdaResult
 from TRITON_SWMM_toolkit.eda.cross_sim_identity import check_cross_sim_identity
@@ -26,5 +30,7 @@ __all__ = [
     "EdaResult",
     "assemble_eda_report",
     "check_cross_sim_identity",
+    "promote_eda_plot_to_static_config",
+    "register_eda_plot_in_reporting_set",
     "render_eda_plots",
 ]
