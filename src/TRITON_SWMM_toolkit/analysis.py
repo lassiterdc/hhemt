@@ -672,6 +672,26 @@ class TRITONSWMM_analysis:
         report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
         return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
 
+    def promote_eda_plot(self, plot_id: str, *, target: str, **kwargs):
+        """Promote an EDA plot into a standard static-plot config OR a named reporting set (ADR-11).
+
+        Thin facade over eda/_promote.py. ``target="static_plot"`` emits an ADR-4
+        StaticPlotBaseConfig YAML keyed on the plot-ID (kwargs: ``output_path``,
+        ``caption``); ``target="reporting_set"`` records the plot-ID's promotion intent
+        against an ADR-5 ReportingSet (kwargs: ``set_name``). Promotion is a deliberate
+        per-plot user action -- it is NOT folded into eda() and is NOT exposed on Bundle.
+        """
+        from TRITON_SWMM_toolkit.eda._promote import (
+            promote_eda_plot_to_static_config,
+            register_eda_plot_in_reporting_set,
+        )
+
+        if target == "static_plot":
+            return promote_eda_plot_to_static_config(plot_id, **kwargs)
+        if target == "reporting_set":
+            return register_eda_plot_in_reporting_set(plot_id, **kwargs)
+        raise ValueError(f"target must be 'static_plot' or 'reporting_set', got {target!r}.")
+
     @staticmethod
     def _handle_destination_conflict(
         dest_dir: Path,
@@ -2196,7 +2216,7 @@ class TRITONSWMM_analysis:
                 _active_set = get_reporting_set(_set_name)
             except Exception as _e:
                 logging.getLogger(__name__).warning(
-                    "render-path reporting_set resolution failed (%s); " "falling back to 'default' category order",
+                    "render-path reporting_set resolution failed (%s); falling back to 'default' category order",
                     _e,
                 )
                 _active_set = get_reporting_set("default")
@@ -3426,9 +3446,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (sa_id is None) == (
-            master_dir is None
-        ), "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        assert (sa_id is None) == (master_dir is None), (
+            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        )
         is_sub = sa_id is not None
 
         reconciled: set[tuple[str, str]] = set()

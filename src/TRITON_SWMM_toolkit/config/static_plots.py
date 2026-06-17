@@ -111,7 +111,15 @@ class StaticPlotBaseConfig(cfgBaseModel):
     figure_height_inches: float = Field(5.0, gt=0.0)
     savefig_dpi: int = Field(300, gt=0, description="Publication raster dpi.")
     output_format: Literal["pdf", "svg", "ps", "eps", "pgf", "png"] = Field(
-        "pdf", description="Vector publication format. matplotlib backends: pdf|svg|ps|eps|pgf; png for raster."
+        "pdf",
+        description=(
+            "Vector publication format. matplotlib backends: pdf|svg|ps|eps|pgf; png for raster. "
+            "NOTE for figures carrying a rasterized map layer (imshow DEM/depth): prefer 'pdf' or "
+            "'pgf' — matplotlib's 'eps'/'ps' writers embed the raster as a bulky, lossy preview-EPS. "
+            "If a journal mandates EPS, emit 'pdf' here and convert PDF->EPS via Ghostscript "
+            "(epstopdf/pdftops) rather than rendering EPS directly. Pure-vector figures (no raster "
+            "layer) are unaffected; 'eps'/'ps' remain fully legal."
+        ),
     )
     bbox_inches_tight: bool = Field(
         False,
