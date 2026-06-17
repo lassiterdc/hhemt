@@ -50,15 +50,15 @@ onerror:
     # codes as informational — the workflow has already failed.
     shell("""
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.export_scenario_status \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
-            > /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log 2>&1
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
+            > /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log 2>&1
     """)
 
 rule setup:
     output: "_status/a_setup_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/setup.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/setup.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=60,
@@ -69,8 +69,8 @@ rule setup:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.setup_workflow \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --process-system-inputs \
             \
             --compile-triton-swmm \
@@ -85,8 +85,8 @@ rule setup:
 rule prepare_scenario:
     input: "_status/a_setup_complete.flag"
     output: "_status/b_prepare_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/prepare_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/prepare_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -100,8 +100,8 @@ rule prepare_scenario:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.prepare_scenario_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             \
             \
             --flag-output {output} \
@@ -113,8 +113,8 @@ rule prepare_scenario:
 rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -129,8 +129,8 @@ rule run_triton:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type triton \
             \
             --flag-output {output} \
@@ -142,8 +142,8 @@ rule run_triton:
 rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -158,8 +158,8 @@ rule run_tritonswmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type tritonswmm \
             \
             --flag-output {output} \
@@ -171,8 +171,8 @@ rule run_tritonswmm:
 rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     threads: 1
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
@@ -187,8 +187,8 @@ rule run_swmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.run_simulation_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type swmm \
             \
             --flag-output {output} \
@@ -200,9 +200,9 @@ rule run_swmm:
 rule process_triton:
     input: "_status/c_run_triton_evt-{event_id}_complete.flag"
     output: "_status/d_process_triton_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/process_triton_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -216,8 +216,8 @@ rule process_triton:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type triton \
             --which TRITON \
             \
@@ -231,9 +231,9 @@ rule process_triton:
 rule process_tritonswmm:
     input: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_tritonswmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/process_tritonswmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -247,8 +247,8 @@ rule process_tritonswmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type tritonswmm \
             --which both \
             \
@@ -262,9 +262,9 @@ rule process_tritonswmm:
 rule process_swmm:
     input: "_status/c_run_swmm_evt-{event_id}_complete.flag"
     output: "_status/d_process_swmm_evt-{event_id}_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/process_swmm_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     params:
         event_iloc=lambda wildcards: ILOC_BY_EVENT_ID[wildcards.event_id],
     resources:
@@ -278,8 +278,8 @@ rule process_swmm:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.process_timeseries_runner \
             --event-iloc {params.event_iloc} \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --model-type swmm \
             --which SWMM \
             \
@@ -295,9 +295,9 @@ rule consolidate_scenario:
     output:
         flag="_status/f_consolidate_scenario_evt-{event_id}_complete.flag",
         du_sentinel="sims/{event_id}/_status/_du.json",
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/sims/consolidate_scenario_evt-{event_id}.log"
     group: "process_evt_{event_id}"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=10,
@@ -308,8 +308,8 @@ rule consolidate_scenario:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.consolidate_workflow \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --compression-level 5 \
             --flag-output {output.flag} \
             --rule-name consolidate_scenario \
@@ -320,8 +320,8 @@ rule consolidate_scenario:
 rule consolidate:
     input: expand("_status/f_consolidate_scenario_evt-{event_id}_complete.flag", event_id=SIM_IDS)
     output: "_status/e_consolidate_complete.flag"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/consolidate.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/consolidate.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -332,8 +332,8 @@ rule consolidate:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.consolidate_workflow \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --compression-level 5 \
             \
             --which TRITON \
@@ -353,16 +353,16 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../synthetic_test_models/23e859ea50fa19b1/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../synthetic_test_models/9892e5a53f524d98/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../synthetic_test_models/9892e5a53f524d98/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli system_overview \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -377,7 +377,7 @@ def _per_sim_flood_depth_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson',
+        watershed_rel_path='../../../../synthetic_test_models/9892e5a53f524d98/watershed.geojson',
     )
 
 def _per_sim_conduit_flow_sources(wildcards):
@@ -390,7 +390,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../synthetic_test_models/23e859ea50fa19b1/watershed.geojson',
+        watershed_rel_path='../../../../synthetic_test_models/9892e5a53f524d98/watershed.geojson',
     )
 
 rule plot_per_sim_peak_flood_depth:
@@ -410,13 +410,13 @@ rule plot_per_sim_peak_flood_depth:
         source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_flood_depth_sources(w)),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
     log: "logs/plots/per_sim_peak_flood_depth_{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_peak_flood_depth \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
@@ -439,13 +439,13 @@ rule plot_per_sim_conduit_flow:
         source_paths_rst = lambda w: _fmt_sources_rst(_per_sim_conduit_flow_sources(w)),
         event_iloc = lambda w: ILOC_BY_EVENT_ID[w.event_id],
     log: "logs/plots/per_sim_conduit_flow_{event_id}.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=4000, time_min=15
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_sim_conduit_flow \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
             --output {output} \
             > {log} 2>&1
@@ -466,13 +466,13 @@ rule plot_per_analysis_summary_table:
         source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}],
         source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=2000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli per_analysis_summary \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -493,13 +493,13 @@ rule plot_scenario_status_appendix:
         source_paths = [{'path': 'scenario_status.csv', 'variables': ['event_id', 'model_type', 'status', 'runtime_s', 'continuity_error_pct', 'notes']}],
         source_paths_rst = '- ``scenario_status.csv``\n\n  - ``event_id``\n  - ``model_type``\n  - ``status``\n  - ``runtime_s``\n  - ``continuity_error_pct``\n  - ``notes``\n',
     log: "logs/plots/scenario_status_appendix.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=1000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli scenario_status_appendix \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -520,13 +520,13 @@ rule plot_errors_and_warnings:
         source_paths = [{'path': 'scenario_status.csv', 'variables': ['scenario_setup', 'run_completed', 'actual_nTasks', 'actual_omp_threads', 'actual_total_gpus', 'actual_gpu_backend']}, {'path': 'sims/<event_id>/log_<model_type>.json', 'variables': ['simulation_completed (per scenario × model_type)']}, {'path': '../system_log.json', 'variables': ['compilation_successful', 'compilation_triton_only_successful', 'compilation_swmm_successful']}],
         source_paths_rst = '- ``scenario_status.csv``\n\n  - ``scenario_setup``\n  - ``run_completed``\n  - ``actual_nTasks``\n  - ``actual_omp_threads``\n  - ``actual_total_gpus``\n  - ``actual_gpu_backend``\n\n- ``sims/<event_id>/log_<model_type>.json``\n\n  - ``simulation_completed (per scenario × model_type)``\n\n- ``../system_log.json``\n\n  - ``compilation_successful``\n  - ``compilation_triton_only_successful``\n  - ``compilation_swmm_successful``\n',
     log: "logs/plots/errors_and_warnings.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=1000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli errors_and_warnings \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -545,13 +545,13 @@ rule plot_disk_utilization:
         source_paths = [{'path': '_status/_du.json', 'variables': ['disk_utilization_bytes', 'sub_path_breakdown']}],
         source_paths_rst = '- ``_status/_du.json``\n\n  - ``disk_utilization_bytes``\n  - ``sub_path_breakdown``\n',
     log: "logs/plots/disk_utilization.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources: mem_mb=1000, time_min=5
     shell:
         """
         python -m TRITON_SWMM_toolkit.report_renderers._cli disk_utilization \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --output {output} \
             > {log} 2>&1
         """
@@ -563,8 +563,8 @@ rule export_scenario_status:
     output:
         csv = "scenario_status.csv",
         md  = "workflow_summary.md",
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log"
-    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2259_named-reporting-sets/workflow/envs/triton_swmm.yaml"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/export_scenario_status.log"
+    conda: "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/toolkit_06-13_2240_hpc-system-profile-config/workflow/envs/triton_swmm.yaml"
     resources:
         slurm_partition="None",
         runtime=10,
@@ -575,8 +575,8 @@ rule export_scenario_status:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.export_scenario_status \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             > {log} 2>&1
         """
 
@@ -594,7 +594,7 @@ rule render_report:
         "analysis_report.{format}"
     wildcard_constraints:
         format="zip|html"
-    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/synth_multi_sim/logs/render_report_{format}.log"
+    log: "/home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/synth_multi_sim/logs/render_report_{format}.log"
     resources:
         slurm_partition="None",
         runtime=30,
@@ -605,8 +605,8 @@ rule render_report:
     shell:
         """
         /home/***REMOVED***/miniconda3/envs/triton_swmm_toolkit/bin/python -m TRITON_SWMM_toolkit.render_report_runner \
-            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/system_config.yaml \
-            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2259_named-reporting-sets/synth_multi_sim/analysis_config.yaml \
+            --system-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/system_config.yaml \
+            --analysis-config /home/***REMOVED***/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/toolkit_06-13_2240_hpc-system-profile-config/synth_multi_sim/analysis_config.yaml \
             --format {wildcards.format} \
             > {log} 2>&1
         """

@@ -26,6 +26,11 @@ from typing import TYPE_CHECKING, Literal, NamedTuple
 import yaml  # type: ignore
 
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue
+from TRITON_SWMM_toolkit.config.hpc_system import (
+    resolve_additional_modules,
+    resolve_gpu_target,
+    resolve_gpus_per_node,
+)
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError, WorkflowError
 from TRITON_SWMM_toolkit.report_plot_ids import (
     _OUTPUT_EXT_BY_RENDERER,
@@ -682,6 +687,11 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         self.analysis = analysis
         self.cfg_analysis = analysis.cfg_analysis
         self.system = analysis._system
+        # Phase 2 (R3): the per-HPC-system config (None when no
+        # --hpc-system-config was supplied). The batch_job emitter resolution
+        # helpers prefer it when present and fall back to the legacy
+        # cfg_analysis/cfg_system reads otherwise (byte-identical when None).
+        self.cfg_hpc_system = analysis.cfg_hpc_system
         self.analysis_paths = analysis.analysis_paths
         # Prefer an explicit interpreter path for generated shell commands.
         # If analysis stores a generic command ("python"/"python3"), use
@@ -1229,6 +1239,8 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         self,
         analysis_config_yaml: Path | None = None,
         system_config_yaml: Path | None = None,
+        hpc_system_config_yaml: Path | None = None,
+        target_partition: str | None = None,
     ) -> str:
         """
         Generate common config path arguments.
@@ -1241,6 +1253,21 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             If provided, use this system config instead of self.system.system_config_yaml.
             Threaded by SensitivityAnalysisWorkflowBuilder so each sub-analysis rule
             invokes its runner script with the correct per-SA system config (Phase 3).
+        hpc_system_config_yaml : Path | None
+            If provided, use this HPC-system config instead of
+            self.analysis.hpc_system_config_yaml. Emitted as ``--hpc-system-config``
+            only when an HPC config is present (the analysis attribute is None when
+            no ``hpc_system_config.yaml`` was supplied) — so the emitted string is
+            byte-identical to today when the third config is absent.
+        target_partition : str | None
+            Phase-4 (4c): the partition whose PartitionSpec GPU hardware/backend the
+            GPU-compile runners (setup_workflow, run_simulation_runner) resolve +
+            inject into ``TRITONSWMM_system``. Emitted as ``--target-partition`` ONLY
+            when provided — the shared/non-GPU-compile rule emissions pass None and
+            stay byte-identical. The GPU-compile target is the ENSEMBLE (sim)
+            partition for BOTH the setup rule (which compiles the binary that runs on
+            the sim partition) and the sim rule (which runs it) — NOT the processing
+            partition (which is CPU post-processing and carries no GPU hardware).
 
         Returns
         -------
@@ -1249,7 +1276,13 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         """
         analysis_cfg = analysis_config_yaml or self.analysis.analysis_config_yaml
         system_cfg = system_config_yaml or self.system.system_config_yaml
-        return f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
+        hpc_cfg = hpc_system_config_yaml or self.analysis.hpc_system_config_yaml
+        base = f"--system-config {system_cfg} \\\n            --analysis-config {analysis_cfg}"
+        if hpc_cfg is not None:
+            base += f" \\\n            --hpc-system-config {hpc_cfg}"
+        if target_partition is not None:
+            base += f" \\\n            --target-partition {target_partition}"
+        return base
 
     def _delete_flags_for_force_rerun(
         self,
@@ -1454,6 +1487,97 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # Pydantic schema; sourcing static_backend inline removes the need
         # for the legacy peer-file path resolution.
         return self.cfg_analysis.report.interactive.static_backend
+
+    def _resolve_account(self) -> str | None:
+        """Phase-2 (R3): SLURM account default-resource.
+
+        Returns cfg_hpc_system.default_account when the per-HPC-system config is
+        present; else None (Phase-4 4d: the legacy cfg_analysis.hpc_account is
+        retired — a LOCAL analysis has no account and emits none, byte-identical
+        to the prior null read).
+        """
+        if self.cfg_hpc_system is not None:
+            return self.cfg_hpc_system.default_account
+        return None
+
+    def _resolve_gpu_alloc_mode(self) -> Literal["gres", "gpus"]:
+        """Phase-2 (R3): gres-vs-gpus GPU allocation channel.
+
+        Prefer cfg_hpc_system.gpu_allocation_flavor; default to "gpus" when no
+        flavor is declared (Phase-4 4c: the legacy
+        cfg_system.preferred_slurm_option_for_allocating_gpus is retired; the
+        "gpus" default preserves the legacy ``or "gpus"`` behavior).
+        """
+        if self.cfg_hpc_system is not None and self.cfg_hpc_system.gpu_allocation_flavor is not None:
+            return self.cfg_hpc_system.gpu_allocation_flavor
+        # Phase-4 (4c): legacy cfg_system.preferred_slurm_option_for_allocating_gpus
+        # retired; default to "gpus" when no flavor is declared (byte-identical to
+        # the legacy ``or "gpus"`` default).
+        return "gpus"
+
+    def _resolve_gpus_per_node(self, partition_name: str | None) -> int:
+        """Phase-2 (R3): per-node GPU topology for the given (sim) partition.
+
+        Prefer the PartitionSpec.gpus_per_node of the named partition when
+        cfg_hpc_system is present AND the partition is declared AND it carries a
+        gpus_per_node value; else 0 (Phase-4 4d: the legacy
+        cfg_analysis.hpc_gpus_per_node is retired; 0 == no GPU topology per the
+        _build_resource_block contract).
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.gpus_per_node is not None:
+                return spec.gpus_per_node
+        return 0
+
+    def _resolve_cpus_per_node(self, partition_name: str | None) -> int | None:
+        """Phase-4 (4a, unconsumed): per-node CPU topology for the given partition.
+
+        Prefer the PartitionSpec.cpus_per_node of the named partition when
+        cfg_hpc_system is present AND the partition is declared AND it carries a
+        cpus_per_node value; else None (Phase-4 4d: the legacy
+        cfg_analysis.hpc_cpus_per_node is retired; the `not isinstance(..., int)`
+        guard at the one-big-job dry-run preserves graceful-skip on None).
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.cpus_per_node is not None:
+                return spec.cpus_per_node
+        return None
+
+    def _resolve_gpu_hardware(self, partition_name: str | None) -> str | None:
+        """Phase-4 (4a, unconsumed): the GPU arch string for the given partition.
+
+        Prefer the PartitionSpec.gpu_hardware of the named partition (D1 Option-A:
+        gpu_hardware lives on the partition spec) when cfg_hpc_system is present
+        AND the partition is declared AND it carries a gpu_hardware value; else
+        None (Phase-4 4c: the legacy cfg_system.gpu_hardware is retired). The
+        system.py reads switched to the DI'd attribute in 4c; this builder helper
+        resolves the per-partition value to inject + to emit in SLURM directives.
+        """
+        if self.cfg_hpc_system is not None and partition_name is not None:
+            spec = self.cfg_hpc_system.partitions.get(partition_name)
+            if spec is not None and spec.gpu_hardware is not None:
+                return spec.gpu_hardware
+        # Phase-4 (4c): legacy cfg_system.gpu_hardware retired; None when the
+        # partition declares no GPU hardware / no hpc_system_config is present.
+        return None
+
+    def _resolve_additional_modules(self) -> str | None:
+        """Phase-4 (4a, unconsumed): the `module load` argument string.
+
+        Prefer cfg_hpc_system.additional_modules (a ``list[str]``) joined on a
+        single space into the ``str`` the `module load {modules}` emitters expect
+        (module names are space-free, so the join is lossless — D1 str↔list
+        bridge); else the legacy cfg_system field (already a space-joined str).
+        Returns None when neither source supplies modules so the existing
+        ``if modules:`` guards stay byte-identical. Added additive/unconsumed in
+        4a; consumers wire when the legacy fields are removed in 4c.
+        """
+        # Phase-4 (4c): single join site is the config.hpc_system free function
+        # (also used by the GPU-compile runners, which have no builder instance);
+        # the legacy cfg_system fallback is retired.
+        return resolve_additional_modules(self.cfg_hpc_system)
 
     def _make_rule_emission_context(self, *, static_backend: Literal["matplotlib", "plotly"]) -> RuleEmissionContext:
         """Build the shared per-Snakefile-emission context the new
@@ -1829,12 +1953,25 @@ rule consolidate_scenario:
         # Conservative estimate: 2GB per CPU (can be made configurable later)
         mem_mb_per_sim = self.cfg_analysis.mem_gb_per_cpu * cpus_per_sim * 1000
         n_nodes = self.cfg_analysis.n_nodes or 1
-        gpus_per_node_config = self.cfg_analysis.hpc_gpus_per_node or 0
-        gpu_alloc_mode = self.system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+        # Phase 2 (R3): prefer the partition-sourced GPU topology + allocation
+        # flavor from cfg_hpc_system when present; byte-identical legacy reads
+        # when absent. The sim rules target hpc_ensemble_partition (1591/1772),
+        # so the topology is keyed on that partition's PartitionSpec.
+        gpus_per_node_config = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
+        gpu_alloc_mode = self._resolve_gpu_alloc_mode()
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._get_conda_env_path()
         config_args = self._get_config_args()
+        # Phase-4 (4c): the SETUP rule (compiles the GPU binary) and the SIM rule
+        # (runs it) resolve GPU hardware/backend from the ENSEMBLE (sim) partition's
+        # PartitionSpec — the compile/run target — via --target-partition. NB: the
+        # ensemble partition (NOT the processing partition) is the GPU-compile source
+        # for the setup rule too, because the binary it builds runs on the sim
+        # partition. Other rules keep the shared config_args (no --target-partition).
+        gpu_compile_config_args = self._get_config_args(
+            target_partition=self.cfg_analysis.hpc_ensemble_partition
+        )
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
 
         # Make log dirs
@@ -1853,7 +1990,7 @@ rule consolidate_scenario:
             tritonswmm_model = self.system.cfg_system.toggle_tritonswmm_model
             setup_shell = f'''"""
         {self.python_executable} -m TRITON_SWMM_toolkit.setup_workflow \\
-            {config_args} \\
+            {gpu_compile_config_args} \\
             {"--process-system-inputs " if process_system_level_inputs else ""}\\
             {"--overwrite-system-inputs " if overwrite_system_inputs else ""}\\
             {"--compile-triton-swmm " if compile_TRITON_SWMM and tritonswmm_model else ""}\\
@@ -1895,7 +2032,7 @@ rule consolidate_scenario:
             cpus_per_task=omp_threads,
             gpus_total=n_gpus,
             gpus_per_node_config=gpus_per_node_config,
-            gpu_hardware=self.system.cfg_system.gpu_hardware,
+            gpu_hardware=self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition),
             gpu_alloc_mode=gpu_alloc_mode,
             mpi=(self.cfg_analysis.run_mode in ["hybrid", "mpi"]),
         )
@@ -2099,7 +2236,7 @@ rule run_{model_type}:
         """
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {{params.event_iloc}} \\
-            {config_args} \\
+            {gpu_compile_config_args} \\
             --model-type {model_type} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
             --flag-output {{output}} \\
@@ -2739,10 +2876,12 @@ def _per_sim_conduit_flow_sources(wildcards):
         else:  # slurm
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
-            max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
+            # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
+            max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for "
+                "generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -2771,14 +2910,13 @@ def _per_sim_conduit_flow_sources(wildcards):
                         "mem_mb=2000",
                         "runtime=30",
                         f"slurm_partition={slurm_partition}",
-                        f"slurm_account={self.cfg_analysis.hpc_account}",
+                        f"slurm_account={self._resolve_account()}",
                     ],
-                    "slurm": {
-                        "sbatch": {
-                            "partition": "{resources.slurm_partition}",
-                            "account": "{resources.slurm_account}",
-                        }
-                    },
+                    # NOTE: the legacy `slurm: {sbatch: {...}}` block was deleted
+                    # in Phase 2 — it is a `--cluster`-generic-executor key shape
+                    # the modern `executor: slurm` plugin ignores (slurm_partition/
+                    # slurm_account come from default-resources above); snakemake 9's
+                    # profile parser silently drops it. (snakemake FQ2 open-finding 2.)
                 }
             )
 
@@ -2871,7 +3009,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         # additional_sbatch_args is computed below after gpu_directive is set
         # (it needs gpu_directive for the override-detection map).
 
-        modules = self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        modules = self._resolve_additional_modules()
         module_load_cmd = ""
         if modules:
             module_load_cmd = f"module load {modules}"
@@ -2950,12 +3088,18 @@ echo ""
         gpu_cli_arg = ""
 
         if n_gpus_per_sim > 0:
-            gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
-            assert isinstance(
-                gpus_per_node, int
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            # Phase-3 (R4): per-node GPU topology for the sbatch --gres header.
+            # Prefer cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node;
+            # else the legacy cfg_analysis.hpc_gpus_per_node. The `> 0` guard
+            # preserves the original assert's intent (GPUs requested ⇒ a positive
+            # per-node count is required) — _resolve_gpus_per_node resolves an
+            # absent value to 0, which is a misconfiguration in the GPU branch.
+            gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
-            gpu_hardware = self.system.cfg_system.gpu_hardware
+            gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
                 gpu_directive = f"#SBATCH --gres=gpu:{gpu_hardware}:{gpus_per_node}\n"
             else:
@@ -2992,8 +3136,8 @@ echo ""
                     str(self.cfg_analysis.hpc_ensemble_partition),
                 ),
                 "--account": (
-                    "cfg_analysis.hpc_account",
-                    str(self.cfg_analysis.hpc_account),
+                    "cfg_hpc_system.default_account (or cfg_analysis.hpc_account)",
+                    str(self._resolve_account()),
                 ),
                 "--nodes": (
                     "cfg_analysis.hpc_total_nodes (or override_hpc_total_nodes runtime kwarg)",
@@ -3016,7 +3160,8 @@ echo ""
             if gpu_directive:
                 gres_value = gpu_directive.replace("#SBATCH ", "").strip()
                 config_emitted_directives["--gres"] = (
-                    "cfg_analysis.hpc_gpus_per_node + cfg_system.gpu_hardware",
+                    "cfg_hpc_system.partitions[hpc_ensemble_partition].gpus_per_node "
+                    "(or cfg_analysis.hpc_gpus_per_node) + cfg_system.gpu_hardware",
                     gres_value,
                 )
             for cfg_arg in self.cfg_analysis.additional_SBATCH_params or []:
@@ -3044,7 +3189,7 @@ echo ""
         script_content = f"""#!/bin/bash
 #SBATCH --job-name=triton_workflow
 #SBATCH --partition={self.cfg_analysis.hpc_ensemble_partition}
-#SBATCH --account={self.cfg_analysis.hpc_account}
+#SBATCH --account={self._resolve_account()}
 #SBATCH --nodes={total_nodes}
 #SBATCH --exclusive
 {gpu_directive}#SBATCH --time={estimated_time}
@@ -3968,7 +4113,7 @@ ${{CONDA_PREFIX}}/bin/python -m snakemake \\
                 additional_sbatch_args = "#SBATCH "
                 additional_sbatch_args += "\n#SBATCH ".join(self.cfg_analysis.additional_SBATCH_params)
 
-            modules = self.analysis._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+            modules = self._resolve_additional_modules()
             module_load_cmd = ""
             if modules:
                 module_load_cmd = f"module load {modules}"
@@ -4005,8 +4150,9 @@ echo "=========================================="
 """
 
             account_directive = ""
-            if self.cfg_analysis.hpc_account:
-                account_directive = f"#SBATCH --account={self.cfg_analysis.hpc_account}\n"
+            _account = self._resolve_account()
+            if _account:
+                account_directive = f"#SBATCH --account={_account}\n"
 
             # Create SLURM efficiency report directory and set timestamped filename
             efficiency_report_dir = self.analysis.analysis_paths.analysis_log_directory / "slurm_efficiency_report"
@@ -4417,7 +4563,9 @@ exit $snakemake_status
 
             # Determine the node to use in reattach commands:
             # prefer explicit config value, fall back to auto-detected hostname
-            reattach_node = self.cfg_analysis.hpc_login_node or submission_node
+            # Phase-4 (4d): login_node moved to hpc_system_config.login_node.
+            _login_node = self.cfg_hpc_system.login_node if self.cfg_hpc_system else None
+            reattach_node = _login_node or submission_node
 
             # Build node-pinned reattach commands (required when cluster uses
             # round-robin login load balancers, e.g. login.hpc.virginia.edu)
@@ -4500,7 +4648,7 @@ exit $snakemake_status
         str
             Shell command prefix to load modules, or empty string if not on HPC
         """
-        modules_str = self.system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        modules_str = self._resolve_additional_modules()
 
         # If we're in SLURM or using batch_job mode, always try to load tmux
         # Even if no other modules are specified, tmux might not be in default PATH
@@ -5806,7 +5954,8 @@ exit $snakemake_status
             config_dir = self.write_snakemake_config(config, mode="slurm")
             cmd_args += ["--executor", "slurm", "--profile", str(config_dir)]
         else:
-            cmd_args += ["--cores", str(self.cfg_analysis.hpc_max_simultaneous_sims or 1)]
+            _max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
+            cmd_args += ["--cores", str(_max_concurrent or 1)]
         if verbose:
             print(f"[Snakemake] Delete command: {' '.join(cmd_args)}", flush=True)
         with open(logfile, "w") as log_f:
@@ -6440,6 +6589,7 @@ onerror:
             target_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=self.master_analysis.analysis_config_yaml,
                 system_config_yaml=target.system_config_yaml,
+                target_partition=target.target_partition,
             )
             target_cfg_system = target.system.cfg_system
             snakefile_content += f'''rule setup_target_{target.target_id}:
@@ -6503,7 +6653,12 @@ onerror:
             n_nodes = sub_analysis.cfg_analysis.n_nodes or 1
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
-            gpus_per_node_config = sub_analysis.cfg_analysis.hpc_gpus_per_node or 0
+            gpus_per_node_config = (
+                resolve_gpus_per_node(
+                    sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition
+                )
+                or 0
+            )
             cpus_per_sim = n_mpi * n_omp
             run_mode = sub_analysis.cfg_analysis.run_mode
 
@@ -6511,11 +6666,19 @@ onerror:
                 analysis_config_yaml=sub_analysis.analysis_config_yaml,
                 system_config_yaml=sub_analysis._system.system_config_yaml,
             )
+            # Phase 6 (DQ7b): the run_simulation_runner resolves + injects the GPU
+            # hardware from --target-partition. Pass the per-sub ensemble partition
+            # so the sim runs (and any per-sim GPU compile) target the right hardware.
+            sub_gpu_compile_config_args = self._base_builder._get_config_args(
+                analysis_config_yaml=sub_analysis.analysis_config_yaml,
+                system_config_yaml=sub_analysis._system.system_config_yaml,
+                target_partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
+            )
 
             # Phase 3: per-SA system config sources gpu_alloc_mode + gpu_hw so a
             # sensitivity study spanning UVA (gres) and Frontier (gpus) emits the
             # correct SLURM directive per sub-analysis.
-            gpu_alloc_mode = sub_analysis._system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+            gpu_alloc_mode = self._base_builder._resolve_gpu_alloc_mode()
 
             # Setup-target flag this sub-analysis depends on (Phase 3). Keyed by
             # str(sa_id) to match the map built before the rule_all section.
@@ -6541,7 +6704,9 @@ onerror:
             # gpu_hardware comes directly from the per-target cfg_system. Under the
             # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
             # already populated this field via the synthesized per-target YAML.
-            gpu_hw = sub_analysis._system.cfg_system.gpu_hardware
+            gpu_hw = resolve_gpu_target(
+                sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition
+            )[0]
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,
@@ -6644,7 +6809,7 @@ onerror:
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {event_iloc} \\
-            {sub_config_args} \\
+            {sub_gpu_compile_config_args} \\
             --model-type {model_type} \\
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\
@@ -7736,7 +7901,7 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
 
         sim_resources = self.master_analysis._resource_manager._get_simulation_resource_requirements()
         n_gpus_per_sim = sim_resources["n_gpus"]
-        if n_gpus_per_sim > 0 and not self.system.cfg_system.gpu_compilation_backend:
+        if n_gpus_per_sim > 0 and not self.system.gpu_compilation_backend:
             raise ConfigurationError(
                 field="gpu_compilation_backend",
                 message=(

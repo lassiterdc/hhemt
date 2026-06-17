@@ -358,6 +358,24 @@ class TestSubmitSingleJobWorkflow:
 class TestSubmitWorkflowIntegration:
     """Integration tests for submit_workflow with 1_job_many_srun_tasks mode."""
 
+    @pytest.fixture(autouse=True)
+    def _patch_queued_sentinels(self):
+        # submit_workflow writes _status/_queued/ sentinels post-submit (commit
+        # 4802a71) via _write_queued_sentinels(self._planned_sim_tokens(), ...).
+        # Both halves break the thin mock_analysis fixture: _planned_sim_tokens
+        # runs len(analysis.df_sims) (the call argument is evaluated eagerly, so
+        # patching only the outer method does NOT prevent it), and
+        # _write_queued_sentinels does mkdir on the mocked /test analysis_dir.
+        # Patch BOTH. These 2 tests assert only wait_for_completion forwarding;
+        # the _queued/ sentinel mechanism is covered by
+        # test_synth_06_submission_guard.py. (Mirrors the _patch_lock_clear
+        # autouse fixture above.)
+        with (
+            patch.object(SnakemakeWorkflowBuilder, "_planned_sim_tokens", return_value=[]),
+            patch.object(SnakemakeWorkflowBuilder, "_write_queued_sentinels"),
+        ):
+            yield
+
     @patch.object(SnakemakeWorkflowBuilder, "_submit_single_job_workflow")
     def test_submit_workflow_passes_wait_parameter(
         self, mock_submit_single, mock_analysis

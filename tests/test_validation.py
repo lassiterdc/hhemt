@@ -196,3 +196,155 @@ def test_analysis_validate_raise_if_invalid(norfolk_multi_sim_analysis):
 
     # If we get here, validation passed (no ConfigurationError raised)
     assert True
+
+
+def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis, tmp_path):
+    """Phase 2 (R5): a per-rule runtime exceeding the partition max_runtime cap
+    surfaces a preflight error naming the partition; cfg_hpc_system=None is a no-op.
+    """
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+
+    a = synth_multi_sim_analysis
+    cfg_sys = a._system.cfg_system
+    cfg_analysis = a.cfg_analysis
+    # Force batch_job + partitions so the per-rule runtime bound is reachable.
+    cfg_analysis.multi_sim_run_method = "batch_job"
+    cfg_analysis.hpc_ensemble_partition = "tiny"
+    cfg_analysis.hpc_setup_and_analysis_processing_partition = "tiny"
+    # Phase-4 (4d): account + max-concurrent moved to hpc_system_config; the batch_job
+    # presence checks now read them there (this test exercises the max_runtime bound).
+    cfg_analysis.hpc_total_job_duration_min = 60
+
+    # Baseline: no hpc_system_config -> the new per-partition bound is skipped
+    # (R2 no-op). No max_runtime error is produced.
+    base = preflight_validate(cfg_sys, cfg_analysis)
+    assert not any("max_runtime" in e.message for e in base.errors)
+
+    # With a cap (5 min) below the fixed 30/60/120-min rule runtimes, the bound fires.
+    hpc_yaml = tmp_path / "hpc_system_config.yaml"
+    hpc_yaml.write_text(
+        _yaml.safe_dump(
+            {
+                "system_name": "tiny-cluster",
+                "default_account": "acct",
+                "partitions": {"tiny": {"max_runtime": 5}},
+            }
+        )
+    )
+    cfg_hpc = load_hpc_system_config(hpc_yaml)
+
+    result = preflight_validate(cfg_sys, cfg_analysis, cfg_hpc_system=cfg_hpc)
+    assert not result.is_valid
+    msgs = " ".join(e.message for e in result.errors)
+    assert "max_runtime" in msgs and "tiny" in msgs
+
+
+def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_analysis, tmp_path):
+    """Phase 3 (R5): a 1_job_many_srun_tasks hpc_total_job_duration_min exceeding
+    the ensemble partition's max_runtime cap surfaces a preflight error naming the
+    partition; cfg_hpc_system=None is a no-op (R2 byte-identity).
+    """
+    import yaml as _yaml
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+
+    a = synth_multi_sim_analysis
+    cfg_sys = a._system.cfg_system
+    cfg_analysis = a.cfg_analysis
+    # Force 1_job_many_srun_tasks + a partition so the one-big-job bound is reachable.
+    cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
+    cfg_analysis.hpc_ensemble_partition = "tiny"
+    cfg_analysis.hpc_total_nodes = 2
+    cfg_analysis.hpc_total_job_duration_min = 60
+
+    # Baseline: no hpc_system_config -> the one-big-job bound is skipped (R2 no-op).
+    base = preflight_validate(cfg_sys, cfg_analysis)
+    assert not any("max_runtime" in e.message for e in base.errors)
+
+    # With a cap (5 min) below the requested 60-min duration, the bound fires.
+    hpc_yaml = tmp_path / "hpc_system_config.yaml"
+    hpc_yaml.write_text(
+        _yaml.safe_dump(
+            {
+                "system_name": "tiny-cluster",
+                "default_account": "acct",
+                "partitions": {"tiny": {"max_runtime": 5}},
+            }
+        )
+    )
+    cfg_hpc = load_hpc_system_config(hpc_yaml)
+
+    result = preflight_validate(cfg_sys, cfg_analysis, cfg_hpc_system=cfg_hpc)
+    assert not result.is_valid
+    msgs = " ".join(e.message for e in result.errors)
+    assert "max_runtime" in msgs and "tiny" in msgs
+    assert "1_job_many_srun_tasks" in msgs
+
+
+def test_dq6_per_row_partition_requires_batch_job(tmp_path):
+    """Phase 6 (DQ6): per-row ensemble-partition variation is incompatible with
+    `1_job_many_srun_tasks` (one allocation cannot span partitions) and must
+    fail loud at preflight; `batch_job` mode is permitted."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.validation import (
+        ValidationResult,
+        _validate_per_row_partition_requires_batch_job,
+    )
+
+    csv = tmp_path / "sens.csv"
+    pd.DataFrame(
+        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}
+    ).to_csv(csv, index=False)
+
+    # 1_job_many_srun_tasks + >1 distinct partition -> invalid, with batch_job hint.
+    cfg_bad = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="1_job_many_srun_tasks",
+        sensitivity_analysis=str(csv),
+    )
+    result_bad = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg_bad, result_bad)
+    assert not result_bad.is_valid
+    msgs = " ".join(e.message for e in result_bad.errors)
+    assert "batch_job" in msgs
+    assert "gpu-a6000" in msgs and "gpu-a100" in msgs
+
+    # batch_job mode -> valid (per-sim partition is fine).
+    cfg_ok = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="batch_job",
+        sensitivity_analysis=str(csv),
+    )
+    result_ok = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg_ok, result_ok)
+    assert result_ok.is_valid
+
+
+def test_dq6_single_partition_allowed_under_1job(tmp_path):
+    """A single distinct partition under `1_job_many_srun_tasks` is allowed (no span)."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.validation import (
+        ValidationResult,
+        _validate_per_row_partition_requires_batch_job,
+    )
+
+    csv = tmp_path / "sens.csv"
+    pd.DataFrame(
+        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}
+    ).to_csv(csv, index=False)
+    cfg = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="1_job_many_srun_tasks",
+        sensitivity_analysis=str(csv),
+    )
+    result = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg, result)
+    assert result.is_valid

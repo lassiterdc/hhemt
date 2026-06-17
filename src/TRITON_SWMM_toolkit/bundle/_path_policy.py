@@ -79,9 +79,9 @@ _PATH_FIELD_POLICY: dict[str, PathPolicy] = {
     "TRITONSWMM_software_directory": PathPolicy.IS_NONE_ACCEPTABLE,
     "subcatchment_raingage_mapping": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "triton_swmm_configuration_template": PathPolicy.BUNDLE_RELATIVE,
-    # ---- analysis_config (10 Path fields) -----------------------------
+    # ---- analysis_config (Path fields) --------------------------------
+    # Phase-4 (4d): python_path retired off analysis_config (no longer a Path field).
     "weather_timeseries": PathPolicy.BUNDLE_RELATIVE,
-    "python_path": PathPolicy.IS_NONE_ACCEPTABLE,
     "storm_tide_boundary_line_gis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "weather_event_summary_csv": PathPolicy.BUNDLE_RELATIVE_OR_NONE,
     "sensitivity_analysis": PathPolicy.BUNDLE_RELATIVE_OR_NONE,

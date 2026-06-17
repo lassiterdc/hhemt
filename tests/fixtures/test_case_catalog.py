@@ -17,14 +17,12 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
 
 import pandas as pd
 import platformdirs
 import pytest
 
 import TRITON_SWMM_toolkit.constants as cnst
-
 from tests.fixtures import worktree_slug
 
 # Import from test fixtures
@@ -32,10 +30,18 @@ from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
     retrieve_TRITON_SWMM_test_case,
 )
+from TRITON_SWMM_toolkit.case_study_catalog import (
+    _FRONTIER_ANALYSIS_OVERLAY,
+    _FRONTIER_SYSTEM_OVERLAY,
+    _UVA_ANALYSIS_OVERLAY,
+    _UVA_SYSTEM_OVERLAY,
+)
 from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
 
-if TYPE_CHECKING:
-    from TRITON_SWMM_toolkit.platform_configs import PlatformConfig
+# UVA HPC example-data dir (was the retired UVA platform preset's
+# example_data_dir). The literal $USER scratch path is the Phase-5
+# anonymization-scrub target.
+_UVA_EXAMPLE_DATA_DIR = Path("/scratch") / os.getenv("USER", "unknown") / "triton_swmm_toolkit_data"
 
 
 def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
@@ -69,11 +75,11 @@ class GetTS_TestCases:
     Provides factory methods to create test cases with:
     - Synthetic weather data
     - Short simulation durations
-    - Platform-specific HPC configurations (via PlatformConfig)
+    - Platform-specific HPC configurations (via analysis/system overlay dicts)
     - Isolated test directories
 
-    Platform-specific methods use centralized PlatformConfig instances from
-    TRITON_SWMM_toolkit._testing.platform_configs to eliminate configuration duplication.
+    Platform-specific methods apply centralized analysis/system overlay dicts
+    (defined in case_study_catalog.py) to eliminate configuration duplication.
 
     Caching Strategy:
         Use start_from_scratch=False to reuse processed inputs from previous runs,
@@ -92,18 +98,21 @@ class GetTS_TestCases:
         analysis_name: str,
         start_from_scratch: bool,
         download_if_exists=False,
-        platform_config: Optional["PlatformConfig"] = None,
+        analysis_overlay: dict | None = None,
+        system_overlay: dict | None = None,
+        example_data_dir: Path | None = None,
         analysis_overrides: dict | None = None,
         system_overrides: dict | None = None,
         n_reporting_tsteps_per_sim=cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
         TRITON_reporting_timestep_s=cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
         test_system_dirname=cnst.TEST_SYSTEM_DIRNAME,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """
         Internal helper to create Norfolk test cases.
 
-        Supports both old-style (additional_*_configs) and new-style (platform_config + overrides)
-        for backward compatibility during refactoring.
+        Applies a base analysis/system overlay (analysis_overlay / system_overlay),
+        then per-call overrides (analysis_overrides / system_overrides) take precedence.
 
         Args:
             analysis_name: Name for the test analysis
@@ -112,31 +121,22 @@ class GetTS_TestCases:
             TRITON_reporting_timestep_s: Reporting interval in seconds
             start_from_scratch: Whether to reprocess inputs
             download_if_exists: Whether to re-download HydroShare data
-            platform_config: PlatformConfig instance (new style)
-            analysis_overrides: Analysis config overrides (new style)
-            system_overrides: System config overrides (new style)
-            additional_analysis_configs: Analysis configs (old style)
-            additional_system_configs: System configs (old style)
+            analysis_overlay: Base analysis-config overlay dict
+            system_overlay: Base system-config overlay dict
+            analysis_overrides: Per-call analysis-config overrides (win over the overlay)
+            system_overrides: Per-call system-config overrides (win over the overlay)
             example_data_dir: Override for data directory location
+            hpc_system_config_yaml: Optional path to an hpc_system_config YAML
 
         Returns:
             retrieve_TRITON_SWMM_test_case instance with configured system
         """
 
-        example_data_dir = None
-        if platform_config is not None:
-            if platform_config.example_data_dir:
-                example_data_dir = platform_config.example_data_dir
-            analysis_overrides = analysis_overrides or {}
-            system_overrides = system_overrides or {}
-            final_analysis_configs = (
-                platform_config.to_analysis_dict() | analysis_overrides
-            )
-            final_system_configs = platform_config.to_system_dict() | system_overrides
-        else:
-            # When platform_config is None, use overrides directly or empty dicts
-            final_analysis_configs = analysis_overrides or {}
-            final_system_configs = system_overrides or {}
+        # Example-platform overlay is the base; per-call overrides win (same
+        # precedence as the retired PlatformConfig.to_*_dict() | overrides).
+        # example_data_dir is now an explicit param (was a UVA-preset field).
+        final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
+        final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
         example = NorfolkIreneExample.load(
             download_if_exists=download_if_exists, example_data_dir=example_data_dir
@@ -152,6 +152,7 @@ class GetTS_TestCases:
             start_from_scratch=start_from_scratch,
             additional_analysis_configs=final_analysis_configs,
             additional_system_configs=final_system_configs,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
         return nrflk_test
 
@@ -189,7 +190,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=8,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
         )
 
@@ -219,7 +222,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
         )
 
@@ -261,7 +266,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -304,7 +311,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -347,7 +356,9 @@ class UVA_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -390,7 +401,9 @@ class UVA_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -432,7 +445,9 @@ class UVA_TestCases:
             analysis_name=analysis_name,
             start_from_scratch=start_from_scratch,
             n_events=1,
-            platform_config=cnst.UVA_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
+            system_overlay=_UVA_SYSTEM_OVERLAY,
+            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
             analysis_overrides=analysis_overrides,
             system_overrides=system_overrides,
         )
@@ -465,7 +480,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=20,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -492,7 +508,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=20,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -525,7 +542,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -557,7 +575,8 @@ class Frontier_TestCases:
             start_from_scratch=start_from_scratch,
             download_if_exists=download_if_exists,
             n_events=1,
-            platform_config=cnst.FRONTIER_DEFAULT_PLATFORM_CONFIG,
+            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
+            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
             analysis_overrides=analysis_overrides,
         )
 
@@ -570,7 +589,10 @@ class Local_TestCases:
 
     @classmethod
     def retrieve_norfolk_cpu_config_sensitivity_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+        cls,
+        start_from_scratch: bool = False,
+        download_if_exists: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity"
@@ -586,6 +608,7 @@ class Local_TestCases:
             download_if_exists=download_if_exists,
             n_events=1,
             analysis_overrides=analysis_overrides,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
 
     @classmethod
@@ -657,7 +680,10 @@ class Local_TestCases:
 
     @classmethod
     def retrieve_norfolk_multi_sim_test_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
+        cls,
+        start_from_scratch: bool = False,
+        download_if_exists: bool = False,
+        hpc_system_config_yaml: Path | None = None,
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local multi-simulation test with 2 events."""
         analysis_name = "multi_sim"
@@ -673,6 +699,7 @@ class Local_TestCases:
             download_if_exists=download_if_exists,
             n_events=2,
             system_overrides=system_overrides,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
 
     # ========== Multi-Model Test Cases ==========
@@ -954,13 +981,21 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(
         start_from_scratch: bool = False,
     ):
-        """Phase 1 R4 — `system.gpu_compilation_backend='WRONG'` → Pydantic Literal failure."""
+        """Phase 1 R4 — `system.target_dem_resolution='WRONG'` → Pydantic float-coercion failure.
+
+        Retargeted from the retired `system.gpu_compilation_backend` overlay (Phase-4
+        moved GPU backend off system_config) to the still-existing top-level typed
+        `target_dem_resolution: float` field. `"WRONG"` fails float coercion, re-firing
+        `system_config.model_validate` → the `"SystemConfig validation"` ConfigurationError
+        wrapper (sensitivity_analysis.py), which the test asserts via
+        `match="SystemConfig validation"`.
+        """
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_invalid_overlay",
             model_subset="all",
             extra_columns={
-                "system.gpu_compilation_backend": ["WRONG", None, None, None],
+                "system.target_dem_resolution": ["WRONG", None, None, None],
             },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
@@ -1026,30 +1061,110 @@ class Local_TestCases:
         )
 
     @staticmethod
-    def retrieve_synth_cpu_config_sensitivity_case_with_system_gpu_hardware_override(
+    def retrieve_synth_cpu_config_sensitivity_case_with_partition_axis(
         start_from_scratch: bool = False,
     ):
-        """Phase 1 R8 (T13 equivalence) — `system.gpu_hardware='override-test-gpu'` overlay."""
+        """Phase-5 partition-axis re-enablement — `analysis.hpc_ensemble_partition`
+        overlay resolves gpu_hardware per-partition (replaces the retired
+        `system.gpu_hardware` overlay; T13 equivalence). The synthetic
+        `hpc_system_config_test.yaml` declares `test_partition` -> gpu_hardware
+        `a6000`; the MASTER `hpc_ensemble_partition` is set to `test_partition`
+        because the as-built single-master resolution reads the master selector
+        for compile-dedup + GRES (per-row generalization is deferred to Phase 6)."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
-            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            analysis_name="synth_sensitivity_with_partition_axis",
             model_subset="all",
             extra_columns={
-                "system.gpu_hardware": [
-                    "override-test-gpu", "override-test-gpu",
-                    "override-test-gpu", "override-test-gpu",
+                "analysis.hpc_ensemble_partition": [
+                    "test_partition", "test_partition",
+                    "test_partition", "test_partition",
                 ],
             },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
-            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            analysis_name="synth_sensitivity_with_partition_axis",
             toggle_tritonswmm_model=True,
             toggle_triton_model=False,
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_test.yaml"
+            ),
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+                "hpc_ensemble_partition": "test_partition",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_multi_partition_fanout(
+        start_from_scratch: bool = False,
+    ):
+        """Phase-6 cross-hardware fan-out — the `hpc.partition` overlay varies the
+        ensemble partition across rows (gpu-a6000 + gpu-a100), so the compile-dedup
+        produces TWO distinct UniqueSystemTarget builds with distinct
+        partition-derived gpu_hardware. (Tests force `n_gpus>0` per sub
+        post-construction so the GPU directive renders — setting it in the CSV
+        would trip the analysis-config MPI-only-mode validator.)
+        `hpc_system_config_multipartition.yaml` declares both partitions; the
+        MASTER `hpc_ensemble_partition` is gpu-a6000."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_multi_partition_fanout",
+            model_subset="all",
+            extra_columns={
+                "hpc.partition": [
+                    "gpu-a6000", "gpu-a100",
+                    "gpu-a6000", "gpu-a100",
+                ],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_multi_partition_fanout",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
+            ),
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "hpc_ensemble_partition": "gpu-a6000",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_hpc_gpu_hardware_rejected(
+        start_from_scratch: bool = False,
+    ):
+        """Phase-6 DQ4 — a direct `hpc.gpu_hardware` overlay column is allowlist-
+        REJECTED (gpu_hardware is derived-only, R7). Constructing this case raises
+        a ConfigurationError pointing the user to `hpc.partition`."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_hpc_gpu_hardware_rejected",
+            model_subset="all",
+            extra_columns={
+                "hpc.gpu_hardware": ["a6000", "a100", "a6000", "a100"],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_hpc_gpu_hardware_rejected",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
+            ),
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "hpc_ensemble_partition": "gpu-a6000",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
             },
         )
 

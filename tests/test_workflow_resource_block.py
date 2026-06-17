@@ -119,3 +119,41 @@ def test_cpu_non_mpi_unchanged(synth_multi_sim_builder):
     assert "mpi=True" not in block
     assert "tasks_per_gpu" not in block
     assert "slurm_extra" not in block
+
+
+def test_resolution_helpers_read_hpc_system_config(synth_multi_sim_builder):
+    """Phase 4 (4a): with cfg_hpc_system present, the resolution helpers read the
+    new per-HPC-system config (default_account + per-partition topology) instead
+    of the legacy cfg_analysis/cfg_system reads.
+
+    This is the byte-identity foundation for 4c/4d: those phases delete the
+    None-fallback branch of each helper, so every Snakefile-generating path must
+    resolve through a non-None cfg_hpc_system first. The (4a-additive) helpers
+    _resolve_gpu_hardware / _resolve_cpus_per_node / _resolve_additional_modules
+    are exercised here too. A fresh builder is constructed and its cfg_hpc_system
+    is overridden locally so the session-scoped fixture's other consumers (the
+    GPU-branch tests above, which call _build_resource_block directly) are
+    unaffected.
+    """
+    from pathlib import Path
+
+    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    example = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
+    b = SnakemakeWorkflowBuilder(synth_multi_sim_builder)
+    b.cfg_hpc_system = load_hpc_system_config(example)
+
+    # default_account is read from the new config (a distinctive value the legacy
+    # null hpc_account could not produce — proving the cfg_hpc_system branch fired).
+    assert b._resolve_account() == b.cfg_hpc_system.default_account == "test_alloc"
+    # Per-partition topology is read from the named PartitionSpec.
+    assert b._resolve_gpus_per_node("test_partition") == 8
+    assert b._resolve_cpus_per_node("test_partition") == 40
+    assert b._resolve_gpu_hardware("test_partition") == "a6000"
+    # gpu_allocation_flavor + additional_modules are unset in the example config,
+    # gpu_allocation_flavor + additional_modules are unset in the example config.
+    # 4c removed the legacy cfg_system fallbacks, so these resolve to the no-config
+    # defaults: "gpus" for the alloc mode, None for the module string.
+    assert b._resolve_gpu_alloc_mode() == "gpus"
+    assert b._resolve_additional_modules() is None

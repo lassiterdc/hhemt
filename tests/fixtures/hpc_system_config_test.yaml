@@ -1,0 +1,23 @@
+# Test-only hpc_system_config (Phase 4, sub-commit 4a — byte-identity foundation).
+#
+# Threaded into the byte-identity (Norfolk multi_sim + cpu_config_sensitivity) and
+# resolution-helper test cases so that cfg_hpc_system is non-None BEFORE the legacy
+# None-fallbacks are deleted in 4c/4d. The named test cases are LOCAL mode with all
+# hpc_* selectors null (hpc_ensemble_partition is null), so:
+#   - the partition spec below is never looked up (selector short-circuits to legacy),
+#   - default_account appears only in the batch_job profile config.yaml, not the
+#     Snakefile under byte-identity test,
+#   - gpu_allocation_flavor / additional_modules are left unset so the 4a helpers
+#     fall through to the legacy reads.
+# Net effect on the two Snakefile goldens: byte-identical (see the 4a Validation
+# Plan's human-verified-diff gate). default_account is a distinctive value so the
+# resolution-helper test can prove _resolve_account() reads from cfg_hpc_system.
+system_name: test_cluster
+default_account: test_alloc
+partitions:
+  test_partition:
+    max_runtime: 4320
+    gpus_per_node: 8
+    cpus_per_node: 40
+    gpu_hardware: a6000
+    gpu_compilation_backend: HIP

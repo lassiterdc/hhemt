@@ -66,7 +66,7 @@ def _require_software_dirs() -> None:
 # config restricted to [n_devices]. requires_software_dirs flags the variants
 # whose sensitivity XLSX carry system.* overlay rows (which revalidate against
 # the compiled swmm/triton software dirs); the swmm-only XLSX has none.
-_SHARED_UVA_VARS = ["n_devices", "system.target_dem_resolution", "system.gpu_hardware"]
+_SHARED_UVA_VARS = ["n_devices", "system.target_dem_resolution", "analysis.hpc_ensemble_partition"]
 _SWMM_VARS = ["n_devices"]
 
 

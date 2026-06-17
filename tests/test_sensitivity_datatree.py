@@ -53,9 +53,16 @@ def test_build_sensitivity_datatree_structure(tmp_path):
         index=pd.Index(["0", "1"], name="sa_id"),
     )
 
+    # `_refresh_log` is a read-only observer call the cross-analysis datatree read
+    # site makes on each sub (added by the log-write-race-fix compute-on-read change);
+    # the stub provides a no-op so the structural test does not depend on a real log.
     sub_analyses = {
-        "0": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree())),
-        "1": SimpleNamespace(process=_FakeProcess(_build_fake_sub_tree())),
+        "0": SimpleNamespace(
+            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
+        ),
+        "1": SimpleNamespace(
+            process=_FakeProcess(_build_fake_sub_tree()), _refresh_log=lambda: None
+        ),
     }
 
     master = SimpleNamespace(

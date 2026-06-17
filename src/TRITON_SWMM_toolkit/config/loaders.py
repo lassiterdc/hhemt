@@ -6,6 +6,7 @@ from TRITON_SWMM_toolkit.config.system import system_config
 from TRITON_SWMM_toolkit.config.analysis import analysis_config
 from TRITON_SWMM_toolkit.config.brand_theme import brand_theme
 from TRITON_SWMM_toolkit.config.globus import GlobusTransferSpec
+from TRITON_SWMM_toolkit.config.hpc_system import hpc_system_config
 
 _M = TypeVar("_M")
 
@@ -36,6 +37,10 @@ def load_system_config(cfg_yaml: Path) -> system_config:
 
 def load_analysis_config(cfg_yaml: Path) -> analysis_config:
     return _load_config(cfg_yaml, analysis_config)
+
+
+def load_hpc_system_config(cfg_yaml: Path) -> hpc_system_config:
+    return _load_config(cfg_yaml, hpc_system_config)
 
 
 def load_brand_theme(cfg_yaml: Path) -> brand_theme:

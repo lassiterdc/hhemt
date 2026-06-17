@@ -15,7 +15,7 @@ import pandas as pd
 
 from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
-from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+from TRITON_SWMM_toolkit.config.loaders import load_analysis_config, load_hpc_system_config
 from TRITON_SWMM_toolkit.execution import (
     LocalConcurrentExecutor,
     SerialExecutor,
@@ -93,6 +93,7 @@ class TRITONSWMM_analysis:
         skip_log_update: bool = False,
         verbose: bool = True,
         is_main_orchestrator: bool = True,
+        hpc_system_config_yaml: Path | None = None,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -113,11 +114,23 @@ class TRITONSWMM_analysis:
         verbose : bool, optional
             If True, print a resume status summary when prior ``_status/`` flags
             are detected (default: True)
+        hpc_system_config_yaml : Path, optional
+            Path to the per-HPC-system configuration YAML
+            (``hpc_system_config.yaml``). Loaded ONCE here into
+            ``self.cfg_hpc_system`` (None when the path is absent). Consumers
+            (the SLURM emitters / preflight) wire in later phases; with the
+            argument absent, behavior is byte-identical to today (default: None).
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
+        # Load the per-HPC-system config ONCE (R2). Store BEFORE any
+        # _get_config_args read so the direct attribute read is always safe.
+        self.hpc_system_config_yaml = hpc_system_config_yaml
+        self.cfg_hpc_system = (
+            load_hpc_system_config(hpc_system_config_yaml) if hpc_system_config_yaml is not None else None
+        )
         if cfg_analysis.analysis_dir:
             analysis_dir = cfg_analysis.analysis_dir
         else:
@@ -186,11 +199,11 @@ class TRITONSWMM_analysis:
             cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks"
         )
         self._execution_strategy = self._select_execution_strategy()
-        if self.cfg_analysis.python_path is not None:
-            python_executable = str(self.cfg_analysis.python_path)
-        else:
-            python_executable = "python"
-        self._python_executable = python_executable
+        # Phase-4 (4d): python_path retired off analysis_config (no hpc_system_config
+        # home — re-addable if a cluster needs a bespoke interpreter). Rule shells use
+        # "python", resolved by the conda-env activation emitted in the shell prefix —
+        # byte-identical to the prior python_path-absent emission.
+        self._python_executable = "python"
         self._workflow_builder = SnakemakeWorkflowBuilder(self)
         self.process = TRITONSWMM_analysis_post_processing(self)
         self.plot = TRITONSWMM_analysis_plotting(self)
@@ -262,7 +275,13 @@ class TRITONSWMM_analysis:
                 for sa_id in incomplete_sa_ids:
                     sa = self.sensitivity.sub_analyses[sa_id]
                     n_gpus = sa.cfg_analysis.n_gpus or 0
-                    gpus_per_node = sa.cfg_analysis.hpc_gpus_per_node or 1
+                    # Phase-4 (4d): per-node GPU topology resolves from the sub-analysis
+                    # ensemble partition's PartitionSpec (retired off analysis_config).
+                    from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpus_per_node
+
+                    gpus_per_node = (
+                        resolve_gpus_per_node(sa.cfg_hpc_system, sa.cfg_analysis.hpc_ensemble_partition) or 1
+                    )
                     if n_gpus > 0:
                         nodes = math.ceil(n_gpus / gpus_per_node)
                     else:
@@ -432,6 +451,7 @@ class TRITONSWMM_analysis:
         return preflight_validate(
             cfg_system=self._system.cfg_system,
             cfg_analysis=self.cfg_analysis,
+            cfg_hpc_system=self.cfg_hpc_system,
         )
 
     def _refresh_log(self):

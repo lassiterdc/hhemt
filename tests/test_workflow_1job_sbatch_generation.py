@@ -27,7 +27,14 @@ def norfolk_1job_cpu_only():
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "test_partition"
-    analysis.cfg_analysis.hpc_account = "test_account"
+    # Phase-4 (4d): account moved to hpc_system_config.default_account.
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="test_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120)},
+    )
 
     # Update in_slurm flag (normally set at __init__ time)
     analysis.in_slurm = True
@@ -47,13 +54,23 @@ def norfolk_1job_with_gpus():
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
-    analysis.cfg_analysis.hpc_gpus_per_node = 8  # Frontier-like
-    analysis._system.cfg_system.gpu_hardware = "a100"
+    # Phase-4 (4d): per-node GPU count + gpu_hardware + account all resolve from the
+    # ensemble partition's PartitionSpec / hpc_system_config (retired off analysis_config
+    # + system_config). The partition declares gpus_per_node=8 + gpu_hardware="a100".
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="test_account",
+        max_concurrent_jobs=10,
+        partitions={
+            "test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100", gpus_per_node=8)
+        },
+    )
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "test_partition"
-    analysis.cfg_analysis.hpc_account = "test_account"
 
     # Update in_slurm flag (normally set at __init__ time)
     analysis.in_slurm = True
@@ -223,7 +240,17 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_wit
     from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_with_gpus
-    analysis.cfg_analysis.hpc_gpus_per_node = None  # Remove required field
+    # Phase-4 (4d): per-node GPU count is the partition's PartitionSpec.gpus_per_node
+    # (hpc_gpus_per_node retired, no cfg_analysis fallback). Override to a partition
+    # WITHOUT gpus_per_node so _resolve_gpus_per_node resolves 0 and the GPU-header
+    # assert fires.
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="test_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120, gpu_hardware="a100")},
+    )
 
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
     config = workflow_builder.generate_snakemake_config(mode="single_job")
@@ -404,3 +431,65 @@ def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
 
     with pytest.raises(ConfigurationError, match="extra_sbatch_args is only valid"):
         workflow_builder.submit_workflow(extra_sbatch_args=["--qos=debug"])
+
+
+def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
+    """Phase 3 (R4): when cfg_hpc_system is present, the sbatch --account is
+    sourced from cfg_hpc_system.default_account (via _resolve_account), not the
+    legacy cfg_analysis.hpc_account."""
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_cpu_only
+    # A distinct account on the new config proves which source the header used
+    # (Phase-4 4d: account is sourced solely from hpc_system_config.default_account).
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="hpc_sys_account",
+        partitions={"test_partition": PartitionSpec(max_runtime=120)},
+    )
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir
+    )
+    script_content = script_path.read_text()
+
+    assert "#SBATCH --account=hpc_sys_account" in script_content
+    assert "--account=test_account" not in script_content
+
+
+def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
+    """Phase 4 (4d): the --gres per-node GPU count + gpu_hardware are both sourced
+    from the ensemble partition's PartitionSpec (gpus_per_node + gpu_hardware), via
+    _resolve_gpus_per_node / _resolve_gpu_hardware — the legacy cfg_analysis.hpc_gpus_per_node
+    + cfg_system.gpu_hardware are retired."""
+    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_1job_with_gpus
+    # The fixture partition declares 8/node; this override declares 4/node — the
+    # resolved per-node count must be the partition's (4).
+    analysis.cfg_hpc_system = hpc_system_config(
+        system_name="test-cluster",
+        default_account="hpc_sys_account",
+        partitions={
+            "test_partition": PartitionSpec(max_runtime=120, gpus_per_node=4, gpu_hardware="a100")
+        },
+    )
+
+    workflow_builder = SnakemakeWorkflowBuilder(analysis)
+    config = workflow_builder.generate_snakemake_config(mode="single_job")
+    config_dir = workflow_builder.write_snakemake_config(config, mode="single_job")
+    snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
+    script_path = workflow_builder._generate_single_job_submission_script(
+        snakefile_path, config_dir
+    )
+    script_content = script_path.read_text()
+
+    assert "--gres=gpu:a100:4" in script_content, "per-node count must come from PartitionSpec (4)"
+    assert "--gres=gpu:a100:8" not in script_content, "legacy cfg_analysis value (8) must not win"
+    assert "TOTAL_GPUS=$((SLURM_JOB_NUM_NODES * 4))" in script_content

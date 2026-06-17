@@ -1,0 +1,22 @@
+# Test-only multi-partition hpc_system_config (Phase 6 — cross-hardware fan-out).
+#
+# Declares TWO GPU partitions with DISTINCT gpu_hardware so a sensitivity CSV
+# varying `hpc.partition` across rows produces TWO distinct UniqueSystemTarget
+# builds (a6000 + a100, NOT collapsed) and emits distinct per-target
+# --target-partition + per-sub GPU directives. Exercises the DQ7 per-row
+# partition generalization end-to-end at Snakefile-generation time (no compile).
+system_name: test_multipartition_cluster
+default_account: test_alloc
+partitions:
+  gpu-a6000:
+    max_runtime: 4320
+    gpus_per_node: 8
+    cpus_per_node: 40
+    gpu_hardware: a6000
+    gpu_compilation_backend: HIP
+  gpu-a100:
+    max_runtime: 4320
+    gpus_per_node: 8
+    cpus_per_node: 64
+    gpu_hardware: a100
+    gpu_compilation_backend: CUDA

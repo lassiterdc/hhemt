@@ -79,6 +79,7 @@ class retrieve_TRITON_SWMM_test_case:
         start_from_scratch: bool = False,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ):
         """
         Initialize test case from system configuration.
@@ -171,7 +172,9 @@ class retrieve_TRITON_SWMM_test_case:
             )
         )
         # update analysis
-        self.analysis = TRITONSWMM_analysis(cfg_anlysys_yaml, self.system)
+        self.analysis = TRITONSWMM_analysis(
+            cfg_anlysys_yaml, self.system, hpc_system_config_yaml=hpc_system_config_yaml
+        )
         # Link analysis back to system
         self.system._analysis = self.analysis
 
@@ -285,9 +288,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
         params: SyntheticModelParams = DEFAULT_PARAMS,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ):
         self.artifacts = get_or_build_synthetic_case(params)
         self.analysis_name = analysis_name
+        self._hpc_system_config_yaml = hpc_system_config_yaml
 
         # Per-worktree rooting (Phase 1, synth-test-isolation-and-runtime):
         # nest runs_root under the current worktree's slug so concurrent pytest
@@ -342,7 +347,9 @@ class retrieve_synth_TRITON_SWMM_test_case:
         )
 
         self.system = TRITONSWMM_system(self.system_yaml)
-        self.analysis = TRITONSWMM_analysis(self.analysis_yaml, self.system)
+        self.analysis = TRITONSWMM_analysis(
+            self.analysis_yaml, self.system, hpc_system_config_yaml=hpc_system_config_yaml
+        )
         self.system._analysis = self.analysis
         # `skip_run=True` (Phase 2, synth-test-isolation-and-runtime): callers that
         # need only a configured analysis for `generate_snakefile_content` skip the
@@ -380,7 +387,6 @@ class retrieve_synth_TRITON_SWMM_test_case:
             "toggle_use_swmm_for_hydrology": kwargs["toggle_use_swmm_for_hydrology"],
             "toggle_use_constant_mannings": kwargs["toggle_use_constant_mannings"],
             "target_dem_resolution": float(params.cell_size_m),
-            "gpu_compilation_backend": None,
             "crs": {"horizontal_epsg": int(params.epsg), "vertical_epsg": 5703},
         }
         if not kwargs["toggle_use_constant_mannings"]:

@@ -16,6 +16,7 @@ import TRITON_SWMM_toolkit.analysis as anlysis
 from TRITON_SWMM_toolkit import orchestrator_sentinels as _osent
 from TRITON_SWMM_toolkit.cf_conventions import apply_global_attributes
 from TRITON_SWMM_toolkit.config.analysis import ClearRawValue, ForceRerunValue
+from TRITON_SWMM_toolkit.config.hpc_system import resolve_additional_modules, resolve_gpu_target
 from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
 from TRITON_SWMM_toolkit.utils import current_datetime_string, write_datatree_zarr
@@ -36,10 +37,38 @@ class UniqueSystemTarget:
     system_config_yaml: Path
     system: "TRITONSWMM_system"
     sub_analysis_ids: list[str] = field(default_factory=list)
+    # Phase 6 (DQ7a): the ensemble partition this build target compiles for.
+    # All sa_ids in a target share (hw, backend) by dedup-key construction, so any
+    # member's partition yields the correct GPU build; the first member's is stored.
+    # Threaded to the setup rule's --target-partition so the GPU compile resolves
+    # the right PartitionSpec hardware per build target (not the master partition).
+    target_partition: str | None = None
 
 
 _SYSTEM_COLUMN_PREFIX = "system."
 _ANALYSIS_COLUMN_PREFIX = "analysis."
+_HPC_COLUMN_PREFIX = "hpc."
+# hpc.{key} columns are a provenance-rooted ALIAS surface for HPC-resource
+# sensitivity axes. The single supported alias today is hpc.partition ->
+# analysis.hpc_ensemble_partition (the partition selector stays an analysis_config
+# field per D-A; only the column SPELLING gains an hpc. root). DQ1 Option 3.
+_HPC_ALIAS_TO_ANALYSIS_FIELD: dict[str, str] = {
+    "partition": "hpc_ensemble_partition",
+    "setup_partition": "hpc_setup_and_analysis_processing_partition",
+}
+
+
+def _is_hpc_overlay_column(col: str) -> bool:
+    """True if `col` is `hpc.{key}` where key is a supported HPC-resource alias."""
+    if not col.startswith(_HPC_COLUMN_PREFIX):
+        return False
+    return col[len(_HPC_COLUMN_PREFIX) :] in _HPC_ALIAS_TO_ANALYSIS_FIELD
+
+
+def _resolve_hpc_alias_to_analysis_field(col: str) -> str:
+    """Map an `hpc.{key}` column to its target analysis_config field name."""
+    assert col.startswith(_HPC_COLUMN_PREFIX), f"expected hpc.* column, got {col!r}"
+    return _HPC_ALIAS_TO_ANALYSIS_FIELD[col[len(_HPC_COLUMN_PREFIX) :]]
 
 
 def _is_system_overlay_column(col: str) -> bool:
@@ -72,6 +101,23 @@ def _strip_analysis_prefix(col: str) -> str:
     """Return the analysis_config field name from an `analysis.{field}` column."""
     assert col.startswith(_ANALYSIS_COLUMN_PREFIX), f"expected analysis.* column, got {col!r}"
     return col[len(_ANALYSIS_COLUMN_PREFIX) :]
+
+
+def _resolve_row_ensemble_partition(row, master_partition: str | None) -> str | None:
+    """Per-row ensemble partition from the partition-overlay cell, else master.
+
+    Recognizes the canonical `hpc.partition` alias and the legacy
+    `analysis.hpc_ensemble_partition` spelling (both resolve to the ensemble
+    selector). Returns the master ensemble partition when neither cell is set.
+    Used by `_build_unique_system_targets` to derive the per-row compile-dedup
+    hardware BEFORE `_create_sub_analyses` materializes the per-sub cfg.
+    """
+    for col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
+        if col in row.index:
+            val = row.get(col)
+            if val is not None and not pd.isna(val) and str(val).strip() != "":
+                return str(val)
+    return master_partition
 
 
 def _to_native_attr(value):
@@ -187,7 +233,26 @@ class TRITONSWMM_sensitivity_analysis:
         self._df_setup_full = df_setup_full
         self._has_per_sa_system_configs = "system_config_yaml" in df_setup_full.columns
         self._has_per_sa_system_overlay_columns = any(_is_system_overlay_column(c) for c in df_setup_full.columns)
-        if self._has_per_sa_system_overlay_columns or self._has_per_sa_system_configs:
+        # Phase 6 (DQ7): a per-row ensemble-partition axis (hpc.partition canonical or
+        # analysis.hpc_ensemble_partition legacy) that varies across rows resolves to
+        # DISTINCT gpu_hardware per row, so it must route through the per-target build
+        # path (one UniqueSystemTarget per distinct hardware) — not the master fast
+        # path. A single distinct partition collapses to the master target as before.
+        _partition_axis_cols = [
+            c for c in df_setup_full.columns
+            if c == "hpc.partition" or c == "analysis.hpc_ensemble_partition"
+        ]
+        _distinct_row_partitions: set = set()
+        for _c in _partition_axis_cols:
+            _distinct_row_partitions |= {
+                str(v) for v in df_setup_full[_c].dropna().tolist() if str(v).strip() != ""
+            }
+        self._has_per_row_partition_variation = len(_distinct_row_partitions) > 1
+        if (
+            self._has_per_sa_system_overlay_columns
+            or self._has_per_sa_system_configs
+            or self._has_per_row_partition_variation
+        ):
             self.unique_system_targets = self._build_unique_system_targets(
                 df_setup_full,
                 is_main_orchestrator=is_main_orchestrator,
@@ -207,7 +272,10 @@ class TRITONSWMM_sensitivity_analysis:
         analysis_cols = [
             c
             for c in df_setup_full.columns
-            if c in _analysis_config_for_df_setup.model_fields or _is_analysis_overlay_column(c)
+            if c in _analysis_config_for_df_setup.model_fields
+            or _is_analysis_overlay_column(c)
+            or _is_hpc_overlay_column(c)  # Phase 6 (DQ5): retain hpc.* alias columns so
+            # the per-sub overlay application in _create_sub_analyses can resolve them.
         ]
         self.df_setup = df_setup_full.loc[:, analysis_cols]
         self.sub_analyses = self._create_sub_analyses()
@@ -1328,7 +1396,9 @@ class TRITONSWMM_sensitivity_analysis:
                 continue
             if _is_system_overlay_column(col):
                 continue
-            if _is_analysis_overlay_column(col):
+            if _is_hpc_overlay_column(col):
+                field_name = _resolve_hpc_alias_to_analysis_field(col)
+            elif _is_analysis_overlay_column(col):
                 field_name = _strip_analysis_prefix(col)
             elif col in analysis_config.model_fields:
                 field_name = col  # bare name; DeprecationWarning fires at sub-analysis construction time
@@ -1438,17 +1508,29 @@ class TRITONSWMM_sensitivity_analysis:
             | set(analysis_config.model_fields)
             | {_SYSTEM_COLUMN_PREFIX + f for f in system_config.model_fields}
             | {_ANALYSIS_COLUMN_PREFIX + f for f in analysis_config.model_fields}
+            | {_HPC_COLUMN_PREFIX + k for k in _HPC_ALIAS_TO_ANALYSIS_FIELD}
         )
         unknown = set(df_setup.columns) - valid_columns
         if unknown:
+            # Phase 6 (DQ4): a direct `hpc.gpu_hardware` axis is rejected — gpu_hardware
+            # is derived-only (R7); cross-hardware variation is expressed via the
+            # `hpc.partition` selector (hardware derives from the partition spec).
+            hpc_gpu_hint = (
+                " To vary GPU hardware across rows, use `hpc.partition` "
+                "(gpu_hardware derives from the partition spec); a direct "
+                "`hpc.gpu_hardware` axis is not supported."
+                if any(c.startswith(_HPC_COLUMN_PREFIX) for c in unknown)
+                else ""
+            )
             raise ConfigurationError(
                 field="sensitivity_analysis.csv_columns",
                 message=(
                     f"Unknown sensitivity-CSV columns: {sorted(unknown)}. "
                     f"Valid columns: sa_id (required, becomes index), system_config_yaml, "
                     f"bare analysis_config field names, `system.{{field}}` for system_config fields, "
-                    f"`analysis.{{field}}` for analysis_config fields. "
-                    f"If you previously used `gpu_hardware_override`, replace with `system.gpu_hardware`."
+                    f"`analysis.{{field}}` for analysis_config fields, and the HPC-resource "
+                    f"aliases `hpc.partition` / `hpc.setup_partition` (resolving to the "
+                    f"analysis_config partition selectors)." + hpc_gpu_hint
                 ),
                 config_path=snstivity_definition,
             )
@@ -1815,19 +1897,53 @@ class TRITONSWMM_sensitivity_analysis:
             else:
                 cfg = self._system.cfg_system
 
+            # Phase 6 (DQ7a): resolve the ensemble partition PER ROW from the
+            # overlay (analysis.hpc_ensemble_partition / hpc.partition), falling back
+            # to the master. The dedup key STAYS hardware-derived (two same-hardware
+            # partitions collapse to one build target) — NOT partition-name-keyed —
+            # but the hardware now derives from each row's partition, so a6000 + a100
+            # rows produce DISTINCT build targets.
+            _row_partition = _resolve_row_ensemble_partition(
+                row, self.master_analysis.cfg_analysis.hpc_ensemble_partition
+            )
+            _gpu_hardware, _gpu_backend = resolve_gpu_target(
+                self.master_analysis.cfg_hpc_system,
+                _row_partition,
+            )
             key = (
                 cfg.target_dem_resolution,
-                cfg.gpu_hardware,
-                cfg.gpu_compilation_backend,
+                _gpu_hardware,
+                _gpu_backend,
             )
             if key not in groups:
-                groups[key] = {"cfg": cfg, "sa_ids": []}
+                groups[key] = {"cfg": cfg, "sa_ids": [], "partition": _row_partition}
             groups[key]["sa_ids"].append(sa_id_str)
+
+        # Phase-4 (4c): GPU hardware/backend + modules are injected into each target
+        # system (retired off system_config), resolved from the master ensemble
+        # partition (uniform in 4c). The master self._system represents that same
+        # ensemble target, so populate its injected attrs too (so the reuse branch
+        # below is GPU-correct, not a None-injected CPU system).
+        _gpu_hardware, _gpu_backend = resolve_gpu_target(
+            self.master_analysis.cfg_hpc_system,
+            self.master_analysis.cfg_analysis.hpc_ensemble_partition,
+        )
+        _modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
+        self._system.gpu_hardware = _gpu_hardware
+        self._system.gpu_compilation_backend = _gpu_backend
+        self._system.additional_modules = _modules
 
         targets: list[UniqueSystemTarget] = []
         for target_id, group in enumerate(groups.values()):
             cfg = group["cfg"]
             sa_ids = group["sa_ids"]
+            _target_partition = group["partition"]
+            # Phase 6 (DQ7a): resolve THIS target's (hw, backend, modules) from its
+            # own partition — distinct targets (a6000 vs a100) inject distinct pairs.
+            _t_hw, _t_backend = resolve_gpu_target(
+                self.master_analysis.cfg_hpc_system, _target_partition
+            )
+            _t_modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
             generated_yaml = generated_dir / f"target_{target_id}.yaml"
             if is_main_orchestrator:
                 # Temp-file-rename for atomicity (PID-keyed per Gotcha 17 pattern).
@@ -1835,18 +1951,29 @@ class TRITONSWMM_sensitivity_analysis:
                 with tmp_yaml.open("w") as fh:
                     yaml.safe_dump(cfg.model_dump(mode="json"), fh, sort_keys=False)
                 tmp_yaml.rename(generated_yaml)
-            # Reuse master self._system when the resolved cfg matches; avoids re-running
-            # _check_paths_exist against possibly-HPC paths in the synthesized YAML.
-            if cfg.model_dump_json() == self._system.cfg_system.model_dump_json():
+            # Reuse master self._system only when BOTH the resolved cfg AND the
+            # injected GPU pair match the master's (else a same-cfg, different-hw
+            # target would wrongly reuse the master CPU/hardware system).
+            if (
+                cfg.model_dump_json() == self._system.cfg_system.model_dump_json()
+                and _t_hw == self._system.gpu_hardware
+                and _t_backend == self._system.gpu_compilation_backend
+            ):
                 target_system = self._system
             else:
-                target_system = TRITONSWMM_system(generated_yaml)
+                target_system = TRITONSWMM_system(
+                    generated_yaml,
+                    gpu_hardware=_t_hw,
+                    gpu_compilation_backend=_t_backend,
+                    additional_modules=_t_modules,
+                )
             targets.append(
                 UniqueSystemTarget(
                     target_id=target_id,
                     system_config_yaml=generated_yaml,
                     system=target_system,
                     sub_analysis_ids=sa_ids,
+                    target_partition=_target_partition,
                 )
             )
 
@@ -1867,7 +1994,9 @@ class TRITONSWMM_sensitivity_analysis:
             for k, v in row.items():
                 if pd.isna(v):
                     continue
-                if _is_analysis_overlay_column(k):
+                if _is_hpc_overlay_column(k):
+                    overlay_cells[_resolve_hpc_alias_to_analysis_field(k)] = v
+                elif _is_analysis_overlay_column(k):
                     overlay_cells[_strip_analysis_prefix(k)] = v
                 elif k in analysis_config.model_fields:
                     warnings.warn(
@@ -1933,6 +2062,13 @@ class TRITONSWMM_sensitivity_analysis:
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=sa_id_to_system[sa_id],
                 skip_log_update=self._skip_log_update,
+                # Phase 6 (DQ7): thread the master's hpc_system_config to each sub so
+                # the per-sub partition -> gpu_hardware / gpus_per_node resolution
+                # (resolve_gpu_target / resolve_gpus_per_node, consumed by the per-sa
+                # GRES emission) works for cross-hardware sensitivity. Subs previously
+                # carried cfg_hpc_system=None, which was latent only because the GRES
+                # block is gated on n_gpus>0 (the synth CPU fixtures never tripped it).
+                hpc_system_config_yaml=self.master_analysis.hpc_system_config_yaml,
             )
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses

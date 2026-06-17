@@ -61,6 +61,13 @@ def main():
         help="Path to system configuration YAML file",
     )
     parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        required=False,
+        default=None,
+        help="Optional path to the per-HPC-system configuration YAML file",
+    )
+    parser.add_argument(
         "--overwrite-scenario-if-already-set-up",
         action="store_true",
         default=False,
@@ -111,6 +118,9 @@ def main():
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
+    if args.hpc_system_config is not None and not args.hpc_system_config.exists():
+        logger.error(f"HPC system config not found: {args.hpc_system_config}")
+        return 2
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -130,6 +140,7 @@ def main():
             system=system,
             skip_log_update=True,
             is_main_orchestrator=False,
+            hpc_system_config_yaml=args.hpc_system_config,
         )
 
         logger.info(f"Preparing scenario {args.event_iloc}")

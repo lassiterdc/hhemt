@@ -1,5 +1,6 @@
+import warnings
 from pydantic import Field, model_validator
-from typing import Optional, Literal
+from typing import Optional
 from pathlib import Path
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
 
@@ -136,36 +137,15 @@ class system_config(cfgBaseModel):
         "v5.2.4",
         description="SWMM tag to checkout.",
     )
-    gpu_compilation_backend: Optional[Literal["HIP", "CUDA"]] = Field(
-        None,
-        description=(
-            "GPU backend for compilation: 'HIP' for AMD GPUs (ROCm), 'CUDA' for NVIDIA GPUs. "
-            "If None, only CPU (OPENMP) backend will be compiled. "
-            "When set, both CPU and GPU backends are compiled into separate build directories."
-        ),
-    )
-    gpu_hardware: Optional[str] = Field(
-        None,
-        description=(
-            "GPU hardware identifier used to select compilation flags "
-            "(e.g., 'a6000', 'rtx3090', 'a100', 'h100'). Required for CUDA "
-            "single-arch GPU builds."
-        ),
-    )
-    preferred_slurm_option_for_allocating_gpus: Optional[Literal["gres", "gpus"]] = (
-        Field(
-            "gpus",
-            description=(
-                "Preferred SLURM GPU allocation directive. "
-                "Set to 'gres' to emit --gres=gpu:..., or 'gpus' to emit "
-                "--gpus/--gpus-per-node when supported by the cluster."
-            ),
-        )
-    )
-    additional_modules_needed_to_run_TRITON_SWMM_on_hpc: Optional[str] = Field(
-        None,
-        description="Space separated list of modules to load using 'module load' prior to running each TRITON-SWMM simulatoin, e.g,. 'PrgEnv-amd Core/24.07 craype-accel-amd-gfx90a'",
-    )
+    # Phase-4 (4c, hpc-system-profile-config): gpu_compilation_backend, gpu_hardware,
+    # preferred_slurm_option_for_allocating_gpus, and
+    # additional_modules_needed_to_run_TRITON_SWMM_on_hpc were RETIRED off system_config.
+    # GPU hardware/backend now live per-partition on PartitionSpec (resolved via
+    # config.hpc_system.resolve_gpu_target + constructor-injected into TRITONSWMM_system);
+    # the alloc flavor is hpc_system_config.gpu_allocation_flavor; modules are
+    # hpc_system_config.additional_modules (joined via resolve_additional_modules).
+    # A one-cycle pop-and-warn shim in validate_toggle_dependencies (below) lets
+    # un-migrated YAMLs still load. REMOVE the shim after <release>.
     subcatchment_raingage_mapping: Optional[Path] = Field(
         None,
         description="Lookup table relating spatially indexed rainfall time series to SWMM subcatchment IDs.",
@@ -281,6 +261,27 @@ class system_config(cfgBaseModel):
             legacy = values.pop("crs_epsg")
             if legacy is not None:
                 values["crs"] = {"horizontal_epsg": int(legacy)}
+
+        # REMOVE after <release>: Phase-4 hpc-system-profile-config retired the four
+        # HPC system_config fields to PartitionSpec / hpc_system_config. Pop-and-warn
+        # so un-migrated YAMLs still LOAD (extra="forbid" would else reject them).
+        _retired_hpc_keys = (
+            "gpu_hardware",
+            "gpu_compilation_backend",
+            "preferred_slurm_option_for_allocating_gpus",
+            "additional_modules_needed_to_run_TRITON_SWMM_on_hpc",
+        )
+        if isinstance(values, dict):
+            for _k in _retired_hpc_keys:
+                if _k in values:
+                    values.pop(_k)
+                    warnings.warn(
+                        f"system_config field '{_k}' is retired (moved to the "
+                        f"per-HPC-system config / PartitionSpec). It is ignored. "
+                        f"Remove it from your system config YAML.",
+                        DeprecationWarning,
+                        stacklevel=2,
+                    )
         errors = []
 
         _, additional_errors = cls.validate_from_toggle(

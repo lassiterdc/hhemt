@@ -345,7 +345,7 @@ def _validate_model_selection(cfg: system_config, result: ValidationResult):
 # ============================================================================
 
 
-def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
+def validate_analysis_config(cfg: analysis_config, cfg_hpc_system: Any | None = None) -> ValidationResult:
     """Validate analysis configuration.
 
     Checks:
@@ -372,7 +372,7 @@ def validate_analysis_config(cfg: analysis_config) -> ValidationResult:
     _validate_toggle_dependencies_analysis(cfg, result)
 
     # HPC sanity checks (section 5)
-    _validate_hpc_configuration(cfg, result)
+    _validate_hpc_configuration(cfg, result, cfg_hpc_system=cfg_hpc_system)
 
 
     return result
@@ -760,18 +760,17 @@ def _validate_per_sa_system_configs(
     # require agreement on every non-dedup-key cfg_system field within a group.
     if not loaded_by_path:
         return
+    # Phase-4 (4c): gpu_hardware/gpu_compilation_backend were retired off system_config
+    # (now partition-axis-derived), so they are no longer per-sub-YAML consistency
+    # dimensions here — the compile-dedup gpu pairing lives in
+    # sensitivity_analysis._build_unique_system_targets. The remaining system_config
+    # dedup dimension is target_dem_resolution.
     groups: dict[tuple, list[tuple[Path, system_config]]] = {}
     for path, loaded in loaded_by_path.items():
-        key = (
-            loaded.target_dem_resolution,
-            loaded.gpu_hardware,
-            loaded.gpu_compilation_backend,
-        )
+        key = (loaded.target_dem_resolution,)
         groups.setdefault(key, []).append((path, loaded))
     dedup_key_fields = {
         "target_dem_resolution",
-        "gpu_hardware",
-        "gpu_compilation_backend",
     }
     for entries in groups.values():
         if len(entries) < 2:
@@ -804,8 +803,81 @@ def _validate_per_sa_system_configs(
                     break  # First divergence per pair is enough.
 
 
-def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
-    """Validate HPC configuration sanity."""
+def _validate_per_row_partition_requires_batch_job(
+    cfg_analysis: analysis_config,
+    result: ValidationResult,
+):
+    """Per-row partition variation requires batch_job mode (DQ6 fail-loud guard).
+
+    Under partition-as-sensitivity-axis, a sensitivity CSV may declare an
+    ``hpc.partition`` (canonical) or ``analysis.hpc_ensemble_partition`` (legacy)
+    overlay column to vary the ensemble partition per row. >1 distinct partition
+    value is structurally incompatible with
+    ``multi_sim_run_method='1_job_many_srun_tasks'`` (one SLURM allocation cannot
+    span partitions). batch_job mode submits each sim as an independent sbatch, so
+    per-sim partition is fine. Fail loud at preflight.
+
+    Runs only when ``toggle_sensitivity_analysis=True`` AND the CSV is readable AND
+    a partition overlay column is present. Skipped silently otherwise.
+    """
+    import pandas as pd
+
+    if not cfg_analysis.toggle_sensitivity_analysis:
+        return
+    if cfg_analysis.multi_sim_run_method != "1_job_many_srun_tasks":
+        return  # batch_job + local support per-row partition; only the single-allocation mode does not.
+    sensitivity_csv = cfg_analysis.sensitivity_analysis
+    if sensitivity_csv is None:
+        return
+    sensitivity_csv = Path(sensitivity_csv)
+    if not sensitivity_csv.is_file():
+        return
+    try:
+        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
+            df = pd.read_excel(sensitivity_csv)
+        else:
+            df = pd.read_csv(sensitivity_csv)
+    except Exception:
+        return
+
+    # The partition axis may be spelled `hpc.partition` (canonical) or
+    # `analysis.hpc_ensemble_partition` (legacy). Both resolve to the same field.
+    partition_cols = [
+        c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
+    ]
+    distinct_partitions: set = set()
+    for c in partition_cols:
+        distinct_partitions |= {
+            str(v) for v in df[c].dropna().tolist() if str(v).strip() != ""
+        }
+    if len(distinct_partitions) > 1:
+        result.add_error(
+            field="analysis.multi_sim_run_method",
+            message=(
+                f"Sensitivity CSV varies the ensemble partition across rows "
+                f"(distinct partitions: {sorted(distinct_partitions)}), which is "
+                f"incompatible with multi_sim_run_method='1_job_many_srun_tasks' "
+                f"(one SLURM allocation cannot span partitions). "
+                f"Use multi_sim_run_method='batch_job' for cross-partition "
+                f"(cross-hardware) sensitivity experiments."
+            ),
+            current_value=cfg_analysis.multi_sim_run_method,
+            fix_hint="Set multi_sim_run_method='batch_job' in the analysis config.",
+        )
+
+
+def _validate_hpc_configuration(
+    cfg: analysis_config,
+    result: ValidationResult,
+    cfg_hpc_system: Any | None = None,
+):
+    """Validate HPC configuration sanity.
+
+    ``cfg_hpc_system`` (typed ``Any`` to avoid a circular import from
+    ``config.hpc_system``) is the per-HPC-system config when supplied; when it
+    is ``None`` the Phase-2 per-partition runtime preflight is skipped so the
+    validation result is byte-identical to today (R2).
+    """
     method = cfg.multi_sim_run_method
 
     if method == "1_job_many_srun_tasks":
@@ -836,12 +908,14 @@ def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
                 fix_hint="Set hpc_total_job_duration_min (e.g., 720 for 12 hours)",
             )
 
-        if cfg.hpc_max_simultaneous_sims is None or cfg.hpc_max_simultaneous_sims < 1:
+        # Phase-4 (4d): hpc_max_simultaneous_sims moved to hpc_system_config.max_concurrent_jobs.
+        _max_concurrent = cfg_hpc_system.max_concurrent_jobs if cfg_hpc_system is not None else None
+        if _max_concurrent is None or _max_concurrent < 1:
             result.add_error(
-                field="analysis.hpc_max_simultaneous_sims",
+                field="hpc_system_config.max_concurrent_jobs",
                 message="Required for multi_sim_run_method='batch_job'",
-                current_value=cfg.hpc_max_simultaneous_sims,
-                fix_hint="Set hpc_max_simultaneous_sims (e.g., 32)",
+                current_value=_max_concurrent,
+                fix_hint="Set hpc_system_config.max_concurrent_jobs (e.g., 32)",
             )
 
         if not cfg.hpc_ensemble_partition:
@@ -852,26 +926,152 @@ def _validate_hpc_configuration(cfg: analysis_config, result: ValidationResult):
                 fix_hint="Set hpc_ensemble_partition",
             )
 
-        if not cfg.hpc_account:
+        # Phase-4 (4d): account + login_node moved to hpc_system_config.
+        _account = cfg_hpc_system.default_account if cfg_hpc_system is not None else None
+        if not _account:
             result.add_error(
-                field="analysis.hpc_account",
+                field="hpc_system_config.default_account",
                 message="Required for multi_sim_run_method='batch_job'",
-                current_value=cfg.hpc_account,
-                fix_hint="Set hpc_account",
+                current_value=_account,
+                fix_hint="Set hpc_system_config.default_account",
             )
 
-        if not cfg.hpc_login_node:
+        _login_node = cfg_hpc_system.login_node if cfg_hpc_system is not None else None
+        if not _login_node:
             result.add_warning(
-                field="analysis.hpc_login_node",
+                field="hpc_system_config.login_node",
                 message=(
-                    "hpc_login_node is not set. If your cluster uses round-robin login load balancing "
-                    "(e.g., login.hpc.virginia.edu routes to different nodes), tmux reattach commands "
-                    "may not work from a new SSH session. The toolkit will auto-detect and store the "
-                    "submission node hostname as a fallback, but setting hpc_login_node explicitly is recommended."
+                    "hpc_system_config.login_node is not set. If your cluster uses round-robin login "
+                    "load balancing (e.g., login.hpc.virginia.edu routes to different nodes), tmux "
+                    "reattach commands may not work from a new SSH session. The toolkit will auto-detect "
+                    "and store the submission node hostname as a fallback, but setting login_node "
+                    "explicitly is recommended."
                 ),
                 current_value=None,
-                fix_hint="Set hpc_login_node to your specific login node (e.g., 'login1.hpc.virginia.edu')",
+                fix_hint=(
+                    "Set hpc_system_config.login_node to your specific login node "
+                    "(e.g., 'login1.hpc.virginia.edu')"
+                ),
             )
+
+    # Phase 2 (R5): per-rule runtime <= partition max_runtime preflight.
+    # Net-new bound; no native enforcement exists (snakemake FQ3). Gated on
+    # batch_job mode AND a present cfg_hpc_system, so when no hpc_system_config
+    # is supplied this is a no-op (R2 byte-identity). Phase 3 adds the
+    # 1_job_many_srun_tasks `hpc_total_job_duration_min` bound separately.
+    if method == "batch_job" and cfg_hpc_system is not None:
+        # Per-rule (runtime_min, partition) pairs mirror the batch_job emitter
+        # in workflow.py: sim rules target hpc_ensemble_partition; setup/prep/
+        # process/consolidate target hpc_setup_and_analysis_processing_partition.
+        # The literal runtimes (30/120/30) mirror the workflow.py emitter
+        # constants verbatim; an emitter runtime edit must update both.
+        sim_partition = cfg.hpc_ensemble_partition
+        proc_partition = cfg.hpc_setup_and_analysis_processing_partition
+        # (rule_label, partition_name, requested_runtime_min, is_hardcoded_literal)
+        per_rule_runtimes = [
+            (
+                "simulation (run_triton/run_tritonswmm/run_swmm)",
+                sim_partition,
+                cfg.hpc_time_min_per_sim or 30,
+                False,
+            ),
+            ("setup", proc_partition, cfg.hpc_runtime_min_for_setup, False),
+            ("scenario preparation", proc_partition, 30, True),
+            ("output processing", proc_partition, 120, True),
+            ("consolidation", proc_partition, 30, True),
+        ]
+        for rule_label, partition_name, requested, is_literal in per_rule_runtimes:
+            if partition_name is None or requested is None:
+                continue  # partition/field-presence errors already emitted above
+            spec = cfg_hpc_system.partitions.get(partition_name)
+            if spec is None:
+                result.add_error(
+                    field="hpc_system.partitions",
+                    message=(
+                        f"Rule '{rule_label}' targets partition "
+                        f"'{partition_name}', which is not declared in the "
+                        f"hpc_system_config partitions block."
+                    ),
+                    current_value=partition_name,
+                    fix_hint=(
+                        f"Add a '{partition_name}' entry to the hpc_system_config "
+                        f"partitions block, or change the analysis_config partition "
+                        f"field to a declared partition: "
+                        f"{sorted(cfg_hpc_system.partitions)}"
+                    ),
+                )
+                continue
+            cap = spec.max_runtime
+            if cap is not None and requested > cap:
+                if is_literal:
+                    fix = (
+                        f"The '{rule_label}' rule uses a fixed {requested}-min "
+                        f"runtime estimate. Raise partition '{partition_name}' "
+                        f"max_runtime to >= {requested} in hpc_system_config (or "
+                        f"assign this rule a partition with a higher cap)."
+                    )
+                else:
+                    fix = (
+                        f"Reduce the requested runtime, raise partition "
+                        f"'{partition_name}' max_runtime to >= {requested} in "
+                        f"hpc_system_config, or choose a partition with a higher cap."
+                    )
+                result.add_error(
+                    field=f"hpc_system.partitions.{partition_name}.max_runtime",
+                    message=(
+                        f"Rule '{rule_label}' requests {requested} min on "
+                        f"partition '{partition_name}', exceeding its "
+                        f"max_runtime cap of {cap} min."
+                    ),
+                    current_value=requested,
+                    fix_hint=fix,
+                )
+
+    # Phase 3 (R5): one-big-job total-job-duration <= partition max_runtime.
+    # The `#SBATCH --time` the 1_job_many_srun_tasks script emits
+    # (_generate_single_job_submission_script) is hpc_total_job_duration_min on
+    # the hpc_ensemble_partition; a request exceeding the partition cap is the
+    # most common cryptic whole-allocation SLURM rejection (snakemake FQ3). The
+    # bound is net-new (no native enforcement) and gated on a present
+    # cfg_hpc_system, so cfg_hpc_system is None is a no-op (R2 byte-identity).
+    if method == "1_job_many_srun_tasks" and cfg_hpc_system is not None:
+        partition_name = cfg.hpc_ensemble_partition
+        requested = cfg.hpc_total_job_duration_min
+        if partition_name is not None and requested is not None:
+            spec = cfg_hpc_system.partitions.get(partition_name)
+            if spec is None:
+                result.add_error(
+                    field="hpc_system.partitions",
+                    message=(
+                        f"The 1_job_many_srun_tasks allocation targets partition "
+                        f"'{partition_name}', which is not declared in the "
+                        f"hpc_system_config partitions block."
+                    ),
+                    current_value=partition_name,
+                    fix_hint=(
+                        f"Add a '{partition_name}' entry to the hpc_system_config "
+                        f"partitions block, or change hpc_ensemble_partition to a "
+                        f"declared partition: {sorted(cfg_hpc_system.partitions)}"
+                    ),
+                )
+            else:
+                cap = spec.max_runtime
+                if cap is not None and requested > cap:
+                    result.add_error(
+                        field=f"hpc_system.partitions.{partition_name}.max_runtime",
+                        message=(
+                            f"The 1_job_many_srun_tasks allocation requests "
+                            f"{requested} min (hpc_total_job_duration_min) on "
+                            f"partition '{partition_name}', exceeding its "
+                            f"max_runtime cap of {cap} min."
+                        ),
+                        current_value=requested,
+                        fix_hint=(
+                            f"Reduce hpc_total_job_duration_min, raise partition "
+                            f"'{partition_name}' max_runtime to >= {requested} in "
+                            f"hpc_system_config, or choose a partition with a higher cap."
+                        ),
+                    )
 
 
 # ============================================================================
@@ -1228,6 +1428,7 @@ def preflight_validate(
     cfg_system: system_config,
     cfg_analysis: analysis_config,
     report_cfg: Optional[Any] = None,
+    cfg_hpc_system: Any | None = None,
 ) -> ValidationResult:
     """Run full preflight validation on system and analysis configs.
 
@@ -1242,6 +1443,10 @@ def preflight_validate(
             ``interactive.enabled=True`` but ``plotly`` / ``datashader``
             fail to import). Typed as ``Any`` to avoid a circular import
             from ``config.report``.
+        cfg_hpc_system: Optional per-HPC-system config. When provided, the
+            Phase-2 per-partition runtime preflight runs (errors when a per-rule
+            runtime exceeds its partition's ``max_runtime`` cap). Typed as
+            ``Any`` to avoid a circular import from ``config.hpc_system``.
 
     Returns:
         ValidationResult with all errors and warnings
@@ -1259,7 +1464,7 @@ def preflight_validate(
     result.merge(sys_result)
 
     # Validate analysis config
-    analysis_result = validate_analysis_config(cfg_analysis)
+    analysis_result = validate_analysis_config(cfg_analysis, cfg_hpc_system=cfg_hpc_system)
     result.merge(analysis_result)
 
     # Validate data cross-consistency
@@ -1274,6 +1479,10 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+
+    # Per-row partition variation requires batch_job mode (DQ6). Runs only when
+    # the sensitivity CSV varies the ensemble partition across rows.
+    _validate_per_row_partition_requires_batch_job(cfg_analysis, result)
 
     # Setup-rule memory sizing sanity check (warning only — does not fail-fast).
     _validate_setup_mem_sizing(cfg_system, cfg_analysis, result)

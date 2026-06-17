@@ -472,7 +472,8 @@ class TRITONSWMM_run:
         # ----------------------------
         # Build command
         # ----------------------------
-        modules = self._scenario._system.cfg_system.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+        # Phase-4 (4c): additional_modules is DI'd onto the system (retired off system_config).
+        modules = self._scenario._system.additional_modules
         module_load_cmd = ""
 
         if modules:
@@ -648,7 +649,14 @@ class TRITONSWMM_run:
                 #
                 # See: completed/2026-02-28_gpu-mpi-scaling-machine-file-override.md
                 #      bugs/2026-03-01_fix_gpu_srun_flag_conflict.md
-                gpu_alloc_mode = self._scenario._system.cfg_system.preferred_slurm_option_for_allocating_gpus or "gpus"
+                # Phase-4 (4c): alloc flavor is hpc_system_config.gpu_allocation_flavor
+                # (system-level), reachable via the analysis; retired off system_config.
+                _cfg_hpc = self._analysis.cfg_hpc_system
+                gpu_alloc_mode = (
+                    _cfg_hpc.gpu_allocation_flavor
+                    if (_cfg_hpc is not None and _cfg_hpc.gpu_allocation_flavor is not None)
+                    else "gpus"
+                )
                 if gpu_alloc_mode == "gpus":
                     gpu_bind_flag = "--gpus-per-task=1 "
                     # Frontier: --gpus-per-task=1 honors --ntasks=N exactly; the

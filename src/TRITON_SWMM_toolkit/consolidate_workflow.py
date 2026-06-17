@@ -114,11 +114,12 @@ def validate_resource_usage(analysis, logger=None):
             expected_omp_threads = cfg.n_omp_threads or 1
             expected_gpus = cfg.n_gpus or 0
 
-        # Determine expected GPU backend
-        if run_mode == "gpu":
-            expected_gpu_backend = analysis._system.cfg_system.gpu_compilation_backend or "unknown"
-        else:
-            expected_gpu_backend = "none"
+        # Determine expected GPU backend (Phase-4 4c, D2): gpu_compilation_backend
+        # was retired off system_config. The downstream guard is binary
+        # none-vs-non-none (the precise "HIP"/"CUDA" string is message-only and
+        # never compared), so a backend-agnostic sentinel is behavior-preserving and
+        # needs no cfg_hpc_system/partition dependency.
+        expected_gpu_backend = "gpu" if run_mode == "gpu" else "none"
 
         # Check nTasks
         if pd.notna(row["actual_nTasks"]) and row["actual_nTasks"] != expected_nTasks:
@@ -244,6 +245,13 @@ def main() -> int:
         help="Path to analysis configuration YAML file",
     )
     parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        required=False,
+        default=None,
+        help="Optional path to the per-HPC-system configuration YAML file",
+    )
+    parser.add_argument(
         "--which",
         type=str,
         default="both",
@@ -312,6 +320,9 @@ def main() -> int:
     if not args.system_config.exists():
         logger.error(f"System config not found: {args.system_config}")
         return 2
+    if args.hpc_system_config is not None and not args.hpc_system_config.exists():
+        logger.error(f"HPC system config not found: {args.hpc_system_config}")
+        return 2
 
     try:
         # Import here to avoid import errors if dependencies are missing
@@ -330,6 +341,7 @@ def main() -> int:
             system=system,
             skip_log_update=False,
             is_main_orchestrator=False,
+            hpc_system_config_yaml=args.hpc_system_config,
         )
 
         # Per-scenario dispatch — writes {scenario_dir}/_status/_du.json via the DU sentinel
