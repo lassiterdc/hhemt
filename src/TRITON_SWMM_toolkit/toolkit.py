@@ -28,6 +28,8 @@ from typing import Literal, Optional, List
 from .system import TRITONSWMM_system
 from .orchestration import WorkflowResult, WorkflowStatus
 
+__all__ = ["Toolkit"]
+
 
 class Toolkit:
     """High-level API facade for TRITON-SWMM workflow orchestration.
