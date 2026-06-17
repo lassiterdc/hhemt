@@ -954,6 +954,15 @@ def _render_plotly_branch(
         config=plotly_config,
     )
 
+    # Resolve the analysis-canonical .inp pair for provenance. Re-resolved here
+    # (rather than threaded out of _build_conduit_flow_figure) to match the
+    # sibling renderer per_sim_peak_flood_depth._render_plotly_branch;
+    # _resolve_inp_sources is a pure path lookup.
+    from TRITON_SWMM_toolkit.report_renderers.system_overview import (
+        _resolve_inp_sources,
+    )
+
+    hydro_inp, hydraulics_inp = _resolve_inp_sources(analysis)
     source_paths: list[Path] = [
         Path(link_summary_path),
         inp_path,
