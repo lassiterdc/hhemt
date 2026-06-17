@@ -255,7 +255,7 @@ class TRITONSWMM_analysis:
         # Node recommendation — only for 1_job_many_srun_tasks
         if self.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
             # Compute per-sim node requirement for each incomplete sub-analysis
-            failures = self.classify_incomplete_sim_failures()
+            failures = self._classify_incomplete_sim_failures()
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 incomplete_nodes: list[int] = []
                 incomplete_sa_ids = {re.search(r"sa-(.+?)_evt-", k).group(1) for k in failures}
@@ -285,7 +285,7 @@ class TRITONSWMM_analysis:
             )
 
             if failures:
-                if self.is_timeout_only_failure:
+                if self._is_timeout_only_failure:
                     print("[Analysis] All failures are SLURM time limits — increase --time and re-run.", flush=True)
                 else:
                     print(
@@ -715,15 +715,15 @@ class TRITONSWMM_analysis:
                 TRITONSWMM_analysis._handle_destination_conflict(dest_dir, "clear")
             # "s" or anything else: skip, let Globus handle via sync_level
 
-    def print_all_yaml_defined_input_files(self):
-        print_json_file_tree(self.dict_of_exp_and_sys_config())
+    def _print_all_yaml_defined_input_files(self):
+        print_json_file_tree(self._dict_of_exp_and_sys_config())
 
-    def dict_of_exp_and_sys_config(self):
+    def _dict_of_exp_and_sys_config(self):
         dic_exp = self._system.cfg_system.model_dump()
         dic_sys = self.cfg_analysis.model_dump()
         return dic_exp | dic_sys
 
-    def dict_of_all_sim_files(self, event_iloc):
+    def _dict_of_all_sim_files(self, event_iloc):
         dic_syspaths = self._system.sys_paths.as_dict()
         dic_analysis_paths = self.analysis_paths.as_dict()
         scen = TRITONSWMM_scenario(event_iloc, self)
@@ -731,8 +731,8 @@ class TRITONSWMM_analysis:
         dic_all_paths = dic_syspaths | dic_analysis_paths | dic_sim_paths
         return dic_all_paths
 
-    def print_all_sim_files(self, event_iloc):
-        dic_all_paths = self.dict_of_all_sim_files(event_iloc)
+    def _print_all_sim_files(self, event_iloc):
+        dic_all_paths = self._dict_of_all_sim_files(event_iloc)
         print_json_file_tree(dic_all_paths)
 
     def _retrieve_weather_indexer_using_integer_index(
@@ -744,7 +744,7 @@ class TRITONSWMM_analysis:
         return weather_event_indexers
 
     @property
-    def scenarios_not_created(self):
+    def _scenarios_not_created(self):
         """
         Get list of scenarios that have not been created successfully.
 
@@ -764,7 +764,7 @@ class TRITONSWMM_analysis:
         return scens_not_created
 
     @property
-    def scenarios_not_run(self):
+    def _scenarios_not_run(self):
         """
         Get list of scenarios that have not been run successfully.
 
@@ -785,7 +785,7 @@ class TRITONSWMM_analysis:
                 scens_not_run.append(str(scen.log.logfile.parent))
         return scens_not_run
 
-    def classify_incomplete_sim_failures(self) -> dict[str, str]:
+    def _classify_incomplete_sim_failures(self) -> dict[str, str]:
         """Scan model logs for all incomplete simulations and classify each failure.
 
         Reads the analysis-level model log for each incomplete simulation and
@@ -816,19 +816,19 @@ class TRITONSWMM_analysis:
         return results
 
     @property
-    def is_timeout_only_failure(self) -> bool:
+    def _is_timeout_only_failure(self) -> bool:
         """True iff all incomplete simulations have timeout-classified failures.
 
         Returns False if there are no incomplete sims (all done), or if any
         incomplete sim has an unclassified or no_log failure.
         """
-        failures = self.classify_incomplete_sim_failures()
+        failures = self._classify_incomplete_sim_failures()
         if not failures:
             return False
         return all(v == "timeout" for v in failures.values())
 
     @property
-    def all_scenarios_created(self):
+    def _all_scenarios_created(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_scenarios_created
         for event_iloc in self.df_sims.index:
@@ -839,7 +839,7 @@ class TRITONSWMM_analysis:
         return True
 
     @property
-    def all_sims_run(self):
+    def _all_sims_run(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_sims_run
         for event_iloc in self.df_sims.index:
@@ -849,13 +849,13 @@ class TRITONSWMM_analysis:
         return True
 
     @property
-    def all_TRITONSWMM_performance_timeseries_processed(self):
+    def _all_TRITONSWMM_performance_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_TRITONSWMM_performance_timeseries_processed
-        return len(self.TRITONSWMM_performance_time_series_not_processed) == 0
+        return len(self._TRITONSWMM_performance_time_series_not_processed) == 0
 
     @property
-    def TRITONSWMM_performance_time_series_not_processed(self):
+    def _TRITONSWMM_performance_time_series_not_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.TRITONSWMM_performance_time_series_not_processed
         scens_not_processed = []
@@ -878,14 +878,14 @@ class TRITONSWMM_analysis:
         return scens_not_processed
 
     @property
-    def all_SWMM_timeseries_processed(self):
+    def _all_SWMM_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_SWMM_timeseries_processed
         # Uses model-specific logs - race-condition free!
-        return len(self.SWMM_time_series_not_processed) == 0
+        return len(self._SWMM_time_series_not_processed) == 0
 
     @property
-    def TRITON_time_series_not_processed(self):
+    def _TRITON_time_series_not_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.TRITON_time_series_not_processed
         scens_not_processed = []
@@ -904,7 +904,7 @@ class TRITONSWMM_analysis:
         return scens_not_processed
 
     @property
-    def SWMM_time_series_not_processed(self):
+    def _SWMM_time_series_not_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.SWMM_time_series_not_processed
         scens_not_processed = []
@@ -927,14 +927,14 @@ class TRITONSWMM_analysis:
         return scens_not_processed
 
     @property
-    def all_TRITON_timeseries_processed(self):
+    def _all_TRITON_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_TRITON_timeseries_processed
         # Uses model-specific logs - race-condition free!
-        return len(self.TRITON_time_series_not_processed) == 0
+        return len(self._TRITON_time_series_not_processed) == 0
 
     @property
-    def all_raw_TRITON_outputs_cleared(self) -> bool:
+    def _all_raw_TRITON_outputs_cleared(self) -> bool:
         """Computed on read from primitive per-model raw_TRITON_outputs_cleared flags."""
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_raw_TRITON_outputs_cleared
@@ -948,7 +948,7 @@ class TRITONSWMM_analysis:
         return True
 
     @property
-    def all_raw_SWMM_outputs_cleared(self) -> bool:
+    def _all_raw_SWMM_outputs_cleared(self) -> bool:
         """Computed on read from primitive per-model raw_SWMM_outputs_cleared flags."""
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_raw_SWMM_outputs_cleared
@@ -1064,7 +1064,7 @@ class TRITONSWMM_analysis:
 
         return scenario_timeseries_processing_launchers
 
-    def calculate_effective_max_parallel(
+    def _calculate_effective_max_parallel(
         self,
         min_memory_per_function_MiB: int | None = 1024,
         max_concurrent: int | None = None,
@@ -1125,7 +1125,7 @@ class TRITONSWMM_analysis:
             Indices of functions that completed successfully.
         """
 
-        effective_max_parallel = self.calculate_effective_max_parallel(
+        effective_max_parallel = self._calculate_effective_max_parallel(
             min_memory_per_function_MiB=min_memory_per_function_MiB,
             max_concurrent=max_parallel,
             verbose=verbose,
@@ -1274,7 +1274,7 @@ class TRITONSWMM_analysis:
 
         return allocations, None
 
-    def run_sim(
+    def _run_sim(
         self,
         event_iloc: int,
         pickup_where_leftoff,
@@ -1416,7 +1416,7 @@ class TRITONSWMM_analysis:
             compression_level=compression_level,
         )
 
-    def process_all_sim_timeseries_serially(
+    def _process_all_sim_timeseries_serially(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
         *,
@@ -1435,7 +1435,7 @@ class TRITONSWMM_analysis:
         self._update_log()
         return
 
-    def consolidate_analysis_outputs(
+    def _consolidate_analysis_outputs(
         self,
         *,
         verbose: bool = False,
@@ -1590,7 +1590,7 @@ class TRITONSWMM_analysis:
                         f"Running sim {event_iloc} ({model_type}) and pickup_where_leftoff = {pickup_where_leftoff}",
                         flush=True,
                     )
-                self.run_sim(
+                self._run_sim(
                     event_iloc=event_iloc,
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
@@ -2291,8 +2291,8 @@ class TRITONSWMM_analysis:
         )
 
         # Check scenario preparation
-        all_prepared = self.all_scenarios_created
-        not_prepared = self.scenarios_not_created
+        all_prepared = self._all_scenarios_created
+        not_prepared = self._scenarios_not_created
 
         n_total = self.n_sims
 
@@ -2307,8 +2307,8 @@ class TRITONSWMM_analysis:
         )
 
         # Check simulations
-        all_run = self.all_sims_run
-        not_run = self.scenarios_not_run
+        all_run = self._all_sims_run
+        not_run = self._scenarios_not_run
         n_run = n_total - len(not_run)
 
         sim_phase = PhaseStatus(
@@ -2324,8 +2324,8 @@ class TRITONSWMM_analysis:
         triton_enabled = "triton" in enabled_models or "tritonswmm" in enabled_models
         swmm_enabled = "swmm" in enabled_models or "tritonswmm" in enabled_models
 
-        triton_missing = len(self.TRITON_time_series_not_processed) if triton_enabled else 0
-        swmm_missing = len(self.SWMM_time_series_not_processed) if swmm_enabled else 0
+        triton_missing = len(self._TRITON_time_series_not_processed) if triton_enabled else 0
+        swmm_missing = len(self._SWMM_time_series_not_processed) if swmm_enabled else 0
 
         triton_total = n_total if triton_enabled else 0
         swmm_total = n_total if swmm_enabled else 0
@@ -3611,41 +3611,41 @@ class TRITONSWMM_analysis:
     # @property
     # def TRITONSWMM_runtimes(self):
     #     return (
-    #         self.tritonswmm_TRITON_summary["compute_time_min"]
+    #         self._tritonswmm_TRITON_summary["compute_time_min"]
     #         .to_dataframe()
     #         .dropna()["compute_time_min"]
     #     )
 
     @property
-    def tritonswmm_performance_analysis_summary_created(self):
+    def _tritonswmm_performance_analysis_summary_created(self):
         return bool(self.log.tritonswmm_performance_analysis_summary_created.get())
 
     @property
-    def tritonswmm_triton_analysis_summary_created(self):
+    def _tritonswmm_triton_analysis_summary_created(self):
         return bool(self.log.tritonswmm_triton_analysis_summary_created.get())
 
     @property
-    def tritonswmm_node_analysis_summary_created(self):
+    def _tritonswmm_node_analysis_summary_created(self):
         return bool(self.log.tritonswmm_node_analysis_summary_created.get())
 
     @property
-    def tritonswmm_link_analysis_summary_created(self):
+    def _tritonswmm_link_analysis_summary_created(self):
         return bool(self.log.tritonswmm_link_analysis_summary_created.get())
 
     @property
-    def triton_only_analysis_summary_created(self):
+    def _triton_only_analysis_summary_created(self):
         return bool(self.log.triton_only_analysis_summary_created.get())
 
     @property
-    def swmm_only_node_analysis_summary_created(self):
+    def _swmm_only_node_analysis_summary_created(self):
         return bool(self.log.swmm_only_node_analysis_summary_created.get())
 
     @property
-    def swmm_only_link_analysis_summary_created(self):
+    def _swmm_only_link_analysis_summary_created(self):
         return bool(self.log.swmm_only_link_analysis_summary_created.get())
 
     @property
-    def df_snakemake_allocations(self) -> pd.DataFrame:
+    def _df_snakemake_allocations(self) -> pd.DataFrame:
         enabled_models_untyped = self._get_enabled_model_types()
         enabled_models: list[Literal["triton", "tritonswmm", "swmm"]] = [
             m for m in ("triton", "tritonswmm", "swmm") if m in enabled_models_untyped
@@ -3847,7 +3847,7 @@ class TRITONSWMM_analysis:
         if self.cfg_analysis.toggle_sensitivity_analysis:
             df_status = self.sensitivity.df_status
             df_status_joined = df_status.merge(
-                self.df_snakemake_allocations,
+                self._df_snakemake_allocations,
                 on=["model_type", "scenario_directory", "event_iloc"],
                 how="left",
             )
@@ -3951,7 +3951,7 @@ class TRITONSWMM_analysis:
             return self._reorder_df_status_columns(df_status)
         else:
             df_status_joined = df_status.merge(
-                self.df_snakemake_allocations,
+                self._df_snakemake_allocations,
                 on=["model_type", "scenario_directory", "event_iloc"],
                 how="left",
             )
@@ -3975,37 +3975,37 @@ class TRITONSWMM_analysis:
 
     # TRITON-SWMM model accessors
     @property
-    def tritonswmm_TRITON_summary(self):
+    def _tritonswmm_TRITON_summary(self):
         return self.process.tritonswmm_TRITON_summary
 
     @property
-    def tritonswmm_performance_summary(self):
+    def _tritonswmm_performance_summary(self):
         return self.process.tritonswmm_performance_summary
 
     @property
-    def tritonswmm_SWMM_node_summary(self):
+    def _tritonswmm_SWMM_node_summary(self):
         return self.process.tritonswmm_SWMM_node_summary
 
     @property
-    def tritonswmm_SWMM_link_summary(self):
+    def _tritonswmm_SWMM_link_summary(self):
         return self.process.tritonswmm_SWMM_link_summary
 
     # TRITON-only model accessors
     @property
-    def triton_only_summary(self):
+    def _triton_only_summary(self):
         return self.process.triton_only_summary
 
     @property
-    def triton_only_performance_summary(self):
+    def _triton_only_performance_summary(self):
         return self.process.triton_only_performance_summary
 
     # SWMM-only model accessors
     @property
-    def swmm_only_node_summary(self):
+    def _swmm_only_node_summary(self):
         return self.process.swmm_only_node_summary
 
     @property
-    def swmm_only_link_summary(self):
+    def _swmm_only_link_summary(self):
         return self.process.swmm_only_link_summary
 
     def cancel(self, verbose: bool = True, wait_timeout: int = 120, debug: bool = False) -> dict:

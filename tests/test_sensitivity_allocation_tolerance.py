@@ -118,7 +118,7 @@ def test_df_snakemake_allocations_tolerates_missing_sa(synth_sensitivity_builder
     drop = {all_sa_ids[-1]}  # remove the last sub-analysis's sim-rule block
     _delete_sim_rule_blocks(sf, drop)
 
-    df = analysis.df_snakemake_allocations  # must NOT raise
+    df = analysis._df_snakemake_allocations  # must NOT raise
     assert isinstance(df, pd.DataFrame)
     # Rows for dropped sub-analyses are skipped (their scenario_directory absent)
     assert len(df) > 0

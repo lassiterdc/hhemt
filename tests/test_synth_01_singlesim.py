@@ -103,8 +103,8 @@ def test_process_sim(synth_all_models_analysis_cached):
     tst_ut.assert_swmm_compiled(analysis)
 
     success_clearing = (
-        analysis.all_raw_TRITON_outputs_cleared
-        and analysis.all_raw_SWMM_outputs_cleared
+        analysis._all_raw_TRITON_outputs_cleared
+        and analysis._all_raw_SWMM_outputs_cleared
     )
     if not success_clearing:
         analysis.print_logfile_for_scenario(0)

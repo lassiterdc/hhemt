@@ -32,9 +32,9 @@ def test_rollups_compute_on_read_and_are_not_persisted(synthetic_multisim_comple
         "all_raw_SWMM_outputs_cleared",
     ):
         assert f not in TRITONSWMM_analysis_log.model_fields  # persisted field removed
-    assert isinstance(a.all_sims_run, bool)  # property computes on read
-    assert isinstance(a.all_scenarios_created, bool)
-    assert isinstance(a.all_raw_TRITON_outputs_cleared, bool)
+    assert isinstance(a._all_sims_run, bool)  # property computes on read
+    assert isinstance(a._all_scenarios_created, bool)
+    assert isinstance(a._all_raw_TRITON_outputs_cleared, bool)
 
 
 # TEST-NEW-2b (main agent authored) — legacy log.json with stale all_* keys still loads (extra="ignore").
