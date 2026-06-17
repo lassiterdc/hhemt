@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator, model_validator
 
 from TRITON_SWMM_toolkit.config.base import cfgBaseModel
+from TRITON_SWMM_toolkit.config.eda import eda_config
 
 # One-way import: config/analysis.py imports report_config; config/report.py
 # must not import from config/analysis.py to avoid circular import.
@@ -406,6 +407,18 @@ class analysis_config(cfgBaseModel):
             "this field triggers is built downstream in "
             "reporting-system_static-plots-entrypoint-and-distribution; the field is "
             "inert (settable but unconsumed) until that plan lands."
+        ),
+    )
+
+    eda: eda_config = Field(
+        default_factory=eda_config,
+        description=(
+            "Optional inline EDA-loop config (ADR-10): selects which EDA plots "
+            "appear in the standalone eda_report.html. Default member set (the "
+            "cross-sim byte-identity plot) applies when absent. Deliberately INLINE "
+            "(not a path field) so it travels in cfg_analysis.yaml and Bundle.eda() "
+            "reads it with zero extra carry/repoint wiring — the same rationale as "
+            "the `report` field above. Runtime override via eda(override_eda_config=<Path>)."
         ),
     )
 

@@ -79,6 +79,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             print(f"[delete] removing {sa_dir}", flush=True)
+            # EXEMPT-DU: delete-workflow-leaf
             fast_rmtree(sa_dir)
 
         flag_path = (
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     finally:
         if _sentinel is not None:
+            # EXEMPT-DU: status-flag
             _sentinel.unlink(missing_ok=True)
 
 

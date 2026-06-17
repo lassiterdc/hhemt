@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+from collections import Counter
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, NamedTuple
@@ -522,7 +523,138 @@ class _ClearedToken(NamedTuple):
     reason: str
 
 
-class SnakemakeWorkflowBuilder:
+class _ReportingSetDispatchMixin:
+    """Registry-driven plot-rule dispatcher shared by the multisim and
+    sensitivity-master/reprocess generators (P1b / TO-8).
+
+    Replaces the hardcoded `_build_plot_rule_block_*` call lists (duplicated
+    across `generate_snakefile_content`, `generate_master_snakefile_content`, and
+    `generate_reprocess_master_snakefile_content`) with one dispatcher that
+    iterates the active reporting set's `renderer_selection`. `SnakemakeWorkflowBuilder`
+    and `SensitivityAnalysisWorkflowBuilder` are composition-related (the
+    sensitivity builder holds a `_base_builder`), not inheritance-related, so the
+    dispatcher lives in a mixin both inherit: `getattr(self, "_base_builder", self)`
+    resolves the five common builders to the base builder when `self` is the
+    sensitivity builder and to `self` when `self` is the base builder; the two
+    conditional builders (per_sim_per_sa, sensitivity_benchmarking) live only on
+    the sensitivity builder and resolve via getattr.
+    """
+
+    # Predicate-key -> predicate over the per-call predicate_inputs dict. The
+    # values (independent_vars, sa_event_pairs_sa) are METHOD-LOCALs inside the
+    # master/reprocess generators (NOT instance attributes), threaded in via
+    # predicate_inputs; getattr-on-self would always be None. (F-I-2)
+    _RENDERER_PREDICATES = {
+        "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
+        "has_sa_event_pairs": lambda inp: bool(inp.get("sa_event_pairs_sa")),
+    }
+
+    def _resolve_active_reporting_set(self, analysis):
+        """Resolve ``analysis``'s active ReportingSet (TO-8 dispatch source).
+
+        `_active_reporting_set` is set only at analysis.run() entry (F-B-1), so a
+        generate-without-run() path (e.g. the byte-identity test, which configures
+        but never runs the analysis; render_report_runner on a fresh instance)
+        must fall back to the CSV-free name resolver — mirroring the established
+        getattr-fallback in `analysis.render_report`'s category-order block. The
+        fallback resolves to the SAME set the run-entry attr would hold (default
+        for multisim, benchmarking for sensitivity), preserving byte-identity (R6).
+        """
+        active = getattr(analysis, "_active_reporting_set", None)
+        if active is not None:
+            return active
+        from TRITON_SWMM_toolkit.config.report import resolve_active_reporting_set_name
+        from TRITON_SWMM_toolkit.report_renderers._reporting_sets import get_reporting_set
+
+        cfg_report = getattr(analysis, "_cfg_report", None)
+        if cfg_report is None:
+            cfg_report = analysis.cfg_analysis.report
+        name = resolve_active_reporting_set_name(
+            cfg_report,
+            is_sensitivity=analysis.cfg_analysis.toggle_sensitivity_analysis,
+        )
+        return get_reporting_set(name)
+
+    def _builder_call_kwargs(self, builder_key, input_flag, ctx, inputs):
+        """Resolve the exact kwargs for one builder_key (Option A — the 8
+        `_build_plot_rule_block_*` builders are LEFT UNCHANGED, so their
+        heterogeneous signatures are honored here rather than normalized). Keeps
+        R6 byte-identity free: no builder body is touched, so the proof reduces to
+        "the resolver yields the historical call args."
+        """
+        if builder_key in (
+            "system_overview",
+            "per_analysis_summary",
+            "scenario_status_appendix",
+            "errors_and_warnings",
+            "disk_utilization",
+        ):
+            return {"input_flag": input_flag, "ctx": ctx}
+        if builder_key in ("per_sim", "per_sim_per_sa"):
+            return {"ctx": ctx}  # wildcard over event_id; no input_flag in signature
+        if builder_key == "sensitivity_benchmarking":
+            # positional independent_vars, forwarded from predicate_inputs (the
+            # value the master/reprocess call sites already thread); NO input_flag.
+            return {"independent_vars": inputs["independent_vars"], "ctx": ctx}
+        raise KeyError(f"unknown builder_key for call-kwargs resolution: {builder_key!r}")
+
+    def _emit_active_set_plot_rules(
+        self,
+        reporting_set,
+        *,
+        input_flag: str,
+        ctx: "RuleEmissionContext | None" = None,
+        predicate_inputs: dict | None = None,
+        interleave_after_unconditional=None,
+    ) -> str:
+        """Emit every plot rule for the active reporting set, in set order (TO-8).
+
+        The set's `renderer_selection` is the single source of which renderers fire
+        and in what order; each entry names a builder method (by key) and an
+        optional predicate_key gating conditional renderers (benchmarking, per_sa).
+        `input_flag` is threaded per generator (multisim: e_consolidate_complete;
+        master/reprocess: f_consolidate_master_complete).
+
+        `interleave_after_unconditional` (B-i hook) is a zero-arg callable flushed
+        ONCE immediately before the first predicate-keyed entry — so the export
+        rule lands BETWEEN the unconditional and conditional renderers at
+        master/reprocess, byte-matching the pre-refactor emission order. Multisim
+        (no conditional entries) passes None and keeps a trailing export sibling.
+        """
+        base = getattr(self, "_base_builder", self)
+        builders = {
+            "system_overview": base._build_plot_rule_block_system_overview,
+            "per_sim": base._build_plot_rule_block_per_sim,
+            "per_analysis_summary": base._build_plot_rule_block_per_analysis_summary,
+            "scenario_status_appendix": base._build_plot_rule_block_scenario_status_appendix,
+            "errors_and_warnings": base._build_plot_rule_block_errors_and_warnings,
+            "disk_utilization": base._build_plot_rule_block_disk_utilization,
+            "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
+            "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
+        }
+        out = ""
+        inputs = predicate_inputs or {}
+        interleaved = False
+        for sel in reporting_set.renderer_selection:
+            if sel.predicate_key is not None:
+                # First conditional entry: flush the interleave hook (export rule)
+                # so it lands BETWEEN the unconditional and conditional renderers.
+                # Flushed BEFORE the predicate check — matching today's
+                # unconditional export emission (the export fires regardless of
+                # whether the first conditional renderer's predicate passes).
+                if interleave_after_unconditional is not None and not interleaved:
+                    out += interleave_after_unconditional()
+                    interleaved = True
+                if not self._RENDERER_PREDICATES[sel.predicate_key](inputs):
+                    continue
+            builder = builders[sel.builder_key]
+            if builder is None:  # conditional builder absent on the base builder
+                continue
+            out += builder(**self._builder_call_kwargs(sel.builder_key, input_flag, ctx, inputs))
+        return out
+
+
+class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
     """
     Builder class for generating and executing Snakemake workflows.
 
@@ -652,6 +784,7 @@ class SnakemakeWorkflowBuilder:
             for sub in ("locks", "incomplete"):
                 target = snakemake_state / sub
                 if target.exists():
+                    # EXEMPT-DU: lock-file-cleanup
                     fast_rmtree(target)
             (snakemake_state / "log").mkdir(parents=True, exist_ok=True)
             return
@@ -741,7 +874,34 @@ class SnakemakeWorkflowBuilder:
         base_dir = analysis_dir if analysis_dir is not None else self.analysis_paths.analysis_dir
         submitted_dir = base_dir / "_status" / "_submitted"
         sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
-        if not sentinels:
+
+        # mechanism (b) PENDING-recovery: discover SLURM-accepted-but-still-PENDING
+        # sims. The worker writes _status/_submitted/ only at process START, so a job
+        # SLURM accepted but has not yet started leaves NO _submitted/ sentinel — a
+        # driver-death-then-rerun would otherwise DOUBLE-submit it. The toolkit wrote
+        # _status/_queued/{rule_token}.json for the planned sim-token set at submit; a
+        # token still in _queued/ NOT yet superseded by _submitted/_completed/_failed
+        # is a still-queued sim to hold (wait-rule), not resubmit.
+        queued_dir = base_dir / "_status" / "_queued"
+        queued_tokens = sorted(p.stem for p in queued_dir.glob("*.json")) if queued_dir.is_dir() else []
+
+        def _still_queued(tok: str) -> bool:
+            # existence-semantic predicate: the _status/{_submitted,_completed,_failed,
+            # _queued}/ sentinel classes record that a state-transition occurred
+            # (presence == transition), distinct from the _already_written()/
+            # processing-log CONTENT-success gate used for processed outputs — raw
+            # .exists() is the correct predicate here (F-I Flag 8).
+            return not any(
+                (base_dir / "_status" / d / f"{tok}.json").exists() for d in ("_submitted", "_completed", "_failed")
+            )
+
+        pending_tokens = [t for t in queued_tokens if _still_queued(t)]
+
+        # Fast path: a genuinely-fresh analysis (no _submitted/ sentinels AND no
+        # still-_queued/ tokens) returns [] with ZERO sacct calls (R6). A previously-
+        # submitted analysis with an empty _submitted/ but live _queued/ tokens must
+        # NOT fast-return — it falls through to the PENDING-recovery sweep below.
+        if not sentinels and not pending_tokens:
             return []  # fast path: no alive set
 
         # v2 graceful-rerun: classify via sentinel state markers (no SLURM CLI).
@@ -765,6 +925,22 @@ class SnakemakeWorkflowBuilder:
                     f"{f' ({reason})' if reason and reason != 'None' else ''}",
                     flush=True,
                 )
+
+        # mechanism (b): merge PENDING-recovered tokens into the alive set so the
+        # emission layer substitutes wait_for_{token} rules for still-queued sims
+        # (R1, R5 — applied in the SHARED reconcile so the multisim and sensitivity
+        # emission sites both inherit it). Each recovered token is a canonical
+        # rule-token (the toolkit wrote _queued/{rule_token}.json), so it flows
+        # through _emit_wait_for_sim_rule_block unchanged — no comment:-token
+        # normalization (mechanism (a) eliminated). Token-keyed dedup (SE Flag 2):
+        # a _submitted/-derived (token, jobid) entry ALWAYS wins over a _queued/-
+        # derived (token, "") for the same logical token — a hard-kill between the
+        # runner's os.replace and its _queued/ unlink can transiently leave BOTH —
+        # so the emission layer never sees one token twice with divergent jobids.
+        recovered = self._recover_pending_from_queued(pending_tokens, base_dir)
+        _alive_tokens = {t for t, _ in alive}
+        alive = alive + [r for r in recovered if r[0] not in _alive_tokens]
+
         if alive:
             print(
                 f"[reconcile] v2 graceful-rerun: {len(alive)} in-flight rule(s) "
@@ -773,6 +949,132 @@ class SnakemakeWorkflowBuilder:
                 flush=True,
             )
         return alive
+
+    def _recover_pending_from_queued(self, pending_tokens: list[str], base_dir: Path) -> list[tuple[str, str]]:
+        """mechanism (b) PENDING-recovery: classify still-_queued/ tokens (a sim
+        SLURM accepted but whose worker has not written _submitted/ yet) by
+        WHO-OWNS-THE-SBATCH, returning the alive subset as (rule_token, slurm_jobid)
+        tuples for merge into the reconcile alive set.
+
+        - Toolkit-owns-sbatch (the _queued/ payload carries an allocation jobid, e.g.
+          Frontier 1_job_many_srun_tasks): classify via _sacct_states_batched with the
+          SAME F2 srun-step aliasing guard as _classify_stale_via_sacct (a shared
+          allocation jobid is aliasing-unsafe). DEAD -> drop the _queued/ sentinel
+          (re-runs); ALIVE or sacct-UNKNOWN -> hold, returning (token, jid).
+        - Executor-owns-sbatch (payload jobid null, e.g. UVA & all --executor slurm
+          batch_job — the executor assigns per-rule ids the toolkit never sees): F1-O3
+          hold-on-PRESENCE, returning (token, ""), bounded by the mtime-age fail-safe
+          (R12) — a _queued/ older than _max_plausible_job_lifetime_min is a stale
+          orphan, dropped (re-runs).
+
+        NO sacct --name= run-UUID cross-check ships (mechanism (c) struck — the
+        executor's run-UUID JobName is not toolkit-controllable; F1-O1 toolkit-minted
+        identity is the named enabled future). Returns [] for an empty input with no
+        sacct call (R6 fast-path politeness)."""
+        if not pending_tokens:
+            return []
+        queued_dir = base_dir / "_status" / "_queued"
+        cap_min = _max_plausible_job_lifetime_min(self.cfg_analysis)
+        max_plausible_s = cap_min * 60
+
+        # Read each payload's allocation jobid (None = executor-owns / unreadable).
+        jobid_by_token: dict[str, str | None] = {}
+        for tok in pending_tokens:
+            try:
+                payload = json.loads((queued_dir / f"{tok}.json").read_text())
+                jobid_by_token[tok] = str(payload.get("slurm_jobid") or "") or None
+            except (json.JSONDecodeError, OSError):
+                jobid_by_token[tok] = None
+
+        # Toolkit-owns set: ONE batched sacct call (R6 — only when jobid-bearing
+        # pending tokens exist; an executor-owns-only / fresh set makes no call).
+        toolkit_owned_jids = [j for j in jobid_by_token.values() if j]
+        states = _sacct_states_batched(toolkit_owned_jids) if toolkit_owned_jids else {}
+        # F2 srun-step aliasing guard for the _queued/ set too: a jobid shared by
+        # >=2 pending tokens is not per-token authoritative -> mtime fail-safe.
+        _jid_counts = Counter(toolkit_owned_jids)
+        _aliased_jids = {j for j, c in _jid_counts.items() if c >= 2}
+
+        recovered: list[tuple[str, str]] = []
+        for tok in pending_tokens:
+            jid = jobid_by_token[tok]
+            qpath = queued_dir / f"{tok}.json"
+            if jid and jid not in _aliased_jids:
+                row = states.get(jid)
+                if row is not None:
+                    state, _exit, _reason = row
+                    if state in _SACCT_DEAD_STATES:
+                        # EXEMPT-DU: status-dir-cleanup
+                        qpath.unlink(missing_ok=True)  # dead -> re-run
+                        continue
+                    recovered.append((tok, jid))  # alive (toolkit-owns)
+                    continue
+                # jid present but sacct-UNKNOWN -> fall through to mtime fail-safe.
+            # executor-owns (jid None) OR aliased OR sacct-UNKNOWN: presence + mtime.
+            try:
+                age_s = time.time() - qpath.stat().st_mtime
+            except OSError:
+                age_s = max_plausible_s + 1
+            if age_s >= max_plausible_s:
+                # EXEMPT-DU: status-dir-cleanup
+                qpath.unlink(missing_ok=True)  # stale orphan -> re-run (R12)
+                continue
+            recovered.append((tok, jid or ""))  # held on presence (F1-O3)
+        return recovered
+
+    def _planned_sim_tokens(self) -> list[str]:
+        """Enumerate the canonical multisim sim rule-tokens the Snakefile emits
+        run-rules for (the mechanism (b) _queued/ writer source). Recomputes the SAME
+        (model_type x event_id) cross-product generate_snakefile_content uses:
+        event_ids via compute_event_id_slug over the integer weather indexer, enabled
+        models via the system toggles. The token form run_{model_type}_evt-{event_id}
+        is byte-identical to run_simulation_runner.py's _rule_token (literal evt-)."""
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        n_sims = len(self.analysis.df_sims)
+        event_ids = [
+            compute_event_id_slug(self.analysis._retrieve_weather_indexer_using_integer_index(i)) for i in range(n_sims)
+        ]
+        enabled_models: list[str] = []
+        if self.system.cfg_system.toggle_triton_model:
+            enabled_models.append("triton")
+        if self.system.cfg_system.toggle_tritonswmm_model:
+            enabled_models.append("tritonswmm")
+        if self.system.cfg_system.toggle_swmm_model:
+            enabled_models.append("swmm")
+        return [f"run_{model_type}_evt-{event_id}" for model_type in enabled_models for event_id in event_ids]
+
+    def _write_queued_sentinels(self, planned_tokens: list[str], alloc_jobid: str | None, analysis_dir: Path) -> None:
+        """mechanism (b) PENDING-recovery writer: at submit, AFTER the snakemake
+        submission call returns success (F2-OC write-after-launch — a pre-launch
+        exception leaves no orphan), write _status/_queued/{rule_token}.json for every
+        planned sim rule-token so a still-PENDING sim is discoverable at the next
+        _reconcile_inflight_submissions BEFORE its worker writes _submitted/.
+
+        Compare-and-write (mtime-preserving): the payload carries NO timestamp, so a
+        re-submit of the same (token, jobid) is byte-identical and PRESERVES mtime —
+        the R12 mtime-age fail-safe therefore measures age-since-first-submit and ages
+        out genuinely-stale orphans even across driver re-invocations (a written_at
+        field would bump mtime on every submit and defeat the age-out). Toolkit-owns-
+        sbatch (1_job_many_srun_tasks) records the allocation jobid (→ wait-runner
+        in-loop probe, R8); executor-owns-sbatch (batch_job) records null. The worker
+        unlinks its own _queued/{token}.json at the _submitted/ write (queued→submitted
+        handoff). The top-level slurm_jobid key is byte-key-equal to the _submitted/
+        payload so wait_for_sentinel_runner._read_submitted_jobid reads it unchanged on
+        the _queued/ fallback (SE Flag 3)."""
+        qdir = Path(analysis_dir) / "_status" / "_queued"
+        qdir.mkdir(parents=True, exist_ok=True)
+        for tok in planned_tokens:
+            payload = json.dumps({"rule_token": tok, "slurm_jobid": alloc_jobid}, sort_keys=True)
+            qpath = qdir / f"{tok}.json"
+            try:
+                if qpath.read_text() == payload:
+                    continue  # byte-identical → preserve mtime (compare-and-write)
+            except OSError:
+                pass
+            tmp = qpath.with_suffix(".json.tmp")
+            tmp.write_text(payload)
+            tmp.replace(qpath)  # atomic
 
     def _recover_inflight_via_comment(self, known_jobids: set[str]) -> list[tuple[str, str]]:
         """Recover in-flight simulation jobs missed by the sentinel sweep.
@@ -811,6 +1113,11 @@ class SnakemakeWorkflowBuilder:
         """
         import getpass
 
+        # NOTE: `sacct -u` is hidden-partition-safe. The slurmdbd accounting DB has no
+        # partition-visibility filter, so `sacct -u $USER` returns jobs in SLURM Hidden
+        # partitions (e.g. UVA shen GPU partitions) where `squeue -u $USER` is blind.
+        # Do NOT "fix" this to squeue. (Empirically: sacct returns hidden-partition
+        # PENDING rows; see library/knowledge/slurm/hidden_partition_makes_per_user_squeue_blind.md.)
         out = subprocess.run(
             [
                 "sacct",
@@ -989,8 +1296,10 @@ class SnakemakeWorkflowBuilder:
             raise ValueError(f"Unrecognized spec.scope: {spec.scope!r}")
 
         for flag_path in matched_flags:
+            # EXEMPT-DU: status-flag
             flag_path.unlink(missing_ok=True)
             sidecar = flag_path.with_suffix(flag_path.suffix + ".json")
+            # EXEMPT-DU: status-flag
             sidecar.unlink(missing_ok=True)
 
     def _build_resource_block(
@@ -1910,12 +2219,18 @@ rule run_{model_type}:
             consolidate_resources=consolidate_resources,
             compression_level=compression_level,
         )
-        snakefile_content += self._build_plot_rule_block_system_overview()
-        snakefile_content += self._build_plot_rule_block_per_sim()
-        snakefile_content += self._build_plot_rule_block_per_analysis_summary()
-        snakefile_content += self._build_plot_rule_block_scenario_status_appendix()
-        snakefile_content += self._build_plot_rule_block_errors_and_warnings()
-        snakefile_content += self._build_plot_rule_block_disk_utilization()
+        # Registry-driven plot-rule dispatch (P1b / TO-8): the active set's
+        # renderer_selection (default → the six common renderers in order) is the
+        # single source of which renderers fire. Replaces the hardcoded call list.
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.analysis),
+            input_flag="_status/e_consolidate_complete.flag",
+        )
+        # export_scenario_status: set-invariant, non-figure workflow rule
+        # (scenario_status.csv + a top-level localrules:); intentionally NOT a
+        # renderer_selection entry (Option B); emitted as a dispatcher sibling in
+        # its historical trailing position (multisim has no conditional renderers,
+        # so no interleave hook).
         snakefile_content += self._build_export_scenario_status_rule(
             input_flag="_status/e_consolidate_complete.flag",
         )
@@ -2402,9 +2717,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
-            "local_cpu_cores_for_workflow must be specified for local runs"
-        )
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
             config.update(
                 {
@@ -2425,9 +2740,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # SLURM mode: support both modern executor and legacy cluster modes
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             max_concurrent = self.cfg_analysis.hpc_max_simultaneous_sims
-            assert isinstance(max_concurrent, int), (
-                "hpc_max_simultaneous_sims is required for generate_snakemake_config"
-            )
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_max_simultaneous_sims is required for generate_snakemake_config"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -2636,9 +2951,9 @@ echo ""
 
         if n_gpus_per_sim > 0:
             gpus_per_node = self.cfg_analysis.hpc_gpus_per_node
-            assert isinstance(gpus_per_node, int), (
-                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            )
+            assert isinstance(
+                gpus_per_node, int
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self.system.cfg_system.gpu_hardware
             if gpu_hardware:
@@ -4496,6 +4811,15 @@ exit $snakemake_status
                 extra_sbatch_args=extra_sbatch_args,
             )
 
+            # mechanism (b): record the planned sim-token set under _status/_queued/
+            # AFTER the submit returned success (write-after-launch). 1_job_many_srun_tasks
+            # is toolkit-owns-sbatch — the allocation jobid enables the wait-runner in-loop
+            # liveness probe (R8) for a PENDING-recovered wait-rule.
+            if isinstance(result, dict) and result.get("success", True):
+                self._write_queued_sentinels(
+                    self._planned_sim_tokens(), result.get("job_id"), self.analysis_paths.analysis_dir
+                )
+
             self.analysis._refresh_log()
             return result
 
@@ -4549,6 +4873,13 @@ exit $snakemake_status
                 wait_for_completion=wait_for_completion,
                 verbose=verbose,
             )
+
+            # mechanism (b): record the planned sim-token set under _status/_queued/
+            # AFTER submit-success. batch_job is executor-owns-sbatch — the executor
+            # assigns per-rule ids the toolkit never sees, so jobid is null and the
+            # token is held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
+            if isinstance(result, dict) and result.get("success", True):
+                self._write_queued_sentinels(self._planned_sim_tokens(), None, self.analysis_paths.analysis_dir)
 
             self.analysis._refresh_log()
             return result
@@ -4910,6 +5241,7 @@ exit $snakemake_status
                     flush=True,
                 )
                 if reclaim_dead:
+                    # EXEMPT-DU: status-flag
                     s.unlink(missing_ok=True)
                 continue
             except OSError as _e:
@@ -4921,6 +5253,7 @@ exit $snakemake_status
             if jid and _slurm_job_is_live(jid):
                 alive.append((s.stem, jid))
             elif reclaim_dead:
+                # EXEMPT-DU: status-flag
                 s.unlink(missing_ok=True)  # DEAD/stale → reclaim
         return alive
 
@@ -4968,6 +5301,7 @@ exit $snakemake_status
             failed = failed_dir / f"{rule_token}.json"
             if completed.exists() or failed.exists():
                 if reclaim_completed:
+                    # EXEMPT-DU: status-flag
                     s.unlink(missing_ok=True)
                 continue
             try:
@@ -5014,14 +5348,30 @@ exit $snakemake_status
         job_ids = [j for _, j in marker_less_alive if j]
         states = _sacct_states_batched(job_ids)
 
+        # F2 srun-step job-id-aliasing guard: under 1_job_many_srun_tasks every
+        # concurrent srun-step sim records the SAME allocation $SLURM_JOB_ID, so
+        # `sacct -X` returns ONE allocation-summary row for N tokens. A terminal
+        # allocation State would then mass-classify all N still-running tokens
+        # DEAD (empirically confirmed 2026-06-13: a TIMEOUT allocation row is read
+        # by every aliased token). For any jobid shared by >=2 tokens, refuse to
+        # classify from the shared allocation row — fall through to the mtime-age
+        # fail-safe instead. (F1 step-level `sacct -j` per-token classification is
+        # the optional precision upgrade; F2 guard is the minimum-correctness fix.)
+        _jid_counts = Counter(j for _, j in marker_less_alive if j)
+        _aliased_jids = {j for j, c in _jid_counts.items() if c >= 2}
+
         still_alive: list[tuple[str, str]] = []
         cleared: list[_ClearedToken] = []
         for rule_token, jid in marker_less_alive:
             sentinel = submitted_dir / f"{rule_token}.json"
             row = states.get(jid) if jid else None
+            if jid in _aliased_jids:
+                # aliased: the single allocation row is not per-token authoritative
+                row = None
             if row is not None:
                 state, _exit, reason = row
                 if state in _SACCT_DEAD_STATES:
+                    # EXEMPT-DU: status-flag
                     sentinel.unlink(missing_ok=True)
                     cleared.append(_ClearedToken(rule_token, jid, state, reason))
                 else:
@@ -5032,6 +5382,7 @@ exit $snakemake_status
             except OSError:
                 age_s = max_plausible_s + 1
             if age_s >= max_plausible_s:
+                # EXEMPT-DU: status-flag
                 sentinel.unlink(missing_ok=True)
                 cleared.append(_ClearedToken(rule_token, jid or "(no jobid)", "UNKNOWN", "purged/age-exceeded"))
             else:
@@ -5093,6 +5444,7 @@ exit $snakemake_status
             if alive:
                 live.append(f"{s.get('driver_id')} (mode={mode})")
             else:
+                # EXEMPT-DU: status-flag
                 path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
                 print(
                     f"[orchestrator-gate] reclaimed stale sentinel {s.get('driver_id')} (mode={mode}) at {path}",
@@ -5185,7 +5537,7 @@ exit $snakemake_status
             f"        {inputs_block}\n"
             f"    output:\n"
             f'        "{flag_output_path}"\n'
-            f"    resources: cpus_per_task=1, mem_mb=100, runtime={wait_walltime_cap_min}\n"
+            f"    resources: cpus_per_task=1, mem_mb=100\n"
             f"    shell:\n"
             f'        "{python_exe} -m TRITON_SWMM_toolkit.wait_for_sentinel_runner "\n'
             f'        "--rule-token {rule_token} "\n'
@@ -5239,6 +5591,27 @@ exit $snakemake_status
         submitted_dir = analysis_dir / "_status" / "_submitted"
         sentinels = sorted(submitted_dir.glob("*.json")) if submitted_dir.exists() else []
         alive = self._classify_live_sentinels(sentinels, reclaim_dead=False)
+
+        # (2b) Sweep _status/_queued/ too (mechanism b): a still-PENDING sim
+        # (SLURM-accepted, worker not yet started, so no _submitted/ sentinel) is
+        # in-flight and must block a delete exactly like a running sim. Presence-only
+        # (no reclaim — consistent with the no-reclaim stance of (2); a stale orphan
+        # _queued/ is aged out by the run-path reconcile's mtime fail-safe, or the
+        # operator passes override_in_flight — never destructive cleanup here).
+        queued_dir = analysis_dir / "_status" / "_queued"
+        if queued_dir.is_dir():
+            for qpath in sorted(queued_dir.glob("*.json")):
+                tok = qpath.stem
+                if any(
+                    (analysis_dir / "_status" / d / f"{tok}.json").exists()
+                    for d in ("_submitted", "_completed", "_failed")
+                ):
+                    continue  # superseded — already covered by the _submitted/ sweep
+                try:
+                    jid = str(json.loads(qpath.read_text()).get("slurm_jobid") or "")
+                except (json.JSONDecodeError, OSError):
+                    jid = ""
+                alive.append((tok, jid))
 
         # (3) Comment-recovery for the lost-sentinel window (C.4).
         alive += self._recover_inflight_via_comment(known_jobids={j for _, j in alive})
@@ -5585,6 +5958,7 @@ exit $snakemake_status
         )
         stale = self.analysis_paths.analysis_dir / "_status" / "_deleting_reprocess"
         if stale.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale)
         snakefile = self.analysis_paths.analysis_dir / "Snakefile.reprocess_delete"
         snakefile.write_text(self._build_reprocess_delete_snakefile_content(start_with=start_with))
@@ -5699,7 +6073,7 @@ def _sub_analysis_summaries_complete(sub_analysis, enabled_models: list[str]) ->
     return True
 
 
-class SensitivityAnalysisWorkflowBuilder:
+class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
     """
     Builder class for generating and executing Snakemake workflows for sensitivity analysis.
 
@@ -6390,33 +6764,27 @@ onerror:
         """
 '''
 
-        # Append system_overview + per_analysis_summary rules at master scope (match rule_all above).
-        # Master uses f_consolidate_master_complete.flag (NOT the multisim e_consolidate_complete flag).
-        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_scenario_status_appendix(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+        # Registry-driven plot-rule dispatch at master scope (P1b / TO-8). The
+        # benchmarking set drives the five common renderers + the two conditional
+        # sensitivity renderers (per_sim_per_sa, sensitivity_benchmarking), gated
+        # by predicate_key against the method-local sa_event_pairs_sa /
+        # _independent_vars threaded in via predicate_inputs. The export rule is a
+        # set-invariant non-figure rule (Option B — NOT a renderer_selection
+        # entry); the B-i interleave hook flushes it BETWEEN the unconditional and
+        # conditional renderers, byte-matching the pre-refactor emission order.
+        # Master uses f_consolidate_master_complete.flag (NOT the multisim
+        # e_consolidate_complete flag).
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.master_analysis),
             input_flag="_status/f_consolidate_master_complete.flag",
+            predicate_inputs={
+                "independent_vars": _independent_vars,
+                "sa_event_pairs_sa": sa_event_pairs_sa,
+            },
+            interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
+                input_flag="_status/f_consolidate_master_complete.flag",
+            ),
         )
-        # Per-sa per-event plot rules (Iteration 7 Change 3b — "show all" parity).
-        # Only emit when sa_event_pairs are populated (best-effort guarded above).
-        if sa_event_pairs_sa:
-            snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
-
-        if _independent_vars:
-            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
 
         # Render-report rule (replaces the broken onsuccess auto-render approach).
         # Single rule wildcarded on `format` — Snakemake fires it once per
@@ -6987,30 +7355,22 @@ onerror:
         """
 '''
 
-        # Plot + export + render rules — reuse the same helper methods as the
-        # production master so the rendered report set is byte-equivalent.
-        snakefile_content += self._base_builder._build_plot_rule_block_system_overview(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_per_analysis_summary(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_scenario_status_appendix(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_errors_and_warnings(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_plot_rule_block_disk_utilization(
-            input_flag="_status/f_consolidate_master_complete.flag"
-        )
-        snakefile_content += self._base_builder._build_export_scenario_status_rule(
+        # Plot + export + render rules — registry-driven dispatch (P1b / TO-8),
+        # identical to the production master (same benchmarking set + B-i
+        # interleave hook), so the rendered report set is byte-equivalent. The
+        # dispatcher running the SAME set on both surfaces makes the
+        # historically hand-maintained "byte-equivalent" guarantee structural.
+        snakefile_content += self._emit_active_set_plot_rules(
+            self._resolve_active_reporting_set(self.master_analysis),
             input_flag="_status/f_consolidate_master_complete.flag",
+            predicate_inputs={
+                "independent_vars": _independent_vars,
+                "sa_event_pairs_sa": sa_event_pairs_sa,
+            },
+            interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
+                input_flag="_status/f_consolidate_master_complete.flag",
+            ),
         )
-        if sa_event_pairs_sa:
-            snakefile_content += self._build_plot_rule_block_per_sim_per_sa()
-        if _independent_vars:
-            snakefile_content += self._build_plot_rule_block_sensitivity_benchmarking(_independent_vars)
 
         # Render-report rule (wildcarded over format=zip|html), matching the
         # production master generator.
@@ -7265,6 +7625,28 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 alive_token_to_dir[_tok] = str(_sub_dir)
         return alive_by_token, alive_token_to_dir
 
+    def _write_queued_sentinels_sensitivity(self, alloc_jobid: str | None) -> None:
+        """mechanism (b) PENDING-recovery writer for the sensitivity path: write
+        _status/_queued/{simulation_sa_{sa_id}_evt-{event_id}}.json under EACH
+        sub-analysis's OWN analysis_dir (sensitivity markers/sentinels live per-sub,
+        Spec D — the master-dir reconcile would miss them), for the full planned
+        per-sub sim-token set, AFTER submit-success. The sensitivity sentinel token is
+        per-(sa_id, event_id) with NO model_type segment (matching
+        run_simulation_runner.py's _rule_token when args.sa_id is set, and the
+        generate_master_snakefile_content emission gate). Toolkit-owns-sbatch (1_job)
+        records the master allocation jobid; executor-owns-sbatch (batch_job) null.
+        Delegates the atomic compare-and-write to the base builder's writer so the
+        mtime-preserving contract (R12) is single-sourced."""
+        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+
+        for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():  # type: ignore[attr-defined]
+            event_ids = [
+                compute_event_id_slug(sub._retrieve_weather_indexer_using_integer_index(i))
+                for i in range(len(sub.df_sims))
+            ]
+            tokens = [f"simulation_sa_{sa_id}_evt-{event_id}" for event_id in event_ids]
+            self._base_builder._write_queued_sentinels(tokens, alloc_jobid, sub.analysis_paths.analysis_dir)
+
     def submit_workflow(
         self,
         mode: Literal["local", "slurm", "auto"] = "auto",
@@ -7452,6 +7834,13 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 extra_sbatch_args=extra_sbatch_args,
             )
 
+            # mechanism (b): record the planned per-sub sim-token set under each sub's
+            # _status/_queued/ AFTER submit-success. 1_job_many_srun_tasks is
+            # toolkit-owns-sbatch — the master allocation jobid enables the wait-runner
+            # in-loop probe (R8) for PENDING-recovered sensitivity wait-rules.
+            if isinstance(result, dict) and result.get("success", True):
+                self._write_queued_sentinels_sensitivity(result.get("job_id"))
+
             self.sensitivity_analysis._update_master_analysis_log()
             return result
 
@@ -7513,6 +7902,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
                 verbose=verbose,
                 wait_for_completion=wait_for_completion,
             )
+
+            # mechanism (b): record the planned per-sub sim-token set under each sub's
+            # _status/_queued/ AFTER submit-success. batch_job is executor-owns-sbatch —
+            # jobid null, held on PRESENCE bounded by the mtime fail-safe (F1-O3, R12).
+            if isinstance(result, dict) and result.get("success", True):
+                self._write_queued_sentinels_sensitivity(None)
 
             self.sensitivity_analysis._update_master_analysis_log()
             return result

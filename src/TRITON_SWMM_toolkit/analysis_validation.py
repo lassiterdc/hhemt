@@ -393,3 +393,79 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
+
+
+# ---------------------------------------------------------------------------
+# Persist-then-render read-model (Class-Y resolution, Option D, 2026-06-14)
+# ---------------------------------------------------------------------------
+#
+# validate_analysis() reads a whole-tree surface (compilation logs, DEM/Manning
+# rasters, Snakefile, per-sim logs + perf-summary zarrs) spanning analysis_dir AND
+# system_dir. Running it inside errors_and_warnings.render() put that whole-tree
+# read surface in the render path, which (a) the renderer-IO provenance audit could
+# not faithfully declare and (b) made the portable render bundle non-re-renderable
+# (the bundle ships none of that surface). The fix: run the inspection ONCE at
+# consolidation (the compute phase that owns the full tree) and persist its result
+# as a single JSON read-model; the renderer reads only that artifact. JSON shape =
+# dataclasses.asdict(CheckResult), identical to the ADR-9 eda/*.verdict.json schema.
+
+_VALIDATION_REPORT_FILENAME = "validation_report.json"
+
+
+def persist_validation_report(analysis: TRITONSWMM_analysis) -> Path:
+    """Run validate_analysis and persist it to {analysis_dir}/validation_report.json.
+
+    Called once at consolidation. Overwrites on each consolidate (idempotent, like
+    analysis_datatree.zarr). The persisted artifact also carries the eda verdicts
+    (validate_analysis already folds them in via _read_persisted_eda_verdicts), so
+    the renderer no longer reads eda/ either. Re-stamps the parent DU sentinel per
+    the du-sentinels-written-at-every-mutation-site stipulation (Gotcha 38).
+    """
+    import json
+    from dataclasses import asdict
+
+    from TRITON_SWMM_toolkit import du_sentinels
+
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    report = validate_analysis(analysis)
+    out = analysis_dir / _VALIDATION_REPORT_FILENAME
+    payload = {"checks": [asdict(c) for c in report.checks]}
+    tmp = out.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2))
+    tmp.replace(out)  # atomic
+    du_sentinels.restamp_parent_sentinels(out, analysis_dir=analysis_dir)
+    return out
+
+
+def load_validation_report(analysis: TRITONSWMM_analysis) -> ValidationReport:
+    """Graceful-absent read of {analysis_dir}/validation_report.json.
+
+    Returns an EMPTY ValidationReport when the artifact is absent (a pre-feature
+    analysis, or a render that precedes the consolidation write). The absent case is
+    deliberately NOT a fallback to validate_analysis(): re-running the whole-tree
+    inspection at render time would re-introduce the render-path read surface this
+    feature removes AND trip the renderer-IO provenance audit (those reads are
+    undeclared). An empty report degrades cleanly, mirroring the eda graceful-absent
+    pattern.
+    """
+    import json
+
+    p = Path(analysis.analysis_paths.analysis_dir) / _VALIDATION_REPORT_FILENAME
+    if not p.exists():
+        return ValidationReport(checks=[])
+    try:
+        payload = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return ValidationReport(checks=[])
+    return ValidationReport(
+        checks=[
+            CheckResult(
+                name=c["name"],
+                level=c["level"],
+                passed=c["passed"],
+                summary=c["summary"],
+                details=c.get("details", []),
+            )
+            for c in payload.get("checks", [])
+        ]
+    )

@@ -1137,6 +1137,8 @@ class TRITONSWMM_sim_post_processing:
         stipulation governs WHEN this helper may fire — callers MUST gate the
         invocation so it only fires after the final allocation completes.
         """
+        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+
         _OUT_DIR_BY_MODEL = {
             "tritonswmm": self.scen_paths.out_tritonswmm,
             "triton": self.scen_paths.out_triton,
@@ -1147,7 +1149,7 @@ class TRITONSWMM_sim_post_processing:
                 return
             for child in out_dir.iterdir():
                 if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
-                    fast_rmtree(child)
+                    fast_rmtree(child, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the
             # coupled tritonswmm case). Phase 3 semantics: the cleanup has
@@ -1161,6 +1163,7 @@ class TRITONSWMM_sim_post_processing:
             out_file = self.scen_paths.swmm_full_out_file
             if out_file is not None and Path(out_file).exists():
                 Path(out_file).unlink()
+                restamp_parent_sentinels(Path(out_file), analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
             if getattr(self.log, "raw_SWMM_outputs_cleared", None):
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
@@ -1473,6 +1476,8 @@ class TRITONSWMM_sim_post_processing:
         verbose : bool
             If True, print progress messages
         """
+        from TRITON_SWMM_toolkit.du_sentinels import restamp_parent_sentinels
+
         if (which == "both") or (which == "TRITON"):
             if self.log.TRITON_summary_written and self.log.TRITON_summary_written.get():
                 triton_ts_path = self.scen_paths.output_tritonswmm_triton_timeseries
@@ -1480,9 +1485,10 @@ class TRITONSWMM_sim_post_processing:
                     if verbose:
                         print(f"Clearing TRITON full timeseries for scenario {self._scenario.event_iloc}")
                     if triton_ts_path.is_dir():
-                        fast_rmtree(triton_ts_path)
+                        fast_rmtree(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
                     else:
                         triton_ts_path.unlink()
+                        restamp_parent_sentinels(triton_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
                     if self.log.full_TRITON_timeseries_cleared:
                         self.log.full_TRITON_timeseries_cleared.set(True)
             elif verbose:
@@ -1498,9 +1504,10 @@ class TRITONSWMM_sim_post_processing:
                     if verbose:
                         print(f"Clearing SWMM node full timeseries for scenario {self._scenario.event_iloc}")
                     if node_ts_path.is_dir():
-                        fast_rmtree(node_ts_path)
+                        fast_rmtree(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
                     else:
                         node_ts_path.unlink()
+                        restamp_parent_sentinels(node_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
 
                 # Clear link timeseries
                 link_ts_path = self.scen_paths.output_tritonswmm_link_time_series
@@ -1508,9 +1515,10 @@ class TRITONSWMM_sim_post_processing:
                     if verbose:
                         print(f"Clearing SWMM link full timeseries for scenario {self._scenario.event_iloc}")
                     if link_ts_path.is_dir():
-                        fast_rmtree(link_ts_path)
+                        fast_rmtree(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
                     else:
                         link_ts_path.unlink()
+                        restamp_parent_sentinels(link_ts_path, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN B
 
                 if self.log.full_SWMM_timeseries_cleared:
                     self.log.full_SWMM_timeseries_cleared.set(True)

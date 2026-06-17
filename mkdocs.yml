@@ -23,13 +23,40 @@ markdown_extensions:
 
 plugins:
   - search
+  - htmlproofer:
+      validate_external_urls: false
   - mkdocstrings:
       handlers:
         python:
           paths: [src]
+          options:
+            docstring_style: numpy
+
+validation:
+  nav:
+    omitted_files: warn
+    not_found: warn
+    absolute_links: warn
+  links:
+    not_found: warn
+    absolute_links: warn
+    unrecognized_links: warn
+    anchors: warn
+
+exclude_docs: |
+  running a simulation.ipynb
+  processing_sim_outputs.ipynb
 
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - Usage: usage.md
-  - API Reference: api.md
+  - Tutorials:
+      - tutorials/index.md
+  - How-To Guides:
+      - how-to/index.md
+      - Installation: how-to/installation.md
+  - Reference:
+      - reference/index.md
+      - API Reference: reference/api.md
+      - Example interactive report: reference/example-report.md
+  - Explanation:
+      - explanation/index.md

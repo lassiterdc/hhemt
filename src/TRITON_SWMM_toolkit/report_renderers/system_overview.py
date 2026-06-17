@@ -674,7 +674,7 @@ def _apply_rcparams(report_cfg: report_config) -> None:
 # ===========================================================================
 
 
-def _render_plotly_branch(
+def _build_system_overview_figure(
     output_path: Path,
     source_paths: list[Path],
     *,
@@ -696,7 +696,7 @@ def _render_plotly_branch(
     dem_building_height: float | None = None,
     dem_outside_watershed_height: float | None = None,
     vertical_crs_epsg: int | None = None,
-) -> Path:
+):
     # Side-effect import: registers `triton_journal` Plotly template.
     from TRITON_SWMM_toolkit.report_renderers import _plotly_theme  # noqa: F401
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
@@ -793,6 +793,60 @@ def _render_plotly_branch(
             "format": "svg", "filename": "system_overview", "scale": 2,
         },
     }
+    return (
+        fig, emit_plot_with_sources, plotly_config, output_path,
+        source_paths, analysis_dir, manifest_data, prov, plotly_js_mode,
+    )
+
+
+def _render_plotly_branch(
+    output_path: Path,
+    source_paths: list[Path],
+    *,
+    analysis_dir,
+    dem,
+    dem_bounds,
+    hydro_model,
+    hydraulics_model,
+    hydro_rel: str,
+    hydraulics_rel: str,
+    dem_rel: str,
+    bc_path,
+    bc_rel,
+    target_crs,
+    map_cfg,
+    manifest_data,
+    prov,
+    plotly_js_mode: str,
+    dem_building_height: float | None = None,
+    dem_outside_watershed_height: float | None = None,
+    vertical_crs_epsg: int | None = None,
+) -> Path:
+    (
+        fig, emit_plot_with_sources, plotly_config, output_path,
+        source_paths, analysis_dir, manifest_data, prov, plotly_js_mode,
+    ) = _build_system_overview_figure(
+        output_path,
+        source_paths,
+        analysis_dir=analysis_dir,
+        dem=dem,
+        dem_bounds=dem_bounds,
+        hydro_model=hydro_model,
+        hydraulics_model=hydraulics_model,
+        hydro_rel=hydro_rel,
+        hydraulics_rel=hydraulics_rel,
+        dem_rel=dem_rel,
+        bc_path=bc_path,
+        bc_rel=bc_rel,
+        target_crs=target_crs,
+        map_cfg=map_cfg,
+        manifest_data=manifest_data,
+        prov=prov,
+        plotly_js_mode=plotly_js_mode,
+        dem_building_height=dem_building_height,
+        dem_outside_watershed_height=dem_outside_watershed_height,
+        vertical_crs_epsg=vertical_crs_epsg,
+    )
     html_text = pio.to_html(
         fig, include_plotlyjs=plotly_js_mode, full_html=True,
         config=plotly_config,

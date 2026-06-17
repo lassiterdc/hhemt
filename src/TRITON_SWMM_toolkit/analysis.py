@@ -51,6 +51,7 @@ from TRITON_SWMM_toolkit.workflow import (
 
 if TYPE_CHECKING:
     from .config.globus import PostRunTransferConfig
+    from .eda import EdaReportResult
     from .orchestration import WorkflowResult, WorkflowStatus
     from .system import TRITONSWMM_system
     from .workflow import ResolvedForceRerunSpec  # noqa: F401
@@ -165,6 +166,13 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "sensitivity_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
+        # Ensure the per-analysis simulation directory exists at construction time.
+        # Previously this was created incidentally during __init__ by the heavy
+        # _update_log()'s per-scenario TRITONSWMM_scenario construction (whose
+        # __init__ mkdir's sims/<sim_id>/...). _update_log is now a thin refresh
+        # (log-write-race-fix), so create the directory explicitly here to
+        # preserve the construction-time contract relied on by callers/tests.
+        self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
 
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
@@ -189,12 +197,16 @@ class TRITONSWMM_analysis:
         self.nsims = len(self.df_sims)
 
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            self.sensitivity = TRITONSWMM_sensitivity_analysis(self, is_main_orchestrator=is_main_orchestrator)
+            self.sensitivity = TRITONSWMM_sensitivity_analysis(
+                self, is_main_orchestrator=is_main_orchestrator, skip_log_update=skip_log_update
+            )
             self.nsims *= len(self.sensitivity.df_setup)
+        # Always LOAD the log from disk (read-only safe; _refresh_log creates a
+        # default when the log file is absent). Only the WRITE-BACK side is gated
+        # on skip_log_update, so a read-only consumer (renderer) gets self.log
+        # populated WITHOUT mutating the shared log.
+        self._refresh_log()
         if not skip_log_update:
-            # self._add_all_scenarios()
-            self._refresh_log()
-
             # Record available backends at analysis creation time
             self.log.cpu_backend_available.set(self._system.compilation_cpu_successful)
             self.log.gpu_backend_available.set(self._system.compilation_gpu_successful)
@@ -379,6 +391,7 @@ class TRITONSWMM_analysis:
         settled = sorted(settled)
         if not dry_run:
             for m in settled:
+                # EXEMPT-DU: status-flag
                 m.unlink(missing_ok=True)
         return settled
 
@@ -602,6 +615,43 @@ class TRITONSWMM_analysis:
 
         return emit_bundle(self, output_path)
 
+    def eda(self, *, override_eda_config: "Path | None" = None) -> "EdaReportResult":
+        """Run the in-process EDA loop: calc -> plots -> doc (ADR-10).
+
+        A LIGHTER non-Snakemake facade. Resolves the EDA config (override-or-cfg
+        per the override_ convention), runs the calc members, renders the EDA
+        plots under plots/eda/, and assembles eda_report/eda_report.html. Returns
+        an EdaReportResult. Bundle carriage: run this BEFORE bundle_report_data()
+        so the EDA plots' declared eda/<plot_id>.zarr sources are harvested into
+        the bundle (the plots emit under plots/eda/ and declare the zarr as a
+        source); bundling before eda() silently omits EDA content.
+        """
+        from TRITON_SWMM_toolkit.config.eda import eda_config
+        from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+        from TRITON_SWMM_toolkit.eda import (
+            EdaReportResult,
+            assemble_eda_report,
+            check_cross_sim_identity,
+            render_eda_plots,
+        )
+
+        eda_cfg = (
+            yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
+        )
+        root = Path(self.analysis_paths.analysis_dir)
+        verdict_result = check_cross_sim_identity(self)
+        verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
+        # Non-sensitivity analyses produce no eda/<plot_id>.zarr artifact (the
+        # cross-sim check skips and writes nothing), so render_eda_plots would
+        # open a non-existent zarr. Skip rendering and assemble a figureless doc
+        # via the figures fast-path (SE Flag 1).
+        if verdict_result.skipped or verdict_result.artifact_path is None:
+            report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, figures=[])
+            return EdaReportResult(report_path=report_path, plot_paths=[], verdicts=verdicts)
+        plot_paths = render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
+
     @staticmethod
     def _handle_destination_conflict(
         dest_dir: Path,
@@ -781,19 +831,28 @@ class TRITONSWMM_analysis:
     def all_scenarios_created(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_scenarios_created
-        return bool(self.log.all_scenarios_created.get())
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            scen.log.refresh()
+            if not bool(scen.log.scenario_creation_complete.get()):
+                return False
+        return True
 
     @property
     def all_sims_run(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_sims_run
-        return bool(self.log.all_sims_run.get())
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            if not all(scen.model_run_completed(m) for m in scen.run.model_types_enabled):
+                return False
+        return True
 
     @property
     def all_TRITONSWMM_performance_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_TRITONSWMM_performance_timeseries_processed
-        return bool(self.log.all_TRITONSWMM_performance_timeseries_processed.get())
+        return len(self.TRITONSWMM_performance_time_series_not_processed) == 0
 
     @property
     def TRITONSWMM_performance_time_series_not_processed(self):
@@ -874,81 +933,49 @@ class TRITONSWMM_analysis:
         # Uses model-specific logs - race-condition free!
         return len(self.TRITON_time_series_not_processed) == 0
 
+    @property
+    def all_raw_TRITON_outputs_cleared(self) -> bool:
+        """Computed on read from primitive per-model raw_TRITON_outputs_cleared flags."""
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_raw_TRITON_outputs_cleared
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            for model_type in scen.run.model_types_enabled:
+                if model_type in ("triton", "tritonswmm"):
+                    ml = scen.get_log(model_type)
+                    if not bool(ml.raw_TRITON_outputs_cleared and ml.raw_TRITON_outputs_cleared.get()):
+                        return False
+        return True
+
+    @property
+    def all_raw_SWMM_outputs_cleared(self) -> bool:
+        """Computed on read from primitive per-model raw_SWMM_outputs_cleared flags."""
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_raw_SWMM_outputs_cleared
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            for model_type in scen.run.model_types_enabled:
+                if model_type in ("swmm", "tritonswmm"):
+                    ml = scen.get_log(model_type)
+                    if not bool(ml.raw_SWMM_outputs_cleared and ml.raw_SWMM_outputs_cleared.get()):
+                        return False
+        return True
+
     def _update_log(self):
+        """Reload this analysis's log from disk.
+
+        Historically this recomputed and PERSISTED seven `all_*` rollup flags.
+        Those rollups are pure derived state (a function of primitive
+        per-scenario / per-model flags) and are now computed on read via the
+        `all_*` properties above — so this method no longer authors any rollup
+        write. Persisting derived state created an observer-recompute-write path
+        that clobbered owner-authored primitives (e.g.
+        `datatree_consolidation_complete`) under concurrency; removing the
+        persistence removes the clobber vector. Retained as a thin refresh
+        wrapper for call-site compatibility; primitives are still persisted by
+        their own `.set()` calls at their owner sites.
+        """
         self._refresh_log()
-        # dict_all_logs = {}
-        all_scens_created = True
-        all_sims_run = True
-        all_TRITON_outputs_processed = True
-        all_SWMM_outputs_processed = True
-        all_TRITONSWMM_performance_outputs_processed = True
-        all_raw_TRITON_outputs_cleared = True
-        all_raw_SWMM_outputs_cleared = True
-        if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            sens = self.sensitivity
-            all_scens_created = sens.all_scenarios_created
-            all_sims_run = sens.all_sims_run
-            all_TRITON_outputs_processed = sens.all_TRITON_timeseries_processed
-            all_SWMM_outputs_processed = sens.all_SWMM_timeseries_processed
-            all_TRITONSWMM_performance_outputs_processed = sens.all_TRITONSWMM_performance_timeseries_processed
-            all_raw_TRITON_outputs_cleared = sens.all_raw_TRITON_outputs_cleared
-            all_raw_SWMM_outputs_cleared = sens.all_raw_SWMM_outputs_cleared
-        else:
-            for event_iloc in self.df_sims.index:
-                scen = TRITONSWMM_scenario(event_iloc, self)
-                # sim run status - check if all enabled models completed
-                enabled_models = scen.run.model_types_enabled
-                scen_all_models_completed = all(scen.model_run_completed(model_type) for model_type in enabled_models)
-                all_sims_run = all_sims_run and scen_all_models_completed
-
-                # Scenario creation status comes exclusively from scenario prep log
-                scen.log.refresh()
-                scen_created = bool(scen.log.scenario_creation_complete.get())
-                all_scens_created = all_scens_created and scen_created
-
-                # Check output processing status for each enabled model
-                for model_type in enabled_models:
-                    model_log = scen.get_log(model_type)
-
-                    # TRITON outputs (triton and tritonswmm models)
-                    if model_type in ("triton", "tritonswmm"):
-                        triton_ok = bool(
-                            model_log.TRITON_timeseries_written and model_log.TRITON_timeseries_written.get()
-                        )
-                        all_TRITON_outputs_processed = all_TRITON_outputs_processed and triton_ok
-
-                        perf_ok = bool(
-                            model_log.performance_timeseries_written and model_log.performance_timeseries_written.get()
-                        )
-                        all_TRITONSWMM_performance_outputs_processed = (
-                            all_TRITONSWMM_performance_outputs_processed and perf_ok
-                        )
-
-                        cleared = bool(
-                            model_log.raw_TRITON_outputs_cleared and model_log.raw_TRITON_outputs_cleared.get()
-                        )
-                        all_raw_TRITON_outputs_cleared = all_raw_TRITON_outputs_cleared and cleared
-
-                    # SWMM outputs (swmm and tritonswmm models)
-                    if model_type in ("swmm", "tritonswmm"):
-                        node_ok = bool(
-                            model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
-                        )
-                        link_ok = bool(
-                            model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
-                        )
-                        swmm_ok = node_ok and link_ok
-                        all_SWMM_outputs_processed = all_SWMM_outputs_processed and swmm_ok
-
-                        cleared = bool(model_log.raw_SWMM_outputs_cleared and model_log.raw_SWMM_outputs_cleared.get())
-                        all_raw_SWMM_outputs_cleared = all_raw_SWMM_outputs_cleared and cleared
-        self.log.all_scenarios_created.set(all_scens_created)
-        self.log.all_sims_run.set(all_sims_run)
-        self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
-        self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
-        self.log.all_TRITONSWMM_performance_timeseries_processed.set(all_TRITONSWMM_performance_outputs_processed)
-        self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
-        self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return
 
     def retrieve_prepare_scenario_launchers(
@@ -1732,10 +1759,11 @@ class TRITONSWMM_analysis:
             report_config as ReportConfigModel,
         )
         from .config.report import (
-            validate_sensitivity_independent_vars,
+            validate_active_reporting_set,
         )
         from .exceptions import ConfigurationError
         from .orchestration import WorkflowResult, translate_mode, translate_phases
+        from .report_renderers._reporting_sets import get_reporting_set
 
         # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
         # Resolution order:
@@ -1758,7 +1786,13 @@ class TRITONSWMM_analysis:
             cfg_report = self.cfg_analysis.report
 
         sa_csv = self.cfg_analysis.sensitivity_analysis if self.cfg_analysis.toggle_sensitivity_analysis else None
-        validate_sensitivity_independent_vars(cfg_report, sa_csv)
+        _resolved_set_name = validate_active_reporting_set(
+            cfg_report,
+            is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
+            sensitivity_csv_path=sa_csv,
+        )
+        self._active_reporting_set_name = _resolved_set_name
+        self._active_reporting_set = get_reporting_set(_resolved_set_name)
         self._cfg_report = cfg_report
 
         # Pre-run brand-theme resolution (ADR-7 layer 2 — 3-step, fail-fast).
@@ -1827,6 +1861,7 @@ class TRITONSWMM_analysis:
             # which defaults None and made fast_rmtree(None) crash here. Every
             # other analysis_dir reference in this module already uses the derived
             # path; this site was the lone holdout.
+            # EXEMPT-DU: full-analysis-root-wipe
             fast_rmtree(self.analysis_paths.analysis_dir)
 
         # Orphan detection gate (sensitivity-only; non-sensitivity covered by
@@ -2111,13 +2146,52 @@ class TRITONSWMM_analysis:
         # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
         # defaulting to analysis_id when None (D-6). _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
+        # Resolve the active set's category_order. render_report() is dominantly
+        # invoked from render_report_runner.main() on a FRESH analysis that never
+        # called run() (see the _brand_theme getattr-fallback above for the
+        # identical hazard), so self._active_reporting_set may not exist. getattr-
+        # fallback to a config-only resolution (no CSV cross-validation at render
+        # time) mirroring the _theme fallback above. Never let the bare attribute
+        # AttributeError be swallowed by the surrounding `except Exception: pass`.
+        _active_set = getattr(self, "_active_reporting_set", None)
+        if _active_set is None:
+            # render-without-run() fallback. Fail SOFT (SE F-I-3): the render path
+            # bypasses validate_active_reporting_set, so a stale/unknown
+            # reporting_set would raise here and surface as an opaque Snakemake
+            # rule failure. Degrade to the historical "default" sidebar order + a
+            # one-line warning instead of crashing the render rule.
+            import logging
+
+            from .config.report import resolve_active_reporting_set_name
+            from .report_renderers._reporting_sets import get_reporting_set
+
+            try:
+                _cfg_report = getattr(self, "_cfg_report", None)
+                if _cfg_report is None:
+                    _cfg_report = self.cfg_analysis.report
+                _set_name = resolve_active_reporting_set_name(
+                    _cfg_report,
+                    is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
+                )
+                _active_set = get_reporting_set(_set_name)
+            except Exception as _e:
+                logging.getLogger(__name__).warning(
+                    "render-path reporting_set resolution failed (%s); " "falling back to 'default' category order",
+                    _e,
+                )
+                _active_set = get_reporting_set("default")
+        _category_order = list(_active_set.category_order)
         try:
             if format == "html":
                 out.write_text(
-                    apply_post_process_surgery(out.read_text(), navbar_text=_navbar)
+                    apply_post_process_surgery(
+                        out.read_text(),
+                        navbar_text=_navbar,
+                        category_order=_category_order,
+                    )
                 )
             else:
-                apply_post_process_surgery_to_zip(out, navbar_text=_navbar)
+                apply_post_process_surgery_to_zip(out, navbar_text=_navbar, category_order=_category_order)
         except Exception:
             pass
         if format != "html":
@@ -2888,6 +2962,7 @@ class TRITONSWMM_analysis:
         # tree.
         stale_dir = analysis_dir / "_status" / "_deleting"
         if stale_dir.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale_dir)
 
         # 2. Submit the distributed delete workflow. The workflow builder's
@@ -2915,6 +2990,7 @@ class TRITONSWMM_analysis:
             f"[delete] all {len(expected)} per-rule sentinels present — removing analysis_dir.",
             flush=True,
         )
+        # EXEMPT-DU: full-analysis-root-wipe
         fast_rmtree(analysis_dir)
 
     def _enumerate_expected_delete_sentinels(self) -> set[Path]:
@@ -3025,7 +3101,9 @@ class TRITONSWMM_analysis:
             # decrement has the bytes to subtract (post-unlink stat is impossible).
             _html_bytes = report_html.stat().st_size if report_html.exists() else 0
             _zip_bytes = report_zip.stat().st_size if report_zip.exists() else 0
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             plots_dir = analysis_dir / "plots"
             plots_total_bytes = 0
@@ -3038,6 +3116,7 @@ class TRITONSWMM_analysis:
                             pass
                 for art in plots_dir.rglob("*"):
                     if art.is_file():
+                        # EXEMPT-DU: du-handled-by-decrement
                         art.unlink(missing_ok=True)
             if not dry_run:
                 # PATTERN B replaced by D3 — O(1)/O(plots) decrement instead of a
@@ -3063,7 +3142,9 @@ class TRITONSWMM_analysis:
         if start_with == "process":
             if regenerate_existing:
                 for f in sd.glob("d_process_*"):
+                    # EXEMPT-DU: status-flag
                     f.unlink(missing_ok=True)
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3072,6 +3153,7 @@ class TRITONSWMM_analysis:
             _delete_report_and_plot_artifacts()
         elif start_with == "consolidate":
             if regenerate_existing:
+                # EXEMPT-DU: status-flag
                 (sd / "e_consolidate_complete.flag").unlink(missing_ok=True)
                 if not dry_run and not skip_destructive_delete:
                     _zarr = self.analysis_paths.analysis_datatree_zarr
@@ -3086,7 +3168,9 @@ class TRITONSWMM_analysis:
             # "report shell only" path).
             report_html = analysis_dir / "analysis_report.html"
             report_zip = analysis_dir / "analysis_report.zip"
+            # EXEMPT-DU: du-handled-by-decrement
             report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             report_zip.unlink(missing_ok=True)
             if not dry_run:
                 restamp_parent_sentinels(report_html, analysis_dir=analysis_dir)  # PATTERN B
@@ -3322,9 +3406,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (sa_id is None) == (master_dir is None), (
-            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
-        )
+        assert (sa_id is None) == (
+            master_dir is None
+        ), "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
         is_sub = sa_id is not None
 
         reconciled: set[tuple[str, str]] = set()
@@ -3358,6 +3442,7 @@ class TRITONSWMM_analysis:
                 if not _summary_absent(scen, model_type):
                     continue  # summary present — healthy, no-op
                 # Divergence: flag present, summary absent → heal.
+                # EXEMPT-DU: status-flag
                 flag_path.unlink(missing_ok=True)
                 reconciled.add((evt, model_type))
                 reconciled_event_ids.add(evt)
