@@ -158,6 +158,7 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         analysis: "TRITONSWMM_analysis",
         is_main_orchestrator: bool = True,
+        skip_log_update: bool = False,
     ) -> None:
         """
         Initialize a sensitivity analysis orchestrator.
@@ -177,6 +178,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         self.master_analysis = analysis
         self._system = analysis._system
+        self._skip_log_update = skip_log_update
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
         self.sub_analyses_prefix = "sa_"
@@ -1111,6 +1113,15 @@ class TRITONSWMM_sensitivity_analysis:
 
         for sa_id, sub_analysis in self.sub_analyses.items():
             node_name = f"{self.sub_analyses_prefix}{sa_id}"
+            # Refresh the sub-analysis's in-memory log from disk before reading its
+            # consolidation state: open_datatree() gates on the in-memory
+            # datatree_consolidation_complete flag, which a run (often in another
+            # process) sets on disk but not in this long-lived sub object.
+            # Previously the sensitivity aggregators' _update_log() refreshed these
+            # sub logs as a side effect; that call was dropped in the
+            # log-write-race-fix compute-on-read change, so refresh explicitly here
+            # at the cross-analysis read site (read-only observer; safe).
+            sub_analysis._refresh_log()
             try:
                 sub_tree = sub_analysis.process.open_datatree()
             except ValueError:
@@ -1921,6 +1932,7 @@ class TRITONSWMM_sensitivity_analysis:
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=sa_id_to_system[sa_id],
+                skip_log_update=self._skip_log_update,
             )
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
@@ -2182,8 +2194,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_scenarios_created = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
-            all_scenarios_created = all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
+            all_scenarios_created = all_scenarios_created and sub_analysis.all_scenarios_created
         return all_scenarios_created is True
 
     @property
@@ -2198,8 +2209,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_sims_run = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
-            all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
+            all_sims_run = all_sims_run and sub_analysis.all_sims_run
         return all_sims_run is True
 
     @property
@@ -2214,9 +2224,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_TRITON_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_TRITON_timeseries_processed = (
-                all_TRITON_timeseries_processed and sub_analysis.log.all_TRITON_timeseries_processed.get()
+                all_TRITON_timeseries_processed and sub_analysis.all_TRITON_timeseries_processed
             )
         return all_TRITON_timeseries_processed is True
 
@@ -2232,9 +2241,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_SWMM_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed and sub_analysis.log.all_SWMM_timeseries_processed.get()
+                all_SWMM_timeseries_processed and sub_analysis.all_SWMM_timeseries_processed
             )
         return all_SWMM_timeseries_processed is True
 
@@ -2250,10 +2258,9 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_TRITONSWMM_performance_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_TRITONSWMM_performance_timeseries_processed = (
                 all_TRITONSWMM_performance_timeseries_processed
-                and sub_analysis.log.all_TRITONSWMM_performance_timeseries_processed.get()
+                and sub_analysis.all_TRITONSWMM_performance_timeseries_processed
             )
         return all_TRITONSWMM_performance_timeseries_processed is True
 
@@ -2261,7 +2268,6 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITONSWMM_performance_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.TRITONSWMM_performance_time_series_not_processed
         return lst_scens
 
@@ -2269,7 +2275,6 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITON_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.TRITON_time_series_not_processed
         return lst_scens
 
@@ -2277,7 +2282,6 @@ class TRITONSWMM_sensitivity_analysis:
     def SWMM_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.SWMM_time_series_not_processed
         return lst_scens
 
@@ -2293,9 +2297,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_raw_TRITON_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
+                all_raw_TRITON_outputs_cleared and sub_analysis.all_raw_TRITON_outputs_cleared
             )
         return all_raw_TRITON_outputs_cleared is True
 
@@ -2311,9 +2314,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_raw_SWMM_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
+                all_raw_SWMM_outputs_cleared and sub_analysis.all_raw_SWMM_outputs_cleared
             )
         return all_raw_SWMM_outputs_cleared is True
 

@@ -166,6 +166,13 @@ class TRITONSWMM_analysis:
             analysis_paths_kwargs["sensitivity_datatree_zarr"] = analysis_dir / "sensitivity_datatree.zarr"
 
         self.analysis_paths = AnalysisPaths(**analysis_paths_kwargs)
+        # Ensure the per-analysis simulation directory exists at construction time.
+        # Previously this was created incidentally during __init__ by the heavy
+        # _update_log()'s per-scenario TRITONSWMM_scenario construction (whose
+        # __init__ mkdir's sims/<sim_id>/...). _update_log is now a thin refresh
+        # (log-write-race-fix), so create the directory explicitly here to
+        # preserve the construction-time contract relied on by callers/tests.
+        self.analysis_paths.simulation_directory.mkdir(parents=True, exist_ok=True)
 
         self.df_sims = pd.read_csv(self.cfg_analysis.weather_events_to_simulate).loc[
             :, self.cfg_analysis.weather_event_indices
@@ -190,12 +197,16 @@ class TRITONSWMM_analysis:
         self.nsims = len(self.df_sims)
 
         if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            self.sensitivity = TRITONSWMM_sensitivity_analysis(self, is_main_orchestrator=is_main_orchestrator)
+            self.sensitivity = TRITONSWMM_sensitivity_analysis(
+                self, is_main_orchestrator=is_main_orchestrator, skip_log_update=skip_log_update
+            )
             self.nsims *= len(self.sensitivity.df_setup)
+        # Always LOAD the log from disk (read-only safe; _refresh_log creates a
+        # default when the log file is absent). Only the WRITE-BACK side is gated
+        # on skip_log_update, so a read-only consumer (renderer) gets self.log
+        # populated WITHOUT mutating the shared log.
+        self._refresh_log()
         if not skip_log_update:
-            # self._add_all_scenarios()
-            self._refresh_log()
-
             # Record available backends at analysis creation time
             self.log.cpu_backend_available.set(self._system.compilation_cpu_successful)
             self.log.gpu_backend_available.set(self._system.compilation_gpu_successful)
@@ -820,19 +831,28 @@ class TRITONSWMM_analysis:
     def all_scenarios_created(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_scenarios_created
-        return bool(self.log.all_scenarios_created.get())
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            scen.log.refresh()
+            if not bool(scen.log.scenario_creation_complete.get()):
+                return False
+        return True
 
     @property
     def all_sims_run(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_sims_run
-        return bool(self.log.all_sims_run.get())
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            if not all(scen.model_run_completed(m) for m in scen.run.model_types_enabled):
+                return False
+        return True
 
     @property
     def all_TRITONSWMM_performance_timeseries_processed(self):
         if self.cfg_analysis.toggle_sensitivity_analysis:
             return self.sensitivity.all_TRITONSWMM_performance_timeseries_processed
-        return bool(self.log.all_TRITONSWMM_performance_timeseries_processed.get())
+        return len(self.TRITONSWMM_performance_time_series_not_processed) == 0
 
     @property
     def TRITONSWMM_performance_time_series_not_processed(self):
@@ -913,81 +933,49 @@ class TRITONSWMM_analysis:
         # Uses model-specific logs - race-condition free!
         return len(self.TRITON_time_series_not_processed) == 0
 
+    @property
+    def all_raw_TRITON_outputs_cleared(self) -> bool:
+        """Computed on read from primitive per-model raw_TRITON_outputs_cleared flags."""
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_raw_TRITON_outputs_cleared
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            for model_type in scen.run.model_types_enabled:
+                if model_type in ("triton", "tritonswmm"):
+                    ml = scen.get_log(model_type)
+                    if not bool(ml.raw_TRITON_outputs_cleared and ml.raw_TRITON_outputs_cleared.get()):
+                        return False
+        return True
+
+    @property
+    def all_raw_SWMM_outputs_cleared(self) -> bool:
+        """Computed on read from primitive per-model raw_SWMM_outputs_cleared flags."""
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            return self.sensitivity.all_raw_SWMM_outputs_cleared
+        for event_iloc in self.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self)
+            for model_type in scen.run.model_types_enabled:
+                if model_type in ("swmm", "tritonswmm"):
+                    ml = scen.get_log(model_type)
+                    if not bool(ml.raw_SWMM_outputs_cleared and ml.raw_SWMM_outputs_cleared.get()):
+                        return False
+        return True
+
     def _update_log(self):
+        """Reload this analysis's log from disk.
+
+        Historically this recomputed and PERSISTED seven `all_*` rollup flags.
+        Those rollups are pure derived state (a function of primitive
+        per-scenario / per-model flags) and are now computed on read via the
+        `all_*` properties above — so this method no longer authors any rollup
+        write. Persisting derived state created an observer-recompute-write path
+        that clobbered owner-authored primitives (e.g.
+        `datatree_consolidation_complete`) under concurrency; removing the
+        persistence removes the clobber vector. Retained as a thin refresh
+        wrapper for call-site compatibility; primitives are still persisted by
+        their own `.set()` calls at their owner sites.
+        """
         self._refresh_log()
-        # dict_all_logs = {}
-        all_scens_created = True
-        all_sims_run = True
-        all_TRITON_outputs_processed = True
-        all_SWMM_outputs_processed = True
-        all_TRITONSWMM_performance_outputs_processed = True
-        all_raw_TRITON_outputs_cleared = True
-        all_raw_SWMM_outputs_cleared = True
-        if self.cfg_analysis.toggle_sensitivity_analysis is True:
-            sens = self.sensitivity
-            all_scens_created = sens.all_scenarios_created
-            all_sims_run = sens.all_sims_run
-            all_TRITON_outputs_processed = sens.all_TRITON_timeseries_processed
-            all_SWMM_outputs_processed = sens.all_SWMM_timeseries_processed
-            all_TRITONSWMM_performance_outputs_processed = sens.all_TRITONSWMM_performance_timeseries_processed
-            all_raw_TRITON_outputs_cleared = sens.all_raw_TRITON_outputs_cleared
-            all_raw_SWMM_outputs_cleared = sens.all_raw_SWMM_outputs_cleared
-        else:
-            for event_iloc in self.df_sims.index:
-                scen = TRITONSWMM_scenario(event_iloc, self)
-                # sim run status - check if all enabled models completed
-                enabled_models = scen.run.model_types_enabled
-                scen_all_models_completed = all(scen.model_run_completed(model_type) for model_type in enabled_models)
-                all_sims_run = all_sims_run and scen_all_models_completed
-
-                # Scenario creation status comes exclusively from scenario prep log
-                scen.log.refresh()
-                scen_created = bool(scen.log.scenario_creation_complete.get())
-                all_scens_created = all_scens_created and scen_created
-
-                # Check output processing status for each enabled model
-                for model_type in enabled_models:
-                    model_log = scen.get_log(model_type)
-
-                    # TRITON outputs (triton and tritonswmm models)
-                    if model_type in ("triton", "tritonswmm"):
-                        triton_ok = bool(
-                            model_log.TRITON_timeseries_written and model_log.TRITON_timeseries_written.get()
-                        )
-                        all_TRITON_outputs_processed = all_TRITON_outputs_processed and triton_ok
-
-                        perf_ok = bool(
-                            model_log.performance_timeseries_written and model_log.performance_timeseries_written.get()
-                        )
-                        all_TRITONSWMM_performance_outputs_processed = (
-                            all_TRITONSWMM_performance_outputs_processed and perf_ok
-                        )
-
-                        cleared = bool(
-                            model_log.raw_TRITON_outputs_cleared and model_log.raw_TRITON_outputs_cleared.get()
-                        )
-                        all_raw_TRITON_outputs_cleared = all_raw_TRITON_outputs_cleared and cleared
-
-                    # SWMM outputs (swmm and tritonswmm models)
-                    if model_type in ("swmm", "tritonswmm"):
-                        node_ok = bool(
-                            model_log.SWMM_node_timeseries_written and model_log.SWMM_node_timeseries_written.get()
-                        )
-                        link_ok = bool(
-                            model_log.SWMM_link_timeseries_written and model_log.SWMM_link_timeseries_written.get()
-                        )
-                        swmm_ok = node_ok and link_ok
-                        all_SWMM_outputs_processed = all_SWMM_outputs_processed and swmm_ok
-
-                        cleared = bool(model_log.raw_SWMM_outputs_cleared and model_log.raw_SWMM_outputs_cleared.get())
-                        all_raw_SWMM_outputs_cleared = all_raw_SWMM_outputs_cleared and cleared
-        self.log.all_scenarios_created.set(all_scens_created)
-        self.log.all_sims_run.set(all_sims_run)
-        self.log.all_TRITON_timeseries_processed.set(all_TRITON_outputs_processed)
-        self.log.all_SWMM_timeseries_processed.set(all_SWMM_outputs_processed)
-        self.log.all_TRITONSWMM_performance_timeseries_processed.set(all_TRITONSWMM_performance_outputs_processed)
-        self.log.all_raw_TRITON_outputs_cleared.set(all_raw_TRITON_outputs_cleared)
-        self.log.all_raw_SWMM_outputs_cleared.set(all_raw_SWMM_outputs_cleared)
         return
 
     def retrieve_prepare_scenario_launchers(

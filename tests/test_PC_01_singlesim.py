@@ -113,8 +113,8 @@ def test_process_sim(norfolk_all_models_analysis_cached):
 
     # Validate raw outputs were cleared
     success_clearing = (
-        analysis.log.all_raw_TRITON_outputs_cleared.get()
-        and analysis.log.all_raw_SWMM_outputs_cleared.get()
+        analysis.all_raw_TRITON_outputs_cleared
+        and analysis.all_raw_SWMM_outputs_cleared
     )
     if not success_clearing:
         analysis.print_logfile_for_scenario(0)
