@@ -371,14 +371,14 @@ def main() -> int:
 
         # Phase 3a: Verify all simulations completed successfully
         logger.info("Verifying simulation completion status...")
-        analysis._update_log()
+        analysis._refresh_log()  # load owner primitives; rollups are computed on read
 
         # Check if all simulations ran. Under --allow-incomplete (set by the reprocess Snakefile
         # generators), demote to a warning and continue — the reprocess Snakefile's `input:` directive
         # has already scope-limited the rule to completed sim flags, so the runner consolidates only
         # those completed scenarios and the un-run ones are surfaced via the operator-facing log
         # below (and the rendered report's Errors-and-Warnings sidebar).
-        if not analysis.log.all_sims_run.get():
+        if not analysis.all_sims_run:
             if args.allow_incomplete:
                 logger.warning(
                     "Not all simulations completed successfully; --allow-incomplete is set, proceeding with completed scenarios only"  # noqa: E501
@@ -400,7 +400,7 @@ def main() -> int:
         # warnings would otherwise fire spuriously for the out-of-scope (un-run) scenarios. Demote to
         # an info-level note in that case; the canonical workflow path (flag absent) keeps the warnings.
         if args.which in ["both", "TRITON"]:
-            if not analysis.log.all_TRITON_timeseries_processed.get():
+            if not analysis.all_TRITON_timeseries_processed:
                 if args.allow_incomplete:
                     logger.info(
                         "Skipping all-TRITON-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)"  # noqa: E501
@@ -411,7 +411,7 @@ def main() -> int:
                         f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed}"
                     )
         if args.which in ["both", "SWMM"]:
-            if not analysis.log.all_SWMM_timeseries_processed.get():
+            if not analysis.all_SWMM_timeseries_processed:
                 if args.allow_incomplete:
                     logger.info(
                         "Skipping all-SWMM-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)"  # noqa: E501
