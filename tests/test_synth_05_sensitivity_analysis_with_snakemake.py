@@ -646,7 +646,8 @@ def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity
 
 # ─── Phase 7: Snakemake report integration tests (sensitivity master) ──────────
 
-from pathlib import Path as _Path
+from pathlib import Path as _Path  # noqa: E402
+
 _SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7 = (
     _Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
 )
@@ -785,9 +786,10 @@ def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cache
 # Phase 1 of prefixed_column_config_variation — tests
 # ============================================================================
 
-import yaml as _yaml
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-import tests.fixtures.test_case_catalog as _cases
+import yaml as _yaml  # noqa: E402
+
+import tests.fixtures.test_case_catalog as _cases  # noqa: E402
+from TRITON_SWMM_toolkit.exceptions import ConfigurationError  # noqa: E402
 
 
 def test_system_overlay_mutual_exclusion_with_system_config_yaml():
@@ -1035,3 +1037,37 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     assert report_zip.exists() and report_zip.stat().st_size > 0, (
         "master analysis_report.zip must exist after the reprocess render"
     )
+
+
+@pytest.mark.slow
+def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_sensitivity_analysis_cached):
+    """Sensitivity-tier audit-passes guard — exercises sensitivity_benchmarking
+    (Plotly branch), the rebased per-sa per-sim renderers, and errors_and_warnings /
+    per_analysis_summary reading the persisted validation_report.json (Option D).
+
+    Master plots are deleted before the second run() to force a fresh render through
+    the audited _cli subprocess path (the _cached fixture key is the swmm-topology
+    SHA, not the renderer source). render_report() requires every report()-flagged
+    figure to exist (Gotcha 39), so its success is the audit-passed-for-every-renderer
+    signal: a single renderer's audit ProcessingError leaves its figure missing.
+    """
+    import os
+    import shutil
+    from pathlib import Path
+
+    os.environ.pop("TRITON_SWMM_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
+    analysis = synth_sensitivity_analysis_cached
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))
+
+    master_dir = analysis.sensitivity.master_analysis.analysis_paths.analysis_dir
+    plots_dir = master_dir / "plots"
+    shutil.rmtree(plots_dir, ignore_errors=True)
+    analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))
+
+    out_html = analysis.sensitivity.render_report(format="html")
+    assert out_html.exists() and out_html.stat().st_size > 0, (
+        "sensitivity render_report failed after a forced fresh render — likely an "
+        f"audit ProcessingError; inspect plot-rule logs under {plots_dir}"
+    )
+    manifests = list(plots_dir.rglob("*.manifest.json"))
+    assert manifests, "no manifest sidecars (sensitivity renderers did not re-run)"

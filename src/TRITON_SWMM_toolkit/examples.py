@@ -11,7 +11,6 @@ Generic API (for any case study):
 
     # Load any case study
     example = TRITON_SWMM_example.from_case_study(
-        app_name=APP_NAME,
         case_name="norfolk_coastal_flooding",
         system_config_template="template_system_config.yaml",
         analysis_config_template="template_analysis_config.yaml",
@@ -33,7 +32,6 @@ Adding New Case Studies:
         @classmethod
         def load(cls, download_if_exists=False, example_data_dir=None):
             return TRITON_SWMM_example.from_case_study(
-                app_name=APP_NAME,
                 case_name="miami_flooding",
                 system_config_template="template_system_config.yaml",
                 analysis_config_template="template_analysis_config.yaml",
@@ -66,8 +64,6 @@ import yaml
 import bagit
 from zipfile import ZipFile
 
-from pathlib import Path
-from typing import Optional
 import warnings
 from importlib.resources import files
 
@@ -87,6 +83,11 @@ from TRITON_SWMM_toolkit.config.loaders import (
     load_system_config,
     load_system_config_from_dict,
 )
+
+import hashlib
+
+from TRITON_SWMM_toolkit.config.case_manifest import CaseManifest
+from TRITON_SWMM_toolkit.exceptions import ProcessingError
 
 
 class TRITON_SWMM_example:
@@ -155,7 +156,6 @@ class TRITON_SWMM_example:
         Example:
             from TRITON_SWMM_toolkit.constants import *
             example = TRITON_SWMM_example.from_case_study(
-                app_name=APP_NAME,
                 case_name=NORFOLK_EX,
                 system_config_template=NORFOLK_SYSTEM_CONFIG,
                 analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
@@ -278,8 +278,8 @@ class TRITON_SWMM_example:
         Returns:
             Path to generated system configuration YAML
         """
-        case_details = cls._load_config_file_as_dic(case_name, case_config_filename)
-        res_identifier = case_details["res_identifier"]  # will come from the case yaml
+        case_manifest = cls._load_case_manifest(case_name, case_config_filename)
+        res_identifier = case_manifest.res_identifier
         mapping = cls._get_case_data_and_package_directory_mapping_dict(
             case_name=case_name,
             example_data_dir=example_data_dir,
@@ -298,12 +298,13 @@ class TRITON_SWMM_example:
                 print(
                     f"Download example data to {mapping['DATA_DIR']} using Hydroshare"
                 )
-            hs = cls._sign_into_hydroshare()
+            hs = cls._connect_to_hydroshare(res_identifier)
             cls._download_data_from_hydroshare(
                 res_identifier,
                 Path(mapping["HYDROSHARE_ROOT"]),
                 hs,
                 download_if_exists=download_if_exists,
+                expected_manifest=case_manifest.manifest,
             )
 
         cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
@@ -350,9 +351,9 @@ class TRITON_SWMM_example:
         return files(cnst.APP_NAME).parents[1].joinpath(f"test_data/{case_study_name}/{filename}")  # type: ignore
 
     @classmethod
-    def _load_config_file_as_dic(cls, case_study_name: str, filename: str) -> dict:
+    def _load_case_manifest(cls, case_study_name: str, filename: str) -> CaseManifest:
         path = cls._load_config_filepath(case_study_name, filename)
-        return read_yaml(path)
+        return CaseManifest.model_validate(read_yaml(path))
 
     @classmethod
     def _download_data_from_hydroshare(
@@ -361,9 +362,11 @@ class TRITON_SWMM_example:
         target: Path,
         hs,
         download_if_exists=False,
-        validate=False,
+        validate=True,
+        expected_manifest: dict[str, str] | None = None,
     ):
         if target.exists() and download_if_exists:
+            # EXEMPT-DU: test-example-fixture
             fast_rmtree(target)
         if target.exists() and not download_if_exists:
             return
@@ -386,28 +389,93 @@ class TRITON_SWMM_example:
                 )
         # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
         if validate:
-            bag = bagit.Bag(unzipped_folder)
+            bag = bagit.Bag(str(unzipped_folder))
             if bag.is_valid():
-                print("Bag verified! All checksums match.")
+                print("Bag verified! All bagit checksums match.", flush=True)
             else:
-                print("Bag is invalid!")
+                raise ProcessingError(
+                    operation="hydroshare_bag_validation",
+                    filepath=str(unzipped_folder),
+                    reason="bagit manifest validation failed (bag is not self-consistent).",
+                )
+
+        cls._verify_manifest(unzipped_folder, expected_manifest)
 
         outdir = unzipped_folder.rename(target)
+        # EXEMPT-DU: test-example-fixture
         zip_path.unlink()
 
     @classmethod
-    def _sign_into_hydroshare(
-        cls,
-    ):
+    def _verify_manifest(cls, bag_root: Path, expected_manifest: dict[str, str] | None) -> None:
+        """Raise ProcessingError if any manifest-declared file is absent or sha256-mismatched.
+
+        Keys in ``expected_manifest`` are POSIX paths relative to ``bag_root`` (the
+        extracted bag root — the dir containing ``data/`` and the bagit control files,
+        i.e. the dir ``_download_data_from_hydroshare`` names ``unzipped_folder``). This
+        is the SAME key base ``generate_case_manifest.compute_manifest`` uses, so a
+        manifest computed against the bag root verifies against the bag root. An empty
+        or ``None`` manifest is a no-op (the Norfolk pre-population ``manifest: {}`` state).
+        """
+        if not expected_manifest:
+            return
+        for rel_name, expected_sha in expected_manifest.items():
+            fpath = bag_root / rel_name
+            if not fpath.exists():
+                raise ProcessingError(
+                    operation="case_manifest_verification",
+                    filepath=str(fpath),
+                    reason=f"file declared in case.yaml manifest is absent from the downloaded bag: {rel_name}",
+                )
+            actual_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
+            if actual_sha != expected_sha:
+                raise ProcessingError(
+                    operation="case_manifest_verification",
+                    filepath=str(fpath),
+                    reason=(
+                        f"sha256 mismatch for {rel_name}: expected {expected_sha}, got {actual_sha}. "
+                        "The Hydroshare resource may have been reorganized; "
+                        "regenerate case.yaml via generate_case_manifest if intended."
+                    ),
+                )
+
+    @classmethod
+    def _connect_to_hydroshare(cls, res_identifier: str):
+        """Return a HydroShare client able to read ``res_identifier``.
+
+        Anonymous-first: a public resource is downloadable with NO credentials
+        (verified: GET /hsapi/resource/{id}/ returns 200 binary/octet-stream for a
+        public resource). Only fall back to the interactive OAuth sign-in when the
+        anonymous resource read fails (private/unshared resource).
+        """
         if HydroShare is None:
             raise RuntimeError(
-                "hsclient is not installed. Install optional dependencies with `pip install .[tests]`. Alternatively, you can download the data manually if you have issues installing this package with pip. Link: https://www.hydroshare.org/resource/a4aace329b8c401a93e94ce2a761fe1b/"
+                "hsclient is not installed. Install optional dependencies with "
+                "`pip install .[tests]`. Alternatively, download the data manually: "
+                f"https://www.hydroshare.org/resource/{res_identifier}/"
             )
-        hs = HydroShare()
-        print("Please log into hydroshare to download example.", flush=True)
-        hs.sign_in()
-        print("signed into Hydroshare successfully.")
-        return hs
+        hs = HydroShare()  # no args -> unauthenticated requests.Session, no userInfo call
+        try:
+            hs.resource(res_identifier, validate=True)  # public read -> 200, no auth
+            return hs
+        except Exception as exc:  # noqa: BLE001 - hsclient raises bare Exception on non-200
+            # Broad catch is deliberate: hsclient does not raise a typed auth error.
+            # Preserve the original cause so a network failure or a misspelled
+            # res_identifier is diagnosable rather than silently masked by the
+            # interactive sign-in prompt.
+            print(
+                f"Anonymous read of {res_identifier} failed ({exc!r}); "
+                "signing in to HydroShare.",
+                flush=True,
+            )
+            try:
+                hs.sign_in()
+            except Exception as sign_in_exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"HydroShare sign-in failed after anonymous read of "
+                    f"{res_identifier} failed ({exc!r})."
+                ) from sign_in_exc
+            print("Signed into HydroShare successfully.", flush=True)
+            return hs
 
     @classmethod
     def _return_filled_template_yaml_dictionary(cls, cfg_template: Path, mapping: dict):

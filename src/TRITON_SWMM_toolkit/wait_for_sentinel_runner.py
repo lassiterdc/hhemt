@@ -30,6 +30,15 @@ def _read_submitted_jobid(status_dir: Path, rule_token: str) -> str | None:
     """Recover the original SLURM job-id from the submitted-sentinel, or None
     (local mode / no sentinel / no jobid) — in which case the probe is skipped."""
     sentinel = status_dir / "_submitted" / f"{rule_token}.json"
+    if not sentinel.exists():
+        # mechanism (b): a PENDING-recovered token has no _submitted/ sentinel yet
+        # (its worker never started). Fall back to _queued/{token}.json so the
+        # in-loop liveness probe (Gotcha 43) re-enables instead of degrading to a
+        # pure marker-poll that stalls to the flat cap on an in-queue cancellation.
+        # The _queued/ payload carries the same top-level slurm_jobid key — null on
+        # executor-owns-sbatch clusters (probe stays disabled there, byte-identical
+        # to today), the allocation jobid on toolkit-owns-sbatch clusters.
+        sentinel = status_dir / "_queued" / f"{rule_token}.json"
     try:
         return str(json.loads(sentinel.read_text()).get("slurm_jobid") or "") or None
     except (json.JSONDecodeError, OSError):
@@ -58,6 +67,7 @@ def _write_failed_marker_and_reclaim(status_dir: Path, rule_token: str, job_id: 
     tmp = marker.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload))
     os.replace(tmp, marker)
+    # EXEMPT-DU: status-flag
     (status_dir / "_submitted" / f"{rule_token}.json").unlink(missing_ok=True)
 
 

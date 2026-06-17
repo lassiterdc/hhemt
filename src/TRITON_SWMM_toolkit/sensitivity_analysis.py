@@ -118,6 +118,7 @@ def _unlink_dprocess_flags_for_regenerate(targets: list[str], status_dir: Path) 
     """
     for sa_id in targets:
         for f in status_dir.glob(f"d_process_*_sa-{sa_id}_*"):
+            # EXEMPT-DU: status-flag
             f.unlink(missing_ok=True)
 
 
@@ -157,6 +158,7 @@ class TRITONSWMM_sensitivity_analysis:
         self,
         analysis: "TRITONSWMM_analysis",
         is_main_orchestrator: bool = True,
+        skip_log_update: bool = False,
     ) -> None:
         """
         Initialize a sensitivity analysis orchestrator.
@@ -176,6 +178,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         self.master_analysis = analysis
         self._system = analysis._system
+        self._skip_log_update = skip_log_update
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
         self.sub_analyses_prefix = "sa_"
@@ -376,9 +379,7 @@ class TRITONSWMM_sensitivity_analysis:
 
         return result
 
-    def _invalidate_processing_log_for_sa_ids(
-        self, sa_id_tokens: tuple[str, ...]
-    ) -> None:
+    def _invalidate_processing_log_for_sa_ids(self, sa_id_tokens: tuple[str, ...]) -> None:
         """Per-sa_id dispatch for processing-log invalidation under
         ``override_force_rerun={"sa_id": [...]}``.
 
@@ -511,7 +512,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_dir = master_analysis_dir / "_status"
         if start_with in ("consolidate", "process"):
             for sa_id in targets:
+                # EXEMPT-DU: status-flag
                 (status_dir / f"e_consolidate_sa-{sa_id}_complete.flag").unlink(missing_ok=True)
+            # EXEMPT-DU: status-flag
             (status_dir / "f_consolidate_master_complete.flag").unlink(missing_ok=True)
             # R7 (D2 Option a) — consolidate-stage divergence preflight. Login-node
             # fail-fast that converts the SILENT-partial-master-tree hazard into a
@@ -589,7 +592,9 @@ class TRITONSWMM_sensitivity_analysis:
             # regenerates from the preserved zarr on the default path (FQ1 parity).
             _report_html = master_analysis_dir / "analysis_report.html"
             _report_zip = master_analysis_dir / "analysis_report.zip"
+            # EXEMPT-DU: du-handled-by-decrement
             _report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             _report_zip.unlink(missing_ok=True)
             # FIX 3 — when regenerate_existing (and not dry_run), a LATER
             # deletion restamps the master _du.json anyway (SLURM route: the
@@ -616,12 +621,11 @@ class TRITONSWMM_sensitivity_analysis:
                 "1_job_many_srun_tasks",
             )
             _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-            route_delete_via_slurm = (
-                regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
-            )
+            route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
             if route_delete_via_slurm:
                 self._workflow_builder._base_builder.submit_reprocess_delete_workflow(
-                    start_with=start_with, override_in_flight=False,
+                    start_with=start_with,
+                    override_in_flight=False,
                 )
             elif regenerate_existing and not dry_run:
                 # In-process path (local / delete_via_slurm=False) — per-sub +
@@ -670,7 +674,9 @@ class TRITONSWMM_sensitivity_analysis:
             # D3 — capture sizes BEFORE unlink so the O(1) decrement has the bytes.
             _html_bytes = _report_html.stat().st_size if _report_html.exists() else 0
             _zip_bytes = _report_zip.stat().st_size if _report_zip.exists() else 0
+            # EXEMPT-DU: du-handled-by-decrement
             _report_html.unlink(missing_ok=True)
+            # EXEMPT-DU: du-handled-by-decrement
             _report_zip.unlink(missing_ok=True)
             if not dry_run:
                 # D3 — O(1) decrement of the two report children (no plots on the
@@ -721,6 +727,7 @@ class TRITONSWMM_sensitivity_analysis:
         # 1. Clear any stale sentinels from a prior failed delete attempt.
         stale_dir = analysis_dir / "_status" / "_deleting"
         if stale_dir.exists():
+            # EXEMPT-DU: status-dir-cleanup
             fast_rmtree(stale_dir)
 
         # 2. Submit the distributed sensitivity-delete workflow. Guards run
@@ -738,17 +745,16 @@ class TRITONSWMM_sensitivity_analysis:
         missing = expected - actual
         if missing:
             print(
-                f"[delete] {len(missing)} per-sa-rule sentinels missing — "
-                f"preserving analysis_dir for debugging.",
+                f"[delete] {len(missing)} per-sa-rule sentinels missing — " f"preserving analysis_dir for debugging.",
                 flush=True,
             )
             print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
             return
         print(
-            f"[delete] all {len(expected)} per-sa-rule sentinels present — "
-            f"removing analysis_dir.",
+            f"[delete] all {len(expected)} per-sa-rule sentinels present — " f"removing analysis_dir.",
             flush=True,
         )
+        # EXEMPT-DU: full-analysis-root-wipe
         fast_rmtree(analysis_dir)
 
     def _enumerate_expected_delete_sentinels(self) -> set[Path]:
@@ -856,13 +862,52 @@ class TRITONSWMM_sensitivity_analysis:
         # Navbar upper-left brand text: brand_theme.upper_left_text (ADR-7),
         # defaulting to analysis_id when None (D-6). _theme is resolved above.
         _navbar = _theme.upper_left_text or self.cfg_analysis.analysis_id
+        # Resolve the active set's category_order. render_report() is dominantly
+        # invoked from render_report_runner.main() on a FRESH analysis that never
+        # called run() (see the _brand_theme getattr-fallback above for the
+        # identical hazard), so self._active_reporting_set may not exist. getattr-
+        # fallback to a config-only resolution (no CSV cross-validation at render
+        # time) mirroring the _theme fallback above. Never let the bare attribute
+        # AttributeError be swallowed by the surrounding `except Exception: pass`.
+        _active_set = getattr(self, "_active_reporting_set", None)
+        if _active_set is None:
+            # render-without-run() fallback. Fail SOFT (SE F-I-3): the render path
+            # bypasses validate_active_reporting_set, so a stale/unknown
+            # reporting_set would raise here and surface as an opaque Snakemake
+            # rule failure. Degrade to the historical "default" sidebar order + a
+            # one-line warning instead of crashing the render rule.
+            import logging
+
+            from .config.report import resolve_active_reporting_set_name
+            from .report_renderers._reporting_sets import get_reporting_set
+
+            try:
+                _cfg_report = getattr(self, "_cfg_report", None)
+                if _cfg_report is None:
+                    _cfg_report = self.cfg_analysis.report
+                _set_name = resolve_active_reporting_set_name(
+                    _cfg_report,
+                    is_sensitivity=self.cfg_analysis.toggle_sensitivity_analysis,
+                )
+                _active_set = get_reporting_set(_set_name)
+            except Exception as _e:
+                logging.getLogger(__name__).warning(
+                    "render-path reporting_set resolution failed (%s); " "falling back to 'default' category order",
+                    _e,
+                )
+                _active_set = get_reporting_set("default")
+        _category_order = list(_active_set.category_order)
         try:
             if format == "html":
                 out.write_text(
-                    apply_post_process_surgery(out.read_text(), navbar_text=_navbar)
+                    apply_post_process_surgery(
+                        out.read_text(),
+                        navbar_text=_navbar,
+                        category_order=_category_order,
+                    )
                 )
             else:
-                apply_post_process_surgery_to_zip(out, navbar_text=_navbar)
+                apply_post_process_surgery_to_zip(out, navbar_text=_navbar, category_order=_category_order)
         except Exception:
             pass
         if format != "html":
@@ -1068,6 +1113,15 @@ class TRITONSWMM_sensitivity_analysis:
 
         for sa_id, sub_analysis in self.sub_analyses.items():
             node_name = f"{self.sub_analyses_prefix}{sa_id}"
+            # Refresh the sub-analysis's in-memory log from disk before reading its
+            # consolidation state: open_datatree() gates on the in-memory
+            # datatree_consolidation_complete flag, which a run (often in another
+            # process) sets on disk but not in this long-lived sub object.
+            # Previously the sensitivity aggregators' _update_log() refreshed these
+            # sub logs as a side effect; that call was dropped in the
+            # log-write-race-fix compute-on-read change, so refresh explicitly here
+            # at the cross-analysis read site (read-only observer; safe).
+            sub_analysis._refresh_log()
             try:
                 sub_tree = sub_analysis.process.open_datatree()
             except ValueError:
@@ -1137,6 +1191,11 @@ class TRITONSWMM_sensitivity_analysis:
         if fname_out.exists() and _log_complete:
             if verbose:
                 print(f"Sensitivity DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
+            # Ensure the master analysis-scope DU sentinel exists even on the
+            # already-consolidated early-return path. This materializes the
+            # sentinel on trees consolidated before this write site existed, and
+            # is cheap/idempotent via compare-and-write.
+            self._write_master_du_sentinel()
             return fname_out
         if fname_out.exists() and not _log_complete:
             from TRITON_SWMM_toolkit.utils import fast_rmtree
@@ -1175,9 +1234,38 @@ class TRITONSWMM_sensitivity_analysis:
         self.master_analysis._refresh_log()
         if hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete"):
             self.master_analysis.log.sensitivity_datatree_consolidation_complete.set(True)
+
         if verbose:
             print(f"Wrote sensitivity DataTree zarr to {fname_out}")
+        self._write_master_du_sentinel()
         return fname_out
+
+    def _write_master_du_sentinel(self) -> None:
+        """Write the master analysis-scope ``_du.json`` DU sentinel.
+
+        The sensitivity mirror of the multisim analysis-scope write in
+        ``processing_analysis.py`` (``consolidate_to_datatree``): the sensitivity
+        master-consolidate path is otherwise the ONLY consolidation path that
+        never writes an analysis-scope ``_du.json``, leaving the master root
+        unsentineled so a ``delete --dry-run`` falls back to a full tree walk.
+
+        Uses ``sum_child_sentinels`` (Gotcha 38 / the DU-rollup decision): the
+        master total is the Σ of the per-sub ``_du.json`` sentinels (written by
+        the D6 fold) + a bounded own-files walk excluding the child-scope dirs —
+        NEVER a full-tree ``compute_and_write_scope_sentinel`` walk on the
+        largest tree in the system. Ordering is structurally safe: the
+        ``master_consolidation`` rule fans in on every per-sub completion flag,
+        so all per-sub sentinels exist before this runs. Compare-and-write keeps
+        the call idempotent (mtime preserved on unchanged bytes), so it is safe
+        to invoke on the already-consolidated early-return path too.
+        """
+        from TRITON_SWMM_toolkit.du_sentinels import sum_child_sentinels
+
+        sum_child_sentinels(
+            self.master_analysis.analysis_paths.analysis_dir,
+            scope="analysis",
+            child_scope_dirs=["subanalyses", "sims"],
+        )
 
     def open_sensitivity_datatree(self) -> "xr.DataTree":
         """Open the consolidated sensitivity DataTree zarr lazily."""
@@ -1617,6 +1705,7 @@ class TRITONSWMM_sensitivity_analysis:
         for p in result["status_flags"]:
             if verbose:
                 print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
+            # EXEMPT-DU: status-flag
             p.unlink()
         result["sensitivity_datatree_removed"] = False
         result["master_flag_removed"] = False
@@ -1637,6 +1726,7 @@ class TRITONSWMM_sensitivity_analysis:
                         f"[cleanup-orphans] Unlinking master-consolidation flag {master_flag}",
                         flush=True,
                     )
+                # EXEMPT-DU: status-flag
                 master_flag.unlink()
                 result["master_flag_removed"] = True
         return result
@@ -1671,7 +1761,7 @@ class TRITONSWMM_sensitivity_analysis:
         generated_dir = analysis_dir / "_generated"
 
         if is_main_orchestrator:
-            fast_rmtree(generated_dir, missing_ok=True)
+            fast_rmtree(generated_dir, missing_ok=True, analysis_dir=analysis_dir)  # PATTERN A (_generated is DU-counted; not _status*-prefixed)
             generated_dir.mkdir(parents=True, exist_ok=True)
 
         has_yaml_col = "system_config_yaml" in df_setup_full.columns
@@ -1842,6 +1932,7 @@ class TRITONSWMM_sensitivity_analysis:
             anlsys = anlysis.TRITONSWMM_analysis(
                 analysis_config_yaml=cfg_anlysys_yaml,
                 system=sa_id_to_system[sa_id],
+                skip_log_update=self._skip_log_update,
             )
             dic_sensitivity_analyses[sa_id] = anlsys
         return dic_sensitivity_analyses
@@ -2072,9 +2163,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sa_id, sub_analysis in self.sub_analyses.items():
-            assert sub_analysis.cfg_analysis.is_subanalysis, (
-                "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
-            )
+            assert (
+                sub_analysis.cfg_analysis.is_subanalysis
+            ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
             sub_df_status = sub_analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[sa_id, :]
@@ -2103,8 +2194,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_scenarios_created = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
-            all_scenarios_created = all_scenarios_created and sub_analysis.log.all_scenarios_created.get()
+            all_scenarios_created = all_scenarios_created and sub_analysis.all_scenarios_created
         return all_scenarios_created is True
 
     @property
@@ -2119,8 +2209,7 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_sims_run = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
-            all_sims_run = all_sims_run and sub_analysis.log.all_sims_run.get()
+            all_sims_run = all_sims_run and sub_analysis.all_sims_run
         return all_sims_run is True
 
     @property
@@ -2135,9 +2224,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_TRITON_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_TRITON_timeseries_processed = (
-                all_TRITON_timeseries_processed and sub_analysis.log.all_TRITON_timeseries_processed.get()
+                all_TRITON_timeseries_processed and sub_analysis.all_TRITON_timeseries_processed
             )
         return all_TRITON_timeseries_processed is True
 
@@ -2153,9 +2241,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_SWMM_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_SWMM_timeseries_processed = (
-                all_SWMM_timeseries_processed and sub_analysis.log.all_SWMM_timeseries_processed.get()
+                all_SWMM_timeseries_processed and sub_analysis.all_SWMM_timeseries_processed
             )
         return all_SWMM_timeseries_processed is True
 
@@ -2171,10 +2258,9 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_TRITONSWMM_performance_timeseries_processed = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_TRITONSWMM_performance_timeseries_processed = (
                 all_TRITONSWMM_performance_timeseries_processed
-                and sub_analysis.log.all_TRITONSWMM_performance_timeseries_processed.get()
+                and sub_analysis.all_TRITONSWMM_performance_timeseries_processed
             )
         return all_TRITONSWMM_performance_timeseries_processed is True
 
@@ -2182,7 +2268,6 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITONSWMM_performance_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.TRITONSWMM_performance_time_series_not_processed
         return lst_scens
 
@@ -2190,7 +2275,6 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITON_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.TRITON_time_series_not_processed
         return lst_scens
 
@@ -2198,7 +2282,6 @@ class TRITONSWMM_sensitivity_analysis:
     def SWMM_time_series_not_processed(self):
         lst_scens = []
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             lst_scens += sub_analysis.SWMM_time_series_not_processed
         return lst_scens
 
@@ -2214,9 +2297,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_raw_TRITON_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_raw_TRITON_outputs_cleared = (
-                all_raw_TRITON_outputs_cleared and sub_analysis.log.all_raw_TRITON_outputs_cleared.get()
+                all_raw_TRITON_outputs_cleared and sub_analysis.all_raw_TRITON_outputs_cleared
             )
         return all_raw_TRITON_outputs_cleared is True
 
@@ -2232,9 +2314,8 @@ class TRITONSWMM_sensitivity_analysis:
         """
         all_raw_SWMM_outputs_cleared = True
         for key, sub_analysis in self.sub_analyses.items():
-            sub_analysis._update_log()
             all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared and sub_analysis.log.all_raw_SWMM_outputs_cleared.get()
+                all_raw_SWMM_outputs_cleared and sub_analysis.all_raw_SWMM_outputs_cleared
             )
         return all_raw_SWMM_outputs_cleared is True
 

@@ -67,7 +67,7 @@ def _render_system_level_table(checks: list[CheckResult]) -> str:
         if not c.passed and c.details:
             detail_lines = [d.get("detail", "") for d in c.details]
             detail_text = c.summary + "<br>" + "<br>".join(f"&nbsp;&nbsp;• {d}" for d in detail_lines)
-        rows.append(f"<tr><td>{c.name}</td><td class=\"{status_cls}\">{status_glyph}</td><td>{detail_text}</td></tr>")
+        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{detail_text}</td></tr>')
     return (
         "<h3>System-Level Checks</h3>\n"
         "<table>\n"
@@ -83,7 +83,7 @@ def _render_aggregate_table(checks: list[CheckResult]) -> str:
     for c in checks:
         status_cls = "pass" if c.passed else "fail"
         status_glyph = "✓" if c.passed else "✗"
-        rows.append(f"<tr><td>{c.name}</td><td class=\"{status_cls}\">{status_glyph}</td><td>{c.summary}</td></tr>")
+        rows.append(f'<tr><td>{c.name}</td><td class="{status_cls}">{status_glyph}</td><td>{c.summary}</td></tr>')
     return (
         "<h3>Aggregate Per-Scenario Checks</h3>\n"
         "<table>\n"
@@ -123,9 +123,9 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
             all_issues.extend(c.details)
     if not all_issues:
         return (
-            '<h3>Resource-Utilization Mismatches</h3>\n'
+            "<h3>Resource-Utilization Mismatches</h3>\n"
             '<div class="banner pass">✓ No resource mismatches — '
-            'all scenarios used expected compute resources.</div>'
+            "all scenarios used expected compute resources.</div>"
         )
     rows = []
     for d in all_issues:
@@ -144,7 +144,7 @@ def _render_resource_mismatches_table(checks: list[CheckResult]) -> str:
 
 def _wrap_html_doc(body: str, analysis_id: str, inline_css: str) -> str:
     return (
-        "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+        '<!DOCTYPE html><html><head><meta charset="utf-8">'
         f"<style>{inline_css}</style></head><body>"
         f"<h2>Errors and Warnings — {analysis_id}</h2>"
         f"{body}"
@@ -167,9 +167,10 @@ def render(
         from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
             warn_no_plotly_branch,
         )
+
         warn_no_plotly_branch("errors_and_warnings")
 
-    from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from TRITON_SWMM_toolkit.analysis_validation import _VALIDATION_REPORT_FILENAME, load_validation_report
     from TRITON_SWMM_toolkit.report_renderers._figure_emission import emit_plot_with_sources
     from TRITON_SWMM_toolkit.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
@@ -177,13 +178,16 @@ def render(
     with prov.artist(
         axes_id="html_section",
         kind="table",
-        note="validation report (HTML-rendered, no matplotlib artist)",
+        note="validation report (read from persisted validation_report.json, no matplotlib artist)",
     ) as a:
         a.add_channel(
             "data",
-            ProvenanceRef(source_path="scenario_status.csv"),
+            ProvenanceRef(source_path=_VALIDATION_REPORT_FILENAME),
         )
-        report = validate_analysis(analysis)
+        # Option D (Class-Y resolution): read the persisted read-model artifact
+        # produced at consolidation, NOT a render-time validate_analysis() whole-tree
+        # inspection. Graceful-absent -> empty report. See analysis_validation.
+        report = load_validation_report(analysis)
     by_level = report.by_level
     body_parts = [
         _render_overall_banner(report),
@@ -202,7 +206,12 @@ def render(
     return emit_plot_with_sources(
         html,
         output_path,
-        [analysis_dir / "scenario_status.csv"],
+        # Option D: the renderer's sole data source is the persisted ValidationReport
+        # read-model (validation_report.json), produced at consolidation. It already
+        # folds in the eda/*.verdict.json (validate_analysis appends them at persist
+        # time), so the renderer declares exactly one file -> tight audit catch-power
+        # + faithful bundle re-render.
+        [analysis_dir / _VALIDATION_REPORT_FILENAME],
         analysis_dir=analysis_dir,
         output_format="html",
         manifest_data={

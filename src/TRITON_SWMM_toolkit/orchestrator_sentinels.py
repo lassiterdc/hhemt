@@ -69,6 +69,7 @@ def write_orchestrator_sentinel(
 
 def remove_orchestrator_sentinel(analysis_dir: Path, driver_id: str) -> None:
     """Remove the sentinel (idempotent). Called from the driver's try/finally."""
+    # EXEMPT-DU: status-flag
     (orchestrator_dir(analysis_dir) / f"{driver_id}.json").unlink(missing_ok=True)
 
 

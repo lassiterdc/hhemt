@@ -763,7 +763,7 @@ def _scalar_at_event(da: xr.DataArray, event_iloc: int) -> float | None:
         return None
 
 
-def _render_plotly_branch(
+def _build_sensitivity_benchmarking_figure(
     df: pd.DataFrame,
     speedup_per_group: dict,
     strong_eff_per_group: dict,
@@ -783,7 +783,7 @@ def _render_plotly_branch(
     speedup_all_rows: dict | None = None,
     efficiency_all_rows: dict | None = None,
     speedup_range_mode: str = "full_ideal",
-) -> Path:
+):
     """Plotly MV port (pre-/design-figure): static 4-panel benchmarking figure.
     Wall-clock | Compute-cost | Strong-scaling speedup | Parallel efficiency,
     stacked rows=4, cols=1 with shared x-axis. One trace per group_by_var value
@@ -906,6 +906,50 @@ def _render_plotly_branch(
             "format": "svg", "filename": "sensitivity_benchmarking", "scale": 2,
         },
     }
+    return fig, plotly_config
+
+
+def _render_plotly_branch(
+    df: pd.DataFrame,
+    speedup_per_group: dict,
+    strong_eff_per_group: dict,
+    *,
+    wall_unit: str,
+    cost_unit: str,
+    independent_var: str,
+    group_by_var: str | None,
+    sens_cfg,
+    output_path: Path,
+    source_paths: list,
+    analysis_dir,
+    plotly_js_mode: str,
+    prov: ProvenanceLog,
+    gpu_legend_suffix: str = "",
+    facet: FacetConfig | None = None,
+    speedup_all_rows: dict | None = None,
+    efficiency_all_rows: dict | None = None,
+    speedup_range_mode: str = "full_ideal",
+) -> Path:
+    fig, plotly_config = _build_sensitivity_benchmarking_figure(
+        df,
+        speedup_per_group,
+        strong_eff_per_group,
+        wall_unit=wall_unit,
+        cost_unit=cost_unit,
+        independent_var=independent_var,
+        group_by_var=group_by_var,
+        sens_cfg=sens_cfg,
+        output_path=output_path,
+        source_paths=source_paths,
+        analysis_dir=analysis_dir,
+        plotly_js_mode=plotly_js_mode,
+        prov=prov,
+        gpu_legend_suffix=gpu_legend_suffix,
+        facet=facet,
+        speedup_all_rows=speedup_all_rows,
+        efficiency_all_rows=efficiency_all_rows,
+        speedup_range_mode=speedup_range_mode,
+    )
     html_text = pio.to_html(
         fig, include_plotlyjs=plotly_js_mode,
         full_html=True, config=plotly_config,

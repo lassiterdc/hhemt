@@ -164,27 +164,15 @@ def _build_tabulator_html(
     effective_pid = tab_cfg.persistence_id or sanitize_persistence_id(analysis_id)
     persistence_key = f"scenario_status_appendix__{effective_pid}"
 
+    # Sorting re-enabled (named-reporting-sets D2). The iter-8 alignment
+    # toggle (headerSort click -> fitDataStretch reinitializeWidth remeasure
+    # against a sort-dependent visible-row set) is eliminated structurally by
+    # assigning every column an explicit `width` in build_columns_spec:
+    # Tabulator skips reinitializeWidth for widthFixed columns
+    # (fitDataStretch.js:9), and definition.width sets widthFixed=true
+    # (Column.js:871-873). The filter-trigger button's click handler already
+    # stopPropagation()s, so clicking the filter ▾ does not sort.
     extra_options: dict = {}
-    # iter 9 — Disable headerSort globally via columnDefaults (Tabulator's
-    # default is headerSort: True at the column level, registered at
-    # src/js/modules/Sort/Sort.js:29). headerSort: True attaches a click
-    # listener to the entire column-header element (Sort.js:164) that
-    # fires refreshSort -> refreshData(true) -> a fitDataStretch layout
-    # pass which calls column.reinitializeWidth() on every non-fixed
-    # column. With pagination + variable-width data cells, the post-sort
-    # visible row set differs between asc and desc orderings, so the
-    # measured "widest visible cell" per column settles to two distinct
-    # widths that alternate on each click. This produced the persistent
-    # alignment toggle the user observed in iter 8 (clicks alternately
-    # and permanently align/misalign the column header against the data
-    # column). Filter UI + sidebar provide the user's primary interaction;
-    # sortable columns were not requested. headerMenu (per-column Hide)
-    # is also removed per user direction at iter-9 dispatch — the
-    # sidebar Show all / Hide all + per-column checkboxes (VMS-A4 +
-    # pre-existing) fully superset the per-column headerMenu hide action.
-    extra_options["columnDefaults"] = {
-        "headerSort": False,
-    }
 
     options = build_options_dict(
         df,
