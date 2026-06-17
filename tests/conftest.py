@@ -442,8 +442,8 @@ def synth_sensitivity_typo_in_prefixed_column():
 
 
 @pytest.fixture
-def synth_sensitivity_with_system_gpu_hardware_override():
-    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_with_system_gpu_hardware_override(
+def synth_sensitivity_with_partition_axis():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_with_partition_axis(
         start_from_scratch=True
     )
     return case.analysis

@@ -981,13 +981,21 @@ class Local_TestCases:
     def retrieve_synth_cpu_config_sensitivity_case_invalid_overlay(
         start_from_scratch: bool = False,
     ):
-        """Phase 1 R4 — `system.gpu_compilation_backend='WRONG'` → Pydantic Literal failure."""
+        """Phase 1 R4 — `system.target_dem_resolution='WRONG'` → Pydantic float-coercion failure.
+
+        Retargeted from the retired `system.gpu_compilation_backend` overlay (Phase-4
+        moved GPU backend off system_config) to the still-existing top-level typed
+        `target_dem_resolution: float` field. `"WRONG"` fails float coercion, re-firing
+        `system_config.model_validate` → the `"SystemConfig validation"` ConfigurationError
+        wrapper (sensitivity_analysis.py), which the test asserts via
+        `match="SystemConfig validation"`.
+        """
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
             analysis_name="synth_sensitivity_invalid_overlay",
             model_subset="all",
             extra_columns={
-                "system.gpu_compilation_backend": ["WRONG", None, None, None],
+                "system.target_dem_resolution": ["WRONG", None, None, None],
             },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
@@ -1053,30 +1061,40 @@ class Local_TestCases:
         )
 
     @staticmethod
-    def retrieve_synth_cpu_config_sensitivity_case_with_system_gpu_hardware_override(
+    def retrieve_synth_cpu_config_sensitivity_case_with_partition_axis(
         start_from_scratch: bool = False,
     ):
-        """Phase 1 R8 (T13 equivalence) — `system.gpu_hardware='override-test-gpu'` overlay."""
+        """Phase-5 partition-axis re-enablement — `analysis.hpc_ensemble_partition`
+        overlay resolves gpu_hardware per-partition (replaces the retired
+        `system.gpu_hardware` overlay; T13 equivalence). The synthetic
+        `hpc_system_config_test.yaml` declares `test_partition` -> gpu_hardware
+        `a6000`; the MASTER `hpc_ensemble_partition` is set to `test_partition`
+        because the as-built single-master resolution reads the master selector
+        for compile-dedup + GRES (per-row generalization is deferred to Phase 6)."""
         _require_cpu_cores_for_sensitivity()
         csv_path = Local_TestCases._write_synth_sensitivity_csv(
-            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            analysis_name="synth_sensitivity_with_partition_axis",
             model_subset="all",
             extra_columns={
-                "system.gpu_hardware": [
-                    "override-test-gpu", "override-test-gpu",
-                    "override-test-gpu", "override-test-gpu",
+                "analysis.hpc_ensemble_partition": [
+                    "test_partition", "test_partition",
+                    "test_partition", "test_partition",
                 ],
             },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
-            analysis_name="synth_sensitivity_with_system_gpu_hardware_override",
+            analysis_name="synth_sensitivity_with_partition_axis",
             toggle_tritonswmm_model=True,
             toggle_triton_model=False,
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_test.yaml"
+            ),
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
+                "hpc_ensemble_partition": "test_partition",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
             },
         )
 

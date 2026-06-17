@@ -1,0 +1,34 @@
+# Anonymized UVA Rivanna HPC system profile (example).
+# Authored from UVA's PUBLIC cluster documentation; substitute {your-allocation} with your account.
+system_name: uva_rivanna
+default_account: "{your-allocation}"          # NATIVE -> slurm_account (UVA: your allocation, e.g. ***REMOVED***)
+login_node: login1.hpc.virginia.edu           # EXTENSION (tmux orchestration; batch_job mode) — public
+default_execution_mode: batch_job             # EXTENSION (multi_sim_run_method default)
+gpu_allocation_flavor: gres                   # EXTENSION (UVA uses --gres=gpu:N)
+max_concurrent_jobs: 1000                     # EXTENSION (D-D: cluster-throughput cap; new home for the retired analysis_config.hpc_max_simultaneous_sims)
+additional_modules:                           # EXTENSION (public module names)
+  - gcc/12.4.0
+partitions:
+  standard:
+    max_runtime: 4320                         # NATIVE (minutes; public partition cap)
+    max_mem_mb: 768000                        # NATIVE
+    max_cpus_per_task: 96                     # NATIVE
+    max_nodes: 1                              # NATIVE
+    supports_mpi: true                        # NATIVE
+  gpu-a6000:
+    max_runtime: 4320                         # NATIVE
+    max_gpu: 8                                # NATIVE (per-job cap)
+    available_gpu_models: ["a6000"]           # NATIVE (capability allowlist)
+    gpu_hardware: a6000                       # EXTENSION (D1: arch string _resolve_cuda_arch_flags keys on; distinct from available_gpu_models)
+    gpus_per_node: 8                          # EXTENSION (node topology)
+    cpus_per_node: 48                         # EXTENSION
+    gpu_compilation_backend: CUDA             # EXTENSION (D1: per-partition backend)
+  gpu-a100-80:                                # ADDED (Phase-5 expansion): the second GPU partition the UVA benchmarking axis requires (FQ1 cardinality = 2)
+    max_runtime: 4320                         # NATIVE
+    max_gpu: 8                                # NATIVE (per-job cap)
+    available_gpu_models: ["a100"]            # NATIVE (capability allowlist)
+    gpu_hardware: a100                        # EXTENSION (D1: arch string; the second GPU-hardware axis value, formerly system.gpu_hardware='a100')
+    gpus_per_node: 8                          # EXTENSION (node topology; a100-80 nodes are 8-GPU)
+    cpus_per_node: 64                         # EXTENSION
+    gpu_compilation_backend: CUDA             # EXTENSION (D1: per-partition backend)
+executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)

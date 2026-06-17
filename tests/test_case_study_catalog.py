@@ -66,7 +66,7 @@ def _require_software_dirs() -> None:
 # config restricted to [n_devices]. requires_software_dirs flags the variants
 # whose sensitivity XLSX carry system.* overlay rows (which revalidate against
 # the compiled swmm/triton software dirs); the swmm-only XLSX has none.
-_SHARED_UVA_VARS = ["n_devices", "system.target_dem_resolution", "system.gpu_hardware"]
+_SHARED_UVA_VARS = ["n_devices", "system.target_dem_resolution", "analysis.hpc_ensemble_partition"]
 _SWMM_VARS = ["n_devices"]
 
 
@@ -86,16 +86,6 @@ def test_uva_benchmarking_factory_populates_report_sensitivity(
     example_data_available: bool,
 ) -> None:
     """Each UVA benchmarking factory must produce a case whose cfg_analysis.report.sensitivity is populated."""
-    if "system.gpu_hardware" in expected_independent_vars:
-        pytest.xfail(
-            "Phase-4 retired gpu_hardware off system_config; the `system.gpu_hardware` "
-            "sensitivity overlay column is rejected by the column allowlist. Re-enabling "
-            "needs the experiment-definition migration (the UVA benchmarking CSV's axis "
-            "moves from `system.gpu_hardware` to `analysis.hpc_ensemble_partition`, with "
-            "gpu_hardware DERIVED per-partition) + anonymized UVA example hpc_system_config "
-            "profiles declaring those partitions (Phase-5 example-profiles work) — beyond "
-            "the 4d field-retirement. Remove this xfail when that lands."
-        )
     if requires_software_dirs:
         _require_software_dirs()
     factory = getattr(cat.UVACaseStudies, factory_name)

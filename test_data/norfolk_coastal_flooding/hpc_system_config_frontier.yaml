@@ -1,0 +1,21 @@
+# Anonymized OLCF Frontier HPC system profile (example).
+# Authored from OLCF's PUBLIC cluster documentation; substitute {your-allocation} with your account.
+system_name: olcf_frontier
+default_account: "{your-allocation}"          # NATIVE -> slurm_account (Frontier: your project, e.g. ***REMOVED***)
+default_execution_mode: 1_job_many_srun_tasks # EXTENSION (Frontier default: one allocation, srun pool)
+gpu_allocation_flavor: gpus                   # EXTENSION (Frontier uses --gpus-per-node)
+max_concurrent_jobs: 1000                     # EXTENSION (D-D: cluster-throughput cap; new home for the retired analysis_config.hpc_max_simultaneous_sims)
+additional_modules:                           # EXTENSION (public module names)
+  - PrgEnv-amd
+  - rocm
+partitions:
+  batch:
+    max_runtime: 720                          # NATIVE (minutes; public batch cap for small node counts)
+    max_gpu: 8                                # NATIVE (per-node MI250X count; per-job cap scales with nodes)
+    available_gpu_models: ["mi250x"]          # NATIVE (capability allowlist)
+    gpu_hardware: mi250x                      # EXTENSION (D1: arch string _resolve_cuda_arch_flags keys on; distinct from available_gpu_models)
+    gpus_per_node: 8                          # EXTENSION (node topology: 4 MI250X = 8 GCDs)
+    cpus_per_node: 56                         # EXTENSION (Frontier: 64 cores, 56 allocatable)
+    supports_mpi: true                        # NATIVE
+    gpu_compilation_backend: HIP              # EXTENSION (D1: per-partition backend)
+executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)
