@@ -1,5 +1,6 @@
 from TRITON_SWMM_toolkit.utils import write_json
-from filelock import FileLock
+from TRITON_SWMM_toolkit.exceptions import ProcessingError
+from filelock import FileLock, Timeout
 from pathlib import Path
 from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
 import json
@@ -172,6 +173,11 @@ class TRITONSWMM_log(BaseModel):
     # Pydantic config
     # ----------------------------
     model_config = {"arbitrary_types_allowed": True}
+    # Snapshot of the on-disk state this instance last synced with (set at load
+    # and after each write). write() overlays ONLY fields changed since this
+    # baseline onto the latest disk state, so a concurrent writer's updates to
+    # OTHER fields are never clobbered (lost-update prevention).
+    _baseline: dict = PrivateAttr(default_factory=dict)
 
     # ----------------------------
     # Parent injection
@@ -183,6 +189,9 @@ class TRITONSWMM_log(BaseModel):
         for value in self.__dict__.values():
             if hasattr(value, "set_log"):
                 value.set_log(self)
+        # Baseline = this instance's current serialized state (model defaults for
+        # a fresh log; overwritten with loaded data by from_json / refresh).
+        self._baseline = self.as_dict()
 
     # ----------------------------
     # Persistence helpers
@@ -191,7 +200,54 @@ class TRITONSWMM_log(BaseModel):
         return self.model_dump(mode="json")
 
     def write(self):
-        write_json(self.as_dict(), self.logfile)
+        """Persist this log with concurrency-safe, lost-update-free semantics.
+
+        Multiple processes (per-sim jobs, consolidate jobs, analysis
+        constructions) may write the SAME log file concurrently. Under an
+        exclusive per-log file lock we reload the latest on-disk state and
+        overlay ONLY the fields THIS instance changed since it last synced
+        (compared against the merge baseline), so a concurrent writer's updates
+        to OTHER fields survive. write_json itself is atomic
+        (temp + fsync + os.replace).
+        """
+        lock_path = self.logfile.with_suffix(f"{self.logfile.suffix}.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Bounded timeout: the merge is sub-second; a stale/dead lock holder must
+        # not deadlock every writer (SE-F-I-2). A filelock timeout is translated
+        # to a ProcessingError naming this log file.
+        try:
+            with FileLock(str(lock_path), timeout=30):
+                disk: dict = {}
+                if self.logfile.exists():
+                    try:
+                        with self.logfile.open() as f:
+                            disk = json.load(f)
+                    except (json.JSONDecodeError, OSError):
+                        disk = {}
+                mine = self.as_dict()
+                changed_keys = {
+                    k for k, v in mine.items() if v != self._baseline.get(k)
+                }
+                # Overlay disk's value for every field I did NOT change, so a
+                # concurrent writer's updates win on those fields; my changed
+                # fields and required fields (e.g. logfile) come from mine.
+                # `k in mine` (SE-F-I-1 Spec 2) drops undeclared keys so removed
+                # all_* fields are NOT resurrected on write — closes the
+                # resurrection vector for any future field removal.
+                overlay = {
+                    k: v
+                    for k, v in disk.items()
+                    if k not in changed_keys and k in mine
+                }
+                merged = {**mine, **overlay}
+                write_json(merged, self.logfile)
+                self._baseline = merged
+        except Timeout as exc:
+            raise ProcessingError(
+                "log write (file lock acquisition)",
+                filepath=self.logfile,
+                reason=f"timed out after 30s acquiring {lock_path}",
+            ) from exc
 
     def _dict_for_json(self, obj):
         if isinstance(obj, dict):
@@ -218,6 +274,8 @@ class TRITONSWMM_log(BaseModel):
             # Copy all attributes from reloaded instance to self
             for key, value in reloaded.__dict__.items():
                 setattr(self, key, value)
+            # Re-sync the merge baseline to the freshly reloaded disk state.
+            self._baseline = self.as_dict()
         else:
             pass
 
@@ -241,6 +299,9 @@ class TRITONSWMM_log(BaseModel):
 
         # Ensure future writes go back to the same file
         log.logfile = path
+        # Baseline = the on-disk state just loaded, so write() overlays only the
+        # fields THIS instance subsequently changes (lost-update prevention).
+        log._baseline = log.as_dict()
 
         return log
 
@@ -539,23 +600,8 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "vertical_crs_epsg",
     )(_logfield_serializer)
 
-    def write(self):
-        lock_path = self.logfile.with_suffix(f"{self.logfile.suffix}.lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(lock_path)):
-            super().write()
-
 
 class TRITONSWMM_analysis_log(TRITONSWMM_log):
-    all_scenarios_created: LogField[bool] = Field(default_factory=LogField)
-    all_sims_run: LogField[bool] = Field(default_factory=LogField)
-    all_TRITON_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
-    all_SWMM_timeseries_processed: LogField[bool] = Field(default_factory=LogField)
-    all_TRITONSWMM_performance_timeseries_processed: LogField[bool] = Field(
-        default_factory=LogField
-    )
-    all_raw_TRITON_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
-    all_raw_SWMM_outputs_cleared: LogField[bool] = Field(default_factory=LogField)
     # Hierarchical DataTree consolidation (Phase 2)
     datatree_consolidation_complete: LogField[bool] = Field(
         default_factory=LogField
@@ -584,13 +630,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # Consolidated validators using helper functions
     # ----------------------------
     _validate_bool_fields = field_validator(
-        "all_scenarios_created",
-        "all_sims_run",
-        "all_TRITON_timeseries_processed",
-        "all_SWMM_timeseries_processed",
-        "all_TRITONSWMM_performance_timeseries_processed",
-        "all_raw_TRITON_outputs_cleared",
-        "all_raw_SWMM_outputs_cleared",
         "datatree_consolidation_complete",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
@@ -619,13 +658,6 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     # Consolidated serializer
     # ----------------------------
     _serialize_logfields = field_serializer(
-        "all_scenarios_created",
-        "all_sims_run",
-        "all_TRITON_timeseries_processed",
-        "all_SWMM_timeseries_processed",
-        "all_TRITONSWMM_performance_timeseries_processed",
-        "all_raw_TRITON_outputs_cleared",
-        "all_raw_SWMM_outputs_cleared",
         "datatree_consolidation_complete",
         "consolidation_version",
         "sensitivity_datatree_consolidation_complete",
