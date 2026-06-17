@@ -30,6 +30,9 @@ if TYPE_CHECKING:
     from .system import TRITONSWMM_system
 
 
+__all__ = ["TRITONSWMM_sensitivity_analysis"]
+
+
 @dataclass
 class UniqueSystemTarget:
     target_id: int

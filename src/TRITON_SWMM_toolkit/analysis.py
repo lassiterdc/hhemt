@@ -85,6 +85,9 @@ PERF_VARS_ORDERED: list[str] = [
 ]
 
 
+__all__ = ["TRITONSWMM_analysis"]
+
+
 class TRITONSWMM_analysis:
     def __init__(
         self,
