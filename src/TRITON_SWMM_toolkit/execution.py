@@ -180,7 +180,7 @@ class LocalConcurrentExecutor:
             # Calculate effective max parallel with all constraints
             # ----------------------------
             min_memory_per_sim_MiB = 1024  # Conservative default
-            max_concurrent = self.analysis.calculate_effective_max_parallel(
+            max_concurrent = self.analysis._calculate_effective_max_parallel(
                 min_memory_per_function_MiB=min_memory_per_sim_MiB,
                 max_concurrent=max_concurrent,
                 verbose=verbose,

@@ -378,15 +378,15 @@ def main() -> int:
         # has already scope-limited the rule to completed sim flags, so the runner consolidates only
         # those completed scenarios and the un-run ones are surfaced via the operator-facing log
         # below (and the rendered report's Errors-and-Warnings sidebar).
-        if not analysis.all_sims_run:
+        if not analysis._all_sims_run:
             if args.allow_incomplete:
                 logger.warning(
                     "Not all simulations completed successfully; --allow-incomplete is set, proceeding with completed scenarios only"  # noqa: E501
                 )
-                logger.warning(f"Scenarios not run: {analysis.scenarios_not_run}")
+                logger.warning(f"Scenarios not run: {analysis._scenarios_not_run}")
             else:
                 logger.error("Not all simulations completed successfully")
-                logger.error(f"Scenarios not run: {analysis.scenarios_not_run}")
+                logger.error(f"Scenarios not run: {analysis._scenarios_not_run}")
                 return 1
         else:
             logger.info("All simulations completed successfully")
@@ -400,7 +400,7 @@ def main() -> int:
         # warnings would otherwise fire spuriously for the out-of-scope (un-run) scenarios. Demote to
         # an info-level note in that case; the canonical workflow path (flag absent) keeps the warnings.
         if args.which in ["both", "TRITON"]:
-            if not analysis.all_TRITON_timeseries_processed:
+            if not analysis._all_TRITON_timeseries_processed:
                 if args.allow_incomplete:
                     logger.info(
                         "Skipping all-TRITON-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)"  # noqa: E501
@@ -408,10 +408,10 @@ def main() -> int:
                 else:
                     logger.warning("Not all TRITON timeseries were processed")
                     logger.warning(
-                        f"Scenarios with unprocessed TRITON timeseries: {analysis.TRITON_time_series_not_processed}"
+                        f"Scenarios with unprocessed TRITON timeseries: {analysis._TRITON_time_series_not_processed}"
                     )
         if args.which in ["both", "SWMM"]:
-            if not analysis.all_SWMM_timeseries_processed:
+            if not analysis._all_SWMM_timeseries_processed:
                 if args.allow_incomplete:
                     logger.info(
                         "Skipping all-SWMM-timeseries-processed warning under --allow-incomplete (expected for reprocess against partial completion)"  # noqa: E501
@@ -419,7 +419,7 @@ def main() -> int:
                 else:
                     logger.warning("Not all SWMM timeseries were processed")
                     logger.warning(
-                        f"Scenarios with unprocessed SWMM timeseries: {analysis.SWMM_time_series_not_processed}"
+                        f"Scenarios with unprocessed SWMM timeseries: {analysis._SWMM_time_series_not_processed}"
                     )
 
         # Phase 3b: Consolidate outputs

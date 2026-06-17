@@ -988,7 +988,7 @@ class TRITONSWMM_sim_post_processing:
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=self._current_model_type, astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()
-        paths_attr = paths_to_strings(self._analysis.dict_of_all_sim_files(self._scenario.event_iloc))
+        paths_attr = paths_to_strings(self._analysis._dict_of_all_sim_files(self._scenario.event_iloc))
         config_attr = paths_to_strings(
             {
                 "system": self._system.cfg_system.model_dump(),

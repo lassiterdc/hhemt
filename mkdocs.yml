@@ -31,6 +31,7 @@ plugins:
           paths: [src]
           options:
             docstring_style: numpy
+            filters: ["!^_"]
 
 validation:
   nav:
