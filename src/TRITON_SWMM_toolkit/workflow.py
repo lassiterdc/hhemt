@@ -6589,6 +6589,7 @@ onerror:
             target_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=self.master_analysis.analysis_config_yaml,
                 system_config_yaml=target.system_config_yaml,
+                target_partition=target.target_partition,
             )
             target_cfg_system = target.system.cfg_system
             snakefile_content += f'''rule setup_target_{target.target_id}:
@@ -6664,6 +6665,14 @@ onerror:
             sub_config_args = self._base_builder._get_config_args(
                 analysis_config_yaml=sub_analysis.analysis_config_yaml,
                 system_config_yaml=sub_analysis._system.system_config_yaml,
+            )
+            # Phase 6 (DQ7b): the run_simulation_runner resolves + injects the GPU
+            # hardware from --target-partition. Pass the per-sub ensemble partition
+            # so the sim runs (and any per-sim GPU compile) target the right hardware.
+            sub_gpu_compile_config_args = self._base_builder._get_config_args(
+                analysis_config_yaml=sub_analysis.analysis_config_yaml,
+                system_config_yaml=sub_analysis._system.system_config_yaml,
+                target_partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
             )
 
             # Phase 3: per-SA system config sources gpu_alloc_mode + gpu_hw so a
@@ -6800,7 +6809,7 @@ onerror:
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
         {self.python_executable} -m TRITON_SWMM_toolkit.run_simulation_runner \\
             --event-iloc {event_iloc} \\
-            {sub_config_args} \\
+            {sub_gpu_compile_config_args} \\
             --model-type {model_type} \\
             --sa-id {sa_id} \\
             {"--pickup-where-leftoff " if pickup_where_leftoff else ""}\\

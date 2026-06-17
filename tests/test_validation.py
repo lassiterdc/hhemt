@@ -281,3 +281,70 @@ def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_ana
     msgs = " ".join(e.message for e in result.errors)
     assert "max_runtime" in msgs and "tiny" in msgs
     assert "1_job_many_srun_tasks" in msgs
+
+
+def test_dq6_per_row_partition_requires_batch_job(tmp_path):
+    """Phase 6 (DQ6): per-row ensemble-partition variation is incompatible with
+    `1_job_many_srun_tasks` (one allocation cannot span partitions) and must
+    fail loud at preflight; `batch_job` mode is permitted."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.validation import (
+        ValidationResult,
+        _validate_per_row_partition_requires_batch_job,
+    )
+
+    csv = tmp_path / "sens.csv"
+    pd.DataFrame(
+        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a100"]}
+    ).to_csv(csv, index=False)
+
+    # 1_job_many_srun_tasks + >1 distinct partition -> invalid, with batch_job hint.
+    cfg_bad = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="1_job_many_srun_tasks",
+        sensitivity_analysis=str(csv),
+    )
+    result_bad = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg_bad, result_bad)
+    assert not result_bad.is_valid
+    msgs = " ".join(e.message for e in result_bad.errors)
+    assert "batch_job" in msgs
+    assert "gpu-a6000" in msgs and "gpu-a100" in msgs
+
+    # batch_job mode -> valid (per-sim partition is fine).
+    cfg_ok = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="batch_job",
+        sensitivity_analysis=str(csv),
+    )
+    result_ok = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg_ok, result_ok)
+    assert result_ok.is_valid
+
+
+def test_dq6_single_partition_allowed_under_1job(tmp_path):
+    """A single distinct partition under `1_job_many_srun_tasks` is allowed (no span)."""
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    from TRITON_SWMM_toolkit.validation import (
+        ValidationResult,
+        _validate_per_row_partition_requires_batch_job,
+    )
+
+    csv = tmp_path / "sens.csv"
+    pd.DataFrame(
+        {"sa_id": [0, 1], "hpc.partition": ["gpu-a6000", "gpu-a6000"]}
+    ).to_csv(csv, index=False)
+    cfg = SimpleNamespace(
+        toggle_sensitivity_analysis=True,
+        multi_sim_run_method="1_job_many_srun_tasks",
+        sensitivity_analysis=str(csv),
+    )
+    result = ValidationResult()
+    _validate_per_row_partition_requires_batch_job(cfg, result)
+    assert result.is_valid

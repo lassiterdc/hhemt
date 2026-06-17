@@ -809,11 +809,19 @@ def test_system_overlay_validator_re_fire_invalid_value():
 
 
 def test_gpu_hardware_override_column_raises_migration_error():
-    """Phase 1 R8, R-X-2 — legacy column raises ConfigurationError naming migration path."""
-    with pytest.raises(ConfigurationError, match=r"gpu_hardware_override.*system\.gpu_hardware"):
+    """Legacy `gpu_hardware_override` column is rejected as unknown.
+
+    Phase 6: the prior migration target `system.gpu_hardware` is itself retired
+    (Phase 4, R7 — gpu_hardware is now partition-DERIVED). The column is rejected
+    as unknown; the message lists the valid columns (including the `hpc.partition`
+    alias that selects GPU hardware via the partition spec)."""
+    with pytest.raises(
+        ConfigurationError, match="Unknown sensitivity-CSV columns"
+    ) as excinfo:
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_legacy_gpu_hardware_override(
             start_from_scratch=True
         )
+    assert "gpu_hardware_override" in str(excinfo.value)
 
 
 def test_unknown_column_rejected_with_nearest_match_hint():

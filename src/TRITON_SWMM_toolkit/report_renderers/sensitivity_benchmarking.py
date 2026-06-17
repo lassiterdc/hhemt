@@ -202,14 +202,31 @@ def render(
         if analysis.cfg_analysis.sensitivity_analysis is not None:
             source_paths.append(Path(analysis.cfg_analysis.sensitivity_analysis))
         # F1: GPU hardware suffix (e.g., "gpu (a6000)"). Phase-4 (4c, D3): gpu_hardware
-        # was retired off system_config to the partition axis; resolve it from the master
-        # ensemble partition's PartitionSpec. When the experiment introduces per-row GPU
-        # hardware variation, the canonical generalization is to derive the suffix per-sa_id
-        # from each sub-analysis's resolved partition — captured as a Phase-2 follow-up in
-        # the Figure spec. Single-partition path covers today's single-hardware experiments.
+        # was retired off system_config to the partition axis; resolve it from each
+        # sub-analysis's resolved partition's PartitionSpec.
         from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target
 
-        gpu_hw = resolve_gpu_target(analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition)[0]
+        # Phase 6 (DQ7c): under per-row partition, derive the distinct GPU hardware
+        # across sub-analyses. Single-hardware experiments keep the master suffix
+        # (byte-identical); multi-hardware experiments suppress the global suffix so
+        # the per-group hardware is carried by the group label instead.
+        _hw_values = set()
+        _sens = getattr(analysis, "sensitivity", None)
+        if _sens is not None:
+            for _sub in _sens.sub_analyses.values():
+                _hw = resolve_gpu_target(
+                    _sub.cfg_hpc_system, _sub.cfg_analysis.hpc_ensemble_partition
+                )[0]
+                if _hw:
+                    _hw_values.add(_hw)
+        if len(_hw_values) == 1:
+            gpu_hw = next(iter(_hw_values))
+        elif len(_hw_values) == 0:
+            gpu_hw = resolve_gpu_target(
+                analysis.cfg_hpc_system, analysis.cfg_analysis.hpc_ensemble_partition
+            )[0]
+        else:
+            gpu_hw = None  # multi-hardware: suffix carried per-group, not globally
         gpu_legend_suffix = f" ({gpu_hw})" if gpu_hw else ""
         # F-FU-6 / Q1: speedup panel range mode. Read from report_cfg if present,
         # default to `full_ideal`. Surface via kwarg for caller override (e.g.,
