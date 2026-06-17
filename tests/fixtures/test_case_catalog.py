@@ -1099,6 +1099,76 @@ class Local_TestCases:
         )
 
     @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_multi_partition_fanout(
+        start_from_scratch: bool = False,
+    ):
+        """Phase-6 cross-hardware fan-out — the `hpc.partition` overlay varies the
+        ensemble partition across rows (gpu-a6000 + gpu-a100), so the compile-dedup
+        produces TWO distinct UniqueSystemTarget builds with distinct
+        partition-derived gpu_hardware. (Tests force `n_gpus>0` per sub
+        post-construction so the GPU directive renders — setting it in the CSV
+        would trip the analysis-config MPI-only-mode validator.)
+        `hpc_system_config_multipartition.yaml` declares both partitions; the
+        MASTER `hpc_ensemble_partition` is gpu-a6000."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_multi_partition_fanout",
+            model_subset="all",
+            extra_columns={
+                "hpc.partition": [
+                    "gpu-a6000", "gpu-a100",
+                    "gpu-a6000", "gpu-a100",
+                ],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_multi_partition_fanout",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
+            ),
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "hpc_ensemble_partition": "gpu-a6000",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_hpc_gpu_hardware_rejected(
+        start_from_scratch: bool = False,
+    ):
+        """Phase-6 DQ4 — a direct `hpc.gpu_hardware` overlay column is allowlist-
+        REJECTED (gpu_hardware is derived-only, R7). Constructing this case raises
+        a ConfigurationError pointing the user to `hpc.partition`."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_hpc_gpu_hardware_rejected",
+            model_subset="all",
+            extra_columns={
+                "hpc.gpu_hardware": ["a6000", "a100", "a6000", "a100"],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_hpc_gpu_hardware_rejected",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(
+                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
+            ),
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "hpc_ensemble_partition": "gpu-a6000",
+                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
+            },
+        )
+
+    @staticmethod
     def retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
         start_from_scratch: bool = False,
     ):

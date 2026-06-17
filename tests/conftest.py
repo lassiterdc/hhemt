@@ -450,6 +450,14 @@ def synth_sensitivity_with_partition_axis():
 
 
 @pytest.fixture
+def synth_sensitivity_multi_partition_fanout():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_multi_partition_fanout(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
 def synth_sensitivity_all_analysis_prefixed():
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
         start_from_scratch=True

@@ -288,9 +288,11 @@ class retrieve_synth_TRITON_SWMM_test_case:
         params: SyntheticModelParams = DEFAULT_PARAMS,
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ):
         self.artifacts = get_or_build_synthetic_case(params)
         self.analysis_name = analysis_name
+        self._hpc_system_config_yaml = hpc_system_config_yaml
 
         # Per-worktree rooting (Phase 1, synth-test-isolation-and-runtime):
         # nest runs_root under the current worktree's slug so concurrent pytest
@@ -345,7 +347,9 @@ class retrieve_synth_TRITON_SWMM_test_case:
         )
 
         self.system = TRITONSWMM_system(self.system_yaml)
-        self.analysis = TRITONSWMM_analysis(self.analysis_yaml, self.system)
+        self.analysis = TRITONSWMM_analysis(
+            self.analysis_yaml, self.system, hpc_system_config_yaml=hpc_system_config_yaml
+        )
         self.system._analysis = self.analysis
         # `skip_run=True` (Phase 2, synth-test-isolation-and-runtime): callers that
         # need only a configured analysis for `generate_snakefile_content` skip the

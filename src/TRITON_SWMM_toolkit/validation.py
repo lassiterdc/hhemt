@@ -803,6 +803,69 @@ def _validate_per_sa_system_configs(
                     break  # First divergence per pair is enough.
 
 
+def _validate_per_row_partition_requires_batch_job(
+    cfg_analysis: analysis_config,
+    result: ValidationResult,
+):
+    """Per-row partition variation requires batch_job mode (DQ6 fail-loud guard).
+
+    Under partition-as-sensitivity-axis, a sensitivity CSV may declare an
+    ``hpc.partition`` (canonical) or ``analysis.hpc_ensemble_partition`` (legacy)
+    overlay column to vary the ensemble partition per row. >1 distinct partition
+    value is structurally incompatible with
+    ``multi_sim_run_method='1_job_many_srun_tasks'`` (one SLURM allocation cannot
+    span partitions). batch_job mode submits each sim as an independent sbatch, so
+    per-sim partition is fine. Fail loud at preflight.
+
+    Runs only when ``toggle_sensitivity_analysis=True`` AND the CSV is readable AND
+    a partition overlay column is present. Skipped silently otherwise.
+    """
+    import pandas as pd
+
+    if not cfg_analysis.toggle_sensitivity_analysis:
+        return
+    if cfg_analysis.multi_sim_run_method != "1_job_many_srun_tasks":
+        return  # batch_job + local support per-row partition; only the single-allocation mode does not.
+    sensitivity_csv = cfg_analysis.sensitivity_analysis
+    if sensitivity_csv is None:
+        return
+    sensitivity_csv = Path(sensitivity_csv)
+    if not sensitivity_csv.is_file():
+        return
+    try:
+        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
+            df = pd.read_excel(sensitivity_csv)
+        else:
+            df = pd.read_csv(sensitivity_csv)
+    except Exception:
+        return
+
+    # The partition axis may be spelled `hpc.partition` (canonical) or
+    # `analysis.hpc_ensemble_partition` (legacy). Both resolve to the same field.
+    partition_cols = [
+        c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
+    ]
+    distinct_partitions: set = set()
+    for c in partition_cols:
+        distinct_partitions |= {
+            str(v) for v in df[c].dropna().tolist() if str(v).strip() != ""
+        }
+    if len(distinct_partitions) > 1:
+        result.add_error(
+            field="analysis.multi_sim_run_method",
+            message=(
+                f"Sensitivity CSV varies the ensemble partition across rows "
+                f"(distinct partitions: {sorted(distinct_partitions)}), which is "
+                f"incompatible with multi_sim_run_method='1_job_many_srun_tasks' "
+                f"(one SLURM allocation cannot span partitions). "
+                f"Use multi_sim_run_method='batch_job' for cross-partition "
+                f"(cross-hardware) sensitivity experiments."
+            ),
+            current_value=cfg_analysis.multi_sim_run_method,
+            fix_hint="Set multi_sim_run_method='batch_job' in the analysis config.",
+        )
+
+
 def _validate_hpc_configuration(
     cfg: analysis_config,
     result: ValidationResult,
@@ -1416,6 +1479,10 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+
+    # Per-row partition variation requires batch_job mode (DQ6). Runs only when
+    # the sensitivity CSV varies the ensemble partition across rows.
+    _validate_per_row_partition_requires_batch_job(cfg_analysis, result)
 
     # Setup-rule memory sizing sanity check (warning only — does not fail-fast).
     _validate_setup_mem_sizing(cfg_system, cfg_analysis, result)

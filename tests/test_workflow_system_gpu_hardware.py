@@ -1,22 +1,17 @@
-"""GRES regression check for per-sub-analysis `system.gpu_hardware` overlay.
+"""GRES regression check for per-sub-analysis partition-derived GPU hardware.
 
-Phase 1 of `prefixed_column_config_variation` retired the
-`gpu_hardware_override` analysis-config field and replaced its single use
-(GRES construction in `workflow.py`) with a direct read from
-`sub_analysis._system.cfg_system.gpu_hardware`. The overlay mechanism
-populates that field via the synthesized per-target system YAML emitted
-by `_build_unique_system_targets`.
+Phase 4 retired ``gpu_hardware`` off ``system_config``; it now lives on each
+partition's ``PartitionSpec`` and DERIVES from the ensemble partition the
+sub-analysis selects (R7). Phase 6 generalized this per-row: each
+sub-analysis's GRES substring is resolved from
+``resolve_gpu_target(sub.cfg_hpc_system, sub.cfg_analysis.hpc_ensemble_partition)``
+— NOT from the retired ``sub._system.cfg_system.gpu_hardware``.
 
-These tests confirm:
-
-- Without a `system.gpu_hardware` overlay, the simulation rule's GRES
-  substring mirrors the master ``system.cfg_system.gpu_hardware``.
-- With a `system.gpu_hardware` overlay, the substring is the overlay
-  value.
-
-This substring equivalence is the direct successor of the byte-for-byte
-regression check previously gated on ``gpu_hardware_override``. See
-plan-Phase-1 R8 / R-P1-5.
+These tests confirm the per-sub partition -> GRES resolution: the simulation
+rule's ``--gres`` substring mirrors each sub-analysis's PARTITION-DERIVED GPU
+hardware. This is the partition-as-axis successor of the byte-for-byte
+regression check previously gated on ``gpu_hardware_override`` and then on the
+``system.gpu_hardware`` overlay column (both retired). See plan-Phase-6 DQ7.
 """
 
 import pytest
@@ -26,18 +21,6 @@ import tests.utils_for_testing as tst_ut
 pytestmark = [
     pytest.mark.skipif(
         tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
-    pytest.mark.skip(
-        reason=(
-            "Phase-4 retired gpu_hardware off system_config. This module tests the "
-            "`system.gpu_hardware` overlay-column -> cfg_system.gpu_hardware propagation; "
-            "gpu_hardware is now partition-derived + DI-injected and the overlay column is "
-            "allowlist-rejected. Re-enabling needs the experiment-definition migration "
-            "(fixtures' axis moves from `system.gpu_hardware` to `analysis.hpc_ensemble_partition`, "
-            "gpu_hardware DERIVED per-partition) + the GRES-substring assertion retargeted to the "
-            "partition-resolved value — beyond the 4d field-retirement (Phase-5-adjacent). "
-            "Re-enable when that lands."
-        )
     ),
 ]
 
@@ -52,57 +35,39 @@ def _sim_rule_block(snakefile_text: str, sa_id: str) -> str:
     return snakefile_text[idx:next_rule] if next_rule >= 0 else snakefile_text[idx:]
 
 
-def _has_gpu_subanalyses(sensitivity) -> bool:
-    return any(
-        (sub.cfg_analysis.n_gpus or 0) > 0 for sub in sensitivity.sub_analyses.values()
-    )
+def test_per_sub_partition_resolves_gres_hardware(synth_sensitivity_with_partition_axis):
+    """Each sub-analysis's GRES substring is its PARTITION-derived gpu_hardware.
 
+    The ``analysis.hpc_ensemble_partition`` overlay column selects ``test_partition``
+    (declared in ``hpc_system_config_test.yaml`` with ``gpu_hardware: a6000``) on
+    every sub. The per-sub GRES substring must equal that partition-derived
+    hardware — resolved via ``resolve_gpu_target``, NOT a retired config field.
+    """
+    from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target
 
-def test_system_gpu_hardware_absent_matches_default(synth_sensitivity_with_system_overlay):
-    """Without `system.gpu_hardware` overlay, GRES substring is the master gpu_hardware."""
-    analysis = synth_sensitivity_with_system_overlay
+    analysis = synth_sensitivity_with_partition_axis
     sensitivity = analysis.sensitivity
 
-    if not _has_gpu_subanalyses(sensitivity):
-        pytest.skip(
-            "Synth fixture has no GPU-enabled sub-analyses; gres block only "
-            "appears when n_gpus > 0."
-        )
-
-    master = sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", compression_level=5
-    )
-
-    sa_ids = list(sensitivity.sub_analyses.keys())
-    master_gpu_hw = analysis._system.cfg_system.gpu_hardware
-    if master_gpu_hw is None:
-        pytest.skip("master cfg_system.gpu_hardware is None; substring check N/A")
-    sample_block = _sim_rule_block(master, sa_ids[0])
-    assert master_gpu_hw in sample_block
-
-
-def test_system_gpu_hardware_overlay_propagates_to_gres_substring(
-    synth_sensitivity_with_system_gpu_hardware_override,
-):
-    """`system.gpu_hardware='override-test-gpu'` overlay propagates to the GRES substring."""
-    analysis = synth_sensitivity_with_system_gpu_hardware_override
-    sensitivity = analysis.sensitivity
-
-    # Verify the per-target cfg_system carries the overlay value.
+    # Force one GPU per sub so the GRES block renders (the synth CSV defaults
+    # n_gpus=0; GPU directives only emit when n_gpus > 0).
     for sub in sensitivity.sub_analyses.values():
-        assert sub._system.cfg_system.gpu_hardware == "override-test-gpu"
-
-    if not _has_gpu_subanalyses(sensitivity):
-        # Force one sub-analysis to have GPUs allocated so the gres block is rendered.
-        sa_ids = list(sensitivity.sub_analyses.keys())
-        sub_override = sensitivity.sub_analyses[sa_ids[0]]
-        sub_override.cfg_analysis.n_gpus = 1
-        sub_override.cfg_analysis.hpc_gpus_per_node = 1
+        sub.cfg_analysis.n_gpus = 1
 
     master = sensitivity._workflow_builder.generate_master_snakefile_content(
         which="both", compression_level=5
     )
 
-    sa_ids = list(sensitivity.sub_analyses.keys())
-    block = _sim_rule_block(master, sa_ids[0])
-    assert "override-test-gpu" in block
+    for sa_id, sub in sensitivity.sub_analyses.items():
+        partition = sub.cfg_analysis.hpc_ensemble_partition
+        gpu_hw = resolve_gpu_target(sub.cfg_hpc_system, partition)[0]
+        assert gpu_hw == "a6000", (
+            f"sa_id={sa_id}: partition {partition!r} should derive gpu_hardware "
+            f"'a6000' from hpc_system_config_test.yaml, got {gpu_hw!r}"
+        )
+        block = _sim_rule_block(master, sa_id)
+        # The partition-derived hardware appears in the GPU directive in either
+        # alloc mode: `--gres=gpu:{hw}:N` (gres mode) or `gpu_model="{hw}"` (gpus mode).
+        assert (f"gpu:{gpu_hw}" in block) or (f'gpu_model="{gpu_hw}"' in block), (
+            f"sa_id={sa_id}: partition-derived hardware {gpu_hw!r} not found in the "
+            f"simulation rule block's GPU directive (gres or gpus mode)."
+        )
