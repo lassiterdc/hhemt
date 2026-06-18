@@ -42,10 +42,15 @@ dependencies = [
     "datashader>=0.16",
     "jinja2>=3.1",
 ]
-requires-python = ">= 3.10"
+requires-python = ">= 3.11, < 3.13"
 
 [project.optional-dependencies]
 test = [
+    "ruff==0.15.10",
+    "ty",
+    "pytest",
+    "pytest-xdist>=3.0",
+    "coverage",
 ]
 viz-export = ["kaleido>=0.2.1,<1.0"]
 # HPC orchestration extras required by SnakemakeWorkflowBuilder when
@@ -55,8 +60,10 @@ viz-export = ["kaleido>=0.2.1,<1.0"]
 # for dry runs. Pin to current Snakemake 9.x line; jobstep plugin is required
 # for the SLURM-job-step model the toolkit uses for per-rule resource control.
 hpc = [
-    "snakemake-executor-plugin-slurm>=0.10",
-    "snakemake-executor-plugin-slurm-jobstep>=0.2",
+    "snakemake-executor-plugin-slurm>=2.0,<3",
+    "snakemake-executor-plugin-slurm-jobstep>=0.3,<1",
+    "snakemake==9.15.0",
+    "snakemake-storage-plugin-fs==1.1.3",
 ]
 docs = [
     "mkdocs",
@@ -72,9 +79,6 @@ homepage = "https://github.com/lassiterdc/TRITON_SWMM_toolkit"
 
 [project.scripts]
 TRITON_SWMM_toolkit = "TRITON_SWMM_toolkit.cli:app"
-
-[tool.ty]
-enabled = true  # dummy key so TOML parser doesnt choke
 
 [tool.ruff]
 line-length = 120

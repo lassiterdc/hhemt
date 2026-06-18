@@ -58,7 +58,7 @@ dependencies:
   - pytest
   - pytest-xdist>=3.0
   - py-spy>=0.3.14
-  - ruff
+  - ruff=0.15.10
   - ty
   - pre-commit
   - ipdb
