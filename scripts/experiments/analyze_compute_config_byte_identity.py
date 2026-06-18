@@ -97,41 +97,65 @@ def divergence_onset_index(clean_dump_hashes: list[str], resume_dump_hashes: lis
 # ---------------------------------------------------------------------------
 # Cluster-fetch wrappers (route through _ssh; exercised on UVA in Phase 3)
 # ---------------------------------------------------------------------------
-def completed_sa_ids(case_dir: str) -> list[str]:
-    """sa_ids with a ``c_run_<sa_id>_complete.flag`` in ``{case_dir}/_status`` (completed sims only)."""
+def completed_sims(case_dir: str) -> list[tuple[str, str | None]]:
+    """``[(sa_id, event_id)]`` for every completed sim (``c_run`` flag in ``{case_dir}/_status``).
+
+    Sensitivity flag form is ``c_run_{model}_sa-{sa_id}_evt-{event_id}_complete.flag``
+    (e.g. ``c_run_tritonswmm_sa-gpu_0_r1_evt-event_index.0_complete.flag``), so the bare
+    middle must be split on ``_sa-`` and ``_evt-`` to recover the real ``sa_id`` + ``event_id``.
+    A legacy multisim flag (``c_run_{sa_id}_complete.flag``) yields ``(sa_id, None)``.
+    """
     out = _ssh(f"ls {case_dir}/_status 2>/dev/null || true")
-    ids = []
+    sims: list[tuple[str, str | None]] = []
     for line in out.splitlines():
         name = line.strip()
         if name.startswith("c_run_") and name.endswith("_complete.flag"):
-            ids.append(name[len("c_run_") : -len("_complete.flag")])
-    return sorted(ids)
+            core = name[len("c_run_") : -len("_complete.flag")]
+            if "_sa-" in core and "_evt-" in core:
+                sa_part = core.split("_sa-", 1)[1]
+                sa_id, event_id = sa_part.split("_evt-", 1)
+                sims.append((sa_id, event_id))
+            else:
+                sims.append((core, None))
+    return sorted(sims)
 
 
-def _fetch_mh_blobs(case_dir: str, sa_id: str) -> dict[int, bytes]:
-    """Fetch ``{idx: bytes}`` for every ``MH_<idx>_00.out`` of one sim via base64 over ssh.
+def _bin_dir(case_dir: str, sa_id: str, event_id: str | None) -> str:
+    """Remote ``out_tritonswmm/bin`` dir for one sim — sensitivity layout when an event
+    id is known (``subanalyses/sa_{sa_id}/sims/{event_id}/``), else legacy multisim."""
+    if event_id is not None:
+        return f"{case_dir}/subanalyses/sa_{sa_id}/sims/{event_id}/out_tritonswmm/bin"
+    return f"{case_dir}/sims/{sa_id}/out_tritonswmm/bin"
 
-    base64 keeps the binary intact across the text ssh channel; ``_ssh`` stays the sole seam.
+
+def _fetch_mh_blobs(case_dir: str, sa_id: str, event_id: str | None = None) -> dict[int, bytes]:
+    """Fetch ``{idx: bytes}`` for the MAX-index ``MH_<idx>_00.out`` (the final depth grid)
+    of one sim via base64 over ssh. Only the FINAL dump is needed for the byte-identity
+    comparison, so we list the dir, pick the max index, and fetch that single dump (1 ssh
+    round-trip per sim rather than one per checkpoint). base64 keeps the binary intact across
+    the text ssh channel; ``_ssh`` stays the sole seam.
     """
-    bin_dir = f"{case_dir}/sims/{sa_id}/out_tritonswmm/bin"
+    bin_dir = _bin_dir(case_dir, sa_id, event_id)
     listing = _ssh(f"ls {bin_dir} 2>/dev/null || true")
-    blobs: dict[int, bytes] = {}
+    idxs: list[int] = []
     for name in listing.split():
         if name.startswith("MH_") and name.endswith("_00.out"):
             try:
-                idx = int(name[len("MH_") : -len("_00.out")])
+                idxs.append(int(name[len("MH_") : -len("_00.out")]))
             except ValueError:
                 continue
-            b64 = _ssh(f"base64 {bin_dir}/{name}")
-            blobs[idx] = base64.b64decode(b64)
-    return blobs
+    if not idxs:
+        return {}
+    mx = max(idxs)
+    b64 = _ssh(f"base64 {bin_dir}/MH_{mx}_00.out")
+    return {mx: base64.b64decode(b64)}
 
 
 def case_final_hashes(case_dir: str) -> dict[str, str]:
     """Map every completed sim's sa_id to the md5 of its max-index final-MH dump."""
     hashes: dict[str, str] = {}
-    for sa_id in completed_sa_ids(case_dir):
-        blobs = _fetch_mh_blobs(case_dir, sa_id)
+    for sa_id, event_id in completed_sims(case_dir):
+        blobs = _fetch_mh_blobs(case_dir, sa_id, event_id)
         if blobs:
             _, digest = final_mh_md5(blobs)
             hashes[sa_id] = digest
@@ -148,7 +172,7 @@ def resume_count_by_sa(case_dir: str) -> dict[str, int]:
     dependency) so it is robust to where the analysis log dir sits under the case dir.
     """
     out: dict[str, int] = {}
-    for sa_id in completed_sa_ids(case_dir):
+    for sa_id, _event_id in completed_sims(case_dir):
         raw = _ssh(
             f"find {case_dir} -type f -name 'simulation_sa_{sa_id}_evt*.log' "
             f"-exec grep -c 'Resuming tritonswmm from hotstart' {{}} + 2>/dev/null "
