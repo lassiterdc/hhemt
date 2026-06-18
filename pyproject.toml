@@ -1,5 +1,5 @@
 [project]
-name = "TRITON-SWMM_toolkit"
+name = "hhemt"
 version = "0.1.0"
 description = "Tools for running and processing TRITON-SWMM models."
 readme = "README.md"
@@ -73,12 +73,12 @@ docs = [
 ]
 
 [project.urls]
-bugs = "https://github.com/lassiterdc/TRITON_SWMM_toolkit/issues"
-changelog = "https://github.com/lassiterdc/TRITON_SWMM_toolkit/blob/master/changelog.md"
-homepage = "https://github.com/lassiterdc/TRITON_SWMM_toolkit"
+bugs = "https://github.com/lassiterdc/hhemt/issues"
+changelog = "https://github.com/lassiterdc/hhemt/blob/master/changelog.md"
+homepage = "https://github.com/lassiterdc/hhemt"
 
 [project.scripts]
-TRITON_SWMM_toolkit = "TRITON_SWMM_toolkit.cli:app"
+hhemt = "hhemt.cli:app"
 
 [tool.ruff]
 line-length = 120
@@ -97,7 +97,7 @@ select = [
 package = true
 
 [tool.setuptools.package-data]
-TRITON_SWMM_toolkit = [
+hhemt = [
     "examples/*.yaml",
     "examples/*.md",
     "examples/*.xlsx",
@@ -110,7 +110,7 @@ testpaths = ["tests"]
 norecursedirs = ["test_data", "docs", ".git", ".venv", "venv"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
-    "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and TRITON_SWMM_GLOBUS_E2E=1",
+    "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and HHEMT_GLOBUS_E2E=1",
     "requires_snakemake_subprocess: test launches Snakemake subprocess; serialize under xdist",
 ]
 filterwarnings = [

@@ -28,7 +28,7 @@ def norfolk_1job_cpu_only():
     analysis.cfg_analysis.n_omp_threads = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "test_partition"
     # Phase-4 (4d): account moved to hpc_system_config.default_account.
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",
@@ -57,7 +57,7 @@ def norfolk_1job_with_gpus():
     # Phase-4 (4d): per-node GPU count + gpu_hardware + account all resolve from the
     # ensemble partition's PartitionSpec / hpc_system_config (retired off analysis_config
     # + system_config). The partition declares gpus_per_node=8 + gpu_hardware="a100".
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",
@@ -80,7 +80,7 @@ def norfolk_1job_with_gpus():
 
 def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
     """Verify SBATCH script for 1-job mode (CPU-only)."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -150,7 +150,7 @@ def test_1job_sbatch_script_cpu_only(norfolk_1job_cpu_only):
 
 def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
     """Verify SBATCH script for 1-job mode with GPUs."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_with_gpus
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -194,7 +194,7 @@ def test_1job_sbatch_script_with_gpus(norfolk_1job_with_gpus):
 
 def test_1job_sbatch_script_error_if_cpus_not_set(norfolk_1job_cpu_only):
     """Verify SBATCH script includes error handling for missing SLURM_CPUS_ON_NODE."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -218,7 +218,7 @@ def test_1job_sbatch_script_error_if_cpus_not_set(norfolk_1job_cpu_only):
 
 def test_1job_sbatch_requires_hpc_total_nodes(norfolk_1job_cpu_only):
     """Verify that SBATCH script generation fails without hpc_total_nodes."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     analysis.cfg_analysis.hpc_total_nodes = None  # Remove required field
@@ -237,14 +237,14 @@ def test_1job_sbatch_requires_hpc_total_nodes(norfolk_1job_cpu_only):
 
 def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_with_gpus):
     """Verify that GPU mode requires hpc_gpus_per_node."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_with_gpus
     # Phase-4 (4d): per-node GPU count is the partition's PartitionSpec.gpus_per_node
     # (hpc_gpus_per_node retired, no cfg_analysis fallback). Override to a partition
     # WITHOUT gpus_per_node so _resolve_gpus_per_node resolves 0 and the GPU-header
     # assert fires.
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",
@@ -268,7 +268,7 @@ def test_1job_sbatch_requires_hpc_gpus_per_node_when_using_gpus(norfolk_1job_wit
 
 def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
     """Verify that SBATCH script includes conda initialization for non-interactive shells."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -303,7 +303,7 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
 
     # Verify conda initialization happens BEFORE conda activate
     init_pos = script_content.find("Initialize conda for non-interactive shell")
-    activate_pos = script_content.find("conda activate triton_swmm_toolkit")
+    activate_pos = script_content.find("conda activate hhemt")
     assert init_pos > 0, "Conda initialization should be present"
     assert activate_pos > 0, "Conda activation should be present"
     assert (
@@ -313,7 +313,7 @@ def test_1job_sbatch_conda_initialization_present(norfolk_1job_cpu_only):
 
 def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
     """override_hpc_total_nodes replaces hpc_total_nodes in the generated SBATCH script."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     # Config says 2 nodes; we override to 3
@@ -335,8 +335,8 @@ def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
 
 def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
     """override_hpc_total_nodes raises ConfigurationError when multi_sim_run_method != 1_job_many_srun_tasks."""
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     analysis.cfg_analysis.multi_sim_run_method = "local"
@@ -349,7 +349,7 @@ def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
 
 def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
     """Runtime extra_sbatch_args appears as #SBATCH lines in the generated script."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -369,7 +369,7 @@ def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
 
 def test_extra_sbatch_args_appends_after_config(norfolk_1job_cpu_only):
     """Runtime extra_sbatch_args lines appear AFTER cfg_analysis.additional_SBATCH_params lines."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     analysis.cfg_analysis.additional_SBATCH_params = ["--qos=normal", "--mail-type=END"]
@@ -396,7 +396,7 @@ def test_extra_sbatch_args_appends_after_config(norfolk_1job_cpu_only):
 def test_extra_sbatch_args_prints_override_info(norfolk_1job_cpu_only, capsys):
     """When extra_sbatch_args overrides a config-derived directive, an INFO message is printed naming
     the flag, the origin of the original value, and the new runtime value."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     original_partition = str(analysis.cfg_analysis.hpc_ensemble_partition)
@@ -421,8 +421,8 @@ def test_extra_sbatch_args_prints_override_info(norfolk_1job_cpu_only, capsys):
 
 def test_extra_sbatch_args_wrong_mode(norfolk_1job_cpu_only):
     """extra_sbatch_args raises ConfigurationError when multi_sim_run_method != '1_job_many_srun_tasks'."""
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.exceptions import ConfigurationError
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     analysis.cfg_analysis.multi_sim_run_method = "local"
@@ -437,8 +437,8 @@ def test_1job_sbatch_account_from_cfg_hpc_system(norfolk_1job_cpu_only):
     """Phase 3 (R4): when cfg_hpc_system is present, the sbatch --account is
     sourced from cfg_hpc_system.default_account (via _resolve_account), not the
     legacy cfg_analysis.hpc_account."""
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     # A distinct account on the new config proves which source the header used
@@ -467,8 +467,8 @@ def test_1job_sbatch_gpus_per_node_from_partition_spec(norfolk_1job_with_gpus):
     from the ensemble partition's PartitionSpec (gpus_per_node + gpu_hardware), via
     _resolve_gpus_per_node / _resolve_gpu_hardware — the legacy cfg_analysis.hpc_gpus_per_node
     + cfg_system.gpu_hardware are retired."""
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_with_gpus
     # The fixture partition declares 8/node; this override declares 4/node — the

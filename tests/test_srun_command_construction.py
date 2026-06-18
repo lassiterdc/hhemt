@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from TRITON_SWMM_toolkit.run_simulation import TRITONSWMM_run
+from hhemt.run_simulation import TRITONSWMM_run
 
 
 def _make_run(

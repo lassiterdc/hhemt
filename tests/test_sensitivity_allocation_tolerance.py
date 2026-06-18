@@ -4,7 +4,7 @@
 Regression coverage for the partial-completion reprocess crash where
 `sensitivity.sub_analyses` is a strict superset of the Snakefile's
 `simulation_sa_*` rules (observed 2026-06-02, uva_sensitivity_suite 37/49).
-See library/docs/planning/projects/TRITON-SWMM_toolkit/bugs/sensitivity
+See library/docs/planning/projects/hhemt/bugs/sensitivity
 consolidation tolerates sub analyses missing from snakefile.md.
 """
 
@@ -16,7 +16,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from TRITON_SWMM_toolkit.snakemake_snakefile_parsing import (
+from hhemt.snakemake_snakefile_parsing import (
     SnakefileParsingError,
     parse_sensitivity_analysis_workflow_model_allocations,
 )

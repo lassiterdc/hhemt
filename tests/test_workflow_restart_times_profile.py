@@ -26,14 +26,14 @@ def slurm_ready_builder():
     assert requires ``local_cpu_cores_for_workflow`` for every mode. Set them
     explicitly so all three modes emit without skipping.
     """
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     case = cases.Local_TestCases.retrieve_norfolk_multi_sim_test_case(start_from_scratch=False)
     analysis = case.analysis
     analysis.cfg_analysis.local_cpu_cores_for_workflow = 4
     analysis.cfg_analysis.hpc_ensemble_partition = "standard"
     # Phase-4 (4d): account + max-concurrent moved to hpc_system_config.
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",

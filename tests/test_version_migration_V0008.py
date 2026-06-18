@@ -32,7 +32,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from TRITON_SWMM_toolkit.version_migration import runner
+from hhemt.version_migration import runner
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "legacy_layouts" / "v0008_unit_test"
 

@@ -18,21 +18,21 @@ _parts = [p for p in _existing.split(os.pathsep) if p and p != _src_str]
 os.environ["PYTHONPATH"] = os.pathsep.join([_src_str, *_parts])
 
 # Testing-time seams (see protocol doc).
-_DISABLE = os.environ.get("TRITON_SWMM_TOOLKIT_DISABLE_WORKTREE_GUARD") == "1"
-_ALLOW = os.environ.get("TRITON_SWMM_TOOLKIT_ALLOW_INSTALLED") == "1"
-_FORCE_WRONG_SRC = os.environ.get("TRITON_SWMM_TOOLKIT_FORCE_WRONG_SRC")
+_DISABLE = os.environ.get("HHEMT_DISABLE_WORKTREE_GUARD") == "1"
+_ALLOW = os.environ.get("HHEMT_ALLOW_INSTALLED") == "1"
+_FORCE_WRONG_SRC = os.environ.get("HHEMT_FORCE_WRONG_SRC")
 
 if not _DISABLE:
     try:
-        import TRITON_SWMM_toolkit  # noqa: E402
-        _resolved = Path(TRITON_SWMM_toolkit.__file__).resolve() if _FORCE_WRONG_SRC is None else Path(_FORCE_WRONG_SRC).resolve()
+        import hhemt  # noqa: E402
+        _resolved = Path(hhemt.__file__).resolve() if _FORCE_WRONG_SRC is None else Path(_FORCE_WRONG_SRC).resolve()
     except ImportError as _exc:
         # Shared conda env's editable install may point at a removed worktree — surface the friendly message instead of a raw ModuleNotFoundError.
         msg = (
-            f"worktree-test-guard: import TRITON_SWMM_toolkit failed ({_exc}).\n"
+            f"worktree-test-guard: import hhemt failed ({_exc}).\n"
             f"  expected prefix: {_SRC}\n"
             f"  shared conda env's editable install may point at a removed or stale path.\n"
-            f"  Set TRITON_SWMM_TOOLKIT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
+            f"  Set HHEMT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
         )
         if _ALLOW:
             sys.__stderr__.write(f"[worktree-test-guard] WARNING: {msg}\n")
@@ -46,10 +46,10 @@ if not _DISABLE:
             _resolved.relative_to(_SRC)
         except ValueError:
             msg = (
-                f"worktree-test-guard: TRITON_SWMM_toolkit.__file__ = {_resolved}\n"
+                f"worktree-test-guard: hhemt.__file__ = {_resolved}\n"
                 f"  expected prefix: {_SRC}\n"
                 f"  shared conda env's editable install points elsewhere.\n"
-                f"  Set TRITON_SWMM_TOOLKIT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
+                f"  Set HHEMT_ALLOW_INSTALLED=1 to bypass for installed-package testing."
             )
             if _ALLOW:
                 sys.__stderr__.write(f"[worktree-test-guard] WARNING: {msg}\n")

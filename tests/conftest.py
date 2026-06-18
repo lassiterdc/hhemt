@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import tests.fixtures.test_case_catalog as cases
-from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
+from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
     Path(__file__).resolve().parents[1]
@@ -490,7 +490,7 @@ def synthetic_multisim_completed(tritonswmm_cpu_compiled):
     Follow-up: integrate this clear into the broader
     ``_pytest_uses_non_interactive_snakemake_lock_clear`` autouse fixture
     described by stipulation
-    ``library/docs/stipulations/TRITON-SWMM_toolkit/snakemake fixture setup clears locks and incomplete.md``
+    ``library/docs/stipulations/hhemt/snakemake fixture setup clears locks and incomplete.md``
     (cross-plan synth-test-isolation work; not yet implemented).
     """
     import shutil

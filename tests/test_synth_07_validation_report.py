@@ -24,13 +24,13 @@ from __future__ import annotations
 
 import pytest
 
-from TRITON_SWMM_toolkit.analysis_validation import (
+from hhemt.analysis_validation import (
     CheckResult,
     ValidationReport,
     validate_analysis,
 )
-from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG
-from TRITON_SWMM_toolkit.report_renderers.errors_and_warnings import (
+from hhemt.config.report import DEFAULT_REPORT_CONFIG
+from hhemt.report_renderers.errors_and_warnings import (
     _render_aggregate_table,
     _render_granular_failures_table,
     _render_overall_banner,
@@ -180,20 +180,20 @@ def test_renders_full_html_doc(tmp_path):
 
     # Patch validate_analysis to return our synthetic report instead of running
     # the real validator (which would fail against the MagicMock).
-    import TRITON_SWMM_toolkit.report_renderers.errors_and_warnings as ew_mod
+    import hhemt.report_renderers.errors_and_warnings as ew_mod
     original = ew_mod.__dict__.get("validate_analysis")
     try:
-        from TRITON_SWMM_toolkit.analysis_validation import (
+        from hhemt.analysis_validation import (
             validate_analysis as _real_validate,
         )
         import sys
         # Monkey-patch the module-level import in the renderer
-        import TRITON_SWMM_toolkit.analysis_validation as av_mod
+        import hhemt.analysis_validation as av_mod
         av_mod.validate_analysis = lambda a: _synthetic_report()
         render(fake_analysis, DEFAULT_REPORT_CONFIG, out_path)
     finally:
         # Restore
-        from TRITON_SWMM_toolkit import analysis_validation as av_mod_final
+        from hhemt import analysis_validation as av_mod_final
         av_mod_final.validate_analysis = _real_validate
 
     assert out_path.exists() and out_path.stat().st_size > 0

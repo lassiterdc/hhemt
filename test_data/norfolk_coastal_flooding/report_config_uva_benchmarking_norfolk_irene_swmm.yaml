@@ -1,6 +1,6 @@
 # Canonical report_config for UVACaseStudies.benchmarking_norfolk_irene_swmm_only.
-# Wired in src/TRITON_SWMM_toolkit/case_study_catalog.py via report_config_yaml.
-# Schema: src/TRITON_SWMM_toolkit/config/report.py.
+# Wired in src/hhemt/case_study_catalog.py via report_config_yaml.
+# Schema: src/hhemt/config/report.py.
 # SWMM-only variant: full_benchmarking_experiment_uva_swmm.xlsx is CPU-only and
 # lacks system.target_dem_resolution / system.gpu_hardware columns, so
 # independent_vars is restricted to the derived n_devices axis (see

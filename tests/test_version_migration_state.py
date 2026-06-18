@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.version_migration import state
-from TRITON_SWMM_toolkit.version_migration.constants import LAYOUT_VERSION
+from hhemt.version_migration import state
+from hhemt.version_migration.constants import LAYOUT_VERSION
 
 # Phase 4 (synth-test-isolation-and-runtime): the two stamp-wire regression
 # tests at the bottom of this file (test_analysis_run_stamps_version_file and
@@ -75,8 +75,8 @@ def _mp_stamp_worker(target_dir: str) -> None:
     """Module-scope worker for multiprocessing test; picklable under spawn."""
     from pathlib import Path as _P
 
-    from TRITON_SWMM_toolkit.version_migration import state as _state
-    from TRITON_SWMM_toolkit.version_migration.constants import (
+    from hhemt.version_migration import state as _state
+    from hhemt.version_migration.constants import (
         LAYOUT_VERSION as _LV,
     )
 

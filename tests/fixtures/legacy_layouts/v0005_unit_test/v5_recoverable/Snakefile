@@ -3,4 +3,4 @@
 rule analysis_report:
     output: "analysis_report/index.html"
     shell:
-        "TRITON_SWMM_toolkit render --report-config /tmp/v0005_fixture_source_cfg.yaml"
+        "hhemt render --report-config /tmp/v0005_fixture_source_cfg.yaml"

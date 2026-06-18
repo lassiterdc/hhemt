@@ -38,15 +38,15 @@ import pandas as pd
 import pytest
 import xarray as xr
 
-from TRITON_SWMM_toolkit.constants import (
+from hhemt.constants import (
     process_timeseries_flag_per_sa,
     sa_inputs_fingerprint_flag,
     sim_run_flag_per_sa,
 )
-from TRITON_SWMM_toolkit.exceptions import ProcessingError
-from TRITON_SWMM_toolkit.log import ProcessingEntry
-from TRITON_SWMM_toolkit.process_simulation import TRITONSWMM_sim_post_processing
-from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario, compute_event_id_slug
+from hhemt.exceptions import ProcessingError
+from hhemt.log import ProcessingEntry
+from hhemt.process_simulation import TRITONSWMM_sim_post_processing
+from hhemt.scenario import TRITONSWMM_scenario, compute_event_id_slug
 
 
 def _seed_scenario_processing_log(scen: TRITONSWMM_scenario) -> list[str]:
@@ -425,8 +425,8 @@ def _patch_loaders(monkeypatch, *, df_outputs, ny, nx):
     """Force the load chunk to floor at 1 timestep and replace the on-disk
     loaders with synthetic in-memory datasets, so the batched-append loop is
     exercised without any real TRITON binaries or compiled engine."""
-    import TRITON_SWMM_toolkit.process_simulation as ps
-    import TRITON_SWMM_toolkit.utils as utils
+    import hhemt.process_simulation as ps
+    import hhemt.utils as utils
 
     # estimate_timesteps_per_chunk is imported method-locally from utils, so the
     # patch target is utils (not the process_simulation namespace).
@@ -540,8 +540,8 @@ def test_report_restamp_skipped_on_regenerate(tmp_path, monkeypatch):
     ``restamp_parent_sentinels`` full-tree walk with the O(1) decrement). Drives
     TRITONSWMM_analysis._invalidate_downstream_flags directly; the gate is pure
     routing logic, so no compile is required."""
-    import TRITON_SWMM_toolkit.du_sentinels as du_sentinels
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    import hhemt.du_sentinels as du_sentinels
+    from hhemt.analysis import TRITONSWMM_analysis
 
     inst = object.__new__(TRITONSWMM_analysis)
     inst.analysis_paths = SimpleNamespace(

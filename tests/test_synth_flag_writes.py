@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+from hhemt.exceptions import ConfigurationError
+from hhemt.workflow import ResolvedForceRerunSpec
 
 
 def test_run_emits_flag_and_sidecar(synthetic_multisim_completed):
@@ -51,7 +51,7 @@ def test_override_force_rerun_sa_id_on_non_sensitivity_fails(synth_multi_sim_ana
 
 def test_build_force_rerun_spec_all_none():
     """"all"/"none" map directly to scope tokens with no token list."""
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis  # noqa: F401
+    from hhemt.analysis import TRITONSWMM_analysis  # noqa: F401
 
     # Pure dataclass shape test — no analysis fixture needed.
     spec_all = ResolvedForceRerunSpec(scope="all", tokens=())
@@ -143,7 +143,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     invalidation, the runner subprocess re-fires (flags deleted) but
     every _export_* early-returns -> fresh flags + stale outputs.
     """
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     sensitivity = synthetic_sensitivity_completed
     analysis = sensitivity.master_analysis
@@ -172,7 +172,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
 
 def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_sensitivity_completed):
     """force_rerun={"sa_id":[<first>]} MUST NOT touch other sa's processing log."""
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     sensitivity = synthetic_sensitivity_completed
     analysis = sensitivity.master_analysis
@@ -200,7 +200,7 @@ def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_s
 def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic_multisim_completed):
     """Non-sensitivity force-rerun: event_iloc=[1] invalidates the named event's
     log but leaves the other event_iloc untouched."""
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     analysis = synthetic_multisim_completed
     n_sims = len(analysis.df_sims)

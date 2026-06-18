@@ -3,18 +3,18 @@
 These tests require live, user-activated Globus endpoints and a valid OAuth
 session. They are SKIPPED by default under pytest. To opt in:
 
-    TRITON_SWMM_GLOBUS_E2E=1 pytest tests/dev/test_globus_transfer.py -v
+    HHEMT_GLOBUS_E2E=1 pytest tests/dev/test_globus_transfer.py -v
 
 They are also marked ``slow`` and ``globus_e2e`` so they are deselected by
 ``pytest -m "not slow"``.
 
 Run interactively (outside pytest):
-    conda run -n triton_swmm_toolkit ipython -i tests/dev/test_globus_transfer.py
+    conda run -n hhemt ipython -i tests/dev/test_globus_transfer.py
 
 Or run a specific test via the CLI dispatch at the bottom:
-    conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py frontier
-    conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py uva
-    conda run -n triton_swmm_toolkit python tests/dev/test_globus_transfer.py verify
+    conda run -n hhemt python tests/dev/test_globus_transfer.py frontier
+    conda run -n hhemt python tests/dev/test_globus_transfer.py uva
+    conda run -n hhemt python tests/dev/test_globus_transfer.py verify
 """
 
 import os
@@ -22,21 +22,21 @@ import sys
 
 import pytest
 
-_GLOBUS_E2E_ENABLED = os.environ.get("TRITON_SWMM_GLOBUS_E2E") == "1"
+_GLOBUS_E2E_ENABLED = os.environ.get("HHEMT_GLOBUS_E2E") == "1"
 _globus_e2e = pytest.mark.skipif(
     not _GLOBUS_E2E_ENABLED,
-    reason="Globus E2E tests require activated endpoints; set TRITON_SWMM_GLOBUS_E2E=1 to opt in",
+    reason="Globus E2E tests require activated endpoints; set HHEMT_GLOBUS_E2E=1 to opt in",
 )
 
 # Use worktree source if available, otherwise fall back to installed package
-WORKTREE_SRC = "/home/***REMOVED***/dev/TRITON-SWMM_toolkit/.claude/worktrees/globus-auto-transfer-and-debug-restructuring/src"
+WORKTREE_SRC = "/home/***REMOVED***/dev/hhemt/.claude/worktrees/globus-auto-transfer-and-debug-restructuring/src"
 if os.path.isdir(WORKTREE_SRC):
     sys.path.insert(0, WORKTREE_SRC)
 
 from pathlib import Path  # noqa: E402
 
-from TRITON_SWMM_toolkit.config.globus import PostRunTransferConfig, _get_endpoint_uuids  # noqa: E402
-from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager  # noqa: E402
+from hhemt.config.globus import PostRunTransferConfig, _get_endpoint_uuids  # noqa: E402
+from hhemt.globus_transfer import GlobusTransferManager  # noqa: E402
 
 # ── Test 1: Frontier → Local ──────────────────────────────────────────
 
@@ -53,13 +53,13 @@ def test_frontier():
         print("[Setup] Cleared stale tokens")
 
     config = PostRunTransferConfig(
-        destination_root=r"D:\Dropbox\_GradSchool\repos\TRITON-SWMM_toolkit\frontier",
+        destination_root=r"D:\Dropbox\_GradSchool\repos\hhemt\frontier",
         system="frontier",
     )
 
     spec = config.to_transfer_spec(
         analysis_dir=Path(
-            "/lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit/"
+            "/lustre/orion/***REMOVED***/proj-shared/***REMOVED***/hhemt/"
             "test_data/norfolk_coastal_flooding/cases/frontier_sensitivity_suite"
         ),
         analysis_id="frontier_sensitivity_suite",
@@ -95,14 +95,14 @@ def test_frontier():
 def test_uva():
     """Transfer UVA results to local machine. Edit paths before running."""
     config = PostRunTransferConfig(
-        destination_root="/D/Dropbox/_GradSchool/repos/TRITON-SWMM_toolkit/uva",
+        destination_root="/D/Dropbox/_GradSchool/repos/hhemt/uva",
         system="uva",
     )
 
     spec = config.to_transfer_spec(
         analysis_dir=Path(
             "/dtn/landings/users/d/dc/***REMOVED***/project/***REMOVED***/***REMOVED***/norfolk/"
-            "TRITON-SWMM_toolkit/test_data/norfolk_coastal_flooding/cases/uva_sensitivity_suite"
+            "hhemt/test_data/norfolk_coastal_flooding/cases/uva_sensitivity_suite"
         ),
         analysis_id="uva_sensitivity_suite",
     )
@@ -130,7 +130,7 @@ def test_uva():
 
 def verify():
     """Check Frontier transfer destination for correctness."""
-    dest = Path("/mnt/d/Dropbox/_GradSchool/repos/TRITON-SWMM_toolkit/" "frontier/frontier_sensitivity_suite")
+    dest = Path("/mnt/d/Dropbox/_GradSchool/repos/hhemt/" "frontier/frontier_sensitivity_suite")
     print(f"Exists: {dest.exists()}")
     if not dest.exists():
         print("  Nothing to verify — destination does not exist.")

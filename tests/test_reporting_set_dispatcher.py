@@ -22,8 +22,8 @@ Load-bearing invariants tested:
 
 from __future__ import annotations
 
-import TRITON_SWMM_toolkit.workflow as wf
-from TRITON_SWMM_toolkit.report_renderers._reporting_sets import (
+import hhemt.workflow as wf
+from hhemt.report_renderers._reporting_sets import (
     RendererSelection,
     ReportingSet,
 )

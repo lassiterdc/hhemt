@@ -10,7 +10,7 @@ This surfaces whether the 5390s pytest cost lives in the SECOND generate
 call, in the regex helpers, or somewhere else that the harness's single-call
 v1 missed.
 
-Run: `conda run --no-capture-output -n triton_swmm_toolkit python -m scripts.profile.profile_p2v1_builder`
+Run: `conda run --no-capture-output -n hhemt python -m scripts.profile.profile_p2v1_builder`
 """
 
 from __future__ import annotations

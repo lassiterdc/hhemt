@@ -24,8 +24,8 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from TRITON_SWMM_toolkit.config.brand_theme import DEFAULT_BRAND_THEME, brand_theme
-from TRITON_SWMM_toolkit.workflow import _brand_theme_css_map, _emit_report_artifacts
+from hhemt.config.brand_theme import DEFAULT_BRAND_THEME, brand_theme
+from hhemt.workflow import _brand_theme_css_map, _emit_report_artifacts
 
 _DEFAULT_HEXES = ("#232D4B", "#E57200", "#F1F1EF", "#DADADA", "#666666", "#495E9D")
 
@@ -94,7 +94,7 @@ def test_table_overlay_sources_brand_defaults_from_theme():
     # Exercises the model_validate overlay pattern run() applies at D-5: the
     # brand-derived HTML-table fields take theme colors; frozen semantic fields
     # (th_text_color etc.) do not.
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.report import report_config
 
     theme = brand_theme(
         primary_color="#0A7E8C",
@@ -163,7 +163,7 @@ def test_bundle_regenerate_reproduces_theme(tmp_path, norfolk_single_sim_analysi
 
     result = subprocess.run(
         [
-            "TRITON_SWMM_toolkit",
+            "hhemt",
             "report-from-bundle",
             str(bundle_path),
             "--format",

@@ -12,7 +12,7 @@ import pytest
 from pathlib import Path
 from tests.fixtures.test_case_catalog import Local_TestCases
 import tests.utils_for_testing as tut
-from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+from hhemt.scenario import TRITONSWMM_scenario
 
 
 class TestTRITONOnlyIntegration:

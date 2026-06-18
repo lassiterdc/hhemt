@@ -12,7 +12,7 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
-from TRITON_SWMM_toolkit.processing_analysis import (
+from hhemt.processing_analysis import (
     TRITONSWMM_analysis_post_processing,
     prev_power_of_two,
     ds_memory_req_MiB,

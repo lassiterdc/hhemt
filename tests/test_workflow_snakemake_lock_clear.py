@@ -15,7 +15,7 @@ from unittest import mock
 
 import pytest
 
-from TRITON_SWMM_toolkit.workflow import (
+from hhemt.workflow import (
     _NON_INTERACTIVE_LOCK_CLEAR_ENV,
     SnakemakeWorkflowBuilder,
 )
@@ -66,7 +66,7 @@ def test_interactive_branch_when_env_unset(tmp_path, monkeypatch):
     canonical sentinel that the interactive branch fired (it never tries to
     rmtree silently when the user declines).
     """
-    from TRITON_SWMM_toolkit.exceptions import WorkflowError
+    from hhemt.exceptions import WorkflowError
 
     analysis_dir = tmp_path / "an"
     locks_dir = analysis_dir / ".snakemake" / "locks"

@@ -7,13 +7,13 @@ import warnings
 import pytest
 from pydantic import ValidationError
 
-from TRITON_SWMM_toolkit.config.static_plots import (
+from hhemt.config.static_plots import (
     _CVD_SAFE_COLORMAPS,
     CvdAdvisoryWarning,
     PeakFloodDepthStaticConfig,
     StaticPlotBaseConfig,
 )
-from TRITON_SWMM_toolkit.config.viz_vocabulary import FontTarget, VminVmaxStrategy
+from hhemt.config.viz_vocabulary import FontTarget, VminVmaxStrategy
 
 _VALID_PLOT_ID = "per_sim_peak_flood_depth__evt.year.9"
 

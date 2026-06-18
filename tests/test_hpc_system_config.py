@@ -12,12 +12,12 @@ Phase 1 of hpc-system-profile-config. Covers:
 import pytest
 from pydantic import ValidationError
 
-from TRITON_SWMM_toolkit.config.hpc_system import (
+from hhemt.config.hpc_system import (
     PartitionSpec,
     hpc_system_config,
 )
-from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt.config.loaders import load_hpc_system_config
+from hhemt.exceptions import ConfigurationError
 
 
 def _uva_shaped_dict() -> dict:
@@ -163,7 +163,7 @@ def test_system_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, reti
 
     import yaml as _yaml
 
-    from TRITON_SWMM_toolkit.config.loaders import load_system_config
+    from hhemt.config.loaders import load_system_config
 
     # A known-good system config (the shipped template) + a retired HPC key.
     template = Path("test_data/norfolk_coastal_flooding/template_system_config.yaml")
@@ -199,8 +199,8 @@ def test_analysis_config_shim_pops_and_warns_on_retired_hpc_keys(retired_key, re
     partition selectors are KEPT."""
     from pathlib import Path
 
-    from TRITON_SWMM_toolkit.config.analysis import analysis_config
-    from TRITON_SWMM_toolkit.config.loaders import load_analysis_config
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.loaders import load_analysis_config
 
     template = Path("test_data/norfolk_coastal_flooding/template_analysis_config.yaml")
     base = load_analysis_config(template)

@@ -6,7 +6,7 @@ in the same Snakefile, for both `static_backend` values.
 
 Authored after the plotly-default extension-mismatch bug. See the originating
 plan ``plotly default snakefile extension fix.md`` under
-``library/docs/planning/projects/TRITON-SWMM_toolkit/bugs/`` (active) or
+``library/docs/planning/projects/hhemt/bugs/`` (active) or
 ``.../bugs/completed/`` (after closeout).
 """
 
@@ -273,7 +273,7 @@ def test_plotly_chart_renderers_emit_html_extension():
     # Snakemake's report engine dispatches via <iframe> (text/html). A .svg
     # extension here would dispatch via <img> (image/svg+xml) and fail to
     # parse the Plotly HTML content as SVG XML.
-    from TRITON_SWMM_toolkit.workflow import _OUTPUT_EXT_BY_RENDERER
+    from hhemt.workflow import _OUTPUT_EXT_BY_RENDERER
     for renderer, exts in _OUTPUT_EXT_BY_RENDERER.items():
         mpl_ext = exts["matplotlib"]
         plotly_ext = exts["plotly"]

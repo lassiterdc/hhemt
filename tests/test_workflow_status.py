@@ -64,7 +64,7 @@ def test_workflow_status_string_representation(norfolk_multi_sim_analysis_cached
 
 def test_phase_status_symbol():
     """Test PhaseStatus.symbol() returns correct symbols."""
-    from TRITON_SWMM_toolkit.orchestration import PhaseStatus
+    from hhemt.orchestration import PhaseStatus
 
     # Complete phase
     complete = PhaseStatus(name="test", complete=True, progress=1.0)

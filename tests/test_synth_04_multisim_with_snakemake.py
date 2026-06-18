@@ -50,7 +50,7 @@ def test_snakemake_local_workflow_generation_and_write(synth_multi_sim_analysis)
     tst_ut.assert_snakefile_has_flags(
         content,
         [
-            "/workflow/envs/triton_swmm.yaml",
+            "/workflow/envs/hhemt.yaml",
             "setup_workflow",
             "--process-system-inputs",
             "--compile-triton-swmm",
@@ -84,7 +84,7 @@ def test_reprocess_render_report_rule_carries_reprocess_flag(synth_multi_sim_ana
     selects ``Snakefile.reprocess``; the PRODUCTION Snakefile's ``rule
     render_report`` shell MUST NOT (byte-identical production render path).
     """
-    from TRITON_SWMM_toolkit.reprocess_snakefile_generator import generate_reprocess_snakefile
+    from hhemt.reprocess_snakefile_generator import generate_reprocess_snakefile
 
     builder = synth_multi_sim_analysis._workflow_builder
 
@@ -259,21 +259,21 @@ def test_snakemake_workflow_end_to_end(synth_multi_sim_analysis):
 
     repo_src = Path(__file__).resolve().parent.parent / "src"
     probe = subprocess.run(
-        [sys.executable, "-c", "import TRITON_SWMM_toolkit; print(TRITON_SWMM_toolkit.__file__)"],
+        [sys.executable, "-c", "import hhemt; print(hhemt.__file__)"],
         capture_output=True,
         text=True,
         check=True,
     )
     resolved = Path(probe.stdout.strip()).resolve()
     assert str(resolved).startswith(str(repo_src)), (
-        f"subprocess resolved TRITON_SWMM_toolkit from {resolved}, "
+        f"subprocess resolved hhemt from {resolved}, "
         f"expected under {repo_src}. Layer 2 PYTHONPATH inheritance is broken."
     )
 
     # Phase 1 (synth-test-isolation-and-runtime) exercises SnakemakeDiagnostics
     # end-to-end so P1-V2's `test_diagnose.log` + `--reason` annotations
     # requirement is satisfied by every run of this test.
-    from TRITON_SWMM_toolkit.workflow import SnakemakeDiagnostics
+    from hhemt.workflow import SnakemakeDiagnostics
 
     diagnostic_log_path = (
         analysis.analysis_paths.analysis_dir / ".snakemake" / "log" / "test_diagnose.log"
@@ -559,7 +559,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
     # Resolve backend-dependent extensions via the canonical helper so the
     # assertions match the per-rule emission regardless of static_backend.
-    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    from hhemt.workflow import _output_ext_for
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     so_ext = _output_ext_for(backend, "system_overview")
     pfd_ext = _output_ext_for(backend, "per_sim_peak_flood_depth")
@@ -569,7 +569,7 @@ def test_run_and_render_report(synth_multi_sim_analysis_cached):
     assert (plots_dir / "per_analysis" / f"summary_table{pas_ext}").exists()
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
-        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+        from hhemt.scenario import compute_event_id_slug
         event_id = compute_event_id_slug(ev)
         # ADR-2: figures carry the canonical plot ID as their stem
         # (peak_flood_depth__evt.{event_id}); the manifest carries the same id as
@@ -731,7 +731,7 @@ def test_emit_plot_with_sources_html_branch(tmp_path):
     """
     import json
 
-    from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+    from hhemt.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
 
@@ -786,7 +786,7 @@ def test_cleanup_stale_metadata_auto_applies_after_rule_rename(
     # Deterministic enumeration covers the Phase 8 orphan paths.
     orphan_paths = analysis._enumerate_stale_metadata_paths()
     assert "plots/system_overview.png" in orphan_paths
-    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+    from hhemt.scenario import compute_event_id_slug
     for event_iloc in analysis.df_sims.index:
         ev = analysis._retrieve_weather_indexer_using_integer_index(event_iloc)
         event_id = compute_event_id_slug(ev)
@@ -886,7 +886,7 @@ def test_render_report_includes_disk_utilization_card(synth_multi_sim_analysis_c
     assert out_html.exists() and out_html.stat().st_size > 0
 
     plots_dir = analysis.analysis_paths.analysis_dir / "plots"
-    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    from hhemt.workflow import _output_ext_for
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     du_ext = _output_ext_for(backend, "disk_utilization")
     du_path = plots_dir / f"disk_utilization{du_ext}"
@@ -913,7 +913,7 @@ def test_slurm_config_reads_hpc_system_config(synth_multi_sim_analysis, tmp_path
     cfg_hpc_system.default_account and emits no dead `slurm:` block."""
     import yaml as _yaml
 
-    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+    from hhemt.config.loaders import load_hpc_system_config
 
     analysis = synth_multi_sim_analysis
     _set_batch_job_fields(analysis.cfg_analysis)
@@ -977,7 +977,7 @@ def test_renderer_provenance_audit_passes_for_all_multisim_renderers(synth_multi
     import shutil
     from pathlib import Path
 
-    os.environ.pop("TRITON_SWMM_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
+    os.environ.pop("HHEMT_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
     analysis = synth_multi_sim_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
 
@@ -1028,8 +1028,8 @@ def test_render_survives_missing_backing_file(
     import shutil
     from pathlib import Path
 
-    from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG
-    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    from hhemt.config.report import DEFAULT_REPORT_CONFIG
+    from hhemt.workflow import _output_ext_for
 
     analysis = synth_multi_sim_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
@@ -1042,7 +1042,7 @@ def test_render_survives_missing_backing_file(
     try:
         assert not backing.exists()
 
-        mod = importlib.import_module(f"TRITON_SWMM_toolkit.report_renderers.{renderer_module}")
+        mod = importlib.import_module(f"hhemt.report_renderers.{renderer_module}")
         backend = analysis._workflow_builder._get_report_cfg_static_backend()
         out = tmp_path / f"out{_output_ext_for(backend, renderer_module)}"
         returned = mod.render(analysis, DEFAULT_REPORT_CONFIG, out)
@@ -1072,13 +1072,13 @@ def test_errors_and_warnings_declares_exactly_validation_report(
     import json
     from pathlib import Path
 
-    from TRITON_SWMM_toolkit.config.report import DEFAULT_REPORT_CONFIG
-    from TRITON_SWMM_toolkit.workflow import _output_ext_for
+    from hhemt.config.report import DEFAULT_REPORT_CONFIG
+    from hhemt.workflow import _output_ext_for
 
     analysis = synth_multi_sim_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
 
-    mod = importlib.import_module("TRITON_SWMM_toolkit.report_renderers.errors_and_warnings")
+    mod = importlib.import_module("hhemt.report_renderers.errors_and_warnings")
     backend = analysis._workflow_builder._get_report_cfg_static_backend()
     out = tmp_path / f"out{_output_ext_for(backend, 'errors_and_warnings')}"
     mod.render(analysis, DEFAULT_REPORT_CONFIG, out)

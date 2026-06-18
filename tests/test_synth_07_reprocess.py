@@ -1,6 +1,6 @@
 """Phase 2 reprocess tests — analysis-level reprocess re-fires downstream only.
 
-Plan: ``library/docs/planning/projects/TRITON-SWMM_toolkit/features/reprocess_downstream_stages/2 analysis level reprocess cli scoped snakefile generator.md``.
+Plan: ``library/docs/planning/projects/hhemt/features/reprocess_downstream_stages/2 analysis level reprocess cli scoped snakefile generator.md``.
 
 R6: ``c_run_*`` simulation completion flags must be untouched by a reprocess —
 the reprocess driver never re-fires simulations.
@@ -21,8 +21,8 @@ import subprocess
 
 import pytest
 
-from TRITON_SWMM_toolkit import orchestrator_sentinels as osent
-from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
+from hhemt import orchestrator_sentinels as osent
+from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
 
 def _fake_ps_run(ps_alive):
@@ -272,7 +272,7 @@ def test_reprocess_dry_run_no_destructive_mutation(synthetic_multisim_completed)
     """R5/R6: analysis.reprocess(dry_run=True, start_with='consolidate') must NOT
     delete analysis_datatree.zarr nor re-stamp the analysis-scope _du.json. The
     completion flag MAY be deleted (it is the cheap mtime trigger)."""
-    from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+    from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
     a = synthetic_multisim_completed
     zarr = a.analysis_paths.analysis_datatree_zarr

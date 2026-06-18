@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
-from TRITON_SWMM_toolkit.version_migration import runner
-from TRITON_SWMM_toolkit.version_migration.context import MigrationContext
-from TRITON_SWMM_toolkit.version_migration.exceptions import (
+from hhemt.scenario import compute_event_id_slug
+from hhemt.version_migration import runner
+from hhemt.version_migration.context import MigrationContext
+from hhemt.version_migration.exceptions import (
     MigrationConflictError,
 )
 
@@ -108,7 +108,7 @@ def test_v0_to_v1_collision_detection(tmp_path: Path) -> None:
 def test_v0_to_v1_unknown_slug_skipped(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     import logging as _lg
 
-    caplog.set_level(_lg.WARNING, logger="TRITON_SWMM_toolkit.version_migration.context")
+    caplog.set_level(_lg.WARNING, logger="hhemt.version_migration.context")
     work = _copy_fixture("v0", tmp_path)
     sims = work / "sims"
     (sims / "9-orphan_slug").mkdir()

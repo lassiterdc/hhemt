@@ -41,8 +41,8 @@ def test_bundle_report_data_is_opt_in():
     one-shot grep gate to a CI-permanent assertion."""
     import inspect
 
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-    from TRITON_SWMM_toolkit.sensitivity_analysis import (
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.sensitivity_analysis import (
         TRITONSWMM_sensitivity_analysis,
     )
 
@@ -82,7 +82,7 @@ def test_bundle_round_trip(request, tmp_path, fixture_name):
     assert bundle_path.exists(), "bundle zip not emitted"
 
     result = subprocess.run(
-        ["TRITON_SWMM_toolkit", "report-from-bundle", str(bundle_path),
+        ["hhemt", "report-from-bundle", str(bundle_path),
          "--format", "html"],
         capture_output=True, text=True,
     )
@@ -131,7 +131,7 @@ def test_bundle_baseline_wrapper_section_matches(
     Any other field-level difference indicates a workflow_description.rst.j2
     Jinja2 conditional whose key changed across the HPC->local boundary;
     such divergences must be enumerated as known-divergence items in
-    `library/docs/decisions/TRITON-SWMM_toolkit/bundle layout and contents.md`
+    `library/docs/decisions/hhemt/bundle layout and contents.md`
     before this assertion is loosened.
     """
     analysis = request.getfixturevalue(fixture_name)
@@ -143,7 +143,7 @@ def test_bundle_baseline_wrapper_section_matches(
     )
 
     result = subprocess.run(
-        ["TRITON_SWMM_toolkit", "report-from-bundle", str(bundle_path),
+        ["hhemt", "report-from-bundle", str(bundle_path),
          "--format", "html"],
         capture_output=True, text=True,
     )

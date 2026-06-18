@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit.version_migration.context import (
+from hhemt.version_migration.context import (
     MigrationContext,
     PlannedOp,
 )
@@ -292,7 +292,7 @@ def test_zarr_flat_to_datatree_skips_missing_inputs(
         present, mode="w", consolidated=False
     )
     out = tmp_path / "tree.zarr"
-    caplog.set_level(logging.WARNING, logger="TRITON_SWMM_toolkit.version_migration.context")
+    caplog.set_level(logging.WARNING, logger="hhemt.version_migration.context")
     ctx = _ctx(tmp_path)
     ctx.zarr_flat_to_datatree(
         input_stores={"present": present, "missing": missing},
@@ -316,7 +316,7 @@ def test_zarr_flat_to_datatree_all_missing_no_output(
     import logging
 
     out = tmp_path / "tree.zarr"
-    caplog.set_level(logging.WARNING, logger="TRITON_SWMM_toolkit.version_migration.context")
+    caplog.set_level(logging.WARNING, logger="hhemt.version_migration.context")
     ctx = _ctx(tmp_path)
     ctx.zarr_flat_to_datatree(
         input_stores={"a": tmp_path / "absent_a.zarr", "b": tmp_path / "absent_b.zarr"},
@@ -445,13 +445,13 @@ def test_regenerate_scenario_status_csv_dispatches(
         called.append(analysis)
 
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.system.TRITONSWMM_system", fake_system
+        "hhemt.system.TRITONSWMM_system", fake_system
     )
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.analysis.TRITONSWMM_analysis", fake_analysis
+        "hhemt.analysis.TRITONSWMM_analysis", fake_analysis
     )
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.export_scenario_status.export_scenario_status_to_csv",
+        "hhemt.export_scenario_status.export_scenario_status_to_csv",
         fake_export,
     )
     ctx = MigrationContext(

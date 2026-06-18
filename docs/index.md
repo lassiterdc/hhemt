@@ -1,4 +1,4 @@
-# TRITON-SWMM Toolkit
+# H&H Ensemble Modeling Toolkit
 
 Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations across local machines and HPC clusters.
 

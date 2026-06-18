@@ -11,8 +11,8 @@ import pytest
 
 import tests.fixtures.test_case_catalog as cases
 import tests.utils_for_testing as tst_ut
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-from TRITON_SWMM_toolkit.sensitivity_analysis import (
+from hhemt.exceptions import ConfigurationError
+from hhemt.sensitivity_analysis import (
     _HPC_ALIAS_TO_ANALYSIS_FIELD,
     _is_hpc_overlay_column,
     _resolve_hpc_alias_to_analysis_field,

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit.config.static_plots import StaticPlotBaseConfig
-from TRITON_SWMM_toolkit.eda import (
+from hhemt.config.static_plots import StaticPlotBaseConfig
+from hhemt.eda import (
     promote_eda_plot_to_static_config,
     register_eda_plot_in_reporting_set,
 )

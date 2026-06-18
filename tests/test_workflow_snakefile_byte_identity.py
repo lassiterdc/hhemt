@@ -24,10 +24,10 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 from fixtures.test_case_catalog import Local_TestCases  # noqa: E402
 
-from TRITON_SWMM_toolkit.sensitivity_analysis import (  # noqa: E402
+from hhemt.sensitivity_analysis import (  # noqa: E402
     TRITONSWMM_sensitivity_analysis,
 )
-from TRITON_SWMM_toolkit.workflow import (  # noqa: E402
+from hhemt.workflow import (  # noqa: E402
     SensitivityAnalysisWorkflowBuilder,
     SnakemakeWorkflowBuilder,
 )

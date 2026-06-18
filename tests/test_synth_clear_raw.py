@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from TRITON_SWMM_toolkit.process_simulation import (
+from hhemt.process_simulation import (
     TRITONSWMM_sim_post_processing,
     _CLEAR_RAW_DELETE_SUBDIRS,
 )

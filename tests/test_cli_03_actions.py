@@ -7,7 +7,7 @@ provide discovery of available profiles without requiring full workflow executio
 from pathlib import Path
 from typer.testing import CliRunner
 
-from TRITON_SWMM_toolkit.cli import app
+from hhemt.cli import app
 
 runner = CliRunner()
 

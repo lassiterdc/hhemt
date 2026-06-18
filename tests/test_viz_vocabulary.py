@@ -10,7 +10,7 @@ import sys
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from TRITON_SWMM_toolkit.config import viz_vocabulary as viz
+from hhemt.config import viz_vocabulary as viz
 
 _PROJECT_ENUMS = [
     viz.VminVmaxStrategy,
@@ -47,7 +47,7 @@ def test_encoding_channel_value_stability():
 
 
 def test_provenance_channel_is_encoding_channel_alias():
-    from TRITON_SWMM_toolkit.report_renderers import _provenance
+    from hhemt.report_renderers import _provenance
 
     assert _provenance._Channel is viz.EncodingChannel
 
@@ -139,7 +139,7 @@ def test_annotated_aliases_validate_on_cfgbasemodel():
     # (_check_paths_exist) co-runs with each alias's AfterValidator. Confirm the
     # star-validator (which returns non-Path values unchanged) does not shadow
     # the registry validation.
-    from TRITON_SWMM_toolkit.config.base import cfgBaseModel
+    from hhemt.config.base import cfgBaseModel
 
     class _Cfg(cfgBaseModel):
         cmap: viz.MplColormap = "viridis"
@@ -157,8 +157,8 @@ def test_font_family_rejects_empty():
 # ---- R-8: importing the module BODY is cheap (no matplotlib/plotly at load) --
 def test_import_does_not_load_matplotlib_or_plotly():
     # Load ONLY the viz_vocabulary module body via spec_from_file_location, in a
-    # subprocess that never imports the TRITON_SWMM_toolkit PACKAGE. Importing
-    # the dotted path would fire TRITON_SWMM_toolkit/__init__.py (-> .toolkit),
+    # subprocess that never imports the hhemt PACKAGE. Importing
+    # the dotted path would fire hhemt/__init__.py (-> .toolkit),
     # which eagerly imports matplotlib (empirically confirmed 2026-06-07) — that
     # is a package-init concern, NOT a viz_vocabulary concern. This test isolates
     # the module body so R-8 ("the module itself does not eagerly import

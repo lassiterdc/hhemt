@@ -84,15 +84,15 @@ def test_report_target_predicate_excludes_summary_absent_sub(
       "marked for report but does not exist"). With the prior ``c_run`` predicate
       the incomplete sub would be enumerated and consolidate/render would fail.
     """
-    from TRITON_SWMM_toolkit.constants import (
+    from hhemt.constants import (
         consolidate_subanalysis_flag,
         sim_run_flag_per_sa,
     )
-    from TRITON_SWMM_toolkit.reprocess_snakefile_generator import (
+    from hhemt.reprocess_snakefile_generator import (
         _available_event_ids,
         _enabled_models,
     )
-    from TRITON_SWMM_toolkit.scenario import (
+    from hhemt.scenario import (
         TRITONSWMM_scenario,
         compute_event_id_slug,
     )

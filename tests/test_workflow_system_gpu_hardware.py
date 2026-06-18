@@ -43,7 +43,7 @@ def test_per_sub_partition_resolves_gres_hardware(synth_sensitivity_with_partiti
     every sub. The per-sub GRES substring must equal that partition-derived
     hardware — resolved via ``resolve_gpu_target``, NOT a retired config field.
     """
-    from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target
+    from hhemt.config.hpc_system import resolve_gpu_target
 
     analysis = synth_sensitivity_with_partition_axis
     sensitivity = analysis.sensitivity

@@ -1,23 +1,23 @@
 # to run:
 # if environment already exists, first run:
 # conda deactivate
-# conda env remove -n triton_swmm_toolkit
+# conda env remove -n hhemt
 # then:
 # either:
   # clean install, no use of :
-    # conda create -n triton_swmm_toolkit python=3.11 --no-default-packages
-    # conda activate triton_swmm_toolkit
+    # conda create -n hhemt python=3.11 --no-default-packages
+    # conda activate hhemt
     # export PYTHONNOUSERSITE=1
     # conda env update -f environment.yaml
   # create directly from environment yaml
     # module purge
     # module load {conda app, e.g., miniforge}
     # conda env create -f environment.yaml
-    # conda (or source) activate triton_swmm_toolkit
+    # conda (or source) activate hhemt
 # IMPORTANT: after creating the environment, install the package in editable mode:
   # pip install -e .
-  # (required — without this, imports of TRITON_SWMM_toolkit will fail)
-name: triton_swmm_toolkit
+  # (required — without this, imports of hhemt will fail)
+name: hhemt
 channels:
   - conda-forge
   - bioconda

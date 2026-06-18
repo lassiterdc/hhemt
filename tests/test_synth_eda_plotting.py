@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.config.eda import eda_config
-from TRITON_SWMM_toolkit.eda import check_cross_sim_identity
-from TRITON_SWMM_toolkit.eda._plotting import render_eda_plots
+from hhemt.config.eda import eda_config
+from hhemt.eda import check_cross_sim_identity
+from hhemt.eda._plotting import render_eda_plots
 
 
 def test_render_cross_sim_identity_emits_master_rooted_with_source(

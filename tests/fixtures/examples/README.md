@@ -23,5 +23,5 @@ preflight validator enforces:
    tuples collide must agree on every other `cfg_system` field — divergence on
    any non-key field raises `ConfigurationError`.
 
-See `library/prompts/workspaces/projects/TRITON-SWMM_toolkit/TRITON SWMM toolkit architecture.md`
+See `library/prompts/workspaces/projects/hhemt/TRITON SWMM toolkit architecture.md`
 § "Per-Sub-Analysis System Configs" in the agentic-workspace for the full design.

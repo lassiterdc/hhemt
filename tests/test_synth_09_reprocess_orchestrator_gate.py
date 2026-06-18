@@ -8,7 +8,7 @@ monkeypatching).
 import json
 from pathlib import Path
 
-from TRITON_SWMM_toolkit import orchestrator_sentinels as osent
+from hhemt import orchestrator_sentinels as osent
 
 
 def _write_sentinel(analysis_dir, driver_id, mode, **kw):
@@ -72,7 +72,7 @@ def test_e_single_job_dead_jobid_reclaimed(synthetic_multisim_builder, monkeypat
     s = _write_sentinel(
         b.analysis_paths.analysis_dir, "d3", "1_job_many_srun_tasks", slurm_jobid="55"
     )
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._slurm_job_is_live", lambda jid, **k: False)
+    monkeypatch.setattr("hhemt.workflow._slurm_job_is_live", lambda jid, **k: False)
     assert b._orchestrator_liveness_gate() is None
     assert not Path(s).exists()  # reclaimed
 
@@ -83,7 +83,7 @@ def test_e2_single_job_live_jobid_refuses(synthetic_multisim_builder, monkeypatc
     s = _write_sentinel(
         b.analysis_paths.analysis_dir, "d4", "1_job_many_srun_tasks", slurm_jobid="56"
     )
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._slurm_job_is_live", lambda jid, **k: True)
+    monkeypatch.setattr("hhemt.workflow._slurm_job_is_live", lambda jid, **k: True)
     err = b._orchestrator_liveness_gate()
     assert err is not None and "live orchestration driver" in err.stderr
     assert Path(s).exists()  # live ⇒ preserved

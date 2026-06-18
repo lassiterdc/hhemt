@@ -4,8 +4,8 @@ from pathlib import Path
 import yaml
 import pytest
 from pydantic import ValidationError
-from TRITON_SWMM_toolkit.config.analysis import analysis_config
-from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
+from hhemt.config.analysis import analysis_config
+from hhemt.config.loaders import yaml_to_model
 
 
 def _minimum_valid_cfg_analysis_dict(stub_root: Path) -> dict:

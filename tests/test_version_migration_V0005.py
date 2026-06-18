@@ -13,9 +13,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit.version_migration.context import MigrationContext
-from TRITON_SWMM_toolkit.version_migration.exceptions import MigrationBlockedError
-from TRITON_SWMM_toolkit.version_migration.versions import (
+from hhemt.version_migration.context import MigrationContext
+from hhemt.version_migration.exceptions import MigrationBlockedError
+from hhemt.version_migration.versions import (
     V0005__inline_report_config as V0005,
 )
 

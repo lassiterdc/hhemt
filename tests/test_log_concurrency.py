@@ -4,8 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.log import TRITONSWMM_analysis_log
+from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.log import TRITONSWMM_analysis_log
 
 
 # TEST-NEW-1 (main agent authored) — the canonical lost-update regression (VMS-C).
@@ -69,8 +69,8 @@ def test_readonly_construction_writes_no_log(synth_multi_sim_analysis_cached):
 
 # TEST-NEW-4 (routed from SE VMS-TEST-1) — static single-writer-invariant guard.
 def test_log_single_writer_invariant():
-    import TRITON_SWMM_toolkit
+    import hhemt
 
-    src = Path(TRITON_SWMM_toolkit.__file__).parent
+    src = Path(hhemt.__file__).parent
     assert "sub_analysis._update_log()" not in (src / "sensitivity_analysis.py").read_text()
     assert "skip_log_update=True" in (src / "report_renderers" / "_cli.py").read_text()

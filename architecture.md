@@ -6,7 +6,7 @@ Reference document for the TRITON-SWMM toolkit codebase. Tool-agnostic — load 
 
 ## Project Overview
 
-TRITON-SWMM Toolkit orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations. It supports single simulations, multi-simulation ensembles, and sensitivity analysis studies across local machines and HPC clusters (UVA, Oak Ridge Frontier).
+H&H Ensemble Modeling Toolkit orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations. It supports single simulations, multi-simulation ensembles, and sensitivity analysis studies across local machines and HPC clusters (UVA, Oak Ridge Frontier).
 
 ---
 
@@ -90,7 +90,7 @@ Configuration flows: **YAML → Pydantic → Analysis/Scenario classes**
 - `system_config`: DEM paths, TRITON compilation, Manning's coefficients
 - `analysis_config`: Simulation parameters, HPC settings, weather data, execution mode
 
-Many fields are conditionally required based on boolean toggles. Call `analysis.validate().raise_if_invalid()` before launching simulations (`src/TRITON_SWMM_toolkit/validation.py`).
+Many fields are conditionally required based on boolean toggles. Call `analysis.validate().raise_if_invalid()` before launching simulations (`src/hhemt/validation.py`).
 
 ### Critical Configuration Fields
 

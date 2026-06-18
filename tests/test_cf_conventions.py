@@ -3,7 +3,7 @@
 import numpy as np
 import xarray as xr
 
-from TRITON_SWMM_toolkit.cf_conventions import (
+from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
     _CF_VARIABLE_MAP,

@@ -8,7 +8,7 @@ pytestmark = [
 
 # module purge
 # module load gompi/14.2.0_5.0.7 miniforge
-# conda activate triton_swmm_toolkit
+# conda activate hhemt
 # export PYTHONNOUSERSITE=1
 
 
@@ -52,7 +52,7 @@ def test_snakemake_slurm_workflow_generation_and_write(
     tst_ut.assert_snakefile_has_flags(
         content,
         [
-            "/workflow/envs/triton_swmm.yaml",
+            "/workflow/envs/hhemt.yaml",
             "setup_workflow",
             "--process-system-inputs",
             "--compile-triton-swmm",

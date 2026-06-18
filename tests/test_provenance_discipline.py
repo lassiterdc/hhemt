@@ -1,6 +1,6 @@
 """AST-level enforcement of the per-artist provenance discipline.
 
-Walks every renderer module under `src/TRITON_SWMM_toolkit/report_renderers/`
+Walks every renderer module under `src/hhemt/report_renderers/`
 (excluding files whose stem starts with `_`) and asserts that every artist-
 creating matplotlib call inside the module is enclosed in a
 `with <name>.artist(...)` context block. Additionally asserts that each
@@ -89,7 +89,7 @@ _REQUIRED_GO_IMPORT_ALIAS = "go"
 
 _RENDERERS_DIR = (
     Path(__file__).resolve().parents[1]
-    / "src" / "TRITON_SWMM_toolkit" / "report_renderers"
+    / "src" / "hhemt" / "report_renderers"
 )
 
 

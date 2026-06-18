@@ -19,14 +19,14 @@ import pandas as pd
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit import sensitivity_analysis as sa_mod
-from TRITON_SWMM_toolkit.config.loaders import load_system_config
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
-from TRITON_SWMM_toolkit.sensitivity_analysis import (
+from hhemt import sensitivity_analysis as sa_mod
+from hhemt.config.loaders import load_system_config
+from hhemt.exceptions import ConfigurationError
+from hhemt.sensitivity_analysis import (
     TRITONSWMM_sensitivity_analysis,
     UniqueSystemTarget,
 )
-from TRITON_SWMM_toolkit.validation import (
+from hhemt.validation import (
     ValidationResult,
     _validate_per_sa_system_configs,
 )
@@ -83,8 +83,8 @@ def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple
 
     monkeypatch.setattr(sa_mod, "TRITONSWMM_system", fake_constructor, raising=False)
     # Also patch the in-method import target (the method imports lazily via
-    # `from TRITON_SWMM_toolkit.system import TRITONSWMM_system`).
-    import TRITON_SWMM_toolkit.system as system_mod
+    # `from hhemt.system import TRITONSWMM_system`).
+    import hhemt.system as system_mod
     monkeypatch.setattr(system_mod, "TRITONSWMM_system", fake_constructor)
 
     instance._system = _make_stub_system(
@@ -317,7 +317,7 @@ def test_attributes_varied_filters_system_config_yaml():
 
 def test_phase3_get_config_args_accepts_system_config_override():
     """SnakemakeWorkflowBuilder._get_config_args(system_config_yaml=...) overrides self.system."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
     builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
@@ -332,7 +332,7 @@ def test_phase3_get_config_args_accepts_system_config_override():
 
 def test_phase3_get_config_args_falls_back_to_self_system():
     """Without override, _get_config_args uses self.system.system_config_yaml."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
     builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
@@ -611,7 +611,7 @@ def test_phase4_preflight_invokes_per_sa_validator(tmp_path, monkeypatch):
         # validate_data_consistency to no-ops; this test exercises only the
         # wiring point added by Phase 4, not the full preflight surface.
     )
-    from TRITON_SWMM_toolkit import validation as vmod
+    from hhemt import validation as vmod
 
     monkeypatch.setattr(vmod, "validate_analysis_config", lambda cfg: ValidationResult())
     monkeypatch.setattr(

@@ -8,13 +8,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.config.globus import (
+from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.config.globus import (
     GlobusEndpoints,
     GlobusTransferItem,
     GlobusTransferSpec,
 )
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError, GlobusTransferError
+from hhemt.exceptions import ConfigurationError, GlobusTransferError
 
 
 class TestGlobusTransferError:
@@ -33,7 +33,7 @@ class TestGlobusTransferError:
         assert "User cancelled" in str(err)
 
     def test_inherits_from_base(self):
-        from TRITON_SWMM_toolkit.exceptions import TRITONSWMMError
+        from hhemt.exceptions import TRITONSWMMError
 
         err = GlobusTransferError(task_id="t", status="FAILED")
         assert isinstance(err, TRITONSWMMError)
@@ -110,14 +110,14 @@ class TestExcludeDirsParameter:
             items=[GlobusTransferItem(source_path="/src/path", destination_path="/dst/path")],
         )
 
-        with patch("TRITON_SWMM_toolkit.globus_transfer.globus_sdk") as mock_sdk:
+        with patch("hhemt.globus_transfer.globus_sdk") as mock_sdk:
             mock_tdata = MagicMock()
             mock_sdk.TransferData.return_value = mock_tdata
             mock_response = {"task_id": "test-task-id"}
             mock_client = MagicMock()
             mock_client.submit_transfer.return_value = mock_response
 
-            from TRITON_SWMM_toolkit.globus_transfer import GlobusTransferManager
+            from hhemt.globus_transfer import GlobusTransferManager
 
             manager = GlobusTransferManager.__new__(GlobusTransferManager)
             manager.transfer_client = mock_client

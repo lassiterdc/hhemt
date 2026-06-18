@@ -24,7 +24,7 @@ This is load-bearing: on an all-empty-``_status`` tree assertions (a)/(b) would
 pass trivially even WITHOUT the D-A ``_status`` add-back, defeating the test.
 
 Run:
-    conda run -n triton_swmm_toolkit python -m pytest tests/test_synth_du_summation_parity.py -v
+    conda run -n hhemt python -m pytest tests/test_synth_du_summation_parity.py -v
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit import du_sentinels
-from TRITON_SWMM_toolkit.du_sentinels import (
+from hhemt import du_sentinels
+from hhemt.du_sentinels import (
     compute_and_write_scope_sentinel,
     decrement_scope_sentinel,
     read_du_sentinel,

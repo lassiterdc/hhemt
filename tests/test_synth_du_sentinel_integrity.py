@@ -29,7 +29,7 @@ idempotent on the early-return path, so a flag-only delete suffices). See the
 captured follow-up to add a flag-deleting fixture variant for durable robustness.
 """
 
-from TRITON_SWMM_toolkit.du_sentinels import read_du_sentinel
+from hhemt.du_sentinels import read_du_sentinel
 
 
 def test_all_du_sentinels_walk_errors_zero(synthetic_sensitivity_completed):
@@ -63,7 +63,7 @@ def test_delete_dry_run_no_fallback_walk_warning(synthetic_sensitivity_completed
     # Without that fold the master read falls back to a full rglob walk and prints
     # the warning (the regression this guards). capsys (not caplog) — it is a
     # print, not a logger.
-    from TRITON_SWMM_toolkit.cli import _print_delete_dry_run_summary
+    from hhemt.cli import _print_delete_dry_run_summary
 
     sensitivity = synthetic_sensitivity_completed
     _print_delete_dry_run_summary(sensitivity.master_analysis)

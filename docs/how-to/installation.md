@@ -7,8 +7,8 @@
 The repo ships an `environment.yaml` that pins every runtime dependency including the Snakemake SLURM executor plugins required for HPC `batch_job` orchestration. Use this for production HPC installs.
 
 ```bash
-conda env create -n triton_swmm_toolkit --file environment.yaml
-conda activate triton_swmm_toolkit
+conda env create -n hhemt --file environment.yaml
+conda activate hhemt
 pip install -e .
 ```
 
@@ -19,8 +19,8 @@ For exactly-reproducible installs (e.g., debugging cross-machine drift), use `en
 When you control the conda env separately (e.g., shared HPC env, CI), install the toolkit via pip extras matched to your usage:
 
 ```bash
-conda create -n triton_swmm_toolkit python=3.11
-conda activate triton_swmm_toolkit
+conda create -n hhemt python=3.11
+conda activate hhemt
 pip install -e '.[hpc,viz-export]'
 ```
 

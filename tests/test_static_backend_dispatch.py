@@ -8,7 +8,7 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _reset_warning_state():
-    from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
+    from hhemt.report_renderers._static_backend_warning import (
         _reset_for_tests,
     )
     _reset_for_tests()
@@ -17,7 +17,7 @@ def _reset_warning_state():
 
 
 def test_warn_no_plotly_branch_fires_once(caplog):
-    from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
+    from hhemt.report_renderers._static_backend_warning import (
         warn_no_plotly_branch,
     )
 
@@ -34,7 +34,7 @@ def test_warn_no_plotly_branch_fires_once(caplog):
 
 
 def test_warn_no_plotly_branch_per_renderer(caplog):
-    from TRITON_SWMM_toolkit.report_renderers._static_backend_warning import (
+    from hhemt.report_renderers._static_backend_warning import (
         warn_no_plotly_branch,
     )
 

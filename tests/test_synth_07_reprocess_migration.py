@@ -22,8 +22,8 @@ def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_comple
     """When ``_version.json`` is stamped older than the current LAYOUT_VERSION,
     reprocess() must re-stamp it to the current version (the lazy-stamp
     PI-1 contract carried over from run() / submit_workflow)."""
-    from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
-    from TRITON_SWMM_toolkit.version_migration.state import (
+    from hhemt.version_migration import LAYOUT_VERSION
+    from hhemt.version_migration.state import (
         read_version_file,
         stamp_new_target,
     )
@@ -62,8 +62,8 @@ def test_reprocess_idempotent_when_current(synthetic_multisim_completed):
     """When ``_version.json`` is already at current ``LAYOUT_VERSION``,
     reprocess() must not re-write the file (stamp_new_target is idempotent
     at the same version)."""
-    from TRITON_SWMM_toolkit.version_migration import LAYOUT_VERSION
-    from TRITON_SWMM_toolkit.version_migration.state import (
+    from hhemt.version_migration import LAYOUT_VERSION
+    from hhemt.version_migration.state import (
         VERSION_FILE_NAME,
         stamp_new_target,
     )

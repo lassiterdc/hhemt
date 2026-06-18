@@ -58,7 +58,7 @@ def _seed_scenario(analysis_dir: Path, event_id: str) -> Path:
 
 
 def test_delete_processed_runner_removes_processed_preserves_raw(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_processed_runner as runner
+    from hhemt import delete_processed_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     sim = _seed_scenario(analysis_dir, "evt_1")
@@ -75,7 +75,7 @@ def test_delete_processed_runner_removes_processed_preserves_raw(tmp_path, slurm
 
 
 def test_delete_processed_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_processed_runner as runner
+    from hhemt import delete_processed_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     _seed_scenario(analysis_dir, "evt_1")
@@ -90,7 +90,7 @@ def test_delete_processed_runner_cleans_sentinel_on_exception(tmp_path, slurm_en
 
 def test_delete_processed_runner_no_sentinel_without_slurm(tmp_path, monkeypatch):
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
-    from TRITON_SWMM_toolkit import delete_processed_runner as runner
+    from hhemt import delete_processed_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     _seed_scenario(analysis_dir, "evt_1")
@@ -106,7 +106,7 @@ def test_delete_processed_runner_no_sentinel_without_slurm(tmp_path, monkeypatch
 
 
 def test_delete_reprocess_zarr_runner_removes_zarrs_preserves_report(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_reprocess_zarr_runner as runner
+    from hhemt import delete_reprocess_zarr_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -128,7 +128,7 @@ def test_delete_reprocess_zarr_runner_removes_zarrs_preserves_report(tmp_path, s
 
 
 def test_delete_reprocess_zarr_runner_noop_on_absent_zarr(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_reprocess_zarr_runner as runner
+    from hhemt import delete_reprocess_zarr_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -156,7 +156,7 @@ def _seed_subanalysis(sub_dir: Path) -> None:
 
 
 def test_subanalysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_subanalysis_reprocess_runner as runner
+    from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
     _seed_subanalysis(sub_dir)
@@ -179,7 +179,7 @@ def test_subanalysis_reprocess_runner_deletes_processed_and_zarr(tmp_path, slurm
 def test_subanalysis_reprocess_runner_preserves_processed_without_flag(tmp_path, slurm_env):
     """Without --delete-processed (start_with != 'process'), processed/ survives;
     only the sub's consolidated zarr is removed."""
-    from TRITON_SWMM_toolkit import delete_subanalysis_reprocess_runner as runner
+    from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
     _seed_subanalysis(sub_dir)
@@ -191,7 +191,7 @@ def test_subanalysis_reprocess_runner_preserves_processed_without_flag(tmp_path,
 
 
 def test_subanalysis_reprocess_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_subanalysis_reprocess_runner as runner
+    from hhemt import delete_subanalysis_reprocess_runner as runner
 
     sub_dir = tmp_path / "subanalyses" / "sa_3"
     _seed_subanalysis(sub_dir)
@@ -216,7 +216,7 @@ def test_submit_delete_snakemake_defaults_preserve_analysis_delete_callers():
     namespace, so existing callers are byte-for-byte unchanged."""
     import inspect
 
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     params = inspect.signature(SnakemakeWorkflowBuilder._submit_delete_snakemake).parameters
     assert params["working_subdir"].default == ".snakemake_delete"
@@ -229,7 +229,7 @@ def test_pre_delete_guards_defaults_preserve_analysis_delete_namespace():
     reprocess-delete path overrides both so the guard inspects the correct lock)."""
     import inspect
 
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     params = inspect.signature(SnakemakeWorkflowBuilder._pre_delete_guards).parameters
     assert params["snakefile_name"].default == "Snakefile.delete"
@@ -245,16 +245,16 @@ def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_anal
     """Non-sensitivity start_with='process' emits per-event delete_processed_*
     rules + a delete_reprocess_zarr_consolidation rule, all in the
     _deleting_reprocess/ namespace."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_multi_sim_analysis
     builder = SnakemakeWorkflowBuilder(analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="process")
 
     assert "rule delete_processed_" in content
-    assert "TRITON_SWMM_toolkit.delete_processed_runner" in content
+    assert "hhemt.delete_processed_runner" in content
     assert "rule delete_reprocess_zarr_consolidation:" in content
-    assert "TRITON_SWMM_toolkit.delete_reprocess_zarr_runner" in content
+    assert "hhemt.delete_reprocess_zarr_runner" in content
     # isolation: flags land in the scoped reprocess namespace, never _deleting/
     assert "_deleting_reprocess/" in content
     assert "_status/_deleting/" not in content
@@ -265,7 +265,7 @@ def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_anal
 def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):
     """D-scope Option C: sensitivity emits ONE delete_subanalysis_reprocess_{sa}
     rule per sub (NOT per-(sa,event)) + a master consolidation rule."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_sensitivity_analysis
     sub_ids = [str(k) for k in analysis.sensitivity.sub_analyses.keys()]
@@ -279,7 +279,7 @@ def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivi
     assert n_sub_rules == len(sub_ids), (
         f"expected one per-sub rule per sub ({len(sub_ids)}), got {n_sub_rules}"
     )
-    assert "TRITON_SWMM_toolkit.delete_subanalysis_reprocess_runner" in content
+    assert "hhemt.delete_subanalysis_reprocess_runner" in content
     # start_with='process' threads --delete-processed into the per-sub runner
     assert "--delete-processed" in content
     # master consolidation rule deletes the sensitivity master zarr
@@ -292,7 +292,7 @@ def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivi
 def test_build_reprocess_delete_snakefile_consolidate_skips_processed(norfolk_multi_sim_analysis):
     """start_with='consolidate' emits NO per-event processed rules (processed/
     deletion is a process-stage-only concern) but still deletes the zarr."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     builder = SnakemakeWorkflowBuilder(norfolk_multi_sim_analysis)
     content = builder._build_reprocess_delete_snakefile_content(start_with="consolidate")
@@ -310,9 +310,9 @@ def test_reprocess_phase3_self_methods_are_defined_on_class():
     import inspect
     import re
 
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-    from TRITON_SWMM_toolkit.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.sensitivity_analysis import TRITONSWMM_sensitivity_analysis
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     # The specific method that went missing.
     assert hasattr(TRITONSWMM_analysis, "_delete_processed_outputs_for_reprocess")

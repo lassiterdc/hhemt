@@ -51,7 +51,7 @@ def norfolk_1job_with_gpus():
 
 def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
     """Verify 1-job profile doesn't hardcode cores (CPU-only)."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
@@ -82,7 +82,7 @@ def test_1job_profile_no_cores_cpu_only(norfolk_1job_cpu_only):
 
 def test_1job_profile_with_gpu_resources(norfolk_1job_with_gpus):
     """Verify 1-job profile does NOT include GPU resources (passed via CLI instead)."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_with_gpus
     workflow_builder = SnakemakeWorkflowBuilder(analysis)

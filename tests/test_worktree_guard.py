@@ -37,22 +37,22 @@ def test_guard_fires_on_wrong_src(pytester: pytest.Pytester, monkeypatch: pytest
     """FORCE_WRONG_SRC outside worktree src/ → guard fires with exit 99."""
     _copy_rootdir_conftest(pytester)
     _make_trivial_test(pytester)
-    monkeypatch.delenv("TRITON_SWMM_TOOLKIT_DISABLE_WORKTREE_GUARD", raising=False)
-    monkeypatch.delenv("TRITON_SWMM_TOOLKIT_ALLOW_INSTALLED", raising=False)
-    monkeypatch.setenv("TRITON_SWMM_TOOLKIT_FORCE_WRONG_SRC", _WRONG_SRC)
+    monkeypatch.delenv("HHEMT_DISABLE_WORKTREE_GUARD", raising=False)
+    monkeypatch.delenv("HHEMT_ALLOW_INSTALLED", raising=False)
+    monkeypatch.setenv("HHEMT_FORCE_WRONG_SRC", _WRONG_SRC)
     result = pytester.runpytest_subprocess("--collect-only", "-s")
     assert result.ret == 99, f"expected exit 99, got {result.ret}"
     combined = "\n".join(result.outlines + result.errlines)
-    assert f"worktree-test-guard: TRITON_SWMM_toolkit.__file__ = {_WRONG_SRC}" in combined, combined
+    assert f"worktree-test-guard: hhemt.__file__ = {_WRONG_SRC}" in combined, combined
 
 
 def test_guard_downgrades_to_warning_with_allow_installed(pytester: pytest.Pytester, monkeypatch: pytest.MonkeyPatch) -> None:
     """ALLOW_INSTALLED=1 + FORCE_WRONG_SRC → WARNING emitted, inner exit 0."""
     _copy_rootdir_conftest(pytester)
     _make_trivial_test(pytester)
-    monkeypatch.delenv("TRITON_SWMM_TOOLKIT_DISABLE_WORKTREE_GUARD", raising=False)
-    monkeypatch.setenv("TRITON_SWMM_TOOLKIT_FORCE_WRONG_SRC", _WRONG_SRC)
-    monkeypatch.setenv("TRITON_SWMM_TOOLKIT_ALLOW_INSTALLED", "1")
+    monkeypatch.delenv("HHEMT_DISABLE_WORKTREE_GUARD", raising=False)
+    monkeypatch.setenv("HHEMT_FORCE_WRONG_SRC", _WRONG_SRC)
+    monkeypatch.setenv("HHEMT_ALLOW_INSTALLED", "1")
     result = pytester.runpytest_subprocess("--collect-only", "-s")
     assert result.ret == 0, f"expected exit 0 with WARNING, got {result.ret}"
     combined = "\n".join(result.outlines + result.errlines)

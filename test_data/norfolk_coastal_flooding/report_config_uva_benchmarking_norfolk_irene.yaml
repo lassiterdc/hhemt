@@ -1,6 +1,6 @@
 # Canonical report_config for UVACaseStudies.benchmarking_norfolk_irene.
-# Wired in src/TRITON_SWMM_toolkit/case_study_catalog.py via report_config_path.
-# Schema: src/TRITON_SWMM_toolkit/config/report.py.
+# Wired in src/hhemt/case_study_catalog.py via report_config_path.
+# Schema: src/hhemt/config/report.py.
 figure_defaults:
   font_family: "DejaVu Sans"
   font_size: 10

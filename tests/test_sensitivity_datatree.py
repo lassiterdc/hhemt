@@ -44,7 +44,7 @@ def _build_fake_sub_tree() -> xr.DataTree:
 
 
 def test_build_sensitivity_datatree_structure(tmp_path):
-    from TRITON_SWMM_toolkit.sensitivity_analysis import (
+    from hhemt.sensitivity_analysis import (
         TRITONSWMM_sensitivity_analysis,
     )
 

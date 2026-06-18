@@ -4,19 +4,19 @@
 # when the change touches a layout-relevant module but does not break on-disk state.
 layout_relevant:
   paths:
-    - src/TRITON_SWMM_toolkit/paths.py
-    - src/TRITON_SWMM_toolkit/scenario.py
-    - src/TRITON_SWMM_toolkit/log.py
-    - src/TRITON_SWMM_toolkit/scenario_inputs.py
-    - src/TRITON_SWMM_toolkit/process_simulation.py
-    - src/TRITON_SWMM_toolkit/processing_analysis.py
-    - src/TRITON_SWMM_toolkit/cf_conventions.py
-    - src/TRITON_SWMM_toolkit/sensitivity_analysis.py
-    - src/TRITON_SWMM_toolkit/report_plot_ids.py  # reporting-system_canonical-plot-id (ADR-2): the canonical plot-ID grammar + per-renderer extension map. Figure stems ARE the plot IDs; a change here changes on-disk figure filenames (C-LAYOUT) and must bump LAYOUT_VERSION + ship a V{NNNN} migration. workflow.py consumes this module but is intentionally NOT layout-relevant (highest-churn file; would flood Check-B with false positives).
+    - src/hhemt/paths.py
+    - src/hhemt/scenario.py
+    - src/hhemt/log.py
+    - src/hhemt/scenario_inputs.py
+    - src/hhemt/process_simulation.py
+    - src/hhemt/processing_analysis.py
+    - src/hhemt/cf_conventions.py
+    - src/hhemt/sensitivity_analysis.py
+    - src/hhemt/report_plot_ids.py  # reporting-system_canonical-plot-id (ADR-2): the canonical plot-ID grammar + per-renderer extension map. Figure stems ARE the plot IDs; a change here changes on-disk figure filenames (C-LAYOUT) and must bump LAYOUT_VERSION + ship a V{NNNN} migration. workflow.py consumes this module but is intentionally NOT layout-relevant (highest-churn file; would flood Check-B with false positives).
   globs:
-    - "src/TRITON_SWMM_toolkit/config/**/*.py"
-    - "src/TRITON_SWMM_toolkit/version_migration/schema/*.json"
-    - "src/TRITON_SWMM_toolkit/version_migration/versions/*.py"
+    - "src/hhemt/config/**/*.py"
+    - "src/hhemt/version_migration/schema/*.json"
+    - "src/hhemt/version_migration/versions/*.py"
 # cleanup-rerun-delete-redesign Phase 1: these paths are config-schema or
 # behavior-only changes — no on-disk layout changes. Justifications:
 #   - process_simulation.py: Phase 3 — replaces structurally broken
@@ -31,23 +31,23 @@ layout_relevant:
 #   - config/analysis.py: Phase 1 — adds Pydantic `clear_raw` and
 #     `force_rerun` fields. Config schema is NOT on-disk layout.
 non_breaking_allowlist:
-  - src/TRITON_SWMM_toolkit/process_simulation.py
-  - src/TRITON_SWMM_toolkit/scenario.py
+  - src/hhemt/process_simulation.py
+  - src/hhemt/scenario.py
   # hpc-system-profile-config Phase 4 (4d): config/analysis.py + sensitivity_analysis.py
   # REMOVED from the allowlist — the partition-axis field retirement changes the per-sa
   # input fingerprint (a bounded one-time re-fingerprint), a breaking on-disk change now
   # covered by the V0013 migration + LAYOUT_VERSION 12->13 bump. (The incoming origin/main
   # log-write-race-fix changes to sensitivity_analysis.py are likewise covered by the
   # already-shipped bump to 13; they do not need a separate allowlist entry.)
-  - src/TRITON_SWMM_toolkit/log.py  # reprocess-orchestrator-liveness-gate Phase 1: additive orchestrator_slurm_jobid LogField (optional, default-empty); non-breaking — older trees read it as empty, no on-disk migration. log-write-race-fix: removes the 7 persisted all_* rollup LogFields (now @property compute-on-read); non-breaking — TRITONSWMM_log uses pydantic default extra=ignore, so legacy log.json files carrying the removed keys load cleanly and drop them on next write; no Snakemake rule reads log.json (nil mtime-rerun/du-sentinel impact); on-disk layout unchanged.
-  - src/TRITON_SWMM_toolkit/processing_analysis.py  # reprocess-regeneration-toggle Phase 2 R4: behavior-only early-return re-key (.exists() to .exists() AND datatree_consolidation_complete); the log field already exists and is already set on success — no on-disk layout change.
-  - src/TRITON_SWMM_toolkit/config/viz_vocabulary.py  # reporting-system frozen-viz-vocabulary: new frozen plotting-vocabulary module (project token enums + Annotated registry-validator aliases). Pure in-memory config code — no on-disk layout, no zarr/log/path schema. Non-breaking.
-  - src/TRITON_SWMM_toolkit/config/brand_theme.py  # reporting-system config-layering-and-branding: new ADR-7 layer-2 brand-theme Pydantic model (6 colors + upper_left_text, MplColor-typed). Pure in-memory config schema — no on-disk layout. Non-breaking.
-  - src/TRITON_SWMM_toolkit/config/case_manifest.py  # case-study-hosting-conventions: new ADR-12 CaseManifest Pydantic model (case.yaml schema — case_name/res_identifier/resource_version/description/citation/sha256 manifest/host). Pure in-memory config schema — no on-disk layout, no zarr/log/path schema. Non-breaking.
+  - src/hhemt/log.py  # reprocess-orchestrator-liveness-gate Phase 1: additive orchestrator_slurm_jobid LogField (optional, default-empty); non-breaking — older trees read it as empty, no on-disk migration. log-write-race-fix: removes the 7 persisted all_* rollup LogFields (now @property compute-on-read); non-breaking — TRITONSWMM_log uses pydantic default extra=ignore, so legacy log.json files carrying the removed keys load cleanly and drop them on next write; no Snakemake rule reads log.json (nil mtime-rerun/du-sentinel impact); on-disk layout unchanged.
+  - src/hhemt/processing_analysis.py  # reprocess-regeneration-toggle Phase 2 R4: behavior-only early-return re-key (.exists() to .exists() AND datatree_consolidation_complete); the log field already exists and is already set on success — no on-disk layout change.
+  - src/hhemt/config/viz_vocabulary.py  # reporting-system frozen-viz-vocabulary: new frozen plotting-vocabulary module (project token enums + Annotated registry-validator aliases). Pure in-memory config code — no on-disk layout, no zarr/log/path schema. Non-breaking.
+  - src/hhemt/config/brand_theme.py  # reporting-system config-layering-and-branding: new ADR-7 layer-2 brand-theme Pydantic model (6 colors + upper_left_text, MplColor-typed). Pure in-memory config schema — no on-disk layout. Non-breaking.
+  - src/hhemt/config/case_manifest.py  # case-study-hosting-conventions: new ADR-12 CaseManifest Pydantic model (case.yaml schema — case_name/res_identifier/resource_version/description/citation/sha256 manifest/host). Pure in-memory config schema — no on-disk layout, no zarr/log/path schema. Non-breaking.
   # reporting-system_named-reporting-sets: retires SensitivityReportConfig.mode
   # (dead Literal) + adds report_config.reporting_set selector + before-validator
   # mode->reporting_set rewrite. Config-schema only — no figure-stem rename, no
   # on-disk output-dir change. Non-breaking; no LAYOUT_VERSION bump / migration.
-  - src/TRITON_SWMM_toolkit/config/report.py  # reporting-system config-layering-and-branding D-5: _HtmlTableStyleBase brand defaults overridden from brand_theme at run(); additive/behavior-only — no on-disk layout change.
-  - src/TRITON_SWMM_toolkit/config/hpc_system.py  # hpc-system-profile-config Phase 1: new per-HPC-system config model (native-mirrored PartitionLimits vocab + extension fields). Config schema is NOT on-disk layout — additive, no _version.json/fingerprint/datatree change. The breaking partition-axis change is Phase 4 (V0013 migration).
-  - src/TRITON_SWMM_toolkit/config/static_plots.py  # reporting-system_publication-static-config-schema (ADR-4): new publication static-plot Pydantic config family. Pure in-memory config schema — no on-disk layout, no figure stem, no zarr/log/path change. Non-breaking (mirrors viz_vocabulary.py / brand_theme.py).
+  - src/hhemt/config/report.py  # reporting-system config-layering-and-branding D-5: _HtmlTableStyleBase brand defaults overridden from brand_theme at run(); additive/behavior-only — no on-disk layout change.
+  - src/hhemt/config/hpc_system.py  # hpc-system-profile-config Phase 1: new per-HPC-system config model (native-mirrored PartitionLimits vocab + extension fields). Config schema is NOT on-disk layout — additive, no _version.json/fingerprint/datatree change. The breaking partition-axis change is Phase 4 (V0013 migration).
+  - src/hhemt/config/static_plots.py  # reporting-system_publication-static-config-schema (ADR-4): new publication static-plot Pydantic config family. Pure in-memory config schema — no on-disk layout, no figure stem, no zarr/log/path change. Non-breaking (mirrors viz_vocabulary.py / brand_theme.py).

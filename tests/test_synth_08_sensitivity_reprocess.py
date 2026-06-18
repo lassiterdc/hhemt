@@ -25,8 +25,8 @@ import subprocess
 
 import pytest
 
-from TRITON_SWMM_toolkit import orchestrator_sentinels as osent
-from TRITON_SWMM_toolkit.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
+from hhemt import orchestrator_sentinels as osent
+from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV, WorkflowError
 
 pytestmark = [pytest.mark.requires_snakemake_subprocess]
 
@@ -193,7 +193,7 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(synthetic_
 def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensitivity_completed):
     """R3/R4: sensitivity.reprocess(dry_run=True, start_with='consolidate') must NOT
     delete the master or any sub-analysis datatree zarr, nor re-stamp _du.json sentinels."""
-    from TRITON_SWMM_toolkit.du_sentinels import compute_and_write_scope_sentinel
+    from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
     sa = synthetic_sensitivity_completed
     master_zarr = sa.analysis_paths.sensitivity_datatree_zarr
@@ -268,7 +268,7 @@ def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_pat
     tripwire for the d5d0084 re-removal class — it exercises EXACTLY the loop that
     commit dropped, with zero coupling to reprocess()'s destructive body (D1
     Option A)."""
-    from TRITON_SWMM_toolkit.sensitivity_analysis import (
+    from hhemt.sensitivity_analysis import (
         _unlink_dprocess_flags_for_regenerate,
     )
 

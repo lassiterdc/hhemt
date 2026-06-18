@@ -6,7 +6,7 @@ alongside the post-resume files so that V0008's `_aggregate_perf_tseries` can
 reconstruct end-to-end wallclock across the allocation boundary.
 
 This test asserts the invariant codified by the stipulation
-``library/docs/stipulations/TRITON-SWMM_toolkit/clear raw triton outputs deferred
+``library/docs/stipulations/hhemt/clear raw triton outputs deferred
 until last allocation.md``:
 
   1. ``test_two_allocation_merge_recovers_full_wallclock`` — when both batches of
@@ -93,7 +93,7 @@ def test_two_allocation_merge_recovers_full_wallclock(two_allocation_perf_dir):
     ``max(Rank)`` of the per-rank sums selects rank 1 (slowest at 160s) as the
     end-to-end wallclock.
     """
-    from TRITON_SWMM_toolkit.process_simulation import _aggregate_perf_summary
+    from hhemt.process_simulation import _aggregate_perf_summary
 
     summary = _aggregate_perf_summary(two_allocation_perf_dir)
 
@@ -115,7 +115,7 @@ def test_pre_resume_files_deleted_undercounts_wallclock(two_allocation_perf_dir)
     Asserts: truncated ``Total`` < full ``Total`` AND truncated ``Total`` equals only
     the post-resume work (rank 1: 16·5 = 80).
     """
-    from TRITON_SWMM_toolkit.process_simulation import _aggregate_perf_summary
+    from hhemt.process_simulation import _aggregate_perf_summary
 
     # Capture the full summary first as the reference value.
     full_summary = _aggregate_perf_summary(two_allocation_perf_dir)

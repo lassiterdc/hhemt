@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.config.eda import eda_config
-from TRITON_SWMM_toolkit.eda import check_cross_sim_identity
-from TRITON_SWMM_toolkit.eda._plotting import render_eda_plots
-from TRITON_SWMM_toolkit.eda._report import assemble_eda_report
+from hhemt.config.eda import eda_config
+from hhemt.eda import check_cross_sim_identity
+from hhemt.eda._plotting import render_eda_plots
+from hhemt.eda._report import assemble_eda_report
 
 
 def _prep(analysis):

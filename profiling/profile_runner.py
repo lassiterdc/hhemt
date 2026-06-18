@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
+from hhemt.swmm_output_parser import retrieve_SWMM_outputs_as_datasets
 
 
 def main() -> None:

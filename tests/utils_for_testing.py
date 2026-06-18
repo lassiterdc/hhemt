@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 import pandas as pd
 import pytest
 
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+from hhemt.analysis import TRITONSWMM_analysis
 
 if TYPE_CHECKING:
     import xarray as xr
@@ -84,7 +84,7 @@ def assert_snakefile_has_flags(content: str, flags: list[str]):
 #
 # Each `assert_*` helper below is a thin pytest wrapper around the
 # corresponding `check_*` function in
-# `src/TRITON_SWMM_toolkit/analysis_validation.py`. The validator module is
+# `src/hhemt/analysis_validation.py`. The validator module is
 # the single source of truth for the analysis-validation logic; the wrappers
 # convert structured `CheckResult` records into `pytest.fail(...)` calls,
 # preserving the existing public signature (positional + keyword args, the
@@ -116,7 +116,7 @@ def _verbose_detail_block(result, key: str = "scenario_dir") -> str:
 
 def assert_system_setup(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_system_setup."""
-    from TRITON_SWMM_toolkit.analysis_validation import check_system_setup
+    from hhemt.analysis_validation import check_system_setup
     result = check_system_setup(analysis)
     if not result.passed:
         msg = result.summary
@@ -134,7 +134,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
     verbose : bool, optional
         If True, append per-scenario fail list to the failure message.
     """
-    from TRITON_SWMM_toolkit.analysis_validation import check_scenarios_setup
+    from hhemt.analysis_validation import check_scenarios_setup
     result = check_scenarios_setup(analysis)
     if not result.passed:
         msg = result.summary
@@ -147,7 +147,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
 
 def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
     """Pytest wrapper around analysis_validation.check_scenarios_run."""
-    from TRITON_SWMM_toolkit.analysis_validation import check_scenarios_run
+    from hhemt.analysis_validation import check_scenarios_run
     result = check_scenarios_run(analysis)
     if not result.passed:
         msg = result.summary
@@ -167,7 +167,7 @@ def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "bot
         Which timeseries model-types to check: "both" (default), "TRITON", or "SWMM".
         Forwarded to check_timeseries_processed.
     """
-    from TRITON_SWMM_toolkit.analysis_validation import check_timeseries_processed
+    from hhemt.analysis_validation import check_timeseries_processed
     result = check_timeseries_processed(analysis, which=which)
     if not result.passed:
         msg = result.summary
@@ -180,7 +180,7 @@ def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "bot
 
 def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_analysis_summaries_created."""
-    from TRITON_SWMM_toolkit.analysis_validation import check_analysis_summaries_created
+    from hhemt.analysis_validation import check_analysis_summaries_created
     result = check_analysis_summaries_created(analysis)
     if not result.passed:
         msg = result.summary
@@ -191,7 +191,7 @@ def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
 
 def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_resource_usage."""
-    from TRITON_SWMM_toolkit.analysis_validation import check_resource_usage
+    from hhemt.analysis_validation import check_resource_usage
     result = check_resource_usage(analysis)
     if not result.passed:
         pytest.fail(
@@ -202,7 +202,7 @@ def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
 
 def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_scenario_status_csv."""
-    from TRITON_SWMM_toolkit.analysis_validation import check_scenario_status_csv
+    from hhemt.analysis_validation import check_scenario_status_csv
     result = check_scenario_status_csv(analysis)
     if not result.passed:
         msg = result.summary
@@ -221,7 +221,7 @@ def assert_analysis_workflow_completed_successfully(
     available via the structured CheckResult records but are NOT printed here
     (use individual assert_* helpers with verbose=True for that).
     """
-    from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from hhemt.analysis_validation import validate_analysis
     report = validate_analysis(analysis)
     if not report.overall_passed:
         failed = [c for c in report.checks if not c.passed]
@@ -1073,7 +1073,7 @@ def snapshot_scenario_output_mtimes(
       - kind='sensitivity': key is (str(sa_id), event_id), disambiguating identical
         event_ids across sub-analyses.
     """
-    from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+    from hhemt.scenario import compute_event_id_slug
 
     snapshot: dict[tuple[str | None, str], dict[Path, float]] = {}
     excluded_log_files = {"log_triton.json", "log_tritonswmm.json", "log_swmm.json"}
@@ -1134,12 +1134,12 @@ def mutate_scenario_csv(
     sensitivity:
       - Source CSV (or XLSX): analysis.cfg_analysis.sensitivity_analysis.
       - The `sa_id` column is required by stipulation
-        `library/docs/stipulations/TRITON-SWMM_toolkit/sensitivity csvs require sa_id column.md`.
+        `library/docs/stipulations/hhemt/sensitivity csvs require sa_id column.md`.
       - Mutation: drop the row whose sa_id == remove_id; clone donor row with a
         new synthetic sa_id matching `^[A-Za-z0-9_.]+$`.
     """
     if kind == "multi_sim":
-        from TRITON_SWMM_toolkit.scenario import compute_event_id_slug
+        from hhemt.scenario import compute_event_id_slug
 
         donor_event_id = donor_key[1]  # sa_id is None for multi_sim
         remove_event_id = remove_key[1]
@@ -1237,7 +1237,7 @@ def reinstantiate_analysis_pointing_at_csv(analysis, *, kind: str, mutated_csv_p
     """
     import yaml
 
-    from TRITON_SWMM_toolkit.toolkit import Toolkit
+    from hhemt.toolkit import Toolkit
 
     sys_yaml = analysis._system.system_config_yaml
     ana_yaml = analysis.analysis_config_yaml

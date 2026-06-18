@@ -8,7 +8,7 @@ import os
 
 import pytest
 
-from TRITON_SWMM_toolkit import du_sentinels as du
+from hhemt import du_sentinels as du
 
 
 def test_compare_and_write_preserves_mtime_on_identical_payload(tmp_path):

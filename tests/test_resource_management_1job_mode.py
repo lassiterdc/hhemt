@@ -121,7 +121,7 @@ def test_sim_requirements_multi_node_config():
 # ---------------------------------------------------------------------------
 # _parse_slurm_allocated_gpus unit tests
 # ---------------------------------------------------------------------------
-from TRITON_SWMM_toolkit.resource_management import _parse_slurm_allocated_gpus
+from hhemt.resource_management import _parse_slurm_allocated_gpus
 
 
 def test_parse_slurm_gpus_integer():

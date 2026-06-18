@@ -17,8 +17,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pytest
 
-from TRITON_SWMM_toolkit.exceptions import ProcessingError
-from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+from hhemt.exceptions import ProcessingError
+from hhemt.report_renderers._figure_emission import (
     emit_plot_with_sources,
 )
 

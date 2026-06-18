@@ -1,4 +1,4 @@
-"""Durable, auto-discovering profiler for the TRITON-SWMM_toolkit routine test corpus.
+"""Durable, auto-discovering profiler for the hhemt routine test corpus.
 
 Usage:
     python -m scripts.profile.profile_routine_tests
@@ -436,7 +436,7 @@ def _env_fingerprint(repetitions: int) -> dict[str, str]:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Profile the TRITON-SWMM_toolkit routine test corpus.",
+        description="Profile the hhemt routine test corpus.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N,

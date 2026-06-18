@@ -28,13 +28,13 @@ import pandas as pd
 import platformdirs
 import yaml
 
-import TRITON_SWMM_toolkit.utils as ut
-from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-from TRITON_SWMM_toolkit.config.analysis import analysis_config
+import hhemt.utils as ut
+from hhemt.analysis import TRITONSWMM_analysis
+from hhemt.config.analysis import analysis_config
 
 # Import from production package
-from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from hhemt.examples import TRITON_SWMM_example
+from hhemt.system import TRITONSWMM_system
 from tests.fixtures import worktree_slug
 
 # NOTE: the former _SHARED_ARTIFACT_CACHE cross-worktree _software symlink was
@@ -299,7 +299,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # runs in sibling worktrees do not contend for the same cache. Falls
         # back to "main" when not inside a worktree.
         runs_root = (
-            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            Path(platformdirs.user_cache_dir("hhemt"))
             / "synthetic_test_runs"
             / worktree_slug()
         )
@@ -473,8 +473,8 @@ def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True
     Leaves the sub's ``d_process_*`` and ``c_run_*`` flags INTACT — that is the
     divergence state under test. Returns the list of deleted summary paths.
     """
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
-    from TRITON_SWMM_toolkit.utils import fast_rmtree
+    from hhemt.scenario import TRITONSWMM_scenario
+    from hhemt.utils import fast_rmtree
 
     _SUMMARY_ATTRS_BY_MODEL = {
         "tritonswmm": (

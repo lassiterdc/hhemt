@@ -23,15 +23,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit.bundle import Bundle
-from TRITON_SWMM_toolkit.bundle._emit import _rewrite_paths_to_relative
-from TRITON_SWMM_toolkit.bundle._path_policy import (
+from hhemt.bundle import Bundle
+from hhemt.bundle._emit import _rewrite_paths_to_relative
+from hhemt.bundle._path_policy import (
     _PATH_FIELD_POLICY,
     PathPolicy,
     enumerate_path_fields,
 )
-from TRITON_SWMM_toolkit.config.analysis import analysis_config
-from TRITON_SWMM_toolkit.config.system import system_config
+from hhemt.config.analysis import analysis_config
+from hhemt.config.system import system_config
 
 
 FIXTURES_ROOT = Path(__file__).parent / "fixtures" / "bundles"
@@ -260,7 +260,7 @@ def test_manifest_invariants_object(multi_sim_bundle):
 def test_regenerate_report_no_chdir(multi_sim_bundle, monkeypatch):
     # Bundle.regenerate_report must not modify the parent-process cwd.
     import os
-    from TRITON_SWMM_toolkit.bundle import Bundle
+    from hhemt.bundle import Bundle
 
     class FakeProc:
         returncode = 0
@@ -271,7 +271,7 @@ def test_regenerate_report_no_chdir(multi_sim_bundle, monkeypatch):
     # local-import-inside-method that VMS-1 uses. If a future refactor
     # moves the import to module-level, this patch still works because
     # it targets the binding site, not the source.
-    import TRITON_SWMM_toolkit.bundle as bundle_mod
+    import hhemt.bundle as bundle_mod
     monkeypatch.setattr(
         bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
     )
@@ -292,7 +292,7 @@ def test_regenerate_report_subprocess_cwd_is_bundle_root(
     multi_sim_bundle, monkeypatch
 ):
     # The snakemake subprocess receives cwd=bundle.root via Popen kwarg.
-    from TRITON_SWMM_toolkit.bundle import Bundle
+    from hhemt.bundle import Bundle
 
     captured = {}
     class FakeProc:
@@ -305,7 +305,7 @@ def test_regenerate_report_subprocess_cwd_is_bundle_root(
     # local-import-inside-method that VMS-1 uses. If a future refactor
     # moves the import to module-level, this patch still works because
     # it targets the binding site, not the source.
-    import TRITON_SWMM_toolkit.bundle as bundle_mod
+    import hhemt.bundle as bundle_mod
     monkeypatch.setattr(
         bundle_mod, "run_subprocess_with_tee", fake_run, raising=False
     )
@@ -323,7 +323,7 @@ def test_regenerate_report_raises_on_stale_lock(multi_sim_bundle):
     # Bundle.regenerate_report fails loud when stale locks exist
     # (Decision 3.1A defense-in-depth check).
     import pytest
-    from TRITON_SWMM_toolkit.bundle import Bundle
+    from hhemt.bundle import Bundle
 
     locks_dir = multi_sim_bundle / ".snakemake" / "locks"
     locks_dir.mkdir(parents=True, exist_ok=True)
@@ -341,8 +341,8 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
     # Pydantic-valid cfg_analysis.yaml; the legacy-bundle compat axis
     # under test is solely the optional invariants key.
     import json
-    from TRITON_SWMM_toolkit.bundle import Bundle
-    from TRITON_SWMM_toolkit.version_migration.constants import (
+    from hhemt.bundle import Bundle
+    from hhemt.version_migration.constants import (
         BUNDLE_SCHEMA_VERSION,
     )
 
@@ -370,7 +370,7 @@ def test_legacy_manifest_no_invariants_key(tmp_path):
 def test_static_backend_field_default_is_plotly():
     # cfg_report's InteractiveBackendConfig.static_backend defaults to
     # 'plotly' per Plan Phase 2 D3 + Decision 4.
-    from TRITON_SWMM_toolkit.config.report import InteractiveBackendConfig
+    from hhemt.config.report import InteractiveBackendConfig
     cfg = InteractiveBackendConfig()
     assert cfg.static_backend == "plotly"
 
@@ -378,7 +378,7 @@ def test_preflight_raises_without_kaleido(monkeypatch):
     # preflight_validate with static_backend='plotly' adds an ERROR
     # issue when kaleido is not importable.
     import sys
-    from TRITON_SWMM_toolkit.validation import (
+    from hhemt.validation import (
         _check_static_backend_kaleido_available,
         ValidationResult,
     )
@@ -406,7 +406,7 @@ def test_zip_determinism(tmp_path):
     # invocations against the same staging tree (fixed mtime + sorted
     # order).
     import hashlib
-    from TRITON_SWMM_toolkit.bundle._emit import _emit_bundle_zip
+    from hhemt.bundle._emit import _emit_bundle_zip
 
     # Construct a synthetic staging tree with a few files at varying
     # depths. Real fixture bundles include zarr stores and CSVs which
@@ -435,7 +435,7 @@ def test_zip_emit_no_tar_artifact(tmp_path):
     # After Plan Phase 4, the emit-side produces .zip, not .tar.
     # The default output_path in emit_bundle uses the .zip suffix.
     import inspect
-    from TRITON_SWMM_toolkit.bundle._emit import emit_bundle
+    from hhemt.bundle._emit import emit_bundle
 
     src = inspect.getsource(emit_bundle)
     assert ".zip" in src, "emit_bundle default output path must use .zip suffix"
@@ -474,7 +474,7 @@ def _write_minimal_cfg_analysis(path, *, static_backend="plotly", with_report=Tr
 def test_read_static_backend_one_step(tmp_path):
     """R8 v2 (case 1): cfg_analysis.yaml carries `report.interactive.static_backend`;
     `_read_static_backend` returns that value as the sole resolution path."""
-    from TRITON_SWMM_toolkit.bundle import Bundle
+    from hhemt.bundle import Bundle
 
     _write_minimal_cfg_analysis(
         tmp_path / "cfg_analysis.yaml", static_backend="matplotlib"
@@ -491,7 +491,7 @@ def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_pa
     Pydantic validation at `Bundle.from_directory(...)` — `_read_static_backend`
     is never reached. Pins the R1 load-time-required contract."""
     import pytest
-    from TRITON_SWMM_toolkit.bundle import Bundle
+    from hhemt.bundle import Bundle
 
     _write_minimal_cfg_analysis(
         tmp_path / "cfg_analysis.yaml", with_report=False
@@ -508,7 +508,7 @@ def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
     schema-version gate in `Bundle.from_directory` under post-F2 toolkit
     (`BUNDLE_SCHEMA_VERSION=2`). The error message names the version mismatch."""
     import pytest
-    from TRITON_SWMM_toolkit.bundle import Bundle, BundleSchemaError
+    from hhemt.bundle import Bundle, BundleSchemaError
 
     _write_minimal_cfg_analysis(tmp_path / "cfg_analysis.yaml")
     (tmp_path / "bundle_manifest.json").write_text(

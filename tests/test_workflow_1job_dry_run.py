@@ -30,7 +30,7 @@ def norfolk_1job_analysis():
     analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition = "test_partition"
     # Phase-4 (4d): account/max-concurrent/cpus_per_node moved to hpc_system_config /
     # the partition's PartitionSpec (retired off analysis_config).
-    from TRITON_SWMM_toolkit.config.hpc_system import PartitionSpec, hpc_system_config
+    from hhemt.config.hpc_system import PartitionSpec, hpc_system_config
 
     analysis.cfg_hpc_system = hpc_system_config(
         system_name="test-cluster",

@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from TRITON_SWMM_toolkit.exceptions import ProcessingError
-from TRITON_SWMM_toolkit.report_renderers._provenance_audit import (
+from hhemt.exceptions import ProcessingError
+from hhemt.report_renderers._provenance_audit import (
     _capture_reads,
     assert_reads_subset_declared,
 )

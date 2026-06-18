@@ -6,7 +6,7 @@ The `path == analysis_dir` short-circuit at SE F-I Flag 2 means a root-wipe call
 NOT re-stamp a directory being deleted.
 
 Run:
-    conda run -n triton_swmm_toolkit python -m pytest tests/test_synth_fast_rmtree_restamps_parents.py -v
+    conda run -n hhemt python -m pytest tests/test_synth_fast_rmtree_restamps_parents.py -v
 """
 
 from __future__ import annotations
@@ -17,8 +17,8 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.utils import fast_rmtree
-from TRITON_SWMM_toolkit.du_sentinels import (
+from hhemt.utils import fast_rmtree
+from hhemt.du_sentinels import (
     compute_and_write_scope_sentinel,
     read_du_sentinel,
 )

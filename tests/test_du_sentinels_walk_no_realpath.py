@@ -1,7 +1,7 @@
 """Unit test: _walk_root_and_breakdown issues zero realpath syscalls and
 preserves byte-total + per-child breakdown parity.
 
-Plan: library/docs/planning/projects/TRITON-SWMM_toolkit/bugs/reprocess du sentinel realpath and dry run mutation.md
+Plan: library/docs/planning/projects/hhemt/bugs/reprocess du sentinel realpath and dry run mutation.md
 Guards R1 (no realpath) + R2 (parity) — the realpath cliff in
 du_sentinels._walk_root_and_breakdown is removed (use p.relative_to(root),
 not p.resolve().relative_to(root.resolve())), and the no-resolve walk returns
@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit import du_sentinels
+from hhemt import du_sentinels
 
 
 def _build_tree(root: Path) -> None:

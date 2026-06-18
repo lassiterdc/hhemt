@@ -17,7 +17,7 @@ import pytest
 import rioxarray as rxr
 import xarray as xr
 
-from TRITON_SWMM_toolkit.exceptions import ProcessingError
+from hhemt.exceptions import ProcessingError
 
 
 def _make_synth_da(ncols: int, nrows: int, *, dtype: str = "float32") -> xr.DataArray:
@@ -37,7 +37,7 @@ def _make_synth_da(ncols: int, nrows: int, *, dtype: str = "float32") -> xr.Data
 
 def test_write_raster_peak_rss_under_250mb(tmp_path: Path, monkeypatch):
     """R1 — peak RSS during _write_raster on a 5000×5000 DEM stays under 250 MB."""
-    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+    from hhemt.system import TRITONSWMM_system
 
     da = _make_synth_da(ncols=5000, nrows=5000)
 
@@ -65,7 +65,7 @@ def test_write_raster_peak_rss_under_250mb(tmp_path: Path, monkeypatch):
 
 def test_write_raster_roundtrip_parity(tmp_path: Path):
     """R6 — round-trip: write then read via rioxarray, allclose at 1e-5 tolerance."""
-    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+    from hhemt.system import TRITONSWMM_system
 
     da = _make_synth_da(ncols=100, nrows=80)
     sys_obj = TRITONSWMM_system.__new__(TRITONSWMM_system)
@@ -88,7 +88,7 @@ def test_write_raster_roundtrip_parity(tmp_path: Path):
 def test_dem_integrity_assertion_fires_fast_on_blank_line(tmp_path: Path):
     """R5 — synthetic malformed DEM with blank-line interleaving triggers ProcessingError."""
     # Per SE plan-review Flag 5: _assert_dem_integrity is a module-level function (state-free).
-    from TRITON_SWMM_toolkit.system import _assert_dem_integrity
+    from hhemt.system import _assert_dem_integrity
 
     fpath = tmp_path / "malformed.dem"
 
@@ -114,7 +114,7 @@ def test_dem_integrity_assertion_fires_fast_on_blank_line(tmp_path: Path):
 
 def test_dem_integrity_assertion_passes_on_clean_file(tmp_path: Path):
     """R5 control — well-formed DEM passes the integrity check."""
-    from TRITON_SWMM_toolkit.system import TRITONSWMM_system, _assert_dem_integrity
+    from hhemt.system import TRITONSWMM_system, _assert_dem_integrity
 
     da = _make_synth_da(ncols=10, nrows=8)
     sys_obj = TRITONSWMM_system.__new__(TRITONSWMM_system)

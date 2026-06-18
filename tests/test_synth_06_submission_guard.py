@@ -52,7 +52,7 @@ def test_reconcile_returns_alive_set_for_live_duplicate(monkeypatch, synthetic_m
     # real accounting row on a login node (where a DEAD State for that id would
     # mass-reclaim the freshly-written sentinel). Empty states → UNKNOWN bucket →
     # the fresh sentinel's recent mtime keeps it alive deterministically.
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda job_ids, **kw: {})
+    monkeypatch.setattr("hhemt.workflow._sacct_states_batched", lambda job_ids, **kw: {})
 
     b = synthetic_multisim_builder
     _write_sentinel(b.analysis_paths.analysis_dir, "run_tritonswmm_evt-test", "999001")
@@ -106,7 +106,7 @@ def test_recover_inflight_via_comment_parses_sacct(monkeypatch, synthetic_multis
 
     monkeypatch.setattr(_sp, "run", lambda *a, **kw: _R())
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._slurm_job_is_live",
+        "hhemt.workflow._slurm_job_is_live",
         lambda jid: jid == "9001",  # only 9001 is live
     )
     b = synthetic_multisim_builder
@@ -125,7 +125,7 @@ def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthe
     """
     # R9 hermeticity: pin the sacct seam (see the sibling reconcile test) so the
     # fake jobid is host-independent — UNKNOWN bucket + fresh mtime → alive.
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda job_ids, **kw: {})
+    monkeypatch.setattr("hhemt.workflow._sacct_states_batched", lambda job_ids, **kw: {})
 
     b = synthetic_multisim_builder
     s = _write_sentinel(b.analysis_paths.analysis_dir, "simulation_sa_alpha_evt-0", "777001")
@@ -136,7 +136,7 @@ def test_reconcile_returns_sensitivity_sentinel_in_alive_set(monkeypatch, synthe
 
 def _build_marker_ctx(analysis_dir, rule_token="run_tritonswmm_evt-0", jobid="12345"):
     """Construct a _MarkerCtx pointing at the synthetic analysis_dir's _status/."""
-    from TRITON_SWMM_toolkit.run_simulation_runner import _MarkerCtx
+    from hhemt.run_simulation_runner import _MarkerCtx
 
     completed_dir = analysis_dir / "_status" / "_completed"
     failed_dir = analysis_dir / "_status" / "_failed"
@@ -199,7 +199,7 @@ def test_marker_writes_on_clean_completion(synthetic_multisim_builder):
 
 def test_marker_writes_on_runner_exception(synthetic_multisim_builder):
     """Phase 1: runner's exception path writes _status/_failed/{rule_token}.json via _write_failed_marker."""
-    from TRITON_SWMM_toolkit.run_simulation_runner import _write_failed_marker
+    from hhemt.run_simulation_runner import _write_failed_marker
 
     b = synthetic_multisim_builder
     ctx = _build_marker_ctx(b.analysis_paths.analysis_dir)
@@ -215,7 +215,7 @@ def test_marker_writes_on_runner_exception(synthetic_multisim_builder):
     assert "finished_at" in body
 
     # Non-SLURM execution (jobid=None) is a no-op.
-    from TRITON_SWMM_toolkit.run_simulation_runner import _MarkerCtx
+    from hhemt.run_simulation_runner import _MarkerCtx
 
     nop_ctx = _MarkerCtx(
         jobid=None,
@@ -392,7 +392,7 @@ def test_force_rerun_does_not_descend_into_status_subdirs(synthetic_multisim_bui
     reach into _submitted/_completed/_failed/. Tested directly on the helper so the
     assertion isolates the glob behavior from log-invalidation orchestration.
     """
-    from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+    from hhemt.workflow import ResolvedForceRerunSpec
 
     b = synthetic_multisim_builder
     status_dir = b.analysis_paths.analysis_dir / "_status"
@@ -423,7 +423,7 @@ def test_force_rerun_sa_scope_does_not_touch_submitted_sentinels(synthetic_multi
     toggle_sensitivity_analysis=True; the regression target is the glob, which is
     analysis-type-agnostic.
     """
-    from TRITON_SWMM_toolkit.workflow import ResolvedForceRerunSpec
+    from hhemt.workflow import ResolvedForceRerunSpec
 
     b = synthetic_multisim_builder
     analysis_dir = b.analysis_paths.analysis_dir
@@ -525,7 +525,7 @@ def test_classify_stale_via_sacct_dead_alive_and_mtime_tiebreak(monkeypatch, syn
     os.utime(aged_s, (old, old))
 
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda job_ids, **kw: {
             "100": ("CANCELLED", "0:15", "JobKilled"),  # DEAD-stale
             "200": ("RUNNING", "0:0", "None"),  # ALIVE
@@ -572,7 +572,7 @@ def test_classify_stale_via_sacct_aliased_jobid_not_mass_dead(monkeypatch, synth
     s2 = _write_sentinel(analysis_dir, "run_tritonswmm_evt-b", "555")
 
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda job_ids, **kw: {"555": ("TIMEOUT", "0:1", "TimeLimit")},  # terminal allocation row
     )
 
@@ -597,7 +597,7 @@ def test_classify_stale_via_sacct_empty_input_is_zero_call_noop(monkeypatch, syn
     def _boom(*a, **kw):
         raise AssertionError("sacct must not be called on an empty marker-less set")
 
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", _boom)
+    monkeypatch.setattr("hhemt.workflow._sacct_states_batched", _boom)
     b = synthetic_multisim_builder
     assert b._classify_stale_via_sacct([]) == ([], [])
 
@@ -606,7 +606,7 @@ def test_max_plausible_job_lifetime_never_below_walltime(synthetic_multisim_buil
     """R8/R-WAITCAP regression (SE + triton specialist follow-up): the derived
     cap is walltime + slack, so it can never drop below the job's own walltime
     even when the override ceiling is at its configured minimum."""
-    from TRITON_SWMM_toolkit import workflow as w
+    from hhemt import workflow as w
 
     cfg = synthetic_multisim_builder.cfg_analysis
     if cfg.hpc_total_job_duration_min is None:
@@ -669,7 +669,7 @@ def test_pending_recovery_executor_owns_held_on_presence(monkeypatch, synthetic_
     """R1/R3/R6: a fresh _queued/ token with jobid=null (executor-owns-sbatch) and no
     _submitted/ is held alive on PRESENCE — no sacct call (jobid-null)."""
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda ids, **k: pytest.fail("sacct must NOT be called for jobid-null pending tokens"),
     )
     b = synthetic_multisim_builder
@@ -703,7 +703,7 @@ def test_pending_recovery_toolkit_owns_dead_drops_alive_holds(monkeypatch, synth
     _write_queued(ad, "run_tritonswmm_evt-dead", "100")
     _write_queued(ad, "run_tritonswmm_evt-live", "200")
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda ids, **k: {"100": ("CANCELLED", "0:0", "JobKilled"), "200": ("PENDING", "0:0", "Priority")},
     )
     alive = {t for t, _ in b._reconcile_inflight_submissions()}
@@ -721,7 +721,7 @@ def test_pending_recovery_aliased_jobid_not_mass_dropped(monkeypatch, synthetic_
     _write_queued(ad, "run_tritonswmm_evt-a", "777")
     _write_queued(ad, "run_tritonswmm_evt-b", "777")
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda ids, **k: {"777": ("TIMEOUT", "0:0", "TimeLimit")},
     )
     alive = {t for t, _ in b._reconcile_inflight_submissions()}
@@ -732,7 +732,7 @@ def test_pending_recovery_token_keyed_dedup_submitted_wins(monkeypatch, syntheti
     """SE Flag 2: when BOTH a _submitted/ and a _queued/ exist for one logical token
     (hard-kill between os.replace and the _queued/ unlink), the token appears in the
     alive set exactly once, with the _submitted/-derived concrete jobid (not "")."""
-    monkeypatch.setattr("TRITON_SWMM_toolkit.workflow._sacct_states_batched", lambda ids, **k: {})
+    monkeypatch.setattr("hhemt.workflow._sacct_states_batched", lambda ids, **k: {})
     b = synthetic_multisim_builder
     ad = b.analysis_paths.analysis_dir
     _write_sentinel(ad, "run_tritonswmm_evt-both", "300")  # worker started (jobid 300)
@@ -746,7 +746,7 @@ def test_fresh_analysis_fast_path_no_sacct_with_no_queued(monkeypatch, synthetic
     """R6: a genuinely-fresh analysis (no _submitted/, no _queued/) fast-returns []
     with NO sacct call."""
     monkeypatch.setattr(
-        "TRITON_SWMM_toolkit.workflow._sacct_states_batched",
+        "hhemt.workflow._sacct_states_batched",
         lambda ids, **k: pytest.fail("sacct must NOT be called on a fresh analysis"),
     )
     assert synthetic_multisim_builder._reconcile_inflight_submissions() == []
@@ -756,7 +756,7 @@ def test_wait_runner_reads_queued_jobid_fallback(tmp_path):
     """R8: _read_submitted_jobid falls back to _queued/{token}.json when no _submitted/
     sentinel exists, so the in-loop liveness probe re-enables for a PENDING-recovered
     wait-rule. A null _queued/ jobid yields None (probe stays disabled, executor-owns)."""
-    from TRITON_SWMM_toolkit import wait_for_sentinel_runner as wr
+    from hhemt import wait_for_sentinel_runner as wr
 
     status = tmp_path / "_status"
     (status / "_queued").mkdir(parents=True)
@@ -848,7 +848,7 @@ class TestWaitRuleInLoopLiveness:
 
     def test_job_is_dead_confirmed_live_squeue_returns_false(self, monkeypatch):
         """Tier 1: squeue reports a live state -> not dead (keep waiting)."""
-        from TRITON_SWMM_toolkit import slurm_liveness as sl
+        from hhemt import slurm_liveness as sl
 
         monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: True)
         # sacct must not even be consulted when squeue says live
@@ -859,7 +859,7 @@ class TestWaitRuleInLoopLiveness:
 
     def test_job_is_dead_confirmed_absent_then_terminal_returns_true(self, monkeypatch):
         """Tier 2: squeue absent + sacct terminal -> dead."""
-        from TRITON_SWMM_toolkit import slurm_liveness as sl
+        from hhemt import slurm_liveness as sl
 
         monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
         monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {"123": ("CANCELLED", "0:0", "None")})
@@ -867,7 +867,7 @@ class TestWaitRuleInLoopLiveness:
 
     def test_job_is_dead_confirmed_absent_then_unknown_returns_false(self, monkeypatch):
         """Tier 2: squeue absent + sacct NO row (UNKNOWN) -> not confirmed dead."""
-        from TRITON_SWMM_toolkit import slurm_liveness as sl
+        from hhemt import slurm_liveness as sl
 
         monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
         monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {})
@@ -875,7 +875,7 @@ class TestWaitRuleInLoopLiveness:
 
     def test_job_is_dead_confirmed_absent_then_nonterminal_returns_false(self, monkeypatch):
         """Tier 2: squeue absent + sacct non-terminal (still scheduled) -> alive."""
-        from TRITON_SWMM_toolkit import slurm_liveness as sl
+        from hhemt import slurm_liveness as sl
 
         monkeypatch.setattr(sl, "_slurm_job_is_live", lambda jid, **k: False)
         monkeypatch.setattr(sl, "_sacct_states_batched", lambda ids, **k: {"123": ("PENDING", "0:0", "Priority")})
@@ -883,8 +883,8 @@ class TestWaitRuleInLoopLiveness:
 
     def test_workflow_reexports_resolve(self):
         """R11: workflow.py re-exports resolve to the leaf-module objects."""
-        from TRITON_SWMM_toolkit import slurm_liveness
-        from TRITON_SWMM_toolkit import workflow as w
+        from hhemt import slurm_liveness
+        from hhemt import workflow as w
 
         assert w._slurm_job_is_live is slurm_liveness._slurm_job_is_live
         assert w._sacct_states_batched is slurm_liveness._sacct_states_batched
@@ -892,13 +892,13 @@ class TestWaitRuleInLoopLiveness:
 
     def test_config_default_is_field_max(self):
         """R8: the inflight-wait cap default is the 1-week field max."""
-        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+        from hhemt.config.analysis import analysis_config
 
         assert analysis_config.model_fields["hpc_max_wait_for_inflight_min"].default == 10080
 
     def test_validate_inflight_wait_vs_total_runtime_removed(self):
         """R9: the vestigial warn-only validator is gone (no warning on a low cap)."""
-        from TRITON_SWMM_toolkit.config.analysis import analysis_config
+        from hhemt.config.analysis import analysis_config
 
         assert not hasattr(analysis_config, "_validate_inflight_wait_vs_total_runtime")
 
@@ -907,8 +907,8 @@ class TestWaitRuleInLoopLiveness:
         the submitted sentinel + returns 1, without touching the completion flag."""
         import json as _json
 
-        from TRITON_SWMM_toolkit import slurm_liveness
-        from TRITON_SWMM_toolkit import wait_for_sentinel_runner as wr
+        from hhemt import slurm_liveness
+        from hhemt import wait_for_sentinel_runner as wr
 
         # Force the time-gated probe to fire on loop cycle 1 (default 300 s gate
         # would otherwise poll for a week with no marker present).

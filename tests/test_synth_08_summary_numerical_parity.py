@@ -70,7 +70,7 @@ def _make_synth_ds(
 
 def test_streaming_argmax_helper_basic(tmp_path: Path):
     """Direct test of the new helper — primary + companions on a small fixture."""
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=10, nrows=10, ntsteps=20, inject_all_nan_cells=False, inject_ties=False)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
@@ -91,7 +91,7 @@ def test_streaming_argmax_helper_basic(tmp_path: Path):
 
 def test_all_nan_cells_produce_nan_outputs(tmp_path: Path):
     """All-NaN cells must produce NaN max, NaN argmax, NaN companion values."""
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=10, nrows=10, ntsteps=20, inject_all_nan_cells=True, inject_ties=False)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
@@ -111,7 +111,7 @@ def test_all_nan_cells_produce_nan_outputs(tmp_path: Path):
 
 def test_first_occurrence_tie_semantics_within_chunk():
     """Within a single chunk, ties resolve to the earliest timestep."""
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=10, nrows=10, ntsteps=50, inject_all_nan_cells=False, inject_ties=True)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
@@ -128,7 +128,7 @@ def test_first_occurrence_tie_semantics_within_chunk():
 
 def test_first_occurrence_tie_semantics_across_chunk_boundary():
     """Across chunk boundaries, ties resolve to the earlier chunk's index."""
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=10, nrows=10, ntsteps=50, inject_all_nan_cells=False, inject_ties=True)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
@@ -152,7 +152,7 @@ def test_numerical_parity_with_reference(tmp_path: Path):
     lazy-dask implementation completes without OOM — we compute the reference summary
     via direct numpy (the conceptual equivalent of the prior code path's final state).
     """
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=10, nrows=10, ntsteps=20, inject_all_nan_cells=True, inject_ties=True)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)
@@ -195,7 +195,7 @@ def test_numerical_parity_with_reference(tmp_path: Path):
 
 def test_peak_rss_under_4gb_on_synth_dem(tmp_path: Path):
     """R1: peak RSS during streaming summary on a synth 1000x1000 50-tstep DEM stays under 4 GB."""
-    from TRITON_SWMM_toolkit.process_simulation import _streaming_argmax_with_companions
+    from hhemt.process_simulation import _streaming_argmax_with_companions
 
     ds = _make_synth_ds(ncols=1000, nrows=1000, ntsteps=50, inject_all_nan_cells=False, inject_ties=False)
     ds = ds.assign(velocity_mps=(ds["velocity_x_mps"] ** 2 + ds["velocity_y_mps"] ** 2) ** 0.5)

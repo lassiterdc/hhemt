@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 # Import the write_netcdf function
-from TRITON_SWMM_toolkit.utils import write_netcdf, write_zarr
+from hhemt.utils import write_netcdf, write_zarr
 
 # Create a simple test dataset
 def create_test_dataset():

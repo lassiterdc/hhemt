@@ -45,7 +45,7 @@ def _sim_rule_block(snakefile_text: str, sa_id: str) -> str:
 def test_multi_partition_fanout_two_targets_distinct_emission(
     synth_sensitivity_multi_partition_fanout,
 ):
-    from TRITON_SWMM_toolkit.config.hpc_system import resolve_gpu_target
+    from hhemt.config.hpc_system import resolve_gpu_target
 
     analysis = synth_sensitivity_multi_partition_fanout
     sensitivity = analysis.sensitivity

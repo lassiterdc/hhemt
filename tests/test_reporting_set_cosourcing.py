@@ -23,8 +23,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-import TRITON_SWMM_toolkit.workflow as wf
-from TRITON_SWMM_toolkit.report_renderers._reporting_sets import get_reporting_set
+import hhemt.workflow as wf
+from hhemt.report_renderers._reporting_sets import get_reporting_set
 
 
 def _capture_source_categories(generate_call: Callable[[], object]) -> dict[str, str]:

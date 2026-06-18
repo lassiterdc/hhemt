@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.bundle import Bundle
-from TRITON_SWMM_toolkit.eda import EdaReportResult
+from hhemt.bundle import Bundle
+from hhemt.eda import EdaReportResult
 
 
 def test_analysis_eda_end_to_end(synthetic_sensitivity_completed):

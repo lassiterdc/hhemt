@@ -23,7 +23,7 @@ pytestmark = pytest.mark.skipif(not tst_ut.on_UVA_HPC(), reason="Only runs on UV
 
 # module purge
 # module load gompi/14.2.0_5.0.7 miniforge
-# conda activate triton_swmm_toolkit
+# conda activate hhemt
 # export PYTHONNOUSERSITE=1
 
 

@@ -1,4 +1,4 @@
-* TRITON-SWMM Toolkit version:
+* H&H Ensemble Modeling Toolkit version:
 * Python version:
 * Operating System:
 

@@ -19,11 +19,11 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.report_plot_ids import (
+from hhemt.report_plot_ids import (
     canonical_plot_id,
     plot_output_template,
 )
-from TRITON_SWMM_toolkit.report_renderers._figure_emission import (
+from hhemt.report_renderers._figure_emission import (
     _emit_manifest_sidecar,
 )
 

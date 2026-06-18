@@ -12,7 +12,7 @@ Verifies:
 import numpy as np
 import xarray as xr
 
-from TRITON_SWMM_toolkit.utils import return_dic_zarr_encodings
+from hhemt.utils import return_dic_zarr_encodings
 
 _CF_ATTRS = {
     "long_name": "water surface elevation",

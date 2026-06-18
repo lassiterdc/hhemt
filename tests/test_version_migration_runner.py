@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.version_migration import runner, state
-from TRITON_SWMM_toolkit.version_migration.constants import LAYOUT_VERSION
-from TRITON_SWMM_toolkit.version_migration.exceptions import LayoutVersionError
+from hhemt.version_migration import runner, state
+from hhemt.version_migration.constants import LAYOUT_VERSION
+from hhemt.version_migration.exceptions import LayoutVersionError
 
 
 def test_cli_baseline_out_of_range_exits_2(tmp_path: Path) -> None:
@@ -19,7 +19,7 @@ def test_cli_baseline_out_of_range_exits_2(tmp_path: Path) -> None:
         [
             sys.executable,
             "-m",
-            "TRITON_SWMM_toolkit.version_migration",
+            "hhemt.version_migration",
             "baseline",
             str(tmp_path),
             "99",

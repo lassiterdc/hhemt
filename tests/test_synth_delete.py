@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit import workflow
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt import workflow
+from hhemt.exceptions import ConfigurationError
 
 
 def _write_live_sentinel(analysis_dir: Path, name: str, jobid: str) -> Path:
@@ -39,7 +39,7 @@ def _write_live_sentinel(analysis_dir: Path, name: str, jobid: str) -> Path:
 def test_delete_dry_run_summary_does_not_delete(synth_multi_sim_analysis, capsys):
     """``_print_delete_dry_run_summary`` prints the per-leaf breakdown and
     leaves the analysis_dir intact."""
-    from TRITON_SWMM_toolkit.cli import _print_delete_dry_run_summary
+    from hhemt.cli import _print_delete_dry_run_summary
 
     analysis = synth_multi_sim_analysis
     analysis_dir = analysis.analysis_paths.analysis_dir

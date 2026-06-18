@@ -21,7 +21,7 @@ from pathlib import Path
 import plotly.graph_objects as go
 import pytest
 
-from TRITON_SWMM_toolkit.report_renderers import (
+from hhemt.report_renderers import (
     per_sim_conduit_flow,
     per_sim_peak_flood_depth,
     sensitivity_benchmarking,

@@ -28,7 +28,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from TRITON_SWMM_toolkit.report_renderers.sensitivity_benchmarking import (
+from hhemt.report_renderers.sensitivity_benchmarking import (
     _compute_efficiency_per_group,
     _compute_speedup_per_group,
 )

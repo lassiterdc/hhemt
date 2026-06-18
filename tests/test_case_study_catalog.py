@@ -13,23 +13,23 @@ from pathlib import Path
 import pytest
 import yaml
 
-import TRITON_SWMM_toolkit.case_study_catalog as cat
+import hhemt.case_study_catalog as cat
 
 
 @pytest.fixture(scope="module")
 def example_data_available() -> bool:
     """Skip these tests if the Norfolk Irene example data is not cached locally.
 
-    When TRITON_SWMM_REQUIRE_EXAMPLE_DATA=1 (set on CI runners that cache the
+    When HHEMT_REQUIRE_EXAMPLE_DATA=1 (set on CI runners that cache the
     example data), a load failure is re-raised as a hard error instead of a
     silent skip, so the regression guard cannot pass vacuously on CI.
     """
     try:
         cat.all_examples.norfolk_irene(download_if_exists=False)
     except Exception as exc:
-        if os.environ.get("TRITON_SWMM_REQUIRE_EXAMPLE_DATA") == "1":
+        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
             raise AssertionError(
-                f"Norfolk Irene example data required (TRITON_SWMM_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
+                f"Norfolk Irene example data required (HHEMT_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
             ) from exc
         pytest.skip(f"Norfolk Irene example data not available locally: {exc!r}")
     return True
@@ -45,7 +45,7 @@ def _require_software_dirs() -> None:
     point at ``<test_case_directory>/swmm`` and ``/triton``. Those dirs are
     build artifacts present on a provisioned tree (CI / main) but not in a fresh
     worktree. The swmm-only variant has no overlay columns and so does not call
-    this gate. Under TRITON_SWMM_REQUIRE_EXAMPLE_DATA=1 the absence is a hard
+    this gate. Under HHEMT_REQUIRE_EXAMPLE_DATA=1 the absence is a hard
     error rather than a silent skip.
     """
     example_dir = cat.all_examples.norfolk_irene().test_case_directory
@@ -55,8 +55,8 @@ def _require_software_dirs() -> None:
             f"software-dir build artifacts {missing} absent under {example_dir}; "
             "coupled/triton-only sensitivity rows cannot revalidate system.* overlays."
         )
-        if os.environ.get("TRITON_SWMM_REQUIRE_EXAMPLE_DATA") == "1":
-            raise AssertionError(f"{msg} (TRITON_SWMM_REQUIRE_EXAMPLE_DATA=1)")
+        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
+            raise AssertionError(f"{msg} (HHEMT_REQUIRE_EXAMPLE_DATA=1)")
         pytest.skip(msg)
 
 

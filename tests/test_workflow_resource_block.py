@@ -137,8 +137,8 @@ def test_resolution_helpers_read_hpc_system_config(synth_multi_sim_builder):
     """
     from pathlib import Path
 
-    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.config.loaders import load_hpc_system_config
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     example = Path(__file__).parent / "fixtures" / "hpc_system_config_test.yaml"
     b = SnakemakeWorkflowBuilder(synth_multi_sim_builder)

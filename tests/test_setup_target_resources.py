@@ -6,7 +6,7 @@ Maps to atomic plan "setup-target-mem-and-a100-compile-fix" — Parts A and B.
 
 import re
 
-from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+from hhemt.system import TRITONSWMM_system
 
 # ----------------------------------------------------------------------------
 # Compile-script helper-method content tests (no fixtures needed)
@@ -77,7 +77,7 @@ def test_setup_target_rule_uses_dedicated_mem_field(norfolk_sensitivity_analysis
 
 
 def test_setup_mem_undersize_warning(norfolk_sensitivity_analysis):
-    from TRITON_SWMM_toolkit.validation import (
+    from hhemt.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )
@@ -99,7 +99,7 @@ def test_setup_mem_undersize_warning(norfolk_sensitivity_analysis):
 
 
 def test_setup_mem_undersize_no_warning_when_safe(norfolk_sensitivity_analysis):
-    from TRITON_SWMM_toolkit.validation import (
+    from hhemt.validation import (
         ValidationResult,
         _validate_setup_mem_sizing,
     )

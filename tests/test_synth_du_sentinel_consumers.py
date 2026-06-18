@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.du_sentinels import write_du_sentinel
+from hhemt.du_sentinels import write_du_sentinel
 
 
 def _write_sentinel(scope_dir: Path, *, bytes_val: int, breakdown: dict | None = None) -> Path:
@@ -49,7 +49,7 @@ def _import_du_via_sentinel(tmp_path: Path):
     The wrapper is defined inside _print_delete_dry_run_summary; the easiest
     way to exercise it is to call that function and inspect stderr.
     """
-    from TRITON_SWMM_toolkit.cli import _print_delete_dry_run_summary
+    from hhemt.cli import _print_delete_dry_run_summary
     return _print_delete_dry_run_summary
 
 
@@ -57,7 +57,7 @@ def test_du_via_sentinel_reads_sentinel_when_present(tmp_path, capsys):
     """When `_status/_du.json` exists under the analysis_dir AND every
     scenario sub-directory, the dry-run summary emits no `[delete] DU sentinel
     absent` stderr lines."""
-    from TRITON_SWMM_toolkit.cli import _print_delete_dry_run_summary
+    from hhemt.cli import _print_delete_dry_run_summary
 
     # Build a synthetic tree: analysis_dir/sims/scen_a, scen_b.
     analysis_dir = tmp_path / "analysis"
@@ -85,7 +85,7 @@ def test_du_via_sentinel_falls_back_when_absent(tmp_path, capsys):
     """When sentinels are absent, the dry-run summary falls back to a tree
     walk and prints one `[delete] DU sentinel absent` warning per missing
     scope."""
-    from TRITON_SWMM_toolkit.cli import _print_delete_dry_run_summary
+    from hhemt.cli import _print_delete_dry_run_summary
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "sims" / "scen_a").mkdir(parents=True)
@@ -113,7 +113,7 @@ def test_du_via_sentinel_falls_back_when_absent(tmp_path, capsys):
 def test_disk_utilization_renderer_emits_table_when_sentinel_present(tmp_path):
     """The renderer reads `_status/_du.json` and writes an HTML table
     containing the formatted total + per-breakdown rows."""
-    from TRITON_SWMM_toolkit.report_renderers.disk_utilization import render
+    from hhemt.report_renderers.disk_utilization import render
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -144,7 +144,7 @@ def test_disk_utilization_renderer_emits_table_when_sentinel_present(tmp_path):
 def test_disk_utilization_renderer_emits_missing_banner_when_absent(tmp_path):
     """When `_status/_du.json` does not exist, the renderer emits the
     re-run-processing banner instead of a table."""
-    from TRITON_SWMM_toolkit.report_renderers.disk_utilization import render
+    from hhemt.report_renderers.disk_utilization import render
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -171,7 +171,7 @@ def test_disk_utilization_renderer_emits_missing_banner_when_absent(tmp_path):
 def test_analysis_disk_utilization_property_returns_int(tmp_path):
     """`TRITONSWMM_analysis.disk_utilization_bytes` returns the sentinel
     payload value when present and None when absent."""
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from hhemt.analysis import TRITONSWMM_analysis
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -187,7 +187,7 @@ def test_analysis_disk_utilization_property_returns_int(tmp_path):
 
 
 def test_analysis_disk_utilization_property_returns_none_when_absent(tmp_path):
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from hhemt.analysis import TRITONSWMM_analysis
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -200,7 +200,7 @@ def test_analysis_disk_utilization_property_returns_none_when_absent(tmp_path):
 def test_scenario_disk_utilization_property_returns_int(tmp_path):
     """`TRITONSWMM_scenario.disk_utilization_bytes` reads
     `scen_paths.sim_folder/_status/_du.json`."""
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     sim_folder = tmp_path / "sims" / "scen_a"
     sim_folder.mkdir(parents=True)
@@ -215,7 +215,7 @@ def test_scenario_disk_utilization_property_returns_int(tmp_path):
 
 
 def test_scenario_disk_utilization_property_returns_none_when_absent(tmp_path):
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     sim_folder = tmp_path / "sims" / "scen_a"
     sim_folder.mkdir(parents=True)

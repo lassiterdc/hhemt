@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from TRITON_SWMM_toolkit import examples as ex
-from TRITON_SWMM_toolkit import generate_case_manifest as gcm
-from TRITON_SWMM_toolkit.config.case_manifest import CaseManifest
+from hhemt import examples as ex
+from hhemt import generate_case_manifest as gcm
+from hhemt.config.case_manifest import CaseManifest
 
 
 def test_casemanifest_minimal_backcompat():
@@ -106,7 +106,7 @@ def test_connect_falls_back_to_sign_in(monkeypatch):
 
 def test_verify_manifest_raises_on_mismatch(tmp_path):
     # R4: a non-empty manifest with a wrong sha256 raises ProcessingError.
-    from TRITON_SWMM_toolkit.exceptions import ProcessingError
+    from hhemt.exceptions import ProcessingError
     bag = tmp_path / "bagroot"
     (bag / "data" / "contents").mkdir(parents=True)
     f = bag / "data" / "contents" / "a.txt"
@@ -122,7 +122,7 @@ def test_verify_manifest_raises_on_mismatch(tmp_path):
 
 def test_verify_manifest_raises_on_absent_file(tmp_path):
     # R4: a manifest entry naming an absent file raises ProcessingError.
-    from TRITON_SWMM_toolkit.exceptions import ProcessingError
+    from hhemt.exceptions import ProcessingError
     bag = tmp_path / "bagroot"
     bag.mkdir()
     with pytest.raises(ProcessingError):

@@ -1,7 +1,7 @@
 """Cache orchestrator for synthetic test models.
 
 Cache layout:
-    <user_cache_dir>/TRITON_SWMM_toolkit/synthetic_test_models/<key>/
+    <user_cache_dir>/hhemt/synthetic_test_models/<key>/
         dem.tif
         landuse.tif
         landuse_lookup.csv
@@ -106,10 +106,10 @@ class SyntheticCaseArtifacts:
 
 def _toolkit_version() -> str:
     try:
-        return importlib.metadata.version("TRITON-SWMM-toolkit")
+        return importlib.metadata.version("hhemt")
     except importlib.metadata.PackageNotFoundError:
         try:
-            return importlib.metadata.version("TRITON_SWMM_toolkit")
+            return importlib.metadata.version("hhemt")
         except importlib.metadata.PackageNotFoundError:
             return "0.0.0+unknown"
 
@@ -171,7 +171,7 @@ def _assert_rim_matches_dem(params, dem_path: Path, swmm_full_path: Path) -> Non
 
 
 def _cache_root() -> Path:
-    return Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit")) / "synthetic_test_models"
+    return Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
 
 
 def get_or_build_synthetic_case(

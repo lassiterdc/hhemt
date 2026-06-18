@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from TRITON_SWMM_toolkit.eda import EdaResult, check_cross_sim_identity
-from TRITON_SWMM_toolkit.eda.cross_sim_identity import compare_variable_exact
+from hhemt.eda import EdaResult, check_cross_sim_identity
+from hhemt.eda.cross_sim_identity import compare_variable_exact
 
 # ---- Fast tier (no build): non-sensitivity skip + graceful-absent + kernel ----
 
@@ -35,7 +35,7 @@ def test_validate_analysis_graceful_absent(synthetic_multisim_completed):
     runs the 7 core checks (check_system_setup reads the DEM); the merge of EDA
     verdicts is graceful-absent when no eda/ dir exists, so the report carries no
     Cross-sim byte-identity row."""
-    from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from hhemt.analysis_validation import validate_analysis
 
     report = validate_analysis(synthetic_multisim_completed)
     assert not any(c.name == "Cross-sim byte-identity" for c in report.checks)
@@ -122,7 +122,7 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
 @pytest.mark.slow
 def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
     """A persisted EDA verdict is merged into validate_analysis()'s ValidationReport."""
-    from TRITON_SWMM_toolkit.analysis_validation import validate_analysis
+    from hhemt.analysis_validation import validate_analysis
 
     analysis = synthetic_sensitivity_completed.master_analysis
     check_cross_sim_identity(analysis)

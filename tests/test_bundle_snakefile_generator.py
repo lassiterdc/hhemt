@@ -14,7 +14,7 @@ from typing import Literal
 
 import pytest
 
-from TRITON_SWMM_toolkit.bundle.snakefile_generator import (
+from hhemt.bundle.snakefile_generator import (
     generate_regeneration_snakefile,
     write_regeneration_snakefile,
 )
@@ -196,7 +196,7 @@ def test_preamble_preserved_for_jinja2_conditionals(multi_sim_bundle: Path) -> N
     """The emitted body contains the import preamble and _toolkit_version fallback."""
     text = generate_regeneration_snakefile(multi_sim_bundle, static_backend="matplotlib")
     assert "from importlib.metadata import version as _pkg_version" in text
-    assert '_toolkit_version = _pkg_version("TRITON_SWMM_toolkit")' in text
+    assert '_toolkit_version = _pkg_version("hhemt")' in text
     assert 'config["toolkit_version"] = _toolkit_version' in text
 
 

@@ -16,6 +16,6 @@
 # Load modules
 module purge
 module ${modules}
-conda activate triton_swmm_toolkit
+conda activate hhemt
 
 ${run_command} ${SLURM_ARRAY_TASK_ID} --prepare-sims=True --process-sim-timeseries=True

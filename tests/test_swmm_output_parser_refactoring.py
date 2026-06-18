@@ -21,9 +21,9 @@ from importlib.resources import files
 import tests.fixtures.test_case_catalog as cases
 
 import tempfile
-from TRITON_SWMM_toolkit.utils import write_zarr
+from hhemt.utils import write_zarr
 
-from TRITON_SWMM_toolkit.swmm_output_parser import (
+from hhemt.swmm_output_parser import (
     retrieve_SWMM_outputs_as_datasets,
     convert_swmm_tdeltas_to_minutes,
     return_swmm_outputs,
@@ -32,7 +32,7 @@ from TRITON_SWMM_toolkit.swmm_output_parser import (
     return_data_from_rpt,
     parse_total_elapsed,
 )
-from TRITON_SWMM_toolkit.constants import (
+from hhemt.constants import (
     LST_COL_HEADERS_NODE_FLOOD_SUMMARY,
     LST_COL_HEADERS_NODE_FLOW_SUMMARY,
     LST_COL_HEADERS_LINK_FLOW_SUMMARY,
@@ -388,7 +388,7 @@ class TestWarningSuppression:
 
     def test_no_unstable_specification_warning(self, tmp_path):
         """Verify no UnstableSpecificationWarning during zarr write."""
-        from TRITON_SWMM_toolkit.utils import write_zarr
+        from hhemt.utils import write_zarr
 
         # Create a simple dataset with string coordinates
         ds = xr.Dataset(

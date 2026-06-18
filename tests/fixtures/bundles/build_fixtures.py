@@ -14,7 +14,7 @@ place and produces byte-identical output modulo deterministic
 timestamps in ``bundle_manifest.json``.
 
 Source data: the cached synth-analysis state under
-``$HOME/.cache/TRITON_SWMM_toolkit/synthetic_test_runs/``. The script
+``$HOME/.cache/hhemt/synthetic_test_runs/``. The script
 does NOT call ``analysis.run()`` — the cached state must already be
 populated (run ``pytest tests/test_synth_04_multisim_with_snakemake.py
 tests/test_synth_05_sensitivity_analysis_with_snakemake.py`` once if
@@ -25,7 +25,7 @@ For each case the script:
   1. Materializes the analysis object via the cached-test-case helper.
   2. Writes ``cfg_system.yaml`` + ``cfg_analysis.yaml`` via the actual
      ``_copy_configs_with_relative_paths`` helper from
-     ``TRITON_SWMM_toolkit.bundle._emit`` — so the fixture exercises
+     ``hhemt.bundle._emit`` — so the fixture exercises
      the real path-rewriter code path.
   3. Writes a minimal ``bundle_manifest.json`` containing the
      ``bundle_root_invariants`` dict (Phase 3 forward-compat).
@@ -53,14 +53,14 @@ if str(TESTS_ROOT) not in sys.path:
 
 from tests.fixtures import test_case_catalog as cases  # noqa: E402
 
-from TRITON_SWMM_toolkit.bundle._emit import (  # noqa: E402
+from hhemt.bundle._emit import (  # noqa: E402
     _copy_configs_with_relative_paths,
 )
-from TRITON_SWMM_toolkit.bundle._path_policy import (  # noqa: E402
+from hhemt.bundle._path_policy import (  # noqa: E402
     _PATH_FIELD_POLICY,
     enumerate_path_fields,
 )
-from TRITON_SWMM_toolkit.version_migration.constants import (  # noqa: E402
+from hhemt.version_migration.constants import (  # noqa: E402
     BUNDLE_MANIFEST_FILENAME,
     BUNDLE_SCHEMA_VERSION,
     LAYOUT_VERSION,

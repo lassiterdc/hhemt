@@ -44,7 +44,7 @@ import pytest
 
 _RENDERERS_DIR = (
     Path(__file__).resolve().parents[1]
-    / "src" / "TRITON_SWMM_toolkit" / "report_renderers"
+    / "src" / "hhemt" / "report_renderers"
 )
 
 _FORBIDDEN_SAVE_METHODS: frozenset[str] = frozenset({"savefig"})
@@ -120,7 +120,7 @@ def test_renderer_does_not_bypass_emit_helper(path: Path) -> None:
 
 def test_emit_plot_with_sources_html_branch_compliant() -> None:
     src = textwrap.dedent("""
-        from TRITON_SWMM_toolkit.report_renderers._figure_emission import emit_plot_with_sources
+        from hhemt.report_renderers._figure_emission import emit_plot_with_sources
 
         def render(analysis, report_cfg, output_path, **kwargs):
             html_str = "<div>example</div>"

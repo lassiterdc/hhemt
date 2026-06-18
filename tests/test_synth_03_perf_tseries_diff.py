@@ -52,7 +52,7 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
     ``max(Rank).sum(timestep_min)`` of correctly-diffed deltas selects the slowest
     rank per column.
     """
-    from TRITON_SWMM_toolkit.process_simulation import _aggregate_perf_summary
+    from hhemt.process_simulation import _aggregate_perf_summary
 
     summary = _aggregate_perf_summary(synthetic_perf_dir)
 
@@ -70,7 +70,7 @@ def test_per_rank_diff_aggregation_is_correct(synthetic_perf_dir):
 
 def test_corrected_reconstruction_matches_final_performance_txt(synthetic_perf_dir):
     """Cross-validate per-rank deltas sum-equal the final cumulative per rank."""
-    from TRITON_SWMM_toolkit.process_simulation import _aggregate_perf_tseries
+    from hhemt.process_simulation import _aggregate_perf_tseries
 
     ds = _aggregate_perf_tseries(synthetic_perf_dir)
     rank0_total = ds["Total"].sel(Rank=0).sum(dim="timestep_min").item()
@@ -90,7 +90,7 @@ def test_reset_detector_handles_resume(synthetic_perf_dir):
     that resets the counter; the corrected aggregator's reset-detector branch should
     treat the post-reset row's absolute value as the new cumulative for that rank.
     """
-    from TRITON_SWMM_toolkit.process_simulation import _aggregate_perf_tseries
+    from hhemt.process_simulation import _aggregate_perf_tseries
 
     reset_tstep_file = synthetic_perf_dir / "performance10.txt"
     content = "%Rank, Compute, MPI, IO, Resize, SWMM, Other, Simulation, Init, Total\n"

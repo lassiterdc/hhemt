@@ -3,9 +3,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from TRITON_SWMM_toolkit.config.analysis import analysis_config
-from TRITON_SWMM_toolkit.config.loaders import load_system_config_from_dict
-from TRITON_SWMM_toolkit.config.system import system_config
+from hhemt.config.analysis import analysis_config
+from hhemt.config.loaders import load_system_config_from_dict
+from hhemt.config.system import system_config
 
 
 def _touch(path: Path) -> Path:
@@ -94,8 +94,8 @@ def _write_report_yaml(path: Path, body: str) -> Path:
 
 
 def test_report_config_loads_default(tmp_path: Path):
-    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.report import report_config
 
     yaml_path = _write_report_yaml(
         tmp_path / "report.yaml",
@@ -108,8 +108,8 @@ def test_report_config_loads_default(tmp_path: Path):
 
 def test_report_config_rejects_unknown_field(tmp_path: Path):
     """Flag 7 — `extra='forbid'` regression test."""
-    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.report import report_config
 
     yaml_path = _write_report_yaml(
         tmp_path / "report.yaml",
@@ -120,8 +120,8 @@ def test_report_config_rejects_unknown_field(tmp_path: Path):
 
 
 def test_report_config_sensitivity_missing_independent_vars(tmp_path: Path):
-    from TRITON_SWMM_toolkit.config.loaders import yaml_to_model
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.loaders import yaml_to_model
+    from hhemt.config.report import report_config
 
     yaml_path = _write_report_yaml(
         tmp_path / "report.yaml",
@@ -134,12 +134,12 @@ def test_report_config_sensitivity_missing_independent_vars(tmp_path: Path):
 def test_validate_sensitivity_independent_vars_missing_columns(tmp_path: Path):
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         SensitivityReportConfig,
         report_config,
         validate_sensitivity_independent_vars,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     csv_path = tmp_path / "sa.csv"
     pd.DataFrame({"n_omp_threads": [1, 2], "run_mode": ["serial", "parallel"]}).to_csv(csv_path, index=False)
@@ -153,12 +153,12 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
     """Flag 17 — Snakemake-safe charset validation."""
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         SensitivityReportConfig,
         report_config,
         validate_sensitivity_independent_vars,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     csv_path = tmp_path / "sa.csv"
     pd.DataFrame({"bad name": [1, 2]}).to_csv(csv_path, index=False)
@@ -169,11 +169,11 @@ def test_validate_sensitivity_independent_vars_charset(tmp_path: Path):
 
 def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path: Path):
     """F-I-6 — sensitivity CSV present with no sensitivity block raises."""
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         report_config,
         validate_sensitivity_independent_vars,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     csv_path = tmp_path / "sa.csv"
     csv_path.write_text("col\n1\n")
@@ -183,12 +183,12 @@ def test_validate_sensitivity_fails_when_block_missing_but_csv_present(tmp_path:
 
 
 def test_validate_sensitivity_fails_when_block_present_but_no_csv(tmp_path: Path):
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         SensitivityReportConfig,
         report_config,
         validate_sensitivity_independent_vars,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     cfg = report_config(sensitivity=SensitivityReportConfig(independent_vars=["col"]))
     with pytest.raises(ConfigurationError, match="no sensitivity CSV path"):
@@ -203,7 +203,7 @@ def test_validate_sensitivity_fails_when_block_present_but_no_csv(tmp_path: Path
 def test_reporting_sets_registry_imports_cleanly():
     """Registry smoke (no import cycle): REPORTING_SETS holds exactly the
     shipped sets and benchmarking carries its run-entry validator key."""
-    from TRITON_SWMM_toolkit.report_renderers._reporting_sets import (
+    from hhemt.report_renderers._reporting_sets import (
         REPORTING_SETS,
         get_reporting_set,
     )
@@ -214,7 +214,7 @@ def test_reporting_sets_registry_imports_cleanly():
 
 
 def test_reporting_set_field_defaults_to_default():
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.report import report_config
 
     assert report_config().reporting_set == "default"
 
@@ -223,7 +223,7 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
     """R3 — a pre-conversion report_config.yaml carrying
     sensitivity.mode: benchmarking loads with a DeprecationWarning and the
     legacy `mode` key dropped (no extra_forbidden), independent_vars retained."""
-    from TRITON_SWMM_toolkit.config.report import report_config
+    from hhemt.config.report import report_config
 
     with pytest.warns(DeprecationWarning, match="report_config.sensitivity.mode is retired"):
         cfg = report_config.model_validate({"sensitivity": {"mode": "benchmarking", "independent_vars": ["x"]}})
@@ -235,7 +235,7 @@ def test_legacy_mode_key_rewritten_with_deprecation_warning():
 def test_resolve_active_reporting_set_name_sentinel_resolution():
     """The 'default' sentinel resolves to 'benchmarking' for sensitivity
     analyses and to the standard 'default' set otherwise (CSV-free)."""
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         report_config,
         resolve_active_reporting_set_name,
     )
@@ -246,7 +246,7 @@ def test_resolve_active_reporting_set_name_sentinel_resolution():
 
 
 def test_resolve_active_reporting_set_name_explicit_value_taken_verbatim():
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         report_config,
         resolve_active_reporting_set_name,
     )
@@ -260,11 +260,11 @@ def test_resolve_active_reporting_set_name_unknown_raises():
     """R2 — an unknown reporting_set raises ConfigurationError naming the
     registered sets (CSV-free resolver; this is what the render-path fail-soft
     catches before degrading to 'default')."""
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         report_config,
         resolve_active_reporting_set_name,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     cfg = report_config(reporting_set="does_not_exist")
     with pytest.raises(ConfigurationError) as exc:
@@ -277,11 +277,11 @@ def test_resolve_active_reporting_set_name_unknown_raises():
 def test_validate_active_reporting_set_unknown_raises():
     """R2 — validate_active_reporting_set surfaces the same unknown-set error
     at run-entry."""
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         report_config,
         validate_active_reporting_set,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     cfg = report_config(reporting_set="nope")
     with pytest.raises(ConfigurationError, match="nope"):
@@ -293,12 +293,12 @@ def test_validate_active_reporting_set_benchmarking_delegates_csv(tmp_path: Path
     validate_sensitivity_independent_vars — a missing CSV column raises."""
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         SensitivityReportConfig,
         report_config,
         validate_active_reporting_set,
     )
-    from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+    from hhemt.exceptions import ConfigurationError
 
     csv_path = tmp_path / "sa.csv"
     pd.DataFrame({"n_omp_threads": [1, 2]}).to_csv(csv_path, index=False)
@@ -313,7 +313,7 @@ def test_validate_active_reporting_set_returns_resolved_name(tmp_path: Path):
     independent_vars all match the CSV, and returns that name."""
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.config.report import (
+    from hhemt.config.report import (
         SensitivityReportConfig,
         report_config,
         validate_active_reporting_set,
@@ -335,7 +335,7 @@ def test_react_surgery_order_js_none_default_is_byte_identical():
     """FQ2 byte-identity: the None-default (historical) ORDER literal is exactly
     the pre-refactor hardcoded comparator dict, so non-passing callers see no
     change in the rendered HTML."""
-    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+    from hhemt.report_renderers._react_surgery import (
         _DEFAULT_CATEGORY_ORDER,
         _order_js,
     )
@@ -351,7 +351,7 @@ def test_react_surgery_order_js_none_default_is_byte_identical():
 def test_react_surgery_threads_config_driven_category_order():
     """A config-driven category_order produces a 1-indexed ORDER literal in the
     surgered comparator (not the alphabetical fallback)."""
-    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+    from hhemt.report_renderers._react_surgery import (
         apply_post_process_surgery,
     )
 
@@ -370,7 +370,7 @@ def test_react_surgery_none_default_matches_hardcoded_comparator():
     """Render regression: with category_order=None the surgered comparator is
     byte-identical to the historical hardcoded comparator (the standard sidebar
     order). This is the render-path observable for the default set."""
-    from TRITON_SWMM_toolkit.report_renderers._react_surgery import (
+    from hhemt.report_renderers._react_surgery import (
         apply_post_process_surgery,
     )
 
@@ -386,7 +386,7 @@ def test_react_surgery_none_default_matches_hardcoded_comparator():
 
 def test_report_artifacts_not_in_globus_exclude_patterns():
     """Flag 14 — R12 automated Globus-exclude audit."""
-    from TRITON_SWMM_toolkit.config.globus import DEFAULT_EXCLUDE_PATTERNS
+    from hhemt.config.globus import DEFAULT_EXCLUDE_PATTERNS
 
     for bad in ("plots", "report", "analysis_report.html"):
         assert not any(bad in p for p in DEFAULT_EXCLUDE_PATTERNS), (
@@ -558,7 +558,7 @@ def test_process_append_batch_budget_resolves_from_job_ram(tmp_path: Path, monke
     The cgroup reader is monkeypatched to None so the assertion is deterministic
     regardless of the host's actual cgroup ceiling (which would only clamp lower).
     """
-    import TRITON_SWMM_toolkit.config.analysis as cfg_mod
+    import hhemt.config.analysis as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "_read_cgroup_memory_limit_mib", lambda: None)
     cfg = _minimal_analysis_config_dict(tmp_path)

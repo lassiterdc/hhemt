@@ -6,7 +6,7 @@ load-bearing mechanism that prevents Snakemake's `--rerun-triggers mtime input`
 cascade-rerun on idempotent processing re-runs).
 
 Run:
-    conda run -n triton_swmm_toolkit python -m pytest tests/test_synth_du_sentinel_mtime_preservation.py -v
+    conda run -n hhemt python -m pytest tests/test_synth_du_sentinel_mtime_preservation.py -v
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.du_sentinels import write_du_sentinel, read_du_sentinel
+from hhemt.du_sentinels import write_du_sentinel, read_du_sentinel
 
 
 def _write(tmp_path: Path, **overrides) -> bool:

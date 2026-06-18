@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.validation import (
+from hhemt.validation import (
     ValidationResult,
     ValidationIssue,
     IssueLevel,
@@ -11,8 +11,8 @@ from TRITON_SWMM_toolkit.validation import (
     validate_system_config,
     validate_analysis_config,
 )
-from TRITON_SWMM_toolkit.config.loaders import load_system_config, load_analysis_config
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt.config.loaders import load_system_config, load_analysis_config
+from hhemt.exceptions import ConfigurationError
 
 
 def test_validation_result_basic():
@@ -128,7 +128,7 @@ def test_validation_model_selection_fails_when_all_disabled():
 
 def test_validate_data_consistency(norfolk_multi_sim_analysis):
     """Test data cross-consistency validation."""
-    from TRITON_SWMM_toolkit.validation import validate_data_consistency
+    from hhemt.validation import validate_data_consistency
 
     cfg_sys = norfolk_multi_sim_analysis._system.cfg_system
     cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
@@ -143,8 +143,8 @@ def test_validate_data_consistency(norfolk_multi_sim_analysis):
 
 def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
     """Test storm tide validation when toggle disabled."""
-    from TRITON_SWMM_toolkit.validation import _validate_storm_tide_data
-    from TRITON_SWMM_toolkit.validation import ValidationResult
+    from hhemt.validation import _validate_storm_tide_data
+    from hhemt.validation import ValidationResult
 
     cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
@@ -158,8 +158,8 @@ def test_validate_storm_tide_when_disabled(norfolk_multi_sim_analysis):
 
 def test_validate_units_requires_rainfall_units(norfolk_multi_sim_analysis):
     """Test units validation requires explicit rainfall_units."""
-    from TRITON_SWMM_toolkit.validation import _validate_units
-    from TRITON_SWMM_toolkit.validation import ValidationResult
+    from hhemt.validation import _validate_units
+    from hhemt.validation import ValidationResult
 
     cfg_analysis = norfolk_multi_sim_analysis.cfg_analysis
     result = ValidationResult()
@@ -204,7 +204,7 @@ def test_preflight_runtime_exceeds_partition_cap_fails(synth_multi_sim_analysis,
     """
     import yaml as _yaml
 
-    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+    from hhemt.config.loaders import load_hpc_system_config
 
     a = synth_multi_sim_analysis
     cfg_sys = a._system.cfg_system
@@ -248,7 +248,7 @@ def test_preflight_1job_duration_exceeds_partition_cap_fails(synth_multi_sim_ana
     """
     import yaml as _yaml
 
-    from TRITON_SWMM_toolkit.config.loaders import load_hpc_system_config
+    from hhemt.config.loaders import load_hpc_system_config
 
     a = synth_multi_sim_analysis
     cfg_sys = a._system.cfg_system
@@ -291,7 +291,7 @@ def test_dq6_per_row_partition_requires_batch_job(tmp_path):
 
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.validation import (
+    from hhemt.validation import (
         ValidationResult,
         _validate_per_row_partition_requires_batch_job,
     )
@@ -331,7 +331,7 @@ def test_dq6_single_partition_allowed_under_1job(tmp_path):
 
     import pandas as pd
 
-    from TRITON_SWMM_toolkit.validation import (
+    from hhemt.validation import (
         ValidationResult,
         _validate_per_row_partition_requires_batch_job,
     )

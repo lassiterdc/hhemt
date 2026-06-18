@@ -2,4 +2,4 @@
 rule analysis_report:
     output: "analysis_report/index.html"
     shell:
-        "TRITON_SWMM_toolkit render --report-config /nonexistent/v0005/missing_source_cfg.yaml"
+        "hhemt render --report-config /nonexistent/v0005/missing_source_cfg.yaml"

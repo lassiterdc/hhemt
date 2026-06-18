@@ -3,13 +3,13 @@
 import pytest
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.profile_catalog import (
+from hhemt.profile_catalog import (
     load_profile_catalog,
     get_profile_entry,
     list_testcases,
     list_case_studies,
 )
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError, CLIValidationError
+from hhemt.exceptions import ConfigurationError, CLIValidationError
 
 
 def test_load_nonexistent_catalog():

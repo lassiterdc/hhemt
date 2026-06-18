@@ -1,0 +1,58 @@
+# Working environment for TRITON-SWMM toolkit development and simulation execution.
+#
+# NOTE: This is currently the single active environment for all work — development,
+# testing, and running simulations. It contains the full dependency set.
+#
+# The Snakefile 'conda:' directives reference this file, but --use-conda is NOT
+# currently passed to Snakemake, so those directives have no effect. The two-environment
+# split (orchestration vs. execution) described in older comments is aspirational and
+# not yet implemented.
+
+name: hhemt
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - typer
+  - pydantic
+  - pyyaml
+  - zarr
+  - netcdf4
+  - scipy
+  - pydap
+  - h5netcdf
+  - cftime
+  - bottleneck
+  - dask
+  - matplotlib
+  - seaborn
+  - sparse
+  - pint
+  - bagit
+  - openpyxl
+  # geospatial packages
+  - rioxarray
+  - cartopy
+  - geopandas
+  - fiona
+  - pyproj
+  - shapely
+  # other stuff
+  - coverage
+  - pytest
+  - ruff
+  - ty
+  - ipdb
+  - ipykernel
+  - pip
+  - pip:
+      - hsclient
+      - pyswmm
+      - swmmio
+      - tabulate
+      - notebook
+      - jupyter_server
+      - ipywidgets
+      - globus-sdk>=3.0
+      - marimo
+      - networkx<3.4  # pin for swmmio compatibility

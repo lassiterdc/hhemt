@@ -5,9 +5,9 @@ pytestmark = pytest.mark.skipif(
     not tst_ut.on_frontier(), reason="Only runs on Frontier HPC"
 )
 
-# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/TRITON-SWMM_toolkit
+# cd /lustre/orion/***REMOVED***/proj-shared/***REMOVED***/hhemt
 # salloc -A ***REMOVED*** -p batch -t 0-02:00:00 -N 2 --cpus-per-task=1 --ntasks-per-node=32 --gres=gpu:2 -q debug --mem=0
-# conda activate triton_swmm_toolkit
+# conda activate hhemt
 
 # bash commands
 # pgrep -l srun # lists all srun processes

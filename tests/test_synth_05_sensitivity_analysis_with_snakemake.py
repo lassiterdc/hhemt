@@ -350,12 +350,12 @@ def test_reprocess_process_self_heals_deleted_summary(synth_sensitivity_analysis
     """
     import shutil
 
-    import TRITON_SWMM_toolkit.analysis as _analysis_mod
-    from TRITON_SWMM_toolkit.constants import (
+    import hhemt.analysis as _analysis_mod
+    from hhemt.constants import (
         consolidate_subanalysis_flag,
         process_timeseries_flag_per_sa,
     )
-    from TRITON_SWMM_toolkit.scenario import (
+    from hhemt.scenario import (
         TRITONSWMM_scenario,
         compute_event_id_slug,
     )
@@ -534,7 +534,7 @@ def test_master_consolidation_tolerates_incomplete_subanalysis(synth_sensitivity
 
     import xarray as xr
 
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     _SUMMARY_ATTRS_BY_MODEL = {
         "tritonswmm": (
@@ -789,7 +789,7 @@ def test_no_html_content_in_svg_file_references(synth_sensitivity_analysis_cache
 import yaml as _yaml  # noqa: E402
 
 import tests.fixtures.test_case_catalog as _cases  # noqa: E402
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError  # noqa: E402
+from hhemt.exceptions import ConfigurationError  # noqa: E402
 
 
 def test_system_overlay_mutual_exclusion_with_system_config_yaml():
@@ -913,7 +913,7 @@ def test_build_unique_system_targets_skips_purge_in_runner_subprocess(
     synth_sensitivity_with_system_overlay, monkeypatch,
 ):
     """Phase 1 R-P1-4 — is_main_orchestrator=False skips fast_rmtree of _generated/."""
-    from TRITON_SWMM_toolkit import utils as _utils_mod
+    from hhemt import utils as _utils_mod
     analysis = synth_sensitivity_with_system_overlay
     generated_dir = analysis.analysis_paths.analysis_dir / "_generated"
     assert generated_dir.exists()
@@ -957,7 +957,7 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     import shutil
     from pathlib import Path
 
-    from TRITON_SWMM_toolkit.scenario import TRITONSWMM_scenario
+    from hhemt.scenario import TRITONSWMM_scenario
 
     _SUMMARY_ATTRS_BY_MODEL = {
         "tritonswmm": (
@@ -1063,7 +1063,7 @@ def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_se
     import shutil
     from pathlib import Path
 
-    os.environ.pop("TRITON_SWMM_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
+    os.environ.pop("HHEMT_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
     analysis = synth_sensitivity_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))
 

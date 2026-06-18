@@ -8,11 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from TRITON_SWMM_toolkit.config.globus import (
+from hhemt.config.globus import (
     PostRunTransferConfig,
     _normalize_wsl_path,
 )
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError
 
 
 class TestNormalizeWslPath:

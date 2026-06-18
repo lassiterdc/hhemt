@@ -8,7 +8,7 @@ works correctly for 1_job_many_srun_tasks mode.
 import pytest
 from unittest.mock import Mock, patch
 from pathlib import Path
-from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+from hhemt.workflow import SnakemakeWorkflowBuilder
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 

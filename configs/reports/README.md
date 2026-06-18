@@ -4,7 +4,7 @@ Each `*.yaml` here defines a `report_config` consumed by `analysis.run(report_co
 
 ## Schema
 
-See `src/TRITON_SWMM_toolkit/config/report.py` for the canonical Pydantic schema.
+See `src/hhemt/config/report.py` for the canonical Pydantic schema.
 
 ## Files
 

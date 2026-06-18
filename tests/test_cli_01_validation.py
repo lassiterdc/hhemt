@@ -11,7 +11,7 @@ import pytest
 from typer.testing import CliRunner
 from pathlib import Path
 
-from TRITON_SWMM_toolkit.cli import app
+from hhemt.cli import app
 
 runner = CliRunner()
 

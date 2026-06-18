@@ -4,7 +4,7 @@
 Implements the MUTATION_SITE_MISSING_RESTAMP audit rule deferred by the
 stipulation `du sentinels written at every mutation site.md`. Pure-stdlib
 ast.NodeVisitor; mirrors scripts/check_layout_version.py. Full-corpus scan of
-src/TRITON_SWMM_toolkit/**/*.py (NOT git-diff-scoped). Exit 0 = clean, 1 = >=1
+src/hhemt/**/*.py (NOT git-diff-scoped). Exit 0 = clean, 1 = >=1
 failure.
 
 Rules:
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SRC_ROOT = REPO_ROOT / "src" / "TRITON_SWMM_toolkit"
+SRC_ROOT = REPO_ROOT / "src" / "hhemt"
 
 EXEMPT_CATEGORIES = frozenset(
     {

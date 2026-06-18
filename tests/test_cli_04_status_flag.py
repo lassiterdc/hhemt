@@ -8,7 +8,7 @@ those in test_cli_03_actions.py which use synthetic test data.
 import pytest
 from typer.testing import CliRunner
 
-from TRITON_SWMM_toolkit.cli import app
+from hhemt.cli import app
 
 runner = CliRunner()
 

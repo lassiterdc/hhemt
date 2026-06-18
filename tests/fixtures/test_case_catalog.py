@@ -22,7 +22,7 @@ import pandas as pd
 import platformdirs
 import pytest
 
-import TRITON_SWMM_toolkit.constants as cnst
+import hhemt.constants as cnst
 from tests.fixtures import worktree_slug
 
 # Import from test fixtures
@@ -30,18 +30,18 @@ from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
     retrieve_TRITON_SWMM_test_case,
 )
-from TRITON_SWMM_toolkit.case_study_catalog import (
+from hhemt.case_study_catalog import (
     _FRONTIER_ANALYSIS_OVERLAY,
     _FRONTIER_SYSTEM_OVERLAY,
     _UVA_ANALYSIS_OVERLAY,
     _UVA_SYSTEM_OVERLAY,
 )
-from TRITON_SWMM_toolkit.examples import NorfolkIreneExample
+from hhemt.examples import NorfolkIreneExample
 
 # UVA HPC example-data dir (was the retired UVA platform preset's
 # example_data_dir). The literal $USER scratch path is the Phase-5
 # anonymization-scrub target.
-_UVA_EXAMPLE_DATA_DIR = Path("/scratch") / os.getenv("USER", "unknown") / "triton_swmm_toolkit_data"
+_UVA_EXAMPLE_DATA_DIR = Path("/scratch") / os.getenv("USER", "unknown") / "hhemt_data"
 
 
 def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
@@ -61,7 +61,7 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
 
 @dataclass
 class all_examples:
-    from TRITON_SWMM_toolkit.examples import TRITON_SWMM_example
+    from hhemt.examples import TRITON_SWMM_example
 
     @staticmethod
     def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
@@ -949,7 +949,7 @@ class Local_TestCases:
         """Phase 1 R3 — row with both system_config_yaml AND system.* → ConfigurationError."""
         _require_cpu_cores_for_sensitivity()
         dest_dir = (
-            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            Path(platformdirs.user_cache_dir("hhemt"))
             / "synthetic_test_runs"
             / worktree_slug()
             / "_sensitivity_configs"
@@ -1239,7 +1239,7 @@ class Local_TestCases:
         # Per-worktree rooting matches test_case_builder so concurrent runs in
         # sibling worktrees do not race on the sensitivity CSV.
         runs_root = (
-            Path(platformdirs.user_cache_dir("TRITON_SWMM_toolkit"))
+            Path(platformdirs.user_cache_dir("hhemt"))
             / "synthetic_test_runs"
             / worktree_slug()
         )

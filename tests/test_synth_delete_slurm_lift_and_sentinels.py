@@ -26,7 +26,7 @@ from unittest.mock import patch
 
 import pytest
 
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ from TRITON_SWMM_toolkit.exceptions import ConfigurationError
 def test_resolve_delete_mode_from_method_recognized_values(method, expected):
     """`_resolve_delete_mode_from_method` maps each recognized method value
     (and None) to the correct delete-executor mode."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     # Instance is unused by this pure method — call as an unbound function
     # via the class to avoid needing a fully-constructed analysis.
@@ -58,7 +58,7 @@ def test_resolve_delete_mode_from_method_recognized_values(method, expected):
 
 def test_resolve_delete_mode_from_method_unknown_raises():
     """Unrecognized values raise ConfigurationError per the fail-fast contract."""
-    from TRITON_SWMM_toolkit.workflow import SnakemakeWorkflowBuilder
+    from hhemt.workflow import SnakemakeWorkflowBuilder
 
     with pytest.raises(ConfigurationError):
         SnakemakeWorkflowBuilder._resolve_delete_mode_from_method(
@@ -93,7 +93,7 @@ def test_delete_scenario_runner_writes_and_cleans_sentinel_on_success(
     tmp_path, slurm_env
 ):
     """Happy path: sentinel written at entry, deleted in finally on clean return."""
-    from TRITON_SWMM_toolkit import delete_scenario_runner as runner
+    from hhemt import delete_scenario_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "sims" / "scen_a").mkdir(parents=True)
@@ -109,7 +109,7 @@ def test_delete_scenario_runner_writes_and_cleans_sentinel_on_success(
 
 def test_delete_scenario_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
     """Exception path: sentinel still deleted by finally; exception propagates."""
-    from TRITON_SWMM_toolkit import delete_scenario_runner as runner
+    from hhemt import delete_scenario_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "sims" / "scen_a").mkdir(parents=True)
@@ -127,7 +127,7 @@ def test_delete_scenario_runner_cleans_sentinel_on_exception(tmp_path, slurm_env
 def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch):
     """When SLURM_JOB_ID is unset, no sentinel is written (matches local-run pattern)."""
     monkeypatch.delenv("SLURM_JOB_ID", raising=False)
-    from TRITON_SWMM_toolkit import delete_scenario_runner as runner
+    from hhemt import delete_scenario_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "sims" / "scen_a").mkdir(parents=True)
@@ -142,7 +142,7 @@ def test_delete_scenario_runner_no_op_without_slurm_job_id(tmp_path, monkeypatch
 def test_delete_subanalysis_runner_writes_and_cleans_sentinel_on_success(
     tmp_path, slurm_env
 ):
-    from TRITON_SWMM_toolkit import delete_subanalysis_runner as runner
+    from hhemt import delete_subanalysis_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "subanalyses" / "sa_3").mkdir(parents=True)
@@ -159,7 +159,7 @@ def test_delete_subanalysis_runner_writes_and_cleans_sentinel_on_success(
 
 
 def test_delete_subanalysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_env):
-    from TRITON_SWMM_toolkit import delete_subanalysis_runner as runner
+    from hhemt import delete_subanalysis_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     (analysis_dir / "subanalyses" / "sa_3").mkdir(parents=True)
@@ -179,7 +179,7 @@ def test_delete_subanalysis_runner_cleans_sentinel_on_exception(tmp_path, slurm_
 def test_delete_consolidation_runner_writes_and_cleans_sentinel_on_success(
     tmp_path, slurm_env
 ):
-    from TRITON_SWMM_toolkit import delete_consolidation_runner as runner
+    from hhemt import delete_consolidation_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()
@@ -200,7 +200,7 @@ def test_delete_consolidation_runner_writes_and_cleans_sentinel_on_success(
 def test_delete_consolidation_runner_cleans_sentinel_on_exception(
     tmp_path, slurm_env
 ):
-    from TRITON_SWMM_toolkit import delete_consolidation_runner as runner
+    from hhemt import delete_consolidation_runner as runner
 
     analysis_dir = tmp_path / "analysis"
     analysis_dir.mkdir()

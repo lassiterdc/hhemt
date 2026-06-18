@@ -12,7 +12,7 @@ to the specification:
 
 from typer.testing import CliRunner
 
-from TRITON_SWMM_toolkit.cli import app
+from hhemt.cli import app
 
 runner = CliRunner()
 
@@ -187,8 +187,8 @@ def test_exit_code_2_configuration_error_invalid_catalog_path():
 
 def test_exit_code_mapping_utility():
     """Test cli_utils.map_exception_to_exit_code() utility function."""
-    from TRITON_SWMM_toolkit.cli_utils import map_exception_to_exit_code
-    from TRITON_SWMM_toolkit.exceptions import (
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.exceptions import (
         CLIValidationError,
         ConfigurationError,
         CompilationError,

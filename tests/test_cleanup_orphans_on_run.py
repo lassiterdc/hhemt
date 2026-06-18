@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from TRITON_SWMM_toolkit.exceptions import ConfigurationError
+from hhemt.exceptions import ConfigurationError
 
 pytestmark = pytest.mark.requires_snakemake_subprocess
 
@@ -121,14 +121,14 @@ def test_run_aborts_when_orphans_and_flag_false(sensitivity_analysis_with_orphan
     would raise its own ConfigurationError before the orphan gate is reached. Mock it
     out so the orphan-specific ConfigurationError can surface for the assertion."""
     analysis = sensitivity_analysis_with_orphans
-    with patch("TRITON_SWMM_toolkit.config.report.validate_sensitivity_independent_vars"):
+    with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with pytest.raises(ConfigurationError, match="cleanup_orphans=True"):
             analysis.run(cleanup_orphans=False, dry_run=True, verbose=False)
 
 
 def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
     analysis = sensitivity_analysis_with_orphans
-    with patch("TRITON_SWMM_toolkit.config.report.validate_sensitivity_independent_vars"):
+    with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
             analysis.run(cleanup_orphans=True, dry_run=True, verbose=False)
     analysis_dir = analysis.analysis_paths.analysis_dir
@@ -137,7 +137,7 @@ def test_run_cleans_when_flag_true(sensitivity_analysis_with_orphans):
 
 def test_run_no_orphans_proceeds_silently(norfolk_sensitivity_analysis_cached):
     analysis = norfolk_sensitivity_analysis_cached
-    with patch("TRITON_SWMM_toolkit.config.report.validate_sensitivity_independent_vars"):
+    with patch("hhemt.config.report.validate_sensitivity_independent_vars"):
         with patch.object(analysis, "submit_workflow", return_value={"success": True, "mode": "local", "snakefile_path": None, "message": "ok"}):
             # Should not raise even though cleanup_orphans=False (default)
             analysis.run(dry_run=True, verbose=False)

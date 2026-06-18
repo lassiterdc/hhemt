@@ -22,7 +22,7 @@ import pandas as pd
 import yaml
 
 if TYPE_CHECKING:
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
+    from hhemt.analysis import TRITONSWMM_analysis
 
 
 def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) -> dict:
@@ -68,8 +68,8 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
 
 def construct_analysis_from_paths(paths: dict) -> "TRITONSWMM_analysis":
     """Construct fresh TRITONSWMM_system + TRITONSWMM_analysis from cloned configs."""
-    from TRITON_SWMM_toolkit.analysis import TRITONSWMM_analysis
-    from TRITON_SWMM_toolkit.system import TRITONSWMM_system
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.system import TRITONSWMM_system
 
     system = TRITONSWMM_system(paths["system_yaml"])
     analysis = TRITONSWMM_analysis(paths["analysis_yaml"], system)
