@@ -1,13 +1,13 @@
-# TRITON-SWMM Toolkit
+# H&H Ensemble Modeling Toolkit
 
-![PyPI version](https://img.shields.io/pypi/v/TRITON-SWMM-toolkit.svg)
-[![Documentation Status](https://readthedocs.org/projects/TRITON-SWMM-toolkit/badge/?version=latest)](https://TRITON-SWMM-toolkit.readthedocs.io/en/latest/?version=latest)
+![PyPI version](https://img.shields.io/pypi/v/hhemt.svg)
+[![Documentation Status](https://readthedocs.org/projects/hhemt/badge/?version=latest)](https://hhemt.readthedocs.io/en/latest/?version=latest)
 
 Tools for running and processing TRITON-SWMM models.
 
-* PyPI package: https://pypi.org/project/TRITON-SWMM_toolkit/
+* PyPI package: https://pypi.org/project/hhemt/
 * License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
-* Documentation: https://TRITON-SWMM-toolkit.readthedocs.io.
+* Documentation: https://hhemt.readthedocs.io.
 
 ## Credits
 
