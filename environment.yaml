@@ -65,9 +65,15 @@ dependencies:
   - ipykernel
   - pip
   - "setuptools<78"  # hsclient uses pkg_resources, removed from setuptools>=78
+  # SWMM Python engine from conda-forge, NOT the PyPI wheel: the PyPI
+  # swmm-toolkit 0.17.0 wheel heap-corrupts in pyswmm Simulation.execute()
+  # (free(): tcache 2 / SIGABRT) on modern glibc, and 0.17.0 also has an
+  # Output.node_series "Input Error 422" reader regression. conda-forge
+  # swmm-toolkit=0.15 (0.15.2) is clean on both; pyswmm resolves to 2.0.1.
+  - swmm-toolkit=0.15
+  - pyswmm
   - pip:
       - hsclient
-      - pyswmm
       - swmmio
       - tabulate
       - notebook
