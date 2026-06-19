@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from hhemt.config.static_plots import (
     _CVD_SAFE_COLORMAPS,
     STATIC_PLOT_CONFIG_REGISTRY,
+    ConduitFlowStaticConfig,
     CvdAdvisoryWarning,
     PeakFloodDepthStaticConfig,
     StaticPlotBaseConfig,
@@ -136,6 +137,43 @@ def test_system_overview_default_cmap_fires_cvd_advisory():
     with pytest.warns(CvdAdvisoryWarning):
         SystemOverviewStaticConfig(
             plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND
+        )
+
+
+# Phase 3 — per_sim_conduit_flow per-function model + registry entry
+_CONDUIT_PLOT_ID = "per_sim_conduit_flow__evt.year.9"
+_CONDUIT_RENDERER_KIND = "per_sim_conduit_flow"
+
+
+def test_registry_maps_conduit_flow_kind_to_subclass():
+    assert STATIC_PLOT_CONFIG_REGISTRY[_CONDUIT_RENDERER_KIND] is ConduitFlowStaticConfig
+    assert issubclass(ConduitFlowStaticConfig, StaticPlotBaseConfig)
+
+
+def test_conduit_flow_inherits_and_extends():
+    cfg = ConduitFlowStaticConfig(plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND)
+    assert cfg.bbox_inches_tight is False  # inherited base default
+    assert cfg.output_format == "pdf"  # inherited base default
+    assert cfg.utilization_cmap == "YlOrRd"  # added content knob (fixed [0,1] panel)
+    assert cfg.peak_flow_cmap == "viridis"  # added content knob (data-ranged panel)
+    assert cfg.peak_flow_vmax is None  # added content knob; None -> data max
+
+
+def test_conduit_flow_default_cmaps_are_cvd_safe_silent():
+    # Both defaults (YlOrRd utilization, viridis peak-flow) are in the CVD-safe
+    # allowlist, so construction with defaults fires NO advisory (contrast with
+    # system_overview's "terrain" default which does).
+    assert "YlOrRd" in _CVD_SAFE_COLORMAPS
+    assert "viridis" in _CVD_SAFE_COLORMAPS
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CvdAdvisoryWarning)
+        ConduitFlowStaticConfig(plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND)
+
+
+def test_conduit_flow_peak_flow_vmax_rejects_negative():
+    with pytest.raises(ValidationError):
+        ConduitFlowStaticConfig(
+            plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND, peak_flow_vmax=-1.0
         )
 
 

@@ -349,10 +349,30 @@ class SystemOverviewStaticConfig(StaticPlotBaseConfig):
     )
 
 
+class ConduitFlowStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the conduit-flow map (utilization + peak-flow panels).
+
+    Per the data-viz FQ2 roster, per_sim_conduit_flow carries TWO colorbars —
+    a utilization map (fixed [0, 1] range) and a peak-flow map (data-ranged).
+    This is a mild impedance mismatch with the single-colorbar base (whose
+    vmin/vmax/vmin_vmax_strategy are singular); the dedicated peak_flow_vmax
+    field plus the renderer's hardcoded [0, 1] utilization range resolves it
+    cleanly without a base change. A general multi-colorbar base is routed to
+    follow-up.
+    """
+
+    utilization_cmap: MplColormap = Field("YlOrRd", description="Conduit utilization colormap (fixed [0,1] range).")
+    peak_flow_cmap: MplColormap = Field("viridis", description="Peak-flow colormap (data-ranged).")
+    peak_flow_vmax: float | None = Field(
+        None, ge=0.0, description="Absolute peak-flow colorbar upper bound; None -> data max."
+    )
+
+
 # renderer_kind -> StaticPlotBaseConfig subclass. Phase 1 registers only the
 # peak-flood-depth exemplar; Phases 2-4 each add one entry. Mirrors the
 # report_plot_ids._OUTPUT_EXT_BY_RENDERER registry-pattern precedent.
 STATIC_PLOT_CONFIG_REGISTRY: dict[str, type[StaticPlotBaseConfig]] = {
     "per_sim_peak_flood_depth": PeakFloodDepthStaticConfig,
     "system_overview": SystemOverviewStaticConfig,
+    "per_sim_conduit_flow": ConduitFlowStaticConfig,
 }
