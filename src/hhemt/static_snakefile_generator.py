@@ -54,22 +54,29 @@ def _load_static_config(path: Path) -> StaticPlotBaseConfig:
     return model_cls.model_validate(raw)
 
 
-def _parse_plot_id_selectors(plot_id: str) -> tuple[str | None, str | None]:
-    """Extract (event_id_slug, sa_id) from an ADR-2 canonical plot ID.
+def _parse_plot_id_selectors(plot_id: str) -> tuple[str | None, str | None, str | None]:
+    """Extract (event_id_slug, sa_id, independent_var) from an ADR-2 canonical plot ID.
 
     Segments are joined by ``__``; the per-sim selector is ``evt.{slug}`` (the
-    slug itself may contain ``.``) and the sensitivity selector is ``sa.{id}``.
-    Returns (None, None) for a plot ID carrying neither (e.g. a per-analysis
-    figure with no per-sim scope).
+    slug itself may contain ``.``), the sensitivity selector is ``sa.{id}``, and
+    the sensitivity-benchmarking selector is ``var.{independent_var}`` (the
+    benchmarking chart's x-axis variable, e.g. ``var.n_devices`` — the renderer's
+    required ``--independent-var``; report-mode supplies this via a Snakefile
+    wildcard, which the bare-output static path lacks, so it rides the plot ID).
+    Returns ``None`` for any selector a plot ID does not carry (e.g. a
+    per-analysis figure with no per-sim scope).
     """
     event_id: str | None = None
     sa_id: str | None = None
+    independent_var: str | None = None
     for seg in plot_id.split("__"):
         if seg.startswith("evt."):
             event_id = seg[len("evt.") :]
         elif seg.startswith("sa."):
             sa_id = seg[len("sa.") :]
-    return event_id, sa_id
+        elif seg.startswith("var."):
+            independent_var = seg[len("var.") :]
+    return event_id, sa_id, independent_var
 
 
 def _resolve_event_iloc(scope_analysis: TRITONSWMM_analysis, event_id: str) -> int | None:
@@ -141,7 +148,7 @@ def _harvest_static_rule_specs(
         # carry a facade-supplied override_static_plot_configs list (that override
         # is resolved here at generation time but never persisted to the analysis
         # config the rule subprocess re-reads). Path is quoted for space-safety.
-        event_id, sa_id = _parse_plot_id_selectors(scfg.plot_id)
+        event_id, sa_id, independent_var = _parse_plot_id_selectors(scfg.plot_id)
         abs_cfg_path = Path(cfg_path).resolve()
         extra_flags: list[str] = [
             f"--static-config-id {scfg.plot_id}",
@@ -149,6 +156,11 @@ def _harvest_static_rule_specs(
         ]
         if sa_id is not None:
             extra_flags.append(f"--sa-id {sa_id}")
+        if independent_var is not None:
+            # sensitivity_benchmarking's required x-axis variable. report-mode
+            # supplies this via a Snakefile wildcard; the bare-output static path
+            # carries it on the plot ID's var.{name} segment instead.
+            extra_flags.append(f"--independent-var {independent_var}")
         if event_id is not None:
             scope = _scope_analysis_for_sa(analysis, sa_id) if sa_id is not None else analysis
             iloc = _resolve_event_iloc(scope, event_id)

@@ -29,6 +29,7 @@ from hhemt.config.viz_vocabulary import (
     FontTarget,
     MplColor,
     MplColormap,
+    MplMarker,
     PanelScalePolicy,
     ValueEncodingPolicy,
     VminVmaxStrategy,
@@ -368,6 +369,29 @@ class ConduitFlowStaticConfig(StaticPlotBaseConfig):
     )
 
 
+class SensitivityBenchmarkingStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the sensitivity-benchmarking charts (4 panels; no colorbar).
+
+    The one chart-shaped (line/scatter, NO colormap/colorbar) renderer. Per the
+    data-viz FQ2 roster it needs a categorical per-run_mode palette + cpu/gpu
+    markers + optional log-y, and no colormap.
+
+    Known advisory bypass (data-viz / hhemt / SE specialists, routed to follow-up):
+    `_cvd_advisory` inspects only `str` fields ending in `_cmap`, so a
+    `series_palette: tuple[MplColor, ...]` never triggers the CVD nudge. Accepted
+    for v1 — the default palette is Okabe-Ito (CVD-safe); a tuple-of-colors
+    advisory branch is the follow-up.
+    """
+
+    series_palette: tuple[MplColor, ...] = Field(
+        default=("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"),
+        description="Categorical per-run_mode palette (default Okabe-Ito, CVD-safe).",
+    )
+    cpu_marker: MplMarker = Field("o", description="Marker for CPU run-mode series.")
+    gpu_marker: MplMarker = Field("s", description="Marker for GPU run-mode series.")
+    log_y: bool = Field(False, description="Log-scale the y-axis (wall-clock / compute-cost panels).")
+
+
 # renderer_kind -> StaticPlotBaseConfig subclass. Phase 1 registers only the
 # peak-flood-depth exemplar; Phases 2-4 each add one entry. Mirrors the
 # report_plot_ids._OUTPUT_EXT_BY_RENDERER registry-pattern precedent.
@@ -375,4 +399,5 @@ STATIC_PLOT_CONFIG_REGISTRY: dict[str, type[StaticPlotBaseConfig]] = {
     "per_sim_peak_flood_depth": PeakFloodDepthStaticConfig,
     "system_overview": SystemOverviewStaticConfig,
     "per_sim_conduit_flow": ConduitFlowStaticConfig,
+    "sensitivity_benchmarking": SensitivityBenchmarkingStaticConfig,
 }

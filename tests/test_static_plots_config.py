@@ -13,6 +13,7 @@ from hhemt.config.static_plots import (
     ConduitFlowStaticConfig,
     CvdAdvisoryWarning,
     PeakFloodDepthStaticConfig,
+    SensitivityBenchmarkingStaticConfig,
     StaticPlotBaseConfig,
     SystemOverviewStaticConfig,
 )
@@ -175,6 +176,52 @@ def test_conduit_flow_peak_flow_vmax_rejects_negative():
         ConduitFlowStaticConfig(
             plot_id=_CONDUIT_PLOT_ID, renderer_kind=_CONDUIT_RENDERER_KIND, peak_flow_vmax=-1.0
         )
+
+
+# Phase 4 — sensitivity_benchmarking per-function model + registry entry
+_SENS_PLOT_ID = "sensitivity_benchmarking"
+_SENS_RENDERER_KIND = "sensitivity_benchmarking"
+
+
+def test_registry_maps_sensitivity_benchmarking_kind_to_subclass():
+    assert STATIC_PLOT_CONFIG_REGISTRY[_SENS_RENDERER_KIND] is SensitivityBenchmarkingStaticConfig
+    assert issubclass(SensitivityBenchmarkingStaticConfig, StaticPlotBaseConfig)
+
+
+def test_sensitivity_benchmarking_inherits_and_extends():
+    cfg = SensitivityBenchmarkingStaticConfig(plot_id=_SENS_PLOT_ID, renderer_kind=_SENS_RENDERER_KIND)
+    assert cfg.bbox_inches_tight is False  # inherited base default
+    assert cfg.output_format == "pdf"  # inherited base default
+    assert cfg.series_palette[0] == "#000000"  # Okabe-Ito default (CVD-safe)
+    assert len(cfg.series_palette) == 8
+    assert cfg.cpu_marker == "o"  # added content knob
+    assert cfg.gpu_marker == "s"  # added content knob
+    assert cfg.log_y is False  # added content knob
+
+
+def test_sensitivity_benchmarking_palette_bypasses_cvd_advisory():
+    # Documents the known bypass (data-viz/hhemt/SE specialists, routed to follow-up):
+    # _cvd_advisory inspects only str fields ending in _cmap, so series_palette (a
+    # tuple) is never inspected — even a deliberately non-CVD-safe palette fires no
+    # advisory. The default is Okabe-Ito (CVD-safe), so the bypass is acceptable for v1.
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", CvdAdvisoryWarning)
+        SensitivityBenchmarkingStaticConfig(
+            plot_id=_SENS_PLOT_ID,
+            renderer_kind=_SENS_RENDERER_KIND,
+            series_palette=("red", "lime"),  # non-CVD-safe but valid; bypass => no warning
+        )
+
+
+def test_registry_has_all_four_renderer_kinds():
+    # Phase 4 DoD: all four renderer kinds registered.
+    assert set(STATIC_PLOT_CONFIG_REGISTRY) == {
+        "per_sim_peak_flood_depth",
+        "system_overview",
+        "per_sim_conduit_flow",
+        "sensitivity_benchmarking",
+    }
+    assert all(issubclass(m, StaticPlotBaseConfig) for m in STATIC_PLOT_CONFIG_REGISTRY.values())
 
 
 # R8 — bad colormap raises (via the viz_vocabulary MplColormap AfterValidator)

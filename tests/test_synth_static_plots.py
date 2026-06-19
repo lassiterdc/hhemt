@@ -115,6 +115,40 @@ def test_system_overview_static_snakefile_no_per_sim_selectors(synth_multi_sim_a
     assert "--sa-id" not in text
 
 
+# Phase 4 — a sensitivity_benchmarking config carries a `var.{independent_var}`
+# selector on its plot_id; the generator threads it as `--independent-var` (the
+# renderer's required x-axis arg, which report-mode supplies via a Snakefile
+# wildcard the bare-output static path lacks). Pure generation-time string parse —
+# uses the light (configured, not-run) multi-sim fixture; no sensitivity data needed.
+def test_sensitivity_benchmarking_static_snakefile_threads_independent_var(synth_multi_sim_analysis, tmp_path):
+    analysis = synth_multi_sim_analysis
+    plot_id = "sensitivity_benchmarking__var.n_devices"
+    cfg = tmp_path / "sensitivity_benchmarking__var.n_devices.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"plot_id": plot_id, "renderer_kind": "sensitivity_benchmarking", "output_format": "pdf"},
+            sort_keys=False,
+        )
+    )
+
+    text = generate_static_snakefile(
+        analysis,
+        static_plot_configs=[cfg],
+        config_args_str="--system-config s.yaml --analysis-config a.yaml",
+        static_backend="matplotlib",
+    )
+
+    assert "report(" not in text
+    assert "rule render_report" not in text
+    assert f"rule static_plot_{plot_id.replace('.', '_')}:" in text
+    assert f"static_plots/{plot_id}.pdf" in text
+    assert f"--static-config-id {plot_id}" in text
+    # The var.{name} selector is threaded as --independent-var; no per-sim/sa selector.
+    assert "--independent-var n_devices" in text
+    assert "--event-iloc" not in text
+    assert "--sa-id" not in text
+
+
 # R5 — static_config_ids filters the harvested rule set to the named subset.
 def test_static_snakefile_static_config_ids_filter(synth_multi_sim_analysis, tmp_path):
     analysis = synth_multi_sim_analysis
@@ -198,6 +232,36 @@ def test_static_plots_generates_system_overview_figure(synthetic_multisim_comple
     cfg.write_text(
         yaml.safe_dump(
             {"plot_id": plot_id, "renderer_kind": "system_overview", "output_format": "pdf"},
+            sort_keys=False,
+        )
+    )
+
+    result = analysis.static_plots(execution_mode="local", override_static_plot_configs=[cfg])
+
+    assert result["success"] is True
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    assert (analysis_dir / "static_plots" / f"{plot_id}.pdf").exists()
+    snakefile_static = (analysis_dir / "Snakefile.static").read_text()
+    assert "report(" not in snakefile_static
+    assert "rule render_report" not in snakefile_static
+
+
+@pytest.mark.slow
+@pytest.mark.requires_snakemake_subprocess
+def test_static_plots_generates_sensitivity_benchmarking_figure(synthetic_sensitivity_completed, tmp_path):
+    """Phase 4: static_plots() produces static_plots/{plot_id}.pdf via the publication
+    static_cfg branch on the sensitivity-benchmarking renderer (the chart-shaped,
+    no-colorbar case; KEEP-no-hybrid — Plotly branch untouched). The benchmarking
+    x-axis variable rides the plot_id's var.{name} selector → --independent-var.
+    Uses the sensitivity synth fixture (master analysis carries .sensitivity)."""
+    analysis = synthetic_sensitivity_completed.master_analysis
+    # n_devices is the synth benchmarking x-axis with data (see
+    # test_synth_05_sensitivity_analysis_with_snakemake.py: benchmarking__n_devices.vs.total).
+    plot_id = "sensitivity_benchmarking__var.n_devices"
+    cfg = tmp_path / "sensitivity_benchmarking__var.n_devices.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"plot_id": plot_id, "renderer_kind": "sensitivity_benchmarking", "output_format": "pdf"},
             sort_keys=False,
         )
     )
