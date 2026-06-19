@@ -33,7 +33,6 @@ import plotly.io as pio
 import rioxarray as rxr
 import swmmio
 import xarray as xr
-from matplotlib import cm as mcm
 from matplotlib.colors import Normalize
 from plotly.subplots import make_subplots
 
@@ -61,7 +60,7 @@ def _build_discrete_depth_colorscale(
     each interior fraction with two stops — one closing the previous band
     color and one opening the next.
     """
-    cmap = mcm.get_cmap(base_cmap_name)
+    cmap = plt.get_cmap(base_cmap_name)
     n_bands = len(boundaries)
     # Sample the base colormap at evenly-spaced positions in [0.2, 1.0] so the
     # lowest band still has visible saturation against a white panel.

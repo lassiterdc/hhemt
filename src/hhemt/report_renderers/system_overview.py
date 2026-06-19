@@ -1551,12 +1551,10 @@ def _matplotlib_cmap_to_plotly_colorscale(
     Important for cmaps without a Plotly equivalent — e.g., `terrain`,
     which is the system_overview default.
     """
-    import matplotlib.cm as mcm
-
     try:
-        cmap = mcm.get_cmap(cmap_name)
+        cmap = plt.get_cmap(cmap_name)
     except (ValueError, KeyError):
-        cmap = mcm.get_cmap("viridis")
+        cmap = plt.get_cmap("viridis")
     ts = np.linspace(0.0, 1.0, n_samples)
     colorscale: list[list] = []
     for t in ts:
