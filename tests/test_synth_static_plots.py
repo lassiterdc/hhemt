@@ -38,6 +38,15 @@ def _first_event_plot_id(analysis) -> str:
     return f"{_RENDERER_KIND}__evt.{event_id}"
 
 
+_CONDUIT_RENDERER_KIND = "per_sim_conduit_flow"
+
+
+def _first_event_conduit_flow_plot_id(analysis) -> str:
+    """Canonical ADR-2 conduit-flow plot_id for the analysis's first event (per-sim)."""
+    event_id = compute_event_id_slug(analysis._retrieve_weather_indexer_using_integer_index(0))
+    return f"{_CONDUIT_RENDERER_KIND}__evt.{event_id}"
+
+
 # R7/R12 — unknown renderer_kind raises ConfigurationError at load time.
 def test_load_static_config_unknown_renderer_kind_raises(tmp_path):
     cfg = tmp_path / "bad.yaml"
@@ -139,6 +148,33 @@ def test_static_plots_generates_publication_figure(synthetic_multisim_completed,
     analysis = synthetic_multisim_completed
     plot_id = _first_event_plot_id(analysis)
     cfg = _write_peak_flood_depth_config(tmp_path / f"{plot_id}.yaml", plot_id)
+
+    result = analysis.static_plots(execution_mode="local", override_static_plot_configs=[cfg])
+
+    assert result["success"] is True
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    assert (analysis_dir / "static_plots" / f"{plot_id}.pdf").exists()
+    snakefile_static = (analysis_dir / "Snakefile.static").read_text()
+    assert "report(" not in snakefile_static
+    assert "rule render_report" not in snakefile_static
+
+
+@pytest.mark.slow
+@pytest.mark.requires_snakemake_subprocess
+def test_static_plots_generates_conduit_flow_figure(synthetic_multisim_completed, tmp_path):
+    """Phase 3: static_plots() produces static_plots/{plot_id}.pdf via the
+    publication static_cfg branch on the per-sim conduit-flow renderer (per-sim —
+    carries an --event-iloc selector), distributed via the local executor,
+    bare-output Snakefile."""
+    analysis = synthetic_multisim_completed
+    plot_id = _first_event_conduit_flow_plot_id(analysis)
+    cfg = tmp_path / f"{plot_id}.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"plot_id": plot_id, "renderer_kind": _CONDUIT_RENDERER_KIND, "output_format": "pdf"},
+            sort_keys=False,
+        )
+    )
 
     result = analysis.static_plots(execution_mode="local", override_static_plot_configs=[cfg])
 
