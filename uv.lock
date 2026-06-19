@@ -876,6 +876,112 @@ wheels = [
 ]
 
 [[package]]
+name = "hhemt"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "bagit" },
+    { name = "dask" },
+    { name = "datashader" },
+    { name = "filelock" },
+    { name = "geopandas" },
+    { name = "globus-sdk" },
+    { name = "hsclient" },
+    { name = "ipywidgets" },
+    { name = "jinja2" },
+    { name = "jupyter-server" },
+    { name = "matplotlib" },
+    { name = "notebook" },
+    { name = "openpyxl" },
+    { name = "pint" },
+    { name = "plotly" },
+    { name = "pydantic" },
+    { name = "pyproj" },
+    { name = "pyswmm" },
+    { name = "pyyaml" },
+    { name = "rioxarray", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "rioxarray", version = "0.22.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "shapely" },
+    { name = "sparse" },
+    { name = "swmmio" },
+    { name = "tabulate" },
+    { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+]
+
+[package.optional-dependencies]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-htmlproofer-plugin" },
+    { name = "mkdocs-material" },
+    { name = "mkdocstrings", extra = ["python"] },
+]
+hpc = [
+    { name = "snakemake" },
+    { name = "snakemake-executor-plugin-slurm" },
+    { name = "snakemake-executor-plugin-slurm-jobstep" },
+    { name = "snakemake-storage-plugin-fs" },
+]
+test = [
+    { name = "coverage" },
+    { name = "pytest" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+viz-export = [
+    { name = "kaleido" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "bagit" },
+    { name = "coverage", marker = "extra == 'test'" },
+    { name = "dask" },
+    { name = "datashader", specifier = ">=0.16" },
+    { name = "filelock" },
+    { name = "geopandas" },
+    { name = "globus-sdk", specifier = ">=3.0" },
+    { name = "hsclient" },
+    { name = "ipywidgets" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "jupyter-server" },
+    { name = "kaleido", marker = "extra == 'viz-export'", specifier = ">=0.2.1,<1.0" },
+    { name = "matplotlib" },
+    { name = "mkdocs", marker = "extra == 'docs'" },
+    { name = "mkdocs-htmlproofer-plugin", marker = "extra == 'docs'" },
+    { name = "mkdocs-material", marker = "extra == 'docs'" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'" },
+    { name = "notebook" },
+    { name = "openpyxl" },
+    { name = "pint" },
+    { name = "plotly", specifier = "==5.24.1" },
+    { name = "pydantic" },
+    { name = "pyproj" },
+    { name = "pyswmm" },
+    { name = "pytest", marker = "extra == 'test'" },
+    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.0" },
+    { name = "pyyaml" },
+    { name = "rioxarray" },
+    { name = "ruff", marker = "extra == 'test'", specifier = "==0.15.10" },
+    { name = "scipy" },
+    { name = "seaborn" },
+    { name = "shapely" },
+    { name = "snakemake", marker = "extra == 'hpc'", specifier = "==9.15.0" },
+    { name = "snakemake-executor-plugin-slurm", marker = "extra == 'hpc'", specifier = ">=2.0,<3" },
+    { name = "snakemake-executor-plugin-slurm-jobstep", marker = "extra == 'hpc'", specifier = ">=0.3,<1" },
+    { name = "snakemake-storage-plugin-fs", marker = "extra == 'hpc'", specifier = "==1.1.3" },
+    { name = "sparse" },
+    { name = "swmmio" },
+    { name = "tabulate" },
+    { name = "ty", marker = "extra == 'test'" },
+    { name = "zarr" },
+]
+provides-extras = ["test", "viz-export", "hpc", "docs"]
+
+[[package]]
 name = "hsclient"
 version = "1.1.6"
 source = { registry = "https://pypi.org/simple" }
@@ -982,7 +1088,7 @@ name = "importlib-metadata"
 version = "9.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz", hash = "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc", size = 56405, upload-time = "2026-03-20T06:42:56.999Z" }
 wheels = [
@@ -3235,112 +3341,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/57/a9/a2584b8313b89f948
 wheels = [
     { url = "https://files.pythonhosted.org/packages/96/8d/1080ee4c231f361b6ce4470d556c8c435b67c7e0753aaa641497ee92f88b/traitlets-5.15.1-py3-none-any.whl", hash = "sha256:770a53705f84b81ac107e83a1b3328ff2dae16094d8fc3cfc004e4b22dfd8e92", size = 85858, upload-time = "2026-06-03T12:26:04.395Z" },
 ]
-
-[[package]]
-name = "triton-swmm-toolkit"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "bagit" },
-    { name = "dask" },
-    { name = "datashader" },
-    { name = "filelock" },
-    { name = "geopandas" },
-    { name = "globus-sdk" },
-    { name = "hsclient" },
-    { name = "ipywidgets" },
-    { name = "jinja2" },
-    { name = "jupyter-server" },
-    { name = "matplotlib" },
-    { name = "notebook" },
-    { name = "openpyxl" },
-    { name = "pint" },
-    { name = "plotly" },
-    { name = "pydantic" },
-    { name = "pyproj" },
-    { name = "pyswmm" },
-    { name = "pyyaml" },
-    { name = "rioxarray", version = "0.19.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "rioxarray", version = "0.22.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-    { name = "scipy" },
-    { name = "seaborn" },
-    { name = "shapely" },
-    { name = "sparse" },
-    { name = "swmmio" },
-    { name = "tabulate" },
-    { name = "zarr", version = "3.1.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "zarr", version = "3.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-
-[package.optional-dependencies]
-docs = [
-    { name = "mkdocs" },
-    { name = "mkdocs-htmlproofer-plugin" },
-    { name = "mkdocs-material" },
-    { name = "mkdocstrings", extra = ["python"] },
-]
-hpc = [
-    { name = "snakemake" },
-    { name = "snakemake-executor-plugin-slurm" },
-    { name = "snakemake-executor-plugin-slurm-jobstep" },
-    { name = "snakemake-storage-plugin-fs" },
-]
-test = [
-    { name = "coverage" },
-    { name = "pytest" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-    { name = "ty" },
-]
-viz-export = [
-    { name = "kaleido" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "bagit" },
-    { name = "coverage", marker = "extra == 'test'" },
-    { name = "dask" },
-    { name = "datashader", specifier = ">=0.16" },
-    { name = "filelock" },
-    { name = "geopandas" },
-    { name = "globus-sdk", specifier = ">=3.0" },
-    { name = "hsclient" },
-    { name = "ipywidgets" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "jupyter-server" },
-    { name = "kaleido", marker = "extra == 'viz-export'", specifier = ">=0.2.1,<1.0" },
-    { name = "matplotlib" },
-    { name = "mkdocs", marker = "extra == 'docs'" },
-    { name = "mkdocs-htmlproofer-plugin", marker = "extra == 'docs'" },
-    { name = "mkdocs-material", marker = "extra == 'docs'" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'" },
-    { name = "notebook" },
-    { name = "openpyxl" },
-    { name = "pint" },
-    { name = "plotly", specifier = "==5.24.1" },
-    { name = "pydantic" },
-    { name = "pyproj" },
-    { name = "pyswmm" },
-    { name = "pytest", marker = "extra == 'test'" },
-    { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.0" },
-    { name = "pyyaml" },
-    { name = "rioxarray" },
-    { name = "ruff", marker = "extra == 'test'", specifier = "==0.15.10" },
-    { name = "scipy" },
-    { name = "seaborn" },
-    { name = "shapely" },
-    { name = "snakemake", marker = "extra == 'hpc'", specifier = "==9.15.0" },
-    { name = "snakemake-executor-plugin-slurm", marker = "extra == 'hpc'", specifier = ">=2.0,<3" },
-    { name = "snakemake-executor-plugin-slurm-jobstep", marker = "extra == 'hpc'", specifier = ">=0.3,<1" },
-    { name = "snakemake-storage-plugin-fs", marker = "extra == 'hpc'", specifier = "==1.1.3" },
-    { name = "sparse" },
-    { name = "swmmio" },
-    { name = "tabulate" },
-    { name = "ty", marker = "extra == 'test'" },
-    { name = "zarr" },
-]
-provides-extras = ["test", "viz-export", "hpc", "docs"]
 
 [[package]]
 name = "ty"
