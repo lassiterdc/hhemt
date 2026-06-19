@@ -101,6 +101,14 @@ class StaticPlotBaseConfig(cfgBaseModel):
             "The whole ID matches ^[A-Za-z0-9_.]+$ ('.' within a segment, '__' between)."
         ),
     )
+    renderer_kind: str = Field(
+        ...,
+        description=(
+            "Renderer-kind key (e.g. 'per_sim_peak_flood_depth') selecting the "
+            "renderer module + the StaticPlotBaseConfig subclass via "
+            "STATIC_PLOT_CONFIG_REGISTRY. Strict-required (no default)."
+        ),
+    )
 
     # --- caption / panel labeling (publication) ---
     caption: str | None = Field(None, description="Figure caption text.")
@@ -324,3 +332,11 @@ class PeakFloodDepthStaticConfig(StaticPlotBaseConfig):
     depth_over_color: MplColor | None = Field(
         None, description="cmap.set_over(...) — cells above vmax (matplotlib-native)."
     )
+
+
+# renderer_kind -> StaticPlotBaseConfig subclass. Phase 1 registers only the
+# peak-flood-depth exemplar; Phases 2-4 each add one entry. Mirrors the
+# report_plot_ids._OUTPUT_EXT_BY_RENDERER registry-pattern precedent.
+STATIC_PLOT_CONFIG_REGISTRY: dict[str, type[StaticPlotBaseConfig]] = {
+    "per_sim_peak_flood_depth": PeakFloodDepthStaticConfig,
+}

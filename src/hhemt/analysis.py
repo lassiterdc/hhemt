@@ -675,6 +675,55 @@ class TRITONSWMM_analysis:
         report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
         return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
 
+    def static_plots(
+        self,
+        *,
+        static_config_ids: "list[str] | None" = None,
+        execution_mode: "Literal['auto','local','slurm']" = "auto",
+        override_static_plot_configs: "list[Path] | None" = None,
+        verbose: bool = True,
+        dry_run: bool = False,
+    ) -> dict:
+        """Generate publication static figures, one Snakemake rule per static-plot ID,
+        distributed via the existing executor (ADR-8). Adjacent to run()/reprocess()/
+        bundle_report_data()/eda().
+
+        ``override_static_plot_configs`` (override-prefixed; default None reads
+        ``cfg_analysis.static_plot_configs``) is the resolved config list, threaded
+        DOWN to the workflow builder so a passed override is honored (anti facade-
+        drift). ``static_config_ids`` optionally restricts the render to the named
+        subset. A lazy ``stamp_new_target`` performs the 13->14 layout stamp (the
+        ``static_plots/`` output dir is created lazily on first render; V0014 is a
+        no-op against persisted state).
+        """
+        from hhemt.version_migration import LAYOUT_VERSION
+        from hhemt.version_migration.state import stamp_new_target
+
+        resolved = (
+            override_static_plot_configs
+            if override_static_plot_configs is not None
+            else self.cfg_analysis.static_plot_configs
+        )
+        if not resolved:
+            from .exceptions import ConfigurationError
+
+            raise ConfigurationError(
+                field="static_plot_configs",
+                message=(
+                    "static_plots() requires >=1 static-plot config; "
+                    "cfg_analysis.static_plot_configs is empty and no override was passed."
+                ),
+                config_path=self.analysis_config_yaml,
+            )
+        stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+        return self._workflow_builder.submit_static_plots_workflow(
+            resolved_static_plot_configs=resolved,
+            static_config_ids=static_config_ids,
+            execution_mode=execution_mode,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+
     def promote_eda_plot(self, plot_id: str, *, target: str, **kwargs):
         """Promote an EDA plot into a standard static-plot config OR a named reporting set (ADR-11).
 
