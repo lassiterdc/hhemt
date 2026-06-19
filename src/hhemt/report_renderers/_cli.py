@@ -44,6 +44,16 @@ def main() -> None:
         help="Publication static-plot ID; loads the matching StaticPlotBaseConfig "
         "from cfg_analysis.static_plot_configs and renders in publication mode.",
     )
+    parser.add_argument(
+        "--static-config-path",
+        type=Path,
+        default=None,
+        help="Absolute path to the per-plot static-config YAML. The static-plots "
+        "generator emits this so the render is self-contained — the config is loaded "
+        "directly from this path, NOT re-searched in the (possibly override-supplied, "
+        "non-persisted) cfg_analysis.static_plot_configs. Falls back to an id-search "
+        "when only --static-config-id is given (persisted-config usage).",
+    )
     args = parser.parse_args()
 
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
@@ -79,29 +89,52 @@ def main() -> None:
         kwargs["independent_var"] = args.independent_var
 
     # Publication static-plot dispatch (Decision B -> B1): a single dispatcher.
-    # Load the matching StaticPlotBaseConfig from the master's
-    # cfg_analysis.static_plot_configs and pass it into render() as static_cfg.
-    # An unknown id raises ConfigurationError -> CLI exit 2 via the pre-existing
-    # cli_utils.EXIT_CODE_MAP entry (no cli_utils edit needed).
-    if args.static_config_id is not None:
+    # Load the StaticPlotBaseConfig and pass it into render() as static_cfg.
+    # Preferred path: --static-config-path loads the config directly (the
+    # static-plots generator always emits it), so the render is self-contained
+    # and works even when the configs were supplied via the facade's
+    # override_static_plot_configs (which is NOT persisted into the analysis
+    # config the rule subprocess re-reads). Fallback: an id-search over
+    # cfg_analysis.static_plot_configs for persisted-config usage.
+    # An unknown id/path raises ConfigurationError -> CLI exit 2 via the
+    # pre-existing cli_utils.EXIT_CODE_MAP entry (no cli_utils edit needed).
+    if args.static_config_path is not None or args.static_config_id is not None:
         from hhemt.static_snakefile_generator import _load_static_config
 
         match = None
-        for cfg_path in analysis.cfg_analysis.static_plot_configs:
-            scfg = _load_static_config(cfg_path)
-            if scfg.plot_id == args.static_config_id:
+        if args.static_config_path is not None:
+            scfg = _load_static_config(args.static_config_path)
+            if args.static_config_id is None or scfg.plot_id == args.static_config_id:
                 match = scfg
-                break
-        if match is None:
-            from hhemt.exceptions import ConfigurationError
+            else:
+                from hhemt.exceptions import ConfigurationError
 
-            raise ConfigurationError(
-                field="static_config_id",
-                message=(
-                    f"--static-config-id={args.static_config_id!r} not found in cfg_analysis.static_plot_configs."
-                ),
-                config_path=args.analysis_config,
-            )
+                raise ConfigurationError(
+                    field="static_config_id",
+                    message=(
+                        f"--static-config-path={args.static_config_path} carries plot_id="
+                        f"{scfg.plot_id!r}, which does not match --static-config-id="
+                        f"{args.static_config_id!r}."
+                    ),
+                    config_path=args.static_config_path,
+                )
+        else:
+            for cfg_path in analysis.cfg_analysis.static_plot_configs:
+                scfg = _load_static_config(cfg_path)
+                if scfg.plot_id == args.static_config_id:
+                    match = scfg
+                    break
+            if match is None:
+                from hhemt.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    field="static_config_id",
+                    message=(
+                        f"--static-config-id={args.static_config_id!r} not found in "
+                        "cfg_analysis.static_plot_configs (and no --static-config-path given)."
+                    ),
+                    config_path=args.analysis_config,
+                )
         kwargs["static_cfg"] = match
 
     from hhemt.report_renderers._provenance_audit import audit_renderer_io

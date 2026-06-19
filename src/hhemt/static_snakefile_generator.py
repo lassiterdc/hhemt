@@ -135,8 +135,18 @@ def _harvest_static_rule_specs(
         ext = scfg.output_format  # pdf/svg/ps/eps/pgf/png — matplotlib-native
 
         # Per-sim / sensitivity selector resolution from the canonical plot ID.
+        # Emit BOTH the id (rule identity) and the absolute config PATH so the
+        # render subprocess is self-contained: it loads the config from the path
+        # rather than re-searching cfg_analysis.static_plot_configs, which does NOT
+        # carry a facade-supplied override_static_plot_configs list (that override
+        # is resolved here at generation time but never persisted to the analysis
+        # config the rule subprocess re-reads). Path is quoted for space-safety.
         event_id, sa_id = _parse_plot_id_selectors(scfg.plot_id)
-        extra_flags: list[str] = [f"--static-config-id {scfg.plot_id}"]
+        abs_cfg_path = Path(cfg_path).resolve()
+        extra_flags: list[str] = [
+            f"--static-config-id {scfg.plot_id}",
+            f'--static-config-path "{abs_cfg_path}"',
+        ]
         if sa_id is not None:
             extra_flags.append(f"--sa-id {sa_id}")
         if event_id is not None:
