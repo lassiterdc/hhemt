@@ -48,7 +48,7 @@ open_boundaries: 1
 analysis_dir: .
 is_subanalysis: false
 master_analysis_cfg_yaml: null
-gpu_hardware_override: null
+static_plot_configs: []
 
 report: {}
 clear_raw: none
