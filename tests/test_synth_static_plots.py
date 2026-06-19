@@ -75,6 +75,37 @@ def test_static_snakefile_is_bare_output_and_threads_selectors(synth_multi_sim_a
     assert "--event-iloc 0" in text
 
 
+# Phase 2 — a system_overview (system-level, not per-sim) config harvests a
+# bare-output rule with NO --event-iloc/--sa-id (its plot_id carries no
+# __evt./__sa. segment), proving the registry + generator handle the new kind.
+def test_system_overview_static_snakefile_no_per_sim_selectors(synth_multi_sim_analysis, tmp_path):
+    analysis = synth_multi_sim_analysis
+    plot_id = "system_overview"
+    cfg = tmp_path / f"{plot_id}.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"plot_id": plot_id, "renderer_kind": "system_overview", "output_format": "pdf"},
+            sort_keys=False,
+        )
+    )
+
+    text = generate_static_snakefile(
+        analysis,
+        static_plot_configs=[cfg],
+        config_args_str="--system-config s.yaml --analysis-config a.yaml",
+        static_backend="matplotlib",
+    )
+
+    assert "report(" not in text
+    assert "rule render_report" not in text
+    assert f"rule static_plot_{plot_id}:" in text
+    assert f"static_plots/{plot_id}.pdf" in text
+    assert f"--static-config-id {plot_id}" in text
+    # System-level plot: no per-sim / sensitivity selector threading.
+    assert "--event-iloc" not in text
+    assert "--sa-id" not in text
+
+
 # R5 — static_config_ids filters the harvested rule set to the named subset.
 def test_static_snakefile_static_config_ids_filter(synth_multi_sim_analysis, tmp_path):
     analysis = synth_multi_sim_analysis
@@ -108,6 +139,32 @@ def test_static_plots_generates_publication_figure(synthetic_multisim_completed,
     analysis = synthetic_multisim_completed
     plot_id = _first_event_plot_id(analysis)
     cfg = _write_peak_flood_depth_config(tmp_path / f"{plot_id}.yaml", plot_id)
+
+    result = analysis.static_plots(execution_mode="local", override_static_plot_configs=[cfg])
+
+    assert result["success"] is True
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    assert (analysis_dir / "static_plots" / f"{plot_id}.pdf").exists()
+    snakefile_static = (analysis_dir / "Snakefile.static").read_text()
+    assert "report(" not in snakefile_static
+    assert "rule render_report" not in snakefile_static
+
+
+@pytest.mark.slow
+@pytest.mark.requires_snakemake_subprocess
+def test_static_plots_generates_system_overview_figure(synthetic_multisim_completed, tmp_path):
+    """Phase 2: static_plots() produces static_plots/system_overview.pdf via the
+    publication static_cfg branch on the system-overview renderer (system-level —
+    no event selector), distributed via the local executor, bare-output Snakefile."""
+    analysis = synthetic_multisim_completed
+    plot_id = "system_overview"
+    cfg = tmp_path / f"{plot_id}.yaml"
+    cfg.write_text(
+        yaml.safe_dump(
+            {"plot_id": plot_id, "renderer_kind": "system_overview", "output_format": "pdf"},
+            sort_keys=False,
+        )
+    )
 
     result = analysis.static_plots(execution_mode="local", override_static_plot_configs=[cfg])
 

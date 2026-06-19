@@ -13,6 +13,7 @@ from hhemt.config.static_plots import (
     CvdAdvisoryWarning,
     PeakFloodDepthStaticConfig,
     StaticPlotBaseConfig,
+    SystemOverviewStaticConfig,
 )
 from hhemt.config.viz_vocabulary import FontTarget, VminVmaxStrategy
 
@@ -105,6 +106,37 @@ def test_exemplar_inherits_and_extends():
     assert cfg.depth_cmap == "YlGnBu"
     assert cfg.depth_under_color == "white"
     assert cfg.depth_over_color is None
+
+
+# Phase 2 — system_overview per-function model + registry entry
+_SYSOV_PLOT_ID = "system_overview"
+_SYSOV_RENDERER_KIND = "system_overview"
+
+
+def test_registry_maps_system_overview_kind_to_subclass():
+    assert STATIC_PLOT_CONFIG_REGISTRY[_SYSOV_RENDERER_KIND] is SystemOverviewStaticConfig
+    assert issubclass(SystemOverviewStaticConfig, StaticPlotBaseConfig)
+
+
+def test_system_overview_inherits_and_extends():
+    # dem_cmap default "terrain" is non-CVD-safe -> the base _cvd_advisory fires a
+    # (non-blocking) warning on construction; suppress it for the field-default asserts.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", CvdAdvisoryWarning)
+        cfg = SystemOverviewStaticConfig(
+            plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND
+        )
+    assert cfg.bbox_inches_tight is False  # inherited base default
+    assert cfg.output_format == "pdf"  # inherited base default
+    assert cfg.dem_cmap == "terrain"  # added content knob
+    assert cfg.dem_over_color is None  # added content knob
+
+
+def test_system_overview_default_cmap_fires_cvd_advisory():
+    with pytest.warns(CvdAdvisoryWarning):
+        SystemOverviewStaticConfig(
+            plot_id=_SYSOV_PLOT_ID, renderer_kind=_SYSOV_RENDERER_KIND
+        )
 
 
 # R8 — bad colormap raises (via the viz_vocabulary MplColormap AfterValidator)

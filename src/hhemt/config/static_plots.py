@@ -334,9 +334,25 @@ class PeakFloodDepthStaticConfig(StaticPlotBaseConfig):
     )
 
 
+class SystemOverviewStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the system-overview map (DEM + boundary + SWMM elements).
+
+    Per the data-viz FQ2 roster, system_overview's only content-specific knob
+    beyond the shared base is a DEM over-color (the "walls" over-max color);
+    all cross-cutting publication mechanics live on the base.
+    """
+
+    dem_cmap: MplColormap = Field("terrain", description="DEM elevation colormap.")
+    dem_over_color: MplColor | None = Field(
+        None,
+        description="cmap.set_over(...) — cells above vmax (e.g. walls) render this color.",
+    )
+
+
 # renderer_kind -> StaticPlotBaseConfig subclass. Phase 1 registers only the
 # peak-flood-depth exemplar; Phases 2-4 each add one entry. Mirrors the
 # report_plot_ids._OUTPUT_EXT_BY_RENDERER registry-pattern precedent.
 STATIC_PLOT_CONFIG_REGISTRY: dict[str, type[StaticPlotBaseConfig]] = {
     "per_sim_peak_flood_depth": PeakFloodDepthStaticConfig,
+    "system_overview": SystemOverviewStaticConfig,
 }
