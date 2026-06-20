@@ -441,7 +441,6 @@ def _build_conduit_flow_figure(
     control flow preserved).
     """
     import geopandas as gpd
-    import matplotlib.cm as mcm
     import rioxarray as rxr
     from matplotlib.colors import Normalize as _MplNormalize
 
@@ -624,7 +623,7 @@ def _build_conduit_flow_figure(
     ]
     values_by_id_per_panel = {p["axes_id"]: dict(zip(link_ids, p["values"], strict=True)) for p in panels}
     for p in panels:
-        cmap = mcm.get_cmap(p["cmap_name"])
+        cmap = plt.get_cmap(p["cmap_name"])
         norm = _MplNormalize(vmin=p["vmin"], vmax=p["vmax"])
         # Bin conduits into N_BINS equal-value bins so we emit ~20 traces
         # instead of one trace per conduit (would be thousands of traces for
@@ -1013,9 +1012,7 @@ def _render_plotly_branch(
 
 def _mpl_cmap_to_plotly_colorscale(cmap_name: str, n_samples: int = 32) -> list:
     """Return a Plotly-compatible colorscale list sampled from a matplotlib cmap."""
-    import matplotlib.cm as mcm
-
-    cmap = mcm.get_cmap(cmap_name)
+    cmap = plt.get_cmap(cmap_name)
     return [
         [
             i / (n_samples - 1),
