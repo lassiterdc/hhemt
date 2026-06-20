@@ -517,7 +517,6 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
                           prov, dem_source: str,
                           vertical_crs_epsg: int | None = None):
-    import matplotlib.cm as cm
     from matplotlib.lines import Line2D
 
     dem_squeezed = dem.squeeze()
@@ -546,7 +545,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     else:
         vmin, vmax = 0.0, 1.0
 
-    cmap = cm.get_cmap(ep.cmap).copy()
+    cmap = plt.get_cmap(ep.cmap).copy()
     cmap.set_over(ep.over_color)
     with prov.artist(
         axes_id="ax_dem", kind="image", note="DEM elevation raster",
@@ -1551,12 +1550,10 @@ def _matplotlib_cmap_to_plotly_colorscale(
     Important for cmaps without a Plotly equivalent — e.g., `terrain`,
     which is the system_overview default.
     """
-    import matplotlib.cm as mcm
-
     try:
-        cmap = mcm.get_cmap(cmap_name)
+        cmap = plt.get_cmap(cmap_name)
     except (ValueError, KeyError):
-        cmap = mcm.get_cmap("viridis")
+        cmap = plt.get_cmap("viridis")
     ts = np.linspace(0.0, 1.0, n_samples)
     colorscale: list[list] = []
     for t in ts:
