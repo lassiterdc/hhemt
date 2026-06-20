@@ -118,7 +118,7 @@ hhemt = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-norecursedirs = ["test_data", "docs", ".git", ".venv", "venv"]
+norecursedirs = ["test_data", "docs", ".git", ".venv", "venv", "dev"]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and HHEMT_GLOBUS_E2E=1",
