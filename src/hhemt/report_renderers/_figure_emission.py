@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -163,12 +163,14 @@ def emit_plot_with_sources(
     source_paths: Iterable[Path],
     analysis_dir: Path,
     dpi: int | None = None,
-    output_format: Literal["png", "svg", "html"] = "png",
+    output_format: Literal["png", "svg", "html", "pdf", "ps", "eps", "pgf"] = "png",
     preview_dpi: int = 100,
     manifest_data: dict[str, Any] | None = None,
     provenance: ProvenanceLog | None = None,
     *,
     allow_empty_sources: bool = False,
+    bbox_inches_tight: bool = True,
+    emit_preview: bool = True,
 ) -> Path:
     """Save fig to output_path with source paths embedded as figure metadata.
 
@@ -289,7 +291,7 @@ def emit_plot_with_sources(
     fig.savefig(
         output_path,
         dpi=dpi,
-        bbox_inches="tight",
+        bbox_inches="tight" if bbox_inches_tight else None,
         format=output_format if output_path.suffix.lstrip(".") != output_format else None,
         metadata=full_res_metadata,
     )
@@ -297,26 +299,34 @@ def emit_plot_with_sources(
     # Preview + manifest siblings emit for ALL output formats so /design-figure's
     # subagent-read pathway works uniformly regardless of full-res format
     # (matplotlib's fig is reusable across savefig calls; no rasterization needed).
-    preview_path = output_path.parent / f"{output_path.stem}.preview.png"
-    fig.savefig(
-        preview_path,
-        dpi=preview_dpi,
-        bbox_inches="tight",
-        format="png",
-        metadata=preview_metadata,
-    )
+    # Publication callers pass emit_preview=False — a publication figure needs no
+    # subagent-review preview sibling; the preview-specific manifest fields then
+    # mirror the html branch's explicit-None shape.
+    if emit_preview:
+        preview_path = output_path.parent / f"{output_path.stem}.preview.png"
+        fig.savefig(
+            preview_path,
+            dpi=preview_dpi,
+            bbox_inches="tight",
+            format="png",
+            metadata=preview_metadata,
+        )
+        preview_size_bytes: int | None = preview_path.stat().st_size
+    else:
+        preview_path = None
+        preview_size_bytes = None
     manifest_payload: dict[str, Any] = {
         "full_res_path": str(output_path),
-        "preview_path": str(preview_path),
+        "preview_path": str(preview_path) if preview_path is not None else None,
         "output_format": output_format,
         "full_res_format": output_format,
         "full_res_dpi": dpi,
-        "preview_dpi": preview_dpi,
+        "preview_dpi": preview_dpi if emit_preview else None,
         "figure_size_inches": list(fig.get_size_inches()),
         "full_res_size_bytes": output_path.stat().st_size,
-        "preview_size_bytes": preview_path.stat().st_size,
+        "preview_size_bytes": preview_size_bytes,
         "source_paths_relative": rel_sources,
-        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "emitted_at_utc": datetime.now(UTC).isoformat(),
     }
     if manifest_data:
         manifest_payload["renderer_data"] = manifest_data
@@ -368,7 +378,7 @@ def emit_data_artifact_with_sources(
         "full_res_path": str(artifact_path),
         "preview_path": None,
         "source_paths_relative": rel_sources,
-        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "emitted_at_utc": datetime.now(UTC).isoformat(),
     }
     if plot_id is not None:
         manifest_payload["plot_id"] = plot_id
@@ -429,7 +439,7 @@ def _emit_html_with_sources(
         "full_res_path": str(output_path),
         "output_format": "html",
         "source_paths_relative": rel_sources,
-        "emitted_at_utc": datetime.now(timezone.utc).isoformat(),
+        "emitted_at_utc": datetime.now(UTC).isoformat(),
         "full_res_size_bytes": output_path.stat().st_size,
         # HTML-branch: explicit None for matplotlib-only fields so consumers
         # see a uniform key set across branches.

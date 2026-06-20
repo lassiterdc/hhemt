@@ -23,6 +23,7 @@ from hhemt import units
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
+    from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
 def render(
@@ -31,8 +32,19 @@ def render(
     output_path: Path,
     *,
     event_iloc: int,
+    static_cfg: StaticPlotBaseConfig | None = None,
+    **kwargs,
 ) -> Path:
-    """Render the two-panel conduit flow figure for one event_iloc."""
+    """Render the two-panel conduit flow figure for one event_iloc.
+
+    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
+    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and
+    the figure geometry, the two panel colormaps (utilization + peak-flow), the
+    peak-flow colorbar upper bound, base typography, and emit format are driven
+    by the ConduitFlowStaticConfig rather than report_cfg. ``static_cfg=None``
+    (the report path) is byte-unchanged. ``**kwargs`` tolerates
+    dispatcher-passed keywords this renderer does not consume.
+    """
     from hhemt.report_renderers._figure_emission import (
         add_panel_label,
         emit_plot_with_sources,
@@ -50,7 +62,10 @@ def render(
         "static_backend",
         "plotly",
     )
-    if static_backend == "plotly":
+    # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
+    # of report_cfg.interactive.static_backend (static plots are matplotlib-only).
+    use_plotly = False if static_cfg is not None else (static_backend == "plotly")
+    if use_plotly:
         return _render_plotly_branch(
             analysis,
             report_cfg,
@@ -58,6 +73,17 @@ def render(
             event_iloc=event_iloc,
             prov=prov,
         )
+
+    # Apply the publication base typography (font_family + a base size) so the
+    # publication font fields are not silently inert. Full per-element FontTarget
+    # threading is routed to the post-static-plots follow-up (the _core
+    # extraction); parity with system_overview's Phase 2 branch. report-mode
+    # (static_cfg is None) is unchanged.
+    if static_cfg is not None:
+        from hhemt.config.viz_vocabulary import FontTarget
+
+        plt.rcParams["font.family"] = static_cfg.font_family
+        plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
 
     proc = analysis._retrieve_sim_run_processing_object(event_iloc)
 
@@ -154,8 +180,15 @@ def render(
     # Subiteration 9.4 — pin h to peak_flood_depth's value (cfg.figsize_inches
     # diverges between the two renderers; using cfg here would break parity).
     map_cfg = report_cfg.per_sim.map
-    h = float(report_cfg.per_sim.peak_flood_depth.figsize_inches[1])
-    fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)  # exactly matches peak_flood_depth
+    if static_cfg is not None:
+        # Publication exact dimensions (data-viz OE-1): the user owns the figure
+        # size via figure_width/height_inches; bypass the report aspect-math width
+        # derivation (parity with system_overview's Phase 2 branch).
+        fig_width = static_cfg.figure_width_inches
+        h = static_cfg.figure_height_inches
+    else:
+        h = float(report_cfg.per_sim.peak_flood_depth.figsize_inches[1])
+        fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)  # exactly matches peak_flood_depth
     fig = plt.figure(figsize=(fig_width, h), layout="constrained")
     outer = fig.add_gridspec(1, 3, width_ratios=list(map_cfg.outer_width_ratios), wspace=map_cfg.outer_wspace)
     _MAP_TO_CBAR_HEIGHT_RATIO = map_cfg.map_to_cbar_height_ratio
@@ -191,10 +224,20 @@ def render(
     # Two-colormap design (iter-2 user feedback): non-overlapping single-color
     # gradations — Blues for utilization (cool / "filling up"), Reds for peak
     # flow magnitude (warm / "intensity"). `cfg.cmap` from report_config is
-    # used as a fallback if user has overridden via YAML.
-    UTILIZATION_CMAP = map_cfg.utilization_cmap
-    PEAK_FLOW_CMAP = map_cfg.peak_flow_cmap
-    peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
+    # used as a fallback if user has overridden via YAML. Publication mode
+    # (static_cfg) overrides both cmaps + the peak-flow upper bound; the
+    # utilization range stays hardcoded [0, 1] in both modes (FQ2 two-colorbar
+    # design — utilization is intrinsically a fraction).
+    UTILIZATION_CMAP = static_cfg.utilization_cmap if static_cfg is not None else map_cfg.utilization_cmap
+    PEAK_FLOW_CMAP = static_cfg.peak_flow_cmap if static_cfg is not None else map_cfg.peak_flow_cmap
+    if static_cfg is not None:
+        peak_flow_vmax = (
+            float(static_cfg.peak_flow_vmax)
+            if static_cfg.peak_flow_vmax is not None
+            else float(peak_flow.max() or 1.0)
+        )
+    else:
+        peak_flow_vmax = _resolve_peak_flow_vmax(peak_flow, cfg)
     panels = [
         (
             ax1,
@@ -369,8 +412,14 @@ def render(
         output_path,
         source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
-        dpi=report_cfg.figure_defaults.savefig_dpi,
-        output_format="svg" if output_path.suffix == ".svg" else "png",
+        dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
+        output_format=(
+            static_cfg.output_format
+            if static_cfg is not None
+            else ("svg" if output_path.suffix == ".svg" else "png")
+        ),
+        bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
+        emit_preview=(static_cfg is None),
         provenance=prov,
     )
 

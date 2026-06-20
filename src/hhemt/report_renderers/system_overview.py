@@ -40,13 +40,26 @@ from hhemt.report_renderers._map_bounds import (
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
+    from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
 def render(
     analysis: TRITONSWMM_analysis,
     report_cfg: report_config,
     output_path: Path,
+    *,
+    static_cfg: StaticPlotBaseConfig | None = None,
+    **kwargs,
 ) -> Path:
+    """Render the 3-panel hydrology + hydraulics + DEM system-overview figure.
+
+    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
+    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and
+    the figure geometry, DEM colormap / over-color, base typography, and emit
+    format are driven by the SystemOverviewStaticConfig rather than report_cfg.
+    ``static_cfg=None`` (the report path) is byte-unchanged. ``**kwargs``
+    tolerates dispatcher-passed keywords this renderer does not consume.
+    """
     from hhemt.config.report import resolve_target_crs
     from hhemt.report_renderers._figure_emission import (
         emit_plot_with_sources,
@@ -61,10 +74,21 @@ def render(
         "static_backend",
         "plotly",
     )
-    use_plotly = (static_backend == "plotly")
+    # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
+    # of report_cfg.interactive.static_backend (static plots are matplotlib-only).
+    use_plotly = False if static_cfg is not None else (static_backend == "plotly")
 
     if not use_plotly:
         _apply_rcparams(report_cfg)
+        # Apply the publication base typography (font_family + a base size) so the
+        # publication font fields are not silently inert. Full per-element
+        # FontTarget threading is routed to the post-Phase-1 follow-up (the _core
+        # extraction). report-mode (static_cfg is None) is unchanged.
+        if static_cfg is not None:
+            from hhemt.config.viz_vocabulary import FontTarget
+
+            plt.rcParams["font.family"] = static_cfg.font_family
+            plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
     target_crs = resolve_target_crs(analysis, report_cfg)
     prov = ProvenanceLog()
 
@@ -161,17 +185,28 @@ def render(
         )
 
     # Matplotlib branch (legacy / interactive.enabled=False default).
-    _, h = map_cfg.figsize_inches
-    dem_x_extent = dem_bounds[2] - dem_bounds[0]
-    dem_y_extent = dem_bounds[3] - dem_bounds[1]
-    panel_aspect = dem_x_extent / dem_y_extent if dem_y_extent else 1.0
-    fig_width = max(
-        3 * h * panel_aspect * map_cfg.fig_width_panel_pad,
-        h * map_cfg.fig_width_min_factor,
-    )
-    fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
-        1, 3, figsize=(fig_width, h), sharex=True, sharey=True,
-    )
+    if static_cfg is not None:
+        # Publication exact dimensions (data-viz OE-1): the user owns the figure
+        # size via figure_width/height_inches; bypass the report aspect-math width
+        # derivation. The publication emit uses bbox_inches=None so the saved
+        # figure is exactly this size (subplots_adjust below is preserved).
+        fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
+            1, 3,
+            figsize=(static_cfg.figure_width_inches, static_cfg.figure_height_inches),
+            sharex=True, sharey=True,
+        )
+    else:
+        _, h = map_cfg.figsize_inches
+        dem_x_extent = dem_bounds[2] - dem_bounds[0]
+        dem_y_extent = dem_bounds[3] - dem_bounds[1]
+        panel_aspect = dem_x_extent / dem_y_extent if dem_y_extent else 1.0
+        fig_width = max(
+            3 * h * panel_aspect * map_cfg.fig_width_panel_pad,
+            h * map_cfg.fig_width_min_factor,
+        )
+        fig, (ax_hydro, ax_hydraulics, ax_dem) = plt.subplots(
+            1, 3, figsize=(fig_width, h), sharex=True, sharey=True,
+        )
     fig.subplots_adjust(**map_cfg.subplots_adjust)
 
     _draw_hydrology_panel(
@@ -180,16 +215,23 @@ def render(
     _draw_hydraulics_panel(
         ax_hydraulics, hydraulics_model, hydraulics_rel, dem_bounds, map_cfg, prov,
     )
+    # Dual-source DEM style: static_cfg overrides the elevation-panel cmap +
+    # over-color when in publication mode; None falls back to ep.cmap/ep.over_color.
     _draw_elevation_panel(
         ax_dem, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
         prov, dem_source=dem_rel,
         vertical_crs_epsg=analysis._system.cfg_system.crs.vertical_epsg,
+        dem_cmap_override=(static_cfg.dem_cmap if static_cfg is not None else None),
+        dem_over_color_override=(static_cfg.dem_over_color if static_cfg is not None else None),
     )
 
     return emit_plot_with_sources(
         fig, output_path, source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
-        dpi=report_cfg.figure_defaults.savefig_dpi,
+        dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
+        output_format=(static_cfg.output_format if static_cfg is not None else "png"),
+        bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
+        emit_preview=(static_cfg is None),
         manifest_data=manifest_data,
         provenance=prov,
     )
@@ -516,7 +558,9 @@ def _draw_node_labels(ax, coords_df, junctions_df, outfalls_df, connected_nodes,
 
 def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_cfg,
                           prov, dem_source: str,
-                          vertical_crs_epsg: int | None = None):
+                          vertical_crs_epsg: int | None = None,
+                          dem_cmap_override: str | None = None,
+                          dem_over_color_override: str | None = None):
     from matplotlib.lines import Line2D
 
     dem_squeezed = dem.squeeze()
@@ -531,6 +575,10 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     # `cmap.set_over` (grey, "#808080") and the colorbar's `extend="max"`
     # arrow makes the modeled-area extent unambiguous on the figure.
     ep = map_cfg.elevation_panel
+    # Dual-source DEM style: publication static_cfg overrides ep.cmap/ep.over_color
+    # when provided; None falls back to the report elevation-panel defaults.
+    _dem_cmap_name = dem_cmap_override if dem_cmap_override is not None else ep.cmap
+    _dem_over_color = dem_over_color_override if dem_over_color_override is not None else ep.over_color
     if valid.size:
         arr_max = float(valid.max())
         wall_threshold = arr_max * ep.wall_threshold_fraction if arr_max > 0 else 1.0
@@ -545,8 +593,10 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
     else:
         vmin, vmax = 0.0, 1.0
 
-    cmap = plt.get_cmap(ep.cmap).copy()
-    cmap.set_over(ep.over_color)
+    # plt.get_cmap (matplotlib >=3.9 API; matplotlib.cm.get_cmap was removed),
+    # mirroring per_sim_peak_flood_depth's publication branch.
+    cmap = plt.get_cmap(_dem_cmap_name).copy()
+    cmap.set_over(_dem_over_color)
     with prov.artist(
         axes_id="ax_dem", kind="image", note="DEM elevation raster",
     ) as a:
@@ -557,7 +607,7 @@ def _draw_elevation_panel(ax, dem, dem_bounds, bc_path, bc_rel, target_crs, map_
         a.add_xarray_channel(
             "color", dem_squeezed, source_path=dem_source,
             transform="modeled-area vmin/vmax clipping (walls → set_over grey)",
-            cmap=ep.cmap, vmin=vmin, vmax=vmax, set_over=ep.over_color,
+            cmap=_dem_cmap_name, vmin=vmin, vmax=vmax, set_over=_dem_over_color,
         )
         im = ax.imshow(
             arr,

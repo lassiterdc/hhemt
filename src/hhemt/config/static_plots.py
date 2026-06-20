@@ -29,6 +29,7 @@ from hhemt.config.viz_vocabulary import (
     FontTarget,
     MplColor,
     MplColormap,
+    MplMarker,
     PanelScalePolicy,
     ValueEncodingPolicy,
     VminVmaxStrategy,
@@ -99,6 +100,14 @@ class StaticPlotBaseConfig(cfgBaseModel):
         description=(
             "Canonical ADR-2 plot ID; the figure-output stem and manifest plot_id. "
             "The whole ID matches ^[A-Za-z0-9_.]+$ ('.' within a segment, '__' between)."
+        ),
+    )
+    renderer_kind: str = Field(
+        ...,
+        description=(
+            "Renderer-kind key (e.g. 'per_sim_peak_flood_depth') selecting the "
+            "renderer module + the StaticPlotBaseConfig subclass via "
+            "STATIC_PLOT_CONFIG_REGISTRY. Strict-required (no default)."
         ),
     )
 
@@ -324,3 +333,71 @@ class PeakFloodDepthStaticConfig(StaticPlotBaseConfig):
     depth_over_color: MplColor | None = Field(
         None, description="cmap.set_over(...) — cells above vmax (matplotlib-native)."
     )
+
+
+class SystemOverviewStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the system-overview map (DEM + boundary + SWMM elements).
+
+    Per the data-viz FQ2 roster, system_overview's only content-specific knob
+    beyond the shared base is a DEM over-color (the "walls" over-max color);
+    all cross-cutting publication mechanics live on the base.
+    """
+
+    dem_cmap: MplColormap = Field("terrain", description="DEM elevation colormap.")
+    dem_over_color: MplColor | None = Field(
+        None,
+        description="cmap.set_over(...) — cells above vmax (e.g. walls) render this color.",
+    )
+
+
+class ConduitFlowStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the conduit-flow map (utilization + peak-flow panels).
+
+    Per the data-viz FQ2 roster, per_sim_conduit_flow carries TWO colorbars —
+    a utilization map (fixed [0, 1] range) and a peak-flow map (data-ranged).
+    This is a mild impedance mismatch with the single-colorbar base (whose
+    vmin/vmax/vmin_vmax_strategy are singular); the dedicated peak_flow_vmax
+    field plus the renderer's hardcoded [0, 1] utilization range resolves it
+    cleanly without a base change. A general multi-colorbar base is routed to
+    follow-up.
+    """
+
+    utilization_cmap: MplColormap = Field("YlOrRd", description="Conduit utilization colormap (fixed [0,1] range).")
+    peak_flow_cmap: MplColormap = Field("viridis", description="Peak-flow colormap (data-ranged).")
+    peak_flow_vmax: float | None = Field(
+        None, ge=0.0, description="Absolute peak-flow colorbar upper bound; None -> data max."
+    )
+
+
+class SensitivityBenchmarkingStaticConfig(StaticPlotBaseConfig):
+    """Publication static config for the sensitivity-benchmarking charts (4 panels; no colorbar).
+
+    The one chart-shaped (line/scatter, NO colormap/colorbar) renderer. Per the
+    data-viz FQ2 roster it needs a categorical per-run_mode palette + cpu/gpu
+    markers + optional log-y, and no colormap.
+
+    Known advisory bypass (data-viz / hhemt / SE specialists, routed to follow-up):
+    `_cvd_advisory` inspects only `str` fields ending in `_cmap`, so a
+    `series_palette: tuple[MplColor, ...]` never triggers the CVD nudge. Accepted
+    for v1 — the default palette is Okabe-Ito (CVD-safe); a tuple-of-colors
+    advisory branch is the follow-up.
+    """
+
+    series_palette: tuple[MplColor, ...] = Field(
+        default=("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7"),
+        description="Categorical per-run_mode palette (default Okabe-Ito, CVD-safe).",
+    )
+    cpu_marker: MplMarker = Field("o", description="Marker for CPU run-mode series.")
+    gpu_marker: MplMarker = Field("s", description="Marker for GPU run-mode series.")
+    log_y: bool = Field(False, description="Log-scale the y-axis (wall-clock / compute-cost panels).")
+
+
+# renderer_kind -> StaticPlotBaseConfig subclass. Phase 1 registers only the
+# peak-flood-depth exemplar; Phases 2-4 each add one entry. Mirrors the
+# report_plot_ids._OUTPUT_EXT_BY_RENDERER registry-pattern precedent.
+STATIC_PLOT_CONFIG_REGISTRY: dict[str, type[StaticPlotBaseConfig]] = {
+    "per_sim_peak_flood_depth": PeakFloodDepthStaticConfig,
+    "system_overview": SystemOverviewStaticConfig,
+    "per_sim_conduit_flow": ConduitFlowStaticConfig,
+    "sensitivity_benchmarking": SensitivityBenchmarkingStaticConfig,
+}

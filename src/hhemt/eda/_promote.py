@@ -73,7 +73,13 @@ def promote_eda_plot_to_static_config(
     """
     if not _PLOT_ID_CHARSET.match(plot_id):
         raise ValueError(f"plot_id {plot_id!r} is not charset-safe; must match ^[A-Za-z0-9_.]+$ (ADR-2).")
-    cfg = StaticPlotBaseConfig(plot_id=plot_id, caption=caption)
+    # renderer_kind is the ADR-2 plot-ID's leading '__'-segment (the renderer
+    # module name), the same convention static_snakefile_generator uses. For a
+    # promoted EDA plot it is not (yet) a key in STATIC_PLOT_CONFIG_REGISTRY —
+    # that is expected per the header comment (EDA-plot-ID render dispatch is
+    # deferred); the field is required so the emitted YAML validates round-trip.
+    renderer_kind = plot_id.split("__", 1)[0]
+    cfg = StaticPlotBaseConfig(plot_id=plot_id, renderer_kind=renderer_kind, caption=caption)
     if cfg.output_format not in _PLOTLY_PORTABLE_FORMATS:
         raise ValueError(
             f"output_format {cfg.output_format!r} is not producible by Plotly-Kaleido; "
