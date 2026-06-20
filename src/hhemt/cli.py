@@ -66,7 +66,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
     except json.JSONDecodeError as exc:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', or a JSON dict "
-            f'like \'{{"sa_id":[0,5]}}\'; got: {value!r} ({exc})'
+            f"like '{{\"sa_id\":[0,5]}}'; got: {value!r} ({exc})"
         )
 
 
@@ -139,8 +139,8 @@ def run_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            'or a JSON dict: \'{"sa_id":[0,5,22]}\' (sensitivity) or '
-            '\'{"event_iloc":[3,7]}\' (non-sensitivity).'
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
     ),
@@ -384,9 +384,7 @@ def run_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(
-            analysis_config, system, hpc_system_config_yaml=hpc_system_config
-        )
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis  # Link back
 
         if not quiet:
@@ -580,9 +578,7 @@ def cleanup_orphans_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(
-            analysis_config, system, hpc_system_config_yaml=hpc_system_config
-        )
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not analysis.cfg_analysis.toggle_sensitivity_analysis:
@@ -701,11 +697,14 @@ def reprocess_command(
     ),
     # Phase 3: R8 SLURM-offload toggle for the opt-in deletion.
     delete_via_slurm: bool | None = typer.Option(
-        None, "--delete-via-slurm/--no-delete-via-slurm",
-        help=("Offload the opt-in (--regenerate-existing) consolidated-zarr + "
-              "processed/ deletion to SLURM via the analysis.delete() architecture. "
-              "Default (unset): auto — offload when the analysis runs on an HPC "
-              "multi_sim_run_method, in-process fast_rmtree on local."),
+        None,
+        "--delete-via-slurm/--no-delete-via-slurm",
+        help=(
+            "Offload the opt-in (--regenerate-existing) consolidated-zarr + "
+            "processed/ deletion to SLURM via the analysis.delete() architecture. "
+            "Default (unset): auto — offload when the analysis runs on an HPC "
+            "multi_sim_run_method, in-process fast_rmtree on local."
+        ),
     ),
     override_clear_raw: str = typer.Option(
         None,
@@ -715,7 +714,7 @@ def reprocess_command(
             'or a JSON list of model types: \'["tritonswmm","swmm"]\'. When '
             'omitted, reprocess defaults to "none" (preserves historic semantics: '
             "reprocess never auto-clears raw outputs). When the resolved value "
-            'would clear, two guards must pass: every sim\'s c_run_*.flag must '
+            "would clear, two guards must pass: every sim's c_run_*.flag must "
             "exist and no in-flight _status/_submitted/ sentinel may be present."
         ),
         callback=lambda value: _parse_override_clear_raw(value),
@@ -725,8 +724,8 @@ def reprocess_command(
         "--override-force-rerun",
         help=(
             'Runtime override for cfg_analysis.force_rerun. Accepts "all", "none", '
-            'or a JSON dict: \'{"sa_id":[0,5,22]}\' (sensitivity) or '
-            '\'{"event_iloc":[3,7]}\' (non-sensitivity).'
+            "or a JSON dict: '{\"sa_id\":[0,5,22]}' (sensitivity) or "
+            "'{\"event_iloc\":[3,7]}' (non-sensitivity)."
         ),
         callback=lambda value: _parse_override_force_rerun(value),
     ),
@@ -777,9 +776,7 @@ def reprocess_command(
             raise typer.Exit(2)
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(
-            analysis_config, system, hpc_system_config_yaml=hpc_system_config
-        )
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         result = analysis.reprocess(
@@ -850,6 +847,52 @@ def eda_command(
         system._analysis = analysis
         result = analysis.eda(override_eda_config=override_eda_config)
         console.print(f"[green]EDA report written:[/green] {result.report_path}")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2)
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(5)
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10)
+
+
+@app.command(name="static-plots")
+def static_plots_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to system configuration YAML file",
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to analysis configuration YAML file",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="snakemake --dry-run only"),
+):
+    """Generate publication static figures (static_plots/) — one Snakemake rule per static-plot ID."""
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system)
+        system._analysis = analysis
+        result = analysis.static_plots(dry_run=dry_run)
+        console.print(f"[green]Static plots:[/green] {result.get('message', 'submitted')}")
         raise typer.Exit(0)
     except typer.Exit:
         raise
@@ -954,15 +997,12 @@ def delete_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(
-            analysis_config, system, hpc_system_config_yaml=hpc_system_config
-        )
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if skip_preview:
             console.print(
-                f"[yellow]Preview skipped (--skip-preview). "
-                f"Targeting {analysis.analysis_paths.analysis_dir}[/yellow]"
+                f"[yellow]Preview skipped (--skip-preview). Targeting {analysis.analysis_paths.analysis_dir}[/yellow]"
             )
         else:
             _print_delete_dry_run_summary(analysis)
@@ -972,9 +1012,7 @@ def delete_command(
             raise typer.Exit(0)
 
         if not yes:
-            response = input(
-                "Proceed with deletion? Type 'y' or 'yes' to confirm: "
-            ).strip().lower()
+            response = input("Proceed with deletion? Type 'y' or 'yes' to confirm: ").strip().lower()
             if response not in ("y", "yes"):
                 console_err.print("[yellow]Aborted.[/yellow]")
                 raise typer.Exit(1)
@@ -1011,9 +1049,7 @@ def _print_delete_dry_run_summary(analysis) -> None:
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     if not analysis_dir.exists():
-        console.print(
-            f"[yellow]analysis_dir does not exist: {analysis_dir}[/yellow]"
-        )
+        console.print(f"[yellow]analysis_dir does not exist: {analysis_dir}[/yellow]")
         return
 
     def _du(path: Path) -> int:
@@ -1060,9 +1096,7 @@ def _print_delete_dry_run_summary(analysis) -> None:
             size_bytes /= 1024.0  # type: ignore[assignment]
         return f"{size_bytes:.1f} PiB"
 
-    console.print(
-        f"[bold]Delete preview for[/bold] {analysis_dir}"
-    )
+    console.print(f"[bold]Delete preview for[/bold] {analysis_dir}")
     total = 0
     if analysis.cfg_analysis.toggle_sensitivity_analysis:
         subanalyses_dir = analysis_dir / "subanalyses"
@@ -1112,8 +1146,7 @@ def cleanup_orphan_delete_sentinels_command(
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
-        help="List dead orphan delete-sentinels without removing (default) or "
-        "remove them with --apply",
+        help="List dead orphan delete-sentinels without removing (default) or remove them with --apply",
     ),
     force: bool = typer.Option(
         False,
@@ -1154,20 +1187,14 @@ def cleanup_orphan_delete_sentinels_command(
         system._analysis = analysis
 
         if not dry_run and not force:
-            console_err.print(
-                "[bold red]Error:[/bold red] --apply requires --force to confirm removal."
-            )
+            console_err.print("[bold red]Error:[/bold red] --apply requires --force to confirm removal.")
             raise typer.Exit(2)
 
         submitted_dir = analysis.analysis_paths.analysis_dir / "_status" / "_submitted"
-        delete_sentinels = (
-            sorted(submitted_dir.glob("delete_*.json")) if submitted_dir.exists() else []
-        )
+        delete_sentinels = sorted(submitted_dir.glob("delete_*.json")) if submitted_dir.exists() else []
 
         if not delete_sentinels:
-            console.print(
-                "[green]No delete-sentinels found under _status/_submitted/.[/green]"
-            )
+            console.print("[green]No delete-sentinels found under _status/_submitted/.[/green]")
             raise typer.Exit(0)
 
         # Reuse the delete preflight's liveness primitive. reclaim_dead=False on a
@@ -1175,20 +1202,14 @@ def cleanup_orphan_delete_sentinels_command(
         # (unlink the dead/corrupt ones in-place). The returned list is the ALIVE
         # set of (sentinel_stem, slurm_jobid) tuples.
         builder = analysis._workflow_builder
-        alive = builder._classify_live_sentinels(
-            delete_sentinels, reclaim_dead=(not dry_run)
-        )
+        alive = builder._classify_live_sentinels(delete_sentinels, reclaim_dead=(not dry_run))
         alive_stems = {stem for stem, _jid in alive}
         dead = [s for s in delete_sentinels if s.stem not in alive_stems]
 
-        console.print(
-            f"[bold]Orphan delete-sentinel cleanup for[/bold] "
-            f"{analysis.analysis_paths.analysis_dir}"
-        )
+        console.print(f"[bold]Orphan delete-sentinel cleanup for[/bold] {analysis.analysis_paths.analysis_dir}")
         verb = "would remove" if dry_run else "removed"
         console.print(
-            f"  {len(delete_sentinels)} delete-sentinel(s): "
-            f"{len(dead)} dead ({verb}), {len(alive)} alive (retained)."
+            f"  {len(delete_sentinels)} delete-sentinel(s): {len(dead)} dead ({verb}), {len(alive)} alive (retained)."
         )
         for s in dead:
             console.print(f"  [yellow]dead[/yellow]   {s.name}")
@@ -1277,9 +1298,7 @@ def cleanup_stale_metadata_command(
         system._analysis = analysis
 
         if not dry_run and not force:
-            console_err.print(
-                "[bold red]Error:[/bold red] --apply requires --force to confirm deletion."
-            )
+            console_err.print("[bold red]Error:[/bold red] --apply requires --force to confirm deletion.")
             raise typer.Exit(2)
 
         orphan_paths = analysis._enumerate_stale_metadata_paths()
@@ -1288,9 +1307,7 @@ def cleanup_stale_metadata_command(
         if n == 0:
             console.print("[green]No orphan metadata candidates enumerated.[/green]")
         elif dry_run:
-            console.print(
-                f"[yellow]Found {n} orphan metadata candidate(s) (dry-run; nothing deleted).[/yellow]"
-            )
+            console.print(f"[yellow]Found {n} orphan metadata candidate(s) (dry-run; nothing deleted).[/yellow]")
             for p in orphan_paths:
                 console.print(f"  orphan: {p}")
         else:
@@ -1298,9 +1315,7 @@ def cleanup_stale_metadata_command(
                 for p in orphan_paths:
                     console.print(f"  orphan: {p}")
             analysis._invoke_snakemake_cleanup_metadata(orphan_paths)
-            console.print(
-                f"[green]Invoked `snakemake --cleanup-metadata` against {n} orphan path(s).[/green]"
-            )
+            console.print(f"[green]Invoked `snakemake --cleanup-metadata` against {n} orphan path(s).[/green]")
 
         raise typer.Exit(0)
 
@@ -1703,10 +1718,7 @@ def report_from_bundle_command(
         raise CLIValidationError(
             argument="bundle_path",
             message=f"{bundle_path} is neither a .zip file nor a directory",
-            fix_hint=(
-                "Pass a path to a bundle.zip produced by "
-                "`hhemt bundle`, or to an unpacked bundle directory."
-            ),
+            fix_hint=("Pass a path to a bundle.zip produced by `hhemt bundle`, or to an unpacked bundle directory."),
         )
 
     bundle = Bundle.from_directory(bundle_root)

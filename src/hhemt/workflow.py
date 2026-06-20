@@ -282,18 +282,25 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
 
     # output: report(...) wrapper. report_kwargs carries caption,
     # category, optional subcategory, and labels as pre-formatted dict.
-    rk = spec.report_kwargs or {}
-    labels_str = rk.get("labels", '{"figure": "?"}')
-    subcategory_line = f'\n            subcategory="{rk["subcategory"]}",' if "subcategory" in rk else ""
-    output_block = (
-        f"report(\n"
-        f'            "{output_path}",\n'
-        f'            caption="{rk.get("caption", "")}",\n'
-        f'            category="{rk.get("category", "")}",'
-        f"{subcategory_line}\n"
-        f"            labels={labels_str},\n"
-        f"        )"
-    )
+    # report_kwargs is None for static-plot / non-report rules: emit a bare
+    # output path with no report() wrapper (R3). The dict branch below is
+    # byte-identical to the prior unconditional form, so existing report-rule
+    # callers are unchanged.
+    if spec.report_kwargs is None:
+        output_block = f'"{output_path}"'
+    else:
+        rk = spec.report_kwargs
+        labels_str = rk.get("labels", '{"figure": "?"}')
+        subcategory_line = f'\n            subcategory="{rk["subcategory"]}",' if "subcategory" in rk else ""
+        output_block = (
+            f"report(\n"
+            f'            "{output_path}",\n'
+            f'            caption="{rk.get("caption", "")}",\n'
+            f'            category="{rk.get("category", "")}",'
+            f"{subcategory_line}\n"
+            f"            labels={labels_str},\n"
+            f"        )"
+        )
 
     # params: block — either literal source_paths or function reference,
     # plus any extra_params entries (e.g. event_iloc lambdas).
@@ -1969,9 +1976,7 @@ rule consolidate_scenario:
         # ensemble partition (NOT the processing partition) is the GPU-compile source
         # for the setup rule too, because the binary it builds runs on the sim
         # partition. Other rules keep the shared config_args (no --target-partition).
-        gpu_compile_config_args = self._get_config_args(
-            target_partition=self.cfg_analysis.hpc_ensemble_partition
-        )
+        gpu_compile_config_args = self._get_config_args(target_partition=self.cfg_analysis.hpc_ensemble_partition)
         skip_setup = not (process_system_level_inputs or compile_TRITON_SWMM)
 
         # Make log dirs
@@ -2854,9 +2859,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -2879,8 +2884,7 @@ def _per_sim_conduit_flow_sources(wildcards):
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
             assert isinstance(max_concurrent, int), (
-                "hpc_system_config.max_concurrent_jobs is required for "
-                "generate_snakemake_config (slurm mode)"
+                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
             )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
@@ -5354,6 +5358,229 @@ exit $snakemake_status
             if remove_self_sentinel:
                 _osent.remove_orchestrator_sentinel(self.analysis_paths.analysis_dir, driver_id)
 
+    def submit_static_plots_workflow(
+        self,
+        *,
+        resolved_static_plot_configs: "list[Path]",
+        static_config_ids: "list[str] | None" = None,
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        dry_run: bool = False,
+        verbose: bool = True,
+    ) -> dict:
+        """Submit the publication static-plots workflow (ADR-8).
+
+        Writes ``{analysis_dir}/Snakefile.static`` (one bare-output rule per
+        static-plot ID + ``rule all``; NO ``render_report``, NO ``report()``
+        wrapper) and dispatches it via the SAME execution plumbing as
+        run()/reprocess(). Modeled verbatim on :meth:`submit_reprocess_workflow`
+        with three differences: (a) the static Snakefile generator replaces the
+        reprocess one; (b) NO ``--rerun-triggers mtime`` — the static path uses
+        Snakemake's DEFAULT rerun triggers (a first-run static render has no
+        prior outputs, so the surgical mtime-only intent of reprocess does not
+        apply); (c) ``static_config_ids`` filters the harvested rule set to the
+        named subset. ``static_plots/{plot_id}.{ext}`` outputs are disjoint from
+        the run/reprocess output set, so ``--nolock`` + ``skip_lock_check=True``
+        plus the orchestrator-liveness gate are the concurrency contract (the
+        Snakemake working-dir lock is keyed on the input/output file SET, so a
+        distinct ``Snakefile.static`` gives NO lock isolation).
+
+        Parameters
+        ----------
+        resolved_static_plot_configs
+            The override-resolved list of per-plot config YAML paths, computed
+            at the :meth:`TRITONSWMM_analysis.static_plots` facade and threaded
+            DOWN (NOT re-read from ``cfg_analysis`` here) so a passed override is
+            honored — the anti-facade-drift contract (master Decision-threading).
+        static_config_ids
+            When non-None, restrict the emitted rules to configs whose
+            ``plot_id`` is in this set; None emits a rule for every resolved
+            config.
+        execution_mode
+            ``"auto"`` detects SLURM context; ``"local"`` / ``"slurm"`` force it.
+        dry_run
+            If True, runs ``snakemake --dry-run`` only and returns.
+        verbose
+            If True, print progress messages.
+
+        Returns
+        -------
+        dict
+            Status dictionary matching the run-path's shape (``success``,
+            ``mode``, ``snakefile_path``, ``job_id``, ``message``,
+            ``snakemake_logfile``).
+        """
+        from hhemt.static_snakefile_generator import write_static_snakefile
+
+        effective_method = self.cfg_analysis.multi_sim_run_method
+        if execution_mode == "auto":
+            mode: Literal["local", "slurm"] = "slurm" if self.analysis.in_slurm else "local"
+        else:
+            mode = execution_mode  # type: ignore[assignment]
+
+        if verbose:
+            print(
+                f"[Snakemake] Submitting static-plots workflow (mode={mode}, method={effective_method})",
+                flush=True,
+            )
+
+        # Write the static-plots Snakefile. The resolved config list is threaded
+        # DOWN from the facade (anti-drift); static_config_ids subset-filtering is
+        # applied at the harvest site inside the generator.
+        snakefile_path = write_static_snakefile(
+            self.analysis,
+            static_plot_configs=resolved_static_plot_configs,
+            config_args_str=self._get_config_args(),
+            static_backend=self._get_report_cfg_static_backend(),
+            static_config_ids=static_config_ids,
+        )
+        if verbose:
+            print(f"[Snakemake] Static-plots Snakefile generated: {snakefile_path}", flush=True)
+
+        # Logs.
+        logs_dir = self.analysis_paths.analysis_log_directory
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        logfile_name = "snakemake_static_plots_dry_run.log" if dry_run else "snakemake_static_plots.log"
+        snakemake_logfile = logs_dir / logfile_name
+
+        # Working dir is analysis_dir itself (relative artifact paths resolve
+        # there). Snakemake locks are keyed on the working-dir input/output file
+        # SET, NOT the Snakefile path, so a distinct Snakefile.static gives NO
+        # lock isolation — coexistence is handled by --nolock + the
+        # orchestrator-liveness gate (see submit_reprocess_workflow).
+        static_working_dir = self.analysis_paths.analysis_dir
+
+        # Build the snakemake command. Reuses the run/submit base command. NO
+        # ``--rerun-triggers mtime`` — the static path uses Snakemake's DEFAULT
+        # rerun triggers (a first-run static render has no prior outputs).
+        cmd_args = self._get_snakemake_base_cmd() + [
+            "--snakefile",
+            str(snakefile_path),
+            "--nolock",
+        ]
+
+        if mode == "local":
+            local_cores = self.cfg_analysis.local_cpu_cores_for_workflow
+            assert isinstance(local_cores, int), "local_cpu_cores_for_workflow must be specified for local runs"
+            if local_cores > 1:
+                cmd_args.extend(["--cores", str(local_cores)])
+            else:
+                cmd_args.extend(["--cores", "1"])
+        else:  # slurm
+            config = self.generate_snakemake_config(mode="slurm")
+            config_dir = self.write_snakemake_config(config, mode="slurm")
+            cmd_args.extend(
+                [
+                    "--profile",
+                    str(config_dir),
+                    "--executor",
+                    "slurm",
+                    "--printshellcmds",
+                ]
+            )
+
+        if dry_run:
+            cmd_args.append("--dry-run")
+
+        # Static-render concurrency gate: refuse fast with a WorkflowError — never
+        # input() — when a live orchestration DRIVER for this analysis exists.
+        # Default-safe when no _orchestrator/ sentinel is present, and coexists
+        # with queued/running _submitted/ sim WORKERS. Skipped for dry runs.
+        import os
+
+        from hhemt import orchestrator_sentinels as _osent
+
+        driver_id = _osent.new_driver_id()
+        remove_self_sentinel = False
+        if not dry_run:
+            gate_err = self._orchestrator_liveness_gate(
+                analysis_dir=self.analysis_paths.analysis_dir,
+                exclude_driver_id=driver_id,
+            )
+            if gate_err is not None:
+                raise gate_err
+            _osent.write_orchestrator_sentinel(
+                self.analysis_paths.analysis_dir,
+                driver_id=driver_id,
+                workflow_submission_mode="local",
+                pid=os.getpid(),
+            )
+            remove_self_sentinel = True
+
+        try:
+            # skip_lock_check=True bypasses the toolkit-side input() prompt; the
+            # orchestrator-liveness gate above is the concurrency authority and
+            # --nolock is on the subprocess.
+            self._pre_snakemake_invocation_guards(
+                snakefile_path,
+                dry_run=dry_run,
+                verbose=verbose,
+                working_dir=static_working_dir,
+                skip_lock_check=True,
+            )
+
+            if mode == "local":
+                with open(snakemake_logfile, "w") as log_f:
+                    result = subprocess.run(
+                        cmd_args,
+                        cwd=str(self.analysis_paths.analysis_dir),
+                        stdout=log_f,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        check=False,
+                    )
+                if verbose:
+                    print(f"[Snakemake] command: \n     {' '.join(cmd_args)}")
+                if result.returncode != 0:
+                    return {
+                        "success": False,
+                        "mode": "local",
+                        "snakefile_path": snakefile_path,
+                        "job_id": None,
+                        "message": (f"Snakemake static-plots failed. See {snakemake_logfile} for details."),
+                        "snakemake_logfile": snakemake_logfile,
+                    }
+                if verbose:
+                    print("[Snakemake] Static plots completed successfully", flush=True)
+                self.analysis._refresh_log()
+                return {
+                    "success": True,
+                    "mode": "local",
+                    "snakefile_path": snakefile_path,
+                    "job_id": None,
+                    "message": "Static plots completed successfully",
+                    "snakemake_logfile": snakemake_logfile,
+                }
+
+            # slurm path
+            with open(snakemake_logfile, "w") as log_f:
+                proc = subprocess.Popen(
+                    cmd_args,
+                    cwd=str(self.analysis_paths.analysis_dir),
+                    stdout=log_f,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            if verbose:
+                print(
+                    f"[Snakemake] Static plots submitted to background (PID: {proc.pid})",
+                    flush=True,
+                )
+            # Detached driver: leave the self-sentinel for the gate's liveness reclaim.
+            remove_self_sentinel = False
+            self.analysis._refresh_log()
+            return {
+                "success": True,
+                "mode": "slurm",
+                "snakefile_path": snakefile_path,
+                "job_id": None,
+                "message": "Static plots submitted to SLURM (detached)",
+                "process": proc,
+                "snakemake_logfile": snakemake_logfile,
+            }
+        finally:
+            if remove_self_sentinel:
+                _osent.remove_orchestrator_sentinel(self.analysis_paths.analysis_dir, driver_id)
+
     def _classify_live_sentinels(
         self,
         sentinel_paths: list[Path],
@@ -6654,9 +6881,7 @@ onerror:
             hpc_time = sub_analysis.cfg_analysis.hpc_time_min_per_sim or 30
             mem_per_cpu = sub_analysis.cfg_analysis.mem_gb_per_cpu or 2
             gpus_per_node_config = (
-                resolve_gpus_per_node(
-                    sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition
-                )
+                resolve_gpus_per_node(sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition)
                 or 0
             )
             cpus_per_sim = n_mpi * n_omp
@@ -6704,9 +6929,9 @@ onerror:
             # gpu_hardware comes directly from the per-target cfg_system. Under the
             # prefixed-column overlay mechanism, `system.gpu_hardware` overlay values
             # already populated this field via the synthesized per-target YAML.
-            gpu_hw = resolve_gpu_target(
-                sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition
-            )[0]
+            gpu_hw = resolve_gpu_target(sub_analysis.cfg_hpc_system, sub_analysis.cfg_analysis.hpc_ensemble_partition)[
+                0
+            ]
             sim_resources_sa = self._base_builder._build_resource_block(
                 partition=sub_analysis.cfg_analysis.hpc_ensemble_partition,
                 runtime_min=hpc_time,

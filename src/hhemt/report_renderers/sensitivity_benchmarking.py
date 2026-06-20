@@ -47,6 +47,7 @@ from hhemt.swmm_output_parser import parse_total_elapsed
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
+    from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
 @dataclass
@@ -87,8 +88,21 @@ def render(
     output_path: Path,
     *,
     independent_var: str,
+    static_cfg: StaticPlotBaseConfig | None = None,
+    **kwargs,
 ) -> Path:
-    """Render the dual-panel benchmarking figure for one independent variable."""
+    """Render the dual-panel benchmarking figure for one independent variable.
+
+    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
+    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and the
+    figure geometry, the categorical series palette, the cpu/gpu markers, optional
+    log-y, base typography, and emit format are driven by the
+    SensitivityBenchmarkingStaticConfig rather than report_cfg. The Plotly branch
+    is the interactive-report renderer and is NOT promoted to publication
+    (KEEP-no-hybrid invariant). ``static_cfg=None`` (the report path) is
+    byte-unchanged. ``**kwargs`` tolerates dispatcher-passed keywords this
+    renderer does not consume.
+    """
     from hhemt.report_renderers.system_overview import _apply_rcparams
 
     _apply_rcparams(report_cfg)
@@ -168,7 +182,11 @@ def render(
         "static_backend",
         "plotly",
     )
-    if static_backend == "plotly":
+    # Publication path (ADR-3): static_cfg FORCES the matplotlib branch regardless
+    # of static_backend. The Plotly branch stays the interactive-report renderer and
+    # is never promoted to publication (KEEP-no-hybrid invariant).
+    use_plotly = False if static_cfg is not None else (static_backend == "plotly")
+    if use_plotly:
         # Pre-compute speedup + efficiency. Baseline anchors against the serial
         # group's wallclock at N=1 (strong-scaling convention) rather than the
         # global N=1 min (which would land on GPU, not serial, since 1 GPU is
@@ -249,11 +267,36 @@ def render(
             speedup_range_mode=speedup_range_mode,
         )
 
-    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
-        4, 1, figsize=tuple(sens_cfg.figsize_inches), sharex=True
+    # Publication base typography (parity with the other static-plot renderers);
+    # full per-element FontTarget threading is the deferred _core extraction.
+    if static_cfg is not None:
+        from hhemt.config.viz_vocabulary import FontTarget
+
+        plt.rcParams["font.family"] = static_cfg.font_family
+        plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
+
+    # Publication exact dimensions (data-viz OE-1) vs the report figsize.
+    _figsize = (
+        (static_cfg.figure_width_inches, static_cfg.figure_height_inches)
+        if static_cfg is not None
+        else tuple(sens_cfg.figsize_inches)
     )
-    _draw_panel(ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov)
-    _draw_panel(ax_cost, df, y_col="compute_disp", group_by_var=group_by_var, sens_cfg=sens_cfg, prov=prov)
+    fig, (ax_wall, ax_cost, ax_speedup, ax_eff) = plt.subplots(
+        4, 1, figsize=_figsize, sharex=True
+    )
+    _draw_panel(
+        ax_wall, df, y_col="wallclock_disp", group_by_var=group_by_var,
+        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+    )
+    _draw_panel(
+        ax_cost, df, y_col="compute_disp", group_by_var=group_by_var,
+        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
+    )
+    # Optional publication log-y on the magnitude panels (wall-clock / compute-cost);
+    # the speedup/efficiency panels are ratios and stay linear.
+    if static_cfg is not None and static_cfg.log_y:
+        ax_wall.set_yscale("log")
+        ax_cost.set_yscale("log")
 
     speedup_per_group = _compute_speedup_per_group(
         df, t_col="wallclock_s", indep_col="n_devices", group_col="group_value",
@@ -267,13 +310,13 @@ def render(
         ax_speedup, speedup_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="linear", ideal_label="Ideal speedup (S=N)",
-        sens_cfg=sens_cfg, prov=prov,
+        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
     )
     _draw_metric_panel(
         ax_eff, strong_eff_per_group, df=df,
         x_max=df["n_devices"].max(),
         ideal_kind="constant", ideal_value=1.0, ideal_label="Ideal efficiency (=1.0)",
-        sens_cfg=sens_cfg, prov=prov,
+        sens_cfg=sens_cfg, prov=prov, static_cfg=static_cfg,
     )
 
     xlabel_text = sens_cfg.independent_var_labels.get(independent_var, independent_var)
@@ -326,8 +369,10 @@ def render(
         output_path,
         source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
-        dpi=report_cfg.figure_defaults.savefig_dpi,
-        output_format="svg",
+        dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
+        output_format=(static_cfg.output_format if static_cfg is not None else "svg"),
+        bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
+        emit_preview=(static_cfg is None),
         provenance=prov,
     )
 
@@ -560,6 +605,7 @@ def _draw_metric_panel(
     prov: ProvenanceLog,
     ideal_value: float = 1.0,
     ideal_label: str = "Ideal",
+    static_cfg=None,
 ) -> None:
     """Draw a per-group line+marker series for speedup or efficiency.
 
@@ -576,6 +622,9 @@ def _draw_metric_panel(
     - ``ideal_kind='constant'``: y = ``ideal_value`` (perfect efficiency = 1.0).
     """
     groups = sorted(metric_per_group.keys(), key=str)
+    # Dual-source publication style: static_cfg overrides palette + cpu marker.
+    palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
+    cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
     # Annotation lookup: map (group_value, n_devices) → n_mpi_procs at the MIN-y row.
     df_min = (
         df.loc[df.groupby(["group_value", "n_devices"])["wallclock_s"].idxmin()]
@@ -592,7 +641,7 @@ def _draw_metric_panel(
             continue
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        color = palette[i % len(palette)]
         with prov.artist(
             axes_id="ax_metric", kind="line",
             note=f"metric group {gv}",
@@ -605,7 +654,7 @@ def _draw_metric_panel(
         ) as a:
             a.add_channel("data", ProvenanceRef(source_path="sensitivity_datatree.zarr"))
             ax.scatter(
-                xs, ys, color=color, marker=sens_cfg.cpu_marker, s=sens_cfg.point_size,
+                xs, ys, color=color, marker=cpu_marker, s=sens_cfg.point_size,
                 edgecolor="black", linewidth=1.0, zorder=3,
             )
         if str(gv).lower() == "hybrid":
@@ -652,15 +701,21 @@ def _adaptive_time_unit(max_hours: float) -> tuple[str, float]:
     return "hrs", 1.0
 
 
-def _draw_panel(ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg, prov: ProvenanceLog) -> None:
+def _draw_panel(
+    ax, df: pd.DataFrame, *, y_col: str, group_by_var: str | None, sens_cfg, prov: ProvenanceLog, static_cfg=None,
+) -> None:
     """Draw one panel of the dual-panel benchmarking figure."""
     groups = sorted(df["group_value"].dropna().unique(), key=str)
+    # Dual-source publication style: static_cfg overrides palette + cpu/gpu markers.
+    palette = static_cfg.series_palette if static_cfg is not None else sens_cfg.palette
+    cpu_marker = static_cfg.cpu_marker if static_cfg is not None else sens_cfg.cpu_marker
+    gpu_marker = static_cfg.gpu_marker if static_cfg is not None else sens_cfg.gpu_marker
     for i, gv in enumerate(groups):
         sub = df[df["group_value"] == gv].sort_values("indep_value")
-        color = sens_cfg.palette[i % len(sens_cfg.palette)]
+        color = palette[i % len(palette)]
         is_gpu_group = str(gv).lower() == "gpu"
         is_hybrid_group = str(gv).lower() == "hybrid"
-        marker = sens_cfg.gpu_marker if is_gpu_group else sens_cfg.cpu_marker
+        marker = gpu_marker if is_gpu_group else cpu_marker
         is_single_point_group = str(gv).lower() in {"serial", "single_cpu", "single-cpu"}
         if is_single_point_group or len(sub) == 1:
             with prov.artist(

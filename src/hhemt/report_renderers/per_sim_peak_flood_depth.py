@@ -81,6 +81,7 @@ def _build_discrete_depth_colorscale(
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.report import report_config
+    from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
 def _shared_depth_max(analysis, target_crs):
@@ -218,9 +219,22 @@ def render(
     report_cfg: report_config,
     output_path: Path,
     *,
-    event_iloc: int,
+    event_iloc: int | None = None,
+    static_cfg: StaticPlotBaseConfig | None = None,
+    **kwargs,
 ) -> Path:
-    """Render the 3-panel depth + WSE + hydrology figure for one event_iloc."""
+    """Render the 3-panel depth + WSE + hydrology figure for one event_iloc.
+
+    When ``static_cfg`` is provided (publication static-plots path, ADR-8) the
+    matplotlib branch is FORCED (publication is matplotlib-only per ADR-3) and
+    the figure geometry, depth colormap / out-of-range colors, colorbar norm,
+    base typography, and emit format are driven by the PeakFloodDepthStaticConfig
+    rather than report_cfg. ``static_cfg=None`` (the report path) is byte-
+    unchanged. ``event_iloc`` defaults to None only so the dispatcher can omit it
+    without a TypeError; the static generator always threads ``--event-iloc``, so
+    a per-sim render still receives it. ``**kwargs`` tolerates dispatcher-passed
+    keywords this renderer does not consume.
+    """
     from hhemt.config.report import resolve_target_crs
     from hhemt.report_renderers._figure_emission import (
         add_panel_label,
@@ -257,7 +271,18 @@ def render(
         "static_backend",
         "plotly",
     )
-    if static_backend == "plotly":
+    # Publication path (ADR-3): when static_cfg is provided, FORCE the matplotlib
+    # branch regardless of report_cfg.interactive.static_backend (static plots are
+    # matplotlib-only) and apply the publication base typography (font_family + a
+    # base size) so the publication font fields are not silently inert. Full
+    # per-element FontTarget threading + rc_context isolation is routed to the
+    # post-Phase-1 follow-up. report-mode (static_cfg is None) is unchanged.
+    if static_cfg is not None:
+        from hhemt.config.viz_vocabulary import FontTarget
+
+        plt.rcParams["font.family"] = static_cfg.font_family
+        plt.rcParams["font.size"] = static_cfg.font_sizes[FontTarget.axis_label]
+    elif static_backend == "plotly":
         return _render_plotly_branch(
             analysis,
             report_cfg,
@@ -358,9 +383,20 @@ def render(
     )
     map_aspect = (bounds[2] - bounds[0]) / max(bounds[3] - bounds[1], 1e-9)
     map_cfg = report_cfg.per_sim.map
-    h = float(cfg.figsize_inches[1]) if hasattr(cfg, "figsize_inches") else map_cfg.fallback_h_inches
-    fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)
-    fig = plt.figure(figsize=(fig_width, h), layout="constrained")
+    if static_cfg is not None:
+        # Publication exact dimensions (data-viz OE-1): the user owns the figure
+        # size via figure_width/height_inches; bypass the report aspect-math width
+        # derivation. layout="constrained" auto-fits panel contents within the
+        # declared size, and the publication emit uses bbox_inches=None so the
+        # saved figure is exactly this size.
+        fig = plt.figure(
+            figsize=(static_cfg.figure_width_inches, static_cfg.figure_height_inches),
+            layout="constrained",
+        )
+    else:
+        h = float(cfg.figsize_inches[1]) if hasattr(cfg, "figsize_inches") else map_cfg.fallback_h_inches
+        fig_width = h * (2 * map_aspect * map_cfg.fig_width_panel_pad + 1.0)
+        fig = plt.figure(figsize=(fig_width, h), layout="constrained")
     outer = fig.add_gridspec(1, 3, width_ratios=list(map_cfg.outer_width_ratios), wspace=map_cfg.outer_wspace)
     _MAP_TO_CBAR_HEIGHT_RATIO = map_cfg.map_to_cbar_height_ratio
     gs_depth = outer[0, 0].subgridspec(2, 1, height_ratios=[_MAP_TO_CBAR_HEIGHT_RATIO, 1])
@@ -398,36 +434,75 @@ def render(
         selection={"event_iloc": int(event_iloc)},
         transform="masked to watershed and depth>0",
     )
-    depth_vmin = map_cfg.depth_vmin
-    shared_max = _shared_depth_max(analysis, target_crs)
-    if shared_max is not None:
-        depth_vmax = float(shared_max)
+    # vmin/vmax: publication static_cfg.vmin/vmax override the report defaults
+    # when set; otherwise the report-path derivation (pinned vmin + shared-or-
+    # local vmax) is byte-unchanged.
+    if static_cfg is not None and static_cfg.vmin is not None:
+        depth_vmin = float(static_cfg.vmin)
     else:
-        d_max_obj = da_masked.max()
-        d_max_local = float(
-            d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
-        )
-        depth_vmax = (
-            d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else map_cfg.depth_vmax_fallback
-        )
-    depth_cmap = plt.get_cmap(map_cfg.depth_cmap).copy()
-    depth_cmap.set_under(map_cfg.depth_under_color)
-    depth_norm = Normalize(vmin=depth_vmin, vmax=depth_vmax)
+        depth_vmin = map_cfg.depth_vmin
+    if static_cfg is not None and static_cfg.vmax is not None:
+        depth_vmax = float(static_cfg.vmax)
+    else:
+        shared_max = _shared_depth_max(analysis, target_crs)
+        if shared_max is not None:
+            depth_vmax = float(shared_max)
+        else:
+            d_max_obj = da_masked.max()
+            d_max_local = float(
+                d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+            )
+            depth_vmax = (
+                d_max_local if (np.isfinite(d_max_local) and d_max_local > depth_vmin) else map_cfg.depth_vmax_fallback
+            )
+    # colormap + out-of-range colors: dual-source (report uses map_cfg; publication
+    # uses the PeakFloodDepthStaticConfig depth_* fields + optional over/bad).
+    _depth_cmap_name = static_cfg.depth_cmap if static_cfg is not None else map_cfg.depth_cmap
+    _depth_under = static_cfg.depth_under_color if static_cfg is not None else map_cfg.depth_under_color
+    depth_cmap = plt.get_cmap(_depth_cmap_name).copy()
+    depth_cmap.set_under(_depth_under)
+    if static_cfg is not None and static_cfg.depth_over_color is not None:
+        depth_cmap.set_over(static_cfg.depth_over_color)
+    if static_cfg is not None and static_cfg.set_bad_color is not None:
+        depth_cmap.set_bad(static_cfg.set_bad_color)
+    # colorbar norm: report path is a continuous linear Normalize (iter-19). The
+    # publication path activates BoundaryNorm/LogNorm/SymLogNorm by colorbar_norm
+    # (new conditional code — these controls have NO map_cfg counterpart, so a
+    # dual-source swap would render them silently inert).
+    _cbar_extend = static_cfg.colorbar_extend if static_cfg is not None else "min"
+    if static_cfg is not None and static_cfg.colorbar_norm != "linear":
+        from matplotlib.colors import BoundaryNorm, LogNorm, SymLogNorm
+
+        if static_cfg.colorbar_norm == "boundary" and static_cfg.colorbar_boundaries:
+            depth_norm = BoundaryNorm(list(static_cfg.colorbar_boundaries), ncolors=depth_cmap.N)
+            _norm_label = "BoundaryNorm"
+        elif static_cfg.colorbar_norm == "log":
+            depth_norm = LogNorm(vmin=max(depth_vmin, 1e-9), vmax=depth_vmax)
+            _norm_label = "LogNorm"
+        elif static_cfg.colorbar_norm == "symlog":
+            depth_norm = SymLogNorm(linthresh=max(depth_vmin, 1e-9), vmin=depth_vmin, vmax=depth_vmax)
+            _norm_label = "SymLogNorm"
+        else:
+            depth_norm = Normalize(vmin=depth_vmin, vmax=depth_vmax)
+            _norm_label = "Normalize"
+    else:
+        depth_norm = Normalize(vmin=depth_vmin, vmax=depth_vmax)
+        _norm_label = "Normalize"
     with prov.artist(
         axes_id="ax_depth",
         kind="image",
-        note=f"peak flood depth raster (continuous linear, event {event_iloc})",
+        note=f"peak flood depth raster ({_norm_label}, event {event_iloc})",
     ) as a:
         a.add_channel("z", depth_ref)
         a.add_channel(
             "color",
             depth_ref,
-            cmap=map_cfg.depth_cmap,
+            cmap=_depth_cmap_name,
             vmin=depth_vmin,
             vmax=depth_vmax,
-            norm="Normalize",
-            extend="min",
-            under_color=map_cfg.depth_under_color,
+            norm=_norm_label,
+            extend=_cbar_extend,
+            under_color=_depth_under,
         )
         depth_img = da_masked.plot(  # noqa: F841
             ax=ax_depth,
@@ -441,7 +516,7 @@ def render(
         ax_depth.collections[0] if ax_depth.collections else depth_img,
         cax=cax_depth,
         orientation="horizontal",
-        extend="min",
+        extend=_cbar_extend,
     )
     cbar_d.set_label(units.depth_label(analysis._system.cfg_system.crs.vertical_epsg))
     ax_depth.set_aspect("equal")
@@ -611,7 +686,10 @@ def render(
         output_path,
         source_paths,
         analysis_dir=analysis.analysis_paths.analysis_dir,
-        dpi=report_cfg.figure_defaults.savefig_dpi,
+        dpi=(static_cfg.savefig_dpi if static_cfg is not None else report_cfg.figure_defaults.savefig_dpi),
+        output_format=(static_cfg.output_format if static_cfg is not None else "png"),
+        bbox_inches_tight=(static_cfg.bbox_inches_tight if static_cfg is not None else True),
+        emit_preview=(static_cfg is None),
         manifest_data={
             "event_iloc": int(event_iloc),
             "depth_m_max": float(wlevel_m_max),
