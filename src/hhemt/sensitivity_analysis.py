@@ -513,9 +513,10 @@ class TRITONSWMM_sensitivity_analysis:
             ``e_consolidate_sa-{id}_complete.flag`` files and the master
             ``f_consolidate_master_complete.flag``, then re-runs the consolidate
             + master_consolidation + plot/render rule chain. ``"render"``
-            invalidates only the report artifacts. ``"process"`` is accepted
-            but maps onto the same Snakefile as ``"consolidate"`` (the master
-            generator does not emit ``process_*`` rules).
+            invalidates only the report artifacts. ``"process"`` reconciles
+            stale ``d_process`` flags against summary existence and re-emits the
+            per-(sa, event) rebuild rules (Gotcha 34/40); it does NOT collapse
+            onto the ``"consolidate"`` Snakefile.
         sa_ids
             Optional subset of sub-analysis IDs (string-cast) to invalidate.
             When ``None`` (default), every sub-analysis's per-sa consolidate
@@ -867,10 +868,12 @@ class TRITONSWMM_sensitivity_analysis:
         import sys
 
         from .exceptions import WorkflowError
+        from .workflow import _assert_snakefile_package_current
 
         master_dir = self.master_analysis.analysis_paths.analysis_dir
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = master_dir / snakefile_name
+        _assert_snakefile_package_current(snakefile)
         out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
         # Brand-theme resolution (ADR-7 layer 2) — symmetric to

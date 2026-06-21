@@ -2168,9 +2168,11 @@ class TRITONSWMM_analysis:
         import sys
 
         from .exceptions import WorkflowError
+        from .workflow import _assert_snakefile_package_current
 
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = self.analysis_paths.analysis_dir / snakefile_name
+        _assert_snakefile_package_current(snakefile)
         out = self.analysis_paths.analysis_dir / f"analysis_report.{format}"
         css_path = self.analysis_paths.analysis_dir / "report" / "report.css"
         # Brand-theme resolution (ADR-7 layer 2). The dominant render path is
@@ -3498,9 +3500,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (sa_id is None) == (master_dir is None), (
-            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
-        )
+        assert (sa_id is None) == (
+            master_dir is None
+        ), "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
         is_sub = sa_id is not None
 
         reconciled: set[tuple[str, str]] = set()
