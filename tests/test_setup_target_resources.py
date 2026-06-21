@@ -20,13 +20,12 @@ def test_libstdcpp_ld_preamble_lines_content():
     assert "libstdc++ ABI fix" in text or "libstdc++ABI fix" in text or "libgdal" in text
 
 
-def test_libstdcpp_link_patch_lines_content():
-    lines = TRITONSWMM_system._emit_libstdcpp_link_patch_lines()
-    text = "\n".join(lines)
-    assert "CMakeFiles/triton.exe.dir/link.txt" in text
-    assert "sed -i" in text
-    assert "${CONDA_PREFIX}/lib/libstdc++.so.6" in text
-    assert "[LINK PATCH]" in text
+def test_libstdcpp_linker_flag_fragment_content():
+    frag = TRITONSWMM_system._libstdcpp_linker_flag_fragment()
+    # Gotcha 31: the CMake -l:libstdc++.so.6 flag mechanism (replaced the sed link patch).
+    assert "-l:libstdc++.so.6" in frag
+    assert "-L${CONDA_PREFIX}/lib" in frag
+    assert "--no-as-needed" in frag
 
 
 # ----------------------------------------------------------------------------
