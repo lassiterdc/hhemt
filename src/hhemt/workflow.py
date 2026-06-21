@@ -13,6 +13,7 @@ Key Components:
 import datetime
 import json
 import math
+import re
 import shlex
 import socket
 import subprocess
@@ -426,6 +427,39 @@ def _brand_theme_css_map(theme) -> "dict[str, str]":
         "uva_text_gray": theme.text_muted,
         "uva_link_blue": theme.link_color,
     }
+
+
+_SNAKEFILE_RUNNER_RE = re.compile(r"-m\s+([A-Za-z_][A-Za-z0-9_]*)\.\w+(?:_runner|_workflow)\b")
+
+
+def _assert_snakefile_package_current(snakefile_path: Path) -> None:
+    """Fail fast at the login node if an on-disk Snakefile bakes a runner module
+    path for a distribution other than the installed package.
+
+    A Snakefile written by a prior ``run()`` before a package rename (e.g.
+    ``TRITON_SWMM_toolkit`` -> ``hhemt``) keeps the old ``-m {dist}.{runner}``
+    token; re-running ``snakemake --report`` (or any read-existing-Snakefile path)
+    against it would surface an hours-deep mid-SLURM ``ModuleNotFoundError``. This
+    converts that into a sub-second ``ConfigurationError`` (CLI exit 2). No-ops on
+    a current or absent Snakefile.
+    """
+    if not snakefile_path.exists():
+        return
+    baked = {m.group(1) for m in _SNAKEFILE_RUNNER_RE.finditer(snakefile_path.read_text())}
+    current = __name__.split(".", 1)[0]  # "hhemt"
+    stale = baked - {current}
+    if stale:
+        from hhemt.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            field="Snakefile",
+            config_path=snakefile_path,
+            message=(
+                f"On-disk Snakefile bakes runner module path(s) for {sorted(stale)}, "
+                f"but the installed package is '{current}'. Regenerate it by re-running "
+                f"analysis.run()/submit_workflow() before invoking render/reprocess."
+            ),
+        )
 
 
 def _emit_report_artifacts(
@@ -2859,9 +2893,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
-            "local_cpu_cores_for_workflow must be specified for local runs"
-        )
+        assert isinstance(
+            self.cfg_analysis.local_cpu_cores_for_workflow, int
+        ), "local_cpu_cores_for_workflow must be specified for local runs"
         if mode == "local":
             config.update(
                 {
@@ -2883,9 +2917,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(max_concurrent, int), (
-                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
-            )
+            assert isinstance(
+                max_concurrent, int
+            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3099,9 +3133,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
-                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
-            )
+            assert (
+                isinstance(gpus_per_node, int) and gpus_per_node > 0
+            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
