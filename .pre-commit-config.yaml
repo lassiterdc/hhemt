@@ -40,3 +40,15 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  # Retired-field overlay-column discipline (scripts/check_retired_field_overlay_columns.py)
+  # Flags any sensitivity-xlsx overlay column system.{field} / analysis.{field}
+  # whose {field} is absent from the live system_config / analysis_config model_fields.
+  - repo: local
+    hooks:
+      - id: check-retired-field-overlay-columns
+        name: check retired-field overlay columns
+        entry: python scripts/check_retired_field_overlay_columns.py
+        language: system
+        pass_filenames: false
+        always_run: true
