@@ -85,6 +85,14 @@ def test_add_new_sa_id_adds_only_its_rules(norfolk_sensitivity_analysis):
     new_id = "newrow"
     assert new_id not in sensitivity.sub_analyses
     sensitivity.sub_analyses[new_id] = donor
+    # The cached unique_system_targets (built once at __init__) does not know the
+    # aliased sa_id; register it on the donor's target so sa_id_to_target_id
+    # (workflow.py:6737-6739) resolves it. Source is correct — this is a fixture-
+    # manipulation gap, not a generator bug.
+    for _t in sensitivity.unique_system_targets:
+        if donor_id in _t.sub_analysis_ids:
+            _t.sub_analysis_ids.append(new_id)
+            break
 
     after = _sim_rule_names(_regenerate_master(sensitivity))
 

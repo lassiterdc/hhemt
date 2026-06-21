@@ -137,9 +137,31 @@ def test_one_row_edit_triggers_only_that_chain(synth_sa_two_row):
     df.loc[df["sa_id"].astype(str) == "1", "n_omp_threads"] = 8
     df.to_csv(case.sensitivity_csv_path, index=False)
 
-    # Rebuild and dry-run to inspect what would re-execute
-    result = case.analysis.submit_workflow(mode="local", dry_run=True, capture_output=True)
-    stdout = getattr(result, "stdout", "") or ""
+    # CRITICAL: case.analysis.sensitivity.sub_analyses is built ONCE at construction
+    # (sensitivity_analysis.py:284 -> read_csv at :1482) and is NOT re-read by
+    # submit_workflow. The per-sa_id fingerprint (workflow.py:6865) is computed from
+    # the in-memory sub_analysis, so reusing the stale case would reproduce the
+    # ORIGINAL fingerprint -> no mtime bump -> "Nothing to be done". Rebuild the case
+    # from the edited CSV (start_from_scratch=False preserves the materialized run and
+    # skips preprocessing; it only re-reads configs + the edited CSV). This mirrors the
+    # real CLI flow (edit CSV -> re-instantiate analysis -> re-submit).
+    case = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_sensitivity_csv_row_rerun",
+        toggle_tritonswmm_model=True,
+        toggle_triton_model=False,
+        toggle_swmm_model=False,
+        sensitivity_csv=case.sensitivity_csv_path,
+        start_from_scratch=False,
+    )
+
+    # Rebuild and dry-run to inspect what would re-execute. submit_workflow has no
+    # capture_output param; the --dry-run snakemake stdout is redirected to a
+    # logfile (run_snakemake_local, workflow.py:3318) whose path the returned dict
+    # carries under "snakemake_logfile" (workflow.py:3347-3354). Read the dry-run
+    # rule names from that log.
+    result = case.analysis.submit_workflow(mode="local", dry_run=True)
+    dry_run_log = result["snakemake_logfile"]
+    stdout = Path(dry_run_log).read_text() if Path(dry_run_log).exists() else ""
 
     # Snakemake's --dry-run output names the rules that would run
     assert "simulation_sa_1" in stdout, (
@@ -191,7 +213,25 @@ def test_row_removal_does_not_rerun_remaining_chains(tmp_path):
             "n_nodes": [1, 1],
         }
     ).to_csv(csv_path, index=False)
-    case.analysis.submit_workflow(mode="local", dry_run=True, cleanup_orphans=True)
+    # Rebuild from the row-removed CSV: sensitivity.df_setup (sensitivity_analysis.py
+    # :1678) is frozen at construction, so the stale in-memory df would still list sa_1
+    # as "expected" and find_orphan_status_flags would find nothing (no-op false pass).
+    case = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_sensitivity_csv_row_rerun_3row",
+        toggle_tritonswmm_model=True,
+        toggle_triton_model=False,
+        toggle_swmm_model=False,
+        sensitivity_csv=csv_path,
+        start_from_scratch=False,
+    )
+    # Exercise the orphan-cleanup directly (R6's assertion target) instead of routing
+    # through run(): run() runs report-config validation first (analysis.py:1881-1885,
+    # raising ConfigurationError because cfg_analysis.report is the empty {} block from
+    # test_case_builder.py:474), and run(dry_run=True, cleanup_orphans=True) actually
+    # DELETES orphans (cleanup_all_orphans(dry_run=False) at analysis.py:1984), which
+    # contradicts this test's "left in place / does not rerun" intent. The run()-path
+    # cleanup_orphans integration is covered by test_cleanup_orphans_on_run.py.
+    case.analysis.sensitivity.cleanup_all_orphans(dry_run=True, force=True, verbose=False)
 
     # Orphan fingerprint left in place per R6
     assert orphan_path.exists(), "R6: orphan fingerprint file should be left in place by this plan"

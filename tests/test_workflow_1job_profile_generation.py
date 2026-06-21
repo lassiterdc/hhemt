@@ -41,7 +41,9 @@ def norfolk_1job_with_gpus():
     analysis.cfg_analysis.multi_sim_run_method = "1_job_many_srun_tasks"
     analysis.cfg_analysis.hpc_total_nodes = 2
     analysis.cfg_analysis.hpc_total_job_duration_min = 60
-    analysis.cfg_analysis.hpc_gpus_per_node = 8  # Frontier-like
+    # hpc_gpus_per_node was retired from analysis_config (config/analysis.py:555
+    # pop-list) and moved to hpc_system_config per-node topology; the 1-job
+    # profile path reads per-node GPU count from hpc_system_config.
     analysis.cfg_analysis.n_gpus = 1  # Use GPUs
     analysis.cfg_analysis.n_mpi_procs = 1
     analysis.cfg_analysis.n_omp_threads = 4

@@ -48,14 +48,26 @@ def _make_run(
     cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = modules
 
     sys_cfg = MagicMock()
-    sys_cfg.preferred_slurm_option_for_allocating_gpus = gpu_alloc_mode
+    # gpu_allocation_flavor was retired from system_config (system.py:271) and
+    # moved to hpc_system_config (hpc_system.py:131); run_simulation.py:654-657
+    # reads analysis.cfg_hpc_system.gpu_allocation_flavor.
     sys_cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc = modules
+
+    hpc_cfg = MagicMock()
+    hpc_cfg.gpu_allocation_flavor = gpu_alloc_mode
 
     system = MagicMock()
     system.cfg_system = sys_cfg
+    # run_simulation.py:476 reads modules from self._scenario._system.additional_modules
+    # (DI'd off cfg_hpc_system in production via resolve_additional_modules). Without
+    # this, the bare MagicMock's auto-attr is truthy, so the modules="" parameter is
+    # silently ignored and the module-gated MPI-lib prepend (run_simulation.py:714-722)
+    # emits unconditionally — masking the no-module conda-first contract under test.
+    system.additional_modules = modules
 
     analysis = MagicMock()
     analysis.cfg_analysis = cfg
+    analysis.cfg_hpc_system = hpc_cfg
     analysis.in_slurm = in_slurm
 
     scenario = MagicMock()
