@@ -18,7 +18,7 @@ import pytest
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_completed):
+def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_completed_isolated):
     """When ``_version.json`` is stamped older than the current LAYOUT_VERSION,
     reprocess() must re-stamp it to the current version (the lazy-stamp
     PI-1 contract carried over from run() / submit_workflow)."""
@@ -28,7 +28,7 @@ def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_comple
         stamp_new_target,
     )
 
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
 
     # Force-stamp at LAYOUT_VERSION - 1 to simulate a pre-migration target.
@@ -58,7 +58,7 @@ def test_reprocess_runs_migration_when_layout_outdated(synthetic_multisim_comple
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_idempotent_when_current(synthetic_multisim_completed):
+def test_reprocess_idempotent_when_current(synthetic_multisim_completed_isolated):
     """When ``_version.json`` is already at current ``LAYOUT_VERSION``,
     reprocess() must not re-write the file (stamp_new_target is idempotent
     at the same version)."""
@@ -68,7 +68,7 @@ def test_reprocess_idempotent_when_current(synthetic_multisim_completed):
         stamp_new_target,
     )
 
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
 
     # Ensure the analysis is at current LAYOUT_VERSION before the test body.

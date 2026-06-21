@@ -25,9 +25,9 @@ _MPL_SPECIFIC_DEFAULTS = {
 
 
 @pytest.fixture
-def eda_plot_id(synthetic_sensitivity_completed):
+def eda_plot_id(synthetic_sensitivity_completed_isolated):
     """Run .eda() on the synth sensitivity master; return the rendered EDA plot-ID."""
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed_isolated.master_analysis
     result = analysis.eda()
     assert result.plot_paths, "expected >=1 rendered EDA plot on the sensitivity master"
     return result.plot_paths[0].stem  # the figure stem IS the canonical ADR-2 plot-ID

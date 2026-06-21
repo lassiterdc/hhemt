@@ -49,16 +49,16 @@ def _zarr_mtime_target(zarr):
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_completed):
+def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_completed_isolated):
     """Phase 2 FQ1 default (regenerate_existing=False): reprocess(consolidate)
     leaves sim flags untouched, PRESERVES the consolidated zarr (mtime
     unchanged — no rebuild, no DU restamp walk), and re-fires the report."""
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     status_dir = a.analysis_paths.analysis_dir / "_status"
 
     before_run_flags = sorted(status_dir.glob("c_run_*"))
     assert before_run_flags, (
-        "Expected synthetic_multisim_completed fixture to have produced c_run_* flags; "
+        "Expected synthetic_multisim_completed_isolated fixture to have produced c_run_* flags; "
         "fixture state is incomplete."
     )
     dt = a.analysis_paths.analysis_datatree_zarr
@@ -100,10 +100,10 @@ def test_reprocess_consolidate_default_preserves_zarr(synthetic_multisim_complet
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multisim_completed):
+def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multisim_completed_isolated):
     """Phase 2 regenerate_existing=True: reprocess(consolidate) deletes and
     rebuilds the consolidated zarr (mtime advances); sim flags untouched."""
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     status_dir = a.analysis_paths.analysis_dir / "_status"
 
     before_run_flags = sorted(status_dir.glob("c_run_*"))
@@ -131,10 +131,10 @@ def test_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_multi
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim_completed):
+def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim_completed_isolated):
     """R4/D5: consolidate_to_datatree treats a present-but-log-incomplete zarr
     as corrupt and rebuilds it — it must NOT early-return on ``.exists()`` alone."""
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     zarr = a.analysis_paths.analysis_datatree_zarr
     assert zarr is not None and zarr.exists(), "fixture precondition: consolidated zarr present"
 
@@ -162,10 +162,10 @@ def test_consolidate_to_datatree_rebuilds_when_log_incomplete(synthetic_multisim
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_render_only(synthetic_multisim_completed):
+def test_reprocess_render_only(synthetic_multisim_completed_isolated):
     """Reprocess(start_with='render') re-renders the report against existing
     plots without re-firing consolidate or sim rules."""
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
 
     result = a.reprocess(start_with="render", execution_mode="local", verbose=False)
@@ -184,7 +184,7 @@ def test_reprocess_render_only(synthetic_multisim_completed):
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_multisim_completed):
+def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_multisim_completed_isolated):
     """(a) R2: reprocess PROCEEDS when ``_submitted/`` sim-WORKER sentinels are
     present but no live ``_orchestrator/`` DRIVER sentinel exists.
 
@@ -192,7 +192,7 @@ def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_mul
     reprocess legitimately coexists with) from a live orchestration driver
     (which it must refuse). A ``_submitted/`` sentinel alone must not gate.
     """
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
     submitted = analysis_dir / "_status" / "_submitted"
     submitted.mkdir(parents=True, exist_ok=True)
@@ -210,7 +210,7 @@ def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_mul
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_completed, monkeypatch):
+def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_completed_isolated, monkeypatch):
     """(b) R3: a live ``_orchestrator/`` DRIVER sentinel makes reprocess refuse
     fast with a ``WorkflowError`` — never ``input()``, never a snakemake subprocess.
 
@@ -218,7 +218,7 @@ def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_comple
     before any downstream-flag invalidation, so this assertion does not mutate
     the session-scoped fixture's consolidated state.
     """
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     builder = a._workflow_builder
     analysis_dir = a.analysis_paths.analysis_dir
     osent.write_orchestrator_sentinel(analysis_dir, driver_id="live-driver", workflow_submission_mode="local", pid=4242)
@@ -232,7 +232,7 @@ def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_comple
 
 
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
-def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_completed, monkeypatch):
+def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_completed_isolated, monkeypatch):
     """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
     UNSET and a stale ``.snakemake/locks/*.lock`` planted (the exact condition
     that drives the run path to ``input()``), the reprocess path's
@@ -242,7 +242,7 @@ def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_com
     reached the toolkit-side lock prompt, this test would fail loudly rather
     than hang.
     """
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
     # Force the interactive branch reachable on the run path: unset the test
     # env var so _check_and_clear_snakemake_lock does NOT silently rmtree, and
@@ -268,13 +268,13 @@ def test_reprocess_never_calls_input_even_with_stale_lock(synthetic_multisim_com
         stale_lock.unlink(missing_ok=True)
 
 
-def test_reprocess_dry_run_no_destructive_mutation(synthetic_multisim_completed):
+def test_reprocess_dry_run_no_destructive_mutation(synthetic_multisim_completed_isolated):
     """R5/R6: analysis.reprocess(dry_run=True, start_with='consolidate') must NOT
     delete analysis_datatree.zarr nor re-stamp the analysis-scope _du.json. The
     completion flag MAY be deleted (it is the cheap mtime trigger)."""
     from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
-    a = synthetic_multisim_completed
+    a = synthetic_multisim_completed_isolated
     zarr = a.analysis_paths.analysis_datatree_zarr
     assert zarr is not None and zarr.exists(), "fixture precondition: consolidated zarr present"
     # Establish a known analysis-scope _du.json so the no-restamp assertion is

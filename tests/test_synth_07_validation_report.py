@@ -171,30 +171,27 @@ def test_renders_resource_mismatches_table_has_omp_row():
 def test_renders_full_html_doc(tmp_path):
     """End-to-end: render a synthetic ValidationReport via the public render API
     against a minimal-stub analysis (only cfg_analysis.analysis_id is needed)."""
+    import json
+    from dataclasses import asdict
     from unittest.mock import MagicMock
+
+    from hhemt.analysis_validation import _VALIDATION_REPORT_FILENAME
 
     fake_analysis = MagicMock()
     fake_analysis.cfg_analysis.analysis_id = "demo_failing_synth"
+    # Option-D: the renderer reads the persisted validation_report.json via
+    # load_validation_report — it does NOT call validate_analysis at render time
+    # (that whole-tree read would trip the renderer-IO provenance audit). So
+    # persist the synthetic report to disk (the canonical
+    # persist_validation_report shape) and point the fake analysis_dir at it.
+    fake_analysis.analysis_paths.analysis_dir = tmp_path
+    report = _synthetic_report()
+    (tmp_path / _VALIDATION_REPORT_FILENAME).write_text(
+        json.dumps({"checks": [asdict(c) for c in report.checks]})
+    )
 
     out_path = tmp_path / "ew.html"
-
-    # Patch validate_analysis to return our synthetic report instead of running
-    # the real validator (which would fail against the MagicMock).
-    import hhemt.report_renderers.errors_and_warnings as ew_mod
-    original = ew_mod.__dict__.get("validate_analysis")
-    try:
-        from hhemt.analysis_validation import (
-            validate_analysis as _real_validate,
-        )
-        import sys
-        # Monkey-patch the module-level import in the renderer
-        import hhemt.analysis_validation as av_mod
-        av_mod.validate_analysis = lambda a: _synthetic_report()
-        render(fake_analysis, DEFAULT_REPORT_CONFIG, out_path)
-    finally:
-        # Restore
-        from hhemt import analysis_validation as av_mod_final
-        av_mod_final.validate_analysis = _real_validate
+    render(fake_analysis, DEFAULT_REPORT_CONFIG, out_path)
 
     assert out_path.exists() and out_path.stat().st_size > 0
     html = out_path.read_text()

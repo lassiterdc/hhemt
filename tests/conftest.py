@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import os
 from pathlib import Path
@@ -11,6 +12,30 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG = (
     Path(__file__).resolve().parents[1]
     / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
 )
+
+
+# census-green-up Phase 1 — builder cache-wipe isolation.
+# start_from_scratch=True builder fixtures whose analysis_name collides with a
+# session *_completed cache (synth_multi_sim / synth_sensitivity) must NOT
+# fast_rmtree-wipe that shared on-disk cache mid-suite (it is the copy-on-read
+# source for the session fixtures and their _isolated clones). The builder reads
+# HHEMT_TEST_RUNS_ROOT_OVERRIDE (test_case_builder.py) and nests its runs_root
+# under that per-test path instead. Function-scoped builders set it via
+# monkeypatch.setenv; session-scoped builders use this context manager around
+# construction (monkeypatch is function-scoped and unavailable at session scope).
+@contextlib.contextmanager
+def _runs_root_override_env(path):
+    key = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
+    old = os.environ.get(key)
+    os.environ[key] = str(path)
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old
+
 
 # import tests.fixtures.test_case_catalog as cases
 
@@ -293,7 +318,10 @@ def synth_all_models_analysis_cached():
 
 
 @pytest.fixture
-def synth_multi_sim_analysis():
+def synth_multi_sim_analysis(tmp_path, monkeypatch):
+    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
+    # tmp_path so it cannot fast_rmtree the shared synth_multi_sim session cache.
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis
 
@@ -305,32 +333,38 @@ def synth_multi_sim_analysis_cached():
 
 
 @pytest.fixture(scope="session")
-def synth_multi_sim_builder():
+def synth_multi_sim_builder(tmp_path_factory):
     """Configured-but-not-run multi-sim analysis (Phase 2,
     synth-test-isolation-and-runtime). No DEM/landuse preprocessing, no compile,
     no scenario prep — sufficient for `generate_snakefile_content`-only tests.
     Session-scoped so the 4 collapsed symmetry tests share one builder."""
-    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
-        start_from_scratch=True,
-        skip_run=True,
-    )
+    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under a
+    # per-session tmp dir so it cannot fast_rmtree the shared synth_multi_sim cache.
+    with _runs_root_override_env(tmp_path_factory.mktemp("synth_multi_sim_builder")):
+        case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+            start_from_scratch=True,
+            skip_run=True,
+        )
     return case.analysis
 
 
 @pytest.fixture(scope="session")
-def synth_sensitivity_builder():
+def synth_sensitivity_builder(tmp_path_factory):
     """Configured-but-not-run sensitivity analysis (Phase 2,
     synth-test-isolation-and-runtime). Same contract as `synth_multi_sim_builder`
     but consumes the sensitivity-CSV factory."""
-    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
-        start_from_scratch=True,
-        skip_run=True,
-    )
+    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under a
+    # per-session tmp dir so it cannot fast_rmtree the shared synth_sensitivity cache.
+    with _runs_root_override_env(tmp_path_factory.mktemp("synth_sensitivity_builder")):
+        case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+            start_from_scratch=True,
+            skip_run=True,
+        )
     return case.analysis
 
 
 @pytest.fixture
-def synthetic_multisim_builder():
+def synthetic_multisim_builder(tmp_path, monkeypatch):
     """Synthetic-tier SnakemakeWorkflowBuilder for at-most-once-guard unit tests.
 
     Yields ``analysis._workflow_builder`` from a fresh synth multisim
@@ -343,6 +377,9 @@ def synthetic_multisim_builder():
     and ``_recover_inflight_via_comment`` — the exact surface the guard's
     test cases monkeypatch against.
     """
+    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
+    # tmp_path so it cannot fast_rmtree the shared synth_multi_sim session cache.
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(start_from_scratch=True)
     return case.analysis._workflow_builder
 
@@ -384,7 +421,10 @@ def synth_triton_and_tritonswmm_analysis_cached():
 
 
 @pytest.fixture
-def synth_sensitivity_analysis():
+def synth_sensitivity_analysis(tmp_path, monkeypatch):
+    # census-green-up Phase 1: isolate this start_from_scratch=True wipe under
+    # tmp_path so it cannot fast_rmtree the shared synth_sensitivity session cache.
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(start_from_scratch=True)
     return case.analysis
 
@@ -586,6 +626,55 @@ def synthetic_sensitivity_completed(tritonswmm_cpu_compiled):
         sensitivity.submit_workflow(mode="local")
 
     return sensitivity
+
+
+# ========== D1 copy-on-read isolation (census-green-up Phase 1) ==========
+# Per-test isolated clones of the session-scoped ``*_completed`` fixtures, built
+# on the in-tree clone helper (``tests/_failing_fixture_helpers.clone_analysis_to_tmp``),
+# which copies the FULL system_directory (configs + nested analysis_dir +
+# ``subanalyses/``) and re-roots ``system_directory`` in the cloned config — the
+# config files live in the system_directory (the parent of analysis_dir), NOT in
+# analysis_dir. Mutating consumers depend on these wrappers so a full
+# ``pytest tests/`` run yields the same per-test verdict as an isolated ``-k`` run.
+@pytest.fixture
+def synthetic_multisim_completed_isolated(synthetic_multisim_completed, tmp_path):
+    """Per-test isolated copy of ``synthetic_multisim_completed`` (D1)."""
+    from tests._failing_fixture_helpers import clone_analysis_to_tmp
+
+    return clone_analysis_to_tmp(synthetic_multisim_completed, tmp_path)
+
+
+@pytest.fixture
+def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tmp_path):
+    """Per-test isolated copy of ``synthetic_sensitivity_completed`` (D1) — clones
+    the master system_directory (with ``subanalyses/``) so master AND per-sa
+    reprocess paths re-derive under tmp_path."""
+    from tests._failing_fixture_helpers import clone_analysis_to_tmp
+
+    master_clone = clone_analysis_to_tmp(
+        synthetic_sensitivity_completed.master_analysis, tmp_path
+    )
+    return master_clone.sensitivity
+
+
+def test_isolated_fixture_does_not_perturb_session_tree(
+    synthetic_multisim_completed, synthetic_multisim_completed_isolated
+):
+    """Lock the D1 copy-on-read contract: a destructive op on the isolated clone
+    leaves the shared session tree's _status flags intact."""
+    session_dir = synthetic_multisim_completed.analysis_paths.analysis_dir
+    flag = session_dir / "_status" / "e_consolidate_complete.flag"
+    before = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+    a = synthetic_multisim_completed_isolated
+    a.reprocess(
+        start_with="consolidate",
+        execution_mode="local",
+        regenerate_existing=True,
+        verbose=False,
+    )
+    after = hashlib.sha1(flag.read_bytes()).hexdigest() if flag.exists() else None
+    assert before == after, "isolated reprocess leaked into the session tree"
+    assert a.analysis_paths.analysis_dir != session_dir, "clone shares the session dir"
 
 
 @pytest.fixture(scope="session")

@@ -176,10 +176,10 @@ def test_static_plots_facade_empty_configs_raises(synth_multi_sim_analysis):
 
 @pytest.mark.slow
 @pytest.mark.requires_snakemake_subprocess
-def test_static_plots_generates_publication_figure(synthetic_multisim_completed, tmp_path):
+def test_static_plots_generates_publication_figure(synthetic_multisim_completed_isolated, tmp_path):
     """static_plots() produces static_plots/{plot_id}.pdf for the peak-flood-depth
     exemplar, distributed via the local executor, with a bare-output Snakefile."""
-    analysis = synthetic_multisim_completed
+    analysis = synthetic_multisim_completed_isolated
     plot_id = _first_event_plot_id(analysis)
     cfg = _write_peak_flood_depth_config(tmp_path / f"{plot_id}.yaml", plot_id)
 
@@ -195,12 +195,12 @@ def test_static_plots_generates_publication_figure(synthetic_multisim_completed,
 
 @pytest.mark.slow
 @pytest.mark.requires_snakemake_subprocess
-def test_static_plots_generates_conduit_flow_figure(synthetic_multisim_completed, tmp_path):
+def test_static_plots_generates_conduit_flow_figure(synthetic_multisim_completed_isolated, tmp_path):
     """Phase 3: static_plots() produces static_plots/{plot_id}.pdf via the
     publication static_cfg branch on the per-sim conduit-flow renderer (per-sim —
     carries an --event-iloc selector), distributed via the local executor,
     bare-output Snakefile."""
-    analysis = synthetic_multisim_completed
+    analysis = synthetic_multisim_completed_isolated
     plot_id = _first_event_conduit_flow_plot_id(analysis)
     cfg = tmp_path / f"{plot_id}.yaml"
     cfg.write_text(
@@ -222,11 +222,11 @@ def test_static_plots_generates_conduit_flow_figure(synthetic_multisim_completed
 
 @pytest.mark.slow
 @pytest.mark.requires_snakemake_subprocess
-def test_static_plots_generates_system_overview_figure(synthetic_multisim_completed, tmp_path):
+def test_static_plots_generates_system_overview_figure(synthetic_multisim_completed_isolated, tmp_path):
     """Phase 2: static_plots() produces static_plots/system_overview.pdf via the
     publication static_cfg branch on the system-overview renderer (system-level —
     no event selector), distributed via the local executor, bare-output Snakefile."""
-    analysis = synthetic_multisim_completed
+    analysis = synthetic_multisim_completed_isolated
     plot_id = "system_overview"
     cfg = tmp_path / f"{plot_id}.yaml"
     cfg.write_text(
@@ -248,13 +248,13 @@ def test_static_plots_generates_system_overview_figure(synthetic_multisim_comple
 
 @pytest.mark.slow
 @pytest.mark.requires_snakemake_subprocess
-def test_static_plots_generates_sensitivity_benchmarking_figure(synthetic_sensitivity_completed, tmp_path):
+def test_static_plots_generates_sensitivity_benchmarking_figure(synthetic_sensitivity_completed_isolated, tmp_path):
     """Phase 4: static_plots() produces static_plots/{plot_id}.pdf via the publication
     static_cfg branch on the sensitivity-benchmarking renderer (the chart-shaped,
     no-colorbar case; KEEP-no-hybrid — Plotly branch untouched). The benchmarking
     x-axis variable rides the plot_id's var.{name} selector → --independent-var.
     Uses the sensitivity synth fixture (master analysis carries .sensitivity)."""
-    analysis = synthetic_sensitivity_completed.master_analysis
+    analysis = synthetic_sensitivity_completed_isolated.master_analysis
     # n_devices is the synth benchmarking x-axis with data (see
     # test_synth_05_sensitivity_analysis_with_snakemake.py: benchmarking__n_devices.vs.total).
     plot_id = "sensitivity_benchmarking__var.n_devices"

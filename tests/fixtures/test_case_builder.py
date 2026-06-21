@@ -21,6 +21,7 @@ Example:
     system = test_case.system
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -45,6 +46,15 @@ from tests.fixtures import worktree_slug
 # rc=1 on fresh fixture rebuilds). Each worktree now owns a per-worktree real
 # _software dir (see TestCaseBuilder.__init__). platformdirs is still imported —
 # it is used to root the per-worktree runs_root below.
+
+# census-green-up Phase 1: env-var override for the runs_root of start_from_scratch=True
+# BUILDER fixtures. When set (by a conftest builder fixture via monkeypatch.setenv to a
+# pytest tmp_path), the builder nests its runs_root under that per-test path instead of
+# the shared slug cache, so its construction-time fast_rmtree(system_directory) cannot
+# wipe the shared cache the session *_completed fixtures (and their copy-on-read clones)
+# read from. The session/cached fixtures never set it, so they keep the slug-nested path.
+# Mirrors the existing HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR test-env-var pattern.
+_TEST_RUNS_ROOT_OVERRIDE_ENV = "HHEMT_TEST_RUNS_ROOT_OVERRIDE"
 
 
 class retrieve_TRITON_SWMM_test_case:
@@ -289,6 +299,7 @@ class retrieve_synth_TRITON_SWMM_test_case:
         additional_analysis_configs: dict | None = None,
         additional_system_configs: dict | None = None,
         hpc_system_config_yaml: Path | None = None,
+        runs_root_override: Path | None = None,
     ):
         self.artifacts = get_or_build_synthetic_case(params)
         self.analysis_name = analysis_name
@@ -298,11 +309,33 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # nest runs_root under the current worktree's slug so concurrent pytest
         # runs in sibling worktrees do not contend for the same cache. Falls
         # back to "main" when not inside a worktree.
-        runs_root = (
+        #
+        # runs_root_override (census-green-up Phase 1): when a caller passes an
+        # explicit per-test root (a pytest tmp_path), nest the ANALYSIS tree there
+        # instead of the slug cache. This is the sanctioned exception to the
+        # per-worktree-slug stipulation for start_from_scratch=True BUILDER fixtures
+        # that must NOT fast_rmtree-wipe the shared slug cache the session
+        # *_completed fixtures (and their copy-on-read clones) read from. tmp_path
+        # is per-test and contention-free, so it honors the stipulation's rationale.
+        #
+        # CRITICAL: only `system_directory` follows the override. `_software_root`
+        # ALWAYS stays on the slug path (see below) — _software is the ~326MB
+        # compiled TRITON+SWMM tier; nesting it under a per-test tmp_path makes the
+        # not-exists() clone gate re-clone it PER TEST, which fills the disk
+        # (35GB+ across a suite). The slug _software already exists (compiled once
+        # by tritonswmm_cpu_compiled), so the gate skips it and the builders reuse it.
+        _slug_runs_root = (
             Path(platformdirs.user_cache_dir("hhemt"))
             / "synthetic_test_runs"
             / worktree_slug()
         )
+        _runs_root_override = runs_root_override or os.environ.get(
+            _TEST_RUNS_ROOT_OVERRIDE_ENV
+        )
+        if _runs_root_override is not None:
+            runs_root = Path(_runs_root_override) / "synthetic_test_runs"
+        else:
+            runs_root = _slug_runs_root
         self.system_directory = runs_root / analysis_name
         # _software is a per-worktree REAL directory (NOT a symlink to a shared
         # cross-worktree cache). The build tier MUST NOT be shared across
@@ -321,7 +354,10 @@ class retrieve_synth_TRITON_SWMM_test_case:
         # per worktree first build, persisted across sessions under the
         # worktree-slug runs_root and skipped by system.py's not-exists() clone
         # gate thereafter).
-        self._software_root = runs_root / "_software"
+        # _software_root is pinned to the SLUG runs_root even under a tmp_path
+        # override (census-green-up Phase 1) — see the CRITICAL note above: the
+        # ~326MB compiled tier must be shared/reused, never re-cloned per test.
+        self._software_root = _slug_runs_root / "_software"
         if start_from_scratch and self.system_directory.exists():
             ut.fast_rmtree(self.system_directory)
         self.system_directory.mkdir(parents=True, exist_ok=True)
