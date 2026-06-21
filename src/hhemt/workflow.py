@@ -2461,7 +2461,7 @@ rule render_report:
             for event_iloc in self.analysis.df_sims.index:
                 scenario_objs.append(self.analysis._retrieve_sim_run_processing_object(event_iloc).scen_paths)
         for scen_paths in scenario_objs:
-            if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt:
+            if "tritonswmm" in enabled and scen_paths.swmm_hydraulics_rpt is not None:
                 sources.append(
                     {
                         "path": _os.path.relpath(
@@ -2471,7 +2471,7 @@ rule render_report:
                         "variables": ["Flow Routing Continuity error (%)"],
                     }
                 )
-            elif "swmm" in enabled and scen_paths.swmm_full_rpt_file:
+            elif "swmm" in enabled and scen_paths.swmm_full_rpt_file is not None:
                 sources.append(
                     {
                         "path": _os.path.relpath(

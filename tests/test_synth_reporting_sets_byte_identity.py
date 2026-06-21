@@ -25,12 +25,51 @@ absent) each test asserts byte-identity against the committed golden.
 from __future__ import annotations
 
 import os
+import re
+import sys
+import tempfile
 from pathlib import Path
 
+import platformdirs
 import pytest
 
 _GOLDEN_DIR = Path(__file__).parent / "fixtures" / "reporting_sets_byte_identity"
 _CAPTURE = os.environ.get("CAPTURE_REPORTING_SET_GOLDENS") == "1"
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SYNTH_RUNS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs"
+_SYNTH_MODELS_ROOT = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_models"
+# The synth fixtures' runs_root is nested under pytest's tmp base (Phase 1's
+# `runs_root_override` isolation), so the goldens bake `{tmpdir}/pytest-of-{user}/
+# pytest-{N}/{basetemp}/...`. Only the `{tmpdir}/pytest-of-{user}/pytest-{N}` prefix
+# is volatile (the per-invocation counter increments and the user/tmpdir are
+# machine-specific); the nodeid-derived `{basetemp}` is deterministic, so it is left
+# intact as real signal. Without this mask the goldens stay machine- and run-bound.
+_PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]+/pytest-\d+")
+# Model-cache source-path attributions appear as variable-depth ``../``-relative paths
+# (``os.path.relpath`` from the deep analysis dir climbs to ``/`` then descends through
+# the absolute home dir into the out-of-repo model cache). The ``../`` depth varies with
+# tree nesting and the descended segment bakes the machine home — mask both, mirroring
+# suite-1's ``{HOME_REL}`` pattern, while preserving the content-hash dir + filename.
+_SYNTH_MODELS_REL_RE = re.compile(r"(?:\.\./)+" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/")))
+
+
+def _normalize_volatile(text: str) -> str:
+    """Mask checkout-location-, interpreter-, and synth-cache-root-specific tokens
+    so the byte-identity assertion is robust to where the repo is checked out, which
+    interpreter runs it, and which worktree's out-of-repo synthetic caches the goldens
+    were captured against. The synth caches live under ``platformdirs`` user-cache
+    (outside ``_REPO_ROOT``), so each needs its own mask beyond suite-1's ``{REPO_ROOT}``.
+    Genuine generation-logic tokens (rule names, resources, command shape, source-path
+    attributions) are left intact so real drift still fails the assertion.
+    """
+    text = text.replace(sys.executable, "{PYTHON}")
+    text = text.replace(str(_REPO_ROOT), "{REPO_ROOT}")
+    text = _PYTEST_TMP_RE.sub("{PYTEST_TMP}", text)  # pytest tmp base (counter/user/tmpdir)
+    text = text.replace(str(_SYNTH_RUNS_ROOT), "{SYNTH_RUNS}")
+    text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
+    text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
+    text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
+    return text
 
 
 def _check(generated: str, golden_name: str) -> None:
@@ -38,10 +77,10 @@ def _check(generated: str, golden_name: str) -> None:
     golden_path = _GOLDEN_DIR / golden_name
     if _CAPTURE:
         _GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(generated)
+        golden_path.write_text(_normalize_volatile(generated))
         pytest.skip(f"captured golden {golden_name} ({len(generated)} bytes)")
     golden = golden_path.read_text()
-    assert generated == golden, (
+    assert _normalize_volatile(generated) == _normalize_volatile(golden), (
         f"Generated Snakefile diverged from {golden_name} — the registry-driven "
         f"data-drive is NOT behavior-preserving. Diff the generated text against "
         f"{golden_path} to locate the drifted rule."
