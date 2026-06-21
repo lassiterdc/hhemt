@@ -47,13 +47,21 @@ def prepare_clone_dir(cached_analysis: "TRITONSWMM_analysis", tmp_path: Path) ->
     dst_system_dir = tmp_path / "system"
     shutil.copytree(src_system_dir, dst_system_dir)
 
+    # Write the modified master configs INSIDE dst_system_dir (NOT at tmp_path
+    # root). The source layout has system_config.yaml + analysis_config.yaml
+    # living inside system_directory; a sensitivity sub derives its analysis-level
+    # model-log dir as master_analysis_cfg_yaml.parent / "logs" / "sims"
+    # (run_simulation.py:_analysis_level_model_logfile). Hoisting the master config
+    # one level out of system_directory makes model_run_completed() look in
+    # tmp_path/logs/sims/ while the cloned logs live in tmp_path/system/logs/sims/,
+    # so reprocess(start_with="consolidate") spuriously fail-fasts on _scenarios_not_run.
     sys_cfg_dict = yaml.safe_load(src_system_yaml.read_text())
     sys_cfg_dict["system_directory"] = str(dst_system_dir)
-    dst_system_yaml = tmp_path / "system_config.yaml"
+    dst_system_yaml = dst_system_dir / "system_config.yaml"
     dst_system_yaml.write_text(yaml.safe_dump(sys_cfg_dict, sort_keys=False))
 
     ana_cfg_dict = yaml.safe_load(src_analysis_yaml.read_text())
-    dst_analysis_yaml = tmp_path / "analysis_config.yaml"
+    dst_analysis_yaml = dst_system_dir / "analysis_config.yaml"
     dst_analysis_yaml.write_text(yaml.safe_dump(ana_cfg_dict, sort_keys=False))
 
     analysis_id = ana_cfg_dict["analysis_id"]

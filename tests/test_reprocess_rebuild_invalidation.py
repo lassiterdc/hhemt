@@ -123,6 +123,9 @@ def test_reprocess_regenerate_slurm_route_clears_flags_and_logs(norfolk_sensitiv
                     )
                     raw_dir.mkdir(parents=True, exist_ok=True)
                     (raw_dir / "H_0.bin").write_bytes(b"\x00")
+                    perf_dir = raw_dir / "performance"
+                    perf_dir.mkdir(parents=True, exist_ok=True)
+                    (perf_dir / "performance0.txt").write_text("Rank Total\n0 1.0\n")
                 elif model_type == "swmm":
                     out_file = scen.scen_paths.swmm_full_out_file
                     out_file.parent.mkdir(parents=True, exist_ok=True)

@@ -132,11 +132,11 @@ def _to_native_attr(value):
             return value.item()
         except (ValueError, AttributeError):
             pass
-    if isinstance(value, (np.integer,)):
+    if isinstance(value, np.integer):
         return int(value)
-    if isinstance(value, (np.floating,)):
+    if isinstance(value, np.floating):
         return float(value)
-    if isinstance(value, (np.bool_,)):
+    if isinstance(value, np.bool_):
         return bool(value)
     return value
 
@@ -242,14 +242,11 @@ class TRITONSWMM_sensitivity_analysis:
         # path (one UniqueSystemTarget per distinct hardware) — not the master fast
         # path. A single distinct partition collapses to the master target as before.
         _partition_axis_cols = [
-            c for c in df_setup_full.columns
-            if c == "hpc.partition" or c == "analysis.hpc_ensemble_partition"
+            c for c in df_setup_full.columns if c == "hpc.partition" or c == "analysis.hpc_ensemble_partition"
         ]
         _distinct_row_partitions: set = set()
         for _c in _partition_axis_cols:
-            _distinct_row_partitions |= {
-                str(v) for v in df_setup_full[_c].dropna().tolist() if str(v).strip() != ""
-            }
+            _distinct_row_partitions |= {str(v) for v in df_setup_full[_c].dropna().tolist() if str(v).strip() != ""}
         self._has_per_row_partition_variation = len(_distinct_row_partitions) > 1
         if (
             self._has_per_sa_system_overlay_columns
@@ -298,7 +295,7 @@ class TRITONSWMM_sensitivity_analysis:
             "1_job_many_srun_tasks",
         ]:
             prepare_scenario_launchers = []
-            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 prepare_scenario_launchers += sub_analysis.retrieve_prepare_scenario_launchers(
                     overwrite_scenario_if_already_set_up=overwrite_scenario_if_already_set_up,
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
@@ -516,9 +513,10 @@ class TRITONSWMM_sensitivity_analysis:
             ``e_consolidate_sa-{id}_complete.flag`` files and the master
             ``f_consolidate_master_complete.flag``, then re-runs the consolidate
             + master_consolidation + plot/render rule chain. ``"render"``
-            invalidates only the report artifacts. ``"process"`` is accepted
-            but maps onto the same Snakefile as ``"consolidate"`` (the master
-            generator does not emit ``process_*`` rules).
+            invalidates only the report artifacts. ``"process"`` reconciles
+            stale ``d_process`` flags against summary existence and re-emits the
+            per-(sa, event) rebuild rules (Gotcha 34/40); it does NOT collapse
+            onto the ``"consolidate"`` Snakefile.
         sa_ids
             Optional subset of sub-analysis IDs (string-cast) to invalidate.
             When ``None`` (default), every sub-analysis's per-sa consolidate
@@ -870,10 +868,12 @@ class TRITONSWMM_sensitivity_analysis:
         import sys
 
         from .exceptions import WorkflowError
+        from .workflow import _assert_snakefile_package_current
 
         master_dir = self.master_analysis.analysis_paths.analysis_dir
         snakefile_name = "Snakefile.reprocess" if reprocess else "Snakefile"
         snakefile = master_dir / snakefile_name
+        _assert_snakefile_package_current(snakefile)
         out = master_dir / f"analysis_report.{format}"
         css_path = master_dir / "report" / "report.css"
         # Brand-theme resolution (ADR-7 layer 2) — symmetric to
@@ -1043,14 +1043,14 @@ class TRITONSWMM_sensitivity_analysis:
                 "in analysis.py to enable this."
             )
             launch_functions = []
-            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 launch_functions += sub_analysis._create_launchable_sims(
                     pickup_where_leftoff=pickup_where_leftoff,
                     verbose=verbose,
                 )
             self.master_analysis.run_simulations_concurrently(launch_functions, verbose=verbose)
         else:
-            for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+            for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
                 sub_analysis.run_sims_in_sequence(
                     pickup_where_leftoff=pickup_where_leftoff,
                     process_outputs_after_sim_completion=process_outputs_after_sim_completion,
@@ -1071,7 +1071,7 @@ class TRITONSWMM_sensitivity_analysis:
         compression_level: int = 5,
     ):
         scenario_timeseries_processing_launchers = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             launchers = sub_analysis.retrieve_scenario_timeseries_processing_launchers(
                 which=which,
                 override_clear_raw=override_clear_raw,
@@ -1088,7 +1088,7 @@ class TRITONSWMM_sensitivity_analysis:
         verbose: bool = False,
         compression_level: int = 5,
     ):
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             sub_analysis._consolidate_analysis_outputs(
                 verbose=verbose,
                 compression_level=compression_level,
@@ -1100,7 +1100,7 @@ class TRITONSWMM_sensitivity_analysis:
     def TRITON_subanalyses_outputs_consolidated(self):
         cfg_sys = self.master_analysis._system.cfg_system
         success = True
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
                 success = success and sub_analysis._tritonswmm_triton_analysis_summary_created
             elif cfg_sys.toggle_triton_model:
@@ -1112,7 +1112,7 @@ class TRITONSWMM_sensitivity_analysis:
         cfg_sys = self.master_analysis._system.cfg_system
         node_success = True
         link_success = True
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             if cfg_sys.toggle_tritonswmm_model:
                 node_success = node_success and sub_analysis._tritonswmm_node_analysis_summary_created
                 link_success = link_success and sub_analysis._tritonswmm_link_analysis_summary_created
@@ -1846,7 +1846,8 @@ class TRITONSWMM_sensitivity_analysis:
         generated_dir = analysis_dir / "_generated"
 
         if is_main_orchestrator:
-            fast_rmtree(generated_dir, missing_ok=True, analysis_dir=analysis_dir)  # PATTERN A (_generated is DU-counted; not _status*-prefixed)
+            # PATTERN A (_generated is DU-counted; not _status*-prefixed)
+            fast_rmtree(generated_dir, missing_ok=True, analysis_dir=analysis_dir)
             generated_dir.mkdir(parents=True, exist_ok=True)
 
         has_yaml_col = "system_config_yaml" in df_setup_full.columns
@@ -1943,9 +1944,7 @@ class TRITONSWMM_sensitivity_analysis:
             _target_partition = group["partition"]
             # Phase 6 (DQ7a): resolve THIS target's (hw, backend, modules) from its
             # own partition — distinct targets (a6000 vs a100) inject distinct pairs.
-            _t_hw, _t_backend = resolve_gpu_target(
-                self.master_analysis.cfg_hpc_system, _target_partition
-            )
+            _t_hw, _t_backend = resolve_gpu_target(self.master_analysis.cfg_hpc_system, _target_partition)
             _t_modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
             generated_yaml = generated_dir / f"target_{target_id}.yaml"
             if is_main_orchestrator:
@@ -2224,7 +2223,7 @@ class TRITONSWMM_sensitivity_analysis:
     @property
     def scenarios_not_created(self):
         scenarios_not_created = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
                 if scen.log.scenario_creation_complete.get() is not True:
@@ -2234,7 +2233,7 @@ class TRITONSWMM_sensitivity_analysis:
     @property
     def scenarios_not_run(self):
         scens_not_run = []
-        for sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
+        for _sub_analysis_iloc, sub_analysis in self.sub_analyses.items():
             for event_iloc in sub_analysis.df_sims.index:
                 scen = TRITONSWMM_scenario(event_iloc, sub_analysis)
                 # Check if all enabled models completed
@@ -2332,7 +2331,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all scenarios in all sub-analyses are created successfully
         """
         all_scenarios_created = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_scenarios_created = all_scenarios_created and sub_analysis._all_scenarios_created
         return all_scenarios_created is True
 
@@ -2347,7 +2346,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all simulations in all sub-analyses completed successfully
         """
         all_sims_run = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_sims_run = all_sims_run and sub_analysis._all_sims_run
         return all_sims_run is True
 
@@ -2362,7 +2361,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all TRITON outputs in all sub-analyses are processed
         """
         all_TRITON_timeseries_processed = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_TRITON_timeseries_processed = (
                 all_TRITON_timeseries_processed and sub_analysis._all_TRITON_timeseries_processed
             )
@@ -2379,7 +2378,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all SWMM outputs in all sub-analyses are processed
         """
         all_SWMM_timeseries_processed = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_SWMM_timeseries_processed = (
                 all_SWMM_timeseries_processed and sub_analysis._all_SWMM_timeseries_processed
             )
@@ -2396,7 +2395,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all performance outputs in all sub-analyses are processed
         """
         all_TRITONSWMM_performance_timeseries_processed = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_TRITONSWMM_performance_timeseries_processed = (
                 all_TRITONSWMM_performance_timeseries_processed
                 and sub_analysis._all_TRITONSWMM_performance_timeseries_processed
@@ -2406,21 +2405,21 @@ class TRITONSWMM_sensitivity_analysis:
     @property
     def TRITONSWMM_performance_time_series_not_processed(self):
         lst_scens = []
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._TRITONSWMM_performance_time_series_not_processed
         return lst_scens
 
     @property
     def TRITON_time_series_not_processed(self):
         lst_scens = []
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._TRITON_time_series_not_processed
         return lst_scens
 
     @property
     def SWMM_time_series_not_processed(self):
         lst_scens = []
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             lst_scens += sub_analysis._SWMM_time_series_not_processed
         return lst_scens
 
@@ -2435,7 +2434,7 @@ class TRITONSWMM_sensitivity_analysis:
             True if all raw TRITON outputs in all sub-analyses are cleared
         """
         all_raw_TRITON_outputs_cleared = True
-        for key, sub_analysis in self.sub_analyses.items():
+        for _key, sub_analysis in self.sub_analyses.items():
             all_raw_TRITON_outputs_cleared = (
                 all_raw_TRITON_outputs_cleared and sub_analysis._all_raw_TRITON_outputs_cleared
             )
@@ -2452,10 +2451,8 @@ class TRITONSWMM_sensitivity_analysis:
             True if all raw SWMM outputs in all sub-analyses are cleared
         """
         all_raw_SWMM_outputs_cleared = True
-        for key, sub_analysis in self.sub_analyses.items():
-            all_raw_SWMM_outputs_cleared = (
-                all_raw_SWMM_outputs_cleared and sub_analysis._all_raw_SWMM_outputs_cleared
-            )
+        for _key, sub_analysis in self.sub_analyses.items():
+            all_raw_SWMM_outputs_cleared = all_raw_SWMM_outputs_cleared and sub_analysis._all_raw_SWMM_outputs_cleared
         return all_raw_SWMM_outputs_cleared is True
 
     def _update_master_analysis_log(self):

@@ -389,8 +389,13 @@ def restamp_parent_sentinels(removed_path: Path, *, analysis_dir: Path) -> None:
 
 
 def _infer_scope(scope_dir: Path, analysis_dir: Path) -> Scope:
-    if scope_dir == analysis_dir:
-        return "analysis"
+    # A sub-analysis dir (parent name "subanalyses") is sub_analysis scope even
+    # when it equals analysis_dir — the per-sub consolidate/processing runners
+    # pass the SUB dir as analysis_dir, so the `== analysis_dir` short-circuit
+    # below would otherwise mislabel the sub root scope="analysis" and clobber
+    # the D6 fold's scope="sub_analysis" write (consolidate_workflow.py:457).
     if scope_dir.parent.name == "subanalyses":
         return "sub_analysis"
+    if scope_dir == analysis_dir:
+        return "analysis"
     return "scenario"

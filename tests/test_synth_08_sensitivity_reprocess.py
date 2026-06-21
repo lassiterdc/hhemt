@@ -8,9 +8,10 @@ flag) without re-running any simulation rule.
 
 The session-scoped ``synthetic_sensitivity_completed`` fixture
 (``tests/conftest.py``) runs the synth sensitivity master once per pytest
-session to the ``f_consolidate_master_complete.flag`` state; this test
-body then re-invokes reprocess and asserts the master datatree zarr's
-mtime advances.
+session to the ``f_consolidate_master_complete.flag`` state; these tests
+consume the per-test ``synthetic_sensitivity_completed_isolated`` copy-on-read
+wrapper (D1) so the reprocess mutation lands on a ``tmp_path`` clone, then
+assert the master datatree zarr's mtime advances.
 
 Phase 3 (reprocess_orchestrator_liveness_gate) adds the sensitivity
 analogues of gate-integration scenarios (a)/(b)/(e) against the master
@@ -49,11 +50,11 @@ def _zarr_mtime_target(zarr):
     return zgroup if zgroup.exists() else zarr
 
 
-def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sensitivity_completed):
+def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sensitivity_completed_isolated):
     """Phase 2 FQ1 default (regenerate_existing=False): sensitivity master
     reprocess(consolidate) PRESERVES the master datatree zarr (mtime unchanged —
     no rebuild, no DU restamp) and re-fires the report."""
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture should have materialized sensitivity_datatree.zarr"
     mtime_target = _zarr_mtime_target(mdt)
@@ -73,10 +74,10 @@ def test_sensitivity_reprocess_consolidate_default_preserves_zarr(synthetic_sens
     )
 
 
-def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed):
+def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(synthetic_sensitivity_completed_isolated):
     """Phase 2 regenerate_existing=True: sensitivity master reprocess(consolidate)
     deletes and rebuilds the master datatree zarr (mtime advances)."""
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master zarr present"
     mtime_target = _zarr_mtime_target(mdt)
@@ -89,7 +90,7 @@ def test_sensitivity_reprocess_consolidate_regenerate_existing_rebuilds_zarr(syn
     )
 
 
-def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_completed):
+def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_completed_isolated):
     """sensitivity.reprocess(sa_ids=[...]) restricts per-sa invalidation to the subset.
 
     The invalidation step only deletes the named per-sa consolidate flags; the
@@ -97,7 +98,7 @@ def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_c
     subset's per-sa flags and the master flag must be re-created (success exit
     proves Snakemake completed the consolidate + master_consolidation chain).
     """
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     status_dir = sa.master_analysis.analysis_paths.analysis_dir / "_status"
     all_sa_ids = [str(sid) for sid in sa.sub_analyses.keys()]
     # Subset: first sub-analysis only.
@@ -117,12 +118,12 @@ def test_sensitivity_reprocess_consolidate_subset_sa_ids(synthetic_sensitivity_c
 
 
 def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
-    synthetic_sensitivity_completed,
+    synthetic_sensitivity_completed_isolated,
 ):
     """(a) R2: sensitivity reprocess PROCEEDS when ``_submitted/`` sim-WORKER
     sentinels are present in the master dir but no live ``_orchestrator/``
     DRIVER sentinel exists."""
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     master_dir = sa.master_analysis.analysis_paths.analysis_dir
     submitted = master_dir / "_status" / "_submitted"
     submitted.mkdir(parents=True, exist_ok=True)
@@ -139,7 +140,9 @@ def test_sensitivity_reprocess_proceeds_with_submitted_workers_no_orchestrator(
         worker.unlink(missing_ok=True)
 
 
-def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(synthetic_sensitivity_completed, monkeypatch):
+def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
+    synthetic_sensitivity_completed_isolated, monkeypatch
+):
     """(b) R3: a live master ``_orchestrator/`` DRIVER sentinel makes the
     sensitivity reprocess refuse fast with a ``WorkflowError``.
 
@@ -147,7 +150,7 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(synthetic_sen
     master flags are invalidated (the facade's pre-invalidation is irrelevant —
     the gate fires first in submit).
     """
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     builder = sa._workflow_builder
     master_dir = sa.master_analysis.analysis_paths.analysis_dir
     osent.write_orchestrator_sentinel(master_dir, driver_id="live-driver", workflow_submission_mode="local", pid=4242)
@@ -162,12 +165,14 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(synthetic_sen
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 
 
-def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(synthetic_sensitivity_completed, monkeypatch):
+def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(
+    synthetic_sensitivity_completed_isolated, monkeypatch
+):
     """(e) non-TTY no-hang: even with the non-interactive lock-clear env var
     UNSET and a stale ``.snakemake/locks/*.lock`` planted on the master dir,
     the sensitivity reprocess path's ``skip_lock_check=True`` returns before
     the interactive prompt (``builtins.input`` raises if reached)."""
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     master_dir = sa.master_analysis.analysis_paths.analysis_dir
     monkeypatch.delenv(_NON_INTERACTIVE_LOCK_CLEAR_ENV, raising=False)
     locks_dir = master_dir / ".snakemake" / "locks"
@@ -190,12 +195,12 @@ def test_sensitivity_reprocess_never_calls_input_even_with_stale_lock(synthetic_
         stale_lock.unlink(missing_ok=True)
 
 
-def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensitivity_completed):
+def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensitivity_completed_isolated):
     """R3/R4: sensitivity.reprocess(dry_run=True, start_with='consolidate') must NOT
     delete the master or any sub-analysis datatree zarr, nor re-stamp _du.json sentinels."""
     from hhemt.du_sentinels import compute_and_write_scope_sentinel
 
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     master_zarr = sa.analysis_paths.sensitivity_datatree_zarr
     assert master_zarr is not None and master_zarr.exists(), "fixture precondition: master zarr present"
     sub_zarrs = [
@@ -222,7 +227,7 @@ def test_sensitivity_reprocess_dry_run_no_destructive_mutation(synthetic_sensiti
     assert master_du.stat().st_mtime_ns == master_du_mtime0, "dry-run must NOT re-stamp master _du.json"
 
 
-def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed):
+def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed_isolated):
     """FIX 1 end-to-end: sensitivity ``reprocess(start_with='process',
     regenerate_existing=True)`` re-fires the per-sa ``process_*`` rebuild rules
     AND clears the per-model processing log so the runner actually re-writes the
@@ -238,7 +243,7 @@ def test_reprocess_rebuild_rewrites_summary(synthetic_sensitivity_completed):
     to find the per-sa summary it expected. Asserts the master datatree zarr's
     mtime advances and ``result["success"]`` is True.
     """
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "fixture precondition: master sensitivity_datatree.zarr present"
     mtime_target = _zarr_mtime_target(mdt)
@@ -292,13 +297,13 @@ def test_unlink_dprocess_flags_for_regenerate_clears_only_matching_flags(tmp_pat
 
 
 @pytest.fixture
-def synth_partial_state_analysis(synthetic_sensitivity_completed):
+def synth_partial_state_analysis(synthetic_sensitivity_completed_isolated):
     """A completed synth sensitivity analysis with ONE sub-analysis induced into
     the summary-absent partial state (its d_process/c_run flags left intact),
     for conditional-process-emit regression coverage (R5)."""
     from tests.fixtures.test_case_builder import induce_incomplete_subanalysis
 
-    sa = synthetic_sensitivity_completed
+    sa = synthetic_sensitivity_completed_isolated
     target_sa_id = sorted(sa.sub_analyses)[0]
     induce_incomplete_subanalysis(sa, target_sa_id, delete_master_tree=True)
     return sa, target_sa_id

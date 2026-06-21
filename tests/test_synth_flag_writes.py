@@ -135,7 +135,7 @@ def test_delete_flags_for_force_rerun_all_clears_status_dir(synth_sensitivity_an
         assert not (status_dir / (name + ".json")).exists()
 
 
-def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivity_completed):
+def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivity_completed_isolated):
     """After override_force_rerun, the per-scenario per-model log
     processing_log.outputs MUST be cleared so _already_written returns False.
 
@@ -145,7 +145,7 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     """
     from hhemt.scenario import TRITONSWMM_scenario
 
-    sensitivity = synthetic_sensitivity_completed
+    sensitivity = synthetic_sensitivity_completed_isolated
     analysis = sensitivity.master_analysis
 
     # Identify the first sa_id and capture pre-invalidation log state.
@@ -170,11 +170,11 @@ def test_override_force_rerun_clears_processing_log_outputs(synthetic_sensitivit
     )
 
 
-def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_sensitivity_completed):
+def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_sensitivity_completed_isolated):
     """force_rerun={"sa_id":[<first>]} MUST NOT touch other sa's processing log."""
     from hhemt.scenario import TRITONSWMM_scenario
 
-    sensitivity = synthetic_sensitivity_completed
+    sensitivity = synthetic_sensitivity_completed_isolated
     analysis = sensitivity.master_analysis
     sa_ids = list(sensitivity.sub_analyses.keys())
     if len(sa_ids) < 2:
@@ -197,12 +197,12 @@ def test_override_force_rerun_does_not_clear_other_sa_processing_log(synthetic_s
     )
 
 
-def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic_multisim_completed):
+def test_override_force_rerun_event_iloc_invalidates_only_named_events(synthetic_multisim_completed_isolated):
     """Non-sensitivity force-rerun: event_iloc=[1] invalidates the named event's
     log but leaves the other event_iloc untouched."""
     from hhemt.scenario import TRITONSWMM_scenario
 
-    analysis = synthetic_multisim_completed
+    analysis = synthetic_multisim_completed_isolated
     n_sims = len(analysis.df_sims)
     if n_sims < 2:
         import pytest as _pytest
