@@ -337,6 +337,18 @@ class InteractiveBackendConfig(cfgBaseModel):
             "field to 'matplotlib' in cfg_analysis.yaml."
         ),
     )
+    html_preview_rasterization: bool = Field(
+        False,
+        description=(
+            "When True, the HTML emit branch (_emit_html_with_sources) also "
+            "writes a <stem>.preview.png raster of the pre-composition Plotly "
+            "figure via kaleido, and sets the manifest preview_path to it. This "
+            "lets /design-figure's subagent visual-review operate on interactive "
+            "Plotly figures. Default False: preview_path stays None (no behavior "
+            "change). No-op when kaleido is unavailable (the rasterize helper "
+            "returns None)."
+        ),
+    )
     plotly_js_mode: Literal["cdn", "inline"] = Field(
         "cdn",
         description=(
