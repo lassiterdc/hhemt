@@ -41,7 +41,11 @@ dependencies = [
     "ipywidgets",
     "globus-sdk>=3.0",
     "plotly==5.24.1",
-    "kaleido>=0.2.1,<1.0",
+    # !=0.2.1.post1 excludes the ARM-only (manylinux2014_armv7l) re-upload of
+    # kaleido; PEP 440 ranks .post1 above 0.2.1, so the bare range greedily picks
+    # it and a fresh x86_64 install fails (no x86_64 wheel, no sdist). Plain 0.2.1
+    # carries the manylinux1_x86_64 wheel used on all real targets.
+    "kaleido>=0.2.1,!=0.2.1.post1,<1.0",
     "datashader>=0.16",
     "jinja2>=3.1",
     # CLI framework — cli.py / version_migration/__main__.py import these, and
