@@ -1502,4 +1502,5 @@ def _render_plotly_branch(
             "datashader_used": bool(use_datashader),
         },
         provenance=prov,
+        preview_figure=(fig if report_cfg.interactive.html_preview_rasterization else None),
     )
