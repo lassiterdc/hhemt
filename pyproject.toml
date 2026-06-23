@@ -41,6 +41,7 @@ dependencies = [
     "ipywidgets",
     "globus-sdk>=3.0",
     "plotly==5.24.1",
+    "kaleido>=0.2.1,<1.0",
     "datashader>=0.16",
     "jinja2>=3.1",
     # CLI framework — cli.py / version_migration/__main__.py import these, and
@@ -63,7 +64,10 @@ test = [
     "pytest-xdist>=3.0",
     "coverage",
 ]
-viz-export = ["kaleido>=0.2.1,<1.0"]
+# viz-export retained as an empty alias for one deprecation cycle so the
+# documented `pip install -e '.[viz-export]'` keeps resolving after kaleido
+# moved to core deps (sub-meter-flood-visibility Phase 1). Remove next cycle.
+viz-export = []
 # HPC orchestration extras required by SnakemakeWorkflowBuilder when
 # multi_sim_run_method='batch_job' or '1_job_many_srun_tasks'. The
 # _validate_batch_job_dry_run path in workflow.py:2274 unconditionally invokes
