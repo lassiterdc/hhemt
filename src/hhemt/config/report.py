@@ -127,6 +127,30 @@ class PerSimMapConfig(cfgBaseModel):
         0.01,
         description=("Lower-quantile clip on WSE colorbar (computed across wetted " "cells)."),
     )
+    depth_clip_quantile_upper: float | None = Field(
+        0.98,
+        description=(
+            "Upper-quantile clip on the DEPTH colorbar vmax (computed across "
+            "wetted cells in _shared_depth_max), mirroring wse_clip_quantile_upper. "
+            "Default 0.98 (clip ON by default — D-USER-1) so a single deep cell "
+            "no longer compresses the sub-meter range where most flooding lives; "
+            "set to None to disable and use the raw cross-event max. The exact "
+            "value is reviewed/locked by the Phase 3 /design-figure pass (R12). "
+            "RECONCILIATION: this is the depth-map counterpart of "
+            "wse_clip_quantile_upper (WSE map, itself default-ON at 0.99) and is "
+            "DISTINCT from PerSimFigureSpec.vmax_quantile (per-figure-spec scope); "
+            "do not add a fourth quantile-clip surface — extend these three, do "
+            "not duplicate."
+        ),
+    )
+    depth_clip_quantile_lower: float | None = Field(
+        None,
+        description=(
+            "Optional lower-quantile clip on the depth colorbar vmin (companion "
+            "to depth_clip_quantile_upper). None keeps the user-locked "
+            "depth_vmin=0.01 'under' threshold."
+        ),
+    )
     utilization_cmap: str = Field("Blues")
     peak_flow_cmap: str = Field("Reds")
     conduit_outline_color: str = Field("black")
@@ -473,6 +497,15 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
             "(existing PerSimMapConfig fields). When False, a Plotly RangeSlider "
             "widget under the colorbar lets the user adjust [vmin, vmax] live "
             "via Plotly.restyle."
+        ),
+    )
+    datashader_canvas_size: tuple[int, int] = Field(
+        (512, 512),
+        description=(
+            "Datashader Canvas (plot_width, plot_height) for raster "
+            "pre-aggregation in per_sim_peak_flood_depth. Replaces the "
+            "previously-hardcoded 512x512. Increase for higher-resolution "
+            "interactive zoom; decrease to shrink HTML payload."
         ),
     )
 
