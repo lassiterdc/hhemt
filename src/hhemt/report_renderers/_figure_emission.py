@@ -171,6 +171,7 @@ def emit_plot_with_sources(
     allow_empty_sources: bool = False,
     bbox_inches_tight: bool = True,
     emit_preview: bool = True,
+    preview_figure: Any | None = None,
 ) -> Path:
     """Save fig to output_path with source paths embedded as figure metadata.
 
@@ -267,6 +268,7 @@ def emit_plot_with_sources(
             analysis_dir=analysis_dir,
             manifest_data=manifest_data,
             provenance=provenance,
+            preview_figure=preview_figure,
         )
     # Fall-through: matplotlib Figure branch (existing behavior unchanged below).
     rel_sources = _relativize(source_paths, analysis_dir)
@@ -417,23 +419,34 @@ def _emit_html_with_sources(
     analysis_dir: Path,
     manifest_data: dict[str, Any] | None,
     provenance: ProvenanceLog | None,
+    preview_figure: Any | None = None,
 ) -> Path:
     """HTML-branch counterpart to :func:`emit_plot_with_sources`.
 
     Writes ``html_text`` verbatim to ``output_path`` (UTF-8). Emits a
     ``<stem>.manifest.json`` sidecar with the same top-level field set as
-    the matplotlib branch plus ``output_format: "html"``. No preview-PNG
-    sibling — Snakemake's report engine renders HTML in ``<iframe>``
-    directly; preview-rendering for subagent visual review is a separate
-    (out-of-scope here) Selenium/Playwright pass.
+    the matplotlib branch plus ``output_format: "html"``.
 
-    Matplotlib-only fields (preview_path, full_res_dpi, preview_dpi,
+    When ``preview_figure`` is supplied (a Plotly ``go.Figure``, gated
+    upstream by ``report.interactive.html_preview_rasterization``), a
+    ``<stem>.preview.png`` raster is written via kaleido and ``preview_path``
+    points to it — this lets ``/design-figure``'s subagent visual-review
+    operate on interactive Plotly figures. When ``preview_figure`` is ``None``
+    (the default) or kaleido is unavailable, ``preview_path`` stays ``None``,
+    byte-identical to the prior HTML-branch behavior.
+
+    The remaining matplotlib-only fields (full_res_dpi, preview_dpi,
     figure_size_inches, preview_size_bytes) are explicitly ``None`` so
     consumers see a uniform key set across branches.
     """
     rel_sources = _relativize(source_paths, analysis_dir)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
+    # Optional Plotly preview raster (gated upstream by
+    # report.interactive.html_preview_rasterization). Computed once here; None
+    # when the toggle is off or kaleido is unavailable, keeping preview_path
+    # byte-identical to the legacy HTML-branch behavior.
+    _preview = _try_rasterize_html_preview(preview_figure, output_path)
     manifest_payload: dict[str, Any] = {
         # Shared schema: keys present on both branches.
         "full_res_path": str(output_path),
@@ -441,9 +454,9 @@ def _emit_html_with_sources(
         "source_paths_relative": rel_sources,
         "emitted_at_utc": datetime.now(UTC).isoformat(),
         "full_res_size_bytes": output_path.stat().st_size,
-        # HTML-branch: explicit None for matplotlib-only fields so consumers
-        # see a uniform key set across branches.
-        "preview_path": None,
+        # HTML-branch preview: set when html_preview_rasterization is enabled and
+        # kaleido succeeds; otherwise None (matching the matplotlib-only fields).
+        "preview_path": str(_preview) if _preview else None,
         "full_res_format": "html",
         "full_res_dpi": None,
         "preview_dpi": None,
@@ -456,6 +469,21 @@ def _emit_html_with_sources(
         manifest_payload["artists"] = provenance.serialize()
     _emit_manifest_sidecar(output_path, manifest_payload)
     return output_path
+
+
+def _try_rasterize_html_preview(preview_figure: Any | None, output_path: Path) -> Path | None:
+    """Write a <stem>.preview.png raster of `preview_figure` (a Plotly go.Figure)
+    via kaleido. Returns the preview path on success, or None when preview_figure
+    is None or kaleido/export is unavailable (keeping the HTML path dependency-light
+    and crash-free in environments without kaleido)."""
+    if preview_figure is None:
+        return None
+    preview_path = output_path.parent / f"{output_path.stem}.preview.png"
+    try:
+        preview_figure.write_image(str(preview_path), format="png")
+    except Exception:
+        return None
+    return preview_path if preview_path.exists() else None
 
 
 def collect_per_sim_source_paths(
