@@ -297,7 +297,19 @@ def render(
     triton_summary_path = analysis.analysis_paths.analysis_datatree_zarr
 
     # ---- Depth raster from consolidated DataTree ------------------------
-    tree = analysis.process.open_datatree()
+    # Consumer-side defense-in-depth (R6): if a partial-completion render
+    # reaches this output-owning entrypoint, soft-skip with a VISIBLE labeled
+    # placeholder (which still writes output_path) rather than raising an opaque
+    # missing-output rule failure (Gotcha 39). _emit_model_type_skip_placeholder
+    # is already imported above for the swmm-only skip path.
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "peak_flood_depth: consolidated DataTree not available for this event",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
     if triton_group not in tree.groups:
         raise AssertionError(
             f"consolidated tree missing expected group {triton_group}; available: {sorted(tree.groups)}"
@@ -1401,29 +1413,46 @@ def _render_plotly_branch(
     from hhemt.report_renderers._figure_emission import (
         emit_plot_with_sources,
     )
-
-    (
-        fig,
-        triton_summary_path,
-        watershed_shp,
-        sys_paths,
-        weather_path,
-        da_masked,
-        cell_count,
-        bc_water_level,
-        wse_min,
-        wse_max,
-        rainfall,
-        map_cfg,
-        use_datashader,
-    ) = _build_peak_flood_depth_figure(
-        analysis,
-        report_cfg,
-        output_path,
-        event_iloc=event_iloc,
-        triton_group=triton_group,
-        prov=prov,
+    from hhemt.report_renderers.per_sim_conduit_flow import (
+        _emit_model_type_skip_placeholder,
     )
+
+    # Consumer-side defense-in-depth (R6): the builder opens the consolidated
+    # DataTree; if a partial-completion render reaches this output-owning plotly
+    # entrypoint, soft-skip with a VISIBLE labeled placeholder (which still
+    # writes output_path) rather than raising an opaque missing-output rule
+    # failure (Gotcha 39). The guard wraps the builder CALL (not the open inside
+    # it) because the builder returns a 13-tuple this branch unpacks — a
+    # placeholder Path returned from inside the builder would break the unpack.
+    try:
+        (
+            fig,
+            triton_summary_path,
+            watershed_shp,
+            sys_paths,
+            weather_path,
+            da_masked,
+            cell_count,
+            bc_water_level,
+            wse_min,
+            wse_max,
+            rainfall,
+            map_cfg,
+            use_datashader,
+        ) = _build_peak_flood_depth_figure(
+            analysis,
+            report_cfg,
+            output_path,
+            event_iloc=event_iloc,
+            triton_group=triton_group,
+            prov=prov,
+        )
+    except (ValueError, FileNotFoundError):
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "peak_flood_depth: consolidated DataTree not available for this event",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
 
     # ---- Emit -----------------------------------------------------------
     plotly_config = {

@@ -103,7 +103,17 @@ def render(
     # Read from the consolidated analysis DataTree. The link group carries
     # `max_over_full_flow`, `max_flow_cms`, and `link_id` for every event_iloc.
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
-    tree = analysis.process.open_datatree()
+    # Consumer-side defense-in-depth (R6): a partial-completion render soft-skips
+    # with a VISIBLE labeled placeholder (which still writes output_path) rather
+    # than raising an opaque missing-output rule failure (Gotcha 39).
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "conduit_flow: consolidated DataTree not available for this event",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
     if link_group not in tree.groups:
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
@@ -526,7 +536,19 @@ def _build_conduit_flow_figure(
 
     # ---- Data prep ------------------------------------------------------
     link_summary_path = analysis.analysis_paths.analysis_datatree_zarr
-    tree = analysis.process.open_datatree()
+    # Consumer-side defense-in-depth (R6): mirror the model-type-skip early
+    # return above (this builder is Path-polymorphic and `_render_plotly_branch`
+    # already handles a returned placeholder Path). A partial-completion render
+    # soft-skips with a VISIBLE labeled placeholder rather than raising an opaque
+    # missing-output rule failure (Gotcha 39).
+    try:
+        tree = analysis.process.open_datatree()
+    except (ValueError, FileNotFoundError):
+        return _emit_model_type_skip_placeholder(
+            output_path,
+            "conduit_flow: consolidated DataTree not available for this event",
+            report_cfg.figure_defaults.savefig_dpi,
+        )
     if link_group not in tree.groups:
         raise AssertionError(f"consolidated tree missing expected group {link_group}; available: {sorted(tree.groups)}")
     ds_links = tree[link_group].to_dataset()
