@@ -638,7 +638,12 @@ class TRITONSWMM_analysis:
 
         return emit_bundle(self, output_path)
 
-    def eda(self, *, override_eda_config: "Path | None" = None) -> "EdaReportResult":
+    def eda(
+        self,
+        *,
+        override_eda_config: "Path | None" = None,
+        notebook_filename: "str | None" = None,
+    ) -> "EdaReportResult":
         """Run the in-process EDA loop: calc -> plots -> doc (ADR-10).
 
         A LIGHTER non-Snakemake facade. Resolves the EDA config (override-or-cfg
@@ -653,10 +658,12 @@ class TRITONSWMM_analysis:
         from hhemt.config.loaders import yaml_to_model
         from hhemt.eda import (
             EdaReportResult,
-            assemble_eda_report,
             check_cross_sim_identity,
             render_eda_plots,
         )
+        from hhemt.eda._html_export import export_eda_html
+        from hhemt.eda._local_surface import emit_eda_local_surface
+        from hhemt.eda._notebook import emit_eda_notebook
 
         eda_cfg = (
             yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
@@ -664,16 +671,40 @@ class TRITONSWMM_analysis:
         root = Path(self.analysis_paths.analysis_dir)
         verdict_result = check_cross_sim_identity(self)
         verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
-        # Non-sensitivity analyses produce no eda/<plot_id>.zarr artifact (the
-        # cross-sim check skips and writes nothing), so render_eda_plots would
-        # open a non-existent zarr. Skip rendering and assemble a figureless doc
-        # via the figures fast-path (SE Flag 1).
-        if verdict_result.skipped or verdict_result.artifact_path is None:
-            report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, figures=[])
-            return EdaReportResult(report_path=report_path, plot_paths=[], verdicts=verdicts)
-        plot_paths = render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
-        report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
-        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
+        # F-B Flag 2 (hhemt-specialist review): load_eda_context reads the fixed-name
+        # cfg_analysis.yaml / cfg_system.yaml at `root`; the LIVE analysis_dir does NOT
+        # carry them by construction (only the bundle staging dir does, via
+        # _copy_configs_with_relative_paths). Materialize them here so the loader's
+        # fixed-name contract holds for the live root too (without this, the notebook's
+        # first executed cell `load_eda_context(root)` raises FileNotFoundError).
+        import yaml as _yaml
+
+        (root / "cfg_analysis.yaml").write_text(_yaml.safe_dump(self.cfg_analysis.model_dump(mode="json")))
+        (root / "cfg_system.yaml").write_text(_yaml.safe_dump(self._system.cfg_system.model_dump(mode="json")))
+        # ADR-12: emit the source-independent eda_local/ package skeleton at root.
+        emit_eda_local_surface(root)
+        # Non-sensitivity analyses produce no eda/<plot_id>.zarr (the cross-sim check
+        # skips), so render_eda_plots would open a non-existent zarr — skip rendering
+        # on the figureless branch. The NOTEBOOK is still emitted (ADR-14: primary
+        # artifact); its zarr-dependent seed cell is gated at execution.
+        figureless = verdict_result.skipped or verdict_result.artifact_path is None
+        plot_paths = [] if figureless else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        notebook_path = emit_eda_notebook(
+            root,
+            cfg_analysis=self.cfg_analysis,
+            eda_cfg=eda_cfg,
+            is_bundle=False,
+            notebook_filename=notebook_filename,
+        )
+        # ADR-14: HTML is a best-effort nbconvert export of the notebook (the source
+        # of truth); a kernel/exec failure degrades to None, never fails the loop.
+        report_path = export_eda_html(notebook_path, root=root)
+        return EdaReportResult(
+            report_path=report_path,
+            notebook_path=notebook_path,
+            plot_paths=plot_paths,
+            verdicts=verdicts,
+        )
 
     def static_plots(
         self,
