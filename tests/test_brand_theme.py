@@ -1,27 +1,21 @@
-"""Brand-theme + branding-realization tests (reporting-system config-layering-and-branding, Phase 1).
+"""Brand-theme + branding-realization unit tests (reporting-system config-layering-and-branding, Phase 1).
 
-Two tiers:
+Fast, fixture-free unit tests cover the brand_theme model (R-1), the
+report.css.j2 render byte-stability + config-drive at the
+``_emit_report_artifacts`` surface (R-3/R-8), the placeholder map, and the
+D-5 HTML-table overlay pattern (R-4). ``_emit_report_artifacts`` is the EXACT
+function the dominant ``render_report_runner`` fresh-instance path calls, so
+testing it directly (no ``run()`` warmup, no ``self._brand_theme``) is the
+regression cover for plan-review SE Flag 1.
 
-* Fast, fixture-free unit tests cover the brand_theme model (R-1), the
-  report.css.j2 render byte-stability + config-drive at the
-  ``_emit_report_artifacts`` surface (R-3/R-8), the placeholder map, and the
-  D-5 HTML-table overlay pattern (R-4). ``_emit_report_artifacts`` is the EXACT
-  function the dominant ``render_report_runner`` fresh-instance path calls, so
-  testing it directly (no ``run()`` warmup, no ``self._brand_theme``) is the
-  regression cover for plan-review SE Flag 1.
-* ``@pytest.mark.slow`` real-data tests use the Norfolk cached fixture to cover
-  the ``run()`` resolution ladder (R-2), the resolved HTML-table primary
-  (R-4/D-5 through ``run()``), and bundle reachability / regenerate
-  reproduction (R-6/V-7). They mirror the verified ``test_PC_04`` /
-  ``test_synth_08`` run→render→bundle idioms.
+The real-data run→render→bundle path (formerly the ``@pytest.mark.slow`` tests
+in this file) is now covered end-to-end by ``test_analysis_test_end_to_end.py``
+via ``analysis.test()`` — the retired ``test_PC_*`` tier's replacement.
 """
 
 from __future__ import annotations
 
-import subprocess
-
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from hhemt.config.brand_theme import DEFAULT_BRAND_THEME, brand_theme
@@ -130,50 +124,3 @@ def test_table_overlay_sources_brand_defaults_from_theme():
     # Frozen semantic colors are NOT theme-driven.
     assert merged.errors_and_warnings.th_text_color == base.errors_and_warnings.th_text_color
     assert merged.errors_and_warnings.body_text_color == base.errors_and_warnings.body_text_color
-
-
-# ---- R-2 / D-5 (through run): real-data resolution + branded render -----------
-@pytest.mark.slow
-def test_run_resolves_branded_css(tmp_path, norfolk_single_sim_analysis_cached):
-    theme_yaml = tmp_path / "brand_theme.yaml"
-    theme_yaml.write_text(yaml.safe_dump({"primary_color": "#0A7E8C"}))
-    analysis = norfolk_single_sim_analysis_cached
-    analysis.run(from_scratch=False, override_brand_theme=theme_yaml)
-    # Resolution ladder stored the theme; the D-5 overlay re-sourced the table.
-    assert analysis._brand_theme.primary_color == "#0A7E8C"
-    assert analysis._cfg_report.errors_and_warnings.primary_color == "#0A7E8C"
-    analysis.render_report(format="html")
-    css = (analysis.analysis_paths.analysis_dir / "report" / "report.css").read_text()
-    assert "#0A7E8C" in css
-    assert "${" not in css
-
-
-# ---- R-6 / V-7: bundle reachability — regenerate reproduces the theme ---------
-@pytest.mark.slow
-def test_bundle_regenerate_reproduces_theme(tmp_path, norfolk_single_sim_analysis_cached):
-    theme_yaml = tmp_path / "brand_theme.yaml"
-    theme_yaml.write_text(yaml.safe_dump({"primary_color": "#0A7E8C"}))
-    analysis = norfolk_single_sim_analysis_cached
-    analysis.run(from_scratch=False, override_brand_theme=theme_yaml)
-    analysis.render_report(format="html")
-
-    bundle_zip = tmp_path / "bundle.zip"
-    bundle_path = analysis.bundle_report_data(bundle_zip)
-    assert bundle_path.exists(), "bundle zip not emitted"
-
-    result = subprocess.run(
-        [
-            "hhemt",
-            "report-from-bundle",
-            str(bundle_path),
-            "--format",
-            "html",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    assert result.returncode == 0, f"report-from-bundle failed:\n{result.stdout}\n{result.stderr}"
-    unpack_dir = bundle_path.parent / bundle_path.stem
-    regen_css = (unpack_dir / "report" / "report.css").read_text()
-    assert "#0A7E8C" in regen_css
-    assert "${" not in regen_css

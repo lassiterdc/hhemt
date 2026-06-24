@@ -1,5 +1,4 @@
 import os
-import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -26,16 +25,6 @@ def is_scheduler_context() -> bool:
         "COBALT_JOBID",  # Cobalt
     )
     return any(v in os.environ for v in scheduler_vars)
-
-
-def on_frontier() -> bool:
-    """Return True when hostname indicates Frontier."""
-    return "frontier" in socket.getfqdn()
-
-
-def on_UVA_HPC() -> bool:
-    """Return True when hostname indicates UVA HPC."""
-    return "virginia" in socket.getfqdn()
 
 
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):
