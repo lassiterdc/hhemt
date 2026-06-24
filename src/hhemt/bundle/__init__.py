@@ -60,14 +60,14 @@ class Bundle:
         self,
         root: Path,
         manifest: dict,
-        cfg_analysis: "analysis_config | None" = None,  # noqa: F821 — forward ref
+        cfg_analysis: analysis_config | None = None,  # noqa: F821 — forward ref
     ) -> None:
         self._root = root.resolve()
         self._manifest = manifest
         self._cfg_analysis = cfg_analysis
 
     @classmethod
-    def from_directory(cls, path: Path | str) -> "Bundle":
+    def from_directory(cls, path: Path | str) -> Bundle:
         # Construct a Bundle from a bundle directory on disk.
         #
         # The directory must contain bundle_manifest.json. All paths
@@ -88,10 +88,7 @@ class Bundle:
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
         if not manifest_path.exists():
-            raise FileNotFoundError(
-                f"No {BUNDLE_MANIFEST_FILENAME} under {root}. "
-                f"Is this a render bundle?"
-            )
+            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} under {root}. " f"Is this a render bundle?")
         manifest = json.loads(manifest_path.read_text())
         try:
             bundle_version = manifest["bundle_schema_version"]
@@ -125,8 +122,7 @@ class Bundle:
         invariants = manifest.get("bundle_root_invariants", {})
         if not isinstance(invariants, dict):
             raise ValueError(
-                f"bundle_root_invariants in {manifest_path} must be a "
-                f"dict, got {type(invariants).__name__}."
+                f"bundle_root_invariants in {manifest_path} must be a " f"dict, got {type(invariants).__name__}."
             )
         # Load and Pydantic-validate the bundle's cfg_analysis.yaml at
         # construction time so downstream attribute access
@@ -135,6 +131,7 @@ class Bundle:
         # guaranteed safe by R1's required-field contract.
         from hhemt.config.analysis import analysis_config
         from hhemt.config.loaders import yaml_to_model
+
         cfg_analysis_path = root / "cfg_analysis.yaml"
         if not cfg_analysis_path.exists():
             raise FileNotFoundError(
@@ -158,7 +155,7 @@ class Bundle:
         ``bundle.root``."""
         return (self._root / rel).resolve()
 
-    def eda(self, *, plots_only: bool = True) -> EdaReportResult:
+    def eda(self, *, plots_only: bool = True, notebook_filename: str | None = None) -> EdaReportResult:
         """Regenerate the EDA report locally from the bundled data (ADR-10).
 
         Delegates to the SAME eda/ free functions analysis.eda() uses, passing
@@ -169,9 +166,11 @@ class Bundle:
         """
         from hhemt.eda import (
             EdaReportResult,
-            assemble_eda_report,
             render_eda_plots,
         )
+        from hhemt.eda._html_export import export_eda_html
+        from hhemt.eda._local_surface import emit_eda_local_surface
+        from hhemt.eda._notebook import emit_eda_notebook
 
         if not plots_only:
             raise ValueError(
@@ -179,9 +178,22 @@ class Bundle:
                 "source datatree, so the EDA calc stage cannot run."
             )
         eda_cfg = self._cfg_analysis.eda
+        emit_eda_local_surface(self._root)
         plot_paths = render_eda_plots(self._root, cfg_analysis=self._cfg_analysis, eda_cfg=eda_cfg)
-        report_path = assemble_eda_report(self._root, cfg_analysis=self._cfg_analysis, eda_cfg=eda_cfg)
-        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=[])
+        notebook_path = emit_eda_notebook(
+            self._root,
+            cfg_analysis=self._cfg_analysis,
+            eda_cfg=eda_cfg,
+            is_bundle=True,
+            notebook_filename=notebook_filename,
+        )
+        report_path = export_eda_html(notebook_path, root=self._root)
+        return EdaReportResult(
+            report_path=report_path,
+            notebook_path=notebook_path,
+            plot_paths=plot_paths,
+            verdicts=[],
+        )
 
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
         # Resolution (post-F2 rev v2): cfg_analysis.report is required by
@@ -195,9 +207,7 @@ class Bundle:
         # so test code can monkey-patch for backend-override coverage.
         return self._cfg_analysis.report.interactive.static_backend
 
-    def regenerate_report(
-        self, *, format: Literal["html", "zip"] = "zip"
-    ) -> Path:
+    def regenerate_report(self, *, format: Literal["html", "zip"] = "zip") -> Path:
         """Regenerate the analysis report from bundled data.
 
         Phase 2 wires (a) the regeneration-scoped Snakefile generator
@@ -267,9 +277,12 @@ class Bundle:
         # and the Snakemake `--touch` documented contract.
         touch_cmd = [
             "snakemake",
-            "--snakefile", str(self._root / "Snakefile"),
-            "--directory", str(self._root),
-            "--cores", "1",
+            "--snakefile",
+            str(self._root / "Snakefile"),
+            "--directory",
+            str(self._root),
+            "--cores",
+            "1",
             "--touch",
             "--quiet",
         ]
@@ -293,11 +306,16 @@ class Bundle:
         # with the plotting content."
         cmd = [
             "snakemake",
-            "--snakefile", str(self._root / "Snakefile"),
-            "--directory", str(self._root),
-            "--cores", "1",
-            "--report", str(output_path),
-            "--report-stylesheet", str(self._root / "report" / "report.css"),
+            "--snakefile",
+            str(self._root / "Snakefile"),
+            "--directory",
+            str(self._root),
+            "--cores",
+            "1",
+            "--report",
+            str(output_path),
+            "--report-stylesheet",
+            str(self._root / "report" / "report.css"),
             "--quiet",
         ]
         proc = run_subprocess_with_tee(
@@ -325,9 +343,7 @@ class Bundle:
 
         # Navbar upper-left brand text from the bundled theme (D-6/D-9), defaulting
         # to the bundle's analysis_id; None falls back to the historical literal.
-        _navbar = _theme.upper_left_text or (
-            self._cfg_analysis.analysis_id if self._cfg_analysis else None
-        )
+        _navbar = _theme.upper_left_text or (self._cfg_analysis.analysis_id if self._cfg_analysis else None)
         try:
             if format == "html":
                 output_path.write_text(
@@ -354,6 +370,7 @@ class Bundle:
         # the contents to match its zip-emit determinism contract; this
         # is a minimal implementation for Plan Phase 3.
         import zipfile
+
         zip_path = self._root / "analysis_report.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.write(html_path, arcname=html_path.name)

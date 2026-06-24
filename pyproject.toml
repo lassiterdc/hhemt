@@ -112,6 +112,14 @@ select = [
     "UP",  # pyupgrade
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Typer declares CLI params as `name: type = typer.Option(...)` / `typer.Argument(...)`,
+# i.e. a function call in the parameter default — the idiomatic Typer API. B008
+# (function-call-in-default) is a false positive for this pattern; suppressing it
+# here is the standard resolution (the alternative is migrating every CLI parameter
+# to `Annotated[type, typer.Option(...)]`).
+"src/hhemt/cli.py" = ["B008"]
+
 [tool.uv]
 package = true
 
