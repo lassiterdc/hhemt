@@ -1,7 +1,7 @@
 # Anonymized OLCF Frontier HPC system profile (example).
 # Authored from OLCF's PUBLIC cluster documentation; substitute {your-allocation} with your account.
 system_name: olcf_frontier
-default_account: "{your-allocation}"          # NATIVE -> slurm_account (Frontier: your project, e.g. ***REMOVED***)
+default_account: "{your-allocation}"          # NATIVE -> slurm_account (Frontier: your OLCF project)
 default_execution_mode: 1_job_many_srun_tasks # EXTENSION (Frontier default: one allocation, srun pool)
 gpu_allocation_flavor: gpus                   # EXTENSION (Frontier uses --gpus-per-node)
 max_concurrent_jobs: 1000                     # EXTENSION (D-D: cluster-throughput cap; new home for the retired analysis_config.hpc_max_simultaneous_sims)
