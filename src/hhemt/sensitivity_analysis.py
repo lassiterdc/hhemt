@@ -1283,7 +1283,20 @@ class TRITONSWMM_sensitivity_analysis:
             sub_path = sub_analysis.analysis_paths.analysis_datatree_zarr
             if sub_path is None:
                 continue
-            if not sub_path.exists():
+            # Gate on the POSITIVE completion marker, not bare .exists(): a sub
+            # whose zarr is on disk but whose datatree_consolidation_complete flag
+            # is null/False (set by a consolidate job in another process but not
+            # reflected in this long-lived sub's in-memory log) must be
+            # (re)consolidated — otherwise build_sensitivity_datatree's
+            # open_datatree() raises ValueError and silently drops the sub.
+            # consolidate_to_datatree is idempotent on an already-complete sub
+            # (its own _log_complete early-return), so this self-heals.
+            sub_analysis._refresh_log()
+            sub_complete = (
+                hasattr(sub_analysis.log, "datatree_consolidation_complete")
+                and sub_analysis.log.datatree_consolidation_complete.get() is True
+            )
+            if not (sub_path.exists() and sub_complete):
                 try:
                     sub_analysis.process.consolidate_to_datatree(
                         compression_level=compression_level,

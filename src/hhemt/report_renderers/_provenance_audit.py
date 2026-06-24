@@ -79,6 +79,13 @@ _INCIDENTAL_READ_SUBSTRINGS: tuple[str, ...] = (
     "/log_tritonswmm.json",
     "/log_swmm.json",
     "/scenario_prep_log.json",
+    # Analysis-scope completion-flag log read by open_datatree's refresh-before-gate
+    # (processing_analysis.py R2): render-time renderers call open_datatree(), whose
+    # _refresh_log() reads this analysis log.json under the audit capture context.
+    # Bookkeeping/completion state, never figure data — sibling to the log basenames
+    # above. Leading "/" anchors it to a path-segment boundary (matches both the bare
+    # log.json and its atomic-write temp); does not over-match plot-data files.
+    "/log.json",
 )
 
 
