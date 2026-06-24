@@ -36,6 +36,7 @@ class EdaReportResult:
     which skips calc).
     """
 
-    report_path: Path
+    report_path: Path | None
+    notebook_path: Path | None = None
     plot_paths: list[Path] = field(default_factory=list)
     verdicts: list[CheckResult] = field(default_factory=list)

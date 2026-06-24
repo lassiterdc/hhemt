@@ -44,7 +44,7 @@ def _parse_override_clear_raw(value: str | None) -> str | list | None:
         raise typer.BadParameter(
             f"--override-clear-raw expects 'all', 'none', or a JSON list "
             f'like \'["tritonswmm","swmm"]\'; got: {value!r} ({exc})'
-        )
+        ) from exc
 
 
 def _parse_override_force_rerun(value: str | None) -> str | dict | None:
@@ -67,7 +67,7 @@ def _parse_override_force_rerun(value: str | None) -> str | dict | None:
         raise typer.BadParameter(
             f"--override-force-rerun expects 'all', 'none', or a JSON dict "
             f"like '{{\"sa_id\":[0,5]}}'; got: {value!r} ({exc})"
-        )
+        ) from exc
 
 
 app = typer.Typer(
@@ -484,23 +484,23 @@ def run_command(
 
     except CLIValidationError as e:
         console_err.print(f"[bold red]Argument Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
     except (CompilationError, WorkflowError, WorkflowPlanningError) as e:
         console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
-        raise typer.Exit(3)
+        raise typer.Exit(3) from e
 
     except SimulationError as e:
         console_err.print(f"[bold red]Simulation Error:[/bold red] {e}")
-        raise typer.Exit(4)
+        raise typer.Exit(4) from e
 
     except ProcessingError as e:
         console_err.print(f"[bold red]Processing Error:[/bold red] {e}")
-        raise typer.Exit(5)
+        raise typer.Exit(5) from e
 
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
@@ -508,7 +508,7 @@ def run_command(
             import traceback
 
             console_err.print(traceback.format_exc())
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="cleanup-orphans")
@@ -635,10 +635,10 @@ def cleanup_orphans_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="reprocess")
@@ -802,13 +802,13 @@ def reprocess_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
         console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="eda")
@@ -846,19 +846,26 @@ def eda_command(
         analysis = TRITONSWMM_analysis(analysis_config, system)
         system._analysis = analysis
         result = analysis.eda(override_eda_config=override_eda_config)
-        console.print(f"[green]EDA report written:[/green] {result.report_path}")
+        console.print(f"[green]EDA notebook written:[/green] {result.notebook_path}")
+        if result.report_path is not None:
+            console.print(f"[green]EDA HTML export:[/green] {result.report_path}")
+        else:
+            console.print(
+                "[yellow]EDA HTML export skipped[/yellow] — the notebook is the source of truth "
+                "(open it to explore; re-run with a working kernel to regenerate the HTML)."
+            )
         raise typer.Exit(0)
     except typer.Exit:
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
         console_err.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(5)
+        raise typer.Exit(5) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="static-plots")
@@ -898,13 +905,13 @@ def static_plots_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
         console_err.print(f"[bold red]Error:[/bold red] {e}")
-        raise typer.Exit(5)
+        raise typer.Exit(5) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="delete")
@@ -1032,13 +1039,13 @@ def delete_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except (WorkflowError, ProcessingError, SimulationError) as e:
         console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 def _print_delete_dry_run_summary(analysis) -> None:
@@ -1228,10 +1235,10 @@ def cleanup_orphan_delete_sentinels_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="cleanup-stale-metadata")
@@ -1323,10 +1330,10 @@ def cleanup_stale_metadata_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 @app.command(name="cleanup-settled-markers")
@@ -1419,10 +1426,10 @@ def cleanup_settled_markers_command(
         raise
     except ConfigurationError as e:
         console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
     except Exception as e:
         console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
-        raise typer.Exit(10)
+        raise typer.Exit(10) from e
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1451,7 +1458,7 @@ def _handle_list_testcases(catalog_path: Path | None) -> None:
 
     except ConfigurationError as e:
         console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
 
 def _handle_list_case_studies(catalog_path: Path | None) -> None:
@@ -1475,7 +1482,7 @@ def _handle_list_case_studies(catalog_path: Path | None) -> None:
 
     except ConfigurationError as e:
         console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2)
+        raise typer.Exit(2) from e
 
 
 def _validate_cli_arguments(**kwargs) -> None:
