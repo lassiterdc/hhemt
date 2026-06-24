@@ -3,7 +3,9 @@
 import math
 import os
 import re
+import select
 import signal
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -16,6 +18,7 @@ import pandas as pd
 import yaml
 
 from hhemt import constants as cnst
+from hhemt import du_sentinels
 from hhemt import orchestrator_sentinels as _osent
 from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
 from hhemt.config.hpc_system import resolve_gpu_target
@@ -1886,6 +1889,39 @@ class TRITONSWMM_analysis:
         from .exceptions import ConfigurationError
         from .orchestration import WorkflowResult, translate_mode, translate_phases
         from .report_renderers._reporting_sets import get_reporting_set
+
+        # _test/ deletion offer (R9): if a leftover smoke-test subtree from a
+        # prior analysis.test() exists, offer to delete it before the real run.
+        # _test/ is excluded from the analysis _du.json (Phase 2 du change), so
+        # size it directly via du_sentinels._walk_root_bytes rather than via
+        # self.disk_utilization_bytes. Mirrors the Globus-conflict prompt's
+        # sys.stdin.isatty() non-TTY guard (A6); adds a 15 s select-based
+        # auto-'no' so an unattended run is never blocked. `select`/`sys` and
+        # `du_sentinels` are imported at module top.
+        test_dir = self.analysis_paths.analysis_dir / "_test"
+        if test_dir.exists():
+            size_bytes, _walk_errors = du_sentinels._walk_root_bytes(test_dir)
+            size_mb = size_bytes / (1024 * 1024)
+            if not sys.stdin.isatty():
+                print(
+                    f"[test] Existing _test/ ({size_mb:.1f} MB) left in place "
+                    f"(non-interactive stdin — not prompting).",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[test] An existing _test/ smoke-test subtree ({size_mb:.1f} MB) "
+                    f"was found at {test_dir}. Delete it? [y/N] (auto-'no' in 15s): ",
+                    end="",
+                    flush=True,
+                )
+                ready, _, _ = select.select([sys.stdin], [], [], 15)
+                answer = sys.stdin.readline().strip().lower() if ready else "n"
+                if answer in ("y", "yes"):
+                    fast_rmtree(test_dir, analysis_dir=self.analysis_paths.analysis_dir)
+                    print(f"[test] Deleted {test_dir}.", flush=True)
+                else:
+                    print("[test] Keeping _test/.", flush=True)
 
         # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
         # Resolution order:
