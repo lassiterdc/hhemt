@@ -172,58 +172,59 @@ def check_timeseries_processed(
     analysis: TRITONSWMM_analysis,
     which: Literal["both", "TRITON", "SWMM"] = "both",
 ) -> CheckResult:
-    """Aggregate: per-model-type timeseries written for every scenario.
+    """Aggregate: per-enabled-model timeseries written for every scenario.
 
-    Combines the per-model checks (TRITONSWMM performance + TRITON + SWMM)
-    into one logical "timeseries processed" stage; details distinguish which
-    model-type failed for each scenario.
+    A scenario's timeseries are "processed" iff its per-enabled-model summary
+    files are PRESENT ON DISK (a path-only predicate), NOT the clobberable/stale
+    ``all_*`` log attributes. The previous implementation ``getattr``'d a wrong
+    attribute name (``all_TRITON_timeseries_processed`` — the class actually
+    defines ``_all_TRITON_timeseries_processed``) and swallowed the resulting
+    ``AttributeError`` under a blanket ``except (AttributeError, Exception)``, so
+    it recorded zero failures unconditionally (the R4 bug). On-disk truth fixes
+    both halves: the predicate cannot be wrong-named, and any genuine error now
+    surfaces instead of being swallowed.
 
     The ``which`` parameter mirrors the existing ``assert_timeseries_processed``
-    pytest helper:
+    pytest helper by restricting the enabled-model set:
 
-    - ``"both"`` (default): TRITONSWMM performance + TRITON + SWMM
-    - ``"TRITON"``: TRITONSWMM performance + TRITON only
-    - ``"SWMM"``: TRITONSWMM performance + SWMM only
+    - ``"both"`` (default): every enabled model
+    - ``"TRITON"``: TRITONSWMM + TRITON-only
+    - ``"SWMM"``: TRITONSWMM + SWMM-only
+
+    Iterates ``_iter_subanalyses_or_self(analysis)`` so the sensitivity
+    sub-analysis fan-out is preserved — iterating the master's own ``df_sims``
+    would silently pass on a sensitivity analysis (also part of the R4 bug).
     """
-    all_checks = [
-        (
-            "TRITONSWMM performance ts",
-            "all_TRITONSWMM_performance_timeseries_processed",
-            "TRITONSWMM_performance_time_series_not_processed",
-        ),
-        ("TRITON ts", "all_TRITON_timeseries_processed", "TRITON_time_series_not_processed"),
-        ("SWMM ts", "all_SWMM_timeseries_processed", "SWMM_time_series_not_processed"),
-    ]
-    if which == "TRITON":
-        active_checks = [c for c in all_checks if "SWMM ts" != c[0]]
-    elif which == "SWMM":
-        active_checks = [c for c in all_checks if "TRITON ts" != c[0]]
-    else:
-        active_checks = all_checks
+    from hhemt.scenario import compute_event_id_slug
+    from hhemt.summary_paths import scenario_summaries_present
 
     details: list[dict] = []
-    failed_count = 0
     total = 0
     for sa_id, sub in _iter_subanalyses_or_self(analysis):
-        try:
-            total += len(sub.df_sims)
-        except Exception:
-            pass
-        for label, all_done_attr, missing_attr in active_checks:
-            try:
-                if not getattr(sub, all_done_attr):
-                    failed = list(getattr(sub, missing_attr))
-                    failed_count += len(failed)
-                    for p in failed:
-                        row = {"scenario": Path(p).name, "scenario_dir": str(p), "detail": f"{label} not processed"}
-                        if sa_id is not None:
-                            row["sa_id"] = f"sa_{sa_id}"
-                        details.append(row)
-            except (AttributeError, Exception):
-                continue
-    passed = failed_count == 0
+        enabled = sub._get_enabled_model_types()
+        if which == "TRITON":
+            enabled = [m for m in enabled if m in ("tritonswmm", "triton")]
+        elif which == "SWMM":
+            enabled = [m for m in enabled if m in ("tritonswmm", "swmm")]
+        sim_dir = sub.analysis_paths.simulation_directory
+        for event_iloc in sub.df_sims.index:
+            total += 1
+            ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+            event_id = compute_event_id_slug(ev)
+            if not scenario_summaries_present(sub, event_id, enabled):
+                row = {
+                    "scenario": event_id,
+                    "scenario_dir": str(sim_dir / event_id),
+                    "detail": "timeseries not processed",
+                }
+                if sa_id is not None:
+                    row["sa_id"] = f"sa_{sa_id}"
+                details.append(row)
+    passed = not details
     summary = (
-        "All timeseries processed" if passed else f"Timeseries processing failed for {failed_count} per-model entries"
+        "All timeseries processed"
+        if passed
+        else f"Timeseries processing failed for {len(details)} of {total} scenarios"
     )
     return CheckResult(name="Timeseries processed", level="aggregate", passed=passed, summary=summary, details=details)
 
