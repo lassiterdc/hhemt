@@ -17,8 +17,8 @@ config["toolkit_version"] = _toolkit_version
 config["n_sims"] = 4
 config["is_sensitivity"] = True
 config["n_sub_analyses"] = 4
-config["independent_vars"] = []
-config["group_by_var"] = None
+config["independent_vars"] = ['n_devices']
+config["group_by_var"] = 'run_mode'
 config["report"] = {"generated_at": _dt.now().isoformat(timespec="seconds")}
 
 # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
@@ -48,7 +48,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -855,6 +855,47 @@ rule plot_per_sim_per_sa_conduit_flow:
             > {log} 2>&1
         """
 
+INDEPENDENT_VARS = ['n_devices']
+
+def _sensitivity_source_paths(wildcards):
+    from hhemt.report_renderers._figure_emission import (
+        collect_sensitivity_source_paths,
+    )
+    return collect_sensitivity_source_paths(
+        wildcards.independent_var,
+        swmm_only_rpt_rel_paths=[],
+    )
+
+rule plot_sensitivity_benchmarking:
+    input:
+        master = "_status/f_consolidate_master_complete.flag",
+    output:
+        report(
+            "plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html",
+            caption="report/captions/sensitivity_benchmarking.rst",
+            category="Key Results",
+            subcategory="Benchmarking",
+            labels={"independent_var": "{independent_var}", "figure": "vs Total runtime"},
+        )
+    wildcard_constraints:
+        independent_var="[A-Za-z0-9_.]+",
+    params:
+        source_paths = _sensitivity_source_paths,
+        source_paths_rst = lambda w: _fmt_sources_rst(_sensitivity_source_paths(w)),
+    log: "logs/plots/sensitivity_benchmarking_{independent_var}.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=4000, time_min=10
+    shell:
+        """
+        python -m hhemt.report_renderers._cli sensitivity_benchmarking \
+            --system-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_system.yaml \
+            --analysis-config {REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/cfg_analysis.yaml \
+            --hpc-system-config {REPO_ROOT}/tests/fixtures/hpc_system_config_test.yaml \
+            --independent-var {wildcards.independent_var} \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 rule render_report:
     input:
         "plots/system_overview.html",
@@ -865,7 +906,8 @@ rule render_report:
         "scenario_status.csv",
         "workflow_summary.md",
         expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
-        expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)
+        expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
+        expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices'])
     output:
         "analysis_report.{format}"
     wildcard_constraints:
