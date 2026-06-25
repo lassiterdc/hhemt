@@ -107,18 +107,14 @@ def _runtime_incidental_prefixes(output_path: Path) -> tuple[str, ...]:
     """Runtime-derived incidental prefixes (host-portable; no literals)."""
     return (
         os.path.realpath(sys.prefix),  # conda/venv env
-        # The base interpreter's stdlib tree. For a venv (uv/virtualenv) whose
-        # base differs from its prefix, the stdlib lives under sys.base_prefix
-        # (e.g. /usr/lib/python312.zip, /usr/lib/python3.12, .../lib-dynload),
-        # NOT under sys.prefix (the .venv). The PEP-578 open-audit hook fires on
-        # every stdlib import during render (contextlib, etc.), so those reads
-        # escape the sys.prefix coverage above on a venv and leak as a false
-        # positive. A self-contained interpreter (conda env: prefix == base) is
-        # unaffected -- base_prefix collapses onto prefix. Interpreter stdlib is
-        # never figure data, so admitting it cannot mask a source under-declaration.
-        # See library/knowledge/hhemt/renderer io audit incidental prefix omits
-        # sys.base_prefix breaking venv interpreters.md.
-        os.path.realpath(sys.base_prefix),  # base interpreter stdlib (venv case)
+        # A venv created over a base/system interpreter (e.g. uv over the system
+        # CPython) reads the BASE interpreter's stdlib -- including the frozen
+        # `pythonNN.zip` -- during render. That lives under sys.base_prefix /
+        # sys.base_exec_prefix, OUTSIDE sys.prefix, so it must be allowlisted too.
+        # No-op when base == prefix (a non-venv conda interpreter). Host-portable
+        # and version-independent: runtime-derived, no absolute literal.
+        os.path.realpath(sys.base_prefix),  # base interpreter (venv parent)
+        os.path.realpath(sys.base_exec_prefix),  # base interpreter exec prefix
         os.path.realpath(tempfile.gettempdir()),  # platform tempdir
         os.path.realpath(matplotlib.get_data_path()),  # mpl-data
         os.path.realpath(str(output_path.parent)),  # self manifest/preview/svg

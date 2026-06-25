@@ -127,6 +127,30 @@ class PerSimMapConfig(cfgBaseModel):
         0.01,
         description=("Lower-quantile clip on WSE colorbar (computed across wetted " "cells)."),
     )
+    depth_clip_quantile_upper: float | None = Field(
+        0.98,
+        description=(
+            "Upper-quantile clip on the DEPTH colorbar vmax (computed across "
+            "wetted cells in _shared_depth_max), mirroring wse_clip_quantile_upper. "
+            "Default 0.98 (clip ON by default — D-USER-1) so a single deep cell "
+            "no longer compresses the sub-meter range where most flooding lives; "
+            "set to None to disable and use the raw cross-event max. The exact "
+            "value is reviewed/locked by the Phase 3 /design-figure pass (R12). "
+            "RECONCILIATION: this is the depth-map counterpart of "
+            "wse_clip_quantile_upper (WSE map, itself default-ON at 0.99) and is "
+            "DISTINCT from PerSimFigureSpec.vmax_quantile (per-figure-spec scope); "
+            "do not add a fourth quantile-clip surface — extend these three, do "
+            "not duplicate."
+        ),
+    )
+    depth_clip_quantile_lower: float | None = Field(
+        None,
+        description=(
+            "Optional lower-quantile clip on the depth colorbar vmin (companion "
+            "to depth_clip_quantile_upper). None keeps the user-locked "
+            "depth_vmin=0.01 'under' threshold."
+        ),
+    )
     utilization_cmap: str = Field("Blues")
     peak_flow_cmap: str = Field("Reds")
     conduit_outline_color: str = Field("black")
@@ -331,10 +355,22 @@ class InteractiveBackendConfig(cfgBaseModel):
             "in Plan Phase 5). Default 'plotly' per Plan Phase 2 D3 + "
             "Decision 4: the bundle workflow's headline use case is "
             "interactive Plotly reports, so the default matches the "
-            "headline experience. Users on environments without "
-            "kaleido installed should either install the viz-export "
-            "extra (`pip install -e '.[viz-export]'`) or set this "
-            "field to 'matplotlib' in cfg_analysis.yaml."
+            "headline experience. kaleido is a core dependency "
+            "(Plan Phase 1), so the Plotly static-export path is "
+            "available by default; set this field to 'matplotlib' in "
+            "cfg_analysis.yaml to force the matplotlib branch."
+        ),
+    )
+    html_preview_rasterization: bool = Field(
+        False,
+        description=(
+            "When True, the HTML emit branch (_emit_html_with_sources) also "
+            "writes a <stem>.preview.png raster of the pre-composition Plotly "
+            "figure via kaleido, and sets the manifest preview_path to it. This "
+            "lets /design-figure's subagent visual-review operate on interactive "
+            "Plotly figures. Default False: preview_path stays None (no behavior "
+            "change). No-op when kaleido is unavailable (the rasterize helper "
+            "returns None)."
         ),
     )
     plotly_js_mode: Literal["cdn", "inline"] = Field(
@@ -461,6 +497,15 @@ class PerSimMapInteractiveConfig(cfgBaseModel):
             "(existing PerSimMapConfig fields). When False, a Plotly RangeSlider "
             "widget under the colorbar lets the user adjust [vmin, vmax] live "
             "via Plotly.restyle."
+        ),
+    )
+    datashader_canvas_size: tuple[int, int] = Field(
+        (512, 512),
+        description=(
+            "Datashader Canvas (plot_width, plot_height) for raster "
+            "pre-aggregation in per_sim_peak_flood_depth. Replaces the "
+            "previously-hardcoded 512x512. Increase for higher-resolution "
+            "interactive zoom; decrease to shrink HTML payload."
         ),
     )
 
