@@ -97,7 +97,8 @@ class WorkflowStatus:
     current_phase : str
         Which phase is currently incomplete
     recommended_mode : str
-        Recommended execution mode: "fresh", "resume", or "overwrite"
+        Recommended execution mode: "fresh" or "resume" (the modes translate_mode
+        accepts). A complete analysis recommends "fresh" (redo from scratch).
     recommendation : str
         Human-readable explanation of recommendation
 

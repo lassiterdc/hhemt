@@ -2397,7 +2397,13 @@ class TRITONSWMM_analysis:
             time_dim = base_cfg.weather_time_series_timestep_dimension_name
             with xr.open_dataset(base_cfg.weather_timeseries, engine="h5netcdf") as wx:
                 wx_short = wx.isel({time_dim: slice(0, n_reporting_timesteps + 1)}).load()
-            short_weather = sub_dir / "_test_weather.nc"
+            # Write the sliced weather to the _test/ root (sibling of group_0/), NOT
+            # inside sub_dir: the sub runs with from_scratch=True (test(), below) which
+            # fast_rmtree's sub_dir (== analysis_dir == group_0/), so a weather file
+            # written inside it would be deleted before prepare_scenario reads it
+            # (FileNotFoundError on _test_weather.nc). The _test/ root survives the wipe;
+            # the {group_id}-suffixed name keeps multiple groups from colliding.
+            short_weather = test_root / f"_test_weather_{group_id}.nc"
             wx_short.to_netcdf(short_weather, engine="h5netcdf")
             overlay = {
                 "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
@@ -2409,7 +2415,13 @@ class TRITONSWMM_analysis:
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
             }
             cfg_a = analysis_config.model_validate({**base_cfg.model_dump(), **overlay})
-            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, sub_dir)
+            # The sub runs with from_scratch=True (test(), below), which fast_rmtree's
+            # the sub's analysis_dir (== sub_dir / group_0). Writing the config INSIDE
+            # sub_dir would self-delete it before the setup runner reads it ("Analysis
+            # config not found"). Write it to the _test/ root (sibling of group_0/) so
+            # the wipe of group_0/ cannot reach it; the sub's analysis_dir stays
+            # group_0/ via the overlay. (analysis_id is group-unique, so no collision.)
+            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, test_root)
             # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
             # is set in the cfg overlay above (mirrors _create_sub_analyses,
             # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
@@ -2806,8 +2818,12 @@ class TRITONSWMM_analysis:
             rec_text = "Use 'resume' to consolidate analysis summaries."
         else:
             current = "complete"
-            rec_mode = "n/a"
-            rec_text = "All phases complete. Use 'fresh' if you want to redo the analysis."
+            # 'fresh' is the only actionable mode for a complete analysis (resume has
+            # nothing left to do); it is a valid translate_mode() input, so
+            # analysis.run(mode=status.recommended_mode) works. 'n/a' is not a member
+            # of the documented {fresh, resume} run-mode set and is not run()-able.
+            rec_mode = "fresh"
+            rec_text = "All phases complete. Use 'fresh' to redo the analysis from scratch."
 
         return WorkflowStatus(
             analysis_id=self.cfg_analysis.analysis_id,
