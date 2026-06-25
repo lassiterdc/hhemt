@@ -1218,7 +1218,6 @@ def _build_peak_flood_depth_figure(
                 ),
                 name=f"≤ {map_cfg.dry_threshold_m:g} m (dry)",
                 showlegend=True,
-                legendgroup="dry",
                 hoverinfo="skip",
             ),
             row=1,
@@ -1525,8 +1524,8 @@ def _render_plotly_branch(
     except Exception as exc:  # noqa: BLE001 — Kaleido failure is non-fatal
         import logging
 
-        logging.getLogger(__name__).warning(
-            "Kaleido SVG export skipped for %s: %s",
+        logging.getLogger(__name__).info(
+            "Kaleido SVG export skipped (HTML emit unaffected) for %s: %s",
             output_path.with_suffix(".svg"),
             exc,
         )

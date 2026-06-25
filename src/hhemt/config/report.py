@@ -355,10 +355,10 @@ class InteractiveBackendConfig(cfgBaseModel):
             "in Plan Phase 5). Default 'plotly' per Plan Phase 2 D3 + "
             "Decision 4: the bundle workflow's headline use case is "
             "interactive Plotly reports, so the default matches the "
-            "headline experience. Users on environments without "
-            "kaleido installed should either install the viz-export "
-            "extra (`pip install -e '.[viz-export]'`) or set this "
-            "field to 'matplotlib' in cfg_analysis.yaml."
+            "headline experience. kaleido is a core dependency "
+            "(Plan Phase 1), so the Plotly static-export path is "
+            "available by default; set this field to 'matplotlib' in "
+            "cfg_analysis.yaml to force the matplotlib branch."
         ),
     )
     html_preview_rasterization: bool = Field(
