@@ -678,6 +678,36 @@ def test_run_and_render_report(synth_sensitivity_analysis_cached):
             f"unexpected per-sub-analysis report at {sub_html} for sa_id={sa_id}"
         )
 
+    # OE-3 / R8: master-tree membership parity (silent-drop guard).
+    # After a FULL clean consolidation (all subs present), every sub-analysis
+    # whose analysis_datatree.zarr exists on disk MUST appear as a node in the
+    # master sensitivity_datatree.zarr. Asserting the on-disk-zarr set is a
+    # subset of the master-tree-node set catches the silent-drop class (Gotcha 36
+    # `allow_incomplete=True` lets build_sensitivity_datatree drop a skipped sub
+    # while returning success=True) against on-disk ground truth -- independent
+    # of the clobberable/stale in-memory + log completion flags this plan fixed.
+    import xarray as xr
+
+    sensitivity = analysis.sensitivity
+    prefix = sensitivity.sub_analyses_prefix
+    master_zarr = sensitivity.analysis_paths.sensitivity_datatree_zarr
+    assert master_zarr is not None and master_zarr.exists(), (
+        "master sensitivity_datatree.zarr must exist after a full clean run"
+    )
+    master_tree = xr.open_datatree(master_zarr, engine="zarr", consolidated=False)
+    tree_sa_ids = {
+        c.removeprefix(prefix) for c in master_tree.children if c.startswith(prefix)
+    }
+    on_disk_sa_ids = {
+        str(sa_id)
+        for sa_id, sub in sensitivity.sub_analyses.items()
+        if sub.analysis_paths.analysis_datatree_zarr is not None
+        and sub.analysis_paths.analysis_datatree_zarr.exists()
+    }
+    assert on_disk_sa_ids <= tree_sa_ids, (
+        f"silent-drop: subs on disk but missing from master tree: {on_disk_sa_ids - tree_sa_ids}"
+    )
+
 
 @pytest.mark.slow
 def test_render_report_idempotent(synth_sensitivity_analysis_cached):

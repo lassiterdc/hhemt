@@ -204,6 +204,14 @@ class TRITONSWMM_analysis_post_processing:
             raise ValueError(
                 "analysis_datatree_zarr path is not configured on AnalysisPaths."
             )
+        # Render-phase readers may hold a long-lived in-memory log constructed
+        # before a concurrent consolidate job set the flag. Reload from disk so
+        # the gate reflects on-disk truth, not a possibly-stale in-memory value.
+        # Mirrors the producer (_refresh_log before .set ~L167) and the
+        # build_sensitivity_datatree per-sub precedent (sensitivity_analysis.py
+        # ~L1195). The lost-update WRITE race is already closed (compute-on-read
+        # rollups landed); this closes the residual READ-staleness window.
+        self._analysis._refresh_log()
         consolidated = (
             hasattr(self._analysis.log, "datatree_consolidation_complete")
             and self._analysis.log.datatree_consolidation_complete.get() is True
