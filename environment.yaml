@@ -76,6 +76,9 @@ dependencies:
   - pip:
       - hsclient
       - swmmio
+      # !=0.2.1.post1: the .post1 re-upload ships only an armv7l wheel; PEP 440
+      # ranks it above 0.2.1 so the bare range picks it and pip fails on x86_64.
+      - "kaleido>=0.2.1,!=0.2.1.post1,<1.0"
       - tabulate
       - notebook
       - jupyter_server

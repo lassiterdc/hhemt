@@ -16,6 +16,11 @@ Iter-3 (2026-04-28) of the per-sim flood-depth figure. Iter-2 user feedback:
 Dispatches per `_get_enabled_model_types()` (Gotcha 5) — TRITON-SWMM coupled
 fixtures use `output_tritonswmm_triton_summary`; TRITON-only uses
 `output_triton_only_summary`; SWMM-only emits a model-type-skip placeholder.
+
+iter-20 (sub_meter_flood_visibility): depth + WSE colorbars now share the
+quantile-clip pattern — `_shared_depth_max` gained the upper-quantile clip
+(`PerSimMapConfig.depth_clip_quantile_upper`) that `_shared_wse_range` already
+had. Keep them aligned so a future iteration does not re-diverge them.
 """
 
 from __future__ import annotations
@@ -84,7 +89,7 @@ if TYPE_CHECKING:
     from hhemt.config.static_plots import StaticPlotBaseConfig
 
 
-def _shared_depth_max(analysis, target_crs):
+def _shared_depth_max(analysis, target_crs, map_cfg=None):
     """Return the global vmax for the peak-flood-depth colorbar across every
     event_iloc (iter-19 user request — depth colorbar must be the same range
     on every per-event figure). vmin is hard-pinned at the user-locked 0.01
@@ -98,6 +103,7 @@ def _shared_depth_max(analysis, target_crs):
     watershed_shp = analysis._system.cfg_system.watershed_gis_polygon
     watershed_gdf = gpd.read_file(watershed_shp)
     g_max = float("-inf")
+    all_wet_values: list[np.ndarray] = []
     try:
         tree = analysis.process.open_datatree()
     except (ValueError, FileNotFoundError):
@@ -119,14 +125,27 @@ def _shared_depth_max(analysis, target_crs):
             else:
                 m = utils.create_mask_from_shapefile(da_ev, watershed_shp)
             d_ev = da_ev.where(m & (da_ev > 0))
-            d_max_obj = d_ev.max()
-            v_max = float(
-                d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
-            )
-            if np.isfinite(v_max):
-                g_max = max(g_max, v_max)
+            if map_cfg is not None and map_cfg.depth_clip_quantile_upper is not None:
+                vals = d_ev.values
+                if hasattr(vals, "compute"):
+                    vals = vals.compute()
+                finite = vals[np.isfinite(vals)]
+                if finite.size > 0:
+                    all_wet_values.append(finite)
+            else:
+                d_max_obj = d_ev.max()
+                v_max = float(
+                    d_max_obj.compute() if hasattr(d_max_obj, "compute") else d_max_obj,
+                )
+                if np.isfinite(v_max):
+                    g_max = max(g_max, v_max)
         except KeyError:
             continue
+    if map_cfg is not None and map_cfg.depth_clip_quantile_upper is not None:
+        if not all_wet_values:
+            return None
+        combined = np.concatenate(all_wet_values)
+        g_max = float(np.nanquantile(combined, map_cfg.depth_clip_quantile_upper))
     if not np.isfinite(g_max) or g_max <= 0.01:
         return None
     return g_max
@@ -456,7 +475,7 @@ def render(
     if static_cfg is not None and static_cfg.vmax is not None:
         depth_vmax = float(static_cfg.vmax)
     else:
-        shared_max = _shared_depth_max(analysis, target_crs)
+        shared_max = _shared_depth_max(analysis, target_crs, map_cfg=map_cfg)
         if shared_max is not None:
             depth_vmax = float(shared_max)
         else:
@@ -828,7 +847,7 @@ def _build_peak_flood_depth_figure(
 
     # ---- Color scale and range setup ------------------------------------
     depth_vmin = map_cfg.depth_vmin
-    shared_max = _shared_depth_max(analysis, target_crs)
+    shared_max = _shared_depth_max(analysis, target_crs, map_cfg=map_cfg)
     if shared_max is not None:
         depth_vmax = float(shared_max)
     else:
@@ -907,7 +926,10 @@ def _build_peak_flood_depth_figure(
         import datashader as ds_lib
         import datashader.reductions as ds_reductions
 
-        canvas = ds_lib.Canvas(plot_width=512, plot_height=512)
+        canvas = ds_lib.Canvas(
+            plot_width=interactive_cfg.datashader_canvas_size[0],
+            plot_height=interactive_cfg.datashader_canvas_size[1],
+        )
         depth_agg = canvas.raster(
             da_masked,
             agg=ds_reductions.max("max_wlevel_m"),
@@ -999,6 +1021,33 @@ def _build_peak_flood_depth_figure(
             xs, ys = poly.exterior.coords.xy
             ws_fill_x.extend(list(xs) + [None])
             ws_fill_y.extend(list(ys) + [None])
+    # iter-21 (sub_meter_flood_visibility): the dry-cell base fill MUST render
+    # BELOW the depth/WSE Heatmaps. Plotly draws SVG vector traces (a
+    # Scatter fill) ABOVE the heatmap raster regardless of add_trace order, so
+    # the iter6 `go.Scatter(fill="toself")` occluded the heatmap (all-grey).
+    # A layout shape with layer="below" is the only mechanism that places fill
+    # beneath a go.Heatmap; build the watershed multi-polygon as one SVG path
+    # (M x,y L x,y ... Z per ring) reusing the same None-separated coords.
+    _ws_path_segments: list[str] = []
+    _seg_x: list[float] = []
+    _seg_y: list[float] = []
+    for _px, _py in zip(ws_fill_x, ws_fill_y, strict=False):
+        if _px is None or _py is None:
+            if _seg_x:
+                _seg = f"M {_seg_x[0]},{_seg_y[0]} " + " ".join(
+                    f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False)
+                ) + " Z"
+                _ws_path_segments.append(_seg)
+                _seg_x, _seg_y = [], []
+            continue
+        _seg_x.append(_px)
+        _seg_y.append(_py)
+    if _seg_x:
+        _seg = f"M {_seg_x[0]},{_seg_y[0]} " + " ".join(
+            f"L {_x},{_y}" for _x, _y in zip(_seg_x[1:], _seg_y[1:], strict=False)
+        ) + " Z"
+        _ws_path_segments.append(_seg)
+    ws_fill_path = " ".join(_ws_path_segments)
     dry_ref = ProvenanceRef(
         source_path=watershed_rel,
         variable="watershed_polygon",
@@ -1023,19 +1072,15 @@ def _build_peak_flood_depth_figure(
         a.add_channel("x", dry_ref)
         a.add_channel("y", dry_ref)
         a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
-        fig.add_trace(
-            go.Scatter(
-                x=ws_fill_x,
-                y=ws_fill_y,
-                fill="toself",
-                fillcolor=map_cfg.dry_fill_color,
-                mode="lines",
-                line=dict(width=0),
-                hoverinfo="skip",
-                showlegend=False,
-                legendgroup="dry",
-                name="dry_watershed_depth",
-            ),
+        # iter-21: layout shape with layer="below" so the grey watershed base
+        # renders BENEATH the depth Heatmap and shows through only dry (NaN)
+        # cells. A go.Scatter fill would draw ABOVE the raster and occlude it.
+        fig.add_shape(
+            type="path",
+            path=ws_fill_path,
+            fillcolor=map_cfg.dry_fill_color,
+            line=dict(width=0),
+            layer="below",
             row=1,
             col=1,
         )
@@ -1108,19 +1153,13 @@ def _build_peak_flood_depth_figure(
         a.add_channel("x", dry_ref)
         a.add_channel("y", dry_ref)
         a.add_channel("color", dry_ref, cmap=map_cfg.dry_fill_color)
-        fig.add_trace(
-            go.Scatter(
-                x=ws_fill_x,
-                y=ws_fill_y,
-                fill="toself",
-                fillcolor=map_cfg.dry_fill_color,
-                mode="lines",
-                line=dict(width=0),
-                hoverinfo="skip",
-                showlegend=False,
-                legendgroup="dry",
-                name="dry_watershed_wse",
-            ),
+        # iter-21: layout shape with layer="below" — see depth-panel note.
+        fig.add_shape(
+            type="path",
+            path=ws_fill_path,
+            fillcolor=map_cfg.dry_fill_color,
+            line=dict(width=0),
+            layer="below",
             row=1,
             col=2,
         )
@@ -1278,16 +1317,23 @@ def _build_peak_flood_depth_figure(
     times_hr = np.asarray(times_min, dtype=float) / units.MINUTES_PER_HOUR
     with prov.artist(
         axes_id="ax_rain_plotly",
-        kind="bar",
+        kind="line2d",
         note="rainfall time series (event hydrology — top sub-panel)",
     ) as a:
         a.add_channel("x", rain_ref, units=units.TIME_AXIS_PROVENANCE_UNITS_HOURS)
         a.add_channel("y", rain_ref, units=rain_units)
+        # iter-21: filled area (not go.Bar). go.Bar uses auto-width bars with
+        # inter-bar gaps, so a constant rainfall over many timesteps renders as
+        # a picket-fence/sawtooth; fill="tozeroy" renders a solid block,
+        # matching the matplotlib branch's gap-free ax_rain.bar(width=...).
         fig.add_trace(
-            go.Bar(
+            go.Scatter(
                 x=times_hr,
                 y=rainfall,
-                marker=dict(color=panel_cfg.rain_color),
+                fill="tozeroy",
+                mode="lines",
+                line=dict(width=0, color=panel_cfg.rain_color),
+                fillcolor=panel_cfg.rain_color,
                 name="rainfall",
                 showlegend=False,
                 hovertemplate="t: %{x:.2f} hr<br>rain: %{y:.2f}<extra></extra>",
@@ -1531,4 +1577,5 @@ def _render_plotly_branch(
             "datashader_used": bool(use_datashader),
         },
         provenance=prov,
+        preview_figure=(fig if report_cfg.interactive.html_preview_rasterization else None),
     )

@@ -16,20 +16,23 @@ Snakemake rule for the EDA loop.
 
 from __future__ import annotations
 
+from hhemt.eda._context import EdaContext, load_eda_context
 from hhemt.eda._plotting import render_eda_plots
 from hhemt.eda._promote import (
     promote_eda_plot_to_static_config,
     register_eda_plot_in_reporting_set,
 )
-from hhemt.eda._report import assemble_eda_report
+from hhemt.eda._report import cross_sim_identity_figure_from_root
 from hhemt.eda._result import EdaReportResult, EdaResult
 from hhemt.eda.cross_sim_identity import check_cross_sim_identity
 
 __all__ = [
+    "EdaContext",
     "EdaReportResult",
     "EdaResult",
-    "assemble_eda_report",
     "check_cross_sim_identity",
+    "cross_sim_identity_figure_from_root",
+    "load_eda_context",
     "promote_eda_plot_to_static_config",
     "register_eda_plot_in_reporting_set",
     "render_eda_plots",

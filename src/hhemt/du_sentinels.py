@@ -37,6 +37,13 @@ from typing import Literal
 
 Scope = Literal["scenario", "sub_analysis", "analysis"]
 
+# Ephemeral top-level dirs that MUST NOT count toward the analysis-scope DU
+# rollup (ADR-8/ASR-8): `_test/` is the user-deletable smoke-test subtree
+# produced by TRITONSWMM_analysis.test(); it is offered for deletion by
+# analysis.run() and must never inflate the real analysis's reported size.
+# Excluded from BOTH total and per-child breakdown at the analysis scope.
+_EPHEMERAL_TOP_LEVEL_DIRS: set[str] = {"_test"}
+
 
 def _scandir_walk(root: Path, *, want_breakdown: bool, skip_status_top: bool) -> tuple[int, dict[str, int], int]:
     """Single-pass os.scandir walk: (total_bytes, per_child_bytes, walk_errors).
@@ -296,6 +303,8 @@ def sum_child_sentinels(scope_dir: Path, *, scope: Scope, child_scope_dirs: list
         breakdown[child_dir_name] = child_total
         total += child_total
     skip = set(child_scope_dirs)
+    if scope == "analysis":
+        skip |= _EPHEMERAL_TOP_LEVEL_DIRS
     for entry in sorted(scope_dir.iterdir()):
         if entry.name in skip or entry.name.startswith("_status"):
             continue

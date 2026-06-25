@@ -114,12 +114,14 @@ def _runtime_incidental_prefixes(output_path: Path) -> tuple[str, ...]:
     """Runtime-derived incidental prefixes (host-portable; no literals)."""
     return (
         os.path.realpath(sys.prefix),  # conda/venv env
-        # venv-on-system-python: the stdlib lives under sys.base_prefix (e.g. /usr
-        # for a venv built on the system interpreter), NOT sys.prefix (the venv dir).
-        # The interpreter's zipimport read (/usr/lib/pythonNN.zip) and stdlib module
-        # reads fire during render and escape the env prefix above. No-op in a conda
-        # env where base_prefix == prefix. Import-machinery/stdlib reads are never figure data.
-        os.path.realpath(sys.base_prefix),  # system interpreter stdlib (venv-on-system-python)
+        # A venv created over a base/system interpreter (e.g. uv over the system
+        # CPython) reads the BASE interpreter's stdlib -- including the frozen
+        # `pythonNN.zip` -- during render. That lives under sys.base_prefix /
+        # sys.base_exec_prefix, OUTSIDE sys.prefix, so it must be allowlisted too.
+        # No-op when base == prefix (a non-venv conda interpreter). Host-portable
+        # and version-independent: runtime-derived, no absolute literal.
+        os.path.realpath(sys.base_prefix),  # base interpreter (venv parent)
+        os.path.realpath(sys.base_exec_prefix),  # base interpreter exec prefix
         os.path.realpath(tempfile.gettempdir()),  # platform tempdir
         os.path.realpath(matplotlib.get_data_path()),  # mpl-data
         os.path.realpath(str(output_path.parent)),  # self manifest/preview/svg
