@@ -694,6 +694,16 @@ def tritonswmm_cpu_compiled():
     or test_data/.../triton/ and assumes no concurrent test sessions are
     running an actual compile against the same cache dir.
     """
+    from tests.utils_for_testing import compile_toolchain_unavailable
+
+    if compile_toolchain_unavailable():
+        pytest.skip(
+            "TRITON-SWMM CPU compile toolchain (cmake + mpic++) not on PATH; "
+            "run compile-dependent tests under the hhemt conda env "
+            "(e.g. `conda run -n hhemt uv run --active --extra test pytest ...`).",
+            allow_module_level=False,
+        )
+
     from tests.fixtures.test_case_catalog import Local_TestCases
 
     for retrieve in (

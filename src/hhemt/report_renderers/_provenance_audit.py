@@ -53,6 +53,9 @@ _INCIDENTAL_READ_SUBSTRINGS: tuple[str, ...] = (
     "site-packages",
     "__pycache__",
     ".pyc",
+    # interpreter-internal: frozen-stdlib zip (e.g. /usr/lib/python3.12.zip) +
+    # stdlib dir; host-portable and version-agnostic.
+    "/lib/python3",
     "matplotlib",
     "mpl-data",
     "fontconfig",

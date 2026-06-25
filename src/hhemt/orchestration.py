@@ -213,6 +213,13 @@ class WorkflowResult:
         SLURM job ID (only for SLURM mode)
     message : str
         Human-readable status message
+    partial_failures : List[dict]
+        Rules that permanently failed under ``--keep-going`` (the sweep let the
+        rest of the DAG complete). Each entry carries at least ``rule_token`` and
+        ``reason``. Non-empty implies ``success=False``. Populated only on the
+        blocking submit paths (``local`` / ``1_job_many_srun_tasks``); a detached
+        ``batch_job`` (tmux) run has no in-process completion point and leaves this
+        empty (operator inspects ``_status/_failed/`` post-hoc — captured follow-up).
 
     Examples
     --------
@@ -231,6 +238,7 @@ class WorkflowResult:
     snakefile_path: Optional[Path] = None
     job_id: Optional[str] = None
     message: str = ""
+    partial_failures: List[dict] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         """Allow truthiness check: if result: ..."""
@@ -256,6 +264,10 @@ class WorkflowResult:
 
         if self.message:
             parts.append(f"Message: {self.message}")
+
+        if self.partial_failures:
+            tokens = ", ".join(r.get("rule_token", "?") for r in self.partial_failures)
+            parts.append(f"Partial failures ({len(self.partial_failures)}): {tokens}")
 
         return "\n".join(parts)
 

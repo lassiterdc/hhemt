@@ -98,7 +98,7 @@ def write_resume_matrix_csv(
     where ``T_sa`` is that backend's measured full-completion wallclock (minutes) from the
     CLEAN sweep (SLURM ``Elapsed`` via sacct, or ``out_tritonswmm/performance.txt`` Total),
     keyed by ``sa_id``. With ``kill_divisor=3`` each sim is killed ~2x and finishes on
-    attempt ~3; set ``hpc_restart_times`` comfortably above
+    attempt ~3; set ``hpc_restart_times_simulate`` comfortably above
     ``ceil(max(T_sa) / min_walltime_min)`` so even a worst-case slow backend completes.
     When ``runtime_min_by_sa`` is None (off-cluster dry-run only), fall back to a
     conservative GPU=4 min / CPU=18 min estimate by row type — REPLACE with real

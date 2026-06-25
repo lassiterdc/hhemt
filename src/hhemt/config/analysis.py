@@ -166,16 +166,25 @@ class analysis_config(cfgBaseModel):
         60,
         description="Time in minutes per simulation for SLURM job array. Required if using generate_SLURM_job_array_script() or submit_SLURM_job_array().",
     )
-    hpc_restart_times: int = Field(
+    hpc_restart_times_simulate: int = Field(
         2,
         ge=0,
         description=(
-            "Snakemake `restart-times` for the SLURM executor: how many times a "
-            "FAILED/TIMEOUT job is auto-resubmitted before the workflow gives up. "
-            "A walltime kill is a TIMEOUT (retriable). Default 2 (legacy). For the "
-            "hotstart-resume sweep set this high (e.g. 20) so a walltime-killed sim "
-            "is re-dispatched enough times to complete from its latest config_NNNN.cfg "
-            "checkpoint within ONE analysis.run() — no manual re-invocation loop."
+            "Per-rule Snakemake `retries:` for the simulation rules "
+            "(run_triton/run_tritonswmm/run_swmm/simulation_sa_*). A walltime "
+            "kill is a SLURM TIMEOUT (retriable); raise this high (e.g. 20) for a "
+            "hotstart-resume sweep so a killed sim re-dispatches from its latest "
+            "config_NNNN.cfg checkpoint within ONE analysis.run(). Default 2."
+        ),
+    )
+    hpc_restart_times_other: int = Field(
+        2,
+        ge=0,
+        description=(
+            "Per-rule Snakemake `retries:` baseline for the non-simulation rules "
+            "(prepare/process/consolidate/plot/render), emitted as the GLOBAL "
+            "restart-times so directive-less rules inherit it. Idempotent "
+            "re-derivations, so a low count suffices. Default 2."
         ),
     )
     # Phase-4 (4d): hpc_max_simultaneous_sims RETIRED off analysis_config — it MOVED

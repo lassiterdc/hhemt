@@ -505,15 +505,44 @@ class TRITONSWMM_run:
             # (no srun, no MPI) so the guard's mpicc test typically fails and the
             # else-branch keeps the prior conda-first behavior; the uniform code
             # path avoids a second ordering convention.
+            # Derive the system/module MPI lib dir that actually holds the NEEDED
+            # libmpi.so.40 / libmpi_cxx.so.40 sonames. The prior prefix+"/lib"
+            # heuristic ($(dirname $(dirname mpicc))/lib) is WRONG on Debian/Ubuntu
+            # multiarch: /usr/bin/mpicc -> /usr/lib, which EXISTS but holds no libmpi
+            # (real libs live in /usr/lib/x86_64-linux-gnu/). Ask OpenMPI for its
+            # libdir (-showme:libdirs), resolve the dev symlink libmpi.so to its real
+            # .so.40.x file, and take that file's directory. Falls back to the prefix
+            # heuristic when -showme is unsupported; the final guard only prepends when
+            # libmpi.so.40 is actually present there (the falsifiable miss-detector).
+            _mpi_derive = (
+                '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+                '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && '
+                'dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
+                '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
+                '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+            )
             if module_load_cmd:
                 post_module_ld = (
-                    '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
-                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                     'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
                     'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
                 )
             else:
-                post_module_ld = ""
+                # Local / no-module path: a triton.exe built with the system mpic++
+                # links the SYSTEM OpenMPI. The static ld_segments above prepend
+                # ${CONDA_PREFIX}/lib (needed for libstdc++ on HPC); on a local dev box
+                # that shadows the system libmpi while libmpi_cxx stays on system ->
+                # ABI split (ompi_mpi_errors_throw_exceptions undefined). Mirror the
+                # module branch's MPI-lib-first ordering so the system MPI dir precedes
+                # ${CONDA_PREFIX}/lib whenever a system mpicc resolves AND its real
+                # libmpi.so.40 dir is found; conda lib stays second so libstdc++ still
+                # wins. No-op when no mpicc / no real MPI dir (falls back to conda-first).
+                post_module_ld = (
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                    'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+                )
             full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
@@ -711,15 +740,31 @@ class TRITONSWMM_run:
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
         # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
+        # See the SWMM-path comment above: NEEDED-soname-accurate MPI lib-dir
+        # derivation (multiarch-correct), reused for the module and local branches.
+        _mpi_derive = (
+            '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+            '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
+            '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
+            '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+        )
         if module_load_cmd:
             post_module_ld = (
-                '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
-                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                f"{_mpi_derive}"
+                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                 'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
                 'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
             )
         else:
-            post_module_ld = ""
+            # Local / no-module path — mirror the module branch's MPI-lib-first
+            # ordering for a system-mpic++-built triton.exe. Conda lib stays second
+            # (already first in the static ld_segments) so libstdc++ GLIBCXX_3.4.31
+            # still wins; system MPI wins for libmpi/libmpi_cxx. No-op when no mpicc.
+            post_module_ld = (
+                f"{_mpi_derive}"
+                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+            )
         full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",

@@ -1705,6 +1705,8 @@ class TRITONSWMM_analysis:
         override_clear_raw: ClearRawValue | None = None,
         override_force_rerun: ForceRerunValue | None = None,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2087,6 +2089,8 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
+            "override_hpc_restart_times_simulate": override_hpc_restart_times_simulate,
+            "override_hpc_restart_times_other": override_hpc_restart_times_other,
             "report_formats": report_formats,
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
@@ -2134,6 +2138,7 @@ class TRITONSWMM_analysis:
             snakefile_path=result_dict.get("snakefile_path"),
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
+            partial_failures=result_dict.get("partial_failures", []),
         )
 
     def render_report(self, format: "Literal['html','zip']" = "zip", *, reprocess: bool = False) -> "Path":
@@ -2541,6 +2546,8 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -2651,6 +2658,8 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     override_hpc_total_nodes=override_hpc_total_nodes,
+                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                    override_hpc_restart_times_other=override_hpc_restart_times_other,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -2660,6 +2669,19 @@ class TRITONSWMM_analysis:
                 # — the pre-delete already happened at this layer
                 # (self._apply_force_rerun above) and the builder's
                 # submit_workflow does not need a runtime force-rerun parameter.
+                if pickup_where_leftoff:
+                    # Scenario-set-change invalidation (multi_sim resume). The toolkit
+                    # uses --rerun-triggers mtime only (workflow.py), so a present
+                    # e_consolidate_complete.flag short-circuits the missing-intermediate
+                    # demand for an ADDED scenario's prepare->run->process->consolidate
+                    # chain (the per-sim plot rules, enumerated over the full SIM_IDS,
+                    # would then fire and crash reading the un-prepared hydraulics.inp).
+                    # Mirror the sensitivity path's scenario-set-change invalidation:
+                    # when the config event-id set differs from the on-disk prepared set,
+                    # delete the analysis-level consolidate flag so consolidate re-demands
+                    # its full SIM_IDS input expand, and delete orphan per-event flags for
+                    # events no longer in the config.
+                    self._invalidate_consolidate_flag_on_scenario_set_change()
                 result = self._workflow_builder.submit_workflow(
                     mode=mode,
                     process_system_level_inputs=process_system_level_inputs,
@@ -2678,6 +2700,8 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     override_hpc_total_nodes=override_hpc_total_nodes,
+                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                    override_hpc_restart_times_other=override_hpc_restart_times_other,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -3409,6 +3433,53 @@ class TRITONSWMM_analysis:
         spec = self._build_force_rerun_spec(resolved)
         self._workflow_builder._delete_flags_for_force_rerun(spec)
         self._invalidate_processing_log_for_force_rerun(spec)
+
+    def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
+        """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
+        multi_sim scenario set changed since the last prepared run.
+
+        Under the toolkit's --rerun-triggers mtime profile, a present
+        e_consolidate_complete.flag prevents Snakemake from re-demanding an ADDED
+        scenario's upstream chain (missing-intermediate is treated as a consumed temp).
+        Deleting it forces consolidate to re-evaluate its expand(...) over the new
+        SIM_IDS, pulling in the added scenario's prepare/run/process rules. Orphan
+        per-event flags for removed events are deleted so their stale chain is not
+        re-consolidated. No-op when the set is unchanged.
+        """
+        from hhemt.scenario import compute_event_id_slug
+
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return
+        # Current config event-id set (same enumeration the Snakefile SIM_IDS uses).
+        n_sims = len(self.df_sims)
+        config_event_ids = {
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i)) for i in range(n_sims)
+        }
+        # On-disk prepared event-id set (from b_prepare flags).
+        prepared_event_ids = {
+            p.name[len("b_prepare_evt-") : -len("_complete.flag")]
+            for p in status_dir.glob("b_prepare_evt-*_complete.flag")
+        }
+        if config_event_ids == prepared_event_ids:
+            return  # set unchanged — no invalidation needed
+        # Set changed: drop the analysis-level consolidate flag so the added chain is
+        # re-demanded; drop orphan per-event flags for removed events.
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)
+        removed = prepared_event_ids - config_event_ids
+        for ev in removed:
+            for stem in (
+                f"b_prepare_evt-{ev}_complete",
+                f"f_consolidate_scenario_evt-{ev}_complete",
+            ):
+                (status_dir / f"{stem}.flag").unlink(missing_ok=True)
+                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+            for model_type in ("triton", "tritonswmm", "swmm"):
+                for phase in ("c_run", "d_process"):
+                    stem = f"{phase}_{model_type}_evt-{ev}_complete"
+                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)
+                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
 
     def _reconcile_stale_process_flags_against_summaries(
         self, *, sa_id: str | None = None, master_dir: Path | None = None

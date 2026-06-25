@@ -18,7 +18,13 @@ testall:
     uv run --python=3.11 --extra test pytest
     uv run --python=3.12 --extra test pytest
 
-# Run all the tests, but allow for arguments to be passed
+# Run all the tests, but allow for arguments to be passed.
+# NOTE: the compile-dependent tests (test_synth_04/05, test_workflow_rerun_triggers_empirical)
+# build TRITON-SWMM CPU, which needs cmake + mpic++ + mpi.h from the `hhemt` conda env.
+# Under this uv `.venv` command they SKIP cleanly (tests/utils_for_testing.py::
+# compile_toolchain_unavailable). To actually run them green, invoke under the conda env
+# (drop the 3.12 pin; the hhemt env is python 3.11 and uv --active uses it):
+#   conda run -n hhemt uv run --active --extra test pytest {{ARGS}}
 test *ARGS:
     @echo "Running with arg: {{ARGS}}"
     uv run --python=3.12 --extra test pytest {{ARGS}}
