@@ -20,7 +20,7 @@ dependencies = [
     "zarr",
     "netcdf4",
     "h5netcdf",
-    "h5py",  # h5netcdf's HDF5 backend; scenario prep reads weather.nc via it. Present in the conda env but previously undeclared, so the uv .venv lacked it (conda↔uv divergence).
+    "h5py",  # h5netcdf's default backend; scenario._write_sim_weather_nc reads weather.nc via the xarray h5netcdf engine
     "scipy",
     "dask",
     "matplotlib",
