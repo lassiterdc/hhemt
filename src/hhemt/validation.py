@@ -1302,9 +1302,11 @@ def _check_static_backend_kaleido_available(
     # render attempt.
     #
     # Per Decision 3.3D + Decision 4, cfg_report.interactive.static_backend
-    # defaults to 'plotly', so the common case is: users without the
-    # viz-export extra installed will hit this check at preflight time
-    # and learn how to install kaleido.
+    # defaults to 'plotly'. kaleido is now a core dependency, so this check
+    # primarily guards an incomplete/corrupted install (kaleido missing) or a
+    # kaleido v1+ that slipped past the core `<1.0` pin — surfacing a
+    # developer-actionable reinstall hint at preflight rather than a cryptic
+    # Plotly stack at render time.
     if report_cfg.interactive.static_backend != "plotly":
         return
     try:
@@ -1318,9 +1320,9 @@ def _check_static_backend_kaleido_available(
             ),
             current_value="plotly",
             fix_hint=(
-                "Install the viz-export extra: "
-                "`pip install -e '.[viz-export]'`. "
-                "Alternatively, set "
+                "kaleido is a core dependency but is not importable — your "
+                "environment is incomplete. Reinstall with `pip install -e .` "
+                "(or recreate from environment.yaml). Alternatively set "
                 "`report.interactive.static_backend: matplotlib` in "
                 "cfg_analysis.yaml to opt out of plotly export."
             ),
@@ -1336,13 +1338,13 @@ def _check_static_backend_kaleido_available(
                 f"static_backend='plotly' detected kaleido "
                 f"version={kaleido_version}. Kaleido v1+ requires a "
                 f"separate Chrome runtime via plotly_get_chrome; the "
-                f"viz-export extra pins kaleido<1.0 which ships a "
+                f"core kaleido<1.0 pin ships a "
                 f"pre-bundled renderer."
             ),
             current_value=kaleido_version,
             fix_hint=(
-                "Reinstall via the viz-export extra to pin "
-                "kaleido<1.0: `pip install -e '.[viz-export]'`. "
+                "Reinstall to honor the core kaleido<1.0 pin: "
+                "`pip install -e .`. "
                 "Or follow the Kaleido v1+ post-install instructions "
                 "for plotly_get_chrome."
             ),

@@ -21,10 +21,10 @@ When you control the conda env separately (e.g., shared HPC env, CI), install th
 ```bash
 conda create -n hhemt python=3.11
 conda activate hhemt
-pip install -e '.[hpc,viz-export]'
+pip install -e '.[hpc]'
 ```
 
-The `[hpc]` extra pulls `snakemake-executor-plugin-slurm` + `snakemake-executor-plugin-slurm-jobstep` (required for sensitivity `batch_job` analyses; see `pyproject.toml` and `workflow.py:2326` for the call site). The `[viz-export]` extra pulls `kaleido` (required for Plotly→SVG figure export per Phase 5 / Decision 4).
+The `[hpc]` extra pulls `snakemake-executor-plugin-slurm` + `snakemake-executor-plugin-slurm-jobstep` (required for sensitivity `batch_job` analyses; see `pyproject.toml` and `workflow.py:2326` for the call site). `kaleido` (required for Plotly→SVG figure export) is now a CORE dependency — no extra needed. The empty `viz-export` extra is retained as a no-op alias for one deprecation cycle.
 
 For purely local non-HPC use (laptop development with `multi_sim_run_method: serial`), neither extra is required:
 
