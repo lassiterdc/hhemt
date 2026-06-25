@@ -213,10 +213,19 @@ class PostRunTransferConfig(BaseModel):
             A fully-populated :class:`GlobusTransferSpec` ready for
             :meth:`GlobusTransferManager.transfer`.
         """
-        from hhemt.constants import LAPTOP_GLOBUS_COLLECTION_UUID
+        from hhemt.exceptions import ConfigurationError
 
         source_uuid, _scratch_base, _needs_data_access, _session_domain = _get_endpoint_uuids(self.system)
-        dest_uuid = self.destination_endpoint_uuid or LAPTOP_GLOBUS_COLLECTION_UUID
+        if self.destination_endpoint_uuid is None:
+            raise ConfigurationError(
+                field="destination_endpoint_uuid",
+                message=(
+                    "destination_endpoint_uuid is required: set it to your local "
+                    "Globus Connect Personal collection UUID (find it at "
+                    "app.globus.org > Collections)."
+                ),
+            )
+        dest_uuid = self.destination_endpoint_uuid
         dest_root = _to_globus_connect_personal_path(self.destination_root)
         dest_path = f"{dest_root.rstrip('/')}/{analysis_id}"
         source_path = str(analysis_dir)

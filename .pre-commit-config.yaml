@@ -41,6 +41,20 @@ repos:
         pass_filenames: false
         always_run: true
 
+  # Anonymization guard (scripts/check_anonymization.py)
+  # Fails if any tracked file contains a genuinely-private identifier listed in
+  # scripts/anonymization_blocklist.txt (ADR-14). Dormant until the pre-commit
+  # framework is activated (`pre-commit install`) by the
+  # `install or remove pre-commit hooks` idea — no effect on commits until then.
+  - repo: local
+    hooks:
+      - id: anonymization-guard
+        name: anonymization blocklist guard
+        entry: python scripts/check_anonymization.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # Retired-field overlay-column discipline (scripts/check_retired_field_overlay_columns.py)
   # Flags any sensitivity-xlsx overlay column system.{field} / analysis.{field}
   # whose {field} is absent from the live system_config / analysis_config model_fields.

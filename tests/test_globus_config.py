@@ -104,15 +104,16 @@ class TestToTransferSpec:
         config = PostRunTransferConfig(
             destination_root=r"D:\Dropbox\results",
             system="frontier",
+            destination_endpoint_uuid="00000000-0000-0000-0000-000000000000",
         )
         spec = config.to_transfer_spec(
-            analysis_dir=Path("/lustre/orion/***REMOVED***/scratch/user/my_analysis"),
+            analysis_dir=Path("/lustre/orion/{project}/scratch/user/my_analysis"),
             analysis_id="my_analysis",
         )
         assert spec.endpoints.source_uuid == "36d521b3-c182-4071-b7d5-91db5d380d42"
-        assert spec.endpoints.destination_uuid == "***REMOVED***"
+        assert spec.endpoints.destination_uuid == "00000000-0000-0000-0000-000000000000"
         assert len(spec.items) == 1
-        assert spec.items[0].source_path == "/lustre/orion/***REMOVED***/scratch/user/my_analysis"
+        assert spec.items[0].source_path == "/lustre/orion/{project}/scratch/user/my_analysis"
         assert spec.items[0].destination_path == "/D/Dropbox/results/my_analysis"
         assert spec.sync_level == 0
 
@@ -120,6 +121,7 @@ class TestToTransferSpec:
         config = PostRunTransferConfig(
             destination_root="/mnt/d/results",
             system="uva",
+            destination_endpoint_uuid="00000000-0000-0000-0000-000000000000",
             include_sims=[0, 3],
         )
         spec = config.to_transfer_spec(
@@ -135,6 +137,7 @@ class TestToTransferSpec:
         config = PostRunTransferConfig(
             destination_root="/mnt/d/results",
             system="frontier",
+            destination_endpoint_uuid="00000000-0000-0000-0000-000000000000",
         )
         spec = config.to_transfer_spec(
             analysis_dir=Path("/lustre/orion/test"),
@@ -146,6 +149,7 @@ class TestToTransferSpec:
         config = PostRunTransferConfig(
             destination_root="/mnt/d/results",
             system="frontier",
+            destination_endpoint_uuid="00000000-0000-0000-0000-000000000000",
             label="My custom label",
         )
         spec = config.to_transfer_spec(
@@ -158,6 +162,7 @@ class TestToTransferSpec:
         config = PostRunTransferConfig(
             destination_root="/mnt/d/results/",
             system="frontier",
+            destination_endpoint_uuid="00000000-0000-0000-0000-000000000000",
         )
         spec = config.to_transfer_spec(
             analysis_dir=Path("/lustre/test"),

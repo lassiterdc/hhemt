@@ -9,7 +9,6 @@
 # SBATCH --cpus-per-task=${cpus_per_task}   # CPU=1, GPU=threads per GPU
 # SBATCH --ntasks-per-node=${ntasks_per_node} # GPU=tasks per node, CPU optional
 #${gpu_toggle}SBATCH --gres=${gres}
-#SBATCH --mail-user=***REMOVED***@virginia.edu
 #SBATCH --mail-type=ALL
 #SBATCH --array=1-${number_of_events}
 
