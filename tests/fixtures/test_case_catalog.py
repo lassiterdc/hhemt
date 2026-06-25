@@ -23,6 +23,7 @@ import platformdirs
 import pytest
 
 import hhemt.constants as cnst
+from hhemt.examples import NorfolkIreneExample
 from tests.fixtures import worktree_slug
 
 # Import from test fixtures
@@ -30,18 +31,6 @@ from tests.fixtures.test_case_builder import (
     retrieve_synth_TRITON_SWMM_test_case,
     retrieve_TRITON_SWMM_test_case,
 )
-from hhemt.case_study_catalog import (
-    _FRONTIER_ANALYSIS_OVERLAY,
-    _FRONTIER_SYSTEM_OVERLAY,
-    _UVA_ANALYSIS_OVERLAY,
-    _UVA_SYSTEM_OVERLAY,
-)
-from hhemt.examples import NorfolkIreneExample
-
-# UVA HPC example-data dir (was the retired UVA platform preset's
-# example_data_dir). The literal $USER scratch path is the Phase-5
-# anonymization-scrub target.
-_UVA_EXAMPLE_DATA_DIR = Path("/scratch") / os.getenv("USER", "unknown") / "hhemt_data"
 
 
 def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
@@ -157,432 +146,6 @@ class GetTS_TestCases:
         return nrflk_test
 
 
-class UVA_TestCases:
-    sensitivity_UVA_cpu_minimal = "benchmarking_uva_minimal.xlsx"
-    sensitivity_analysis_uva_suite_cpu = (
-        "full_benchmarking_experiment_uva_test_cpu.xlsx"
-    )
-    sensitivity_analysis_uva_suite_gpu = (
-        "full_benchmarking_experiment_uva_test_gpu.xlsx"
-    )
-    sensitivity_analysis_uva_suite_swmm = "full_benchmarking_experiment_uva_swmm.xlsx"
-    sensitivity_analysis_uva_suite = (
-        "full_benchmarking_experiment_uva_test_all_configs.xlsx"
-    )
-
-    @classmethod
-    def retrieve_norfolk_UVA_multisim_1cpu_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        analysis_overrides = {
-            "run_mode": "serial",
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_gpus": 0,
-            "n_nodes": 1,
-            "hpc_time_min_per_sim": 2,
-        }
-
-        """UVA HPC multi-simulation test with 1 CPU (serial mode)."""
-        analysis_name = "UVA_multisim"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=8,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_UVA_sensitivity_minimal(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """UVA HPC CPU sensitivity analysis with minimal configuration."""
-        sensitivity_analysis = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_UVA_cpu_minimal
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity_analysis,
-            "hpc_time_min_per_sim": 20,
-            "run_mode": "gpu",
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_gpus": 1,
-            "n_nodes": 1,
-        }
-        analysis_name = "UVA_sensitivity_minimal"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-        )
-
-    @classmethod
-    def benchmarking_norfolk_irene_cpu(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        """UVA HPC sensitivity analysis."""
-        # example_name = "norfolk_irene"
-        analysis_name = "test_uva_sensitivity_suite_cpu"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_analysis_uva_suite_cpu
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 20,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 72,
-        }
-
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": False,
-            "gpu_compilation_backend": "CUDA",
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def benchmarking_norfolk_irene_gpu(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        """UVA HPC sensitivity analysis."""
-        # example_name = "norfolk_irene"
-        analysis_name = "test_uva_sensitivity_suite_gpu"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_analysis_uva_suite_gpu
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 20,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 72,
-        }
-
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": False,
-            "gpu_compilation_backend": "CUDA",
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def benchmarking_norfolk_irene_full_suite(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        """UVA HPC sensitivity analysis."""
-        # example_name = "norfolk_irene"
-        analysis_name = "test_uva_sensitivity_suite_full_suite"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_analysis_uva_suite
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 20,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 72,
-        }
-
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": True,
-            "toggle_swmm_model": False,
-            "gpu_compilation_backend": "CUDA",
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def benchmarking_norfolk_irene_triton_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        """UVA HPC sensitivity analysis."""
-        example_name = "norfolk_irene"
-        analysis_name = "uva_sensitivity_suite_triton_only"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_analysis_uva_suite
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 20,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 72,
-        }
-
-        system_overrides = {
-            "toggle_triton_model": True,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": False,
-            "gpu_compilation_backend": "CUDA",
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            download_if_exists=download_if_exists,
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-    @classmethod
-    def benchmarking_norfolk_irene_swmm_only(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ):
-        """UVA HPC sensitivity analysis."""
-        example_name = "norfolk_irene"
-        analysis_name = "uva_sensitivity_suite_swmm_only"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_analysis_uva_suite_swmm
-        )
-
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 2,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "mem_gb_per_cpu": 2,
-            "hpc_max_simultaneous_sims": 100,
-            "hpc_total_job_duration_min": 60 * 72,
-        }
-
-        system_overrides = {
-            "toggle_triton_model": False,
-            "toggle_tritonswmm_model": False,
-            "toggle_swmm_model": True,
-        }
-
-        return GetTS_TestCases._retrieve_norfolk_case(
-            download_if_exists=download_if_exists,
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            n_events=1,
-            analysis_overlay=_UVA_ANALYSIS_OVERLAY,
-            system_overlay=_UVA_SYSTEM_OVERLAY,
-            example_data_dir=_UVA_EXAMPLE_DATA_DIR,
-            analysis_overrides=analysis_overrides,
-            system_overrides=system_overrides,
-        )
-
-
-class Frontier_TestCases:
-    sensitivity_frontier_all_configs_minimal = "benchmarking_frontier_minimal.xlsx"
-    sensitivity_frontier_suite = "full_benchmarking_experiment_frontier.xlsx"
-
-    @classmethod
-    def retrieve_norfolk_frontier_multisim_gpu_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Frontier HPC multi-simulation test with GPU acceleration."""
-        analysis_overrides = {
-            "run_mode": "gpu",
-            "n_gpus": 1,
-            "hpc_time_min_per_sim": 40,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "hpc_total_nodes": 1,
-            "hpc_total_job_duration_min": 30,
-            "hpc_gpus_per_node": 8,
-            "additional_SBATCH_params": ["-q debug"],
-        }
-        analysis_name = "frontier_multisim_GPU"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=20,
-            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
-            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
-            analysis_overrides=analysis_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_frontier_multisim_cpu_serial_case(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Frontier HPC multi-simulation test with serial CPU execution."""
-        analysis_overrides = {
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 40,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "hpc_total_nodes": 1,
-            "hpc_total_job_duration_min": 30,
-            "hpc_gpus_per_node": 8,
-            "additional_SBATCH_params": ["-q debug"],
-        }
-        analysis_name = "frontier_multisim_CPU"
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=20,
-            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
-            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
-            analysis_overrides=analysis_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_frontier_sensitivity_minimal(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Frontier HPC sensitivity analysis with minimal configuration."""
-        analysis_name = "frontier_sensitivity_minimal"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory
-            / cls.sensitivity_frontier_all_configs_minimal
-        )
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 2,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "hpc_total_nodes": 1,
-            "hpc_total_job_duration_min": 30,
-            "hpc_gpus_per_node": 8,
-            "additional_SBATCH_params": ["-q debug"],
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
-            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
-            analysis_overrides=analysis_overrides,
-        )
-
-    @classmethod
-    def retrieve_norfolk_frontier_sensitivity_suite(
-        cls, start_from_scratch: bool = False, download_if_exists: bool = False
-    ) -> retrieve_TRITON_SWMM_test_case:
-        """Frontier HPC sensitivity analysis with minimal configuration."""
-        analysis_name = "frontier_sensitivity_suite"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory / cls.sensitivity_frontier_suite
-        )
-        analysis_overrides = {
-            "toggle_sensitivity_analysis": True,
-            "sensitivity_analysis": sensitivity,
-            "run_mode": "serial",
-            "hpc_time_min_per_sim": 2,
-            "n_mpi_procs": 1,
-            "n_omp_threads": 1,
-            "n_nodes": 1,
-            "n_gpus": 0,
-            "hpc_total_nodes": 8,
-            "hpc_total_job_duration_min": 120,
-            "hpc_gpus_per_node": 8,
-            "additional_SBATCH_params": ["-q debug"],
-        }
-        return GetTS_TestCases._retrieve_norfolk_case(
-            analysis_name=analysis_name,
-            start_from_scratch=start_from_scratch,
-            download_if_exists=download_if_exists,
-            n_events=1,
-            analysis_overlay=_FRONTIER_ANALYSIS_OVERLAY,
-            system_overlay=_FRONTIER_SYSTEM_OVERLAY,
-            analysis_overrides=analysis_overrides,
-        )
-
-    # ========== Local Test Cases ==========
-
-
 class Local_TestCases:
     cpu_sensitivity = "cpu_benchmarking_analysis.xlsx"
     cpu_sensitivity_swmm = "cpu_benchmarking_analysis_swmm.xlsx"
@@ -600,6 +163,12 @@ class Local_TestCases:
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
+            # Inject the benchmarking sensitivity report config (the same
+            # report.sensitivity shape the synth tier uses) so
+            # cfg_analysis.report.sensitivity is populated. Without it the
+            # report falls back to {} -> sensitivity None -> ConfigurationError
+            # when PC_05/PC_06 render the sensitivity benchmarking figure.
+            "report": cls._load_synth_sensitivity_report_dict(),
         }
 
         return GetTS_TestCases._retrieve_norfolk_case(
@@ -621,6 +190,12 @@ class Local_TestCases:
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
+            # Inject the benchmarking sensitivity report config (the same
+            # report.sensitivity shape the synth tier uses) so
+            # cfg_analysis.report.sensitivity is populated. Without it the
+            # report falls back to {} -> sensitivity None -> ConfigurationError
+            # when PC_05/PC_06 render the sensitivity benchmarking figure.
+            "report": cls._load_synth_sensitivity_report_dict(),
         }
         system_overrides = {
             "toggle_triton_model": True,
@@ -649,6 +224,12 @@ class Local_TestCases:
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
+            # Inject the benchmarking sensitivity report config (the same
+            # report.sensitivity shape the synth tier uses) so
+            # cfg_analysis.report.sensitivity is populated. Without it the
+            # report falls back to {} -> sensitivity None -> ConfigurationError
+            # when PC_05/PC_06 render the sensitivity benchmarking figure.
+            "report": cls._load_synth_sensitivity_report_dict(),
         }
         system_overrides = {
             "toggle_triton_model": False,

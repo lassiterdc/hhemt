@@ -1,6 +1,5 @@
 import os
 import shutil
-import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -45,16 +44,6 @@ def compile_toolchain_unavailable() -> bool:
     own ``mpi.h``, so ``which("mpic++")`` is a sufficient proxy for the header.
     """
     return shutil.which("cmake") is None or shutil.which("mpic++") is None
-
-
-def on_frontier() -> bool:
-    """Return True when hostname indicates Frontier."""
-    return "frontier" in socket.getfqdn()
-
-
-def on_UVA_HPC() -> bool:
-    """Return True when hostname indicates UVA HPC."""
-    return "virginia" in socket.getfqdn()
 
 
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):

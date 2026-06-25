@@ -3,18 +3,25 @@
 import math
 import os
 import re
+import select
 import signal
+import sys
 import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
+import yaml
 
+from hhemt import constants as cnst
+from hhemt import du_sentinels
 from hhemt import orchestrator_sentinels as _osent
-from hhemt.config.analysis import ClearRawValue, ForceRerunValue
+from hhemt.config.analysis import ClearRawValue, ForceRerunValue, analysis_config
+from hhemt.config.hpc_system import resolve_gpu_target
 from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
 from hhemt.execution import (
     LocalConcurrentExecutor,
@@ -86,6 +93,32 @@ PERF_VARS_ORDERED: list[str] = [
 
 
 __all__ = ["TRITONSWMM_analysis"]
+
+
+@dataclass
+class TestRepresentative:
+    """One minimum-device representative of a unique
+    (model-toggles x compilation-backend x partition x compute-config) group,
+    selected by ``TRITONSWMM_analysis._select_test_representatives`` (D-AXES
+    Option A: compute-config is a group KEY so every unique config is
+    represented; device count is the tiebreak). ``source_analysis`` is the
+    already-built, already-validated candidate analysis the representative was
+    chosen from (the master itself, or one ``self.sensitivity.sub_analyses``)."""
+
+    key: tuple
+    source_analysis: "TRITONSWMM_analysis"
+    partition: str | None
+
+
+@dataclass
+class TestResult:
+    """Result of ``TRITONSWMM_analysis.test()`` -- the selected representatives,
+    the materialized ``_test/`` sub-analyses as ``(analysis_id, analysis)`` pairs,
+    and the ``{analysis_dir}/_test`` root directory."""
+
+    representatives: list
+    subanalyses: list
+    root: Path
 
 
 class TRITONSWMM_analysis:
@@ -638,7 +671,12 @@ class TRITONSWMM_analysis:
 
         return emit_bundle(self, output_path)
 
-    def eda(self, *, override_eda_config: "Path | None" = None) -> "EdaReportResult":
+    def eda(
+        self,
+        *,
+        override_eda_config: "Path | None" = None,
+        notebook_filename: "str | None" = None,
+    ) -> "EdaReportResult":
         """Run the in-process EDA loop: calc -> plots -> doc (ADR-10).
 
         A LIGHTER non-Snakemake facade. Resolves the EDA config (override-or-cfg
@@ -653,10 +691,12 @@ class TRITONSWMM_analysis:
         from hhemt.config.loaders import yaml_to_model
         from hhemt.eda import (
             EdaReportResult,
-            assemble_eda_report,
             check_cross_sim_identity,
             render_eda_plots,
         )
+        from hhemt.eda._html_export import export_eda_html
+        from hhemt.eda._local_surface import emit_eda_local_surface
+        from hhemt.eda._notebook import emit_eda_notebook
 
         eda_cfg = (
             yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
@@ -664,16 +704,40 @@ class TRITONSWMM_analysis:
         root = Path(self.analysis_paths.analysis_dir)
         verdict_result = check_cross_sim_identity(self)
         verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
-        # Non-sensitivity analyses produce no eda/<plot_id>.zarr artifact (the
-        # cross-sim check skips and writes nothing), so render_eda_plots would
-        # open a non-existent zarr. Skip rendering and assemble a figureless doc
-        # via the figures fast-path (SE Flag 1).
-        if verdict_result.skipped or verdict_result.artifact_path is None:
-            report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, figures=[])
-            return EdaReportResult(report_path=report_path, plot_paths=[], verdicts=verdicts)
-        plot_paths = render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
-        report_path = assemble_eda_report(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
-        return EdaReportResult(report_path=report_path, plot_paths=plot_paths, verdicts=verdicts)
+        # F-B Flag 2 (hhemt-specialist review): load_eda_context reads the fixed-name
+        # cfg_analysis.yaml / cfg_system.yaml at `root`; the LIVE analysis_dir does NOT
+        # carry them by construction (only the bundle staging dir does, via
+        # _copy_configs_with_relative_paths). Materialize them here so the loader's
+        # fixed-name contract holds for the live root too (without this, the notebook's
+        # first executed cell `load_eda_context(root)` raises FileNotFoundError).
+        import yaml as _yaml
+
+        (root / "cfg_analysis.yaml").write_text(_yaml.safe_dump(self.cfg_analysis.model_dump(mode="json")))
+        (root / "cfg_system.yaml").write_text(_yaml.safe_dump(self._system.cfg_system.model_dump(mode="json")))
+        # ADR-12: emit the source-independent eda_local/ package skeleton at root.
+        emit_eda_local_surface(root)
+        # Non-sensitivity analyses produce no eda/<plot_id>.zarr (the cross-sim check
+        # skips), so render_eda_plots would open a non-existent zarr — skip rendering
+        # on the figureless branch. The NOTEBOOK is still emitted (ADR-14: primary
+        # artifact); its zarr-dependent seed cell is gated at execution.
+        figureless = verdict_result.skipped or verdict_result.artifact_path is None
+        plot_paths = [] if figureless else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        notebook_path = emit_eda_notebook(
+            root,
+            cfg_analysis=self.cfg_analysis,
+            eda_cfg=eda_cfg,
+            is_bundle=False,
+            notebook_filename=notebook_filename,
+        )
+        # ADR-14: HTML is a best-effort nbconvert export of the notebook (the source
+        # of truth); a kernel/exec failure degrades to None, never fails the loop.
+        report_path = export_eda_html(notebook_path, root=root)
+        return EdaReportResult(
+            report_path=report_path,
+            notebook_path=notebook_path,
+            plot_paths=plot_paths,
+            verdicts=verdicts,
+        )
 
     def static_plots(
         self,
@@ -1859,6 +1923,39 @@ class TRITONSWMM_analysis:
         from .orchestration import WorkflowResult, translate_mode, translate_phases
         from .report_renderers._reporting_sets import get_reporting_set
 
+        # _test/ deletion offer (R9): if a leftover smoke-test subtree from a
+        # prior analysis.test() exists, offer to delete it before the real run.
+        # _test/ is excluded from the analysis _du.json (Phase 2 du change), so
+        # size it directly via du_sentinels._walk_root_bytes rather than via
+        # self.disk_utilization_bytes. Mirrors the Globus-conflict prompt's
+        # sys.stdin.isatty() non-TTY guard (A6); adds a 15 s select-based
+        # auto-'no' so an unattended run is never blocked. `select`/`sys` and
+        # `du_sentinels` are imported at module top.
+        test_dir = self.analysis_paths.analysis_dir / "_test"
+        if test_dir.exists():
+            size_bytes, _walk_errors = du_sentinels._walk_root_bytes(test_dir)
+            size_mb = size_bytes / (1024 * 1024)
+            if not sys.stdin.isatty():
+                print(
+                    f"[test] Existing _test/ ({size_mb:.1f} MB) left in place "
+                    f"(non-interactive stdin — not prompting).",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[test] An existing _test/ smoke-test subtree ({size_mb:.1f} MB) "
+                    f"was found at {test_dir}. Delete it? [y/N] (auto-'no' in 15s): ",
+                    end="",
+                    flush=True,
+                )
+                ready, _, _ = select.select([sys.stdin], [], [], 15)
+                answer = sys.stdin.readline().strip().lower() if ready else "n"
+                if answer in ("y", "yes"):
+                    fast_rmtree(test_dir, analysis_dir=self.analysis_paths.analysis_dir)
+                    print(f"[test] Deleted {test_dir}.", flush=True)
+                else:
+                    print("[test] Keeping _test/.", flush=True)
+
         # Pre-run report_config resolution (post-F2 v2 — 2-step, fail-fast).
         # Resolution order:
         #   (a) explicit `report_config=` argument → load and use
@@ -2140,6 +2237,209 @@ class TRITONSWMM_analysis:
             message=result_dict.get("message", ""),
             partial_failures=result_dict.get("partial_failures", []),
         )
+
+    # ---- analysis.test(): end-to-end smoke test on a strict _test/ subset ----
+
+    def test(
+        self,
+        *,
+        n_reporting_timesteps: int = cnst.TEST_N_REPORTING_TSTEPS_PER_SIM,
+        reporting_timestep_s: int = cnst.TEST_TRITON_REPORTING_TIMESTEP_S,
+        execution_mode: Literal["auto", "local", "slurm"] = "auto",
+        verbose: bool = True,
+        wait_for_job_completion: bool | None = None,
+        dry_run: bool = False,
+    ) -> "TestResult":
+        """Run a strict, least-demanding subset of THIS analysis end-to-end.
+
+        Builds one minimum-device representative per unique
+        (enabled-model-toggles x compilation-backend x partition x compute-config)
+        group present in the analysis, materializes each under
+        ``{analysis_dir}/_test/``, truncates its inputs to ~``n_reporting_timesteps``
+        reporting frames, and runs the full compile->run->process->consolidate->
+        report path. A strict subset of the user's defined analysis -- no sweeps,
+        no synthetic substitution (PIP O-f requirements 1-7).
+        """
+        reps = self._select_test_representatives()
+        # Truncation happens INSIDE _build_test_subanalyses: the sliced-weather path
+        # + reporting interval are carried THROUGH the model_validate overlay dict so
+        # the on-disk _test YAML the runner subprocess reloads
+        # (prepare_scenario_runner.py:139) points at the short weather. An in-memory
+        # setattr would be discarded at that reload (Gotcha 15). Scenario-prep
+        # regenerates the SWMM .inp window from the sliced weather automatically
+        # (swmm_utils.py:105-110), so no separate .inp-edit pass is needed.
+        test_subs = self._build_test_subanalyses(
+            reps,
+            n_reporting_timesteps=n_reporting_timesteps,
+            reporting_timestep_s=reporting_timestep_s,
+        )
+        results: list = []
+        for sub in test_subs:
+            sub.run(
+                from_scratch=True,
+                execution_mode=execution_mode,
+                verbose=verbose,
+                wait_for_job_completion=wait_for_job_completion,
+                dry_run=dry_run,
+            )  # full compile->run->process->consolidate->report
+            results.append((sub.cfg_analysis.analysis_id, sub))
+        return TestResult(
+            representatives=reps,
+            subanalyses=results,
+            root=self.analysis_paths.analysis_dir / "_test",
+        )
+
+    def _select_test_representatives(self) -> "list[TestRepresentative]":
+        """Group candidate runs by
+        (model-toggles, compilation-backend, partition, compute-config) and pick the
+        minimum-device row per group (D-AXES Option A: compute-config is a KEY, so
+        every unique config is represented; device count is the tiebreak). Branches
+        on ``toggle_sensitivity_analysis`` (Gotcha 26): a sensitivity master
+        enumerates its already-built ``self.sensitivity.sub_analyses`` (each a
+        fully-validated TRITONSWMM_analysis), a plain analysis is its own single
+        candidate."""
+        sensitivity = getattr(self, "sensitivity", None)
+        if self.cfg_analysis.toggle_sensitivity_analysis and sensitivity is not None:
+            candidates: list = list(sensitivity.sub_analyses.values())
+        else:
+            candidates = [self]
+
+        def _group_key(a: "TRITONSWMM_analysis") -> tuple:
+            cfg_a = a.cfg_analysis
+            partition = cfg_a.hpc_ensemble_partition
+            backend = None
+            if cfg_a.n_gpus and a.cfg_hpc_system is not None:
+                # resolve_gpu_target returns (gpu_hardware, gpu_compilation_backend)
+                # (config/hpc_system.py:190-211) -- unpack hardware-first, matching
+                # _build_unique_system_targets.
+                _hardware, backend = resolve_gpu_target(a.cfg_hpc_system, partition)
+            cfg_s = a._system.cfg_system
+            model_toggles = (
+                cfg_s.toggle_tritonswmm_model,
+                cfg_s.toggle_triton_model,
+                cfg_s.toggle_swmm_model,
+            )
+            compute_config = (
+                cfg_a.run_mode,
+                cfg_a.n_mpi_procs,
+                cfg_a.n_omp_threads,
+                cfg_a.n_gpus,
+                cfg_a.n_nodes,
+            )
+            return (model_toggles, backend, partition, compute_config)
+
+        def _device_demand(a: "TRITONSWMM_analysis") -> tuple:
+            # Ascending (n_nodes, n_gpus, n_mpi_procs, n_omp_threads), then the
+            # least-demanding non-keyed axis (DEM resolution). None coalesces to 0
+            # so the sort key never compares None against an int.
+            cfg_a = a.cfg_analysis
+            return (
+                cfg_a.n_nodes or 0,
+                cfg_a.n_gpus or 0,
+                cfg_a.n_mpi_procs or 0,
+                cfg_a.n_omp_threads or 0,
+                getattr(a._system.cfg_system, "target_dem_resolution", 0.0) or 0.0,
+            )
+
+        groups: dict[tuple, list] = {}
+        for candidate in candidates:
+            groups.setdefault(_group_key(candidate), []).append(candidate)
+
+        reps: list[TestRepresentative] = []
+        for key, members in groups.items():
+            best = min(members, key=_device_demand)
+            reps.append(
+                TestRepresentative(
+                    key=key,
+                    source_analysis=best,
+                    partition=best.cfg_analysis.hpc_ensemble_partition,
+                )
+            )
+        return reps
+
+    def _build_test_subanalyses(
+        self,
+        representatives: "list[TestRepresentative]",
+        *,
+        n_reporting_timesteps: int,
+        reporting_timestep_s: int,
+    ) -> "list[TRITONSWMM_analysis]":
+        """Materialize one TRITONSWMM_analysis per representative under
+        ``{analysis_dir}/_test/``, reusing the ``_create_sub_analyses`` overlay
+        recipe (sensitivity_analysis.py:2021-2074): ``model_validate`` (never
+        ``model_copy``+``setattr``), atomic YAML write, ``is_subanalysis=True``,
+        ``toggle_sensitivity_analysis=False``.
+
+        Truncation (SE F-B Flag 1; the former ``_truncate_test_inputs`` is dissolved
+        here): the real weather is sliced to its first ``n_reporting_timesteps``
+        frames (+1 endpoint) along the configured time dimension, and the SHORT
+        weather path + ``TRITON_reporting_timestep_s`` are carried THROUGH the
+        ``model_validate`` overlay dict -- so the on-disk _test YAML that
+        prepare_scenario_runner.py:139 reloads points at the short weather (an
+        in-memory setattr would be silently discarded at that reload, Gotcha 15).
+        Scenario-prep regenerates the SWMM .inp window from the sliced weather
+        (swmm_utils.py:105-110), so no .inp-edit pass is needed. ``analysis_dir``
+        and ``master_analysis_cfg_yaml`` are ALSO carried through the overlay: the
+        is_subanalysis model-validator (config/analysis.py:529-541) requires both,
+        and ``analysis_dir`` is what keeps every test artifact under ``_test/`` (R2 --
+        without it ``__init__`` derives ``system_directory/{analysis_id}``)."""
+        import xarray as xr
+
+        test_root = self.analysis_paths.analysis_dir / "_test"
+        test_root.mkdir(parents=True, exist_ok=True)
+        subs: list = []
+        for i, rep in enumerate(representatives):
+            group_id = f"group_{i}"
+            sub_dir = test_root / group_id
+            sub_dir.mkdir(parents=True, exist_ok=True)
+            base_cfg = rep.source_analysis.cfg_analysis
+            # --- slice the real weather to the first N reporting frames (+endpoint) ---
+            time_dim = base_cfg.weather_time_series_timestep_dimension_name
+            with xr.open_dataset(base_cfg.weather_timeseries, engine="h5netcdf") as wx:
+                wx_short = wx.isel({time_dim: slice(0, n_reporting_timesteps + 1)}).load()
+            short_weather = sub_dir / "_test_weather.nc"
+            wx_short.to_netcdf(short_weather, engine="h5netcdf")
+            overlay = {
+                "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
+                "toggle_sensitivity_analysis": False,
+                "is_subanalysis": True,  # cfg field, NOT a constructor kwarg
+                "analysis_dir": str(sub_dir),  # keeps all artifacts under _test/ (R2)
+                "master_analysis_cfg_yaml": str(self.analysis_config_yaml),
+                "weather_timeseries": str(short_weather),  # short weather survives the YAML reload
+                "TRITON_reporting_timestep_s": reporting_timestep_s,
+            }
+            cfg_a = analysis_config.model_validate({**base_cfg.model_dump(), **overlay})
+            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, sub_dir)
+            # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
+            # is set in the cfg overlay above (mirrors _create_sub_analyses,
+            # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
+            # sub is not a main orchestrator. The representative's own _system carries
+            # the right model toggles / resolved target hardware.
+            sub = TRITONSWMM_analysis(
+                sub_yaml,
+                system=rep.source_analysis._system,
+                hpc_system_config_yaml=self.hpc_system_config_yaml,
+                is_main_orchestrator=False,
+            )
+            subs.append(sub)
+        return subs
+
+    def _atomic_write_subanalysis_yaml(self, cfg_a: "analysis_config", sub_dir: Path) -> Path:
+        """Atomically write a sub-analysis overlay config to ``{sub_dir}/{id}.yaml``
+        via a PID-keyed temp file + ``Path.replace`` (POSIX-atomic on one
+        filesystem), so a concurrent reader never catches a truncated file.
+
+        DRY-DEBT: shared atomic-overlay-write contract -- mirrors the temp+replace
+        overlay-YAML write at ``sensitivity_analysis.py::_create_sub_analyses``
+        (:2056-2063). The source module is layout-relevant
+        (``_layout_relevant_files.yaml``) and cannot be edited here without tripping
+        CI Check B, so the dance is duplicated rather than extracted into one shared
+        helper; mirror any change across BOTH sites."""
+        cfg_yaml = sub_dir / f"{cfg_a.analysis_id}.yaml"
+        _tmp = cfg_yaml.with_suffix(cfg_yaml.suffix + f".{os.getpid()}.tmp")
+        _tmp.write_text(yaml.safe_dump(cfg_a.model_dump(mode="json"), sort_keys=False))
+        _tmp.replace(cfg_yaml)
+        return cfg_yaml
 
     def render_report(self, format: "Literal['html','zip']" = "zip", *, reprocess: bool = False) -> "Path":
         """Render the report from already-completed workflow outputs.
