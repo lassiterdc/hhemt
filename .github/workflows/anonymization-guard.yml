@@ -1,0 +1,28 @@
+# Anonymization guard: fails if any tracked file contains a blocklisted
+# genuinely-private identifier (scripts/anonymization_blocklist.txt).
+# ADR-14 of public-release-reproducibility. Working-tree scrub enforcement;
+# git HISTORY exposure is a separate concern (git-specialist / ADR-3).
+# This workflow DELIVERS the check; designating it a required status check on
+# `main` branch protection is the release-gate-and-branch-protection plan (ADR-7).
+name: Anonymization guard
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read
+
+jobs:
+  anonymization-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run anonymization guard
+        run: python scripts/check_anonymization.py

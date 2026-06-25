@@ -1,7 +1,7 @@
 # Anonymized UVA Rivanna HPC system profile (example).
 # Authored from UVA's PUBLIC cluster documentation; substitute {your-allocation} with your account.
 system_name: uva_rivanna
-default_account: "{your-allocation}"          # NATIVE -> slurm_account (UVA: your allocation, e.g. ***REMOVED***)
+default_account: "{your-allocation}"          # NATIVE -> slurm_account (UVA: your allocation)
 login_node: login1.hpc.virginia.edu           # EXTENSION (tmux orchestration; batch_job mode) — public
 default_execution_mode: batch_job             # EXTENSION (multi_sim_run_method default)
 gpu_allocation_flavor: gres                   # EXTENSION (UVA uses --gres=gpu:N)

@@ -19,10 +19,9 @@ from hhemt.utils import fast_rmtree
 
 # Example HPC platform overlays (Phase-4 4b: inlined from the retired
 # platform_configs.PlatformConfig presets — the data is preserved, only the
-# PlatformConfig dataclass is deleted). The literal account/module/login values
-# are the Phase-5 anonymization-scrub target (see the public-release
-# anonymization plan + the `private identifier occurrences in public tree`
-# knowledge doc). 4c/4d will prune the retiring/moving keys (gpu_*,
+# PlatformConfig dataclass is deleted). The account literals were anonymized to
+# `{your-allocation}` by public-tree-anonymization-scrub; `login1.hpc.virginia.edu`
+# is retained as the public UVA login node. 4c/4d will prune the retiring/moving keys (gpu_*,
 # additional_modules_*, preferred_slurm_option_*, hpc_account, hpc_login_node,
 # hpc_gpus_per_node, hpc_cpus_per_node, hpc_max_simultaneous_sims) from these
 # dicts as those fields retire. None-valued preset keys are omitted (a None
@@ -30,7 +29,7 @@ from hhemt.utils import fast_rmtree
 _UVA_ANALYSIS_OVERLAY: dict = {
     "hpc_ensemble_partition": "standard",
     "hpc_setup_and_analysis_processing_partition": "standard",
-    "hpc_account": "***REMOVED***",
+    "hpc_account": "{your-allocation}",  # substitute your UVA allocation
     "multi_sim_run_method": "batch_job",
     "hpc_gpus_per_node": 8,
     "hpc_max_simultaneous_sims": 1000,
@@ -50,7 +49,7 @@ _UVA_SYSTEM_OVERLAY: dict = {
 _FRONTIER_ANALYSIS_OVERLAY: dict = {
     "hpc_ensemble_partition": "batch",
     "hpc_setup_and_analysis_processing_partition": "batch",
-    "hpc_account": "***REMOVED***",
+    "hpc_account": "{your-allocation}",  # substitute your OLCF project
     "multi_sim_run_method": "1_job_many_srun_tasks",
     "hpc_gpus_per_node": 8,
     "hpc_cpus_per_node": 64,

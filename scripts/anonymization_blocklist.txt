@@ -1,0 +1,37 @@
+# Independent ground-truth blocklist for the anonymization guard (ADR-14).
+#
+# INDEPENDENCE INVARIANT: this file is HAND-AUTHORED and is the SOLE source of
+# truth for the guard. It MUST NOT be generated from src/hhemt/constants.py or
+# any code the scrub edits — a derived blocklist silently weakens with every
+# scrub (verification guards need an independent ground-truth signal). The guard
+# (scripts/check_anonymization.py) reads ONLY this file and imports nothing from
+# src/hhemt/.
+#
+# Format: one token per line. Blank lines and lines starting with '#' are ignored.
+# Matching is case-insensitive, whole-word (\b...\b), tokens are matched literally
+# (re.escape) — author PLAIN tokens, no regex.
+#
+# Triage rule (D1): list ONLY genuinely-private identifiers — anything that
+# CANNOT be found by reading the public documentation of UVA/Frontier. Public,
+# doc-derivable, or functionally-required identifiers (login1.hpc.virginia.edu,
+# sso.ccs.ornl.gov, institutional Globus collection UUIDs, partition names) are
+# KEPT and MUST NOT be listed here.
+
+# --- Allocation accounts ---
+***REMOVED***
+***REMOVED***
+***REMOVED***
+
+# --- Developer identity + home paths ---
+***REMOVED***
+
+# --- Personal Globus endpoint UUIDs (desktop / laptop) ---
+***REMOVED***
+***REMOVED***
+
+# --- Private-estate companion repo name (ADR-1, D3) ---
+# Blocklist the FULL private token; \b + the longer literal provably never
+# false-positives the public hhemt / TRITON-SWMM_toolkit prefixes. Confirm the
+# live name via D3 (keep both lines if uncertain — a never-present token is a no-op).
+***REMOVED***
+***REMOVED***
