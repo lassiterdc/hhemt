@@ -42,6 +42,11 @@ dependencies = [
     "ipywidgets",
     "globus-sdk>=3.0",
     "plotly==5.24.1",
+    # !=0.2.1.post1 excludes the ARM-only (manylinux2014_armv7l) re-upload of
+    # kaleido; PEP 440 ranks .post1 above 0.2.1, so the bare range greedily picks
+    # it and a fresh x86_64 install fails (no x86_64 wheel, no sdist). Plain 0.2.1
+    # carries the manylinux1_x86_64 wheel used on all real targets.
+    "kaleido>=0.2.1,!=0.2.1.post1,<1.0",
     "datashader>=0.16",
     "jinja2>=3.1",
     # CLI framework — cli.py / version_migration/__main__.py import these, and
@@ -64,7 +69,10 @@ test = [
     "pytest-xdist>=3.0",
     "coverage",
 ]
-viz-export = ["kaleido>=0.2.1,<1.0"]
+# viz-export retained as an empty alias for one deprecation cycle so the
+# documented `pip install -e '.[viz-export]'` keeps resolving after kaleido
+# moved to core deps (sub-meter-flood-visibility Phase 1). Remove next cycle.
+viz-export = []
 # HPC orchestration extras required by SnakemakeWorkflowBuilder when
 # multi_sim_run_method='batch_job' or '1_job_many_srun_tasks'. The
 # _validate_batch_job_dry_run path in workflow.py:2274 unconditionally invokes
@@ -104,6 +112,14 @@ select = [
     "B",   # flake8-bugbear
     "UP",  # pyupgrade
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Typer declares CLI params as `name: type = typer.Option(...)` / `typer.Argument(...)`,
+# i.e. a function call in the parameter default — the idiomatic Typer API. B008
+# (function-call-in-default) is a false positive for this pattern; suppressing it
+# here is the standard resolution (the alternative is migrating every CLI parameter
+# to `Annotated[type, typer.Option(...)]`).
+"src/hhemt/cli.py" = ["B008"]
 
 [tool.uv]
 package = true

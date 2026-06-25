@@ -393,9 +393,10 @@ def test_preflight_raises_without_kaleido(monkeypatch):
     result = ValidationResult(context="test")
     _check_static_backend_kaleido_available(FakeReport(), result)
     assert any(
-        "viz-export" in (issue.fix_hint or "")
+        "reinstall" in (issue.fix_hint or "").lower()
+        or "pip install -e ." in (issue.fix_hint or "")
         for issue in result.errors
-    ), "Expected preflight error naming the viz-export extra"
+    ), "Expected preflight error guiding a reinstall now that kaleido is core"
 
 # ============================================================================
 # Plan Phase 4 tests — zip emit determinism.

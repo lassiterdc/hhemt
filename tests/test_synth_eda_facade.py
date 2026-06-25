@@ -9,12 +9,20 @@ from hhemt.eda import EdaReportResult
 
 
 def test_analysis_eda_end_to_end(synthetic_sensitivity_completed_isolated):
-    """analysis.eda() runs calc->plots->doc and returns a populated EdaReportResult."""
+    """analysis.eda() runs calc->plots->notebook(+best-effort HTML), returns a populated EdaReportResult."""
     analysis = synthetic_sensitivity_completed_isolated.master_analysis
     result = analysis.eda()
     assert isinstance(result, EdaReportResult)
-    assert result.report_path.exists()
-    assert result.report_path.name == "eda_report.html"
+    # The notebook is the ALWAYS-present primary artifact (ADR-14); the HTML is best-effort.
+    assert result.notebook_path is not None and result.notebook_path.exists()
+    assert result.notebook_path.name == "eda.ipynb"
+    assert result.report_path is None or result.report_path.name == "eda_report.html"
+    # SE Flag 1 guard: when the best-effort HTML export succeeded, it must carry an
+    # actual Plotly figure (not just a path list) — the executed notebook renders the
+    # seed-figure cell against live variables.
+    if result.report_path is not None:
+        html = result.report_path.read_text()
+        assert "plotly-graph-div" in html or "Plotly.newPlot" in html
     assert result.plot_paths and all(p.parent.name == "eda" for p in result.plot_paths)
     assert result.verdicts  # the cross-sim-identity verdict
 
@@ -26,7 +34,8 @@ def test_bundle_eda_from_bundle(synthetic_sensitivity_completed_isolated, tmp_pa
     bundle_path = analysis.bundle_report_data()  # harvest carries eda/ zarr + plots/eda/
     bundle = Bundle.from_directory(bundle_path if bundle_path.is_dir() else _unpack(bundle_path, tmp_path))
     result = bundle.eda(plots_only=True)
-    assert result.report_path.exists()
+    assert result.notebook_path is not None and result.notebook_path.exists()
+    assert result.report_path is None or result.report_path.exists()
     assert result.verdicts == []  # calc skipped on the bundle side
 
 
