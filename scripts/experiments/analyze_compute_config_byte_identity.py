@@ -23,7 +23,7 @@ from collections.abc import Mapping
 # Override at runtime with `--case-root` when the case was materialized elsewhere
 # (e.g., the factory's natural platformdirs cache root when no system_directory was
 # passed) — read the actual path via `clean_case(...).system_directory`.
-_DEFAULT_CASE_ROOT = "/project/quinnlab/dcl3nd/norfolk/synth_compute_config"
+_DEFAULT_CASE_ROOT = "/project/{your-allocation}/{username}/norfolk/synth_compute_config"
 
 
 def _case_dirs(case_root: str) -> dict[str, str]:

@@ -86,10 +86,10 @@ def _build_case(
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
-    UVA HPC overrides (A2): system -> CUDA/a6000/3.5m; analysis -> batch_job/quinnlab/login/gres.
+    UVA HPC overrides (A2): system -> CUDA/a6000/3.5m; analysis -> batch_job/{your-allocation}/login/gres.
 
     ``system_directory``: when given, redirect the case root there (Decision 4 — on Rivanna pass
-    ``/project/quinnlab/...`` so outputs avoid the small-quota $HOME/.cache and the analysis tool
+    ``/project/{your-allocation}/...`` so outputs avoid the small-quota $HOME/.cache and the analysis tool
     has a deterministic read root). When ``None`` (the default), the materializer's natural
     platformdirs cache root is used — required so the case can be materialized + dry-run validated
     off-cluster, where ``/project`` does not exist (the system constructor mkdir's this path).
@@ -132,7 +132,7 @@ def _build_case(
         additional_system_configs=system_cfg,
         additional_analysis_configs={
             "multi_sim_run_method": "batch_job",
-            "hpc_account": "quinnlab",
+            "hpc_account": "{your-allocation}",
             "hpc_login_node": "login1.hpc.virginia.edu",
             # batch_job REQUIRED fields (analysis_config check_consistency, config/analysis.py
             # lines 620/625/628/633) — all default None and raise at load if omitted:
@@ -183,7 +183,7 @@ def clean_case(
     clean-vs-resume comparison breaks (different grids → trivially "diverged").
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
-    ``"/project/quinnlab/dcl3nd/norfolk/synth_compute_config/synth_cc_clean"``.
+    ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_clean"``.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "clean_matrix.csv"
@@ -214,7 +214,7 @@ def resume_case(
     fires and completion lands within ``hpc_restart_times`` from a single ``.run()``.
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
-    ``"/project/quinnlab/dcl3nd/norfolk/synth_compute_config/synth_cc_resume"``.
+    ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_resume"``.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
