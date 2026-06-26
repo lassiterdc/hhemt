@@ -433,6 +433,10 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
     # Simulation execution
     simulation_completed: LogField[bool] = Field(default_factory=LogField)
     sim_run_time_minutes: LogField[float] = Field(default_factory=LogField)
+    # n_resumes counts hotstart resumes for this (model_type, event). Incremented
+    # at the resume-decision site in run_simulation.py. Unset on legacy logs;
+    # consumers MUST coalesce None -> 0 (LogField.get() returns None when unset).
+    n_resumes: LogField[int] = Field(default_factory=LogField)
     processing_log: Processing = Field(default_factory=Processing)
 
     # Performance timeseries (triton and tritonswmm only)
@@ -476,6 +480,11 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
         mode="before",
     )(_create_logfield_validator(float))
 
+    _validate_int_fields = field_validator(
+        "n_resumes",
+        mode="before",
+    )(_create_logfield_validator(int))
+
     # Serializers
     _serialize_bool_fields = field_serializer(
         "simulation_completed",
@@ -496,6 +505,11 @@ class TRITONSWMM_model_log(TRITONSWMM_log):
 
     _serialize_float_fields = field_serializer(
         "sim_run_time_minutes",
+        when_used="json",
+    )(lambda self, v: v.get() if v is not None else None)
+
+    _serialize_int_fields = field_serializer(
+        "n_resumes",
         when_used="json",
     )(lambda self, v: v.get() if v is not None else None)
 

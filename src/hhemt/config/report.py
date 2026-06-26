@@ -844,8 +844,20 @@ class ScenarioStatusAppendixConfig(_HtmlTableStyleBase):
         default_factory=lambda: TableInteractiveConfig(pagination_size=0),
     )
 
+    hide_constant_columns: bool = Field(
+        default=True,
+        description=(
+            "If True, drop columns whose values are all identical (including all-NaN) "
+            "before rendering the Tabulator grid. Reduces visual clutter in single-model "
+            "or single-event analyses — e.g. an all-zero n_resumes column when no hotstart "
+            "resumes occurred is auto-hidden."
+        ),
+    )
+
     def render_inline_css(self) -> str:
-        return _HTML_TABLE_STYLE_TEMPLATE.format(**self.model_dump(exclude={"interactive"}))
+        return _HTML_TABLE_STYLE_TEMPLATE.format(
+            **self.model_dump(exclude={"interactive", "hide_constant_columns"})
+        )
 
 
 class report_config(cfgBaseModel):

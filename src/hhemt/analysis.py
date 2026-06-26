@@ -4263,6 +4263,7 @@ class TRITONSWMM_analysis:
             "model_type",
             "scenario_setup",
             "run_completed",
+            "n_resumes",
             "scenario_directory",
         ]
         fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED]
@@ -4374,6 +4375,7 @@ class TRITONSWMM_analysis:
                 row["model_type"] = model_type
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
+                row["n_resumes"] = (scen.get_log(model_type).n_resumes.get() or 0)
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 
