@@ -639,6 +639,19 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     orchestrator_slurm_jobid: LogField[str] = Field(default_factory=LogField)  # E2: single-job orchestrator jobid
     workflow_canceled: LogField[bool] = Field(default_factory=LogField)
     workflow_cancellation_time: LogField[str] = Field(default_factory=LogField)
+    # multi_allocation_in_progress is an INERT defense-in-depth backstop
+    # (resume-retry-resilience P3): the _clear_raw_outputs guard raises if this field
+    # is ever True, refusing a raw-output delete that would strip pre-resume
+    # performance{N}.txt checkpoints the V0008 aggregator depends on. Production
+    # auto-wiring (when to set True/False) is DEFERRED: by DAG construction the per-sim
+    # clear already fires only after that sim's c_run completion flag (i.e.
+    # post-final-allocation), so an analysis-level set-True would over-block finished
+    # sims while siblings resume AND poison the detached-batch_job processing path
+    # (which reloads a fresh disk log). Correct per-sim enforcement needs a real
+    # two-allocation batch_job run to validate (see the deferred follow-up). Unset by
+    # default -> the guard never fires in production today; consumers coalesce
+    # None -> not-in-progress.
+    multi_allocation_in_progress: LogField[bool] = Field(default_factory=LogField)
 
     # ----------------------------
     # Consolidated validators using helper functions
@@ -649,6 +662,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "cpu_backend_available",
         "gpu_backend_available",
         "workflow_canceled",
+        "multi_allocation_in_progress",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -685,6 +699,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_cancellation_time",
         "workflow_submission_node",
         "orchestrator_slurm_jobid",
+        "multi_allocation_in_progress",
     )(_logfield_serializer)
 
     # ----------------------------
