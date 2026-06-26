@@ -6,7 +6,7 @@
 Tools for running and processing TRITON-SWMM models.
 
 * PyPI package: https://pypi.org/project/hhemt/
-* License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+* License: [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/)
 * Documentation: https://hhemt.readthedocs.io.
 
 ## Credits

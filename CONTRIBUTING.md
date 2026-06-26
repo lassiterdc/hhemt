@@ -1,5 +1,26 @@
 # Contributing
 
+## Licensing of contributions
+
+This project is currently released under the
+[PolyForm Noncommercial License 1.0.0](LICENSE).
+
+By submitting a contribution (a pull request, patch, or any other work)
+to this project, you agree that:
+
+1. **Inbound = outbound.** Your contribution is provided under the same
+   license as the project (PolyForm Noncommercial License 1.0.0), and
+   you have the right to submit it under that license.
+
+2. **Forward relicensing.** You grant the maintainer permission to
+   license your contribution under any future license the project
+   adopts, including a permissive OSI-approved open-source license
+   (for example, Apache License 2.0). This lets the project relicense
+   in the future without requiring sign-off from every past contributor.
+
+If you cannot agree to these terms for a particular contribution, please
+open an issue to discuss before submitting.
+
 ## Development setup
 
 1. Fork and clone the repository
