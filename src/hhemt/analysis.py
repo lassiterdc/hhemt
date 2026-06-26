@@ -285,18 +285,53 @@ class TRITONSWMM_analysis:
         else:
             primary_model_type = "swmm"
 
-        # Count completed simulations via glob — fast, no scenario instantiation
-        if self.cfg_analysis.toggle_sensitivity_analysis:
-            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
-        else:
-            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_*_complete.flag"))
-
+        # Count completed sims from the canonical c_run completion-flag set — the
+        # same per-(event) flags ``_all_sim_flags_present`` attests and that the
+        # Snakemake run rule emits gated on ``model_run_completed()`` / "Simulation
+        # ends" (resume-retry-resilience P3 research). Enumerating the canonical
+        # ``c_run_{model}_evt-{event_id}_complete.flag`` names — rather than an
+        # ad-hoc wildcard glob that could match non-canonical/stale flags — aligns
+        # the printed N/M with the planner's authoritative completion signal while
+        # staying O(flag-stat): no scenario instantiation. (c_run flags are durable
+        # post-completion; ``_invalidate_downstream_flags`` never deletes them.)
         total_sims = self.nsims
-        n_complete = len(sim_flags)
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            # The canonical per-(sa_id, event_id) enumeration is owned by the
+            # sub-analyses; the sa-flag glob is the existing sensitivity count
+            # (``c_run_*_sa-*`` flags are likewise post-completion + durable).
+            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
+            n_complete = len(sim_flags)
+        else:
+            from hhemt.scenario import compute_event_id_slug
+
+            n_complete = sum(
+                1
+                for i in range(len(self.df_sims))
+                if (
+                    status_dir
+                    / (
+                        f"c_run_{primary_model_type}_evt-"
+                        f"{compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))}"
+                        "_complete.flag"
+                    )
+                ).exists()
+            )
         n_incomplete = total_sims - n_complete
 
         analysis_id = self.cfg_analysis.analysis_id
         print(f"[Analysis] Resuming {analysis_id} — {n_complete}/{total_sims} sims complete.", flush=True)
+
+        # #3 — surface the effective per-sim retry budget so the operator sees the
+        # cap before a silent post-cap non-completion. This prints the config value;
+        # a runtime override (override_hpc_restart_times_simulate) passed to
+        # run()/submit_workflow() can raise it for that invocation.
+        _attempts = self.cfg_analysis.hpc_restart_times_simulate + 1
+        print(
+            f"[Analysis] Each sim gets {_attempts} attempt(s) "
+            f"(hpc_restart_times_simulate={self.cfg_analysis.hpc_restart_times_simulate}) "
+            "before silent non-completion.",
+            flush=True,
+        )
 
         if n_incomplete == 0:
             return
@@ -347,6 +382,35 @@ class TRITONSWMM_analysis:
                         "[Analysis] Some failures are not time limits — see debugging docs for root cause.",
                         flush=True,
                     )
+
+    def _warn_resume_zero_progress(self, pickup_where_leftoff: bool) -> None:
+        """Warn before launch when a hotstart-resume risks zero progress per round.
+
+        Fires only when actually resuming (``pickup_where_leftoff``) in an HPC mode
+        (``batch_job`` / ``1_job_many_srun_tasks``) with a per-sim walltime set: if
+        that walltime is below the first-checkpoint latency, every resume round
+        restarts from zero and the run never completes. Checkpoint cadence is
+        model-dependent and is NOT a config field, so this is an ADVISORY (no
+        numeric floor) rather than a threshold-gated error — see the
+        resume-retry-resilience P3 friction design-recommendation (Option A).
+        """
+        if not pickup_where_leftoff:
+            return
+        if self.cfg_analysis.multi_sim_run_method not in ("batch_job", "1_job_many_srun_tasks"):
+            return
+        walltime = self.cfg_analysis.hpc_time_min_per_sim
+        if walltime is None:
+            return
+        print(
+            f"[Analysis] WARNING: resuming (pickup_where_leftoff=True) with "
+            f"hpc_time_min_per_sim={walltime} min. Each resume round makes ZERO "
+            "progress unless the per-sim walltime exceeds the first-checkpoint "
+            "latency (the sim never reaches a config_NNNN.cfg checkpoint to resume "
+            "from). Checkpoint cadence is model-dependent and not a config field, so "
+            "this is advisory — confirm the walltime clears your model's "
+            "first-checkpoint time before launching a resume sweep.",
+            flush=True,
+        )
 
     def _enumerate_stale_metadata_paths(self) -> list[str]:
         """Return Snakemake-output-path strings whose ``.snakemake/metadata/``
@@ -2931,6 +2995,12 @@ class TRITONSWMM_analysis:
         from hhemt.version_migration.state import stamp_new_target
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
+
+        # resume-retry-resilience P3 — surface the zero-progress-resume foot-gun
+        # before launch (friction Option A). Fires only when actually resuming in an
+        # HPC mode with a per-sim walltime set; run() reaches here via delegation,
+        # so this single site covers both run() and direct submit_workflow() callers.
+        self._warn_resume_zero_progress(pickup_where_leftoff)
 
         # Driver-start orchestrator-liveness sentinel (Phase 2 of the reprocess
         # concurrency gate). Single-writer per logical driver: a sensitivity
