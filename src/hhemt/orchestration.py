@@ -276,20 +276,22 @@ def translate_mode(mode: Literal["fresh", "resume"]) -> dict:
     Examples
     --------
     >>> params = translate_mode("fresh")
-    >>> params["from_scratch"]
+    >>> params["overwrite_system_inputs"]
     True
     >>> params["pickup_where_leftoff"]
     False
     """
     MODE_TRANSLATION = {
-        # "fresh": {
-        #     # "from_scratch": True,
-        #     "overwrite_system_inputs": True,
-        #     "recompile_if_already_done_successfully": False,
-        #     "overwrite_scenario_if_already_set_up": True,
-        #     "rerun_swmm_hydro_if_outputs_exist": True,
-        #     "pickup_where_leftoff": False,
-        # },
+        "fresh": {
+            # "from_scratch" MUST stay commented: the wipe is owned by run(), and
+            # submit_workflow() has no from_scratch param (uncommenting -> TypeError).
+            # "from_scratch": True,
+            "overwrite_system_inputs": True,
+            "recompile_if_already_done_successfully": False,
+            "overwrite_scenario_if_already_set_up": True,
+            "rerun_swmm_hydro_if_outputs_exist": True,
+            "pickup_where_leftoff": False,
+        },
         "resume": {
             # "from_scratch": False,
             "overwrite_system_inputs": False,

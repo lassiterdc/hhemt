@@ -2044,7 +2044,7 @@ class TRITONSWMM_analysis:
                 "For now, all events in analysis will be processed."
             )
 
-        if from_scratch:
+        if from_scratch and not dry_run:
             # remove analysis folder. Use the DERIVED analysis_paths.analysis_dir
             # (never None) — NOT the raw cfg_analysis.analysis_dir Optional field,
             # which defaults None and made fast_rmtree(None) crash here. Every
@@ -2138,7 +2138,11 @@ class TRITONSWMM_analysis:
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
         # Translate user-friendly parameters to workflow parameters
-        mode_params = translate_mode("resume")  # TODO - hardcoded while troubleshooting
+        # from_scratch's fast_rmtree(analysis_dir) above is the fresh mechanism for the
+        # per-analysis tier; the "fresh" mode params additionally force a re-derive of the
+        # SHARED system tier (DEM/Manning's in system_directory/) via overwrite_system_inputs.
+        # The other four mode flags are moot post-wipe (no scenarios/checkpoints survive).
+        mode_params = translate_mode("fresh" if from_scratch else "resume")
         phase_params = translate_phases(None)  # TODO - hardcoded while troubleshooting
 
         # Detect system input processing needs
