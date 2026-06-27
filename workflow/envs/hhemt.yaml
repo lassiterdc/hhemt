@@ -13,6 +13,16 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
+  # --- TRITON-SWMM CPU build toolchain ---
+  # The CPU compile (src/hhemt/system.py::_compile_backend) inherits its build
+  # toolchain from this env via an env-less subprocess. These provision cmake +
+  # an MPI C/C++ compiler (mpic++/mpicc + mpi.h) + a GLIBCXX-capable libstdc++
+  # for the local (non-HPC) compile path. Present in the live env but previously
+  # undeclared here; declared so a fresh `conda env create` is compile-capable.
+  - cmake
+  - make
+  - openmpi
+  - compilers   # conda-forge metapackage: c-compiler + cxx-compiler (gcc/g++)
   - typer
   - pydantic
   - pyyaml

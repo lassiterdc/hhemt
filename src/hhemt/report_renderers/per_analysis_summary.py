@@ -67,20 +67,24 @@ def render(
     log_source_files: list[Path] = []
 
     if is_sensitivity_master:
-        # CSV-authoritative (matches the non-sensitivity branch + both specialists' FQ4
-        # recommendation): when the master scenario_status.csv is present, derive per-sa
-        # status counts from it (columns: sa_id, event_iloc, model_type, run_completed,
-        # scenario_setup) — no log reads, declared set = just the CSV. Fall back to
-        # _is_scenario_successful (which reads per-scenario logs) only when the CSV is
-        # absent at render time; for sensitivity those logs live at the SHARED
-        # {system_dir}/logs/sims level (filenames carry sa_{id}_evt{n}), so declare that
-        # file set there (not under each sub dir).
+        # CSV-authoritative (matches the non-sensitivity branch): when the master
+        # scenario_status.csv is present, derive per-sa status counts from it
+        # (columns: sa_id, event_iloc, model_type, run_completed, scenario_setup).
+        # The CSV is written by the export_scenario_status rule, which can race AFTER
+        # this plot rule in the DAG — so at render time the CSV may be absent, forcing
+        # the _is_scenario_successful fallback, which reads the per-sub PRIMARY-model
+        # runtime logs via _analysis_level_model_logfile. For a sensitivity sub-analysis
+        # those logs live under the MASTER analysis_dir's logs/sims (NOT the system_dir
+        # parent): _analysis_level_model_logfile uses master_analysis_yaml.parent/logs/sims
+        # (run_simulation.py) and simlog_directory == analysis_dir/logs/sims (analysis.py).
+        # Declare that exact model_*.log set UNCONDITIONALLY so the renderer-IO audit is
+        # satisfied on the fallback branch; on the CSV-present path the declared-but-unread
+        # logs are a benign WARN (the audit's declared-but-unread channel is warn-only).
         master_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
         use_csv = master_csv.exists()
         status_df = pd.read_csv(master_csv) if use_csv else None
-        if not use_csv:
-            sys_logs = Path(analysis._system.cfg_system.system_directory) / "logs" / "sims"
-            log_source_files.extend(sorted(sys_logs.glob("model_*.log")))
+        master_simlogs = analysis.analysis_paths.simlog_directory
+        log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
         per_sa_rows = []
         for sa_id, sub in analysis.sensitivity.sub_analyses.items():
             n = len(sub.df_sims.index)

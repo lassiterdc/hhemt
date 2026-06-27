@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,24 @@ def is_scheduler_context() -> bool:
         "COBALT_JOBID",  # Cobalt
     )
     return any(v in os.environ for v in scheduler_vars)
+
+
+def compile_toolchain_unavailable() -> bool:
+    """Return True when the TRITON-SWMM CPU build toolchain is not on PATH.
+
+    The CPU compile (src/hhemt/system.py::_compile_backend) hard-requires cmake
+    and an MPI C++ wrapper: TRITON's machine.cmake FORCE-sets the compiler to
+    ``mpic++`` even under ``TRITON_IGNORE_MACHINE_FILES=ON`` and ``main.cpp``
+    unconditionally ``#include``s ``mpi.h``. Those live in the ``hhemt`` conda
+    env, which the canonical ``uv run … pytest`` command does not activate, so
+    compile-dependent tests must skip (not error) when the toolchain is absent.
+
+    Keyed on tool REACHABILITY (``shutil.which``), never on the conda env name —
+    so a capable box provisioned by any means is never falsely skipped, and a
+    misconfigured-but-toolchain-less box is never masked. ``mpic++`` carries its
+    own ``mpi.h``, so ``which("mpic++")`` is a sufficient proxy for the header.
+    """
+    return shutil.which("cmake") is None or shutil.which("mpic++") is None
 
 
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):

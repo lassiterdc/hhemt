@@ -46,6 +46,56 @@ def test_legacy_log_with_stale_rollup_keys_loads(tmp_path):
     assert TRITONSWMM_analysis_log.from_json(logfile) is not None  # no validation error
 
 
+# TEST-P2 (resume-retry-resilience Phase 2) — n_resumes additive LogField[int]:
+# set() persists and accumulates across reloads (the per-retry cross-process
+# increment contract — a new worker per retry loads the persisted value, +1s,
+# and writes), and an unset field coalesces None -> 0.
+def test_n_resumes_coalesce_and_increment(tmp_path):
+    from hhemt.log import TRITONSWMM_model_log
+
+    logfile = tmp_path / "log_tritonswmm.json"
+    log = TRITONSWMM_model_log(
+        event_iloc=0, event_idx={}, simulation_folder=tmp_path, logfile=logfile
+    )
+    # Unset on a fresh log -> get() is None; readers MUST coalesce to 0.
+    assert log.n_resumes.get() is None
+    assert (log.n_resumes.get() or 0) == 0
+
+    # First resume increments to 1 and persists (LogField.set auto-writes).
+    log.n_resumes.set((log.n_resumes.get() or 0) + 1)
+    assert log.n_resumes.get() == 1
+    assert log.model_dump(mode="json")["n_resumes"] == 1
+
+    # A fresh load (mimicking a new worker process per retry) sees the persisted
+    # value and accumulates — n_resumes counts resumed attempts across allocations.
+    reloaded = TRITONSWMM_model_log.from_json(logfile)
+    assert reloaded.n_resumes.get() == 1
+    reloaded.n_resumes.set((reloaded.n_resumes.get() or 0) + 1)
+    assert TRITONSWMM_model_log.from_json(logfile).n_resumes.get() == 2
+
+
+# TEST-P2b — a legacy per-model log.json that predates n_resumes loads cleanly
+# (pydantic default_factory, no migration) and the reader coalesces None -> 0.
+def test_legacy_model_log_without_n_resumes_key_coalesces_zero(tmp_path):
+    from hhemt.log import TRITONSWMM_model_log
+
+    logfile = tmp_path / "log_tritonswmm.json"
+    logfile.write_text(
+        json.dumps(
+            {
+                "event_iloc": 0,
+                "event_idx": {},
+                "simulation_folder": str(tmp_path),
+                "logfile": str(logfile),
+                "simulation_completed": {"value": True},
+            }
+        )
+    )
+    log = TRITONSWMM_model_log.from_json(logfile)
+    assert log.n_resumes.get() is None
+    assert (log.n_resumes.get() or 0) == 0
+
+
 # TEST-NEW-3 (main agent authored) — read-only construction authors no log write (VMS-SW2-renderer).
 # Uses the *cached* (start_from_scratch=False) multisim fixture so it does NOT wipe the
 # shared `synth_multi_sim` cache that the session-scoped `synthetic_multisim_completed`
