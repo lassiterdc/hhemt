@@ -1,0 +1,136 @@
+# =============================================================================
+# hhemt Frontier-ROCm production SIF (component C1; ADR-1/2/3/4).
+#
+# Productionized from the validated probe.def (Frontier job 4898044) + the
+# in-SIF TRITON-SWMM build (Kokkos-HIP, gfx90a/MI250X) + Change-B runtime
+# hardening. Build OFF-SITE where root/`--fakeroot` exists, `apptainer sign`,
+# then transfer the signed SIF to $MEMBERWORK and reference it by DOI+SHA-256
+# (never embed). See containers/README.md for the build -> sign -> transfer
+# recipe and the pin-capture procedure.
+#
+# Pin contract (ADR-2 pinned/signed/DOI-referenced; ADR-4 within-family
+# identity). The signed, fetched SIF's SHA-256 is the identity carrier -- a
+# byte-identical SquashFS rebuild is foreclosed (ADR-4); these pins make a
+# REBUILD functionally equivalent (same package set -> same triton.exe
+# behavior). The <PLACEHOLDER> tokens below are values produced BY the off-site
+# build and recorded at build time (base digest, MPICH sha256, the pinned
+# TRITON git URL + commit SHA, the conda lockfile). Every %post/%environment/
+# %labels structural decision is fully specified here.
+# =============================================================================
+
+Bootstrap: docker
+# ADR-2 base-digest pin (glibc 2.39 >= Frontier host 2.38 floor; ROCm major==6
+# host-major HEURISTIC -- the validation probe rung is the falsifiability check).
+# Capture the digest off-site:  docker buildx imagetools inspect \
+#   rocm/dev-ubuntu-24.04:6.4.3-complete   (or read it from the apptainer build log).
+From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
+
+%files
+    # The hhemt source tree (for `pip install -e .` of the in-container process
+    # runner -- FB2: the process_{model} rules run `apptainer exec {sif} python
+    # -m hhemt.{runner}`) and the pinned conda explicit lockfile. Both are
+    # assembled into the off-site build context by containers/README.md.
+    ../  /opt/hhemt-src
+    ./hhemt.conda-lock.yml  /opt/hhemt.conda-lock.yml
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential gfortran wget ca-certificates libnuma-dev python3
+
+    # --- (1) MPICH 3.4.3 ch4:ofi -- the ABI line OLCF documents as compatible
+    #     with the host cray-mpich-abi module. --disable-wrapper-rpath is
+    #     Change-B: stop mpicxx baking -Wl,-rpath,/opt/mpich/lib into triton.exe
+    #     so the runtime APPTAINERENV host Cray-MPICH bind wins (ADR-3).
+    cd /tmp
+    wget -q https://www.mpich.org/static/downloads/3.4.3/mpich-3.4.3.tar.gz
+    # Verify the pinned source hash (pin contract item 3):
+    echo "<PINNED_MPICH_SHA256>  mpich-3.4.3.tar.gz" | sha256sum -c - || \
+        echo "WARNING: MPICH sha256 unverified -- set <PINNED_MPICH_SHA256> for the production build"
+    tar xf mpich-3.4.3.tar.gz && cd mpich-3.4.3
+    ./configure --prefix=/opt/mpich --with-device=ch4:ofi --disable-fortran \
+        --disable-wrapper-rpath FFLAGS=-fallow-argument-mismatch
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf mpich-3.4.3 mpich-3.4.3.tar.gz
+
+    # --- (2) Pinned conda env from the committed EXPLICIT lockfile (NO re-solve).
+    #     Freezes libstdcxx-ng/libgcc-ng to the FQ2 single-libstdc++ floor and
+    #     supplies the hhemt Python runtime for the in-container process runner.
+    wget -q https://micro.mamba.pm/api/micromamba/linux-64/latest -O /tmp/micromamba.tar.bz2
+    tar -xj -C /opt -f /tmp/micromamba.tar.bz2 bin/micromamba && rm /tmp/micromamba.tar.bz2
+    /opt/bin/micromamba create -y -p /opt/conda/envs/hhemt -f /opt/hhemt.conda-lock.yml
+    export PATH=/opt/conda/envs/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+
+    # --- (3) TRITON-SWMM at a PINNED COMMIT (not the moving TRITONSWMM_branch_key
+    #     -- OE-3, ADR-4 bit-identity carrier). `git submodule --recursive` pins
+    #     Kokkos + the bundled SWMM transitively AND is the first correctness
+    #     check (a non-recursive clone leaves external/kokkos absent).
+    git clone <PINNED_TRITON_GIT_URL> /opt/triton
+    cd /opt/triton && git checkout <PINNED_TRITON_COMMIT_SHA> \
+        && git submodule update --init --recursive
+    mkdir -p build && cd build
+    # machine.cmake FORCE-sets CXX=mpic++ even under IGNORE_MACHINE_FILES; make
+    # that wrapper BE hipcc so Kokkos-HIP gets its HIP compiler AND TRITON's MPI
+    # links resolve in one wrapper (the in-SIF analogue of system.py's CUDA
+    # branch passing -DCMAKE_CXX_COMPILER=$MPICXX).
+    export MPICH_CXX=hipcc
+    # The three HIP flags system.py's current native HIP branch OMITS (OE-1):
+    #   -DKokkos_ARCH_AMD_GFX90A=ON, -DTRITON_BACKEND=HIP, and TRITON_HIP_LAUNCHER
+    #   (the hand-launched __launch_bounds__(256) path, architecture Gotcha 17).
+    # -DTRITON_SWMM_FLOODING_DEBUG=ON matches system.py:795 for byte-parity
+    #   (OE-5; double precision is the load-bearing default -- do NOT pass
+    #   -DUSE_SINGLE_PRECISION, it would flip MPI_DATA_TYPE / break BIT4BIT).
+    # libstdc++ reconciliation RETIRED (Q3 INVARIANT, M-7 dissolution): NO
+    #   -L${CONDA_PREFIX}/lib -l:libstdc++.so.6 fragment -- one coherent
+    #   container toolchain (container gcc-13 <-> matched libstdc++).
+    cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=HIP \
+          -DKokkos_ENABLE_HIP=ON -DKokkos_ARCH_AMD_GFX90A=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc \
+          -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
+
+    # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
+    #     Built like system.py: cmake the SWMM source, make -> runswmm.
+    git clone --branch v5.2.4 --depth 1 \
+        https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
+    mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+    # --- (5) Install the binaries to the convention path the example profiles'
+    #     ContainerSpec.exe_in_sif points at (/opt/hhemt/bin) + pip install -e
+    #     the toolkit (the in-container process runner).
+    mkdir -p /opt/hhemt/bin
+    cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
+        /opt/hhemt/bin/runswmm
+    chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
+    /opt/conda/envs/hhemt/bin/pip install --no-deps -e /opt/hhemt-src
+
+%environment
+    export MPI_ROOT=/opt/mpich
+    export PATH=/opt/conda/envs/hhemt/bin:/opt/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+    # Change-B (runtime MPI-shadow hardening): /opt/mpich/lib is DELIBERATELY
+    # ABSENT from LD_LIBRARY_PATH so no in-container path can shadow the host
+    # Cray libmpi.so.12 bound via APPTAINERENV_LD_LIBRARY_PATH (ADR-3). Keep
+    # MPI_ROOT for standalone/build use; the runtime MPI LD path comes from the
+    # host-env segment the runner emits (run_simulation.py container_host_env_str).
+    export LD_LIBRARY_PATH=/opt/rocm/lib:${LD_LIBRARY_PATH:-}
+
+%labels
+    org.hhemt.role        frontier-rocm-production
+    org.hhemt.base_digest sha256:<PINNED_BASE_DIGEST>
+    org.hhemt.triton_sha  <PINNED_TRITON_COMMIT_SHA>
+    org.hhemt.rocm        6.4.3-complete
+    org.hhemt.mpich       3.4.3-ch4ofi
+    org.hhemt.gcc         13.x
+    org.hhemt.gpu_arch    gfx90a
+
+%runscript
+    exec "$@"
