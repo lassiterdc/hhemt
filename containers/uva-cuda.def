@@ -55,12 +55,17 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     set -eu
     export DEBIAN_FRONTEND=noninteractive
     apt-get update
-    # gcc-14 matches the proven gcc 14.2.0; libpmix-dev (Ubuntu 24.04 ships PMIx
-    # 5.x) is the container PMIx the OpenMPI client links and which speaks to the
-    # host slurm pmix_v5 server via the PMIx cross-version contract.
+    # gcc-14 matches the proven gcc 14.2.0. libhwloc-dev + libevent-dev are used as
+    # OpenMPI's EXTERNAL hwloc/libevent (configure finds them). PMIx is OpenMPI's
+    # BUNDLED PMIx 5.0.x, NOT Ubuntu's libpmix-dev -- on Ubuntu 24.04 the
+    # libpmix-dev headers are not at the /usr layout `--with-pmix=/usr` expects
+    # ("External PMIx requested but not found", build attempt 2). The bundled 5.0.x
+    # client satisfies the same PMIx-5.x cross-version contract with host slurm's
+    # pmix_v5; PMIx coordinates launch only (not the numerics), so native (host
+    # PMIx) == container (bundled PMIx) result bit-identity is unaffected.
     apt-get install -y --no-install-recommends \
         git cmake build-essential gfortran wget ca-certificates libnuma-dev python3 \
-        gcc-14 g++-14 libpmix-dev libpmix2 libhwloc-dev libevent-dev
+        gcc-14 g++-14 libhwloc-dev libevent-dev
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
@@ -82,7 +87,7 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # fixed in-SIF path; %environment LD_LIBRARY_PATH backs it up (build log
     # 2026-06-27, first build attempt).
     ./configure --prefix=/opt/openmpi \
-        --with-pmix=/usr --with-cuda=/usr/local/cuda \
+        --with-cuda=/usr/local/cuda \
         --without-ucx --without-ofi --without-hcoll \
         --with-slurm --enable-shared --with-prrte=internal
     make -j"$(nproc)" && make install
