@@ -227,12 +227,21 @@ def apply_grid_mapping(ds: xr.Dataset, crs_wkt: str, grid_mapping_name: str = "c
     return ds
 
 
-def apply_global_attributes(
-    tree: xr.DataTree, analysis_id: str, system_id: str | None = None
-) -> xr.DataTree:
+def apply_global_attributes(tree: xr.DataTree, analysis_id: str, system_id: str | None = None) -> xr.DataTree:
     """Set CF-1.13 global attributes on the DataTree root node."""
     tree.attrs["Conventions"] = CF_CONVENTIONS_VERSION
     tree.attrs["analysis_id"] = analysis_id
     if system_id is not None:
         tree.attrs["system_id"] = system_id
+    return tree
+
+
+def apply_provenance_core(tree: xr.DataTree, *, core_json_str: str) -> xr.DataTree:
+    """Embed the deterministic RO-Crate provenance core as a single JSON-string attr
+    on the DataTree root. Set AFTER apply_global_attributes and AFTER the per-event_iloc
+    concat's combine_attrs='drop_conflicts' (which operates on the per-scenario datasets,
+    never the post-from_dict root), so the root embed is concat-safe. The payload MUST be
+    the deterministic partition only — no timestamps/jobids — so the zarr root .zattrs
+    gains no NEW volatile field beyond the pre-existing output_creation_date."""
+    tree.attrs["ro_crate_metadata"] = core_json_str
     return tree
