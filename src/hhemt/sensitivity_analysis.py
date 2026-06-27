@@ -1705,6 +1705,32 @@ class TRITONSWMM_sensitivity_analysis:
                 orphans.append(entry)
         return sorted(orphans)
 
+    def find_orphan_input_fingerprints(self) -> list[Path]:
+        """Return _status/sa-{sa_id}_inputs.json fingerprint files whose sa_id is absent from df_setup.index.
+
+        The per-sa_id input-fingerprint files (Gotcha 17) are written by
+        ``SensitivityAnalysisWorkflowBuilder`` at Snakefile-build time and named
+        ``sa-{sa_id}_inputs.json`` under ``_status/``. When an sa_id is removed
+        from the sensitivity CSV its fingerprint is orphaned just like its
+        dirs/flags/datatree groups. Returns an empty list if ``_status/`` is absent.
+        """
+        import re as _re
+
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return []
+        expected_sa_ids = set(self.df_setup.index.astype(str))
+        pat = _re.compile(r"^sa-([A-Za-z0-9_.]+?)_inputs\.json$")
+        orphans: list[Path] = []
+        for entry in status_dir.glob("sa-*_inputs.json"):
+            m = pat.match(entry.name)
+            if m is None:
+                continue
+            sa_id = m.group(1)
+            if sa_id not in expected_sa_ids:
+                orphans.append(entry)
+        return sorted(orphans)
+
     def find_orphan_datatree_groups(self) -> list[str]:
         """Return sa_id strings present as subgroups in sensitivity_datatree.zarr but absent from df_setup.index.
 
@@ -1735,7 +1761,7 @@ class TRITONSWMM_sensitivity_analysis:
         force: bool = False,
         verbose: bool = True,
     ) -> dict[str, list]:
-        """Detect and (optionally) delete orphan subanalysis dirs, status flags, and datatree groups.
+        """Detect and (optionally) delete orphan subanalysis dirs, flags, datatree groups, and input fingerprints.
 
         When any orphan is detected and deletion proceeds, the entire
         ``sensitivity_datatree.zarr`` is removed (rebuild approach — see plan
@@ -1755,7 +1781,8 @@ class TRITONSWMM_sensitivity_analysis:
         -------
         dict[str, list | bool]
             Keys: ``"dirs"`` (list[Path]), ``"status_flags"`` (list[Path]),
-            ``"datatree_groups"`` (list[str]), and (after deletion only)
+            ``"datatree_groups"`` (list[str]), ``"input_fingerprints"`` (list[Path]),
+            and (after deletion only)
             ``"sensitivity_datatree_removed"`` (bool) and
             ``"master_flag_removed"`` (bool) reporting whether the
             rebuild-trigger artifacts were actually removed.
@@ -1771,8 +1798,14 @@ class TRITONSWMM_sensitivity_analysis:
             "dirs": self.find_orphan_subanalysis_dirs(),
             "status_flags": self.find_orphan_status_flags(),
             "datatree_groups": self.find_orphan_datatree_groups(),
+            "input_fingerprints": self.find_orphan_input_fingerprints(),
         }
-        any_orphan = bool(result["dirs"] or result["status_flags"] or result["datatree_groups"])
+        any_orphan = bool(
+            result["dirs"]
+            or result["status_flags"]
+            or result["datatree_groups"]
+            or result["input_fingerprints"]
+        )
         if verbose:
             if any_orphan:
                 print(
@@ -1787,6 +1820,8 @@ class TRITONSWMM_sensitivity_analysis:
                     print(f"  flag: {p}", flush=True)
                 for sa_id in result["datatree_groups"]:
                     print(f"  datatree-group: sa_{sa_id}", flush=True)
+                for p in result["input_fingerprints"]:
+                    print(f"  input-fingerprint: {p}", flush=True)
             else:
                 print("[cleanup-orphans] No orphans detected.", flush=True)
         if dry_run:
@@ -1804,6 +1839,11 @@ class TRITONSWMM_sensitivity_analysis:
             if verbose:
                 print(f"[cleanup-orphans] Unlinking flag {p}", flush=True)
             # EXEMPT-DU: status-flag
+            p.unlink()
+        for p in result["input_fingerprints"]:
+            if verbose:
+                print(f"[cleanup-orphans] Unlinking input-fingerprint {p}", flush=True)
+            # EXEMPT-DU: status-dir-cleanup
             p.unlink()
         result["sensitivity_datatree_removed"] = False
         result["master_flag_removed"] = False

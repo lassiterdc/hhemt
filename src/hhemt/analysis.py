@@ -2061,7 +2061,8 @@ class TRITONSWMM_analysis:
             _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
             _flags = self.sensitivity.find_orphan_status_flags()
             _groups = self.sensitivity.find_orphan_datatree_groups()
-            _has_orphans = bool(_dirs or _flags or _groups)
+            _fingerprints = self.sensitivity.find_orphan_input_fingerprints()
+            _has_orphans = bool(_dirs or _flags or _groups or _fingerprints)
             if _has_orphans and not cleanup_orphans:
                 raise _CfgErr(
                     field="cleanup_orphans",
@@ -2071,6 +2072,7 @@ class TRITONSWMM_analysis:
                         f"{len(_dirs)} subanalysis dir(s), "
                         f"{len(_flags)} _status flag(s), "
                         f"{len(_groups)} datatree group(s). "
+                        f"{len(_fingerprints)} input-fingerprint(s). "
                         "Re-invoke analysis.run(cleanup_orphans=True) to delete them, "
                         "or run `triton-swmm cleanup-orphans --apply --force` from the CLI."
                     ),
@@ -2078,7 +2080,7 @@ class TRITONSWMM_analysis:
                 )
             if _has_orphans and cleanup_orphans:
                 self.sensitivity.cleanup_all_orphans(
-                    dry_run=False,
+                    dry_run=dry_run,
                     force=True,
                     verbose=verbose,
                 )
