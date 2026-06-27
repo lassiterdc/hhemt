@@ -2110,7 +2110,7 @@ class TRITONSWMM_analysis:
                 "For now, all events in analysis will be processed."
             )
 
-        if from_scratch:
+        if from_scratch and not dry_run:
             # remove analysis folder. Use the DERIVED analysis_paths.analysis_dir
             # (never None) — NOT the raw cfg_analysis.analysis_dir Optional field,
             # which defaults None and made fast_rmtree(None) crash here. Every
@@ -2127,7 +2127,8 @@ class TRITONSWMM_analysis:
             _dirs = self.sensitivity.find_orphan_subanalysis_dirs()
             _flags = self.sensitivity.find_orphan_status_flags()
             _groups = self.sensitivity.find_orphan_datatree_groups()
-            _has_orphans = bool(_dirs or _flags or _groups)
+            _fingerprints = self.sensitivity.find_orphan_input_fingerprints()
+            _has_orphans = bool(_dirs or _flags or _groups or _fingerprints)
             if _has_orphans and not cleanup_orphans:
                 raise _CfgErr(
                     field="cleanup_orphans",
@@ -2137,6 +2138,7 @@ class TRITONSWMM_analysis:
                         f"{len(_dirs)} subanalysis dir(s), "
                         f"{len(_flags)} _status flag(s), "
                         f"{len(_groups)} datatree group(s). "
+                        f"{len(_fingerprints)} input-fingerprint(s). "
                         "Re-invoke analysis.run(cleanup_orphans=True) to delete them, "
                         "or run `triton-swmm cleanup-orphans --apply --force` from the CLI."
                     ),
@@ -2144,7 +2146,7 @@ class TRITONSWMM_analysis:
                 )
             if _has_orphans and cleanup_orphans:
                 self.sensitivity.cleanup_all_orphans(
-                    dry_run=False,
+                    dry_run=dry_run,
                     force=True,
                     verbose=verbose,
                 )
@@ -2202,7 +2204,11 @@ class TRITONSWMM_analysis:
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
         # Translate user-friendly parameters to workflow parameters
-        mode_params = translate_mode("resume")  # TODO - hardcoded while troubleshooting
+        # from_scratch's fast_rmtree(analysis_dir) above is the fresh mechanism for the
+        # per-analysis tier; the "fresh" mode params additionally force a re-derive of the
+        # SHARED system tier (DEM/Manning's in system_directory/) via overwrite_system_inputs.
+        # The other four mode flags are moot post-wipe (no scenarios/checkpoints survive).
+        mode_params = translate_mode("fresh" if from_scratch else "resume")
         phase_params = translate_phases(None)  # TODO - hardcoded while troubleshooting
 
         # Detect system input processing needs

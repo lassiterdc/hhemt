@@ -480,17 +480,20 @@ class retrieve_synth_TRITON_SWMM_test_case:
         }
         if kwargs["sensitivity_csv"] is not None:
             analysis_cfg["sensitivity_analysis"] = str(kwargs["sensitivity_csv"])
+            # Inline the synth sensitivity report config into cfg_analysis.report —
+            # run() validates the INLINE report block (Post-F2 R1), NOT a standalone
+            # report_config.yaml. Emitting an empty inline block + an unread standalone
+            # file tripped validate_sensitivity_independent_vars() at run() entry (D2).
+            _report_src = (
+                Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
+            )
+            analysis_cfg["report"] = yaml.safe_load(_report_src.read_text())
         analysis_cfg.update(kwargs["additional_analysis_configs"])
 
         self.system_yaml = self.system_directory / "system_config.yaml"
         self.analysis_yaml = self.system_directory / "analysis_config.yaml"
         self.system_yaml.write_text(yaml.safe_dump(system_cfg, sort_keys=False))
         self.analysis_yaml.write_text(yaml.safe_dump(analysis_cfg, sort_keys=False))
-
-        if kwargs["sensitivity_csv"] is not None:
-            import shutil
-            src = Path(__file__).resolve().parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
-            shutil.copy(src, self.system_directory / "report_config.yaml")
 
 
 def induce_incomplete_subanalysis(sensitivity, sa_id, *, delete_master_tree=True):

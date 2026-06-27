@@ -653,6 +653,45 @@ _SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7 = (
 )
 
 
+def test_synth_sensitivity_report_inlined_passes_run_entry_validation():
+    """R2 (DECISION 1 = Option A — D2 consolidation): the BARE ``_TestCaseBuilder``
+    synth-sensitivity construction (no catalog report injection) must inline
+    ``cfg_analysis.report`` so the ``run()``-entry cross-validation passes.
+
+    Red-before-green characterization (SE F-B 2): with the ~13 synth-wrapper
+    ``additional_analysis_configs={"report": ...}`` injections removed from
+    ``test_case_catalog.py``, this path routes through the bare builder. PRE-D2 the
+    builder emitted ``report: {}`` -> ``cfg_analysis.report.sensitivity is None`` ->
+    ``validate_sensitivity_independent_vars`` raises ``ConfigurationError`` (verified
+    RED before the ``test_case_builder.py`` inline landed). POST-D2 the builder
+    inlines ``report_config_synth_sensitivity.yaml``, so ``report.sensitivity`` is
+    populated and validation passes. This is the test the consolidation makes
+    meaningful — the bare-builder path is now the standard synth construction, so a
+    pattern-match against the (previously report-injecting) catalog wrappers would
+    have been tautologically green.
+    """
+    from pathlib import Path
+
+    import tests.fixtures.test_case_catalog as cases
+    from hhemt.config.report import validate_sensitivity_independent_vars
+
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+        start_from_scratch=False, skip_run=True
+    )
+    analysis = case.analysis
+
+    # Post-D2: the bare builder inlines the synth sensitivity report block.
+    assert analysis.cfg_analysis.report.sensitivity is not None, (
+        "D2 builder-inline regressed: bare _TestCaseBuilder emitted an empty "
+        "report block (cfg_analysis.report.sensitivity is None)"
+    )
+
+    # Mirrors the run()-entry cross-validation: analysis.run() resolves
+    # cfg_report = self.cfg_analysis.report and sa_csv = cfg_analysis.sensitivity_analysis.
+    sa_csv = Path(analysis.cfg_analysis.sensitivity_analysis)
+    validate_sensitivity_independent_vars(analysis.cfg_analysis.report, sa_csv)
+
+
 @pytest.mark.slow
 def test_run_and_render_report(synth_sensitivity_analysis_cached):
     """Sensitivity run -> master render. Asserts master report exists; no per-sub-analysis report (R13)."""
