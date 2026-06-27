@@ -122,8 +122,8 @@ def compare_variable_exact(da_ref: xr.DataArray, da_cmp: xr.DataArray) -> dict:
     }
 
 
-def check_cross_sim_identity(analysis: TRITONSWMM_analysis) -> EdaResult:
-    """Verify cross-sim byte-identity of key results on a sensitivity master.
+def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bool = True) -> EdaResult:
+    """ADR-4: verify cross-sim reproducibility and EMIT a characterized-divergence verdict.
 
     Returns a skipped ``EdaResult`` on a non-sensitivity analysis. On a sensitivity
     master, compares each enabled ``(event_iloc, mode, variable)`` across
@@ -131,6 +131,20 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis) -> EdaResult:
     writes ``{analysis_dir}/eda/<plot_id>.zarr`` (max-abs-diff + identical maps) and
     ``<plot_id>.verdict.json``, and returns an ``EdaResult`` carrying the verdict +
     artifact path.
+
+    ``within_family=True`` (default — same signed SIF / same hardware family): assert
+    bit-identity (``np.array_equal(equal_nan=True)``); a divergence is a
+    ``CheckResult`` ``passed=False``. This is today's behavior, unchanged.
+
+    ``within_family=False`` (across hardware families, e.g. Frontier-ROCm vs
+    UVA-CUDA): do NOT assert equality — ADR-4 concedes cross-family bit-identity is
+    not achievable. Instead compute the BOUNDED divergence (max abs diff and max
+    relative diff per tracked variable) and emit it as a ``passed=True``
+    characterized-divergence verdict. The boundary disclosure IS the contribution
+    (disclosed -> verifiable), not an equality claim. The persisted
+    ``<plot_id>.verdict.json`` shape is unchanged (still
+    ``dataclasses.asdict(CheckResult)``); only the verdict's ``passed``/``summary``/
+    ``details`` semantics branch on ``within_family``.
     """
     name = "Cross-sim byte-identity"
     sub_items = list(_iter_subanalyses_or_self(analysis))
@@ -166,6 +180,9 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis) -> EdaResult:
     diff_arrays: dict[str, list[xr.DataArray]] = {}
     identical_arrays: dict[str, list[xr.DataArray]] = {}
     all_identical = True
+    # ADR-4 across-family accumulator: per-variable running max (abs, rel) divergence.
+    # Populated only when within_family is False; ignored on the strict path.
+    divergence: dict[str, dict[str, float]] = {}
 
     for sa_id, sub in subs.items():
         if sa_id == ref_id:
@@ -183,23 +200,47 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis) -> EdaResult:
                 if var not in ds_ref.data_vars or var not in ds_cmp.data_vars:
                     continue
                 for e in ds_ref["event_iloc"].values:
-                    res = compare_variable_exact(
-                        ds_ref[var].sel(event_iloc=e),
-                        ds_cmp[var].sel(event_iloc=e),
-                    )
-                    if not res["identical"]:
-                        all_identical = False
-                        details.append(
-                            {
-                                "sa_id": sa_id,
-                                "event_iloc": int(e),
-                                "variable": var,
-                                "detail": (
-                                    f"max_abs_diff={res['max_abs_diff']:.6g}, "
-                                    f"dtype_match={res['dtype_match']}, coord_match={res['coord_match']}"
-                                ),
-                            }
-                        )
+                    da_ref_sel = ds_ref[var].sel(event_iloc=e)
+                    res = compare_variable_exact(da_ref_sel, ds_cmp[var].sel(event_iloc=e))
+                    if within_family:
+                        # Strict path (within-family / same signed SIF): a divergence
+                        # is a verdict failure (today's behavior, unchanged).
+                        if not res["identical"]:
+                            all_identical = False
+                            details.append(
+                                {
+                                    "sa_id": sa_id,
+                                    "event_iloc": int(e),
+                                    "variable": var,
+                                    "detail": (
+                                        f"max_abs_diff={res['max_abs_diff']:.6g}, "
+                                        f"dtype_match={res['dtype_match']}, coord_match={res['coord_match']}"
+                                    ),
+                                }
+                            )
+                    else:
+                        # ADR-4 across-family: characterize, do NOT fail on divergence.
+                        # A NaN max_abs_diff means the cell sets are not comparable
+                        # (coord mismatch / different mesh); record it as disclosed
+                        # incomparability rather than folding it into the bounds.
+                        max_abs = res["max_abs_diff"]
+                        if not np.isfinite(max_abs):
+                            details.append(
+                                {
+                                    "sa_id": sa_id,
+                                    "event_iloc": int(e),
+                                    "variable": var,
+                                    "detail": "not comparable (coord/dtype mismatch)",
+                                }
+                            )
+                        else:
+                            ref_vals = da_ref_sel.values.astype("float64")
+                            with np.errstate(invalid="ignore"):
+                                denom = float(np.nanmax(np.abs(ref_vals))) if np.isfinite(ref_vals).any() else 0.0
+                            denom = denom or 1.0
+                            acc = divergence.setdefault(var, {"max_abs": 0.0, "max_rel": 0.0})
+                            acc["max_abs"] = max(acc["max_abs"], max_abs)
+                            acc["max_rel"] = max(acc["max_rel"], max_abs / denom)
                     # Collect diff/identical scalars for the plottable artifact.
                     diff_arrays.setdefault(var, []).append(
                         xr.DataArray(res["max_abs_diff"]).expand_dims({"sa_id": [sa_id], "event_iloc": [int(e)]})
@@ -221,16 +262,44 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis) -> EdaResult:
     artifact_ds = xr.Dataset(ds_vars)
     artifact_ds.attrs["reference_sa_id"] = ref_id
 
-    summary = (
-        f"All tracked variables bit-identical across {len(subs) - 1} non-reference sub-analyses (ref sa_id={ref_id})."
-        if all_identical
-        else f"{len([d for d in details if 'variable' in d])} (sa, event, variable) "
-        f"tuple(s) diverged from reference sa_id={ref_id}."
-    )
+    if within_family:
+        summary = (
+            f"All tracked variables bit-identical across {len(subs) - 1} "
+            f"non-reference sub-analyses (ref sa_id={ref_id})."
+            if all_identical
+            else f"{len([d for d in details if 'variable' in d])} (sa, event, variable) "
+            f"tuple(s) diverged from reference sa_id={ref_id}."
+        )
+        passed = all_identical
+    else:
+        # ADR-4 across-family: the disclosed bounds ARE the verdict; passed=True
+        # regardless of divergence magnitude (the boundary is verifiable, not a
+        # claim of equality). Append the per-variable bounds to details so the
+        # persisted verdict.json carries them.
+        for var, acc in sorted(divergence.items()):
+            details.append(
+                {
+                    "variable": var,
+                    "max_abs_diff": acc["max_abs"],
+                    "max_rel_diff": acc["max_rel"],
+                }
+            )
+        if divergence:
+            bounds = ", ".join(f"{var}={acc['max_abs']:.6g}" for var, acc in sorted(divergence.items()))
+            summary = (
+                f"Characterized divergence (across-family, disclosed; ref sa_id={ref_id}): "
+                f"max_abs_diff per variable: {bounds}."
+            )
+        else:
+            summary = (
+                f"Characterized divergence (across-family): no comparable variables "
+                f"across {len(subs) - 1} non-reference sub-analyses (ref sa_id={ref_id})."
+            )
+        passed = True
     verdict = CheckResult(
         name=name,
         level="aggregate",
-        passed=all_identical,
+        passed=passed,
         summary=summary,
         details=details,
     )
