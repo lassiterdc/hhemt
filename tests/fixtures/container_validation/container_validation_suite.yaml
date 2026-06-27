@@ -17,11 +17,15 @@
 # lexicographically-first sa_id; "container" < "native", so the native row is
 # compared against the container reference. Same physics either way.)
 #
-# Compute = CPU-MPI (run_mode=mpi, n_mpi_procs=2), NOT GPU: the synthetic model has
-# no established GPU run path (every synth sensitivity tier is CPU). The MPI rung
-# still exercises the in-container OpenMPI-pmix wireup end-to-end (the UVA SIF's MPI
-# flavor). The CUDA/GPU-binding claim (TO-3) is validated by the real-data Frontier
-# debug-allocation run, not this synthetic suite.
+# Compute = GPU single-rank (run_mode=gpu, n_gpus=1, n_mpi_procs=1) on an a100 node.
+# This matches BOTH sides of the comparison: the UVA SIF is Kokkos-CUDA AMPERE80
+# (GPU-only) and the proven native build on Rivanna is build_tritonswmm_gpu_a100/
+# triton.exe -- the synth model DOES run on GPU on Rivanna (the local CI catalog is
+# CPU-only only because CI lacks GPUs). Both rows are the SAME triton commit
+# (15eb18a5) on the SAME a100, so native ≡ container bit-identity is the proper
+# within-family hypothesis (R9/R11/TO-4). A Kokkos-CUDA build cannot execute a
+# CPU-MPI scenario, so a CPU axis here would not run. The run MUST target an a100
+# node (the SIF's AMPERE80 arch); an a6000 node needs the AMPERE86 sibling SIF.
 #
 # Sensitivity rows: see the sibling `container_validation_suite.csv`.
 
