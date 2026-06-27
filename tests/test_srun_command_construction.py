@@ -180,13 +180,28 @@ def test_mpi_module_lib_precedes_conda_lib():
     )
 
 
-def test_no_mpi_module_keeps_conda_first():
-    """With NO module loaded, no MPI-lib prepend is emitted and the command keeps
-    the prior conda-first behavior (no bare /lib, no $__MPI_LIB)."""
+def test_no_mpi_module_prepends_system_mpi_when_available():
+    """With NO module loaded, the no-module branch now derives the system MPI lib
+    dir and prepends it AHEAD of the static ${CONDA_PREFIX}/lib segment when a system
+    mpicc resolves and its libmpi.so.40 is present — fixing the conda-libmpi-shadows-
+    system-OpenMPI crash on a local/dev box (and a module-less HPC job). Conda lib
+    stays in LD_LIBRARY_PATH (second, via the static ld_segments) so libstdc++
+    GLIBCXX still resolves to conda.
+
+    HPC-safe by construction (hpc-build-env-validated 2026-06-24): the branch is gated
+    on module_load_cmd == "" (compile-gate == runtime-gate — a no-module compile links
+    the same system mpic++), guarded by an `-e libmpi.so.40` no-op fallback, and on
+    Frontier (no mpicc wrapper) it no-ops. Supersedes the prior empty-else behavior."""
     run = _make_run("gpu", n_gpus=2, in_slurm=True, gpu_alloc_mode="gres", modules="")
     full_cmd = _get_launch_cmd(run)
-    assert "$__MPI_LIB" not in full_cmd
-    assert "command -v mpicc" not in full_cmd
+    # The derive + guarded system-MPI-first prepend is emitted on the no-module branch.
+    assert "command -v mpicc" in full_cmd
+    assert 'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"' in full_cmd
+    # It is the LOCAL form (system-MPI-first, conda kept via the static ld_segments) —
+    # NOT the module branch's "$__MPI_LIB:${CONDA_PREFIX}/lib" co-ordering.
+    assert '"$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"' not in full_cmd
+    # libstdc++ invariant: conda lib is still present (from the static ld_segments).
+    assert "${CONDA_PREFIX}/lib" in full_cmd
 
 
 def test_cpu_srun_gpu_flags_absent():

@@ -30,6 +30,7 @@ import shutil
 import pytest
 
 import tests.utils_for_testing as tst_ut
+from hhemt.exceptions import ConfigurationError
 
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
@@ -79,10 +80,13 @@ def test_report_target_predicate_excludes_summary_absent_sub(
       still enumerated.
     - (a)/(b) the non-sensitivity ``_available_event_ids`` EXCLUDES the divergent
       event (per-event predicate) while keeping every complete event.
-    - (c) ``reprocess(start_with="consolidate")`` over the completed subset
-      succeeds end-to-end (``render_report`` does not hit
-      "marked for report but does not exist"). With the prior ``c_run`` predicate
-      the incomplete sub would be enumerated and consolidate/render would fail.
+    - (c) an UNSCOPED ``reprocess(start_with="consolidate")`` over the divergent tree
+      FAILS FAST: the R7 consolidate-stage divergence preflight (Gotcha 40) raises
+      ``ConfigurationError`` so a partial ``sensitivity_datatree.zarr`` is never
+      silently published. (The generator-level exclusion in (a)/(b)/(d) is independent
+      — R7 fires on execution, not on content generation.) The fail-fast (Gotcha 40)
+      vs graceful-exclusion (Gotcha 37) tension for the unscoped path is flagged for
+      main's owner; this test conservatively pins the newer guard's behavior.
     """
     from hhemt.constants import (
         consolidate_subanalysis_flag,
@@ -198,20 +202,22 @@ def test_report_target_predicate_excludes_summary_absent_sub(
     assert evt not in available, "non-sensitivity _available_event_ids must exclude the summary-absent event"
     assert len(available) == n_events - 1, "exactly the one summary-absent event is excluded; all complete events kept"
 
-    # ── (c) end-to-end: reprocess over the completed subset must re-render the
-    # report WITHOUT hitting "marked for report but does not exist". Delete the
-    # existing report so render_report must re-fire; the per-sa consolidate for
-    # the COMPLETED subset runs while the excluded sub's consolidate is never
-    # emitted (so its FileNotFoundError-on-missing-summary cannot abort the run).
-    # With the OLD c_run predicate the incomplete sub would be enumerated and its
-    # consolidate would fail, so the report would never be re-created. (Do NOT use
-    # assert_analysis_summaries_created here — we intentionally left one summary
-    # deleted; start_with="consolidate" does not rebuild per-scenario summaries.)
+    # ── (c) end-to-end: an UNSCOPED reprocess(start_with="consolidate") over a tree
+    # with a c_run-present/summary-absent divergence must FAIL FAST. The R7 consolidate-
+    # stage divergence preflight (Gotcha 40, sensitivity_analysis.py) raises
+    # ConfigurationError so a partial sensitivity_datatree.zarr is never silently
+    # published with the divergent sub dropped. This is the NEWER deliberate guard; it
+    # intentionally supersedes the older "proceed over the completed subset" expectation
+    # for the UNSCOPED call (the generator-level exclusion in (a)/(b)/(d) above is still
+    # proven — R7 only fires on actual execution, not on content generation).
+    #
+    # NOTE (flagged for main's owner — see follow-up): R7/Gotcha-40 (fail-fast) and the
+    # generator's Gotcha-37 (graceful exclusion) are two deliberate features in tension
+    # for the unscoped path. This test pins the fail-fast behavior conservatively rather
+    # than softening the guard from the worktree; whether the intended end-state is
+    # fail-fast or proceed-over-subset is main's design decision.
     report_zip = master_dir / "analysis_report.zip"
     if report_zip.exists():
         report_zip.unlink()
-    analysis.reprocess(start_with="consolidate", execution_mode="local")
-    assert report_zip.exists(), (
-        "reprocess must re-render the report over the completed subset "
-        f"(incomplete sub excluded from its targets): {report_zip}"
-    )
+    with pytest.raises(ConfigurationError, match="cannot consolidate"):
+        analysis.reprocess(start_with="consolidate", execution_mode="local")

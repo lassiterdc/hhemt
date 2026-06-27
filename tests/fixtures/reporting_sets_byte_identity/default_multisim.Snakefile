@@ -113,6 +113,7 @@ rule prepare_scenario:
 rule run_triton:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_triton_evt-{event_id}_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/triton_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -142,6 +143,7 @@ rule run_triton:
 rule run_tritonswmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_tritonswmm_evt-{event_id}_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/tritonswmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1
@@ -171,6 +173,7 @@ rule run_tritonswmm:
 rule run_swmm:
     input: "_status/b_prepare_evt-{event_id}_complete.flag"
     output: "_status/c_run_swmm_evt-{event_id}_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/synth_multi_sim/logs/sims/swmm_evt-{event_id}.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1

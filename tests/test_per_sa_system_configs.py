@@ -53,30 +53,44 @@ def _make_stub_system(target_dem_resolution: float, gpu_hardware, gpu_compilatio
 def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple], tmp_path: Path):
     """Bypass __init__ and stub TRITONSWMM_system to return per-path stubs."""
     instance = TRITONSWMM_sensitivity_analysis.__new__(TRITONSWMM_sensitivity_analysis)
-    master_cfg = SimpleNamespace(sensitivity_analysis=Path("/fake/sensitivity.csv"))
+    master_cfg = SimpleNamespace(
+        sensitivity_analysis=Path("/fake/sensitivity.csv"),
+        # partition-as-sensitivity-axis (DQ7a): _build_unique_system_targets resolves
+        # the per-row ensemble partition; None => CPU/no-GPU dedup-tuple (None, None).
+        hpc_ensemble_partition=None,
+        # preflight_validate reads these (validation.py): the partition-overlay
+        # validator early-returns unless multi_sim_run_method == "1_job_many_srun_tasks".
+        multi_sim_run_method="local",
+        toggle_sensitivity_analysis=True,
+    )
     instance.master_analysis = SimpleNamespace(
         cfg_analysis=master_cfg,
         analysis_paths=SimpleNamespace(analysis_dir=tmp_path),
+        # hpc-system-config layer: passed to resolve_gpu_target / threaded to subs.
+        cfg_hpc_system=None,
+        hpc_system_config_yaml=None,
     )
 
-    def fake_constructor(yaml_path):
+    # GPU hw/backend/modules were retired off system_config (Phase 4c) and are now
+    # passed to TRITONSWMM_system(...) as constructor kwargs, resolved per-target from
+    # the ensemble partition (sensitivity_analysis.py:1983-1988). Absorb them; on the
+    # CPU/no-hpc unit path resolve_gpu_target(None, None) => (None, None).
+    def fake_constructor(yaml_path, gpu_hardware=None, gpu_compilation_backend=None, **_kwargs):
         resolved = Path(yaml_path).resolve()
         if resolved in yaml_to_attrs:
-            target_dem_resolution, gpu_hardware, gpu_compilation_backend = yaml_to_attrs[resolved]
-            return _make_stub_system(
-                target_dem_resolution, gpu_hardware, gpu_compilation_backend, resolved
-            )
-        # Synthesized-target reconstruction path: _build_unique_system_targets
-        # writes _generated/target_{id}.yaml from cfg.model_dump(mode="json")
-        # then re-constructs TRITONSWMM_system(generated_yaml) for any non-master
-        # target (sensitivity_analysis.py:1439). Rebuild the stub from the
-        # round-tripped fields rather than failing on the unregistered path.
+            target_dem_resolution, _y_hw, _y_backend = yaml_to_attrs[resolved]
+            return _make_stub_system(target_dem_resolution, _y_hw, _y_backend, resolved)
+        # Synthesized-target reconstruction path: _build_unique_system_targets writes
+        # _generated/target_{id}.yaml from cfg.model_dump(mode="json") then reconstructs
+        # TRITONSWMM_system(generated_yaml, gpu_hardware=..., gpu_compilation_backend=...).
+        # GPU fields are no longer in the dumped system cfg (retired), so take them from
+        # the constructor kwargs rather than the (now-absent) dumped keys.
         if resolved.is_file() and resolved.parent.name == "_generated":
             dumped = yaml.safe_load(resolved.read_text())
             return _make_stub_system(
                 dumped["target_dem_resolution"],
-                dumped["gpu_hardware"],
-                dumped["gpu_compilation_backend"],
+                gpu_hardware,
+                gpu_compilation_backend,
                 resolved,
             )
         raise AssertionError(f"unexpected yaml_path: {resolved}")
@@ -320,7 +334,12 @@ def test_phase3_get_config_args_accepts_system_config_override():
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
-    builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
+    builder.analysis = SimpleNamespace(
+        analysis_config_yaml=Path("/default/analysis.yaml"),
+        # _get_config_args reads self.analysis.hpc_system_config_yaml; None => no
+        # --hpc-system-config emitted (byte-identical to the pre-hpc-config string).
+        hpc_system_config_yaml=None,
+    )
     builder.system = SimpleNamespace(system_config_yaml=Path("/default/system.yaml"))
 
     args = builder._get_config_args(system_config_yaml=Path("/override/system.yaml"))
@@ -335,7 +354,12 @@ def test_phase3_get_config_args_falls_back_to_self_system():
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     builder = SnakemakeWorkflowBuilder.__new__(SnakemakeWorkflowBuilder)
-    builder.analysis = SimpleNamespace(analysis_config_yaml=Path("/default/analysis.yaml"))
+    builder.analysis = SimpleNamespace(
+        analysis_config_yaml=Path("/default/analysis.yaml"),
+        # _get_config_args reads self.analysis.hpc_system_config_yaml; None => no
+        # --hpc-system-config emitted (byte-identical to the pre-hpc-config string).
+        hpc_system_config_yaml=None,
+    )
     builder.system = SimpleNamespace(system_config_yaml=Path("/default/system.yaml"))
 
     args = builder._get_config_args()
@@ -606,6 +630,10 @@ def test_phase4_preflight_invokes_per_sa_validator(tmp_path, monkeypatch):
         # `_validate_setup_mem_sizing` reads this; >=8000 short-circuits its
         # warning so this test stays focused on the per-SA wiring point.
         hpc_mem_allocation_for_setup_mb=8000,
+        # The partition-overlay validator (validation.py) reads this; != the
+        # single-allocation mode => it early-returns, keeping this test on the
+        # per-SA wiring point rather than the partition surface.
+        multi_sim_run_method="local",
         # Minimal analysis-side attrs touched by other preflight validators
         # are bypassed by patching validate_analysis_config and
         # validate_data_consistency to no-ops; this test exercises only the
@@ -613,9 +641,13 @@ def test_phase4_preflight_invokes_per_sa_validator(tmp_path, monkeypatch):
     )
     from hhemt import validation as vmod
 
-    monkeypatch.setattr(vmod, "validate_analysis_config", lambda cfg: ValidationResult())
+    # preflight_validate now threads cfg_hpc_system=... into validate_analysis_config;
+    # absorb new kwargs so the monkeypatched stubs stay forward-compatible.
     monkeypatch.setattr(
-        vmod, "validate_data_consistency", lambda cs, ca: ValidationResult()
+        vmod, "validate_analysis_config", lambda cfg, **_kw: ValidationResult()
+    )
+    monkeypatch.setattr(
+        vmod, "validate_data_consistency", lambda cs, ca, **_kw: ValidationResult()
     )
     result = vmod.preflight_validate(cfg_system, cfg_analysis_stub)
     assert not result.is_valid

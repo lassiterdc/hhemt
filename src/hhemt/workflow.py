@@ -752,6 +752,14 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             self.python_executable = sys.executable
         else:
             self.python_executable = configured_python
+        # Runtime retry overrides (resume-retry-resilience P1, Decision 4). Set by
+        # submit_workflow before generate_snakemake_config runs; None means "read the
+        # config knob". Stored on the builder rather than threaded through
+        # generate_snakemake_config's ~5 call sites (FQ3 SITE 5). _simulate resolves at
+        # the per-rule retries: on the simulate rules; _other at the global restart-times
+        # baseline that directive-less rules inherit.
+        self._override_hpc_restart_times_simulate: int | None = None
+        self._override_hpc_restart_times_other: int | None = None
 
         # ADR-1: the container prefix for the PROCESS rungs only (sim rungs wrap
         # inside run_simulation.py; plot/consolidate/render stay native). Empty in
@@ -769,6 +777,89 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
         else:
             self._container_process_prefix = ""
+
+    def _resolved_simulate_retries(self) -> int:
+        """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
+
+        Mirrors the ``override_hpc_total_nodes`` consume-site idiom. Returns the runtime
+        override when set, else the ``hpc_restart_times_simulate`` config knob. Emitted as
+        a per-rule ``retries:`` directive on the simulate rule blocks, which OVERRIDES the
+        global ``restart-times`` baseline (= ``hpc_restart_times_other``) under snakemake
+        9.15.0 precedence (Rule.restart_times, rules.py:158-165).
+        """
+        return (
+            self._override_hpc_restart_times_simulate
+            if self._override_hpc_restart_times_simulate is not None
+            else self.cfg_analysis.hpc_restart_times_simulate
+        )
+
+    def _sweep_failed_rules(self, analysis_dir: Path, snakemake_stderr: str = "") -> list[dict]:
+        """Enumerate permanently-failed rules after a --keep-going run (FQ3).
+
+        Layered source: (1) _status/_failed/*.json markers (precise rule_token +
+        jobid + reason; written by the v2 sim/wait/delete runners' try/finally,
+        Gotcha 30/43) for the sim class; (2) a Snakemake-stderr scan for
+        ``Error in rule (\\w+):`` to catch the process/consolidate/plot/render
+        classes that emit NO _failed/ marker (their shells do not run the v2
+        submission-sentinel try/finally). Union the two.
+        """
+        records: list[dict] = []
+        seen: set[str] = set()
+        failed_dir = analysis_dir / "_status" / "_failed"
+        if failed_dir.is_dir():
+            for marker in sorted(failed_dir.glob("*.json")):
+                try:
+                    rec = json.loads(marker.read_text())
+                except (json.JSONDecodeError, OSError):
+                    rec = {"rule_token": marker.stem, "reason": "unparseable marker"}
+                records.append(rec)
+                seen.add(rec.get("rule_token", marker.stem))
+        for m in re.finditer(r"Error in rule (\w+):", snakemake_stderr):
+            name = m.group(1)
+            if name not in seen:
+                records.append({"rule_token": name, "reason": "snakemake-log failure (no _failed marker)"})
+                seen.add(name)
+        return records
+
+    def _augment_result_with_partial_failures(self, result: dict) -> dict:
+        """Sweep permanently-failed rules into a blocking-mode submit result (FQ3).
+
+        Reads the merged stdout+stderr Snakemake log (``result["snakemake_logfile"]``,
+        written with ``stderr=subprocess.STDOUT``) and unions it with the
+        ``_status/_failed/`` markers via :meth:`_sweep_failed_rules`. Sets
+        ``result["partial_failures"]`` and forces ``success=False`` when non-empty so a
+        single non-retryable failure no longer passes silently after --keep-going let the
+        rest of the DAG complete.
+
+        Call ONLY on code paths that block on the Snakemake subprocess return (``local``;
+        ``1_job_many_srun_tasks`` with ``wait_for_completion=True``). A detached run
+        (``batch_job`` tmux, or 1-job sbatch-and-return) has no in-process completion
+        point — sweeping there reads an in-progress/empty ``_failed/`` dir and reports a
+        false-clean (captured follow-up: post-hoc get_status sweep).
+        """
+        if not isinstance(result, dict):
+            return result
+        log_text = ""
+        logfile = result.get("snakemake_logfile")
+        if logfile:
+            try:
+                log_text = Path(logfile).read_text()
+            except OSError:
+                log_text = ""
+        partial_failures = self._sweep_failed_rules(
+            self.analysis_paths.analysis_dir,
+            snakemake_stderr=log_text,
+        )
+        result["partial_failures"] = partial_failures
+        if partial_failures:
+            result["success"] = False
+            print(
+                f"[Workflow] {len(partial_failures)} rule(s) permanently failed "
+                f"(--keep-going let the rest complete): "
+                + ", ".join(r.get("rule_token", "?") for r in partial_failures),
+                flush=True,
+            )
+        return result
 
     def _get_conda_env_path(self) -> Path:
         """Get absolute path to conda environment file.
@@ -2291,6 +2382,7 @@ rule prepare_scenario:
 rule run_{model_type}:
     input: "{sim_input}"
     output: "_status/c_run_{model_type}_evt-{{event_id}}_complete.flag"
+    retries: {self._resolved_simulate_retries()}
     log: "{log_dir_str}/sims/{model_type}_evt-{{event_id}}.log"
     conda: "{conda_env_path}"
     threads: {model_threads}
@@ -2967,9 +3059,18 @@ def _per_sim_conduit_flow_sources(wildcards):
                     # so a retried payload re-run is safe. A walltime kill is a
                     # SLURM TIMEOUT (a terminal FAILED state, not hung-RUNNING),
                     # so it IS rescued by restart-times — this is what drives the
-                    # hotstart-resume sweep's automatic completion. Sourced from
-                    # cfg_analysis.hpc_restart_times (default 2; resume sets it high).
-                    "restart-times": self.cfg_analysis.hpc_restart_times,
+                    # hotstart-resume sweep's automatic completion.
+                    #
+                    # Global baseline for directive-less rules (process/consolidate/
+                    # plot/render carry no per-rule retries:, so they inherit this).
+                    # Simulate rules carry an explicit retries: {simulate} directive
+                    # that OVERRIDES this (snakemake 9.15.0 Rule.restart_times,
+                    # rules.py:158-165). Override-resolved per the FQ3 consume-site.
+                    "restart-times": (
+                        self._override_hpc_restart_times_other
+                        if self._override_hpc_restart_times_other is not None
+                        else self.cfg_analysis.hpc_restart_times_other
+                    ),
                     "default-resources": [
                         "nodes=1",
                         "mem_mb=2000",
@@ -4879,6 +4980,8 @@ exit $snakemake_status
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -4941,6 +5044,14 @@ exit $snakemake_status
         # flags without threading the kwarg through every internal signature.
         # A default-constructed instance is equivalent to passing None.
         self._active_snakemake_diagnostics = snakemake_diagnostics or SnakemakeDiagnostics()
+
+        # Stash the retry overrides on the builder (P1 Decision 4, FQ3 SITE 5) BEFORE
+        # any generate_snakefile_content/generate_snakemake_config call below, so the
+        # global-baseline (_other) and per-rule simulate (_simulate) emission sites read
+        # them. None means "use the config knob". Stored here rather than threaded
+        # through generate_snakemake_config's ~5 call sites.
+        self._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
+        self._override_hpc_restart_times_other = override_hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
@@ -5023,6 +5134,14 @@ exit $snakemake_status
                 override_hpc_total_nodes=override_hpc_total_nodes,
                 extra_sbatch_args=extra_sbatch_args,
             )
+
+            # Sweep permanently-failed rules ONLY when we actually waited on the
+            # allocation. _submit_single_job_workflow sbatch-submits and returns the
+            # job_id without blocking unless wait_for_completion=True; sweeping a
+            # still-running allocation would read an empty _status/_failed/ and report a
+            # false-clean (the detached-mode hazard — captured follow-up otherwise).
+            if wait_for_completion:
+                result = self._augment_result_with_partial_failures(result)
 
             # mechanism (b): record the planned sim-token set under _status/_queued/
             # AFTER the submit returned success (write-after-launch). 1_job_many_srun_tasks
@@ -5159,7 +5278,12 @@ exit $snakemake_status
                 snakefile_path=snakefile_path,
                 verbose=verbose,
             )
+            # Blocking path: sweep permanently-failed rules into the result so a single
+            # non-retryable failure surfaces even though --keep-going completed the rest.
+            result = self._augment_result_with_partial_failures(result)
         else:  # slurm
+            # Detached (_run_snakemake_slurm_detached returns before the run finishes):
+            # no in-process completion point to sweep — captured follow-up.
             result = self._run_snakemake_slurm_detached(
                 snakefile_path=snakefile_path,
                 wait_for_completion=wait_for_completion,
@@ -5973,6 +6097,11 @@ exit $snakemake_status
             f"        {inputs_block}\n"
             f"    output:\n"
             f'        "{flag_output_path}"\n'
+            # Fail-fast: a wait-rule observing a _failed/ marker means the original
+            # sim died; re-polling cannot change that. retries: 0 keeps the wait-rule
+            # from inheriting the global restart-times baseline (= hpc_restart_times_other)
+            # and re-dispatching the poll-runner (FQ2). Correctness, not just cost.
+            f"    retries: 0\n"
             f"    resources: cpus_per_task=1, mem_mb=100\n"
             f"    shell:\n"
             f'        "{python_exe} -m hhemt.wait_for_sentinel_runner "\n'
@@ -7008,6 +7137,7 @@ onerror:
         "{upstream_flag}",
         "_status/sa-{sa_id}_inputs.json"
     output: "{sim_outflag}"
+    retries: {self._base_builder._resolved_simulate_retries()}
     log: "{log_dir_str}/sims/{sim_rule_name}.log"
     conda: "{conda_env_path}"
     threads: {snakemake_threads}
@@ -8042,6 +8172,8 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -8104,6 +8236,13 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # (run_snakemake_local, _run_snakemake_slurm_detached,
         # _validate_batch_job_dry_run on _base_builder) pick them up.
         self._base_builder._active_snakemake_diagnostics = snakemake_diagnostics or SnakemakeDiagnostics()
+
+        # Retry overrides (P1 Decision 4, FQ3 SITE 5): the sensitivity path emits
+        # rules via _base_builder (generate_snakemake_config global baseline +
+        # _resolved_simulate_retries on the simulation_sa rules), so stash the
+        # override knobs there, mirroring the diagnostics stash above.
+        self._base_builder._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
+        self._base_builder._override_hpc_restart_times_other = override_hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method

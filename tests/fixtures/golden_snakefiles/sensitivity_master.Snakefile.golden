@@ -116,6 +116,7 @@ rule simulation_sa_0_evt_event_id_0:
         "_status/b_prepare_sa-0_evt-event_id.0_complete.flag",
         "_status/sa-0_inputs.json"
     output: "_status/c_run_tritonswmm_sa-0_evt-event_id.0_complete.flag"
+    retries: 2
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_sa_0_evt_event_id_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -240,6 +241,7 @@ rule simulation_sa_1_evt_event_id_0:
         "_status/b_prepare_sa-1_evt-event_id.0_complete.flag",
         "_status/sa-1_inputs.json"
     output: "_status/c_run_tritonswmm_sa-1_evt-event_id.0_complete.flag"
+    retries: 2
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_sa_1_evt_event_id_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -363,6 +365,7 @@ rule simulation_sa_2_evt_event_id_0:
         "_status/b_prepare_sa-2_evt-event_id.0_complete.flag",
         "_status/sa-2_inputs.json"
     output: "_status/c_run_tritonswmm_sa-2_evt-event_id.0_complete.flag"
+    retries: 2
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_sa_2_evt_event_id_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 4
@@ -487,6 +490,7 @@ rule simulation_sa_3_evt_event_id_0:
         "_status/b_prepare_sa-3_evt-event_id.0_complete.flag",
         "_status/sa-3_inputs.json"
     output: "_status/c_run_tritonswmm_sa-3_evt-event_id.0_complete.flag"
+    retries: 2
     log: "{REPO_ROOT}/test_data/norfolk_coastal_flooding/tests/cpu_config_sensitivity/logs/sims/simulation_sa_3_evt_event_id_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1

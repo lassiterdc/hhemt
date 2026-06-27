@@ -113,6 +113,7 @@ rule simulation_sa_0_evt_event_index_0:
         "_status/b_prepare_sa-0_evt-event_index.0_complete.flag",
         "_status/sa-0_inputs.json"
     output: "_status/c_run_tritonswmm_sa-0_evt-event_index.0_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_0_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -233,6 +234,7 @@ rule simulation_sa_1_evt_event_index_0:
         "_status/b_prepare_sa-1_evt-event_index.0_complete.flag",
         "_status/sa-1_inputs.json"
     output: "_status/c_run_tritonswmm_sa-1_evt-event_index.0_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_1_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 2
@@ -352,6 +354,7 @@ rule simulation_sa_2_evt_event_index_0:
         "_status/b_prepare_sa-2_evt-event_index.0_complete.flag",
         "_status/sa-2_inputs.json"
     output: "_status/c_run_tritonswmm_sa-2_evt-event_index.0_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_2_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 4
@@ -472,6 +475,7 @@ rule simulation_sa_3_evt_event_index_0:
         "_status/b_prepare_sa-3_evt-event_index.0_complete.flag",
         "_status/sa-3_inputs.json"
     output: "_status/c_run_tritonswmm_sa-3_evt-event_index.0_complete.flag"
+    retries: 2
     log: "{PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/synth_sensitivity/logs/sims/simulation_sa_3_evt_event_index_0.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     threads: 1

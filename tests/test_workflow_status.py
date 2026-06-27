@@ -1,5 +1,4 @@
 """Tests for workflow status reporting functionality."""
-import pytest
 
 
 def test_get_workflow_status_basic(norfolk_multi_sim_analysis_cached):
@@ -31,7 +30,7 @@ def test_get_workflow_status_basic(norfolk_multi_sim_analysis_cached):
         assert 0.0 <= phase.progress <= 1.0
 
     # Verify recommendation fields
-    assert status.recommended_mode in ['fresh', 'resume', 'overwrite']
+    assert status.recommended_mode in ['fresh', 'resume']
     assert status.current_phase != ""
     assert status.recommendation != ""
 
@@ -86,8 +85,9 @@ def test_workflow_status_recommendations(norfolk_multi_sim_analysis_cached):
 
     # Verify recommendation logic consistency
     if status.consolidation.complete:
-        # All done - should recommend overwrite
-        assert status.recommended_mode == "overwrite"
+        # All done - 'fresh' is the only actionable run mode (resume has nothing
+        # left); 'overwrite' is not a real translate_mode input.
+        assert status.recommended_mode == "fresh"
         assert status.current_phase == "complete"
     elif not status.setup.complete:
         # Setup not done - should recommend fresh
