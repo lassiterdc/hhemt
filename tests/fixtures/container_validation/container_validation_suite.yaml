@@ -28,6 +28,10 @@
 # node (the SIF's AMPERE80 arch); an a6000 node needs the AMPERE86 sibling SIF.
 #
 # Sensitivity rows: see the sibling `container_validation_suite.csv`.
+# NOTE: sensitivity-CSV compute columns MUST use the prefixed `analysis.{field}` form
+# (analysis.run_mode, analysis.n_gpus, ...). Bare column names silently do NOT apply
+# per-sub (the base default wins), which would run the CUDA SIF in CPU mode with no
+# --nv and fail. Verified on Rivanna 2026-06-27 (build-only sub-config inspection).
 
 suite:
   sensitivity_csv: container_validation_suite.csv
