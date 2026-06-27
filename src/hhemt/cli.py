@@ -600,14 +600,16 @@ def cleanup_orphans_command(
         n_dirs = len(result["dirs"])
         n_flags = len(result["status_flags"])
         n_groups = len(result["datatree_groups"])
-        total = n_dirs + n_flags + n_groups
+        n_fingerprints = len(result["input_fingerprints"])
+        total = n_dirs + n_flags + n_groups + n_fingerprints
 
         if total == 0:
             console.print("[green]No orphan sub-analysis artifacts found.[/green]")
         elif dry_run:
             console.print(
                 f"[yellow]Found orphans (dry-run; nothing deleted): "
-                f"{n_dirs} dir(s), {n_flags} status flag(s), {n_groups} datatree group(s).[/yellow]"
+                f"{n_dirs} dir(s), {n_flags} status flag(s), {n_groups} datatree group(s), "
+                f"{n_fingerprints} input-fingerprint(s).[/yellow]"
             )
             for p in result["dirs"]:
                 console.print(f"  dir: {p}")
@@ -615,6 +617,8 @@ def cleanup_orphans_command(
                 console.print(f"  flag: {p}")
             for sa_id in result["datatree_groups"]:
                 console.print(f"  datatree-group: sa_{sa_id}")
+            for p in result["input_fingerprints"]:
+                console.print(f"  input-fingerprint: {p}")
         else:
             zarr_removed = result.get("sensitivity_datatree_removed", False)
             master_flag_removed = result.get("master_flag_removed", False)
@@ -626,7 +630,8 @@ def cleanup_orphans_command(
             extras_msg = f" plus {' and '.join(extras)}" if extras else ""
             console.print(
                 f"[green]Deleted {n_dirs} orphan dir(s), {n_flags} status flag(s), "
-                f"and {n_groups} datatree group(s){extras_msg}.[/green]"
+                f"{n_groups} datatree group(s), and {n_fingerprints} input-fingerprint(s)"
+                f"{extras_msg}.[/green]"
             )
 
         raise typer.Exit(0)
