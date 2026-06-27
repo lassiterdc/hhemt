@@ -1421,6 +1421,40 @@ def _validate_setup_mem_sizing(
         )
 
 
+def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "ValidationResult") -> None:
+    """ADR-1 preflight (R10): container mode requires a resolvable ContainerSpec.
+
+    Accumulates into the shared ValidationResult (the established preflight
+    convention) rather than raising directly, so a container-config error is
+    reported alongside any co-occurring config errors via raise_if_invalid().
+    Reads the container block via getattr (no config.hpc_system import — the
+    deliberate Any-typed decoupling at validation.py:876). No-op in native mode.
+    """
+    if getattr(cfg_analysis, "execution_environment", "native") != "container":
+        return
+    cspec = getattr(cfg_hpc_system, "container", None)
+    if cspec is None:
+        result.add_error(
+            field="execution_environment",
+            message=(
+                "execution_environment='container' but no hpc_system_config.container "
+                "block is declared. Add a `container:` block (sif_path, gpu_flag, ...) to "
+                "the hpc_system_config, or set execution_environment='native'."
+            ),
+            fix_hint="Declare hpc_system_config.container or set execution_environment='native'.",
+        )
+        return
+    if not cspec.sif_path:
+        result.add_error(
+            field="container.sif_path",
+            message=(
+                "container mode requires hpc_system_config.container.sif_path (the "
+                "on-cluster absolute path to the transferred, signed SIF)."
+            ),
+            fix_hint="Set hpc_system_config.container.sif_path to the transferred signed SIF path.",
+        )
+
+
 # ============================================================================
 # Combined Preflight Validation
 # ============================================================================
@@ -1495,5 +1529,9 @@ def preflight_validate(
     if report_cfg is not None:
         _check_interactive_dependencies(report_cfg, result)
         _check_static_backend_kaleido_available(report_cfg, result)
+
+    # ADR-1 (R10): container-mode requires a resolvable ContainerSpec/sif_path.
+    # No-op in native mode (byte-identical to today's preflight).
+    _validate_container_config(cfg_analysis, cfg_hpc_system, result)
 
     return result

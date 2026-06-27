@@ -402,6 +402,19 @@ class analysis_config(cfgBaseModel):
         ),
     )
 
+    execution_environment: Literal["native", "container"] = Field(
+        "native",
+        description=(
+            "ADR-1: 'native' runs compile+sim+processing on the host (today's "
+            "behavior, byte-identical); 'container' wraps the innermost sim {exe} and "
+            "the process_{model} runners in `apptainer exec {sif}`, where the cluster "
+            "SIF is described by hpc_system_config.container (ContainerSpec). Additive "
+            "default-valued field so pre-container configs load as native. The "
+            "native|container SELECTOR is experiment-scoped (C-HPC-FIELD-PLACEMENT); "
+            "the cluster-coupled 'how to exec' lives on ContainerSpec."
+        ),
+    )
+
     # CLEANUP / FORCE-RERUN POLICY (cleanup-rerun-delete-redesign Phase 1)
     clear_raw: ClearRawValue = Field(
         "none",
