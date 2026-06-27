@@ -143,10 +143,14 @@ def _build_case(
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
-            # Snakemake restart-times: high for resume so a walltime-killed sim auto-resumes
+            # Snakemake retries: high for resume so a walltime-killed sim auto-resumes
             # to completion within ONE analysis.run() (no manual re-run loop); 2 for clean
-            # (clean has a single-allocation walltime and is never killed).
-            "hpc_restart_times": 20 if resume else 2,
+            # (clean has a single-allocation walltime and is never killed). The simulate
+            # knob drives the per-rule retries: on the sim rules; _other seeds the global
+            # baseline for the idempotent non-sim rules (old single value seeds both,
+            # preserving the prior global-restart-times semantics).
+            "hpc_restart_times_simulate": 20 if resume else 2,
+            "hpc_restart_times_other": 20 if resume else 2,
             # base partitions REQUIRED for SLURM resource-block generation (workflow.py:1044):
             # the sim resource block reads hpc_ensemble_partition (CSV overrides it per-row);
             # setup/prepare/process/consolidate jobs read hpc_setup_and_analysis_processing_partition.
@@ -211,7 +215,7 @@ def resume_case(
 
     ``runtime_min_by_sa``: per-``sa_id`` full-completion wallclock (minutes) measured
     from the CLEAN sweep; sizes each backend's resume walltime to ~T/3 so the kill
-    fires and completion lands within ``hpc_restart_times`` from a single ``.run()``.
+    fires and completion lands within ``hpc_restart_times_simulate`` from a single ``.run()``.
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_resume"``.
