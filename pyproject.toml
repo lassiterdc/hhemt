@@ -58,6 +58,11 @@ dependencies = [
     # `pip install hhemt` with no extras must be able to orchestrate a local workflow.
     # The SLURM executor/storage plugins stay in the `hpc` extra (HPC-only).
     "snakemake==9.15.0",
+    # ro-crate-py is a CORE runtime dependency: consolidation embeds a
+    # deterministic RO-Crate provenance core into every analysis DataTree and
+    # writes a co-located ro-crate-metadata.json sidecar (ADR-5/6/7). Pinned for
+    # byte-deterministic serialization; its footprint does not touch the pydantic pin.
+    "rocrate==0.15.0",
 ]
 requires-python = ">= 3.11, < 3.13"
 
