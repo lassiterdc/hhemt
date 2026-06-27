@@ -75,11 +75,16 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # Verify the pinned source hash (ADR-2 pin contract; captured 2026-06-27):
     echo "67435fdb2560f897882e69fead171d38e7f44a6dfe1d3c90506f549a943050b8  openmpi-${OMPI_VER}.tar.gz" | sha256sum -c -
     tar xf openmpi-${OMPI_VER}.tar.gz && cd openmpi-${OMPI_VER}
+    # NOTE: --disable-wrapper-rpath was DROPPED -- OpenMPI 5.0.7 enables wrapper
+    # runpath by default and configure errors with "--enable-wrapper-runpath cannot
+    # be selected with --disable-wrapper-rpath". The default runpath bakes
+    # /opt/openmpi/lib into the mpicc/mpic++ wrappers, which is correct for the
+    # fixed in-SIF path; %environment LD_LIBRARY_PATH backs it up (build log
+    # 2026-06-27, first build attempt).
     ./configure --prefix=/opt/openmpi \
         --with-pmix=/usr --with-cuda=/usr/local/cuda \
         --without-ucx --without-ofi --without-hcoll \
-        --with-slurm --enable-shared --with-prrte=internal \
-        --disable-wrapper-rpath
+        --with-slurm --enable-shared --with-prrte=internal
     make -j"$(nproc)" && make install
     cd /tmp && rm -rf openmpi-* *.tar.gz
     export PATH=/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
