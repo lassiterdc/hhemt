@@ -103,6 +103,17 @@ def main():
         default=None,
         help="Sub-analysis id for the flag sidecar payload (sensitivity)",
     )
+    parser.add_argument(
+        "--target-partition",
+        type=str,
+        default=None,
+        help=(
+            "Canonical partition for the build target (parity with setup_workflow / "
+            "run_simulation). The Snakefile emits it for every rule built from the shared "
+            "UniqueSystemTarget's config args, including prepare; it drives GPU-backend "
+            "resolution. Falls back to the analysis config's hpc_ensemble_partition when absent."
+        ),
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -146,8 +157,16 @@ def main():
         cfg_hpc = (
             load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
         )
-        _ensemble_partition = load_analysis_config(args.analysis_config).hpc_ensemble_partition
-        gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, _ensemble_partition)
+        # The Snakefile's prepare rule carries --target-partition (the shared
+        # UniqueSystemTarget's canonical partition) just like setup/sim — prefer it; fall
+        # back to the per-sub analysis config's hpc_ensemble_partition for direct CLI use
+        # or a target without an explicit partition. resolve_gpu_target returns (None, None)
+        # for null selectors, so CPU/local prepares stay byte-identical.
+        _partition = (
+            args.target_partition
+            or load_analysis_config(args.analysis_config).hpc_ensemble_partition
+        )
+        gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, _partition)
         system = TRITONSWMM_system(
             args.system_config,
             gpu_hardware=gpu_hardware,
