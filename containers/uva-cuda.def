@@ -123,11 +123,19 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
         && git submodule update --init --recursive
     mkdir -p build && cd build
+    # Use ABSOLUTE wrapper paths, not bare `mpic++`: CMake resolved the bare name
+    # relative to the build dir ("/opt/triton/build/mpic++ is not a full path",
+    # build attempt 3) instead of PATH-searching it under fakeroot. Fail fast with a
+    # listing if the wrappers are somehow absent.
+    test -x /opt/openmpi/bin/mpic++ && test -x /opt/openmpi/bin/mpicc || { \
+        echo "FATAL: OpenMPI wrappers missing under /opt/openmpi/bin"; ls -la /opt/openmpi/bin; exit 1; }
     cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
           -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF \
-          -DCMAKE_CUDA_COMPILER=nvcc -DCMAKE_CXX_COMPILER=mpic++ -DCMAKE_C_COMPILER=mpicc \
+          -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
+          -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
+          -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
           /opt/triton
