@@ -120,6 +120,32 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
 
 @pytest.mark.requires_snakemake_subprocess
 @pytest.mark.slow
+def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_completed):
+    """ADR-4 across-family (within_family=False): the verdict NEVER asserts equality.
+
+    Whether or not the subs are bit-identical, the across-family verdict is
+    passed=True and its summary discloses the bounded divergence (the boundary IS
+    the contribution). The persisted artifact + verdict JSON are still written
+    under {analysis_dir}/eda/, and the verdict's name/contract is unchanged — only
+    passed/summary/details semantics branch on within_family."""
+    analysis = synthetic_sensitivity_completed.master_analysis
+    result = check_cross_sim_identity(analysis, within_family=False)
+    assert result.skipped is False
+    assert result.verdict is not None
+    # Disclosed divergence is always a PASS under ADR-4 across-family semantics.
+    assert result.verdict.passed is True, result.verdict.summary
+    assert "haracterized divergence" in result.verdict.summary
+    assert result.verdict.name == "Cross-sim byte-identity"
+    assert result.artifact_path is not None and result.artifact_path.exists()
+    # The persisted verdict JSON round-trips the (passed=True) across-family verdict.
+    verdict_json = result.artifact_path.parent / f"{result.plot_id}.verdict.json"
+    assert verdict_json.exists()
+    vp = json.loads(verdict_json.read_text())
+    assert vp["passed"] is True
+
+
+@pytest.mark.requires_snakemake_subprocess
+@pytest.mark.slow
 def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
     """A persisted EDA verdict is merged into validate_analysis()'s ValidationReport."""
     from hhemt.analysis_validation import validate_analysis
