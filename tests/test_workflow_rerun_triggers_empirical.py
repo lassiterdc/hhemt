@@ -25,6 +25,14 @@ pytestmark = [
     pytest.mark.skipif(
         tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
     ),
+    pytest.mark.skipif(
+        tst_ut.compile_toolchain_unavailable(),
+        reason=(
+            "TRITON-SWMM CPU compile toolchain (cmake + mpic++) not on PATH. "
+            "These tests compile inline via submit_workflow(compile_TRITON_SWMM=True); "
+            "run them under the hhemt conda env."
+        ),
+    ),
 ]
 
 

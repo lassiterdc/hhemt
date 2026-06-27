@@ -1220,6 +1220,25 @@ def _build_peak_flood_depth_figure(
         note="dry-cell legend swatch (dummy Scatter, no plotted points)",
     ) as a:
         a.add_channel("color", dry_legend_ref, cmap=map_cfg.dry_fill_color)
+        # Legend-togglability invariant (tests/test_synth_legend_toggle_audit.py): a
+        # showlegend=True trace that plots no data must share a legendgroup with a peer
+        # so the legend click toggles a grouped element. The grey dry base-fill is an
+        # add_shape(layer="below") (occlusion fix, 04faa40) and emits no legend entry,
+        # so pair the visible swatch with an invisible peer trace in legendgroup="dry".
+        fig.add_trace(
+            go.Scatter(
+                x=[None],
+                y=[None],
+                mode="markers",
+                marker=dict(color=map_cfg.dry_fill_color, opacity=0),
+                legendgroup="dry",
+                showlegend=False,
+                hoverinfo="skip",
+                name="dry_fill_peer",
+            ),
+            row=1,
+            col=1,
+        )
         fig.add_trace(
             go.Scatter(
                 x=[None],
@@ -1229,6 +1248,7 @@ def _build_peak_flood_depth_figure(
                     color=map_cfg.dry_fill_color, symbol="square", size=12, line=dict(color="darkgrey", width=0.5)
                 ),
                 name=f"≤ {map_cfg.dry_threshold_m:g} m (dry)",
+                legendgroup="dry",
                 showlegend=True,
                 hoverinfo="skip",
             ),

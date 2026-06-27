@@ -686,7 +686,12 @@ class TRITONSWMM_sim_post_processing:
             "Per-column slowest-rank cumulative cost. 'Total' / 'Simulation' / 'Init' "
             "equal wallclock elapsed from triton.exe start through final checkpoint "
             "barrier (TRITON synchronizes ranks before every checkpoint per "
-            "triton.h:2151-2162). Category columns ('Compute','MPI','IO','SWMM',"
+            "triton.h:2151-2162). On a hotstart-resumed sim these columns are the "
+            "CUMULATIVE wallclock across every allocation, because _aggregate_perf_tseries "
+            "concatenates all preserved performance{N}.txt checkpoints and detects "
+            "the per-resume timer reset (process_simulation.py resume-reset branch); "
+            "they are therefore NOT the final-allocation-only figure that the SLURM "
+            "Elapsed field reports. Category columns ('Compute','MPI','IO','SWMM',"
             "'Resize','Other') are upper bounds on the per-category contribution "
             "to wallclock — slowest-rank category cost, NOT per-rank means."
         )
@@ -1136,7 +1141,34 @@ class TRITONSWMM_sim_post_processing:
         The ``clear raw triton outputs deferred until last allocation``
         stipulation governs WHEN this helper may fire — callers MUST gate the
         invocation so it only fires after the final allocation completes.
+
+        Raises:
+            RuntimeError: when invoked while the owning analysis is still
+                mid-multi-allocation (``analysis_log.multi_allocation_in_progress``
+                is True). Deleting raw outputs before the final allocation strips
+                the pre-resume ``performance{N}.txt`` checkpoints that the V0008
+                ``_aggregate_perf_tseries`` aggregator concatenates, silently
+                corrupting cumulative-wallclock metrics. Defense-in-depth backstop
+                for the ``clear raw triton outputs deferred until last allocation``
+                stipulation.
         """
+        # Defense-in-depth runtime guard (resume-retry-resilience P3): refuse a
+        # raw-output delete while the analysis is mid-multi-allocation. The field
+        # is unset (None) on legacy logs and on single-allocation runs -> coalesce
+        # to not-in-progress, so the guard fires ONLY when an active multi-allocation
+        # workflow explicitly set it True and has not yet cleared it post-consolidation.
+        _mip = getattr(self._analysis.log, "multi_allocation_in_progress", None)
+        if _mip is not None and _mip.get() is True:
+            raise RuntimeError(
+                f"_clear_raw_outputs(model_type={model_type!r}) invoked while the "
+                "analysis is mid-multi-allocation (multi_allocation_in_progress=True). "
+                "This is forbidden because removing pre-resume performance{N}.txt "
+                "checkpoints would corrupt the V0008 per-checkpoint wallclock "
+                "aggregation. See library/docs/stipulations/hhemt/clear raw triton "
+                "outputs deferred until last allocation.md. Clearing is only safe "
+                "after the final-allocation consolidation succeeds and clears the flag."
+            )
+
         from hhemt.du_sentinels import restamp_parent_sentinels
 
         _OUT_DIR_BY_MODEL = {

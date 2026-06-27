@@ -11,6 +11,14 @@ Per cleanup-rerun-delete-redesign Phase 3 + the user-corrected helper
 semantics (the coupled-SWMM ``hydraulics.rpt`` lives at
 ``out_tritonswmm/swmm/hydraulics.rpt`` — a subdirectory file — so the
 ``swmm/`` subdir is preserved by the helper to keep the .rpt alive).
+
+Also pins the resume-retry-resilience Phase 3 defense-in-depth guard: when the
+analysis-level ``multi_allocation_in_progress`` log field is True,
+``_clear_raw_outputs`` raises ``RuntimeError`` rather than stripping pre-resume
+``performance{N}.txt`` checkpoints (the V0008 aggregator depends on them). The
+guard is an INERT backstop in production today — its set/clear wiring is deferred
+(see the plan follow-up) — so these tests drive the field directly rather than
+through a real two-allocation ``batch_job`` run (unrunnable in this worktree).
 """
 from __future__ import annotations
 
@@ -44,8 +52,35 @@ def _seed_tritonswmm_out_dir(out_dir: Path) -> None:
     (out_dir / "log.out").write_text("log-content\n")
 
 
-def _make_proc(out_dir_attr: str, out_dir_path: Path, swmm_out_file: Path | None = None) -> object:
-    """Build a minimal stub satisfying ``_clear_raw_outputs``'s reads."""
+class _GetLogField:
+    """LogField-shaped stub exposing only ``.get()`` (what the P3 guard reads).
+
+    ``value=None`` models the common legacy/unset case (a default-factory
+    ``LogField`` whose ``.get()`` returns None); ``value=True`` arms the
+    multi-allocation guard; ``value=False`` is the explicit not-in-progress case.
+    """
+
+    def __init__(self, value: bool | None = None) -> None:
+        self._value = value
+
+    def get(self) -> bool | None:  # pragma: no cover - trivial
+        return self._value
+
+
+def _make_proc(
+    out_dir_attr: str,
+    out_dir_path: Path,
+    swmm_out_file: Path | None = None,
+    *,
+    multi_allocation_in_progress: bool | None = None,
+) -> object:
+    """Build a minimal stub satisfying ``_clear_raw_outputs``'s reads.
+
+    ``multi_allocation_in_progress`` seeds the analysis-level log field the P3
+    defense-in-depth guard reads. Default ``None`` (unset) keeps the guard inert
+    so the preservation tests below behave exactly as before; pass ``True`` to
+    arm the guard.
+    """
     scen_paths = SimpleNamespace(
         out_tritonswmm=None,
         out_triton=None,
@@ -71,8 +106,13 @@ def _make_proc(out_dir_attr: str, out_dir_path: Path, swmm_out_file: Path | None
     # The PATTERN-A/B restamp edits in process_simulation.py read
     # self._analysis.analysis_paths.analysis_dir; point it at the parent of the
     # seeded out_dir so restamp_parent_sentinels no-ops (no _status/ tree there).
+    # The analysis-level log carries multi_allocation_in_progress, which the P3
+    # _clear_raw_outputs guard reads via self._analysis.log.
     proc._analysis = SimpleNamespace(
-        analysis_paths=SimpleNamespace(analysis_dir=out_dir_path.parent)
+        analysis_paths=SimpleNamespace(analysis_dir=out_dir_path.parent),
+        log=SimpleNamespace(
+            multi_allocation_in_progress=_GetLogField(multi_allocation_in_progress)
+        ),
     )
     return proc
 
@@ -186,3 +226,49 @@ def test_should_clear_raw_for_model(resolved, model_type, expected):
         TRITONSWMM_sim_post_processing._should_clear_raw_for_model(resolved, model_type)
         is expected
     )
+
+
+# ---------------------------------------------------------------------------
+# resume-retry-resilience P3 — multi-allocation defense-in-depth guard
+# ---------------------------------------------------------------------------
+
+
+def test_clear_raw_guard_raises_when_mid_multi_allocation(tmp_path: Path):
+    """When ``multi_allocation_in_progress`` is True, ``_clear_raw_outputs``
+    raises ``RuntimeError`` BEFORE deleting anything — the pre-resume
+    ``performance{N}.txt`` checkpoints the V0008 aggregator needs survive."""
+    out_dir = tmp_path / "out_tritonswmm"
+    _seed_tritonswmm_out_dir(out_dir)
+
+    proc = _make_proc("out_tritonswmm", out_dir, multi_allocation_in_progress=True)
+    with pytest.raises(RuntimeError, match="clear raw triton outputs deferred"):
+        TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
+
+    # Guard fired before the _CLEAR_RAW_DELETE_SUBDIRS walk — nothing deleted.
+    for sub in ("H", "QX", "QY", "MH", "bin", "cfg", "performance"):
+        assert (out_dir / sub).exists(), f"{sub}/ must survive when the guard fires"
+
+
+def test_clear_raw_guard_silent_when_not_mid_multi_allocation(tmp_path: Path):
+    """``multi_allocation_in_progress=False`` does NOT arm the guard; the normal
+    delete proceeds."""
+    out_dir = tmp_path / "out_tritonswmm"
+    _seed_tritonswmm_out_dir(out_dir)
+
+    proc = _make_proc("out_tritonswmm", out_dir, multi_allocation_in_progress=False)
+    # Should not raise.
+    TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
+    assert not (out_dir / "H").exists(), "delete must proceed when the guard is not armed"
+
+
+def test_clear_raw_guard_inert_when_field_unset(tmp_path: Path):
+    """Legacy/unset case: a default ``LogField`` whose ``.get()`` returns None
+    coalesces to not-in-progress, so the guard stays inert and the delete runs.
+    This is the production posture today (the set/clear wiring is deferred)."""
+    out_dir = tmp_path / "out_tritonswmm"
+    _seed_tritonswmm_out_dir(out_dir)
+
+    proc = _make_proc("out_tritonswmm", out_dir, multi_allocation_in_progress=None)
+    # Should not raise.
+    TRITONSWMM_sim_post_processing._clear_raw_outputs(proc, "tritonswmm")  # type: ignore[arg-type]
+    assert not (out_dir / "H").exists(), "delete must proceed when the field is unset"
