@@ -87,9 +87,7 @@ class TRITONSWMM_analysis_post_processing:
             if f is None or not f.exists():
                 continue
             tree_dict[tree_path] = self._open(f)
-        tree_dict["/"] = xr.Dataset(
-            attrs={"analysis_id": str(self._analysis.cfg_analysis.analysis_id)}
-        )
+        tree_dict["/"] = xr.Dataset(attrs={"analysis_id": str(self._analysis.cfg_analysis.analysis_id)})
         return xr.DataTree.from_dict(tree_dict)
 
     CONSOLIDATION_VERSION = 1
@@ -112,9 +110,7 @@ class TRITONSWMM_analysis_post_processing:
         """
         fname_out = self._analysis.analysis_paths.analysis_datatree_zarr
         if fname_out is None:
-            raise ValueError(
-                "analysis_datatree_zarr path is not configured on AnalysisPaths."
-            )
+            raise ValueError("analysis_datatree_zarr path is not configured on AnalysisPaths.")
 
         # Per D5: .exists() alone is an unreliable completion signal — a
         # present-but-corrupt zarr (a write that crashed mid-stream) .exists()
@@ -133,6 +129,7 @@ class TRITONSWMM_analysis_post_processing:
             return fname_out
         if fname_out.exists() and not _log_complete:
             from hhemt.utils import fast_rmtree
+
             fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
             if verbose:
                 print(f"DataTree zarr present at {fname_out} but log incomplete — rebuilding (treating as corrupt).")
@@ -141,9 +138,7 @@ class TRITONSWMM_analysis_post_processing:
         tree_dict: dict[str, xr.Dataset] = {}
         for mode, tree_path in self._MODE_TO_TREE_PATH.items():
             scen_path_attr = self._MODE_CONFIG[mode][0]
-            first_scen = TRITONSWMM_scenario(
-                self._analysis.df_sims.index[0], self._analysis
-            )
+            first_scen = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
             if getattr(first_scen.scen_paths, scen_path_attr) is None:
                 continue
             ds = self._retrieve_combined_output(mode)
@@ -158,11 +153,19 @@ class TRITONSWMM_analysis_post_processing:
             }
         )
         tree = xr.DataTree.from_dict(tree_dict)
-        apply_global_attributes(
-            tree, analysis_id=str(self._analysis.cfg_analysis.analysis_id)
-        )
+        apply_global_attributes(tree, analysis_id=str(self._analysis.cfg_analysis.analysis_id))
+
+        from hhemt.cf_conventions import apply_provenance_core
+        from hhemt.provenance import emit_provenance
+
+        _core_json, _graph_json = emit_provenance(self._analysis)
+        apply_provenance_core(tree, core_json_str=_core_json)
 
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+
+        from hhemt.metadata import write_rocrate_sidecar
+
+        write_rocrate_sidecar(self._analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 
         self._analysis._refresh_log()
         if hasattr(self._analysis.log, "datatree_consolidation_complete"):
@@ -170,9 +173,7 @@ class TRITONSWMM_analysis_post_processing:
         if hasattr(self._analysis.log, "consolidation_version"):
             self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
         elapsed_s = time.time() - start_time
-        self._analysis.log.add_sim_processing_entry(
-            fname_out, get_file_size_MiB(fname_out), elapsed_s, True
-        )
+        self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
         # Write the analysis-level DU sentinel. Compare-and-write semantics in
         # du_sentinels.write_du_sentinel preserve mtime on idempotent re-runs,
@@ -201,9 +202,7 @@ class TRITONSWMM_analysis_post_processing:
         """
         path = self._analysis.analysis_paths.analysis_datatree_zarr
         if path is None:
-            raise ValueError(
-                "analysis_datatree_zarr path is not configured on AnalysisPaths."
-            )
+            raise ValueError("analysis_datatree_zarr path is not configured on AnalysisPaths.")
         # Render-phase readers may hold a long-lived in-memory log constructed
         # before a concurrent consolidate job set the flag. Reload from disk so
         # the gate reflects on-disk truth, not a possibly-stale in-memory value.
@@ -221,9 +220,7 @@ class TRITONSWMM_analysis_post_processing:
                 "DataTree zarr not present (log.datatree_consolidation_complete is "
                 "False or unset). Run consolidate_to_datatree() first."
             )
-        return xr.open_datatree(
-            path, engine="zarr", chunks="auto", consolidated=False
-        )
+        return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
 
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
@@ -237,9 +234,7 @@ class TRITONSWMM_analysis_post_processing:
             "triton_only", "swmm_only_node", "swmm_only_link"
         """
         if mode not in self._MODE_CONFIG:
-            raise ValueError(
-                f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}"
-            )
+            raise ValueError(f"Unknown mode: {mode}. Valid modes: {list(self._MODE_CONFIG.keys())}")
 
         scen_path_attr = self._MODE_CONFIG[mode][0]
 
@@ -278,21 +273,15 @@ class TRITONSWMM_analysis_post_processing:
             ds = xr.open_dataset(summary_file, **open_kwargs)
             lst_ds.append(ds)
 
-        ds_combined_outputs = xr.concat(
-            lst_ds, dim="event_iloc", combine_attrs="drop_conflicts"
-        )
+        ds_combined_outputs = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts")
 
         from hhemt.scenario import compute_event_id_slug
 
         event_ids = [
-            compute_event_id_slug(
-                self._analysis._retrieve_weather_indexer_using_integer_index(ei)
-            )
+            compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
             for ei in self._analysis.df_sims.index
         ]
-        ds_combined_outputs = ds_combined_outputs.assign_coords(
-            event_id=("event_iloc", event_ids)
-        )
+        ds_combined_outputs = ds_combined_outputs.assign_coords(event_id=("event_iloc", event_ids))
         return ds_combined_outputs  # type: ignore
 
     def _chunk_for_writing(
@@ -367,9 +356,7 @@ class TRITONSWMM_analysis_post_processing:
     # TRITON-SWMM coupled model accessors
     @property
     def tritonswmm_TRITON_summary(self):
-        return self._open(
-            self._analysis.analysis_paths.output_tritonswmm_triton_summary
-        )
+        return self._open(self._analysis.analysis_paths.output_tritonswmm_triton_summary)
 
     @property
     def tritonswmm_SWMM_node_summary(self):
@@ -381,9 +368,7 @@ class TRITONSWMM_analysis_post_processing:
 
     @property
     def tritonswmm_performance_summary(self):
-        return self._open(
-            self._analysis.analysis_paths.output_tritonswmm_performance_summary
-        )
+        return self._open(self._analysis.analysis_paths.output_tritonswmm_performance_summary)
 
     # TRITON-only model accessors
     @property
@@ -392,9 +377,7 @@ class TRITONSWMM_analysis_post_processing:
 
     @property
     def triton_only_performance_summary(self):
-        return self._open(
-            self._analysis.analysis_paths.output_triton_only_performance_summary
-        )
+        return self._open(self._analysis.analysis_paths.output_triton_only_performance_summary)
 
     # SWMM-only model accessors
     @property
@@ -416,6 +399,7 @@ class TRITONSWMM_analysis_post_processing:
                 already_written = True
         return already_written
 
+
 def prev_power_of_two(n: int | float) -> int:
     n = int(n)
     if n < 1:
@@ -429,14 +413,10 @@ def ds_memory_req_MiB(ds):
     return ds.nbytes / 1024**2
 
 
-def make_sure_ds_are_compatible_for_concatenation(
-    ds_ref, ds_comp, lst_common_dims=["x", "y"]
-):
+def make_sure_ds_are_compatible_for_concatenation(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
     all_problems = ""
     problems = check_matching_dimensions(ds_ref, ds_comp)
-    matching_dim_problems = check_for_matching_dim_values(
-        ds_ref, ds_comp, lst_common_dims
-    )
+    matching_dim_problems = check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims)
     all_problems += problems + matching_dim_problems
     # print(all_problems)
     return all_problems
@@ -468,9 +448,7 @@ def check_for_matching_dim_values(ds_ref, ds_comp, lst_common_dims=["x", "y"]):
         ar_dif = ds_ref[dim].values - ds_comp[dim].values
         n_diff = ((ar_dif) != 0).sum()
         if n_diff > 0:
-            problems += (
-                f"| WARNING: {dim} values are not all equal in {f_ref} and {f_comp} |\n"
-            )
+            problems += f"| WARNING: {dim} values are not all equal in {f_ref} and {f_comp} |\n"
     # print(problems)
     return problems
 
@@ -506,21 +484,9 @@ def return_lst_dic_of_unique_storm_idxs(ds):
         datavar = "total_inflow_vol_10e6_ltr"
         idx_loc = dict(node_id=1)
     if "x" in ds.coords and "y" in ds.coords:
-        idx_storms = (
-            ds.isel(idx_loc)[datavar]
-            .to_dataframe()
-            .reset_index()
-            .set_index(lst_coords)
-            .index.unique()
-        )
+        idx_storms = ds.isel(idx_loc)[datavar].to_dataframe().reset_index().set_index(lst_coords).index.unique()
     else:
-        idx_storms = (
-            ds.isel(idx_loc)[datavar]
-            .to_dataframe()
-            .reset_index()
-            .set_index(lst_coords)
-            .index.unique()
-        )
+        idx_storms = ds.isel(idx_loc)[datavar].to_dataframe().reset_index().set_index(lst_coords).index.unique()
     idx_names = idx_storms.names
     lst_dic_storm_sel = []
     for idx in idx_storms:

@@ -46,6 +46,19 @@ def compile_toolchain_unavailable() -> bool:
     return shutil.which("cmake") is None or shutil.which("mpic++") is None
 
 
+def require_compile_tier() -> bool:
+    """Return True when the compile tier must RUN (a skip is a hard failure).
+
+    Opt-in via ``HHEMT_REQUIRE_COMPILE_TIER=1``. Default off, so every
+    toolchain-less environment (CI pip job, uv ``.venv``, a dev box without the
+    conda env) keeps the graceful skip. The authoritative gating invocation
+    (the conda recipe and the future toolchain-bearing CI job) sets the var, so
+    in that one environment a skip of the coupled-compile tier becomes a loud
+    failure instead of a silently-passing ``N skipped``.
+    """
+    return os.environ.get("HHEMT_REQUIRE_COMPILE_TIER") == "1"
+
+
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):
     """Write Snakefile content to the analysis directory and return the path."""
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"
@@ -125,6 +138,7 @@ def _verbose_detail_block(result, key: str = "scenario_dir") -> str:
 def assert_system_setup(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_system_setup."""
     from hhemt.analysis_validation import check_system_setup
+
     result = check_system_setup(analysis)
     if not result.passed:
         msg = result.summary
@@ -143,6 +157,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
         If True, append per-scenario fail list to the failure message.
     """
     from hhemt.analysis_validation import check_scenarios_setup
+
     result = check_scenarios_setup(analysis)
     if not result.passed:
         msg = result.summary
@@ -156,6 +171,7 @@ def assert_scenarios_setup(analysis: TRITONSWMM_analysis, verbose: bool = False)
 def assert_scenarios_run(analysis: TRITONSWMM_analysis, verbose: bool = False):
     """Pytest wrapper around analysis_validation.check_scenarios_run."""
     from hhemt.analysis_validation import check_scenarios_run
+
     result = check_scenarios_run(analysis)
     if not result.passed:
         msg = result.summary
@@ -176,6 +192,7 @@ def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "bot
         Forwarded to check_timeseries_processed.
     """
     from hhemt.analysis_validation import check_timeseries_processed
+
     result = check_timeseries_processed(analysis, which=which)
     if not result.passed:
         msg = result.summary
@@ -189,6 +206,7 @@ def assert_timeseries_processed(analysis: TRITONSWMM_analysis, which: str = "bot
 def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_analysis_summaries_created."""
     from hhemt.analysis_validation import check_analysis_summaries_created
+
     result = check_analysis_summaries_created(analysis)
     if not result.passed:
         msg = result.summary
@@ -200,6 +218,7 @@ def assert_analysis_summaries_created(analysis: TRITONSWMM_analysis):
 def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_resource_usage."""
     from hhemt.analysis_validation import check_resource_usage
+
     result = check_resource_usage(analysis)
     if not result.passed:
         pytest.fail(
@@ -211,6 +230,7 @@ def assert_resource_usage_matches_config(analysis: TRITONSWMM_analysis):
 def assert_scenario_status_csv_created(analysis: TRITONSWMM_analysis):
     """Pytest wrapper around analysis_validation.check_scenario_status_csv."""
     from hhemt.analysis_validation import check_scenario_status_csv
+
     result = check_scenario_status_csv(analysis)
     if not result.passed:
         msg = result.summary
@@ -230,6 +250,7 @@ def assert_analysis_workflow_completed_successfully(
     (use individual assert_* helpers with verbose=True for that).
     """
     from hhemt.analysis_validation import validate_analysis
+
     report = validate_analysis(analysis)
     if not report.overall_passed:
         failed = [c for c in report.checks if not c.passed]
@@ -893,9 +914,7 @@ def assert_hydraulic_components_exercised(analysis) -> None:
     failures: list[str] = []
 
     enabled = [
-        mt
-        for mt in ("triton", "tritonswmm", "swmm")
-        if getattr(analysis._system.cfg_system, f"toggle_{mt}_model")
+        mt for mt in ("triton", "tritonswmm", "swmm") if getattr(analysis._system.cfg_system, f"toggle_{mt}_model")
     ]
 
     for event_iloc in analysis.df_sims.index:
@@ -909,24 +928,14 @@ def assert_hydraulic_components_exercised(analysis) -> None:
             if model_type == "tritonswmm":
                 node_sum = sp.output_tritonswmm_node_summary
                 if node_sum is None or not node_sum.exists():
-                    failures.append(
-                        f"event {event_iloc} tritonswmm: node summary missing at {node_sum}"
-                    )
+                    failures.append(f"event {event_iloc} tritonswmm: node summary missing at {node_sum}")
                 else:
                     ds = xr.open_zarr(node_sum)
-                    if not any(
-                        float(ds[v].max()) > 0
-                        for v in ds.data_vars
-                        if ds[v].dtype.kind in "fi"
-                    ):
-                        failures.append(
-                            f"event {event_iloc} tritonswmm: node summary has no positive totals"
-                        )
+                    if not any(float(ds[v].max()) > 0 for v in ds.data_vars if ds[v].dtype.kind in "fi"):
+                        failures.append(f"event {event_iloc} tritonswmm: node summary has no positive totals")
                 link_ts = sp.output_tritonswmm_link_time_series
                 if link_ts is None or not link_ts.exists():
-                    failures.append(
-                        f"event {event_iloc} tritonswmm: link timeseries missing at {link_ts}"
-                    )
+                    failures.append(f"event {event_iloc} tritonswmm: link timeseries missing at {link_ts}")
                 else:
                     ds = xr.open_zarr(link_ts)
                     flow_var_max = max(
@@ -938,9 +947,7 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                         default=0.0,
                     )
                     if flow_var_max <= 0:
-                        failures.append(
-                            f"event {event_iloc} tritonswmm: link flow variance is zero"
-                        )
+                        failures.append(f"event {event_iloc} tritonswmm: link flow variance is zero")
                 triton_ts = sp.output_tritonswmm_triton_timeseries
                 _assert_triton_depth(triton_ts, event_iloc, "tritonswmm", failures)
 
@@ -951,9 +958,7 @@ def assert_hydraulic_components_exercised(analysis) -> None:
             elif model_type == "swmm":
                 node_ts = sp.output_swmm_only_node_time_series
                 if node_ts is None or not node_ts.exists():
-                    failures.append(
-                        f"event {event_iloc} swmm: node timeseries missing at {node_ts}"
-                    )
+                    failures.append(f"event {event_iloc} swmm: node timeseries missing at {node_ts}")
                 else:
                     ds = xr.open_zarr(node_ts)
                     inflow_var_max = max(
@@ -967,14 +972,10 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                         default=0.0,
                     )
                     if inflow_var_max <= 0:
-                        failures.append(
-                            f"event {event_iloc} swmm: node inflow/runoff variance is zero"
-                        )
+                        failures.append(f"event {event_iloc} swmm: node inflow/runoff variance is zero")
                 link_ts = sp.output_swmm_only_link_time_series
                 if link_ts is None or not link_ts.exists():
-                    failures.append(
-                        f"event {event_iloc} swmm: link timeseries missing at {link_ts}"
-                    )
+                    failures.append(f"event {event_iloc} swmm: link timeseries missing at {link_ts}")
                 else:
                     ds = xr.open_zarr(link_ts)
                     flow_var_max = max(
@@ -986,9 +987,7 @@ def assert_hydraulic_components_exercised(analysis) -> None:
                         default=0.0,
                     )
                     if flow_var_max <= 0:
-                        failures.append(
-                            f"event {event_iloc} swmm: link flow variance is zero"
-                        )
+                        failures.append(f"event {event_iloc} swmm: link flow variance is zero")
 
     weather_ds = xr.open_dataset(analysis.cfg_analysis.weather_timeseries)
     bc_var = analysis.cfg_analysis.weather_time_series_storm_tide_datavar
@@ -996,10 +995,7 @@ def assert_hydraulic_components_exercised(analysis) -> None:
         failures.append("storm-tide boundary variance is zero")
 
     if failures:
-        raise AssertionError(
-            "assert_hydraulic_components_exercised failed:\n  - "
-            + "\n  - ".join(failures)
-        )
+        raise AssertionError("assert_hydraulic_components_exercised failed:\n  - " + "\n  - ".join(failures))
 
 
 def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[str]) -> None:
@@ -1012,9 +1008,7 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
     import xarray as xr
 
     if triton_ts is None or not triton_ts.exists():
-        failures.append(
-            f"event {event_iloc} {model_type}: triton timeseries missing at {triton_ts}"
-        )
+        failures.append(f"event {event_iloc} {model_type}: triton timeseries missing at {triton_ts}")
         return
     ds = xr.open_zarr(triton_ts)
     depth_var = next(
@@ -1022,26 +1016,18 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
         None,
     )
     if depth_var is None:
-        failures.append(
-            f"event {event_iloc} {model_type}: no water-level var "
-            f"(wlevel_m / depth) in {triton_ts}"
-        )
+        failures.append(f"event {event_iloc} {model_type}: no water-level var (wlevel_m / depth) in {triton_ts}")
         return
     # Reduce over every dim except the time dim so we get one value per
     # timestep, then count timesteps where the field is positive somewhere.
     t_dim = _time_dim(ds[depth_var])
     if t_dim is None:
-        failures.append(
-            f"event {event_iloc} {model_type}: {depth_var} has no time dim in {triton_ts}"
-        )
+        failures.append(f"event {event_iloc} {model_type}: {depth_var} has no time dim in {triton_ts}")
         return
     non_time_dims = tuple(d for d in ds[depth_var].dims if d != t_dim)
     nonzero_ts = int((ds[depth_var] > 0).any(dim=non_time_dims).sum().values)
     if nonzero_ts < 2:
-        failures.append(
-            f"event {event_iloc} {model_type}: TRITON {depth_var} non-zero "
-            f"at only {nonzero_ts} timesteps"
-        )
+        failures.append(f"event {event_iloc} {model_type}: TRITON {depth_var} non-zero at only {nonzero_ts} timesteps")
 
 
 # ---------------------------------------------------------------------------
@@ -1049,9 +1035,7 @@ def _assert_triton_depth(triton_ts, event_iloc, model_type: str, failures: list[
 # ---------------------------------------------------------------------------
 
 
-def snapshot_scenario_output_mtimes(
-    analysis, *, kind: str
-) -> dict[tuple[str | None, str], dict[Path, float]]:
+def snapshot_scenario_output_mtimes(analysis, *, kind: str) -> dict[tuple[str | None, str], dict[Path, float]]:
     """Return {(sa_id, event_id): {output_file: mtime_float}} for every per-scenario output.
 
     Scenario id is the stable event-slug computed by scenario.compute_event_id_slug
@@ -1087,11 +1071,7 @@ def snapshot_scenario_output_mtimes(
     excluded_log_files = {"log_triton.json", "log_tritonswmm.json", "log_swmm.json"}
 
     def _walk(sim_dir: Path) -> dict[Path, float]:
-        return {
-            p: p.stat().st_mtime
-            for p in sim_dir.rglob("*")
-            if p.is_file() and p.name not in excluded_log_files
-        }
+        return {p: p.stat().st_mtime for p in sim_dir.rglob("*") if p.is_file() and p.name not in excluded_log_files}
 
     def _slug_and_sim_folder(ana, iloc):
         indexers = ana._retrieve_weather_indexer_using_integer_index(iloc)
@@ -1185,6 +1165,7 @@ def mutate_scenario_csv(
         # bumping to a value not in the NetCDF would fail scenario preparation. We clone the
         # donor's slice with the new coordinate value.
         import xarray as xr
+
         weather_nc_src = Path(analysis.cfg_analysis.weather_timeseries)
         with xr.open_dataset(weather_nc_src) as ds_weather:
             ds_weather = ds_weather.load()  # into memory so we can close file and write new one
@@ -1230,6 +1211,7 @@ def mutate_scenario_csv(
     # does not fire for untouched scenarios. The trigger should only fire for the new/removed
     # scenario (via the input trigger on the expanded scenario set), not for unchanged ones.
     import os
+
     src_stat = os.stat(src)
     os.utime(out, (src_stat.st_atime, src_stat.st_mtime))
     return out, new_key
@@ -1272,6 +1254,7 @@ def reinstantiate_analysis_pointing_at_csv(analysis, *, kind: str, mutated_csv_p
     # does not fire for untouched scenarios. Without this, the freshly-written YAML is
     # newer than all baseline output files, causing mtime-triggered reruns for every scenario.
     import os
+
     orig_stat = os.stat(ana_yaml)
     os.utime(new_ana_yaml, (orig_stat.st_atime, orig_stat.st_mtime))
 
@@ -1293,26 +1276,19 @@ def assert_rerun_trigger_correctness(
     the substring-suffix collision class that string-concat namespacing would carry.
     """
     # (a) added scenario has outputs in 'after' with at least one file
-    assert added_key in after, (
-        f"added scenario {added_key!r} produced no outputs after rerun; "
-        f"after keys={list(after)}"
-    )
+    assert added_key in after, f"added scenario {added_key!r} produced no outputs after rerun; after keys={list(after)}"
 
     # (b) untouched scenarios have IDENTICAL mtimes
     untouched = [k for k in baseline_scenario_keys if k != removed_key and k != added_key]
     for key in untouched:
         if key not in after:
-            raise AssertionError(
-                f"untouched scenario {key!r} disappeared from rerun analysis state"
-            )
+            raise AssertionError(f"untouched scenario {key!r} disappeared from rerun analysis state")
         before_files = before[key]
         after_files = after[key]
         for path, before_mtime in before_files.items():
             after_mtime = after_files.get(path)
             if after_mtime is None:
-                raise AssertionError(
-                    f"untouched scenario {key!r}: file {path} disappeared after rerun"
-                )
+                raise AssertionError(f"untouched scenario {key!r}: file {path} disappeared after rerun")
             if after_mtime != before_mtime:
                 raise AssertionError(
                     f"untouched scenario {key!r}: file {path} mtime changed "
@@ -1320,9 +1296,7 @@ def assert_rerun_trigger_correctness(
                 )
 
     # (c) removed scenario is no longer in 'after' analysis state
-    assert removed_key not in after, (
-        f"removed scenario {removed_key!r} still present in rerun analysis state"
-    )
+    assert removed_key not in after, f"removed scenario {removed_key!r} still present in rerun analysis state"
 
     # (d) removed scenario's old output mtimes (orphans on disk) are unchanged
     before_removed_files = before[removed_key]
@@ -1360,6 +1334,7 @@ def assert_du_sentinel_present(
     than scattered inline ``stat`` / ``json.loads`` calls.
     """
     import json
+
     sentinel = scope_dir / "_status" / "_du.json"
     if not sentinel.exists():
         raise AssertionError(f"DU sentinel missing at {sentinel}")
@@ -1368,9 +1343,7 @@ def assert_du_sentinel_present(
     except (OSError, ValueError) as e:
         raise AssertionError(f"DU sentinel at {sentinel} is unparseable: {e}") from e
     if "disk_utilization_bytes" not in payload:
-        raise AssertionError(
-            f"DU sentinel at {sentinel} is missing the disk_utilization_bytes field: {payload!r}"
-        )
+        raise AssertionError(f"DU sentinel at {sentinel} is missing the disk_utilization_bytes field: {payload!r}")
     if expected_min_bytes is not None:
         actual = int(payload["disk_utilization_bytes"])
         if actual < expected_min_bytes:
@@ -1394,9 +1367,7 @@ def assert_du_mtime_preserved(
     """
     sentinel = scope_dir / "_status" / "_du.json"
     if not sentinel.exists():
-        raise AssertionError(
-            f"DU sentinel missing at {sentinel} during mtime-preservation check"
-        )
+        raise AssertionError(f"DU sentinel missing at {sentinel} during mtime-preservation check")
     current_mtime = sentinel.stat().st_mtime
     if current_mtime != prior_mtime:
         raise AssertionError(

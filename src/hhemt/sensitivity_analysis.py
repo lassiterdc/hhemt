@@ -818,13 +818,13 @@ class TRITONSWMM_sensitivity_analysis:
         missing = expected - actual
         if missing:
             print(
-                f"[delete] {len(missing)} per-sa-rule sentinels missing — " f"preserving analysis_dir for debugging.",
+                f"[delete] {len(missing)} per-sa-rule sentinels missing — preserving analysis_dir for debugging.",
                 flush=True,
             )
             print(f"[delete] missing: {sorted(p.name for p in missing)}", flush=True)
             return
         print(
-            f"[delete] all {len(expected)} per-sa-rule sentinels present — " f"removing analysis_dir.",
+            f"[delete] all {len(expected)} per-sa-rule sentinels present — removing analysis_dir.",
             flush=True,
         )
         # EXEMPT-DU: full-analysis-root-wipe
@@ -967,7 +967,7 @@ class TRITONSWMM_sensitivity_analysis:
                 _active_set = get_reporting_set(_set_name)
             except Exception as _e:
                 logging.getLogger(__name__).warning(
-                    "render-path reporting_set resolution failed (%s); " "falling back to 'default' category order",
+                    "render-path reporting_set resolution failed (%s); falling back to 'default' category order",
                     _e,
                 )
                 _active_set = get_reporting_set("default")
@@ -1317,7 +1317,20 @@ class TRITONSWMM_sensitivity_analysis:
                     continue
 
         tree = self.build_sensitivity_datatree()
+        from hhemt.cf_conventions import apply_provenance_core
+        from hhemt.metadata import write_rocrate_sidecar
+        from hhemt.provenance import emit_provenance
+
+        _sub_relpaths = [f"subanalyses/sa_{sa_id}/analysis_datatree.zarr" for sa_id in self.sub_analyses]
+        _core_json, _graph_json = emit_provenance(
+            self.master_analysis,
+            consolidated_zarr_relpath="sensitivity_datatree.zarr",
+            sub_dataset_relpaths=_sub_relpaths,
+            with_run_units=False,
+        )
+        apply_provenance_core(tree, core_json_str=_core_json)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
+        write_rocrate_sidecar(self.master_analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 
         self.master_analysis._refresh_log()
         if hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete"):
@@ -2358,9 +2371,9 @@ class TRITONSWMM_sensitivity_analysis:
         status_frames = []
 
         for sa_id, sub_analysis in self.sub_analyses.items():
-            assert (
-                sub_analysis.cfg_analysis.is_subanalysis
-            ), "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
+            assert sub_analysis.cfg_analysis.is_subanalysis, (
+                "is_subanalysis attribute not true in sub_analysis.cfg_analysis.is_subanalysis"
+            )
             sub_df_status = sub_analysis.df_status.copy()
 
             setup_row = self.df_setup.loc[sa_id, :]

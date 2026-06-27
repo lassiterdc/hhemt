@@ -29,6 +29,14 @@ test *ARGS:
     @echo "Running with arg: {{ARGS}}"
     uv run --python=3.12 --extra test pytest {{ARGS}}
 
+# Authoritative gating run: the conda env supplies cmake+mpic++ AND
+# HHEMT_REQUIRE_COMPILE_TIER=1 turns any compile-tier skip into a HARD FAILURE,
+# so the coupled compile->run->process->report tier is GATED, not silently skipped.
+# This is the invocation a toolchain-bearing CI job (or a pre-merge check) should run.
+test-gated *ARGS:
+    @echo "Running GATED (compile tier required) with arg: {{ARGS}}"
+    HHEMT_REQUIRE_COMPILE_TIER=1 conda run -n hhemt uv run --active --extra test pytest {{ARGS}}
+
 # Run all the tests, but on failure, drop into the debugger
 pdb *ARGS:
     @echo "Running with arg: {{ARGS}}"
