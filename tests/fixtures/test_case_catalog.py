@@ -454,9 +454,6 @@ class Local_TestCases:
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
             skip_run=skip_run,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -474,9 +471,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -493,9 +487,6 @@ class Local_TestCases:
             toggle_triton_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -518,9 +509,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -553,9 +541,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -586,9 +571,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -611,9 +593,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -636,9 +615,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -675,7 +651,6 @@ class Local_TestCases:
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "test_partition",
-                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
             },
         )
 
@@ -714,7 +689,6 @@ class Local_TestCases:
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "gpu-a6000",
-                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
             },
         )
 
@@ -745,7 +719,6 @@ class Local_TestCases:
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "gpu-a6000",
-                "report": Local_TestCases._load_synth_sensitivity_report_dict(),
             },
         )
 
@@ -774,9 +747,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod
@@ -803,9 +773,6 @@ class Local_TestCases:
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
             start_from_scratch=start_from_scratch,
-            additional_analysis_configs={
-                "report": Local_TestCases._load_synth_sensitivity_report_dict()
-            },
         )
 
     @staticmethod

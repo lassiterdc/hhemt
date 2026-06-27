@@ -117,7 +117,8 @@ def render(
 
     if independent_var not in df_setup.columns:
         raise ValueError(
-            f"{independent_var} not in sensitivity CSV columns: {list(df_setup.columns)}"
+            f"{independent_var!r} is not a resolvable benchmarking axis; "
+            f"resolvable columns: {sorted(df_setup.columns)}"
         )
 
     dependent_var = report_cfg.sensitivity.dependent_var
@@ -155,8 +156,8 @@ def render(
     if group_by_var is not None:
         if group_by_var not in df_setup.columns:
             raise ValueError(
-                f"group_by_var {group_by_var!r} not in sensitivity CSV columns: "
-                f"{list(df_setup.columns)}"
+                f"group_by_var {group_by_var!r} is not a resolvable benchmarking axis; "
+                f"resolvable columns: {sorted(df_setup.columns)}"
             )
         df["group_value"] = df["sa_id"].map(df_setup[group_by_var])
     else:
