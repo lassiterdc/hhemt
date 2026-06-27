@@ -816,7 +816,12 @@ class Local_TestCases:
                     "sa_id":         [0,        1,        2],
                     "run_mode":      ["openmp", "openmp", "serial"],
                     "n_mpi_procs":   [1,        1,        1],
-                    "n_omp_threads": [4,        2,        1],
+                    # SWMM 5.2 clamps NumThreads=1 when Nobjects[LINK] < 4*NumThreads
+                    # (project.c:269). The synth full SWMM model has 12 conduits, so it
+                    # honors at most 3 threads (12 >= 4*3); 4 would silently clamp to 1
+                    # and fail the resource-match check. sa_0=3 gives a genuinely
+                    # multithreaded run whose actual matches expected.
+                    "n_omp_threads": [3,        2,        1],
                     "n_gpus":        [0,        0,        0],
                     "n_nodes":       [1,        1,        1],
                 }

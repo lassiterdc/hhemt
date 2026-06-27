@@ -285,18 +285,53 @@ class TRITONSWMM_analysis:
         else:
             primary_model_type = "swmm"
 
-        # Count completed simulations via glob — fast, no scenario instantiation
-        if self.cfg_analysis.toggle_sensitivity_analysis:
-            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
-        else:
-            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_*_complete.flag"))
-
+        # Count completed sims from the canonical c_run completion-flag set — the
+        # same per-(event) flags ``_all_sim_flags_present`` attests and that the
+        # Snakemake run rule emits gated on ``model_run_completed()`` / "Simulation
+        # ends" (resume-retry-resilience P3 research). Enumerating the canonical
+        # ``c_run_{model}_evt-{event_id}_complete.flag`` names — rather than an
+        # ad-hoc wildcard glob that could match non-canonical/stale flags — aligns
+        # the printed N/M with the planner's authoritative completion signal while
+        # staying O(flag-stat): no scenario instantiation. (c_run flags are durable
+        # post-completion; ``_invalidate_downstream_flags`` never deletes them.)
         total_sims = self.nsims
-        n_complete = len(sim_flags)
+        if self.cfg_analysis.toggle_sensitivity_analysis:
+            # The canonical per-(sa_id, event_id) enumeration is owned by the
+            # sub-analyses; the sa-flag glob is the existing sensitivity count
+            # (``c_run_*_sa-*`` flags are likewise post-completion + durable).
+            sim_flags = list(status_dir.glob(f"c_run_{primary_model_type}_sa*_complete.flag"))
+            n_complete = len(sim_flags)
+        else:
+            from hhemt.scenario import compute_event_id_slug
+
+            n_complete = sum(
+                1
+                for i in range(len(self.df_sims))
+                if (
+                    status_dir
+                    / (
+                        f"c_run_{primary_model_type}_evt-"
+                        f"{compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i))}"
+                        "_complete.flag"
+                    )
+                ).exists()
+            )
         n_incomplete = total_sims - n_complete
 
         analysis_id = self.cfg_analysis.analysis_id
         print(f"[Analysis] Resuming {analysis_id} — {n_complete}/{total_sims} sims complete.", flush=True)
+
+        # #3 — surface the effective per-sim retry budget so the operator sees the
+        # cap before a silent post-cap non-completion. This prints the config value;
+        # a runtime override (override_hpc_restart_times_simulate) passed to
+        # run()/submit_workflow() can raise it for that invocation.
+        _attempts = self.cfg_analysis.hpc_restart_times_simulate + 1
+        print(
+            f"[Analysis] Each sim gets {_attempts} attempt(s) "
+            f"(hpc_restart_times_simulate={self.cfg_analysis.hpc_restart_times_simulate}) "
+            "before silent non-completion.",
+            flush=True,
+        )
 
         if n_incomplete == 0:
             return
@@ -347,6 +382,35 @@ class TRITONSWMM_analysis:
                         "[Analysis] Some failures are not time limits — see debugging docs for root cause.",
                         flush=True,
                     )
+
+    def _warn_resume_zero_progress(self, pickup_where_leftoff: bool) -> None:
+        """Warn before launch when a hotstart-resume risks zero progress per round.
+
+        Fires only when actually resuming (``pickup_where_leftoff``) in an HPC mode
+        (``batch_job`` / ``1_job_many_srun_tasks``) with a per-sim walltime set: if
+        that walltime is below the first-checkpoint latency, every resume round
+        restarts from zero and the run never completes. Checkpoint cadence is
+        model-dependent and is NOT a config field, so this is an ADVISORY (no
+        numeric floor) rather than a threshold-gated error — see the
+        resume-retry-resilience P3 friction design-recommendation (Option A).
+        """
+        if not pickup_where_leftoff:
+            return
+        if self.cfg_analysis.multi_sim_run_method not in ("batch_job", "1_job_many_srun_tasks"):
+            return
+        walltime = self.cfg_analysis.hpc_time_min_per_sim
+        if walltime is None:
+            return
+        print(
+            f"[Analysis] WARNING: resuming (pickup_where_leftoff=True) with "
+            f"hpc_time_min_per_sim={walltime} min. Each resume round makes ZERO "
+            "progress unless the per-sim walltime exceeds the first-checkpoint "
+            "latency (the sim never reaches a config_NNNN.cfg checkpoint to resume "
+            "from). Checkpoint cadence is model-dependent and not a config field, so "
+            "this is advisory — confirm the walltime clears your model's "
+            "first-checkpoint time before launching a resume sweep.",
+            flush=True,
+        )
 
     def _enumerate_stale_metadata_paths(self) -> list[str]:
         """Return Snakemake-output-path strings whose ``.snakemake/metadata/``
@@ -1769,6 +1833,8 @@ class TRITONSWMM_analysis:
         override_clear_raw: ClearRawValue | None = None,
         override_force_rerun: ForceRerunValue | None = None,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2190,6 +2256,8 @@ class TRITONSWMM_analysis:
             "dry_run": dry_run,
             "verbose": verbose,
             "override_hpc_total_nodes": override_hpc_total_nodes,
+            "override_hpc_restart_times_simulate": override_hpc_restart_times_simulate,
+            "override_hpc_restart_times_other": override_hpc_restart_times_other,
             "report_formats": report_formats,
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
@@ -2237,6 +2305,7 @@ class TRITONSWMM_analysis:
             snakefile_path=result_dict.get("snakefile_path"),
             job_id=result_dict.get("job_id"),
             message=result_dict.get("message", ""),
+            partial_failures=result_dict.get("partial_failures", []),
         )
 
     # ---- analysis.test(): end-to-end smoke test on a strict _test/ subset ----
@@ -2398,7 +2467,13 @@ class TRITONSWMM_analysis:
             time_dim = base_cfg.weather_time_series_timestep_dimension_name
             with xr.open_dataset(base_cfg.weather_timeseries, engine="h5netcdf") as wx:
                 wx_short = wx.isel({time_dim: slice(0, n_reporting_timesteps + 1)}).load()
-            short_weather = sub_dir / "_test_weather.nc"
+            # Write the sliced weather to the _test/ root (sibling of group_0/), NOT
+            # inside sub_dir: the sub runs with from_scratch=True (test(), below) which
+            # fast_rmtree's sub_dir (== analysis_dir == group_0/), so a weather file
+            # written inside it would be deleted before prepare_scenario reads it
+            # (FileNotFoundError on _test_weather.nc). The _test/ root survives the wipe;
+            # the {group_id}-suffixed name keeps multiple groups from colliding.
+            short_weather = test_root / f"_test_weather_{group_id}.nc"
             wx_short.to_netcdf(short_weather, engine="h5netcdf")
             overlay = {
                 "analysis_id": f"{self.cfg_analysis.analysis_id}_test_{group_id}",
@@ -2410,7 +2485,13 @@ class TRITONSWMM_analysis:
                 "TRITON_reporting_timestep_s": reporting_timestep_s,
             }
             cfg_a = analysis_config.model_validate({**base_cfg.model_dump(), **overlay})
-            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, sub_dir)
+            # The sub runs with from_scratch=True (test(), below), which fast_rmtree's
+            # the sub's analysis_dir (== sub_dir / group_0). Writing the config INSIDE
+            # sub_dir would self-delete it before the setup runner reads it ("Analysis
+            # config not found"). Write it to the _test/ root (sibling of group_0/) so
+            # the wipe of group_0/ cannot reach it; the sub's analysis_dir stays
+            # group_0/ via the overlay. (analysis_id is group-unique, so no collision.)
+            sub_yaml = self._atomic_write_subanalysis_yaml(cfg_a, test_root)
             # TRITONSWMM_analysis.__init__ has NO is_subanalysis param; is_subanalysis
             # is set in the cfg overlay above (mirrors _create_sub_analyses,
             # sensitivity_analysis.py:2031). is_main_orchestrator=False -- a _test/
@@ -2807,8 +2888,12 @@ class TRITONSWMM_analysis:
             rec_text = "Use 'resume' to consolidate analysis summaries."
         else:
             current = "complete"
-            rec_mode = "n/a"
-            rec_text = "All phases complete. Use 'fresh' if you want to redo the analysis."
+            # 'fresh' is the only actionable mode for a complete analysis (resume has
+            # nothing left to do); it is a valid translate_mode() input, so
+            # analysis.run(mode=status.recommended_mode) works. 'n/a' is not a member
+            # of the documented {fresh, resume} run-mode set and is not run()-able.
+            rec_mode = "fresh"
+            rec_text = "All phases complete. Use 'fresh' to redo the analysis from scratch."
 
         return WorkflowStatus(
             analysis_id=self.cfg_analysis.analysis_id,
@@ -2847,6 +2932,8 @@ class TRITONSWMM_analysis:
         dry_run: bool = False,
         verbose: bool = True,
         override_hpc_total_nodes: int | None = None,
+        override_hpc_restart_times_simulate: int | None = None,
+        override_hpc_restart_times_other: int | None = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -2915,6 +3002,12 @@ class TRITONSWMM_analysis:
 
         stamp_new_target(self.analysis_paths.analysis_dir, LAYOUT_VERSION)
 
+        # resume-retry-resilience P3 — surface the zero-progress-resume foot-gun
+        # before launch (friction Option A). Fires only when actually resuming in an
+        # HPC mode with a per-sim walltime set; run() reaches here via delegation,
+        # so this single site covers both run() and direct submit_workflow() callers.
+        self._warn_resume_zero_progress(pickup_where_leftoff)
+
         # Driver-start orchestrator-liveness sentinel (Phase 2 of the reprocess
         # concurrency gate). Single-writer per logical driver: a sensitivity
         # run() delegates below to self.sensitivity.submit_workflow, which writes
@@ -2957,6 +3050,8 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     override_hpc_total_nodes=override_hpc_total_nodes,
+                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                    override_hpc_restart_times_other=override_hpc_restart_times_other,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -2966,6 +3061,19 @@ class TRITONSWMM_analysis:
                 # — the pre-delete already happened at this layer
                 # (self._apply_force_rerun above) and the builder's
                 # submit_workflow does not need a runtime force-rerun parameter.
+                if pickup_where_leftoff:
+                    # Scenario-set-change invalidation (multi_sim resume). The toolkit
+                    # uses --rerun-triggers mtime only (workflow.py), so a present
+                    # e_consolidate_complete.flag short-circuits the missing-intermediate
+                    # demand for an ADDED scenario's prepare->run->process->consolidate
+                    # chain (the per-sim plot rules, enumerated over the full SIM_IDS,
+                    # would then fire and crash reading the un-prepared hydraulics.inp).
+                    # Mirror the sensitivity path's scenario-set-change invalidation:
+                    # when the config event-id set differs from the on-disk prepared set,
+                    # delete the analysis-level consolidate flag so consolidate re-demands
+                    # its full SIM_IDS input expand, and delete orphan per-event flags for
+                    # events no longer in the config.
+                    self._invalidate_consolidate_flag_on_scenario_set_change()
                 result = self._workflow_builder.submit_workflow(
                     mode=mode,
                     process_system_level_inputs=process_system_level_inputs,
@@ -2984,6 +3092,8 @@ class TRITONSWMM_analysis:
                     dry_run=dry_run,
                     verbose=verbose,
                     override_hpc_total_nodes=override_hpc_total_nodes,
+                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                    override_hpc_restart_times_other=override_hpc_restart_times_other,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -3716,6 +3826,53 @@ class TRITONSWMM_analysis:
         self._workflow_builder._delete_flags_for_force_rerun(spec)
         self._invalidate_processing_log_for_force_rerun(spec)
 
+    def _invalidate_consolidate_flag_on_scenario_set_change(self) -> None:
+        """Delete e_consolidate_complete.flag (and orphan per-event flags) when the
+        multi_sim scenario set changed since the last prepared run.
+
+        Under the toolkit's --rerun-triggers mtime profile, a present
+        e_consolidate_complete.flag prevents Snakemake from re-demanding an ADDED
+        scenario's upstream chain (missing-intermediate is treated as a consumed temp).
+        Deleting it forces consolidate to re-evaluate its expand(...) over the new
+        SIM_IDS, pulling in the added scenario's prepare/run/process rules. Orphan
+        per-event flags for removed events are deleted so their stale chain is not
+        re-consolidated. No-op when the set is unchanged.
+        """
+        from hhemt.scenario import compute_event_id_slug
+
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return
+        # Current config event-id set (same enumeration the Snakefile SIM_IDS uses).
+        n_sims = len(self.df_sims)
+        config_event_ids = {
+            compute_event_id_slug(self._retrieve_weather_indexer_using_integer_index(i)) for i in range(n_sims)
+        }
+        # On-disk prepared event-id set (from b_prepare flags).
+        prepared_event_ids = {
+            p.name[len("b_prepare_evt-") : -len("_complete.flag")]
+            for p in status_dir.glob("b_prepare_evt-*_complete.flag")
+        }
+        if config_event_ids == prepared_event_ids:
+            return  # set unchanged — no invalidation needed
+        # Set changed: drop the analysis-level consolidate flag so the added chain is
+        # re-demanded; drop orphan per-event flags for removed events.
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)
+        removed = prepared_event_ids - config_event_ids
+        for ev in removed:
+            for stem in (
+                f"b_prepare_evt-{ev}_complete",
+                f"f_consolidate_scenario_evt-{ev}_complete",
+            ):
+                (status_dir / f"{stem}.flag").unlink(missing_ok=True)
+                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+            for model_type in ("triton", "tritonswmm", "swmm"):
+                for phase in ("c_run", "d_process"):
+                    stem = f"{phase}_{model_type}_evt-{ev}_complete"
+                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)
+                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+
     def _reconcile_stale_process_flags_against_summaries(
         self, *, sa_id: str | None = None, master_dir: Path | None = None
     ) -> set[tuple[str, str]]:
@@ -4182,6 +4339,7 @@ class TRITONSWMM_analysis:
             "model_type",
             "scenario_setup",
             "run_completed",
+            "n_resumes",
             "scenario_directory",
         ]
         fixed_perf = [f"perf_{v}" for v in PERF_VARS_ORDERED]
@@ -4293,6 +4451,7 @@ class TRITONSWMM_analysis:
                 row["model_type"] = model_type
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
+                row["n_resumes"] = (scen.get_log(model_type).n_resumes.get() or 0)
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 

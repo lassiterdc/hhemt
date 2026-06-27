@@ -139,6 +139,15 @@ def _build_tabulator_html(
 
     tab_cfg = report_cfg.scenario_status_appendix.interactive
 
+    # Drop constant columns (single unique value, including all-NaN) to cut
+    # clutter in single-model / single-event analyses. nunique(dropna=False) <= 1
+    # catches both all-equal and all-NaN columns. Co-design (P2): an all-zero
+    # n_resumes column (no hotstart resumes occurred) is auto-hidden here —
+    # deliberate and correct (the CSV/df_status still carries it).
+    if report_cfg.scenario_status_appendix.hide_constant_columns:
+        nunique = df.apply(lambda s: s.nunique(dropna=False))
+        df = df[[c for c in df.columns if nunique[c] > 1]]
+
     # iter 9.4 — Compute column_groups FIRST, then reorder df columns to
     # match the group order so the table's left-to-right column display
     # matches the sidebar's top-to-bottom checklist. Without this, the
@@ -174,8 +183,18 @@ def _build_tabulator_html(
     # stopPropagation()s, so clicking the filter ▾ does not sort.
     extra_options: dict = {}
 
+    # Replace NaN with None so the Tabulator data records serialize as JSON
+    # null rather than the bare `NaN` JS literal (invalid JSON — strict parsers
+    # throw, and headerFilter substring match misses NaN-as-NaN cells).
+    # The .astype(object) cast is load-bearing: a float64 column cannot hold
+    # None, so `df.where(pd.notna(df), None)` on a numeric column silently
+    # coerces None back to NaN — casting to object first lets None persist.
+    # build_columns_spec above already inspected the original-dtype df, so the
+    # type-aware column filters are unaffected by this object-dtype copy.
+    df_records = df.astype(object).where(pd.notna(df), None)
+
     options = build_options_dict(
-        df,
+        df_records,
         columns_spec=columns_spec,
         table_height=tab_cfg.table_height,
         pagination_size=tab_cfg.pagination_size,

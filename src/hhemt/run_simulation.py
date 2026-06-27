@@ -2,7 +2,7 @@
 import os
 import subprocess
 import time
-import warnings
+import logging
 import pandas as pd
 from pathlib import Path
 from hhemt.utils import read_text_file_as_list_of_strings
@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 class TRITONSWMM_run:
@@ -97,46 +99,44 @@ class TRITONSWMM_run:
     def model_run_completed(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> bool:
         """Check if a simulation completed for a specific model type.
 
-        Uses log file markers as source of truth:
-        - TRITON/TRITON-SWMM: "Simulation ends" in run_{model}.log
-        - SWMM: "EPA SWMM completed" in run_swmm.log
-
-        Parameters
-        ----------
-        model_type : Literal["triton", "tritonswmm", "swmm"]
-            Which model to check completion for
-
-        Returns
-        -------
-        bool
-            True if the specified model completed successfully
+        Authoritative source of truth: the per-model `TRITONSWMM_model_log` JSON
+        `simulation_completed` field, accessed via `scenario.get_log(model_type)`.
+        Falls back to the raw log-marker scan (`"Simulation ends"` for TRITON /
+        TRITON-SWMM, `"EPA SWMM completed"` for SWMM) when the model log JSON
+        does not yet exist or has not yet recorded a value — this preserves
+        first-run correctness for paths where the simulation has just emitted
+        its log but the log-field has not yet been written.
         """
-        log_file = self._analysis_level_model_logfile(model_type)
+        # Primary: read post-processing-aware log field
+        try:
+            model_log = self._scenario.get_log(model_type)
+            completed = model_log.simulation_completed.get()
+            if completed is not None:
+                return bool(completed)
+        except (AttributeError, FileNotFoundError):
+            pass  # log not yet written — fall through to raw-file check
 
+        # Fallback: raw log-marker scan (first-run path)
+        log_file = self._analysis_level_model_logfile(model_type)
         if not log_file.exists():
             return False
-
         log_content = log_file.read_text()
-
         if model_type in ("triton", "tritonswmm"):
-            # TRITON completion marker (may have ANSI color codes)
             success = "Simulation ends" in log_content
         else:  # swmm
-            # SWMM completion marker
             success = "EPA SWMM completed" in log_content
 
-        # Sanity check for TRITON/TRITON-SWMM: performance.txt should only exist if completed
-        if model_type in ("triton", "tritonswmm"):
+        # Forensic-only divergence check — NOT a user-visible warning.
+        # Logs at DEBUG level so post-mortem investigation can find raw-output-
+        # clearing bugs without spamming the normal resume path.
+        if model_type in ("triton", "tritonswmm") and success:
             perf_file = self.performance_file(model_type=model_type)
-            if perf_file.exists() != success:
-                warnings.warn(
-                    f"{model_type} simulation has ambiguous completion status:\n"
-                    f"  - performance.txt exists = {perf_file.exists()} suggesting completion = {perf_file.exists()}\n"
-                    f"  - Log-based check says: success = {success}\n"
-                    f"Performance files should only be written if simulation completes.\n"
-                    f"This error indicates completion detection needs strengthening.\n"
-                    f"Check log file for model_type={model_type}",
-                    RuntimeWarning,
+            if not perf_file.exists():
+                logger.debug(
+                    "model_run_completed: %s log says completed but performance.txt "
+                    "is absent at %s — possible raw-output-clearing race; not a "
+                    "user-visible error.",
+                    model_type, perf_file,
                 )
         return success
 
@@ -378,6 +378,9 @@ class TRITONSWMM_run:
             if hotstart_cfg is not None:
                 cfg = hotstart_cfg
                 sim_start_reporting_tstep = return_the_reporting_step_from_a_cfg(hotstart_cfg)
+                # Track hotstart resumes as a first-class log field (P2).
+                _ml = self._scenario.get_log(model_type)
+                _ml.n_resumes.set((_ml.n_resumes.get() or 0) + 1)
                 if verbose:
                     print(
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",
@@ -505,15 +508,44 @@ class TRITONSWMM_run:
             # (no srun, no MPI) so the guard's mpicc test typically fails and the
             # else-branch keeps the prior conda-first behavior; the uniform code
             # path avoids a second ordering convention.
+            # Derive the system/module MPI lib dir that actually holds the NEEDED
+            # libmpi.so.40 / libmpi_cxx.so.40 sonames. The prior prefix+"/lib"
+            # heuristic ($(dirname $(dirname mpicc))/lib) is WRONG on Debian/Ubuntu
+            # multiarch: /usr/bin/mpicc -> /usr/lib, which EXISTS but holds no libmpi
+            # (real libs live in /usr/lib/x86_64-linux-gnu/). Ask OpenMPI for its
+            # libdir (-showme:libdirs), resolve the dev symlink libmpi.so to its real
+            # .so.40.x file, and take that file's directory. Falls back to the prefix
+            # heuristic when -showme is unsupported; the final guard only prepends when
+            # libmpi.so.40 is actually present there (the falsifiable miss-detector).
+            _mpi_derive = (
+                '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+                '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && '
+                'dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
+                '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
+                '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+            )
             if module_load_cmd:
                 post_module_ld = (
-                    '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
-                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                     'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
                     'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
                 )
             else:
-                post_module_ld = ""
+                # Local / no-module path: a triton.exe built with the system mpic++
+                # links the SYSTEM OpenMPI. The static ld_segments above prepend
+                # ${CONDA_PREFIX}/lib (needed for libstdc++ on HPC); on a local dev box
+                # that shadows the system libmpi while libmpi_cxx stays on system ->
+                # ABI split (ompi_mpi_errors_throw_exceptions undefined). Mirror the
+                # module branch's MPI-lib-first ordering so the system MPI dir precedes
+                # ${CONDA_PREFIX}/lib whenever a system mpicc resolves AND its real
+                # libmpi.so.40 dir is found; conda lib stays second so libstdc++ still
+                # wins. No-op when no mpicc / no real MPI dir (falls back to conda-first).
+                post_module_ld = (
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                    'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+                )
             full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
@@ -711,15 +743,31 @@ class TRITONSWMM_run:
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
         # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
+        # See the SWMM-path comment above: NEEDED-soname-accurate MPI lib-dir
+        # derivation (multiarch-correct), reused for the module and local branches.
+        _mpi_derive = (
+            '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+            '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
+            '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
+            '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
+        )
         if module_load_cmd:
             post_module_ld = (
-                '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
-                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
+                f"{_mpi_derive}"
+                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                 'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
                 'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
             )
         else:
-            post_module_ld = ""
+            # Local / no-module path — mirror the module branch's MPI-lib-first
+            # ordering for a system-mpic++-built triton.exe. Conda lib stays second
+            # (already first in the static ld_segments) so libstdc++ GLIBCXX_3.4.31
+            # still wins; system MPI wins for libmpi/libmpi_cxx. No-op when no mpicc.
+            post_module_ld = (
+                f"{_mpi_derive}"
+                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+            )
         full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",
