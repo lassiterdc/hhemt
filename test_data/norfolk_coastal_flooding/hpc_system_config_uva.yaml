@@ -31,4 +31,10 @@ partitions:
     gpus_per_node: 8                          # EXTENSION (node topology; a100-80 nodes are 8-GPU)
     cpus_per_node: 64                         # EXTENSION
     gpu_compilation_backend: CUDA             # EXTENSION (D1: per-partition backend)
+container:                                    # ADR-1/2/3: per-cluster Apptainer exec params; consumed only when analysis_config.execution_environment == "container" (native default ignores it)
+  sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF (see containers/README.md)
+  gpu_flag: "--nv"                            # NVIDIA GPU passthrough (binds host driver only; container CUDA toolkit executes -- NVIDIA-contractual)
+  srun_mpi: "pmix"                            # seam emits `srun --mpi=pmix` for the container-own OpenMPI (UVA-only; mutually exclusive with cray_mpich_abi_module)
+  binds: ["/scratch", "/sfs"]                 # APPTAINER_BIND: Rivanna scratch + SFS storage trees
+  exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)
