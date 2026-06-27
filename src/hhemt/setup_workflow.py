@@ -157,7 +157,7 @@ def main() -> int:
         # Import here to avoid import errors if dependencies are missing
         from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
-        from hhemt.config.loaders import load_hpc_system_config
+        from hhemt.config.loaders import load_hpc_system_config, load_analysis_config
         from hhemt.config.hpc_system import resolve_gpu_target, resolve_additional_modules
         from hhemt.exceptions import ConfigurationError
 
@@ -171,11 +171,20 @@ def main() -> int:
         cfg_hpc = load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
         gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, args.target_partition)
         additional_modules = resolve_additional_modules(cfg_hpc)
+        # ADR-1/M-7: resolve the container-mode flag from the analysis config up front
+        # (the full TRITONSWMM_analysis is built below, after the system, because it
+        # takes `system` as a constructor arg — so the flag is read directly here).
+        # Drives BOTH the system's libstdc++ mode-guard injection and the compile-skip
+        # gate below. False in native mode (byte-identical).
+        _exec_env_container = (
+            load_analysis_config(args.analysis_config).execution_environment == "container"
+        )
         system = TRITONSWMM_system(
             args.system_config,
             gpu_hardware=gpu_hardware,
             gpu_compilation_backend=gpu_compilation_backend,
             additional_modules=additional_modules,
+            execution_container_mode=_exec_env_container,
         )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
@@ -230,8 +239,21 @@ def main() -> int:
                 "Skipping system-level input processing (--process-system-inputs not specified)"
             )
 
+        # ADR-1/M-7 (SE Spec 6): in container mode the SIF carries the pre-compiled
+        # binary (built off-site), so the on-cluster compile AND its enabled-but-not-
+        # compiled verification guard are skipped for all three models. DEM/Manning's
+        # preprocessing (process_system_level_inputs, above) STILL runs — the SIF
+        # carries the binary, not the DEM. Each `if _native_compile and ...` /
+        # `elif _native_compile:` collapses to the original `if .../else:` in native
+        # mode (byte-identical) and to a no-op in container mode.
+        _native_compile = not _exec_env_container
+        if not _native_compile:
+            logger.info(
+                "Container mode — skipping on-cluster compile (SIF carries the binary)"
+            )
+
         # Phase 1b: Compile TRITON-SWMM (coupled model)
-        if args.compile_triton_swmm:
+        if _native_compile and args.compile_triton_swmm:
             logger.info("Compiling TRITON-SWMM (coupled model)...")
             try:
                 system.compile_TRITON_SWMM(
@@ -255,7 +277,7 @@ def main() -> int:
                 logger.error(f"Failed to compile TRITON-SWMM: {e}")
                 logger.error(traceback.format_exc())
                 return 1
-        else:
+        elif _native_compile:
             logger.info(
                 "Skipping TRITON-SWMM compilation (--compile-triton-swmm not specified)"
             )
@@ -270,7 +292,7 @@ def main() -> int:
                 return 1
 
         # Phase 1c: Compile TRITON-only (no SWMM coupling)
-        if args.compile_triton_only:
+        if _native_compile and args.compile_triton_only:
             logger.info("Compiling TRITON-only (no SWMM coupling)...")
             try:
                 backends = []
@@ -300,7 +322,7 @@ def main() -> int:
                 logger.error(f"Failed to compile TRITON-only: {e}")
                 logger.error(traceback.format_exc())
                 return 1
-        else:
+        elif _native_compile:
             logger.info(
                 "Skipping TRITON-only compilation (--compile-triton-only not specified)"
             )
@@ -315,7 +337,7 @@ def main() -> int:
                 return 1
 
         # Phase 1d: Compile standalone SWMM
-        if args.compile_swmm:
+        if _native_compile and args.compile_swmm:
             logger.info("Compiling standalone SWMM...")
             try:
                 system.compile_SWMM(
@@ -332,7 +354,7 @@ def main() -> int:
                 logger.error(f"Failed to compile SWMM: {e}")
                 logger.error(traceback.format_exc())
                 return 1
-        else:
+        elif _native_compile:
             logger.info("Skipping SWMM compilation (--compile-swmm not specified)")
             # Verify compilation if model is enabled
             if (

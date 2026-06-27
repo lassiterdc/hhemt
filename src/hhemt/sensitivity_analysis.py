@@ -1981,6 +1981,14 @@ class TRITONSWMM_sensitivity_analysis:
                     gpu_hardware=_t_hw,
                     gpu_compilation_backend=_t_backend,
                     additional_modules=_t_modules,
+                    # ADR-1/M-7: this per-UniqueSystemTarget system DRIVES the
+                    # sensitivity compile (compile_TRITON_SWMM below). In container
+                    # mode the libstdc++ exact-soname patch must be suppressed (the
+                    # SIF carries a self-consistent toolchain); the False default in
+                    # native mode keeps the link line byte-identical.
+                    execution_container_mode=(
+                        self.master_analysis.cfg_analysis.execution_environment == "container"
+                    ),
                 )
             targets.append(
                 UniqueSystemTarget(

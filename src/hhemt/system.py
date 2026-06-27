@@ -95,6 +95,7 @@ class TRITONSWMM_system:
         gpu_hardware: str | None = None,
         gpu_compilation_backend: Literal["HIP", "CUDA"] | None = None,
         additional_modules: str | None = None,
+        execution_container_mode: bool = False,
     ) -> None:
         self.system_config_yaml = system_config_yaml
         self.cfg_system = load_system_config(system_config_yaml)
@@ -112,6 +113,14 @@ class TRITONSWMM_system:
         self.gpu_hardware = gpu_hardware
         self.gpu_compilation_backend = gpu_compilation_backend
         self.additional_modules = additional_modules
+        # ADR-1/M-7: in container mode the SIF ships ONE self-consistent toolchain
+        # (base gcc-13 => GLIBCXX_3.4.32), so the native module-gcc-12-vs-conda
+        # libstdc++ split does not exist and the exact-soname patch (which also
+        # references a ${CONDA_PREFIX} absent inside the container) must NOT be
+        # emitted. Drives the libstdc++ fragment/preamble mode-guard below. Injected
+        # True only at the compile-driving construction sites in container mode; the
+        # render/status-only sites keep the False default (byte-identical native).
+        self._execution_container_mode = execution_container_mode
 
         system_dir = self.cfg_system.system_directory
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
@@ -603,8 +612,13 @@ class TRITONSWMM_system:
             check=True,
         )
 
-    @staticmethod
-    def _emit_libstdcpp_ld_preamble_lines() -> list:
+    def _emit_libstdcpp_ld_preamble_lines(self) -> list:
+        # Container mode (M-7): the SIF's %post build owns its own self-consistent
+        # toolchain, so no host conda-lib runtime preamble is emitted (the empty
+        # form). FI5: this method was a @staticmethod; the decorator is removed and
+        # `self` added so the mode read binds (call sites are all self._method()).
+        if self._execution_container_mode:
+            return []
         # Ensure conda env's libstdc++ resolves at RUNTIME for build-time tool
         # invocations (libstdc++ ABI fix). The HPC compiler module's libstdc++ may
         # max out below the conda env's libgdal/libmuparser requirement (GLIBCXX_3.4.31+).
@@ -620,8 +634,15 @@ class TRITONSWMM_system:
             "",
         ]
 
-    @staticmethod
-    def _libstdcpp_linker_flag_fragment() -> str:
+    def _libstdcpp_linker_flag_fragment(self) -> str:
+        # Container mode (M-7): the SIF base ships gcc-13 (GLIBCXX_3.4.32), so the
+        # single libstdc++ is current by construction — the exact-soname patch is
+        # unnecessary AND references a ${CONDA_PREFIX} that does not exist inside the
+        # container. Return the empty fragment so the in-container CMake link line is
+        # untouched. FI5: this method was a @staticmethod; the decorator is removed
+        # and `self` added so the mode read binds (call sites are all self._method()).
+        if self._execution_container_mode:
+            return ""
         # Force the triton.exe link line to link conda's EXACT libstdc++.so.6 file
         # (which carries GLIBCXX_3.4.31 / CXXABI_1.3.15 required by conda
         # libgdal/libmuparser) via a sanctioned CMake linker FLAG, not a post-cmake

@@ -8,10 +8,21 @@ from pathlib import Path
 from hhemt.utils import read_text_file_as_list_of_strings
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.resource_management import _parse_slurm_allocated_gpus
+from hhemt.config.hpc_system import resolve_container_spec
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     pass
+
+
+# ADR-1: in-SIF fallback paths for the model binary when a ContainerSpec does not
+# pin an explicit `exe_in_sif` entry for the model. The `.def` build installs the
+# binaries under /opt/hhemt/bin (Phase 3). Keyed by model_type.
+_DEFAULT_EXE_NAME = {
+    "triton": "triton.exe",
+    "tritonswmm": "triton.exe",
+    "swmm": "runswmm",
+}
 
 
 class TRITONSWMM_run:
@@ -363,6 +374,22 @@ class TRITONSWMM_run:
         n_gpus = self._analysis.cfg_analysis.n_gpus
         n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
 
+        # Container mode: the SIF carries the pre-compiled binary (the on-cluster
+        # compile is skipped, Phase 2 setup_workflow.py). Rewrite `exe` to
+        # `apptainer exec [gpu_flag] {sif} {in-SIF exe}`. The gpu_flag is applied
+        # ONLY on GPU sim rungs (derived here from run_mode) — NEVER on CPU/processing
+        # rungs (this is why a per-class exec_args map is unnecessary, OE-2). Placed
+        # AFTER the compute-config resolution (SE Spec 1) so `run_mode`/`n_gpus` are
+        # defined; inserting at the `exe` assignment site would NameError run_mode.
+        cspec = resolve_container_spec(self._analysis.cfg_hpc_system)
+        if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+            exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
+            _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
+            _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
+            exe = f"apptainer exec {_gpu}{_extra}{cspec.sif_path} {exe_in_sif}"
+            # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
+            #   srun … apptainer exec --rocm {sif} /opt/hhemt/bin/triton.exe {cfg}
+
         # Check if already completed
         if self._scenario.model_run_completed(model_type):
             if verbose:
@@ -505,8 +532,22 @@ class TRITONSWMM_run:
             # (no srun, no MPI) so the guard's mpicc test typically fails and the
             # else-branch keeps the prior conda-first behavior; the uniform code
             # path avoids a second ordering convention.
+            # FI6: container host-env for the SWMM serial rung — bind-only (SWMM has
+            # no MPI/GPU, so NO cray-mpich-abi / APPTAINERENV_LD_LIBRARY_PATH / srun
+            # --mpi here). The in-container runswmm still needs analysis_dir bound to
+            # read/write under it (interacts with FB2). "" in native mode (byte-identical).
+            container_host_env_str = ""
+            if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+                _adir = self._analysis.analysis_paths.analysis_dir
+                _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+                container_host_env_str = (
+                    f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"; '
+                )
+
+            _container_mode = self._analysis.cfg_analysis.execution_environment == "container"
             if module_load_cmd:
-                post_module_ld = (
+                # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
+                post_module_ld = "" if _container_mode else (
                     '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
                     'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
                     'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
@@ -514,7 +555,7 @@ class TRITONSWMM_run:
                 )
             else:
                 post_module_ld = ""
-            full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
+            full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
                 "-lc",
@@ -603,6 +644,14 @@ class TRITONSWMM_run:
                     f"{'=' * 80}\n"
                 )
 
+        # Container mode (UVA host-OpenMPI): the OUTER srun carries --mpi={srun_mpi}
+        # (e.g. pmix) so the in-container OpenMPI wires up via SLURM PMIx. Frontier
+        # (srun_mpi=None) emits nothing (Cray-PALS path; ADR-3's "never --mpi=pmix"
+        # holds). Precomputed as a token (NOT an inline conditional in the implicit-
+        # concat srun tuple, which would be a syntax error); "" in native mode so the
+        # srun string stays byte-identical.
+        _mpi_flag = f"--mpi={cspec.srun_mpi} " if (cspec is not None and cspec.srun_mpi) else ""
+
         if run_mode != "gpu":
             if using_srun:
                 launch_cmd_str = (
@@ -621,6 +670,7 @@ class TRITONSWMM_run:
                     # all surviving tasks immediately rather than waiting for them to exit
                     # naturally. Prevents indefinite hangs when tasks are blocked at MPI_Init
                     # PMI_Barrier waiting for failed peers (observed as 118-min hang in Run 7).
+                    f"{_mpi_flag}"
                     f"{exe} {cfg}"
                 )
             elif run_mode in ("serial", "openmp"):
@@ -681,6 +731,7 @@ class TRITONSWMM_run:
                     "--cpu-bind=cores "
                     "--overlap "  # See note above on --overlap in batch_job mode.
                     "--kill-on-bad-exit=1 "  # See note above on --kill-on-bad-exit=1.
+                    f"{_mpi_flag}"
                     f"{exe} {cfg}"
                 )
             else:
@@ -711,8 +762,30 @@ class TRITONSWMM_run:
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
         # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
+        # --- container-mode host-side injector env (ADR-3; OUTSIDE the wrap) ---
+        # Apptainer does NOT import the host LD_LIBRARY_PATH; the host Cray-MPICH ABI
+        # bind is realized by exporting APPTAINERENV_LD_LIBRARY_PATH (Apptainer PREPENDS
+        # it inside the container ahead of the SIF-baked /opt/mpich/lib). Emitted as a
+        # distinct segment so native stays byte-identical ("" in native mode).
+        container_host_env_str = ""
+        if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+            parts = []
+            if cspec.cray_mpich_abi_module:
+                parts.append("module load cray-mpich-abi 2>/dev/null")
+            if cspec.apptainerenv_ld_library_path:
+                # SHELL-TEMPLATE in double quotes so ${CRAY_MPICH_DIR} etc. expand at runtime.
+                parts.append(f'export APPTAINERENV_LD_LIBRARY_PATH="{cspec.apptainerenv_ld_library_path}"')
+            if cspec.containlibs:
+                parts.append(f'export APPTAINER_CONTAINLIBS="{",".join(cspec.containlibs)}"')
+            _adir = self._analysis.analysis_paths.analysis_dir
+            _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+            parts.append(f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"')
+            container_host_env_str = "; ".join(parts) + "; "
+
+        _container_mode = self._analysis.cfg_analysis.execution_environment == "container"
         if module_load_cmd:
-            post_module_ld = (
+            # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
+            post_module_ld = "" if _container_mode else (
                 '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
                 'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -d "$__MPI_LIB" ]; then '
                 'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
@@ -720,7 +793,7 @@ class TRITONSWMM_run:
             )
         else:
             post_module_ld = ""
-        full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
+        full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",
             "-lc",
