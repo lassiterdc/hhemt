@@ -9,8 +9,7 @@ import tests.fixtures.test_case_catalog as cases
 from hhemt.workflow import _NON_INTERACTIVE_LOCK_CLEAR_ENV
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
+    Path(__file__).resolve().parents[1] / "configs" / "reports" / "synth_sensitivity_report_config.yaml"
 )
 
 
@@ -360,9 +359,7 @@ def synth_sensitivity_typo_in_prefixed_column():
 
 @pytest.fixture
 def synth_sensitivity_with_partition_axis():
-    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_with_partition_axis(
-        start_from_scratch=True
-    )
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_with_partition_axis(start_from_scratch=True)
     return case.analysis
 
 
@@ -528,9 +525,7 @@ def synthetic_sensitivity_completed_isolated(synthetic_sensitivity_completed, tm
     reprocess paths re-derive under tmp_path."""
     from tests._failing_fixture_helpers import clone_analysis_to_tmp
 
-    master_clone = clone_analysis_to_tmp(
-        synthetic_sensitivity_completed.master_analysis, tmp_path
-    )
+    master_clone = clone_analysis_to_tmp(synthetic_sensitivity_completed.master_analysis, tmp_path)
     return master_clone.sensitivity
 
 
@@ -571,15 +566,25 @@ def tritonswmm_cpu_compiled():
     or test_data/.../triton/ and assumes no concurrent test sessions are
     running an actual compile against the same cache dir.
     """
-    from tests.utils_for_testing import compile_toolchain_unavailable
+    from tests.utils_for_testing import (
+        compile_toolchain_unavailable,
+        require_compile_tier,
+    )
 
     if compile_toolchain_unavailable():
-        pytest.skip(
+        msg = (
             "TRITON-SWMM CPU compile toolchain (cmake + mpic++) not on PATH; "
             "run compile-dependent tests under the hhemt conda env "
-            "(e.g. `conda run -n hhemt uv run --active --extra test pytest ...`).",
-            allow_module_level=False,
+            "(e.g. `conda run -n hhemt uv run --active --extra test pytest ...`)."
         )
+        if require_compile_tier():
+            pytest.fail(
+                "HHEMT_REQUIRE_COMPILE_TIER=1 but the compile toolchain is "
+                "absent — the coupled-compile tier MUST run in this "
+                "environment and cannot. " + msg,
+                pytrace=False,
+            )
+        pytest.skip(msg, allow_module_level=False)
 
     from tests.fixtures.test_case_catalog import Local_TestCases
 
@@ -648,9 +653,7 @@ def _assert_no_sha_drift(
             drift.append(f"MTIME-ONLY-DRIFT: {k} (warning)")
     sha_drift = [d for d in drift if not d.startswith("MTIME-ONLY-DRIFT")]
     if sha_drift:
-        pytest.fail(
-            f"{label} session fixture was mutated:\n  " + "\n  ".join(sha_drift)
-        )
+        pytest.fail(f"{label} session fixture was mutated:\n  " + "\n  ".join(sha_drift))
 
 
 @pytest.fixture(scope="session")
