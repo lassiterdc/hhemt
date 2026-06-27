@@ -18,14 +18,20 @@
 #   srun --mpi=list -> pmix (pmix_v5), pmi2, cray_shasta, none   (MpiDefault=pmi2;
 #     the container speaks pmix to host slurm's pmix_v5 via the PMIx cross-version
 #     contract -> ContainerSpec.srun_mpi="pmix").
+#   TRITON pin (authoritative, recovered 2026-06-27 from the proven build tree's
+#     git remote+HEAD): https://code.ornl.gov/hydro/triton.git @ 15eb18a5 (PUBLIC;
+#     credential-less clone + submodules kokkos/yaml-cpp verified from Rivanna).
 #
 # These PROVEN values REPLACE the amd-gpu-specialist's from-scratch skeleton
 # (which assumed OpenMPI 4.1.6 + UCX 1.16.0); the Rivanna stack is 5.0.7 + PMIx
 # 5.0.7 + CUDA-aware + NO UCX/OFI.
 #
-# Status: design-complete, PENDING Phase-5 validation (the UVA probe ladder is
-# the empirical gate). Build OFF-SITE, `apptainer sign`, transfer to
-# /scratch/{your-allocation}/, reference by DOI+SHA-256. See containers/README.md.
+# Status: PENDING Phase-5 validation (the UVA container-validation suite is the
+# empirical gate). Build IN PLACE on Rivanna -- `apptainer build --fakeroot` works
+# (root-mapped namespace; /scratch has ~12 TB; docker.io + code.ornl.gov reachable),
+# so NO off-site build host or SIF transfer is needed for UVA (the off-site flow in
+# README §0 is Frontier-specific: ORNL Harbor policy + no login-node fakeroot).
+# Then `apptainer sign` and reference by DOI+SHA-256. See containers/README.md.
 # =============================================================================
 
 Bootstrap: docker
@@ -33,15 +39,17 @@ Bootstrap: docker
 # floor is SOFT (NVIDIA binds only the host driver libcuda/libnvidia-ml; the
 # container libcudart executes -- a contract, not a heuristic), so the binding
 # constraint is CUDA toolkit-minor <= host-driver CUDA major (the Rivanna host
-# driver runs cuda/12.8.0, so a 12.8 toolkit is exact). Capture the digest:
-#   skopeo inspect docker://nvidia/cuda:12.8.0-devel-ubuntu24.04 | jq -r '.Digest'
-From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:<PINNED_BASE_DIGEST>
+# driver runs cuda/12.8.0, so a 12.8 toolkit is exact). Digest captured 2026-06-27
+# via the Docker Hub v2 manifest API (skopeo absent on Rivanna).
+From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
 
 %files
-    # hhemt source tree (pip install -e for the in-container process runner, FB2)
-    # + the pinned conda explicit lockfile. Assembled by containers/README.md.
+    # hhemt source tree (uv sync --frozen for the in-container process runner, FB2).
+    # Deps come from the COMMITTED uv.lock inside this tree (the project's real
+    # lockfile) -- NOT a conda explicit lockfile. The original .def's conda-lock step
+    # was unsatisfiable: hhemt has no environment.yml / conda-lock; it is
+    # uv/pyproject-packaged. Build CWD must be containers/ so `../` = the repo root.
     ../  /opt/hhemt-src
-    ./hhemt.conda-lock.yml  /opt/hhemt.conda-lock.yml
 
 %post
     set -eu
@@ -64,9 +72,8 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:<PINNED_BASE_DIGEST>
     cd /tmp
     OMPI_VER=5.0.7
     wget -q https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VER}.tar.gz
-    # Verify the pinned source hash (pin contract):
-    echo "<PINNED_OPENMPI_SHA256>  openmpi-${OMPI_VER}.tar.gz" | sha256sum -c - || \
-        echo "WARNING: OpenMPI sha256 unverified -- set <PINNED_OPENMPI_SHA256> for production"
+    # Verify the pinned source hash (ADR-2 pin contract; captured 2026-06-27):
+    echo "67435fdb2560f897882e69fead171d38e7f44a6dfe1d3c90506f549a943050b8  openmpi-${OMPI_VER}.tar.gz" | sha256sum -c -
     tar xf openmpi-${OMPI_VER}.tar.gz && cd openmpi-${OMPI_VER}
     ./configure --prefix=/opt/openmpi \
         --with-pmix=/usr --with-cuda=/usr/local/cuda \
@@ -77,12 +84,18 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:<PINNED_BASE_DIGEST>
     cd /tmp && rm -rf openmpi-* *.tar.gz
     export PATH=/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
-    # --- (2) Pinned conda env from the committed EXPLICIT lockfile (NO re-solve;
-    #     supplies the hhemt Python runtime for the in-container process runner).
-    wget -q https://micro.mamba.pm/api/micromamba/linux-64/latest -O /tmp/micromamba.tar.bz2
-    tar -xj -C /opt -f /tmp/micromamba.tar.bz2 bin/micromamba && rm /tmp/micromamba.tar.bz2
-    /opt/bin/micromamba create -y -p /opt/conda/envs/hhemt -f /opt/hhemt.conda-lock.yml
-    export PATH=/opt/conda/envs/hhemt/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
+    # --- (2) hhemt Python runtime via uv from the COMMITTED uv.lock (NO re-solve;
+    #     the project's real lockfile). This SUPPLANTS the original conda explicit
+    #     lockfile step, which was unsatisfiable (hhemt has no environment.yml /
+    #     conda-lock -- it is uv/pyproject-packaged). The conda libstdcxx-ng pin is
+    #     MOOT in-SIF: triton.exe links the system gcc-14 libstdc++ (the coherent
+    #     toolchain in (3)), not a conda one. `uv sync --frozen` is reproducible from
+    #     uv.lock (URL+hash pinned), preserving the ADR-2 reproducibility contract.
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    cd /opt/hhemt-src && uv sync --frozen --no-dev
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.
     #     ONE SIF = ONE Kokkos GPU arch (OE-2): this SIF targets a100 (AMPERE80).
@@ -96,8 +109,8 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:<PINNED_BASE_DIGEST>
     #     /lib ... -l:libstdc++.so.6 ..." to fix a host-module-gcc-vs-conda split;
     #     inside the SIF there is ONE coherent toolchain (gcc-14 <-> matched
     #     libstdc++), so that fragment is DELIBERATELY DROPPED.
-    git clone <PINNED_TRITON_GIT_URL> /opt/triton
-    cd /opt/triton && git checkout <PINNED_TRITON_COMMIT_SHA> \
+    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
+    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
         && git submodule update --init --recursive
     mkdir -p build && cd build
     cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
@@ -118,25 +131,26 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:<PINNED_BASE_DIGEST>
     cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
 
     # --- (5) Install to the convention path the example profile's exe_in_sif
-    #     points at (/opt/hhemt/bin) + pip install -e the toolkit.
+    #     points at (/opt/hhemt/bin). hhemt itself was installed editable into
+    #     /opt/hhemt-src/.venv by `uv sync` in (2).
     mkdir -p /opt/hhemt/bin
     cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
     cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
         /opt/hhemt/bin/runswmm
     chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
-    /opt/conda/envs/hhemt/bin/pip install --no-deps -e /opt/hhemt-src
 
 %environment
-    export PATH=/opt/conda/envs/hhemt/bin:/opt/hhemt/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
     export LD_LIBRARY_PATH=/opt/openmpi/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
     # NO host-MPI-bind APPTAINERENV needed: the container OpenMPI speaks pmix to
     # host slurm via `srun --mpi=pmix` (set by the runner from ContainerSpec.srun_mpi).
 
 %labels
     org.hhemt.role        uva-cuda-production
-    org.hhemt.status      design-complete-pending-phase5-validation
-    org.hhemt.base_digest sha256:<PINNED_BASE_DIGEST>
-    org.hhemt.triton_sha  <PINNED_TRITON_COMMIT_SHA>
+    org.hhemt.status      pending-phase5-validation
+    org.hhemt.base_digest sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
+    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.triton_url  https://code.ornl.gov/hydro/triton.git
     org.hhemt.cuda        12.8.0
     org.hhemt.openmpi     5.0.7-pmix5
     org.hhemt.gcc         14.2.0

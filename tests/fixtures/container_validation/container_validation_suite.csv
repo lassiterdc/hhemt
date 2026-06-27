@@ -1,0 +1,3 @@
+sa_id,run_mode,n_mpi_procs,n_omp_threads,n_gpus,n_nodes,analysis.execution_environment
+native,mpi,2,1,0,1,native
+container,mpi,2,1,0,1,container

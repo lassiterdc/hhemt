@@ -15,10 +15,17 @@ reconciliation bug class). The signed, fetched SIF's **SHA-256 is the
 within-family identity carrier** — a byte-identical SquashFS rebuild is
 foreclosed (ADR-4), so the SIF is referenced by DOI + SHA-256, never embedded.
 
-> **Why off-site?** ADR-2: the build needs `root`/`--fakeroot`, which the
-> clusters' login nodes do not grant, and ORNL Harbor's vuln-severity policy
-> blocks the in-job CPE pull. Build where root exists (a Linux box / laptop),
-> sign, then transfer the signed SIF to the cluster.
+> **Build host — per cluster (NOT uniformly off-site).**
+> - **UVA Rivanna:** build IN PLACE on Rivanna. `apptainer build --fakeroot` works
+>   on the login node via the root-mapped-namespace fallback (the user need not be
+>   listed in `/etc/subuid`), `/scratch` has ~12 TB, and both `docker.io` and
+>   `code.ornl.gov` are reachable. No off-site host or SIF transfer is needed —
+>   build directly onto `/scratch` (verified 2026-06-27: the ROCm probe and this
+>   CUDA SIF were both fakeroot-built on Rivanna).
+> - **OLCF Frontier:** build OFF-SITE. ORNL Harbor's vuln-severity policy blocks
+>   the in-job CPE pull, and Frontier login nodes do not grant fakeroot. Build where
+>   root/`--fakeroot` exists (a Linux box, or Rivanna), `apptainer sign`, then
+>   transfer the signed SIF to `$MEMBERWORK`.
 
 ---
 
@@ -48,24 +55,31 @@ skopeo inspect docker://nvidia/cuda:12.8.0-devel-ubuntu24.04 | jq -r '.Digest'
 #    and record (tag, sha256) in the SIF lockfile alongside the conda lockfile.
 ```
 
-### 1b. Pinned conda explicit lockfile
+### 1b. Pinned Python environment — `uv.lock` (NOT conda-lock)
 
-The `.def` `%files`-copies `hhemt.conda-lock.yml` into the build context and
-`micromamba create -f` it with **no re-solve**. Generate it from the working
-hhemt environment and commit it here (must pin `libstdcxx-ng`/`libgcc-ng` at or
-above the base gcc-13 libstdc++ floor — the FQ2 single-libstdc++ guarantee):
+The `.def` `%files`-copies the hhemt source tree (`../ -> /opt/hhemt-src`) and runs
+`uv sync --frozen --no-dev` inside it, installing the EXACT locked dependency set
+from the committed `uv.lock` (the project's real lockfile) with no re-solve. There
+is nothing to generate or commit separately — `uv.lock` already lives in the repo.
 
-```bash
-# conda-lock (preferred, multi-platform), OR `conda list --explicit > hhemt.conda-lock.yml`
-conda-lock --kind explicit -p linux-64 -f environment.yml --filename-template 'containers/hhemt.conda-lock.yml'
-```
+> **Why uv, not conda-lock?** hhemt is `uv`/`pyproject.toml`-packaged: there is no
+> `environment.yml` and no conda env, so the original conda-explicit-lockfile step
+> was unsatisfiable. The conda-lock's reproducibility role was pinning
+> `libstdcxx-ng`/`libgcc-ng`; that is MOOT inside the SIF, because `triton.exe`
+> links the system `gcc-14` libstdc++ (one coherent toolchain — see the `.def`
+> `%post` step (3), M-7 dissolution), not a conda one. `uv sync --frozen` is
+> URL+hash-pinned, preserving the ADR-2 reproducibility contract for the Python
+> runtime that drives the in-container `process_timeseries_runner`.
 
 ### 1c. Pinned source git-shas
 
 - Set each `.def`'s `<PINNED_TRITON_GIT_URL>` + `<PINNED_TRITON_COMMIT_SHA>` to
   the experiment's TRITON-SWMM repo at a **fixed commit** (not the moving
-  `TRITONSWMM_branch_key` — OE-3). A known-working commit is
-  `02438b60613a7d913d884e7b836f9f5ff421fe7d`.
+  `TRITONSWMM_branch_key` — OE-3). The `uva-cuda.def` is already pinned to the
+  authoritative values recovered from the proven on-Rivanna native build tree:
+  `https://code.ornl.gov/hydro/triton.git` @
+  `15eb18a5d25afe5da295cb4b559a62669dbe5bc3` (PUBLIC — credential-less clone plus
+  the `kokkos`/`yaml-cpp` submodules verified from Rivanna 2026-06-27).
 - SWMM is pinned to the public tag `v5.2.4` (USEPA) inside the `.def`.
 - `git submodule --recursive` pins Kokkos + bundled SWMM transitively.
 
@@ -128,10 +142,10 @@ by embedding the 3–8 GB file.
 # Frontier ($MEMBERWORK, readable from a compute node):
 scp containers/hhemt_frontier_rocm.sif \
     YOUR_OLCF_USER@dtn.olcf.ornl.gov:'$MEMBERWORK/{your-allocation}/hhemt_frontier_rocm.sif'
-# UVA Rivanna (/scratch):
-scp containers/hhemt_uva_cuda.sif \
-    rivanna:'/scratch/{your-allocation}/hhemt_uva_cuda.sif'
-# (or use Globus for the large transfer; destination must be readable from a compute node)
+# UVA Rivanna: NO transfer needed — build IN PLACE on /scratch (see §0). Skip
+# straight to §6 with sif_path pointing at the on-/scratch build output.
+# (Frontier only) or use Globus for the large transfer; destination must be
+# readable from a compute node.
 ```
 
 ## 6. Point the profile at the transferred SIF

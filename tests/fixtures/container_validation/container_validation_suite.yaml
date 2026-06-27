@@ -1,0 +1,47 @@
+# Synthetic container-validation sensitivity suite (Phase 5; ADR-4 / R9 / R11 / TO-4)
+#
+# Purpose
+# -------
+# Validate native ≡ container BIT-REPRODUCIBILITY (ADR-4 within-family) end-to-end
+# on the synthetic test model, exercising the REAL toolkit path (`analysis.run()`)
+# so the in-container OpenMPI-pmix wireup is tested alongside the byte-identity
+# claim — not just an isolated MPI probe.
+#
+# Design (sub-choice (a): SYNTHETIC-first — fastest, cheapest, fully reproducible)
+# --------------------------------------------------------------------------------
+# Axis: analysis.execution_environment ∈ {native, container}, crossed with a FIXED
+# compute config (the two rows differ ONLY in execution_environment) so that the
+# consolidation's `check_cross_sim_identity(within_family=True)` compares the
+# container row against the native reference at IDENTICAL compute — yielding a
+# clean native ≡ container verdict. (check_cross_sim_identity anchors on the
+# lexicographically-first sa_id; "container" < "native", so the native row is
+# compared against the container reference. Same physics either way.)
+#
+# Compute = CPU-MPI (run_mode=mpi, n_mpi_procs=2), NOT GPU: the synthetic model has
+# no established GPU run path (every synth sensitivity tier is CPU). The MPI rung
+# still exercises the in-container OpenMPI-pmix wireup end-to-end (the UVA SIF's MPI
+# flavor). The CUDA/GPU-binding claim (TO-3) is validated by the real-data Frontier
+# debug-allocation run, not this synthetic suite.
+#
+# Sensitivity rows: see the sibling `container_validation_suite.csv`.
+
+suite:
+  sensitivity_csv: container_validation_suite.csv
+  model: tritonswmm            # SWMM-coupled (the binary the SIF carries)
+  verdict_member: check_cross_sim_identity   # run at consolidation, within_family=True
+  deterministic_verdict: "OVERALL: native≡container within-family (max_abs_diff=0.0)"
+
+# Operator run-config (fill in before running — see containers/README.md §6 and the
+# anonymized example profile test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml).
+# The native row ignores the `container:` block; the container row consumes it.
+hpc_system_config_container_block:        # paste into your hpc_system_config.yaml
+  container:
+    sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF
+    gpu_flag: "--nv"                       # UVA NVIDIA passthrough
+    srun_mpi: "pmix"                       # container-own OpenMPI (UVA-only)
+    # exe_in_sif / binds: see the example UVA profile; analysis_dir bind is appended by the seam.
+
+# Prerequisite (NOT satisfied in CI / on a build-less host): the signed
+# hhemt_uva_cuda.sif must be BUILT (containers/README.md §0-4) and TRANSFERRED to
+# the cluster (§5) before the container row can run. The native row runs with the
+# on-cluster source build (C-NONCONTAINER fallback).
