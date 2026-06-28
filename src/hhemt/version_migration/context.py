@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from filelock import FileLock
 
+from hhemt._filelock_compat import resolve_filelock
 from hhemt.version_migration.constants import LOCK_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
@@ -274,7 +274,7 @@ class MigrationContext:
         default_or_fn: Any,
     ) -> None:
         log_path = Path(log_file)
-        with FileLock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
+        with resolve_filelock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
             data = (
                 json.loads(log_path.read_text()) if log_path.exists() else {}
             )
@@ -304,7 +304,7 @@ class MigrationContext:
         self, log_file: str, old_name: str, new_name: str
     ) -> None:
         log_path = Path(log_file)
-        with FileLock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
+        with resolve_filelock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
             data = json.loads(log_path.read_text())
             if new_name in data and old_name not in data:
                 return
@@ -335,7 +335,7 @@ class MigrationContext:
         transform_fn: Callable[[Any], Any],
     ) -> None:
         log_path = Path(log_file)
-        with FileLock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
+        with resolve_filelock(str(log_path) + ".lock", timeout=LOCK_TIMEOUT_SECONDS):
             data = json.loads(log_path.read_text())
             data[field_name] = transform_fn(data[field_name])
             log_path.write_text(json.dumps(data, indent=2, sort_keys=True))
