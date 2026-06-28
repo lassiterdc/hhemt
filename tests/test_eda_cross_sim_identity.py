@@ -96,11 +96,28 @@ def test_combine_cells_single_and_multi():
     assert single.sel(sa_id="container", event_iloc=0).item() == 0.0
     assert list(single["sa_id"].values) == ["container"]
 
-    # N>=2: stitches into the (sa_id, event_iloc) hypercube.
+    # N>=2 across sa_id: assembled into the (sa_id, event_iloc) grid (manual build, no
+    # combine_by_coords) with values placed at the right coords.
     cell2 = xr.DataArray(1.0).expand_dims({"sa_id": ["native_dup"], "event_iloc": [0]})
     multi = _combine_cells([cell, cell2])
     assert set(multi["sa_id"].values) == {"container", "native_dup"}
+    assert multi.sel(sa_id="container", event_iloc=0).item() == 0.0
     assert multi.sel(sa_id="native_dup", event_iloc=0).item() == 1.0
+
+    # N>=2 across event_iloc for one sub: grid spans both events.
+    ev0 = xr.DataArray(0.0).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
+    ev1 = xr.DataArray(2.5).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
+    grid = _combine_cells([ev0, ev1])
+    assert list(grid["event_iloc"].values) == [0, 1]
+    assert grid.sel(sa_id="c", event_iloc=1).item() == 2.5
+
+    # Bool dtype (the `identical__{var}` artifact) is preserved through the manual build.
+    b0 = xr.DataArray(True).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
+    b1 = xr.DataArray(False).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
+    bgrid = _combine_cells([b0, b1])
+    assert bgrid.dtype == bool
+    assert bool(bgrid.sel(sa_id="c", event_iloc=0)) is True
+    assert bool(bgrid.sel(sa_id="c", event_iloc=1)) is False
 
 
 # ---- Slow tier (one real build, session-cached): summaries-present sensitivity ----

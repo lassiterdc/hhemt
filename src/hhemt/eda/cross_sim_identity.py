@@ -123,18 +123,31 @@ def compare_variable_exact(da_ref: xr.DataArray, da_cmp: xr.DataArray) -> dict:
 
 
 def _combine_cells(arrs: list[xr.DataArray]) -> xr.DataArray:
-    """Stitch per-(sa_id, event_iloc) scalar cells into a hypercube.
+    """Stitch per-(sa_id, event_iloc) scalar cells into an (sa_id, event_iloc) grid.
 
-    Each element is a 1x1 DataArray keyed by its (sa_id, event_iloc) coords. For N>=2
-    cells `xr.combine_by_coords` orders them into the (sa_id, event_iloc) hypercube. It
-    is DEGENERATE for a single 1x1 cell — the minimal native+container suite (one
-    non-reference sub, one event) — where (on some xarray versions, e.g. the Rivanna
-    py3.11 env) it raises "Could not find any dimension coordinates to use to order the
-    Dataset objects". Return the lone cell directly in that case (it already carries the
-    correct coords); newer xarray tolerates the single-cell combine but the guard keeps
-    the behavior version-independent.
+    Each element is a 1x1 DataArray carrying its scalar value at its own (sa_id,
+    event_iloc) coords. `xr.combine_by_coords` is the natural tool but its coord-ordering
+    inference is FRAGILE for these 1x1 unnamed scalar cells: on the Rivanna py3.11 xarray
+    it raises "Could not find any dimension coordinates to use to order the Dataset
+    objects" for BOTH the single-cell (minimal native+container, one event) and the
+    multi-cell cases, while newer xarray tolerates it — a version-dependent failure that
+    blocked the bit-identity verdict even though the comparison had already completed.
+    Assemble the grid directly instead (no combine_by_coords): version-independent,
+    dtype-preserving (float max_abs_diff / bool identical), and duplicate-tolerant.
     """
-    return arrs[0] if len(arrs) == 1 else xr.combine_by_coords(arrs)
+    if len(arrs) == 1:
+        return arrs[0]
+    sa_ids = sorted({a["sa_id"].item() for a in arrs})
+    events = sorted({int(a["event_iloc"].item()) for a in arrs})
+    vals = [a.squeeze().item() for a in arrs]
+    out = xr.DataArray(
+        np.empty((len(sa_ids), len(events)), dtype=np.asarray(vals).dtype),
+        dims=("sa_id", "event_iloc"),
+        coords={"sa_id": sa_ids, "event_iloc": events},
+    )
+    for a, v in zip(arrs, vals, strict=True):
+        out.loc[{"sa_id": a["sa_id"].item(), "event_iloc": int(a["event_iloc"].item())}] = v
+    return out
 
 
 def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bool = True) -> EdaResult:
