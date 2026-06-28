@@ -126,9 +126,18 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
         exe_in_sif={"tritonswmm": "/opt/hhemt/bin/triton.exe"},
     )
     run._analysis.analysis_paths.analysis_dir = "/fake/analysis"
+    # Concrete out_tritonswmm so the Change-2 output-redirect bind renders a real
+    # path (the default mock yields a MagicMock, not a path).
+    run._scenario.scen_paths.out_tritonswmm = Path("/fake/sim/out_tritonswmm")
 
     full_cmd = _get_launch_cmd(run)
-    assert "apptainer exec --rocm /opt/test.sif /opt/hhemt/bin/triton.exe" in full_cmd, (
+    # The output-redirect bind (Change 2) sits between the gpu_flag and the SIF:
+    # `-B {host_out}:/opt/hhemt/out_tritonswmm` redirects TRITON's argv[0]-two-up
+    # output path (/opt/hhemt inside the read-only SIF) to the writable host dir.
+    assert "apptainer exec --rocm -B " in full_cmd and (
+        ":/opt/hhemt/out_tritonswmm /opt/test.sif /opt/hhemt/bin/triton.exe" in full_cmd
+    ), (
         "container GPU mode did not wrap the innermost {exe} in "
-        "`apptainer exec --rocm /opt/test.sif /opt/hhemt/bin/triton.exe`"
+        "`apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm /opt/test.sif "
+        "/opt/hhemt/bin/triton.exe`"
     )
