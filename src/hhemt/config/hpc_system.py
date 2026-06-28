@@ -283,6 +283,12 @@ class ContainerSpec(BaseModel):
     extra_exec_args: list[str] = Field(default_factory=list)  # shared escape
     #   hatch for an unforeseen per-cluster `apptainer exec` flag; applied to
     #   EVERY class. NEVER put `--cleanenv` here for an MPI cluster (NQ-11).
+    apptainer_module: str | None = None  # cluster Lmod module providing the
+    #   `apptainer` binary. REQUIRED where apptainer is module-only (UVA Rivanna:
+    #   "apptainer/1.5.0") — without it `srun … apptainer exec` dies execve
+    #   (apptainer not on PATH). None on clusters where apptainer is on the default
+    #   PATH (Frontier). The seam emits `module load {apptainer_module}` in container
+    #   mode ONLY (native rows never load it -> native byte-identical).
 
     @model_validator(mode="after")
     def _check_mpi_flavor_exclusive(self):

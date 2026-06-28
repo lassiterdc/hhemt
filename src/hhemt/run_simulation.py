@@ -1,15 +1,17 @@
 # %%
+import logging
 import os
 import subprocess
 import time
-import logging
-import pandas as pd
 from pathlib import Path
-from hhemt.utils import read_text_file_as_list_of_strings
-from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.resource_management import _parse_slurm_allocated_gpus
-from hhemt.config.hpc_system import resolve_container_spec
 from typing import TYPE_CHECKING, Literal
+
+import pandas as pd
+
+from hhemt.config.hpc_system import resolve_container_spec
+from hhemt.resource_management import _parse_slurm_allocated_gpus
+from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.utils import read_text_file_as_list_of_strings
 
 if TYPE_CHECKING:
     pass
@@ -386,9 +388,22 @@ class TRITONSWMM_run:
             exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
             _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
             _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
-            exe = f"apptainer exec {_gpu}{_extra}{cspec.sif_path} {exe_in_sif}"
+            # Container Change 2 (ROOT CAUSE of zero-output): TRITON derives its output
+            # base dir from argv[0] two directory levels up (config_utils get_root_dir).
+            # In-SIF the exe is /opt/hhemt/bin/{exe} -> two-up = /opt/hhemt INSIDE the
+            # read-only SIF, so the relative output_folder write silently fails (native
+            # runs .../sims/<evt>/build/{exe} -> two-up = the writable sim dir). Bind the
+            # host scenario out_tritonswmm dir onto the in-SIF {project_dir}/out_tritonswmm
+            # so output lands on the writable host fs. triton/tritonswmm only (SWMM writes
+            # via its own inp/rpt/out args). The host out_tritonswmm is created by prepare.
+            _out_bind = ""
+            if model_type != "swmm":
+                _host_out = self._scenario.scen_paths.out_tritonswmm
+                _proj_dir = "/".join(exe_in_sif.split("/")[:-2])  # two-up from in-SIF exe = TRITON project_dir
+                _out_bind = f"-B {_host_out}:{_proj_dir}/{_host_out.name} "
+            exe = f"apptainer exec {_gpu}{_extra}{_out_bind}{cspec.sif_path} {exe_in_sif}"
             # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
-            #   srun … apptainer exec --rocm {sif} /opt/hhemt/bin/triton.exe {cfg}
+            #   srun … apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm {sif} {exe} {cfg}
 
         # Check if already completed
         if self._scenario.model_run_completed(model_type):
@@ -510,6 +525,19 @@ class TRITONSWMM_run:
             if verbose:
                 print(f"loading modules {modules}")
             module_load_cmd = f"module load {modules}; "
+
+        # Container Change 1: apptainer is module-only on some clusters (UVA Rivanna);
+        # the seam must `module load` it in container mode or `srun … apptainer exec`
+        # dies with `execve(): apptainer: No such file or directory` (the ambient
+        # /opt/apptainer/current/bin PATH entry is a dead stub). Prepend the apptainer
+        # module ahead of the build/runtime modules. Container-mode ONLY — native rows
+        # never load it (native byte-identical).
+        if (
+            self._analysis.cfg_analysis.execution_environment == "container"
+            and cspec is not None
+            and cspec.apptainer_module
+        ):
+            module_load_cmd = f"module load {cspec.apptainer_module}; {module_load_cmd}"
 
         # ----------------------------
         # SWMM-specific command (no CFG, different structure)
@@ -899,7 +927,6 @@ class TRITONSWMM_run:
             - metadata_dict: dict with simulation metadata for logging
         """
         import os
-        import subprocess
 
         event_iloc = self._scenario.event_iloc
         sim_logfile = self._scenario.log.logfile.parent / f"sim_run_{event_iloc}.log"
@@ -984,7 +1011,7 @@ class TRITONSWMM_run:
             if rc != 0:
                 # Log the error
                 if sim_logfile.exists():
-                    with open(sim_logfile, "r") as f:
+                    with open(sim_logfile) as f:
                         error_output = f.read()
                     if verbose:
                         print(
