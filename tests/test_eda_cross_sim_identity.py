@@ -80,6 +80,29 @@ def test_compare_variable_exact_coord_mismatch_fails_closed():
     assert res["coord_match"] is False
 
 
+def test_combine_cells_single_and_multi():
+    """Regression for the artifact-assembly helper _combine_cells (the stitch the
+    operator 2-row validation run tripped on Rivanna). A single 1x1 (sa_id, event_iloc)
+    cell — the minimal native+container suite, one non-reference sub + one event — is the
+    DEGENERATE combine_by_coords case (raises "Could not find any dimension coordinates"
+    on the Rivanna py3.11 xarray). The helper returns the lone cell directly there and
+    still hypercube-stitches N>=2. The slow synthetic_sensitivity_completed fixture has
+    multiple subs, so it never exercised the single-cell path."""
+    from hhemt.eda.cross_sim_identity import _combine_cells
+
+    cell = xr.DataArray(0.0).expand_dims({"sa_id": ["container"], "event_iloc": [0]})
+    # Single cell: must return the lone array intact (no combine_by_coords degeneracy).
+    single = _combine_cells([cell])
+    assert single.sel(sa_id="container", event_iloc=0).item() == 0.0
+    assert list(single["sa_id"].values) == ["container"]
+
+    # N>=2: stitches into the (sa_id, event_iloc) hypercube.
+    cell2 = xr.DataArray(1.0).expand_dims({"sa_id": ["native_dup"], "event_iloc": [0]})
+    multi = _combine_cells([cell, cell2])
+    assert set(multi["sa_id"].values) == {"container", "native_dup"}
+    assert multi.sel(sa_id="native_dup", event_iloc=0).item() == 1.0
+
+
 # ---- Slow tier (one real build, session-cached): summaries-present sensitivity ----
 
 
