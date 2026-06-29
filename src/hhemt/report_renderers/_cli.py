@@ -26,6 +26,15 @@ def main() -> None:
     parser.add_argument("renderer", help="renderer module name under report_renderers/")
     parser.add_argument("--analysis-config", required=True, type=Path)
     parser.add_argument("--system-config", required=True, type=Path)
+    parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        default=None,
+        help="Optional path to the per-HPC-system configuration YAML. Emitted by the "
+        "Snakemake rule generator (_get_config_args) for every rule; threaded into "
+        "TRITONSWMM_analysis so the renderer builds the analysis consistently with the "
+        "sibling runners (setup_workflow/prepare_scenario_runner/export_scenario_status).",
+    )
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--event-iloc", type=int, default=None, help="for per-sim renderers")
     parser.add_argument("--independent-var", type=str, default=None, help="for sensitivity renderers")
@@ -59,7 +68,7 @@ def main() -> None:
     # TRITONSWMM_system and TRITONSWMM_analysis take YAML Paths and load internally
     # (system.py:25-27, analysis.py:108-109) — pass Paths, not pre-loaded models.
     system = TRITONSWMM_system(args.system_config)
-    analysis = TRITONSWMM_analysis(args.analysis_config, system, is_main_orchestrator=False, skip_log_update=True)
+    analysis = TRITONSWMM_analysis(args.analysis_config, system, hpc_system_config_yaml=args.hpc_system_config, is_main_orchestrator=False, skip_log_update=True)
     # Post-F2: report cfg lives inline on cfg_analysis (R1, load-time-required).
     report_cfg = analysis.cfg_analysis.report
 
