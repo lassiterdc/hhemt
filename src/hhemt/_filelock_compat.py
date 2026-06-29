@@ -23,7 +23,8 @@ any ``OSError`` is the robust test.
 
 from __future__ import annotations
 
-import tempfile
+import os
+import uuid
 from pathlib import Path
 
 from filelock import BaseFileLock, FileLock, SoftFileLock
@@ -60,11 +61,28 @@ def flock_supported(directory: Path) -> bool:
         dev = None
     if dev is not None and dev in _flock_support_by_dev:
         return _flock_support_by_dev[dev]
+    # Probe via an EXPLICIT named probe file (O_CREAT|O_EXCL), never
+    # tempfile.NamedTemporaryFile: on CPython 3.12 the latter calls
+    # _io.open(dir, ..., opener=...), which fires an "open" audit event on the
+    # BARE DIRECTORY before the opener creates the named temp file. That bare-dir
+    # open escapes the renderer-IO provenance audit's ".flock_probe_" substring
+    # allowlist (the bare dir carries no such substring) and fails every per-sim
+    # plot rule whose render takes a cold-cache lock. The named probe path below
+    # carries ".flock_probe_" so the (single, named) open is allowlisted, and no
+    # bare-dir open is ever produced.
+    probe_path = directory / f".flock_probe_{os.getpid()}_{uuid.uuid4().hex}"
     try:
-        with tempfile.NamedTemporaryFile(dir=str(directory), prefix=".flock_probe_") as probe:
-            fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
-        result = True
+        fd = os.open(str(probe_path), os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            result = True
+        finally:
+            os.close(fd)
+            try:
+                probe_path.unlink()
+            except OSError:
+                pass
     except OSError:
         result = False
     if dev is not None:
