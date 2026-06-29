@@ -31,14 +31,9 @@ _DEFAULT_EXE_NAME = {
 
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
-        from hhemt.process_simulation import (
-            TRITONSWMM_sim_post_processing,
-        )
-
         self._scenario = scenario
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
-        self.proc = TRITONSWMM_sim_post_processing(self)
 
     @property
     def _triton_swmm_raw_output_directory(self):
