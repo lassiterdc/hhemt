@@ -61,6 +61,7 @@ def build_case(
     *,
     system_directory: str | None = None,
     start_from_scratch: bool = False,
+    multi_sim_run_method: str | None = None,
 ):
     """Build the container-validation sensitivity test case for ``cluster``.
 
@@ -84,7 +85,11 @@ def build_case(
             {"system_directory": system_directory} if system_directory else {}
         ),
         additional_analysis_configs={
-            "multi_sim_run_method": c["multi_sim_run_method"],
+            # batch_job/1_job_many_srun_tasks = login-node operator submission (default per
+            # cluster). The in-allocation validation entry (run_and_verdict) overrides this to
+            # "local" so execution_mode="local" runs the sims in-process via the inner srun —
+            # no SLURM-executor plugin needed (matches the proven validate_uva/frontier runs).
+            "multi_sim_run_method": multi_sim_run_method or c["multi_sim_run_method"],
             "hpc_account": "{your-allocation}",          # FILL: OLCF project / UVA allocation
             "hpc_max_simultaneous_sims": 1000,
             "hpc_total_job_duration_min": 60,
@@ -115,15 +120,21 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True):
     (the runner submits no jobs itself — execution_mode='local')."""
     from hhemt.eda.cross_sim_identity import check_cross_sim_identity
 
-    tc = build_case(cluster, start_from_scratch=start_from_scratch)
-    # DI parity with the proven validate_* runners: ensure every sub-analysis carries
-    # the GPU partition selector so n_gpus>0 + the GPU-sensitivity validation resolve.
+    # In-allocation validation: multi_sim_run_method="local" so execution_mode="local"
+    # runs the sims (incl. the multi-rank container rows via the inner srun) IN-PROCESS
+    # within this GPU allocation — not the login-node batch_job submission path.
+    tc = build_case(cluster, start_from_scratch=start_from_scratch, multi_sim_run_method="local")
+    # DI parity with the proven validate_* runners: ensure master + every sub-analysis carry
+    # the GPU partition selector (n_gpus>0 + the GPU-sensitivity validation resolve) and the
+    # local orchestration (the subs re-load configs from disk).
     tc.analysis.cfg_analysis.hpc_ensemble_partition = _CLUSTER[cluster]["gpu_partition"]
+    tc.analysis.cfg_analysis.multi_sim_run_method = "local"
     sens = getattr(tc.analysis, "sensitivity", None)
     if sens is not None:
         for sub in getattr(sens, "sub_analyses", {}).values():
             try:
                 sub.cfg_analysis.hpc_ensemble_partition = _CLUSTER[cluster]["gpu_partition"]
+                sub.cfg_analysis.multi_sim_run_method = "local"
             except Exception:
                 pass
     tc.analysis.run(from_scratch=True, execution_mode="local", verbose=True)
@@ -138,4 +149,7 @@ if __name__ == "__main__":
     import sys
 
     cluster = sys.argv[1] if len(sys.argv) > 1 else "uva"
-    run_and_verdict(cluster)
+    _v = run_and_verdict(cluster)
+    # Exit non-zero unless the within-family verdict genuinely passed (so the SLURM job
+    # state reflects the result; the log carries the full verdict either way).
+    sys.exit(0 if getattr(_v, "passed", False) else 1)
