@@ -23,7 +23,15 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   gpu_flag: "--rocm"                          # Frontier MI250X GPU passthrough (binds driver-adjacent libs; container ROCm runtime executes)
   cray_mpich_abi_module: true                 # seam emits `module load cray-mpich-abi` so the ${CRAY_*} vars exist when the LD template expands
   apptainerenv_ld_library_path: "${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"   # host Cray-MPICH-ABI bind (prepended in-container ahead of the baked /opt/mpich/lib; runtime-expanded shell template)
-  containlibs: ["/usr/lib64/libcxi.so.1", "/usr/lib64/libjson-c.so.3", "/lib64/libtinfo.so.6", "/usr/lib64/libnl-3.so.200", "/usr/lib64/libjansson.so.4"]   # CXI/Slingshot + Cray support libs (APPTAINER_CONTAINLIBS)
+  # APPTAINER_CONTAINLIBS — host libs bind-mounted into /.singularity.d/libs/ (always on the in-container loader path).
+  # First five: CXI/Slingshot + Cray support libs. Last four: the AMD/CCE compiler-runtime CLOSURE that the host
+  # Cray-MPICH-ABI libmpi.so.12 (PrgEnv-amd) transitively NEEDs — `ldd ${CRAY_MPICH_DIR}/lib-abi-mpich/libmpi.so.12`
+  # resolves exactly libpgmath/libflang/libflangrti (amd/6.2.4 flang runtime, /opt/rocm-6.2.4/llvm/lib) + libquadmath
+  # (CCE, /opt/cray/pe/lib64/cce). Without these the SIF triton.exe aborts at load with "libpgmath.so: cannot open
+  # shared object file" (exit 127). CONTAINLIBS (not LD_LIBRARY_PATH) is the durable fix: in-container resolution
+  # requires the file physically present, and Frontier `module load` populates CRAY_LD_LIBRARY_PATH, not LD_LIBRARY_PATH.
+  # The rocm-6.2.4 path tracks the PrgEnv-amd default (amd/6.2.4); re-discover via ldd if OLCF bumps the compiler.
+  containlibs: ["/usr/lib64/libcxi.so.1", "/usr/lib64/libjson-c.so.3", "/lib64/libtinfo.so.6", "/usr/lib64/libnl-3.so.200", "/usr/lib64/libjansson.so.4", "/opt/rocm-6.2.4/llvm/lib/libpgmath.so", "/opt/rocm-6.2.4/llvm/lib/libflang.so", "/opt/rocm-6.2.4/llvm/lib/libflangrti.so", "/opt/cray/pe/lib64/cce/libquadmath.so.0"]
   binds: ["/opt/cray", "/usr/share/libdrm", "/var/spool/slurmd"]   # APPTAINER_BIND: Cray PE tree + the PALS apinfo path the in-container MPI reads
   exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)
