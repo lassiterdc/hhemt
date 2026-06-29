@@ -34,24 +34,42 @@ except ImportError:  # pragma: no cover - non-Unix (Windows uses msvcrt locking)
     fcntl = None  # type: ignore[assignment]
 
 
-def flock_supported(directory: Path) -> bool:
-    """Return True iff ``fcntl.flock`` works on a file in ``directory``.
+# flock support is a property of the FILESYSTEM, so cache the probe result by device
+# id (st_dev). This makes the probe fire ONCE per filesystem (early, e.g. at the first
+# cache-build lock) instead of on every lock — so render-time locks on a same-filesystem
+# dir reuse the cache and create no `.flock_probe_` temp file, which otherwise trips the
+# renderer-IO provenance audit (report_renderers/_provenance_audit.py) as an undeclared read.
+_flock_support_by_dev: dict[int, bool] = {}
 
-    Probes by creating a temp file in ``directory`` and taking + releasing a
-    non-blocking exclusive ``flock``. Any ``OSError`` (ENOTSUPP/524 on Lustre,
-    EOPNOTSUPP/95 on some NFS, EROFS, ...) means ``flock`` is unavailable here.
-    On non-Unix platforms (no ``fcntl``) ``filelock`` uses msvcrt locking, so we
-    report supported.
+
+def flock_supported(directory: Path) -> bool:
+    """Return True iff ``fcntl.flock`` works on the filesystem hosting ``directory``.
+
+    Probes ONCE per filesystem (keyed by ``st_dev``): creates a temp file in
+    ``directory`` and takes + releases a non-blocking exclusive ``flock``. Any
+    ``OSError`` (ENOTSUPP/524 on Lustre, EOPNOTSUPP/95 on some NFS, EROFS, ...) means
+    ``flock`` is unavailable there. On non-Unix platforms (no ``fcntl``) ``filelock``
+    uses msvcrt locking, so we report supported.
     """
     if fcntl is None:
         return True
+    directory = Path(directory)
+    try:
+        dev = directory.stat().st_dev
+    except OSError:
+        dev = None
+    if dev is not None and dev in _flock_support_by_dev:
+        return _flock_support_by_dev[dev]
     try:
         with tempfile.NamedTemporaryFile(dir=str(directory), prefix=".flock_probe_") as probe:
             fcntl.flock(probe.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
-        return True
+        result = True
     except OSError:
-        return False
+        result = False
+    if dev is not None:
+        _flock_support_by_dev[dev] = result
+    return result
 
 
 def resolve_filelock(lock_path: str | Path, timeout: float = -1) -> BaseFileLock:
