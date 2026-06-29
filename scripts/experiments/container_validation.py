@@ -13,9 +13,11 @@ the only CSV-varying axes. Build the case, then ``tc.analysis.run(execution_mode
 inside a GPU allocation (mirrors the proven ``validate_*`` runners) and read the verdict
 with ``check_cross_sim_identity(within_family=True)``.
 
-Run from the repo root (so ``tests/`` is on ``sys.path``). Fill ``{your-allocation}``
-and confirm the per-cluster partition/walltime before launching — exactly as
-``synth_compute_config.py`` does.
+Run from the repo root (so ``tests/`` is on ``sys.path``). The real per-cluster deployment
+config (SIF path + account + partitions) is resolved from the PRIVATE ***REMOVED*** estate
+via ``_resolve_hpc_system_config`` ($***REMOVED*** / $HHEMT_HPC_SYSTEM_CONFIG / argv[2]) —
+NO git-tracked file is edited per run; the in-tree ``test_data/.../hpc_system_config_*.yaml``
+are copy-me templates the operator reconstructs into the estate once per cluster.
 """
 
 from __future__ import annotations
@@ -30,6 +32,7 @@ import rioxarray  # noqa: F401  (import-order guard — see synth_compute_config
 # Make the repo root importable so `tests.fixtures...` resolves regardless of how this
 # file is invoked (`python scripts/experiments/container_validation.py` puts the SCRIPT
 # dir on sys.path, not the repo root). Mirrors validate_uva.py's `sys.path.insert(0, ROOT)`.
+import os
 import sys as _sys
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -44,39 +47,90 @@ from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_cas
 # absolute HPC path validate_frontier.py used).
 _SUITE = _REPO_ROOT / "tests/fixtures/container_validation/container_validation_suite.csv"
 
-# Per-cluster knobs. {your-allocation} is the only hard fill-in; confirm the GPU
-# partition + walltime against your current allocation before running.
-_CLUSTER = {
-    "uva": dict(
-        yaml=_REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml",
-        gpu_partition="gpu-a100-80",            # a100 / CUDA (partition derives hardware)
-        multi_sim_run_method="batch_job",       # UVA executor-owns-sbatch
-    ),
-    "frontier": dict(
-        yaml=_REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml",
-        gpu_partition="batch",                  # mi250x / HIP
-        multi_sim_run_method="1_job_many_srun_tasks",  # Frontier toolkit-owns-sbatch
-    ),
+# Default desktop checkout of the PRIVATE deployment estate (***REMOVED***), computed
+# from the user's home (portable; no hard-coded /home/<user>). Cluster runs set
+# $***REMOVED*** to the compute-visible checkout (the resolver reads it).
+_***REMOVED***_DEFAULT = str(Path.home() / "dev" / "***REMOVED***")
+
+# In-tree anonymized examples — COPY-ME templates (+ byte-identity-test fixtures), never
+# the live config. The operator reconstructs the real config in the estate from these.
+_TEMPLATE = {
+    "uva": _REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml",
+    "frontier": _REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml",
 }
+
+# Per-cluster knobs (NOT secrets — the deployment account/SIF come from the resolved
+# estate config; the GPU partition derives the hardware).
+_CLUSTER = {
+    "uva": dict(gpu_partition="gpu-a100-80", multi_sim_run_method="batch_job"),
+    "frontier": dict(gpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks"),
+}
+
+
+def _resolve_hpc_system_config(cluster: str, override: str | None = None) -> Path:
+    """Resolve the operator's REAL hpc_system_config for ``cluster`` from the PRIVATE
+    ***REMOVED*** estate (the versioned, git-pulled deployment-config home).
+
+    Precedence: explicit ``override`` (argv[2]) > ``$HHEMT_HPC_SYSTEM_CONFIG`` env var >
+    ``$***REMOVED***/hpc/hpc_system_config_{cluster}.yaml`` (``$***REMOVED***`` defaults to
+    the desktop checkout; set it per-cluster to the compute-visible estate clone). The
+    in-tree ``_TEMPLATE`` is the copy-me source, never the live config, so a run edits ZERO
+    git-tracked files in the public repo.
+    """
+    if override:
+        path = Path(override).expanduser()
+    elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
+        path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
+    else:
+        projects = Path(os.environ.get("***REMOVED***", _***REMOVED***_DEFAULT)).expanduser()
+        path = projects / "hpc" / f"hpc_system_config_{cluster}.yaml"
+    if not path.is_file():
+        raise FileNotFoundError(
+            f"No hpc_system_config for cluster {cluster!r} at {path}.\n"
+            f"  1. On the cluster, set $***REMOVED*** to your compute-visible ***REMOVED*** "
+            f"checkout and `git pull` it on the login node.\n"
+            f"  2. Reconstruct the config once from the in-tree template:\n"
+            f"       cp {_TEMPLATE[cluster]} {path}\n"
+            f"     then fill default_account (from hpc/profiles.yaml) and container.sif_path.\n"
+            f"  (Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[2].)"
+        )
+    return path.resolve()
 
 
 def build_case(
     cluster: str,
     *,
+    hpc_system_config_yaml: str | None = None,
     system_directory: str | None = None,
     start_from_scratch: bool = False,
     multi_sim_run_method: str | None = None,
 ):
     """Build the container-validation sensitivity test case for ``cluster``.
 
-    ``execution_environment`` is supplied PER ROW by the CSV
-    (``analysis.execution_environment``); the master default stays ``native`` so the
-    native rows need no override. The ContainerSpec + partition→hardware derivation
-    flow through ``hpc_system_config_yaml`` — no per-sub-analysis backend DI.
+    The real deployment ``hpc_system_config`` (ContainerSpec SIF path + partition→hardware
+    + account) is resolved from the PRIVATE ***REMOVED*** estate (see
+    ``_resolve_hpc_system_config``) — NO git-tracked file is edited per run. ``hpc_account``
+    is sourced from the resolved config's ``default_account``; a fail-fast rejects an
+    unfilled template. ``execution_environment`` is supplied PER ROW by the CSV.
     """
     if cluster not in _CLUSTER:
         raise ValueError(f"cluster must be one of {sorted(_CLUSTER)}; got {cluster!r}")
     c = _CLUSTER[cluster]
+    from hhemt.config.loaders import load_hpc_system_config
+
+    cfg_path = _resolve_hpc_system_config(cluster, hpc_system_config_yaml)
+    cfg_hpc = load_hpc_system_config(cfg_path)
+    account = cfg_hpc.default_account or ""
+    if (not account) or ("{your-" in account):
+        raise ValueError(
+            f"{cfg_path}: default_account is unset or still a placeholder ({account!r}). "
+            f"Set default_account to your real OLCF project / UVA allocation."
+        )
+    if cfg_hpc.container is None or "{your-" in (cfg_hpc.container.sif_path or ""):
+        raise ValueError(
+            f"{cfg_path}: container.sif_path is missing or still a placeholder. "
+            f"Set it to the absolute on-cluster path of your transferred, signed SIF."
+        )
     return retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=f"container_validation_{cluster}",
         sensitivity_csv=_SUITE,
@@ -84,7 +138,7 @@ def build_case(
         toggle_triton_model=False,
         toggle_swmm_model=False,
         start_from_scratch=start_from_scratch,
-        hpc_system_config_yaml=c["yaml"],
+        hpc_system_config_yaml=cfg_path,
         additional_system_configs=(
             {"system_directory": system_directory} if system_directory else {}
         ),
@@ -94,7 +148,7 @@ def build_case(
             # "local" so execution_mode="local" runs the sims in-process via the inner srun —
             # no SLURM-executor plugin needed (matches the proven validate_uva/frontier runs).
             "multi_sim_run_method": multi_sim_run_method or c["multi_sim_run_method"],
-            "hpc_account": "{your-allocation}",          # FILL: OLCF project / UVA allocation
+            "hpc_account": account,
             "hpc_max_simultaneous_sims": 1000,
             "hpc_total_job_duration_min": 60,
             "hpc_gpus_per_node": 8,
@@ -122,7 +176,7 @@ def build_case(
     )
 
 
-def run_and_verdict(cluster: str, *, start_from_scratch: bool = True):
+def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system_config_yaml: str | None = None):
     """Build + run the suite locally on the allocated GPU node, then print the
     within-family native≡container verdict. Call from inside a GPU sbatch allocation
     (the runner submits no jobs itself — execution_mode='local')."""
@@ -131,7 +185,12 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True):
     # In-allocation validation: multi_sim_run_method="local" so execution_mode="local"
     # runs the sims (incl. the multi-rank container rows via the inner srun) IN-PROCESS
     # within this GPU allocation — not the login-node batch_job submission path.
-    tc = build_case(cluster, start_from_scratch=start_from_scratch, multi_sim_run_method="local")
+    tc = build_case(
+        cluster,
+        start_from_scratch=start_from_scratch,
+        multi_sim_run_method="local",
+        hpc_system_config_yaml=hpc_system_config_yaml,
+    )
     # DI parity with the proven validate_* runners: ensure master + every sub-analysis carry
     # the GPU partition selector (n_gpus>0 + the GPU-sensitivity validation resolve) and the
     # local orchestration (the subs re-load configs from disk).
@@ -176,6 +235,7 @@ if __name__ == "__main__":
     import sys
 
     cluster = sys.argv[1] if len(sys.argv) > 1 else "uva"
+    cfg_override = sys.argv[2] if len(sys.argv) > 2 else None
     # run_and_verdict returns True only for a REAL within-family pass (no-data guarded);
     # exit non-zero otherwise so the SLURM job state reflects the result.
-    sys.exit(0 if run_and_verdict(cluster) else 1)
+    sys.exit(0 if run_and_verdict(cluster, hpc_system_config_yaml=cfg_override) else 1)
