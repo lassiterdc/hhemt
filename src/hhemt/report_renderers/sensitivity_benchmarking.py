@@ -378,24 +378,50 @@ def render(
 
 
 def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd.DataFrame:
-    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent."""
+    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent.
+
+    Sensitivity columns may be BARE (``n_gpus``) or ``analysis.``-prefixed
+    (``analysis.n_gpus``). Per-sub overlay suites (e.g. container-validation) MUST use the
+    prefixed form so each row applies to its sub-analysis, and ``df_setup_with_system_overlays``
+    preserves the prefix — so resolve every compute column by bare-or-prefixed name, else
+    derivation silently no-ops on a prefixed-column suite and a later ``df_setup["n_devices"]``
+    raises ``KeyError``.
+    """
     if "n_devices" in df_setup.columns:
         return df_setup
-    required = {"n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"}
-    missing = required - set(df_setup.columns)
+
+    def _col(bare: str) -> str | None:
+        if bare in df_setup.columns:
+            return bare
+        prefixed = f"analysis.{bare}"
+        return prefixed if prefixed in df_setup.columns else None
+
+    resolved = {
+        bare: _col(bare)
+        for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
+    }
+    missing = sorted(bare for bare, col in resolved.items() if col is None)
     if missing:
         if independent_var == "n_devices":
             raise ValueError(
                 "Cannot derive n_devices: sensitivity CSV is missing required columns "
-                f"{sorted(missing)}. Either declare n_devices explicitly or include the "
-                "missing columns."
+                f"{missing} (checked bare and 'analysis.'-prefixed). Either declare "
+                "n_devices explicitly or include the missing columns."
             )
         return df_setup
-    is_gpu = (df_setup.get("run_mode", "").astype(str).str.lower() == "gpu") | (df_setup["n_gpus"] > 0)
+
+    run_mode_col = _col("run_mode")
+    run_mode = (
+        df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
+    )
+    n_gpus = df_setup[resolved["n_gpus"]]
+    is_gpu = (run_mode == "gpu") | (n_gpus > 0)
     df_setup = df_setup.assign(
-        n_devices=df_setup["n_gpus"].where(
+        n_devices=n_gpus.where(
             is_gpu,
-            df_setup["n_mpi_procs"] * df_setup["n_omp_threads"] * df_setup["n_nodes"],
+            df_setup[resolved["n_mpi_procs"]]
+            * df_setup[resolved["n_omp_threads"]]
+            * df_setup[resolved["n_nodes"]],
         ).astype(int)
     )
     return df_setup
