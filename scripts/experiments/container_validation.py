@@ -27,6 +27,15 @@ from pathlib import Path
 # allocator and aborts ("free(): invalid pointer"). Must precede tests.fixtures.
 import rioxarray  # noqa: F401  (import-order guard — see synth_compute_config.py)
 
+# Make the repo root importable so `tests.fixtures...` resolves regardless of how this
+# file is invoked (`python scripts/experiments/container_validation.py` puts the SCRIPT
+# dir on sys.path, not the repo root). Mirrors validate_uva.py's `sys.path.insert(0, ROOT)`.
+import sys as _sys
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_REPO_ROOT))
+
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
 _SUITE = Path("tests/fixtures/container_validation/container_validation_suite.csv")
