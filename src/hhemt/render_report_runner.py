@@ -35,6 +35,13 @@ def main():
     parser.add_argument("--system-config", type=Path, required=True)
     parser.add_argument("--analysis-config", type=Path, required=True)
     parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        default=None,
+        help="Optional HPC system config YAML (partition→hardware, container spec). "
+        "Threaded by the orchestrator so render matches the run's execution environment.",
+    )
+    parser.add_argument(
         "--format",
         choices=["html", "zip"],
         default="zip",
@@ -53,7 +60,12 @@ def main():
         from hhemt.analysis import TRITONSWMM_analysis
 
         system = TRITONSWMM_system(args.system_config)
-        analysis = TRITONSWMM_analysis(args.analysis_config, system, is_main_orchestrator=False)
+        analysis = TRITONSWMM_analysis(
+            args.analysis_config,
+            system,
+            hpc_system_config_yaml=args.hpc_system_config,
+            is_main_orchestrator=False,
+        )
 
         if analysis.cfg_analysis.toggle_sensitivity_analysis:
             out = analysis.sensitivity.render_report(format=args.format, reprocess=args.reprocess)
