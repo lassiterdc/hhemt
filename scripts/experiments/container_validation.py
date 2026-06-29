@@ -108,7 +108,11 @@ def build_case(
             "report": {
                 "sensitivity": {
                     "mode": "benchmarking",
-                    "independent_vars": ["analysis.execution_environment"],
+                    # n_devices is the scaling x-axis (1 vs 2 GPU); execution_environment
+                    # (native vs container) is the group overlay — together a real
+                    # strong-scaling + container-overhead figure. n_devices is a derived
+                    # column the renderer synthesizes from the (prefixed) compute columns.
+                    "independent_vars": ["n_devices"],
                     "dependent_var": "performance.Total",
                     "aggregation": "mean",
                     "group_by_var": "analysis.execution_environment",
