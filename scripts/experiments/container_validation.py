@@ -38,18 +38,22 @@ if str(_REPO_ROOT) not in _sys.path:
 
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
 
-_SUITE = Path("tests/fixtures/container_validation/container_validation_suite.csv")
+# ABSOLUTE paths (rooted at the repo) — the Snakemake SUBPROCESS rules re-read the
+# hpc-system-config from the run dir (~/.cache/.../<analysis>), NOT the repo root, so a
+# relative --hpc-system-config raises FileNotFoundError at setup_target_0 (mirrors the
+# absolute HPC path validate_frontier.py used).
+_SUITE = _REPO_ROOT / "tests/fixtures/container_validation/container_validation_suite.csv"
 
 # Per-cluster knobs. {your-allocation} is the only hard fill-in; confirm the GPU
 # partition + walltime against your current allocation before running.
 _CLUSTER = {
     "uva": dict(
-        yaml=Path("test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml"),
+        yaml=_REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml",
         gpu_partition="gpu-a100-80",            # a100 / CUDA (partition derives hardware)
         multi_sim_run_method="batch_job",       # UVA executor-owns-sbatch
     ),
     "frontier": dict(
-        yaml=Path("test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml"),
+        yaml=_REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml",
         gpu_partition="batch",                  # mi250x / HIP
         multi_sim_run_method="1_job_many_srun_tasks",  # Frontier toolkit-owns-sbatch
     ),
@@ -138,18 +142,36 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True):
             except Exception:
                 pass
     tc.analysis.run(from_scratch=True, execution_mode="local", verbose=True)
-    v = check_cross_sim_identity(tc.analysis, within_family=True).verdict
+    result = check_cross_sim_identity(tc.analysis, within_family=True)
+    v = result.verdict
     print("VERDICT passed  =", v.passed)
     print("VERDICT summary =", v.summary)
-    print("OVERALL:", "native=container within-family" if v.passed else "DIVERGED")
-    return v
+    print("VERDICT details =", v.details)
+    # No-data guard (mirrors validate_uva.py): check_cross_sim_identity returns passed=True
+    # with an "N/A — no … summaries" verdict when the sims produced NOTHING to compare
+    # (a rule failed upstream). That is NOT a real native≡container result.
+    details = v.details or []
+    summaries_absent = any(
+        "summaries absent" in str(d.get("detail", "")) for d in details if isinstance(d, dict)
+    )
+    no_data = (
+        bool(getattr(result, "skipped", False))
+        or ("N/A" in (v.summary or ""))
+        or ("no sub-analysis" in (v.summary or ""))
+        or summaries_absent
+    )
+    if no_data:
+        print("OVERALL: NO-DATA — sims produced no summaries; not a real native=container comparison (run failed upstream)")
+        return False
+    real_pass = bool(v.passed)
+    print("OVERALL:", "native=container within-family" if real_pass else "DIVERGED")
+    return real_pass
 
 
 if __name__ == "__main__":
     import sys
 
     cluster = sys.argv[1] if len(sys.argv) > 1 else "uva"
-    _v = run_and_verdict(cluster)
-    # Exit non-zero unless the within-family verdict genuinely passed (so the SLURM job
-    # state reflects the result; the log carries the full verdict either way).
-    sys.exit(0 if getattr(_v, "passed", False) else 1)
+    # run_and_verdict returns True only for a REAL within-family pass (no-data guarded);
+    # exit non-zero otherwise so the SLURM job state reflects the result.
+    sys.exit(0 if run_and_verdict(cluster) else 1)
