@@ -830,6 +830,13 @@ class TRITONSWMM_run:
         container_host_env_str = ""
         if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
             parts = []
+            # Pre-exec modules FIRST (Frontier production: OLCF apptainer-enable-mpi/-gpu
+            # + olcf-container-tools — they bind the open-ended host MPI+ROCm+compiler-
+            # runtime closure so it need not be hand-enumerated into containlibs). They
+            # must precede cray-mpich-abi + the APPTAINERENV exports (validated probe
+            # job 4898044). Empty list => byte-identical to the prior emission.
+            for _m in cspec.pre_exec_modules:
+                parts.append(f"module load {_m} 2>/dev/null")
             if cspec.cray_mpich_abi_module:
                 parts.append("module load cray-mpich-abi 2>/dev/null")
             if cspec.apptainerenv_ld_library_path:

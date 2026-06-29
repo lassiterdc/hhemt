@@ -275,6 +275,14 @@ class ContainerSpec(BaseModel):
     cray_mpich_abi_module: bool = False  # True on Frontier => the seam emits
     #   `module load cray-mpich-abi` ahead of the APPTAINERENV export so the
     #   ${CRAY_*} vars exist when the template expands. False on UVA.
+    pre_exec_modules: list[str] = Field(default_factory=list)  # container-only Lmod
+    #   modules emitted as `module load {m} 2>/dev/null` at the TOP of the container
+    #   host-env segment — BEFORE `module load cray-mpich-abi` and the APPTAINERENV
+    #   exports. Frontier production multi-rank: the OLCF helper set
+    #   ["olcf-container-tools","apptainer-enable-mpi","apptainer-enable-gpu"], which
+    #   bind the open-ended host MPI+ROCm+compiler-runtime closure (libpgmath/libflang/
+    #   …) so it need NOT be hand-enumerated into containlibs (validated probe job
+    #   4898044: size=16/2 nodes). Empty on UVA and on the single-rank validation fallback.
     srun_mpi: str | None = None  # UVA: "pmix" => the seam emits `srun --mpi=pmix`
     #   for the container-own OpenMPI; None on Frontier (Cray-PALS path, never pmix).
     exe_in_sif: dict[str, str] = Field(default_factory=dict)  # OD-A: per-model
