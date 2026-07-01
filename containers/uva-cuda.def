@@ -102,9 +102,13 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # /opt/openmpi/lib into the mpicc/mpic++ wrappers, which is correct for the
     # fixed in-SIF path; %environment LD_LIBRARY_PATH backs it up (build log
     # 2026-06-27, first build attempt).
+    # --disable-oshmem: --with-ucx enables OpenMPI's OpenSHMEM (oshmem) layer, whose
+    # oshmem/mca/sshmem/base/sshmem_base_open.c fails to compile under gcc-14 (-Wint-conversion
+    # is a hard error in gcc-14). hhemt uses MPI only (never OpenSHMEM), so disabling oshmem
+    # sidesteps the build error while KEEPING the UCX *MPI* PML (the InfiniBand transport we need).
     ./configure --prefix=/opt/openmpi \
         --with-cuda=/usr/local/cuda \
-        --with-ucx=/opt/ucx --without-ofi --without-hcoll \
+        --with-ucx=/opt/ucx --without-ofi --without-hcoll --disable-oshmem \
         --with-slurm --enable-shared --with-prrte=internal
     make -j"$(nproc)" && make install
     cd /tmp && rm -rf openmpi-* *.tar.gz
