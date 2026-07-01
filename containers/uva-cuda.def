@@ -65,15 +65,31 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # PMIx) == container (bundled PMIx) result bit-identity is unaffected.
     apt-get install -y --no-install-recommends \
         git cmake build-essential gfortran wget ca-certificates libnuma-dev python3 \
-        gcc-14 g++-14 libhwloc-dev libevent-dev
+        gcc-14 g++-14 libhwloc-dev libevent-dev \
+        libibverbs-dev librdmacm-dev ibverbs-providers rdma-core
     update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
     update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
 
-    # --- (1) OpenMPI 5.0.7 -- the EXACT host module major.minor (gompi/14.2.0_5.0.7).
-    #     Configure MIRRORS the proven host build: --with-pmix (pmix_v5 wireup),
-    #     --with-cuda (CUDA-aware), NO UCX/OFI (single-node sm/self -- the validated
-    #     UVA topology; a100/a6000 nodes carry up to 8 GPUs). --with-slurm so the
-    #     container OpenMPI integrates with host slurm.
+    # --- (1a) UCX 1.18.0 (CUDA-aware) -- the InfiniBand/RDMA transport the MULTI-NODE
+    #     container OpenMPI selects via its UCX PML. Added 2026-07-01 (DoD-7 expanded:
+    #     2-node validation). OpenMPI 5.0 removed the legacy openib/verbs BTL, so native
+    #     IB on Rivanna is reachable ONLY through the UCX PML -- a --without-ucx build is
+    #     single-node-only (container-specialist 2026-07-01). UCX + rdma-core are OPEN and
+    #     shippable in the image, so the SIF becomes a self-contained 1-and-2-node superset.
+    cd /tmp
+    UCX_VER=1.18.0
+    wget -q https://github.com/openucx/ucx/releases/download/v${UCX_VER}/ucx-${UCX_VER}.tar.gz
+    # Verify the pinned source hash (ADR-2 pin contract; captured on Rivanna 2026-07-01):
+    echo "fa75070f5fa7442731b4ef5fc9549391e147ed3d859afeb1dad2d4513b39dc33  ucx-${UCX_VER}.tar.gz" | sha256sum -c -
+    tar xf ucx-${UCX_VER}.tar.gz && cd ucx-${UCX_VER}
+    ./configure --prefix=/opt/ucx --with-cuda=/usr/local/cuda \
+        --enable-mt --without-go --without-java --disable-doxygen-doc
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf ucx-${UCX_VER}
+
+    # --- (1b) OpenMPI 5.0.7 -- the EXACT host module major.minor (gompi/14.2.0_5.0.7).
+    #     Configure MIRRORS the proven host build: --with-cuda (CUDA-aware), --with-slurm;
+    #     NOW --with-ucx=/opt/ucx (multi-node IB). OFI/hcoll stay off (UCX is the transport).
     cd /tmp
     OMPI_VER=5.0.7
     wget -q https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VER}.tar.gz
@@ -88,7 +104,7 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # 2026-06-27, first build attempt).
     ./configure --prefix=/opt/openmpi \
         --with-cuda=/usr/local/cuda \
-        --without-ucx --without-ofi --without-hcoll \
+        --with-ucx=/opt/ucx --without-ofi --without-hcoll \
         --with-slurm --enable-shared --with-prrte=internal
     make -j"$(nproc)" && make install
     cd /tmp && rm -rf openmpi-* *.tar.gz
@@ -104,7 +120,10 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
     sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
     export PATH=/root/.local/bin:${PATH}
-    cd /opt/hhemt-src && uv sync --frozen --no-dev
+    # Remove any host `.venv` copied in by `%files ../` (its python references host-only
+    # libs absent in the container -> `uv sync` would die querying it) so uv builds a
+    # clean container-native venv from uv.lock.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
     export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.
@@ -159,9 +178,14 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
 
 %environment
     export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
-    export LD_LIBRARY_PATH=/opt/openmpi/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:/opt/ucx/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
     # NO host-MPI-bind APPTAINERENV needed: the container OpenMPI speaks pmix to
     # host slurm via `srun --mpi=pmix` (set by the runner from ContainerSpec.srun_mpi).
+    # Multi-node (DoD-7 expanded 2026-07-01): select the UCX PML + CUDA-aware IB transports
+    # so device-buffer MPI (Kokkos-CUDA halo exchange) crosses nodes over InfiniBand. UCX
+    # falls back to sm/self at 1 node, so this is a 1-and-2-node superset (no per-run tuning).
+    export OMPI_MCA_pml=ucx
+    export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,self
 
 %labels
     org.hhemt.role        uva-cuda-production
