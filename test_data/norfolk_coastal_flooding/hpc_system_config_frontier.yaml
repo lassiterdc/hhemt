@@ -35,7 +35,10 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   # /opt/rocm/lib PREPENDED (container-specialist 2026-07-01): triton.exe has empty RPATH (frontier-rocm.def Change-B), so it resolves
   # libamdhip64/libhsa-runtime64/libamd_comgr by LD_LIBRARY_PATH. Without this prepend the ':${LD_LIBRARY_PATH}' tail imports HOST ROCm
   # 6.2.4, which wins over the container's 6.4.3 -> hipErrorNoBinaryForGpu. '/opt/rocm/lib' is a literal that resolves in-container to 6.4.3.
-  apptainerenv_ld_library_path: "/opt/rocm/lib:${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"
+  # + /opt/rocm/llvm/lib (2026-07-01, run 4926639): the ROCm-fix cleared hipErrorNoBinaryForGpu but surfaced the next
+  # empty-RPATH family — `libpgmath.so: cannot open` (exit 127); libpgmath/libflang live in the container's ROCm LLVM
+  # dir. Prepend it so the flang/pgmath family resolves from container 6.4.3 (specialist v3's every-family-must-be-prepended rule).
+  apptainerenv_ld_library_path: "/opt/rocm/lib:/opt/rocm/llvm/lib:${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"
   containlibs: ["/usr/lib64/libcxi.so.1", "/usr/lib64/libjson-c.so.3", "/lib64/libtinfo.so.6", "/usr/lib64/libnl-3.so.200", "/usr/lib64/libjansson.so.4"]
   binds: ["/opt/cray", "/usr/share/libdrm", "/var/spool/slurmd"]   # seam also appends the per-scenario analysis_dir bind
   srun_mpi: null                                # Frontier = Cray-PALS default launch; NEVER pmix (XOR with cray_mpich_abi_module)
