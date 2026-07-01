@@ -67,8 +67,14 @@ _TEMPLATE = {
 # Per-cluster knobs (NOT secrets — the deployment account/SIF come from the resolved
 # estate config; the GPU partition derives the hardware).
 _CLUSTER = {
-    "uva": dict(gpu_partition="gpu-a100-80", multi_sim_run_method="batch_job"),
-    "frontier": dict(gpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks"),
+    # execution_mode: UVA runs the suite via the Snakemake SLURM executor (one right-sized
+    # job per rule) so multi-node GPU rows get their own -N/gres allocation; Frontier runs
+    # in-allocation "local" (proven green, 1_job_many_srun_tasks skips the GPU preflight).
+    # gpu_partition="gpu" is the real Rivanna partition (a100 selected via --gres); the
+    # former "gpu-a100-80" key was a pseudo-partition that --executor slurm would pass to
+    # sbatch -p and fail on.
+    "uva": dict(gpu_partition="gpu", multi_sim_run_method="batch_job", execution_mode="slurm"),
+    "frontier": dict(gpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks", execution_mode="local"),
 }
 
 
@@ -209,7 +215,12 @@ def run_and_verdict(cluster: str, *, start_from_scratch: bool = True, hpc_system
                 sub.cfg_analysis.multi_sim_run_method = "local"
             except Exception:
                 pass
-    tc.analysis.run(from_scratch=True, execution_mode="local", verbose=True)
+    tc.analysis.run(
+        from_scratch=True,
+        execution_mode=_CLUSTER[cluster]["execution_mode"],
+        wait_for_job_completion=True,
+        verbose=True,
+    )
     result = check_cross_sim_identity(tc.analysis, within_family=True)
     v = result.verdict
     print("VERDICT passed  =", v.passed)
