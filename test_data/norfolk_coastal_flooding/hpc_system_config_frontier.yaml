@@ -27,9 +27,15 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   # whack-a-mole. The explicit block then adds Cray-ABI-dir-FIRST libmpi.so.12 ordering, the FIXED 5-lib CXI/Slingshot
   # support set, and the /opt/cray + slurmd-spool (PALS apinfo) binds. The `:${LD_LIBRARY_PATH}` tail is LOAD-BEARING
   # (probe job 4898041 failed rc=127 on libpgmath WITHOUT it). Superset of the single-rank fallback — works at 1 rank too.
-  pre_exec_modules: ["olcf-container-tools", "apptainer-enable-mpi", "apptainer-enable-gpu"]
+  # apptainer-enable-gpu DROPPED (container-specialist 2026-07-01): the OLCF GPU wrapper binds/prepends HOST ROCm 6.2.4
+  # for host-GTL use, which shadows the container's own ROCm 6.4.3 and breaks compute-kernel loading (hipErrorNoBinaryForGpu,
+  # Kokkos_HIP_KernelLaunch, job 4925904). --rocm (gpu_flag) supplies GPU device access + was GREEN in DoD-4; enable-mpi stays for the fabric.
+  pre_exec_modules: ["olcf-container-tools", "apptainer-enable-mpi"]
   cray_mpich_abi_module: true
-  apptainerenv_ld_library_path: "${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"
+  # /opt/rocm/lib PREPENDED (container-specialist 2026-07-01): triton.exe has empty RPATH (frontier-rocm.def Change-B), so it resolves
+  # libamdhip64/libhsa-runtime64/libamd_comgr by LD_LIBRARY_PATH. Without this prepend the ':${LD_LIBRARY_PATH}' tail imports HOST ROCm
+  # 6.2.4, which wins over the container's 6.4.3 -> hipErrorNoBinaryForGpu. '/opt/rocm/lib' is a literal that resolves in-container to 6.4.3.
+  apptainerenv_ld_library_path: "/opt/rocm/lib:${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"
   containlibs: ["/usr/lib64/libcxi.so.1", "/usr/lib64/libjson-c.so.3", "/lib64/libtinfo.so.6", "/usr/lib64/libnl-3.so.200", "/usr/lib64/libjansson.so.4"]
   binds: ["/opt/cray", "/usr/share/libdrm", "/var/spool/slurmd"]   # seam also appends the per-scenario analysis_dir bind
   srun_mpi: null                                # Frontier = Cray-PALS default launch; NEVER pmix (XOR with cray_mpich_abi_module)
