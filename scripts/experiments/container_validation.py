@@ -45,7 +45,12 @@ from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_cas
 # hpc-system-config from the run dir (~/.cache/.../<analysis>), NOT the repo root, so a
 # relative --hpc-system-config raises FileNotFoundError at setup_target_0 (mirrors the
 # absolute HPC path validate_frontier.py used).
-_SUITE = _REPO_ROOT / "tests/fixtures/container_validation/container_validation_suite.csv"
+# Suite selection: default single-node suite, overridable via $HHEMT_CV_SUITE (a filename
+# under tests/fixtures/container_validation/) so a 2-node variant can be run without forking
+# the runner. The 2-node suite adds n_nodes=2 rows to validate the unified config at 2 nodes
+# (subsuming 1) per the expanded DoD-7.
+_SUITE_DIR = _REPO_ROOT / "tests/fixtures/container_validation"
+_SUITE = _SUITE_DIR / (os.environ.get("HHEMT_CV_SUITE") or "container_validation_suite.csv")
 
 # Default desktop checkout of the PRIVATE deployment estate (***REMOVED***), computed
 # from the user's home (portable; no hard-coded /home/<user>). Cluster runs set
