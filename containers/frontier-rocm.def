@@ -23,15 +23,17 @@ Bootstrap: docker
 # host-major HEURISTIC -- the validation probe rung is the falsifiability check).
 # Capture the digest off-site:  docker buildx imagetools inspect \
 #   rocm/dev-ubuntu-24.04:6.4.3-complete   (or read it from the apptainer build log).
-From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
+From: rocm/dev-ubuntu-24.04:6.4.3-complete
+# ADR-2 base-digest pin: captured from the apptainer build log (README §1a line 25 —
+# Rivanna has no skopeo) and recorded into %labels + the SIF lockfile post-build.
 
 %files
-    # The hhemt source tree (for `pip install -e .` of the in-container process
-    # runner -- FB2: the process_{model} rules run `apptainer exec {sif} python
-    # -m hhemt.{runner}`) and the pinned conda explicit lockfile. Both are
-    # assembled into the off-site build context by containers/README.md.
+    # The hhemt source tree (uv sync --frozen for the in-container process runner,
+    # FB2: the process_{model} rules run `apptainer exec {sif} python -m hhemt.{runner}`).
+    # Deps come from the COMMITTED uv.lock inside this tree (the project's real lockfile)
+    # -- NOT a conda explicit lockfile, which is unsatisfiable (hhemt is uv/pyproject-
+    # packaged, no environment.yml/conda-lock). Mirrors uva-cuda.def.
     ../  /opt/hhemt-src
-    ./hhemt.conda-lock.yml  /opt/hhemt.conda-lock.yml
 
 %post
     set -eu
@@ -47,28 +49,35 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
     cd /tmp
     wget -q https://www.mpich.org/static/downloads/3.4.3/mpich-3.4.3.tar.gz
     # Verify the pinned source hash (pin contract item 3):
-    echo "<PINNED_MPICH_SHA256>  mpich-3.4.3.tar.gz" | sha256sum -c - || \
-        echo "WARNING: MPICH sha256 unverified -- set <PINNED_MPICH_SHA256> for the production build"
+    echo "8154d89f3051903181018166678018155f4c2b6f04a9bb6fe9515656452c4fd7  mpich-3.4.3.tar.gz" | sha256sum -c - || \
+        echo "WARNING: MPICH sha256 unverified -- set the pin for the production build"
     tar xf mpich-3.4.3.tar.gz && cd mpich-3.4.3
     ./configure --prefix=/opt/mpich --with-device=ch4:ofi --disable-fortran \
         --disable-wrapper-rpath FFLAGS=-fallow-argument-mismatch
     make -j"$(nproc)" && make install
     cd /tmp && rm -rf mpich-3.4.3 mpich-3.4.3.tar.gz
 
-    # --- (2) Pinned conda env from the committed EXPLICIT lockfile (NO re-solve).
-    #     Freezes libstdcxx-ng/libgcc-ng to the FQ2 single-libstdc++ floor and
-    #     supplies the hhemt Python runtime for the in-container process runner.
-    wget -q https://micro.mamba.pm/api/micromamba/linux-64/latest -O /tmp/micromamba.tar.bz2
-    tar -xj -C /opt -f /tmp/micromamba.tar.bz2 bin/micromamba && rm /tmp/micromamba.tar.bz2
-    /opt/bin/micromamba create -y -p /opt/conda/envs/hhemt -f /opt/hhemt.conda-lock.yml
-    export PATH=/opt/conda/envs/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+    # --- (2) hhemt Python runtime via uv from the COMMITTED uv.lock (NO re-solve;
+    #     hhemt is uv/pyproject-packaged -- no conda-lock). The conda libstdcxx-ng pin
+    #     is MOOT inside the SIF (triton.exe links the container gcc-13 libstdc++, one
+    #     coherent toolchain -- M-7 dissolution), so uv sync --frozen (URL+hash pinned
+    #     from uv.lock) preserves the ADR-2 reproducibility contract. Mirrors uva-cuda.def.
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    # `%files ../ /opt/hhemt-src` copies the build-context repo verbatim, INCLUDING any
+    # host `.venv` whose python references host-only libs (libpython3.x.so absent in the
+    # container) -> `uv sync` would query that broken interpreter and die (exit 127).
+    # Remove it so uv builds a clean container-native venv from uv.lock.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
 
     # --- (3) TRITON-SWMM at a PINNED COMMIT (not the moving TRITONSWMM_branch_key
     #     -- OE-3, ADR-4 bit-identity carrier). `git submodule --recursive` pins
     #     Kokkos + the bundled SWMM transitively AND is the first correctness
     #     check (a non-recursive clone leaves external/kokkos absent).
-    git clone <PINNED_TRITON_GIT_URL> /opt/triton
-    cd /opt/triton && git checkout <PINNED_TRITON_COMMIT_SHA> \
+    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
+    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
         && git submodule update --init --recursive
     mkdir -p build && cd build
     # machine.cmake FORCE-sets CXX=mpic++ even under IGNORE_MACHINE_FILES; make
@@ -89,7 +98,7 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=HIP \
           -DKokkos_ENABLE_HIP=ON -DKokkos_ARCH_AMD_GFX90A=ON -DKokkos_ENABLE_OPENMP=OFF \
-          -DCMAKE_CXX_COMPILER=mpicxx -DCMAKE_C_COMPILER=mpicc \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
           /opt/triton
@@ -111,11 +120,12 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
     cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
         /opt/hhemt/bin/runswmm
     chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
-    /opt/conda/envs/hhemt/bin/pip install --no-deps -e /opt/hhemt-src
+    # The hhemt toolkit is already installed editable into /opt/hhemt-src/.venv by
+    # `uv sync --frozen` in (2) -- no separate pip install (conda env retired).
 
 %environment
     export MPI_ROOT=/opt/mpich
-    export PATH=/opt/conda/envs/hhemt/bin:/opt/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/mpich/bin:/opt/rocm/bin:${PATH}
     # Change-B (runtime MPI-shadow hardening): /opt/mpich/lib is DELIBERATELY
     # ABSENT from LD_LIBRARY_PATH so no in-container path can shadow the host
     # Cray libmpi.so.12 bound via APPTAINERENV_LD_LIBRARY_PATH (ADR-3). Keep
@@ -125,8 +135,8 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete@sha256:<PINNED_BASE_DIGEST>
 
 %labels
     org.hhemt.role        frontier-rocm-production
-    org.hhemt.base_digest sha256:<PINNED_BASE_DIGEST>
-    org.hhemt.triton_sha  <PINNED_TRITON_COMMIT_SHA>
+    org.hhemt.base_digest sha256-recorded-in-SIF-lockfile-post-build
+    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
     org.hhemt.rocm        6.4.3-complete
     org.hhemt.mpich       3.4.3-ch4ofi
     org.hhemt.gcc         13.x
