@@ -18,20 +18,20 @@
 # KEPT and MUST NOT be listed here.
 
 # --- Allocation accounts ---
-***REMOVED***
-***REMOVED***
-***REMOVED***
+quinnlab
+atm112
+cli190
 
 # --- Developer identity + home paths ---
-***REMOVED***
+dcl3nd
 
 # --- Personal Globus endpoint UUIDs (desktop / laptop) ---
-***REMOVED***
-***REMOVED***
+507d4181-1fe7-11f1-8543-02ea150f82e1
+d6980688-1d51-11ec-a47a-a50ad076c282
 
 # --- Private-estate companion repo name (ADR-1, D3) ---
 # Blocklist the FULL private token; \b + the longer literal provably never
 # false-positives the public hhemt / TRITON-SWMM_toolkit prefixes. Confirm the
 # live name via D3 (keep both lines if uncertain — a never-present token is a no-op).
-***REMOVED***
-***REMOVED***
+hhemt_projects
+TRITON-SWMM_toolkit_projects

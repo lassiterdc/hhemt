@@ -11,7 +11,7 @@ def _init_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     (tmp_path / "scripts").mkdir(parents=True, exist_ok=True)
     (tmp_path / "scripts" / "anonymization_blocklist.txt").write_text(
-        "# test blocklist\n***REMOVED***\n***REMOVED***\n***REMOVED***\n",
+        "# test blocklist\nquinnlab\nhhemt_projects\nTRITON-SWMM_toolkit_projects\n",
         encoding="utf-8",
     )
     for rel, content in files.items():
@@ -22,11 +22,11 @@ def _init_repo(tmp_path: Path, files: dict[str, str]) -> Path:
     return tmp_path
 
 def test_planted_token_fails(tmp_path: Path, capsys) -> None:
-    root = _init_repo(tmp_path, {"src/leak.py": "account = '***REMOVED***'\n"})
+    root = _init_repo(tmp_path, {"src/leak.py": "account = 'quinnlab'\n"})
     rc = guard.main(["--root", str(root)])
     err = capsys.readouterr().err
     assert rc == 1
-    assert "***REMOVED***" in err
+    assert "quinnlab" in err
     assert "src/leak.py" in err
 
 def test_clean_tree_passes(tmp_path: Path) -> None:
