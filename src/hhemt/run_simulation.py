@@ -779,14 +779,36 @@ class TRITONSWMM_run:
                     # whole-node parent would otherwise over-expand --ntasks-per-gpu
                     # to the full node GPU count, so clamp with explicit --ntasks.
                     ntasks_flag = f"--ntasks={n_gpus} "
+                elif n_nodes_per_sim >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
+                    # UVA gres mode, MULTI-NODE under the Snakemake slurm executor
+                    # (per-rule jobstep). Here the per-rule sbatch is generated via the
+                    # executor's mpi+tasks path (mpi=True, tasks=N, tasks_per_gpu=0), so
+                    # it carries an explicit --ntasks=N and SUPPRESSES --ntasks-per-gpu.
+                    # In the jobstep the step GPU tres is non-authoritative
+                    # (SLURM_GPUS/ON_NODE/JOB_GPUS unset) and the per-node sbatch --gres
+                    # does NOT flow into a multi-node srun step, so an inner
+                    # --ntasks-per-gpu=1 fails: "_handle_ntasks_per_tres_step:
+                    # ntasks_per_tres was specified, but there was ... no GPU
+                    # specification". Because the parent carries NO --ntasks-per-gpu here,
+                    # SLURM_NTASKS_PER_GPU is NOT inherited, so --gpus-per-task=1 does NOT
+                    # conflict (unlike the single-node else below) — mirror the Frontier
+                    # gpus form: explicit --ntasks + explicit per-rank GPU binding.
+                    # Empirically surfaced on UVA gpu-a100 2-node (2026-07-01, job
+                    # 16708076). Single-node gres, 1_job_many_srun_tasks, and the local
+                    # in-allocation path keep the --ntasks-per-gpu=1 form below (the
+                    # 2026-05-23 collision constraint is still binding there — their
+                    # parent carries --ntasks-per-gpu).
+                    gpu_bind_flag = "--gpus-per-task=1 "
+                    ntasks_flag = f"--ntasks={n_gpus} "
                 else:
                     gpu_bind_flag = "--ntasks-per-gpu=1 "
-                    # UVA gres mode: the parent batch step holds exactly N requested
-                    # GPUs and carries --ntasks-per-gpu=1. Dropping the explicit
-                    # --ntasks lets the step inherit ntasks_per_tres=1 and expand to
-                    # N (one task per inherited GPU). An explicit --ntasks=N collides
-                    # with the 1-task batch step ("More processors requested than
-                    # permitted"). Empirically confirmed on UVA gpu-a6000 (2026-05-23).
+                    # UVA gres mode, SINGLE-NODE (and 1_job_many_srun_tasks): the parent
+                    # batch step holds exactly N requested GPUs and carries
+                    # --ntasks-per-gpu=1. Dropping the explicit --ntasks lets the step
+                    # inherit ntasks_per_tres=1 and expand to N (one task per inherited
+                    # GPU). An explicit --ntasks=N collides with the 1-task batch step
+                    # ("More processors requested than permitted"). Empirically confirmed
+                    # on UVA gpu-a6000 (2026-05-23).
                     ntasks_flag = ""
                 launch_cmd_str = (
                     f"srun "
