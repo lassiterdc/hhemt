@@ -73,8 +73,13 @@ _CLUSTER = {
     # gpu_partition="gpu" is the real Rivanna partition (a100 selected via --gres); the
     # former "gpu-a100-80" key was a pseudo-partition that --executor slurm would pass to
     # sbatch -p and fail on.
-    "uva": dict(gpu_partition="gpu", multi_sim_run_method="batch_job", execution_mode="slurm"),
-    "frontier": dict(gpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks", execution_mode="local"),
+    # cpu_partition: the NON-GPU partition for setup/prepare/process/consolidate/report rules.
+    # Under execution_mode="slurm" every rule gets its own sbatch, and a non-GPU rule submitted
+    # to the GPU partition is rejected by Rivanna's `gpu` QOS (QOSMinGRES requires >=1 GPU).
+    # UVA -> "standard" (CPU-only). Frontier runs in local mode so this value is inert, but set
+    # it to "batch" (Frontier's one partition) for correctness if it ever runs per-rule.
+    "uva": dict(gpu_partition="gpu", cpu_partition="standard", multi_sim_run_method="batch_job", execution_mode="slurm"),
+    "frontier": dict(gpu_partition="batch", cpu_partition="batch", multi_sim_run_method="1_job_many_srun_tasks", execution_mode="local"),
 }
 
 
@@ -167,7 +172,7 @@ def build_case(
             "hpc_restart_times_simulate": 2,
             "hpc_restart_times_other": 2,
             "hpc_ensemble_partition": c["gpu_partition"],
-            "hpc_setup_and_analysis_processing_partition": c["gpu_partition"],
+            "hpc_setup_and_analysis_processing_partition": c["cpu_partition"],
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(_SUITE),
             "report": {
