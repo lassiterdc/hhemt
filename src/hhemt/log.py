@@ -1,6 +1,7 @@
 from hhemt.utils import write_json
 from hhemt.exceptions import ProcessingError
-from filelock import FileLock, Timeout
+from hhemt._filelock_compat import resolve_filelock
+from filelock import Timeout
 from pathlib import Path
 from pydantic import BaseModel, Field, field_serializer, PrivateAttr, field_validator
 import json
@@ -216,7 +217,7 @@ class TRITONSWMM_log(BaseModel):
         # not deadlock every writer (SE-F-I-2). A filelock timeout is translated
         # to a ProcessingError naming this log file.
         try:
-            with FileLock(str(lock_path), timeout=30):
+            with resolve_filelock(str(lock_path), timeout=30):
                 disk: dict = {}
                 if self.logfile.exists():
                     try:

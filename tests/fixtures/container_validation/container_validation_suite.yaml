@@ -1,0 +1,55 @@
+# Synthetic container-validation sensitivity suite (Phase 5; ADR-4 / R9 / R11 / TO-4)
+#
+# Purpose
+# -------
+# Validate native ≡ container BIT-REPRODUCIBILITY (ADR-4 within-family) end-to-end
+# on the synthetic test model, exercising the REAL toolkit path (`analysis.run()`)
+# so the in-container OpenMPI-pmix wireup is tested alongside the byte-identity
+# claim — not just an isolated MPI probe.
+#
+# Design (sub-choice (a): SYNTHETIC-first — fastest, cheapest, fully reproducible)
+# --------------------------------------------------------------------------------
+# Axis: analysis.execution_environment ∈ {native, container}, crossed with a FIXED
+# compute config (the two rows differ ONLY in execution_environment) so that the
+# consolidation's `check_cross_sim_identity(within_family=True)` compares the
+# container row against the native reference at IDENTICAL compute — yielding a
+# clean native ≡ container verdict. (check_cross_sim_identity anchors on the
+# lexicographically-first sa_id; "container" < "native", so the native row is
+# compared against the container reference. Same physics either way.)
+#
+# Compute = GPU single-rank (run_mode=gpu, n_gpus=1, n_mpi_procs=1) on an a100 node.
+# This matches BOTH sides of the comparison: the UVA SIF is Kokkos-CUDA AMPERE80
+# (GPU-only) and the proven native build on Rivanna is build_tritonswmm_gpu_a100/
+# triton.exe -- the synth model DOES run on GPU on Rivanna (the local CI catalog is
+# CPU-only only because CI lacks GPUs). Both rows are the SAME triton commit
+# (15eb18a5) on the SAME a100, so native ≡ container bit-identity is the proper
+# within-family hypothesis (R9/R11/TO-4). A Kokkos-CUDA build cannot execute a
+# CPU-MPI scenario, so a CPU axis here would not run. The run MUST target an a100
+# node (the SIF's AMPERE80 arch); an a6000 node needs the AMPERE86 sibling SIF.
+#
+# Sensitivity rows: see the sibling `container_validation_suite.csv`.
+# NOTE: sensitivity-CSV compute columns MUST use the prefixed `analysis.{field}` form
+# (analysis.run_mode, analysis.n_gpus, ...). Bare column names silently do NOT apply
+# per-sub (the base default wins), which would run the CUDA SIF in CPU mode with no
+# --nv and fail. Verified on Rivanna 2026-06-27 (build-only sub-config inspection).
+
+suite:
+  sensitivity_csv: container_validation_suite.csv
+  model: tritonswmm            # SWMM-coupled (the binary the SIF carries)
+  verdict_member: check_cross_sim_identity   # run at consolidation, within_family=True
+  deterministic_verdict: "OVERALL: native≡container within-family (max_abs_diff=0.0)"
+
+# Operator run-config (fill in before running — see containers/README.md §6 and the
+# anonymized example profile test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml).
+# The native row ignores the `container:` block; the container row consumes it.
+hpc_system_config_container_block:        # paste into your hpc_system_config.yaml
+  container:
+    sif_path: "/scratch/{your-allocation}/hhemt_uva_cuda.sif"   # transferred, signed SIF
+    gpu_flag: "--nv"                       # UVA NVIDIA passthrough
+    srun_mpi: "pmix"                       # container-own OpenMPI (UVA-only)
+    # exe_in_sif / binds: see the example UVA profile; analysis_dir bind is appended by the seam.
+
+# Prerequisite (NOT satisfied in CI / on a build-less host): the signed
+# hhemt_uva_cuda.sif must be BUILT (containers/README.md §0-4) and TRANSFERRED to
+# the cluster (§5) before the container row can run. The native row runs with the
+# on-cluster source build (C-NONCONTAINER fallback).

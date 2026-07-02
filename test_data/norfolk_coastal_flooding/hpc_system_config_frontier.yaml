@@ -18,4 +18,37 @@ partitions:
     cpus_per_node: 56                         # EXTENSION (Frontier: 64 cores, 56 allocatable)
     supports_mpi: true                        # NATIVE
     gpu_compilation_backend: HIP              # EXTENSION (D1: per-partition backend)
+container:                                    # ADR-1/2/3: per-cluster Apptainer exec params; consumed only when analysis_config.execution_environment == "container" (native default ignores it)
+  sif_path: "${MEMBERWORK}/{your-allocation}/hhemt_frontier_rocm.sif"   # transferred, signed SIF (see containers/README.md)
+  gpu_flag: "--rocm"                          # Frontier MI250X GPU passthrough (binds driver-adjacent libs; container ROCm runtime executes)
+  # === PRODUCTION MULTI-RANK (host Cray-MPICH-ABI / Slingshot) — VALIDATED (probe job 4898044: size=16 / 2 nodes / 8 GCDs per node) ===
+  # Mechanism (container-specialist 2026-06-29): the OLCF helper modules bind the OPEN-ENDED host MPI+ROCm+compiler-runtime
+  # cascade (libpgmath/libflang/libflangrti/libompstub/…) so it need NOT be hand-enumerated — this kills the prior
+  # whack-a-mole. The explicit block then adds Cray-ABI-dir-FIRST libmpi.so.12 ordering, the FIXED 5-lib CXI/Slingshot
+  # support set, and the /opt/cray + slurmd-spool (PALS apinfo) binds. The `:${LD_LIBRARY_PATH}` tail is LOAD-BEARING
+  # (probe job 4898041 failed rc=127 on libpgmath WITHOUT it). Superset of the single-rank fallback — works at 1 rank too.
+  # apptainer-enable-gpu DROPPED (container-specialist 2026-07-01): the OLCF GPU wrapper binds/prepends HOST ROCm 6.2.4
+  # for host-GTL use, which shadows the container's own ROCm 6.4.3 and breaks compute-kernel loading (hipErrorNoBinaryForGpu,
+  # Kokkos_HIP_KernelLaunch, job 4925904). --rocm (gpu_flag) supplies GPU device access + was GREEN in DoD-4; enable-mpi stays for the fabric.
+  pre_exec_modules: ["olcf-container-tools", "apptainer-enable-mpi"]
+  cray_mpich_abi_module: true
+  # /opt/rocm/lib PREPENDED (container-specialist 2026-07-01): triton.exe has empty RPATH (frontier-rocm.def Change-B), so it resolves
+  # libamdhip64/libhsa-runtime64/libamd_comgr by LD_LIBRARY_PATH. Without this prepend the ':${LD_LIBRARY_PATH}' tail imports HOST ROCm
+  # 6.2.4, which wins over the container's 6.4.3 -> hipErrorNoBinaryForGpu. '/opt/rocm/lib' is a literal that resolves in-container to 6.4.3.
+  # + /opt/rocm/llvm/lib (2026-07-01, run 4926639): the ROCm-fix cleared hipErrorNoBinaryForGpu but surfaced the next
+  # empty-RPATH family — `libpgmath.so: cannot open` (exit 127); libpgmath/libflang live in the container's ROCm LLVM
+  # dir. Prepend it so the flang/pgmath family resolves from container 6.4.3 (specialist v3's every-family-must-be-prepended rule).
+  apptainerenv_ld_library_path: "/opt/rocm/lib:/opt/rocm/llvm/lib:${CRAY_MPICH_DIR}/lib-abi-mpich:${CRAY_MPICH_ROOTDIR}/gtl/lib:${CRAY_LD_LIBRARY_PATH}:/opt/cray/pe/lib64:/opt/cray/pe/pmi/6.1.15/lib:${LD_LIBRARY_PATH}"
+  containlibs: ["/usr/lib64/libcxi.so.1", "/usr/lib64/libjson-c.so.3", "/lib64/libtinfo.so.6", "/usr/lib64/libnl-3.so.200", "/usr/lib64/libjansson.so.4"]
+  binds: ["/opt/cray", "/usr/share/libdrm", "/var/spool/slurmd"]   # seam also appends the per-scenario analysis_dir bind
+  srun_mpi: null                                # Frontier = Cray-PALS default launch; NEVER pmix (XOR with cray_mpich_abi_module)
+  # === SINGLE-RANK VALIDATION FALLBACK (SIF's OWN MPICH) — swap in ONLY to re-run the DoD-4 1-rank bit-identity probe ===
+  # Sidesteps the host-Cray-MPICH closure; sound ONLY at n_mpi_procs=1 (no collectives). DoD-4 passed with this on
+  # 2026-06-29. To use: comment the PRODUCTION block above and uncomment below.
+  #   pre_exec_modules: []
+  #   cray_mpich_abi_module: false
+  #   apptainerenv_ld_library_path: "/opt/mpich/lib"   # MANDATORY (.def Change-B stripped /opt/mpich/lib; triton.exe empty RPATH)
+  #   containlibs: []
+  #   binds: []
+  exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)

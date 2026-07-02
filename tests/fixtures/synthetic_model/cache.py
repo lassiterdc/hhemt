@@ -25,9 +25,9 @@ import importlib.metadata
 import json
 from pathlib import Path
 
-import filelock
 import platformdirs
 
+from hhemt._filelock_compat import resolve_filelock
 from tests.fixtures.synthetic_model import (
     geometry,
     landuse,
@@ -180,7 +180,7 @@ def get_or_build_synthetic_case(
     key = _cache_key(params)
     cache_dir = _cache_root() / key
     cache_dir.mkdir(parents=True, exist_ok=True)
-    lock = filelock.FileLock(str(cache_dir / "build.lock"))
+    lock = resolve_filelock(str(cache_dir / "build.lock"))
     sentinel = cache_dir / "build.complete"
     with lock:
         if not sentinel.exists():

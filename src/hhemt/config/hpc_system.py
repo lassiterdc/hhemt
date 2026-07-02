@@ -149,6 +149,9 @@ class hpc_system_config(BaseModel):
         ),
     )
 
+    container: ContainerSpec | None = None  # ADR-1/2/3: the per-cluster Apptainer
+    #   exec parameters; None on a cluster with no container support (native-only).
+
     @model_validator(mode="after")
     def _reject_clobbering_extras(self) -> hpc_system_config:
         # D4/R6 guard: reject set-resources/default-resources keys naming
@@ -247,3 +250,82 @@ def resolve_additional_modules(
     if cfg_hpc_system is not None and cfg_hpc_system.additional_modules:
         return " ".join(cfg_hpc_system.additional_modules)
     return None
+
+
+class ContainerSpec(BaseModel):
+    """Per-cluster Apptainer container execution parameters (ADR-1/ADR-3).
+
+    Cluster-coupled (C-HPC-FIELD-PLACEMENT): lives on hpc_system_config, NOT
+    analysis_config. The native|container SELECTOR is the experiment-scoped
+    analysis_config field; THIS model carries the cluster-bound 'how to exec'.
+    Consumed only when analysis_config.execution_environment == "container".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF
+    gpu_flag: Literal["--rocm", "--nv"] | None = None  # None => CPU-only cluster
+    binds: list[str] = Field(default_factory=list)  # APPTAINER_BIND entries
+    #   (e.g. "/opt/cray", "/var/spool/slurmd"); analysis_dir same:same is
+    #   appended by the seam, never hand-authored here (it is experiment-scoped).
+    containlibs: list[str] = Field(default_factory=list)  # APPTAINER_CONTAINLIBS
+    apptainerenv_ld_library_path: str | None = None  # the Frontier Cray-MPICH
+    #   recipe as a SHELL-TEMPLATE string (references ${CRAY_MPICH_DIR} etc. that
+    #   expand at runtime AFTER `module load cray-mpich-abi`); None on UVA-CUDA.
+    cray_mpich_abi_module: bool = False  # True on Frontier => the seam emits
+    #   `module load cray-mpich-abi` ahead of the APPTAINERENV export so the
+    #   ${CRAY_*} vars exist when the template expands. False on UVA.
+    pre_exec_modules: list[str] = Field(default_factory=list)  # container-only Lmod
+    #   modules emitted as `module load {m} 2>/dev/null` at the TOP of the container
+    #   host-env segment — BEFORE `module load cray-mpich-abi` and the APPTAINERENV
+    #   exports. Frontier production multi-rank: the OLCF helper set
+    #   ["olcf-container-tools","apptainer-enable-mpi","apptainer-enable-gpu"], which
+    #   bind the open-ended host MPI+ROCm+compiler-runtime closure (libpgmath/libflang/
+    #   …) so it need NOT be hand-enumerated into containlibs (validated probe job
+    #   4898044: size=16/2 nodes). Empty on UVA and on the single-rank validation fallback.
+    srun_mpi: str | None = None  # UVA: "pmix" => the seam emits `srun --mpi=pmix`
+    #   for the container-own OpenMPI; None on Frontier (Cray-PALS path, never pmix).
+    exe_in_sif: dict[str, str] = Field(default_factory=dict)  # OD-A: per-model
+    #   in-SIF absolute exe path, keyed by model_type ("triton"/"tritonswmm"/
+    #   "swmm"). Empty => fall back to the convention /opt/hhemt/bin/{name}.
+    extra_exec_args: list[str] = Field(default_factory=list)  # shared escape
+    #   hatch for an unforeseen per-cluster `apptainer exec` flag; applied to
+    #   EVERY class. NEVER put `--cleanenv` here for an MPI cluster (NQ-11).
+    apptainer_module: str | None = None  # cluster Lmod module providing the
+    #   `apptainer` binary. REQUIRED where apptainer is module-only (UVA Rivanna:
+    #   "apptainer/1.5.0") — without it `srun … apptainer exec` dies execve
+    #   (apptainer not on PATH). None on clusters where apptainer is on the default
+    #   PATH (Frontier). The seam emits `module load {apptainer_module}` in container
+    #   mode ONLY (native rows never load it -> native byte-identical).
+
+    @model_validator(mode="after")
+    def _check_mpi_flavor_exclusive(self):
+        # FI4 (ADR-3 / R7): srun --mpi=pmix is UVA-only (container-own OpenMPI);
+        # the host Cray-MPICH-ABI bind is Frontier-only. The two MPI flavors are
+        # mutually exclusive — fail fast rather than silently emit a forbidden
+        # Frontier+pmix combo at the seam (the guard the plan claimed "lives in
+        # code" but nothing enforced).
+        if self.cray_mpich_abi_module and self.srun_mpi:
+            raise ValueError(
+                "ContainerSpec: cray_mpich_abi_module=True (Frontier host-Cray-MPICH bind) "
+                "is mutually exclusive with srun_mpi (UVA container-OpenMPI pmix). Set exactly one."
+            )
+        if self.cray_mpich_abi_module and not self.apptainerenv_ld_library_path:
+            raise ValueError(
+                "ContainerSpec: cray_mpich_abi_module=True requires apptainerenv_ld_library_path "
+                "(the Cray-MPICH ABI LD_LIBRARY_PATH shell-template)."
+            )
+        return self
+
+
+def resolve_container_spec(
+    cfg_hpc_system: hpc_system_config | None,
+) -> ContainerSpec | None:
+    """Single resolution point for the per-cluster ContainerSpec (mirrors
+    resolve_gpu_target / resolve_additional_modules). Returns None when no
+    hpc-system config is present or no container block is declared — the
+    native path. Container-mode preflight raises if this returns None while
+    execution_environment == "container"."""
+    if cfg_hpc_system is None:
+        return None
+    return cfg_hpc_system.container

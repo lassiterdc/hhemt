@@ -1,0 +1,206 @@
+# =============================================================================
+# hhemt UVA Rivanna CUDA production SIF (component C1; ADR-1/2/3/4).
+#
+# DERIVED FROM THE PROVEN ON-RIVANNA NATIVE BUILD (OD-D), transcribed
+# 2026-06-27 via `ssh rivanna` from the working synthetic-sensitivity suite
+# build (.cache/TRITON_SWMM_toolkit/.../_software/triton/build_tritonswmm_gpu_*):
+#
+#   module load miniforge gompi/14.2.0_5.0.7 cuda/12.8.0
+#     -> gcc 14.2.0  +  OpenMPI 5.0.7  +  CUDA 12.8.0
+#   OpenMPI 5.0.7 configure (host, /apps/.../openmpi/5.0.7):
+#     --with-pmix=/opt/pmix/5.0.7  --with-cuda  --without-ucx  --without-ofi
+#     --without-hcoll  --with-prrte=internal   (single-node sm/self; pmix_v5 wireup)
+#   TRITON cmake (build_tritonswmm_gpu_a100/CMakeCache.txt):
+#     -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON
+#     -DTRITON_IGNORE_MACHINE_FILES=ON -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80
+#     -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF
+#     -DCMAKE_CUDA_COMPILER=nvcc -DCMAKE_CXX_COMPILER=mpic++ -DCMAKE_CXX_FLAGS=-O3
+#   srun --mpi=list -> pmix (pmix_v5), pmi2, cray_shasta, none   (MpiDefault=pmi2;
+#     the container speaks pmix to host slurm's pmix_v5 via the PMIx cross-version
+#     contract -> ContainerSpec.srun_mpi="pmix").
+#   TRITON pin (authoritative, recovered 2026-06-27 from the proven build tree's
+#     git remote+HEAD): https://code.ornl.gov/hydro/triton.git @ 15eb18a5 (PUBLIC;
+#     credential-less clone + submodules kokkos/yaml-cpp verified from Rivanna).
+#
+# These PROVEN values REPLACE the amd-gpu-specialist's from-scratch skeleton
+# (which assumed OpenMPI 4.1.6 + UCX 1.16.0); the Rivanna stack is 5.0.7 + PMIx
+# 5.0.7 + CUDA-aware + NO UCX/OFI.
+#
+# Status: PENDING Phase-5 validation (the UVA container-validation suite is the
+# empirical gate). Build IN PLACE on Rivanna -- `apptainer build --fakeroot` works
+# (root-mapped namespace; /scratch has ~12 TB; docker.io + code.ornl.gov reachable),
+# so NO off-site build host or SIF transfer is needed for UVA (the off-site flow in
+# README §0 is Frontier-specific: ORNL Harbor policy + no login-node fakeroot).
+# Then `apptainer sign` and reference by DOI+SHA-256. See containers/README.md.
+# =============================================================================
+
+Bootstrap: docker
+# CUDA 12.8.0 matches the proven host nvcc (cuda/12.8.0). Under --nv the glibc
+# floor is SOFT (NVIDIA binds only the host driver libcuda/libnvidia-ml; the
+# container libcudart executes -- a contract, not a heuristic), so the binding
+# constraint is CUDA toolkit-minor <= host-driver CUDA major (the Rivanna host
+# driver runs cuda/12.8.0, so a 12.8 toolkit is exact). Digest captured 2026-06-27
+# via the Docker Hub v2 manifest API (skopeo absent on Rivanna).
+From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
+
+%files
+    # hhemt source tree (uv sync --frozen for the in-container process runner, FB2).
+    # Deps come from the COMMITTED uv.lock inside this tree (the project's real
+    # lockfile) -- NOT a conda explicit lockfile. The original .def's conda-lock step
+    # was unsatisfiable: hhemt has no environment.yml / conda-lock; it is
+    # uv/pyproject-packaged. Build CWD must be containers/ so `../` = the repo root.
+    ../  /opt/hhemt-src
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    # gcc-14 matches the proven gcc 14.2.0. libhwloc-dev + libevent-dev are used as
+    # OpenMPI's EXTERNAL hwloc/libevent (configure finds them). PMIx is OpenMPI's
+    # BUNDLED PMIx 5.0.x, NOT Ubuntu's libpmix-dev -- on Ubuntu 24.04 the
+    # libpmix-dev headers are not at the /usr layout `--with-pmix=/usr` expects
+    # ("External PMIx requested but not found", build attempt 2). The bundled 5.0.x
+    # client satisfies the same PMIx-5.x cross-version contract with host slurm's
+    # pmix_v5; PMIx coordinates launch only (not the numerics), so native (host
+    # PMIx) == container (bundled PMIx) result bit-identity is unaffected.
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential gfortran wget ca-certificates libnuma-dev python3 \
+        gcc-14 g++-14 libhwloc-dev libevent-dev \
+        libibverbs-dev librdmacm-dev ibverbs-providers rdma-core
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+
+    # --- (1a) UCX 1.18.0 (CUDA-aware) -- the InfiniBand/RDMA transport the MULTI-NODE
+    #     container OpenMPI selects via its UCX PML. Added 2026-07-01 (DoD-7 expanded:
+    #     2-node validation). OpenMPI 5.0 removed the legacy openib/verbs BTL, so native
+    #     IB on Rivanna is reachable ONLY through the UCX PML -- a --without-ucx build is
+    #     single-node-only (container-specialist 2026-07-01). UCX + rdma-core are OPEN and
+    #     shippable in the image, so the SIF becomes a self-contained 1-and-2-node superset.
+    cd /tmp
+    UCX_VER=1.18.0
+    wget -q https://github.com/openucx/ucx/releases/download/v${UCX_VER}/ucx-${UCX_VER}.tar.gz
+    # Verify the pinned source hash (ADR-2 pin contract; captured on Rivanna 2026-07-01):
+    echo "fa75070f5fa7442731b4ef5fc9549391e147ed3d859afeb1dad2d4513b39dc33  ucx-${UCX_VER}.tar.gz" | sha256sum -c -
+    tar xf ucx-${UCX_VER}.tar.gz && cd ucx-${UCX_VER}
+    ./configure --prefix=/opt/ucx --with-cuda=/usr/local/cuda \
+        --enable-mt --without-go --without-java --disable-doxygen-doc
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf ucx-${UCX_VER}
+
+    # --- (1b) OpenMPI 5.0.7 -- the EXACT host module major.minor (gompi/14.2.0_5.0.7).
+    #     Configure MIRRORS the proven host build: --with-cuda (CUDA-aware), --with-slurm;
+    #     NOW --with-ucx=/opt/ucx (multi-node IB). OFI/hcoll stay off (UCX is the transport).
+    cd /tmp
+    OMPI_VER=5.0.7
+    wget -q https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VER}.tar.gz
+    # Verify the pinned source hash (ADR-2 pin contract; captured 2026-06-27):
+    echo "67435fdb2560f897882e69fead171d38e7f44a6dfe1d3c90506f549a943050b8  openmpi-${OMPI_VER}.tar.gz" | sha256sum -c -
+    tar xf openmpi-${OMPI_VER}.tar.gz && cd openmpi-${OMPI_VER}
+    # NOTE: --disable-wrapper-rpath was DROPPED -- OpenMPI 5.0.7 enables wrapper
+    # runpath by default and configure errors with "--enable-wrapper-runpath cannot
+    # be selected with --disable-wrapper-rpath". The default runpath bakes
+    # /opt/openmpi/lib into the mpicc/mpic++ wrappers, which is correct for the
+    # fixed in-SIF path; %environment LD_LIBRARY_PATH backs it up (build log
+    # 2026-06-27, first build attempt).
+    # --disable-oshmem: --with-ucx enables OpenMPI's OpenSHMEM (oshmem) layer, whose
+    # oshmem/mca/sshmem/base/sshmem_base_open.c fails to compile under gcc-14 (-Wint-conversion
+    # is a hard error in gcc-14). hhemt uses MPI only (never OpenSHMEM), so disabling oshmem
+    # sidesteps the build error while KEEPING the UCX *MPI* PML (the InfiniBand transport we need).
+    ./configure --prefix=/opt/openmpi \
+        --with-cuda=/usr/local/cuda \
+        --with-ucx=/opt/ucx --without-ofi --without-hcoll --disable-oshmem \
+        --with-slurm --enable-shared --with-prrte=internal
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf openmpi-* *.tar.gz
+    export PATH=/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
+
+    # --- (2) hhemt Python runtime via uv from the COMMITTED uv.lock (NO re-solve;
+    #     the project's real lockfile). This SUPPLANTS the original conda explicit
+    #     lockfile step, which was unsatisfiable (hhemt has no environment.yml /
+    #     conda-lock -- it is uv/pyproject-packaged). The conda libstdcxx-ng pin is
+    #     MOOT in-SIF: triton.exe links the system gcc-14 libstdc++ (the coherent
+    #     toolchain in (3)), not a conda one. `uv sync --frozen` is reproducible from
+    #     uv.lock (URL+hash pinned), preserving the ADR-2 reproducibility contract.
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    # Remove any host `.venv` copied in by `%files ../` (its python references host-only
+    # libs absent in the container -> `uv sync` would die querying it) so uv builds a
+    # clean container-native venv from uv.lock.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
+
+    # --- (3) TRITON-SWMM at a PINNED COMMIT (OE-3), Kokkos-CUDA, the PROVEN flags.
+    #     ONE SIF = ONE Kokkos GPU arch (OE-2): this SIF targets a100 (AMPERE80).
+    #     For a6000, build a SIBLING SIF with -DKokkos_ARCH_AMPERE86=ON instead:
+    #         gpu_hardware: a100  -> Kokkos_ARCH_AMPERE80  (this SIF)
+    #         gpu_hardware: a6000 -> Kokkos_ARCH_AMPERE86  (sibling SIF)
+    #     (TRITON_ARCH=AMPERE80 is the coarse TRITON macro -- constant across both,
+    #     per the proven a6000/a100 CMakeCaches.)
+    #     libstdc++ reconciliation RETIRED (Q3 INVARIANT, M-7 dissolution): the
+    #     proven NATIVE build carries -DCMAKE_CXX_STANDARD_LIBRARIES="-L${CONDA_PREFIX}
+    #     /lib ... -l:libstdc++.so.6 ..." to fix a host-module-gcc-vs-conda split;
+    #     inside the SIF there is ONE coherent toolchain (gcc-14 <-> matched
+    #     libstdc++), so that fragment is DELIBERATELY DROPPED.
+    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
+    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
+        && git submodule update --init --recursive
+    mkdir -p build && cd build
+    # Use ABSOLUTE wrapper paths, not bare `mpic++`: CMake resolved the bare name
+    # relative to the build dir ("/opt/triton/build/mpic++ is not a full path",
+    # build attempt 3) instead of PATH-searching it under fakeroot. Fail fast with a
+    # listing if the wrappers are somehow absent.
+    test -x /opt/openmpi/bin/mpic++ && test -x /opt/openmpi/bin/mpicc || { \
+        echo "FATAL: OpenMPI wrappers missing under /opt/openmpi/bin"; ls -la /opt/openmpi/bin; exit 1; }
+    cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
+          -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
+          -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
+          -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
+
+    # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
+    git clone --branch v5.2.4 --depth 1 \
+        https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
+    mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+    # --- (5) Install to the convention path the example profile's exe_in_sif
+    #     points at (/opt/hhemt/bin). hhemt itself was installed editable into
+    #     /opt/hhemt-src/.venv by `uv sync` in (2).
+    mkdir -p /opt/hhemt/bin
+    cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
+        /opt/hhemt/bin/runswmm
+    chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
+
+%environment
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/openmpi/bin:/usr/local/cuda/bin:${PATH}
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:/opt/ucx/lib:/usr/local/cuda/lib64:${LD_LIBRARY_PATH:-}
+    # NO host-MPI-bind APPTAINERENV needed: the container OpenMPI speaks pmix to
+    # host slurm via `srun --mpi=pmix` (set by the runner from ContainerSpec.srun_mpi).
+    # Multi-node (DoD-7 expanded 2026-07-01): select the UCX PML + CUDA-aware IB transports
+    # so device-buffer MPI (Kokkos-CUDA halo exchange) crosses nodes over InfiniBand. UCX
+    # falls back to sm/self at 1 node, so this is a 1-and-2-node superset (no per-run tuning).
+    export OMPI_MCA_pml=ucx
+    export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,self
+
+%labels
+    org.hhemt.role        uva-cuda-production
+    org.hhemt.status      pending-phase5-validation
+    org.hhemt.base_digest sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
+    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.triton_url  https://code.ornl.gov/hydro/triton.git
+    org.hhemt.cuda        12.8.0
+    org.hhemt.openmpi     5.0.7-pmix5
+    org.hhemt.gcc         14.2.0
+    org.hhemt.gpu_arch    AMPERE80
+
+%runscript
+    exec "$@"

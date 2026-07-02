@@ -60,7 +60,6 @@ class TRITONSWMM_sim_post_processing:
             self.log = self._scenario.get_log(default_model)
             self._current_model_type = default_model
         self.scen_paths = self._scenario.scen_paths
-        self._log_write_status()
 
     def _set_active_model_log(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> None:
         """Set self.log to the appropriate model-specific log for this operation."""
@@ -1099,22 +1098,6 @@ class TRITONSWMM_sim_post_processing:
         if self.log.SWMM_node_timeseries_written:
             self.log.SWMM_node_timeseries_written.set(swmm_nodes)
         return swmm_nodes
-
-    def _log_write_status(self):
-        # Skip status checking if using old scenario log (no model_log passed to __init__)
-        # This happens during initialization before model logs are available
-        from hhemt.log import TRITONSWMM_scenario_log
-
-        if isinstance(self.log, TRITONSWMM_scenario_log):
-            return
-
-        # With model-specific logs, check status
-        enabled_models = self._run.model_types_enabled
-        triton = self.TRITON_outputs_processed
-        if "tritonswmm" in enabled_models:
-            self._swmm_link_outputs_processed("tritonswmm")
-        if "swmm" in enabled_models:
-            self._swmm_link_outputs_processed("swmm")
 
     def _clear_raw_outputs(self, model_type: Literal["tritonswmm", "triton", "swmm"]) -> None:
         """Delete raw model outputs for the named model type.

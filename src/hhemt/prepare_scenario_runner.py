@@ -19,11 +19,11 @@ Exit codes:
     2: Invalid arguments
 """
 
-import sys
 import argparse
-from pathlib import Path
-import traceback
 import logging
+import sys
+import traceback
+from pathlib import Path
 
 from hhemt.log_utils import log_workflow_context
 from hhemt.status_flags import emit_runner_flag as _emit_runner_flag
@@ -103,6 +103,17 @@ def main():
         default=None,
         help="Sub-analysis id for the flag sidecar payload (sensitivity)",
     )
+    parser.add_argument(
+        "--target-partition",
+        type=str,
+        default=None,
+        help=(
+            "Canonical partition for the build target (parity with setup_workflow / "
+            "run_simulation). The Snakefile emits it for every rule built from the shared "
+            "UniqueSystemTarget's config args, including prepare; it drives GPU-backend "
+            "resolution. Falls back to the analysis config's hpc_ensemble_partition when absent."
+        ),
+    )
     try:
         args = parser.parse_args()
     except SystemExit as e:
@@ -124,15 +135,43 @@ def main():
 
     try:
         # Import here to avoid import errors if dependencies are missing
-        from hhemt.system import TRITONSWMM_system
         from hhemt.analysis import TRITONSWMM_analysis
+        from hhemt.config.hpc_system import resolve_gpu_target
+        from hhemt.config.loaders import load_analysis_config, load_hpc_system_config
         from hhemt.scenario import TRITONSWMM_scenario
+        from hhemt.system import TRITONSWMM_system
 
         # Log workflow context for traceability
         log_workflow_context(logger)
 
         logger.info(f"Loading system configuration from {args.system_config}")
-        system = TRITONSWMM_system(args.system_config)
+        # Parity with setup_workflow.py / sensitivity_analysis.py: gpu_hardware and
+        # gpu_compilation_backend were retired off system_config onto the per-HPC-system
+        # PartitionSpec. The prepare GPU gate (scenario.compilation_gpu_successful) resolves
+        # the GPU build dir from these fields, so they MUST be injected here or a GPU prepare
+        # finds build_dir_gpu=None and raises CompilationError("Log: missing"). Unlike
+        # setup/simulation (which read --target-partition from the Snakefile), prepare is
+        # always per-single-sub-analysis, so the ensemble partition is unambiguous and read
+        # directly from the loaded analysis config — no Snakefile thread needed. The helper
+        # returns (None, None) for null selectors, so CPU/local prepares are byte-identical.
+        cfg_hpc = (
+            load_hpc_system_config(args.hpc_system_config) if args.hpc_system_config else None
+        )
+        # The Snakefile's prepare rule carries --target-partition (the shared
+        # UniqueSystemTarget's canonical partition) just like setup/sim — prefer it; fall
+        # back to the per-sub analysis config's hpc_ensemble_partition for direct CLI use
+        # or a target without an explicit partition. resolve_gpu_target returns (None, None)
+        # for null selectors, so CPU/local prepares stay byte-identical.
+        _partition = (
+            args.target_partition
+            or load_analysis_config(args.analysis_config).hpc_ensemble_partition
+        )
+        gpu_hardware, gpu_compilation_backend = resolve_gpu_target(cfg_hpc, _partition)
+        system = TRITONSWMM_system(
+            args.system_config,
+            gpu_hardware=gpu_hardware,
+            gpu_compilation_backend=gpu_compilation_backend,
+        )
 
         logger.info(f"Loading analysis configuration from {args.analysis_config}")
         analysis = TRITONSWMM_analysis(
