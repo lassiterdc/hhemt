@@ -14,8 +14,8 @@ inside a GPU allocation (mirrors the proven ``validate_*`` runners) and read the
 with ``check_cross_sim_identity(within_family=True)``.
 
 Run from the repo root (so ``tests/`` is on ``sys.path``). The real per-cluster deployment
-config (SIF path + account + partitions) is resolved from the PRIVATE ***REMOVED*** estate
-via ``_resolve_hpc_system_config`` ($***REMOVED*** / $HHEMT_HPC_SYSTEM_CONFIG / argv[2]) —
+config (SIF path + account + partitions) is resolved from the operator's PRIVATE deployment estate
+via ``_resolve_hpc_system_config`` ($HHEMT_DEPLOYMENT_CONFIG / $HHEMT_HPC_SYSTEM_CONFIG / argv[2]) —
 NO git-tracked file is edited per run; the in-tree ``test_data/.../hpc_system_config_*.yaml``
 are copy-me templates the operator reconstructs into the estate once per cluster.
 """
@@ -52,10 +52,10 @@ from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_cas
 _SUITE_DIR = _REPO_ROOT / "tests/fixtures/container_validation"
 _SUITE = _SUITE_DIR / (os.environ.get("HHEMT_CV_SUITE") or "container_validation_suite.csv")
 
-# Default desktop checkout of the PRIVATE deployment estate (***REMOVED***), computed
-# from the user's home (portable; no hard-coded /home/<user>). Cluster runs set
-# $***REMOVED*** to the compute-visible checkout (the resolver reads it).
-_***REMOVED***_DEFAULT = str(Path.home() / "dev" / "***REMOVED***")
+# The operator's PRIVATE deployment-config estate is resolved from the
+# $HHEMT_DEPLOYMENT_CONFIG env var (set it to the compute-visible checkout; the
+# resolver reads it). The public repo bakes in no default checkout path — it does
+# not hard-code the operator's private checkout name.
 
 # In-tree anonymized examples — COPY-ME templates (+ byte-identity-test fixtures), never
 # the live config. The operator reconstructs the real config in the estate from these.
@@ -84,27 +84,33 @@ _CLUSTER = {
 
 
 def _resolve_hpc_system_config(cluster: str, override: str | None = None) -> Path:
-    """Resolve the operator's REAL hpc_system_config for ``cluster`` from the PRIVATE
-    ***REMOVED*** estate (the versioned, git-pulled deployment-config home).
+    """Resolve the operator's REAL hpc_system_config for ``cluster`` from the operator's
+    PRIVATE deployment-config estate (the versioned, git-pulled deployment-config home).
 
     Precedence: explicit ``override`` (argv[2]) > ``$HHEMT_HPC_SYSTEM_CONFIG`` env var >
-    ``$***REMOVED***/hpc/hpc_system_config_{cluster}.yaml`` (``$***REMOVED***`` defaults to
-    the desktop checkout; set it per-cluster to the compute-visible estate clone). The
-    in-tree ``_TEMPLATE`` is the copy-me source, never the live config, so a run edits ZERO
-    git-tracked files in the public repo.
+    ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml`` (set
+    ``$HHEMT_DEPLOYMENT_CONFIG`` per-cluster to the compute-visible estate clone; the public
+    repo bakes in no default). The in-tree ``_TEMPLATE`` is the copy-me source, never the
+    live config, so a run edits ZERO git-tracked files in the public repo.
     """
     if override:
         path = Path(override).expanduser()
     elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
         path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
     else:
-        projects = Path(os.environ.get("***REMOVED***", _***REMOVED***_DEFAULT)).expanduser()
-        path = projects / "hpc" / f"hpc_system_config_{cluster}.yaml"
+        estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
+        if not estate:
+            raise FileNotFoundError(
+                f"No hpc_system_config source for cluster {cluster!r}: set "
+                f"$HHEMT_DEPLOYMENT_CONFIG to your compute-visible private deployment-config "
+                f"checkout (or set $HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[2])."
+            )
+        path = Path(estate).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
     if not path.is_file():
         raise FileNotFoundError(
             f"No hpc_system_config for cluster {cluster!r} at {path}.\n"
-            f"  1. On the cluster, set $***REMOVED*** to your compute-visible ***REMOVED*** "
-            f"checkout and `git pull` it on the login node.\n"
+            f"  1. On the cluster, set $HHEMT_DEPLOYMENT_CONFIG to your compute-visible "
+            f"deployment-config checkout and `git pull` it on the login node.\n"
             f"  2. Reconstruct the config once from the in-tree template:\n"
             f"       cp {_TEMPLATE[cluster]} {path}\n"
             f"     then fill default_account (from hpc/profiles.yaml) and container.sif_path.\n"
@@ -124,7 +130,7 @@ def build_case(
     """Build the container-validation sensitivity test case for ``cluster``.
 
     The real deployment ``hpc_system_config`` (ContainerSpec SIF path + partition→hardware
-    + account) is resolved from the PRIVATE ***REMOVED*** estate (see
+    + account) is resolved from the operator's PRIVATE deployment estate (see
     ``_resolve_hpc_system_config``) — NO git-tracked file is edited per run. ``hpc_account``
     is sourced from the resolved config's ``default_account``; a fail-fast rejects an
     unfilled template. ``execution_environment`` is supplied PER ROW by the CSV.
