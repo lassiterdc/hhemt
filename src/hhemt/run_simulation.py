@@ -647,7 +647,18 @@ class TRITONSWMM_run:
             expected_cpus = n_mpi_procs * n_omp_threads if run_mode != "gpu" else n_gpus * n_omp_threads
             slurm_allocated = slurm_ntasks * slurm_cpus_per_task
 
-            if slurm_allocated < expected_cpus:
+            # Raise ONLY on an AUTHORITATIVE positive read. Under the Snakemake slurm
+            # executor the 2-node MPI rows run in the slurm-jobstep MPI branch (no srun
+            # wrap), so the runner inherits the raw batch env where the submit-side
+            # --ntasks-per-gpu/--ntasks-per-node (derived forms) never export a resolved
+            # SLURM_NTASKS -> os.environ.get("SLURM_NTASKS", 0) reads 0 even though the
+            # per-rule sbatch was correctly sized. A slurm_allocated of 0 means the env
+            # expresses no task budget here, NOT that 0 CPUs were allocated; raising on it
+            # false-fires and blocks a correctly-allocated 2-node sim. This mirrors the GPU
+            # guard below, which already raises only on `allocated_gpus > 0`. A genuine
+            # under-allocation still presents SLURM_NTASKS >= 1 (a 0-task job never runs a
+            # shell), so `0 < slurm_allocated < expected_cpus` still catches it.
+            if 0 < slurm_allocated < expected_cpus:
                 error_msg = (
                     f"\n{'=' * 80}\n"
                     f"SLURM RESOURCE ALLOCATION MISMATCH DETECTED\n"
