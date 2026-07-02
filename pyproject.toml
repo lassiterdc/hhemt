@@ -104,7 +104,7 @@ docs = [
 
 [project.urls]
 bugs = "https://github.com/lassiterdc/hhemt/issues"
-changelog = "https://github.com/lassiterdc/hhemt/blob/master/changelog.md"
+changelog = "https://github.com/lassiterdc/hhemt/blob/main/changelog.md"
 homepage = "https://github.com/lassiterdc/hhemt"
 
 [project.scripts]
