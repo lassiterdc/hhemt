@@ -1,0 +1,5 @@
+sa_id,analysis.run_mode,analysis.n_mpi_procs,analysis.n_omp_threads,analysis.n_gpus,analysis.n_nodes,analysis.execution_environment
+native_1g,gpu,1,1,1,1,native
+container_1g,gpu,1,1,1,1,container
+native_2g,gpu,2,1,2,1,native
+container_2g,gpu,2,1,2,1,container

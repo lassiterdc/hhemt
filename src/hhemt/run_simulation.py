@@ -1,14 +1,17 @@
 # %%
+import logging
 import os
 import subprocess
 import time
-import logging
-import pandas as pd
 from pathlib import Path
-from hhemt.utils import read_text_file_as_list_of_strings
-from hhemt.scenario import TRITONSWMM_scenario
-from hhemt.resource_management import _parse_slurm_allocated_gpus
 from typing import TYPE_CHECKING, Literal
+
+import pandas as pd
+
+from hhemt.config.hpc_system import resolve_container_spec
+from hhemt.resource_management import _parse_slurm_allocated_gpus
+from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.utils import read_text_file_as_list_of_strings
 
 if TYPE_CHECKING:
     pass
@@ -16,16 +19,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ADR-1: in-SIF fallback paths for the model binary when a ContainerSpec does not
+# pin an explicit `exe_in_sif` entry for the model. The `.def` build installs the
+# binaries under /opt/hhemt/bin (Phase 3). Keyed by model_type.
+_DEFAULT_EXE_NAME = {
+    "triton": "triton.exe",
+    "tritonswmm": "triton.exe",
+    "swmm": "runswmm",
+}
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
-        from hhemt.process_simulation import (
-            TRITONSWMM_sim_post_processing,
-        )
-
         self._scenario = scenario
         self._analysis = scenario._analysis
         self.weather_event_indexers = scenario.weather_event_indexers
-        self.proc = TRITONSWMM_sim_post_processing(self)
 
     @property
     def _triton_swmm_raw_output_directory(self):
@@ -363,6 +371,35 @@ class TRITONSWMM_run:
         n_gpus = self._analysis.cfg_analysis.n_gpus
         n_nodes_per_sim = self._analysis.cfg_analysis.n_nodes
 
+        # Container mode: the SIF carries the pre-compiled binary (the on-cluster
+        # compile is skipped, Phase 2 setup_workflow.py). Rewrite `exe` to
+        # `apptainer exec [gpu_flag] {sif} {in-SIF exe}`. The gpu_flag is applied
+        # ONLY on GPU sim rungs (derived here from run_mode) — NEVER on CPU/processing
+        # rungs (this is why a per-class exec_args map is unnecessary, OE-2). Placed
+        # AFTER the compute-config resolution (SE Spec 1) so `run_mode`/`n_gpus` are
+        # defined; inserting at the `exe` assignment site would NameError run_mode.
+        cspec = resolve_container_spec(self._analysis.cfg_hpc_system)
+        if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+            exe_in_sif = cspec.exe_in_sif.get(model_type) or f"/opt/hhemt/bin/{_DEFAULT_EXE_NAME[model_type]}"
+            _gpu = f"{cspec.gpu_flag} " if (run_mode == "gpu" and cspec.gpu_flag) else ""
+            _extra = (" ".join(cspec.extra_exec_args) + " ") if cspec.extra_exec_args else ""
+            # Container Change 2 (ROOT CAUSE of zero-output): TRITON derives its output
+            # base dir from argv[0] two directory levels up (config_utils get_root_dir).
+            # In-SIF the exe is /opt/hhemt/bin/{exe} -> two-up = /opt/hhemt INSIDE the
+            # read-only SIF, so the relative output_folder write silently fails (native
+            # runs .../sims/<evt>/build/{exe} -> two-up = the writable sim dir). Bind the
+            # host scenario out_tritonswmm dir onto the in-SIF {project_dir}/out_tritonswmm
+            # so output lands on the writable host fs. triton/tritonswmm only (SWMM writes
+            # via its own inp/rpt/out args). The host out_tritonswmm is created by prepare.
+            _out_bind = ""
+            if model_type != "swmm":
+                _host_out = self._scenario.scen_paths.out_tritonswmm
+                _proj_dir = "/".join(exe_in_sif.split("/")[:-2])  # two-up from in-SIF exe = TRITON project_dir
+                _out_bind = f"-B {_host_out}:{_proj_dir}/{_host_out.name} "
+            exe = f"apptainer exec {_gpu}{_extra}{_out_bind}{cspec.sif_path} {exe_in_sif}"
+            # `exe` now expands inside launch_cmd_str's `{exe} {cfg}` as
+            #   srun … apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm {sif} {exe} {cfg}
+
         # Check if already completed
         if self._scenario.model_run_completed(model_type):
             if verbose:
@@ -484,6 +521,19 @@ class TRITONSWMM_run:
                 print(f"loading modules {modules}")
             module_load_cmd = f"module load {modules}; "
 
+        # Container Change 1: apptainer is module-only on some clusters (UVA Rivanna);
+        # the seam must `module load` it in container mode or `srun … apptainer exec`
+        # dies with `execve(): apptainer: No such file or directory` (the ambient
+        # /opt/apptainer/current/bin PATH entry is a dead stub). Prepend the apptainer
+        # module ahead of the build/runtime modules. Container-mode ONLY — native rows
+        # never load it (native byte-identical).
+        if (
+            self._analysis.cfg_analysis.execution_environment == "container"
+            and cspec is not None
+            and cspec.apptainer_module
+        ):
+            module_load_cmd = f"module load {cspec.apptainer_module}; {module_load_cmd}"
+
         # ----------------------------
         # SWMM-specific command (no CFG, different structure)
         # ----------------------------
@@ -508,6 +558,19 @@ class TRITONSWMM_run:
             # (no srun, no MPI) so the guard's mpicc test typically fails and the
             # else-branch keeps the prior conda-first behavior; the uniform code
             # path avoids a second ordering convention.
+            # FI6: container host-env for the SWMM serial rung — bind-only (SWMM has
+            # no MPI/GPU, so NO cray-mpich-abi / APPTAINERENV_LD_LIBRARY_PATH / srun
+            # --mpi here). The in-container runswmm still needs analysis_dir bound to
+            # read/write under it (interacts with FB2). "" in native mode (byte-identical).
+            container_host_env_str = ""
+            if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+                _adir = self._analysis.analysis_paths.analysis_dir
+                _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+                container_host_env_str = (
+                    f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"; '
+                )
+
+            _container_mode = self._analysis.cfg_analysis.execution_environment == "container"
             # Derive the system/module MPI lib dir that actually holds the NEEDED
             # libmpi.so.40 / libmpi_cxx.so.40 sonames. The prior prefix+"/lib"
             # heuristic ($(dirname $(dirname mpicc))/lib) is WRONG on Debian/Ubuntu
@@ -525,7 +588,8 @@ class TRITONSWMM_run:
                 '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
             )
             if module_load_cmd:
-                post_module_ld = (
+                # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
+                post_module_ld = "" if _container_mode else (
                     f"{_mpi_derive}"
                     'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                     'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
@@ -541,12 +605,12 @@ class TRITONSWMM_run:
                 # ${CONDA_PREFIX}/lib whenever a system mpicc resolves AND its real
                 # libmpi.so.40 dir is found; conda lib stays second so libstdc++ still
                 # wins. No-op when no mpicc / no real MPI dir (falls back to conda-first).
-                post_module_ld = (
+                post_module_ld = "" if _container_mode else (
                     f"{_mpi_derive}"
                     'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                     'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
                 )
-            full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
+            full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
             cmd = [
                 "bash",
                 "-lc",
@@ -583,7 +647,18 @@ class TRITONSWMM_run:
             expected_cpus = n_mpi_procs * n_omp_threads if run_mode != "gpu" else n_gpus * n_omp_threads
             slurm_allocated = slurm_ntasks * slurm_cpus_per_task
 
-            if slurm_allocated < expected_cpus:
+            # Raise ONLY on an AUTHORITATIVE positive read. Under the Snakemake slurm
+            # executor the 2-node MPI rows run in the slurm-jobstep MPI branch (no srun
+            # wrap), so the runner inherits the raw batch env where the submit-side
+            # --ntasks-per-gpu/--ntasks-per-node (derived forms) never export a resolved
+            # SLURM_NTASKS -> os.environ.get("SLURM_NTASKS", 0) reads 0 even though the
+            # per-rule sbatch was correctly sized. A slurm_allocated of 0 means the env
+            # expresses no task budget here, NOT that 0 CPUs were allocated; raising on it
+            # false-fires and blocks a correctly-allocated 2-node sim. This mirrors the GPU
+            # guard below, which already raises only on `allocated_gpus > 0`. A genuine
+            # under-allocation still presents SLURM_NTASKS >= 1 (a 0-task job never runs a
+            # shell), so `0 < slurm_allocated < expected_cpus` still catches it.
+            if 0 < slurm_allocated < expected_cpus:
                 error_msg = (
                     f"\n{'=' * 80}\n"
                     f"SLURM RESOURCE ALLOCATION MISMATCH DETECTED\n"
@@ -635,6 +710,14 @@ class TRITONSWMM_run:
                     f"{'=' * 80}\n"
                 )
 
+        # Container mode (UVA host-OpenMPI): the OUTER srun carries --mpi={srun_mpi}
+        # (e.g. pmix) so the in-container OpenMPI wires up via SLURM PMIx. Frontier
+        # (srun_mpi=None) emits nothing (Cray-PALS path; ADR-3's "never --mpi=pmix"
+        # holds). Precomputed as a token (NOT an inline conditional in the implicit-
+        # concat srun tuple, which would be a syntax error); "" in native mode so the
+        # srun string stays byte-identical.
+        _mpi_flag = f"--mpi={cspec.srun_mpi} " if (cspec is not None and cspec.srun_mpi) else ""
+
         if run_mode != "gpu":
             if using_srun:
                 launch_cmd_str = (
@@ -653,6 +736,7 @@ class TRITONSWMM_run:
                     # all surviving tasks immediately rather than waiting for them to exit
                     # naturally. Prevents indefinite hangs when tasks are blocked at MPI_Init
                     # PMI_Barrier waiting for failed peers (observed as 118-min hang in Run 7).
+                    f"{_mpi_flag}"
                     f"{exe} {cfg}"
                 )
             elif run_mode in ("serial", "openmp"):
@@ -695,14 +779,36 @@ class TRITONSWMM_run:
                     # whole-node parent would otherwise over-expand --ntasks-per-gpu
                     # to the full node GPU count, so clamp with explicit --ntasks.
                     ntasks_flag = f"--ntasks={n_gpus} "
+                elif n_nodes_per_sim >= 2 and multi_sim_run_method != "1_job_many_srun_tasks":
+                    # UVA gres mode, MULTI-NODE under the Snakemake slurm executor
+                    # (per-rule jobstep). Here the per-rule sbatch is generated via the
+                    # executor's mpi+tasks path (mpi=True, tasks=N, tasks_per_gpu=0), so
+                    # it carries an explicit --ntasks=N and SUPPRESSES --ntasks-per-gpu.
+                    # In the jobstep the step GPU tres is non-authoritative
+                    # (SLURM_GPUS/ON_NODE/JOB_GPUS unset) and the per-node sbatch --gres
+                    # does NOT flow into a multi-node srun step, so an inner
+                    # --ntasks-per-gpu=1 fails: "_handle_ntasks_per_tres_step:
+                    # ntasks_per_tres was specified, but there was ... no GPU
+                    # specification". Because the parent carries NO --ntasks-per-gpu here,
+                    # SLURM_NTASKS_PER_GPU is NOT inherited, so --gpus-per-task=1 does NOT
+                    # conflict (unlike the single-node else below) — mirror the Frontier
+                    # gpus form: explicit --ntasks + explicit per-rank GPU binding.
+                    # Empirically surfaced on UVA gpu-a100 2-node (2026-07-01, job
+                    # 16708076). Single-node gres, 1_job_many_srun_tasks, and the local
+                    # in-allocation path keep the --ntasks-per-gpu=1 form below (the
+                    # 2026-05-23 collision constraint is still binding there — their
+                    # parent carries --ntasks-per-gpu).
+                    gpu_bind_flag = "--gpus-per-task=1 "
+                    ntasks_flag = f"--ntasks={n_gpus} "
                 else:
                     gpu_bind_flag = "--ntasks-per-gpu=1 "
-                    # UVA gres mode: the parent batch step holds exactly N requested
-                    # GPUs and carries --ntasks-per-gpu=1. Dropping the explicit
-                    # --ntasks lets the step inherit ntasks_per_tres=1 and expand to
-                    # N (one task per inherited GPU). An explicit --ntasks=N collides
-                    # with the 1-task batch step ("More processors requested than
-                    # permitted"). Empirically confirmed on UVA gpu-a6000 (2026-05-23).
+                    # UVA gres mode, SINGLE-NODE (and 1_job_many_srun_tasks): the parent
+                    # batch step holds exactly N requested GPUs and carries
+                    # --ntasks-per-gpu=1. Dropping the explicit --ntasks lets the step
+                    # inherit ntasks_per_tres=1 and expand to N (one task per inherited
+                    # GPU). An explicit --ntasks=N collides with the 1-task batch step
+                    # ("More processors requested than permitted"). Empirically confirmed
+                    # on UVA gpu-a6000 (2026-05-23).
                     ntasks_flag = ""
                 launch_cmd_str = (
                     f"srun "
@@ -713,6 +819,7 @@ class TRITONSWMM_run:
                     "--cpu-bind=cores "
                     "--overlap "  # See note above on --overlap in batch_job mode.
                     "--kill-on-bad-exit=1 "  # See note above on --kill-on-bad-exit=1.
+                    f"{_mpi_flag}"
                     f"{exe} {cfg}"
                 )
             else:
@@ -743,6 +850,34 @@ class TRITONSWMM_run:
         # paths keep the prior conda-first behavior. Empirically confirmed by a live
         # 2-GPU salloc test on UVA Rivanna (2026-05-24): ldd flipped libmpi->module,
         # libstdc++->conda; the 2-rank srun ran 9.5+ min vs the prior 49s crash.
+        # --- container-mode host-side injector env (ADR-3; OUTSIDE the wrap) ---
+        # Apptainer does NOT import the host LD_LIBRARY_PATH; the host Cray-MPICH ABI
+        # bind is realized by exporting APPTAINERENV_LD_LIBRARY_PATH (Apptainer PREPENDS
+        # it inside the container ahead of the SIF-baked /opt/mpich/lib). Emitted as a
+        # distinct segment so native stays byte-identical ("" in native mode).
+        container_host_env_str = ""
+        if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
+            parts = []
+            # Pre-exec modules FIRST (Frontier production: OLCF apptainer-enable-mpi/-gpu
+            # + olcf-container-tools — they bind the open-ended host MPI+ROCm+compiler-
+            # runtime closure so it need not be hand-enumerated into containlibs). They
+            # must precede cray-mpich-abi + the APPTAINERENV exports (validated probe
+            # job 4898044). Empty list => byte-identical to the prior emission.
+            for _m in cspec.pre_exec_modules:
+                parts.append(f"module load {_m} 2>/dev/null")
+            if cspec.cray_mpich_abi_module:
+                parts.append("module load cray-mpich-abi 2>/dev/null")
+            if cspec.apptainerenv_ld_library_path:
+                # SHELL-TEMPLATE in double quotes so ${CRAY_MPICH_DIR} etc. expand at runtime.
+                parts.append(f'export APPTAINERENV_LD_LIBRARY_PATH="{cspec.apptainerenv_ld_library_path}"')
+            if cspec.containlibs:
+                parts.append(f'export APPTAINER_CONTAINLIBS="{",".join(cspec.containlibs)}"')
+            _adir = self._analysis.analysis_paths.analysis_dir
+            _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+            parts.append(f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"')
+            container_host_env_str = "; ".join(parts) + "; "
+
+        _container_mode = self._analysis.cfg_analysis.execution_environment == "container"
         # See the SWMM-path comment above: NEEDED-soname-accurate MPI lib-dir
         # derivation (multiarch-correct), reused for the module and local branches.
         _mpi_derive = (
@@ -752,7 +887,8 @@ class TRITONSWMM_run:
             '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
         )
         if module_load_cmd:
-            post_module_ld = (
+            # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
+            post_module_ld = "" if _container_mode else (
                 f"{_mpi_derive}"
                 'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                 'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
@@ -763,12 +899,12 @@ class TRITONSWMM_run:
             # ordering for a system-mpic++-built triton.exe. Conda lib stays second
             # (already first in the static ld_segments) so libstdc++ GLIBCXX_3.4.31
             # still wins; system MPI wins for libmpi/libmpi_cxx. No-op when no mpicc.
-            post_module_ld = (
+            post_module_ld = "" if _container_mode else (
                 f"{_mpi_derive}"
                 'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
                 'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
             )
-        full_cmd = f"{env_export_str}; {module_load_cmd}{post_module_ld}{launch_cmd_str}"
+        full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
         cmd = [
             "bash",
             "-lc",
@@ -826,7 +962,6 @@ class TRITONSWMM_run:
             - metadata_dict: dict with simulation metadata for logging
         """
         import os
-        import subprocess
 
         event_iloc = self._scenario.event_iloc
         sim_logfile = self._scenario.log.logfile.parent / f"sim_run_{event_iloc}.log"
@@ -911,7 +1046,7 @@ class TRITONSWMM_run:
             if rc != 0:
                 # Log the error
                 if sim_logfile.exists():
-                    with open(sim_logfile, "r") as f:
+                    with open(sim_logfile) as f:
                         error_output = f.read()
                     if verbose:
                         print(

@@ -258,13 +258,36 @@ class TRITONSWMM_sensitivity_analysis:
                 is_main_orchestrator=is_main_orchestrator,
             )
         else:
-            # Fast path: no row varies system_config; reuse master self._system.
+            # Fast path: no row varies system_config; reuse master self._system. A
+            # same-partition GPU sensitivity suite (e.g. the native/container
+            # within-family suite, which shares ONE partition across rows so the
+            # per-row-partition gate above is False) lands here. The single target
+            # MUST carry the master ensemble partition so `setup_target_N` emits
+            # `--target-partition` (-> resolve_gpu_target -> GPU compile backend) AND
+            # self._system gets the GPU pair injected (the workflow.py GPU-sensitivity
+            # validation reads self.system.gpu_compilation_backend). Guarded on a
+            # resolved backend so CPU/null-selector fast paths stay byte-identical
+            # (every Snakefile golden builds with hpc_ensemble_partition null ->
+            # _fast_backend is None -> no injection, no target_partition).
+            _master_partition = self.master_analysis.cfg_analysis.hpc_ensemble_partition
+            _fast_hw, _fast_backend = resolve_gpu_target(
+                self.master_analysis.cfg_hpc_system, _master_partition
+            )
+            _fast_target_partition = None
+            if _fast_backend is not None:
+                self._system.gpu_hardware = _fast_hw
+                self._system.gpu_compilation_backend = _fast_backend
+                self._system.additional_modules = resolve_additional_modules(
+                    self.master_analysis.cfg_hpc_system
+                )
+                _fast_target_partition = _master_partition
             self.unique_system_targets = [
                 UniqueSystemTarget(
                     target_id=0,
                     system_config_yaml=self._system.system_config_yaml,
                     system=self._system,
                     sub_analysis_ids=list(df_setup_full.index.astype(str)),
+                    target_partition=_fast_target_partition,
                 )
             ]
         from hhemt.config.analysis import analysis_config as _analysis_config_for_df_setup
@@ -2038,6 +2061,14 @@ class TRITONSWMM_sensitivity_analysis:
                     gpu_hardware=_t_hw,
                     gpu_compilation_backend=_t_backend,
                     additional_modules=_t_modules,
+                    # ADR-1/M-7: this per-UniqueSystemTarget system DRIVES the
+                    # sensitivity compile (compile_TRITON_SWMM below). In container
+                    # mode the libstdc++ exact-soname patch must be suppressed (the
+                    # SIF carries a self-consistent toolchain); the False default in
+                    # native mode keeps the link line byte-identical.
+                    execution_container_mode=(
+                        self.master_analysis.cfg_analysis.execution_environment == "container"
+                    ),
                 )
             targets.append(
                 UniqueSystemTarget(

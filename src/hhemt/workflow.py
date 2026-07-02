@@ -29,6 +29,7 @@ import yaml  # type: ignore
 from hhemt.config.analysis import ClearRawValue
 from hhemt.config.hpc_system import (
     resolve_additional_modules,
+    resolve_container_spec,
     resolve_gpu_target,
     resolve_gpus_per_node,
 )
@@ -759,6 +760,23 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # baseline that directive-less rules inherit.
         self._override_hpc_restart_times_simulate: int | None = None
         self._override_hpc_restart_times_other: int | None = None
+
+        # ADR-1: the container prefix for the PROCESS rungs only (sim rungs wrap
+        # inside run_simulation.py; plot/consolidate/render stay native). Empty in
+        # native mode (keeps generated Snakefiles byte-identical, R2/TO-1).
+        _cspec = resolve_container_spec(self.cfg_hpc_system)
+        if getattr(self.cfg_analysis, "execution_environment", "native") == "container" and _cspec is not None:
+            # FB2: the process rung MUST bind analysis_dir (+ cluster binds) — the
+            # in-container process runner loads configs (firing _check_paths_exist on
+            # host paths) and reads out_*/writes processed/+_status under analysis_dir,
+            # which on Frontier ($MEMBERWORK) / Rivanna (/scratch) is OUTSIDE Apptainer's
+            # default $HOME/CWD binds. This mirrors the sim rung's bind (R7); without it
+            # container-mode processing fails at config-load or write on every real cluster.
+            _adir = self.analysis_paths.analysis_dir
+            _proc_binds = ",".join([*_cspec.binds, f"{_adir}:{_adir}"])
+            self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+        else:
+            self._container_process_prefix = ""
 
     def _resolved_simulate_retries(self) -> int:
         """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
@@ -1885,7 +1903,7 @@ rule process_{model_type}:
 {process_resources}
     shell:
         """
-        {self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
@@ -6582,6 +6600,11 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
 
         # Compose base workflow builder for common patterns
         self._base_builder = SnakemakeWorkflowBuilder(self.master_analysis)
+        # ADR-1: the sensitivity-master + reprocess-master process_{model} shells
+        # reference self._container_process_prefix; delegate to the base builder's
+        # resolved token so all three process-rung sites carry the identical prefix
+        # (empty in native mode → generated Snakefiles byte-identical, R2/TO-1).
+        self._container_process_prefix = self._base_builder._container_process_prefix
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -7154,7 +7177,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -7703,7 +7726,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\

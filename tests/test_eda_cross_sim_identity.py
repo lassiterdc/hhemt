@@ -80,6 +80,46 @@ def test_compare_variable_exact_coord_mismatch_fails_closed():
     assert res["coord_match"] is False
 
 
+def test_combine_cells_single_and_multi():
+    """Regression for the artifact-assembly helper _combine_cells (the stitch the
+    operator 2-row validation run tripped on Rivanna). A single 1x1 (sa_id, event_iloc)
+    cell — the minimal native+container suite, one non-reference sub + one event — is the
+    DEGENERATE combine_by_coords case (raises "Could not find any dimension coordinates"
+    on the Rivanna py3.11 xarray). The helper returns the lone cell directly there and
+    still hypercube-stitches N>=2. The slow synthetic_sensitivity_completed fixture has
+    multiple subs, so it never exercised the single-cell path."""
+    from hhemt.eda.cross_sim_identity import _combine_cells
+
+    cell = xr.DataArray(0.0).expand_dims({"sa_id": ["container"], "event_iloc": [0]})
+    # Single cell: must return the lone array intact (no combine_by_coords degeneracy).
+    single = _combine_cells([cell])
+    assert single.sel(sa_id="container", event_iloc=0).item() == 0.0
+    assert list(single["sa_id"].values) == ["container"]
+
+    # N>=2 across sa_id: assembled into the (sa_id, event_iloc) grid (manual build, no
+    # combine_by_coords) with values placed at the right coords.
+    cell2 = xr.DataArray(1.0).expand_dims({"sa_id": ["native_dup"], "event_iloc": [0]})
+    multi = _combine_cells([cell, cell2])
+    assert set(multi["sa_id"].values) == {"container", "native_dup"}
+    assert multi.sel(sa_id="container", event_iloc=0).item() == 0.0
+    assert multi.sel(sa_id="native_dup", event_iloc=0).item() == 1.0
+
+    # N>=2 across event_iloc for one sub: grid spans both events.
+    ev0 = xr.DataArray(0.0).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
+    ev1 = xr.DataArray(2.5).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
+    grid = _combine_cells([ev0, ev1])
+    assert list(grid["event_iloc"].values) == [0, 1]
+    assert grid.sel(sa_id="c", event_iloc=1).item() == 2.5
+
+    # Bool dtype (the `identical__{var}` artifact) is preserved through the manual build.
+    b0 = xr.DataArray(True).expand_dims({"sa_id": ["c"], "event_iloc": [0]})
+    b1 = xr.DataArray(False).expand_dims({"sa_id": ["c"], "event_iloc": [1]})
+    bgrid = _combine_cells([b0, b1])
+    assert bgrid.dtype == bool
+    assert bool(bgrid.sel(sa_id="c", event_iloc=0)) is True
+    assert bool(bgrid.sel(sa_id="c", event_iloc=1)) is False
+
+
 # ---- Slow tier (one real build, session-cached): summaries-present sensitivity ----
 
 
@@ -115,6 +155,32 @@ def test_sensitivity_master_identical_passes(synthetic_sensitivity_completed):
     assert verdict_json.exists()
     vp = json.loads(verdict_json.read_text())
     assert vp["name"] == "Cross-sim byte-identity"
+    assert vp["passed"] is True
+
+
+@pytest.mark.requires_snakemake_subprocess
+@pytest.mark.slow
+def test_sensitivity_master_across_family_characterizes(synthetic_sensitivity_completed):
+    """ADR-4 across-family (within_family=False): the verdict NEVER asserts equality.
+
+    Whether or not the subs are bit-identical, the across-family verdict is
+    passed=True and its summary discloses the bounded divergence (the boundary IS
+    the contribution). The persisted artifact + verdict JSON are still written
+    under {analysis_dir}/eda/, and the verdict's name/contract is unchanged — only
+    passed/summary/details semantics branch on within_family."""
+    analysis = synthetic_sensitivity_completed.master_analysis
+    result = check_cross_sim_identity(analysis, within_family=False)
+    assert result.skipped is False
+    assert result.verdict is not None
+    # Disclosed divergence is always a PASS under ADR-4 across-family semantics.
+    assert result.verdict.passed is True, result.verdict.summary
+    assert "haracterized divergence" in result.verdict.summary
+    assert result.verdict.name == "Cross-sim byte-identity"
+    assert result.artifact_path is not None and result.artifact_path.exists()
+    # The persisted verdict JSON round-trips the (passed=True) across-family verdict.
+    verdict_json = result.artifact_path.parent / f"{result.plot_id}.verdict.json"
+    assert verdict_json.exists()
+    vp = json.loads(verdict_json.read_text())
     assert vp["passed"] is True
 
 

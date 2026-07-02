@@ -17,8 +17,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from filelock import FileLock
-
+from hhemt._filelock_compat import resolve_filelock
 from hhemt.version_migration.constants import (
     LOCK_TIMEOUT_SECONDS,
     VERSION_FILE_NAME,
@@ -109,7 +108,7 @@ def _unlocked_write_version_file(target_dir: Path, state: VersionState) -> None:
 
 def write_version_file(target_dir: Path, state: VersionState) -> None:
     """Write _version.json atomically; filelock-guarded."""
-    lock = FileLock(str(_lock_file(target_dir)), timeout=LOCK_TIMEOUT_SECONDS)
+    lock = resolve_filelock(str(_lock_file(target_dir)), timeout=LOCK_TIMEOUT_SECONDS)
     with lock:
         _unlocked_write_version_file(target_dir, state)
 
@@ -143,7 +142,7 @@ def record_migration(
     """
     from hhemt.version_migration.exceptions import LayoutVersionError
 
-    lock = FileLock(str(_lock_file(target_dir)), timeout=LOCK_TIMEOUT_SECONDS)
+    lock = resolve_filelock(str(_lock_file(target_dir)), timeout=LOCK_TIMEOUT_SECONDS)
     with lock:
         state = read_version_file(target_dir)
         if state is None or state.layout_version != version_from:

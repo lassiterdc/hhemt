@@ -448,11 +448,20 @@ def _parse_slurm_allocated_gpus(env: Mapping[str, str]) -> int:
         if parts:
             return len(parts)
 
-    # Per-node view — sufficient for single-node jobs
+    # Per-node view. Under a `gres` allocation SLURM sets SLURM_GPUS_ON_NODE but
+    # NOT SLURM_GPUS, so for a multi-node sim (e.g. -N2 --gres=gpu:a100:1 = 2 GPUs
+    # total, 1/node) this per-node value undercounts the job total and would make
+    # the GPU preflight falsely raise. Scale by the node count so the check compares
+    # total-vs-total. Single-node jobs (nnodes<=1) are byte-identical to the prior
+    # behavior; Frontier is unaffected (1_job_many_srun_tasks skips the guard).
     val = env.get("SLURM_GPUS_ON_NODE")
     tried["SLURM_GPUS_ON_NODE"] = val
     if val and val.isdigit():
-        return int(val)
+        per_node = int(val)
+        nnodes_raw = env.get("SLURM_JOB_NUM_NODES") or env.get("SLURM_NNODES")
+        if nnodes_raw and nnodes_raw.isdigit() and int(nnodes_raw) > 1:
+            return per_node * int(nnodes_raw)
+        return per_node
 
     # Comma-separated list of GPU device IDs (e.g. "0,1,2,3")
     val = env.get("SLURM_JOB_GPUS")

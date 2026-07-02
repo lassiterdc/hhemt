@@ -50,6 +50,10 @@ _HOOK_INSTALLED = False
 # The `.inp` under-declarations (Class 3b) are renderer `source_paths` fixes,
 # not allowlist entries.
 _INCIDENTAL_READ_SUBSTRINGS: tuple[str, ...] = (
+    # hhemt._filelock_compat flock-support probe temp file (transient infrastructure,
+    # never figure data). Now cached per-filesystem so it rarely fires during render,
+    # but allowlisted here so a first-probe that lands mid-render is not flagged.
+    ".flock_probe_",
     "site-packages",
     "__pycache__",
     ".pyc",

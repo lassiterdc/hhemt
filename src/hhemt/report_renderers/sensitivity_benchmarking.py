@@ -162,13 +162,17 @@ def render(
         df["group_value"] = df["sa_id"].map(df_setup[group_by_var])
     else:
         df["group_value"] = "all"
-    df["n_mpi_procs"] = df["sa_id"].map(df_setup["n_mpi_procs"])
+    df["n_mpi_procs"] = df["sa_id"].map(
+        df_setup[_resolve_setup_col(df_setup, "n_mpi_procs") or "n_mpi_procs"]
+    )
     # F2: extra config columns for hover customdata (OMP threads, GPUs, Nodes).
     # Use .get() semantics so missing columns degrade gracefully — hovertemplate
-    # only includes labels for columns that map successfully.
+    # only includes labels for columns that map successfully. Each is resolved
+    # bare-or-`analysis.`-prefixed, then stored under its BARE key in df.
     for col in ("n_omp_threads", "n_gpus", "n_nodes"):
-        if col in df_setup.columns:
-            df[col] = df["sa_id"].map(df_setup[col])
+        resolved_col = _resolve_setup_col(df_setup, col)
+        if resolved_col is not None:
+            df[col] = df["sa_id"].map(df_setup[resolved_col])
 
     wall_unit, wall_factor = _adaptive_time_unit(df["wallclock_hr"].max())
     cost_unit, cost_factor = _adaptive_time_unit(df["compute_hr"].max())
@@ -378,25 +382,57 @@ def render(
     )
 
 
+def _resolve_setup_col(df_setup: pd.DataFrame, bare: str) -> str | None:
+    """Return the column in ``df_setup`` for ``bare``, tolerating the ``analysis.`` prefix.
+
+    Sensitivity columns are BARE (``n_gpus``) for legacy suites or ``analysis.``-prefixed
+    (``analysis.n_gpus``) for per-sub overlay suites (e.g. container-validation, which MUST
+    use the prefixed form so each row applies to its sub-analysis). ``df_setup_with_system_overlays``
+    preserves whichever the CSV used. Returns None if neither form is present. Used by every
+    compute-column read in this renderer so a prefixed-column suite does not raise ``KeyError``.
+    """
+    if bare in df_setup.columns:
+        return bare
+    prefixed = f"analysis.{bare}"
+    return prefixed if prefixed in df_setup.columns else None
+
+
 def _ensure_n_devices_column(df_setup: pd.DataFrame, independent_var: str) -> pd.DataFrame:
-    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent."""
+    """Derive ``n_devices`` from ``run_mode`` × n_gpus / (n_mpi × n_omp × n_nodes) if absent.
+
+    Resolves every compute column by bare-or-``analysis.``-prefixed name (see
+    ``_resolve_setup_col``), else derivation silently no-ops on a prefixed-column suite and a
+    later ``df_setup["n_devices"]`` raises ``KeyError``.
+    """
     if "n_devices" in df_setup.columns:
         return df_setup
-    required = {"n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"}
-    missing = required - set(df_setup.columns)
+
+    resolved = {
+        bare: _resolve_setup_col(df_setup, bare)
+        for bare in ("n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes")
+    }
+    missing = sorted(bare for bare, col in resolved.items() if col is None)
     if missing:
         if independent_var == "n_devices":
             raise ValueError(
                 "Cannot derive n_devices: sensitivity CSV is missing required columns "
-                f"{sorted(missing)}. Either declare n_devices explicitly or include the "
-                "missing columns."
+                f"{missing} (checked bare and 'analysis.'-prefixed). Either declare "
+                "n_devices explicitly or include the missing columns."
             )
         return df_setup
-    is_gpu = (df_setup.get("run_mode", "").astype(str).str.lower() == "gpu") | (df_setup["n_gpus"] > 0)
+
+    run_mode_col = _resolve_setup_col(df_setup, "run_mode")
+    run_mode = (
+        df_setup[run_mode_col].astype(str).str.lower() if run_mode_col is not None else ""
+    )
+    n_gpus = df_setup[resolved["n_gpus"]]
+    is_gpu = (run_mode == "gpu") | (n_gpus > 0)
     df_setup = df_setup.assign(
-        n_devices=df_setup["n_gpus"].where(
+        n_devices=n_gpus.where(
             is_gpu,
-            df_setup["n_mpi_procs"] * df_setup["n_omp_threads"] * df_setup["n_nodes"],
+            df_setup[resolved["n_mpi_procs"]]
+            * df_setup[resolved["n_omp_threads"]]
+            * df_setup[resolved["n_nodes"]],
         ).astype(int)
     )
     return df_setup

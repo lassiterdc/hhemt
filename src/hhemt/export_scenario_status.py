@@ -372,6 +372,13 @@ def main():
         help="Path to system configuration YAML file",
     )
     parser.add_argument(
+        "--hpc-system-config",
+        type=Path,
+        required=False,
+        default=None,
+        help="Optional path to the per-HPC-system configuration YAML file",
+    )
+    parser.add_argument(
         "--output-path",
         type=Path,
         default=None,
@@ -412,6 +419,7 @@ def main():
         analysis = anlysis.TRITONSWMM_analysis(
             analysis_config_yaml=args.analysis_config,
             system=system,
+            hpc_system_config_yaml=args.hpc_system_config,
             skip_log_update=False,
             is_main_orchestrator=False,
         )
