@@ -1240,6 +1240,23 @@ class TRITONSWMM_sensitivity_analysis:
 
         tree = xr.DataTree.from_dict(tree_dict)
         apply_global_attributes(tree, analysis_id=str(self.master_analysis.cfg_analysis.analysis_id))
+
+        # ADR-15 Phase 1: the per-event hhemt_producing_sha/version coordinates ride
+        # up automatically via the verbatim node.dataset graft above (no new
+        # transmission code). Re-derive the MASTER-level scalar fast-path here by
+        # scanning the grafted sub-nodes for master-wide uniformity (uniform across
+        # ALL sub-analyses' events -> scalar; else absent + divergent breadcrumb).
+        from hhemt.cf_conventions import apply_producing_stamp
+
+        _sha_vals: list[str] = []
+        _semver_vals: list[str] = []
+        for _key, _ds in tree_dict.items():
+            _coords = getattr(_ds, "coords", {})
+            if "hhemt_producing_sha" in _coords:
+                _sha_vals.extend(str(v) for v in _ds["hhemt_producing_sha"].values.tolist())
+            if "hhemt_producing_version" in _coords:
+                _semver_vals.extend(str(v) for v in _ds["hhemt_producing_version"].values.tolist())
+        apply_producing_stamp(tree, _sha_vals, _semver_vals)
         return tree
 
     def consolidate_sensitivity_datatree(

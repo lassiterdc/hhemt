@@ -19,10 +19,6 @@ layout_relevant:
     - "src/hhemt/version_migration/versions/*.py"
 # cleanup-rerun-delete-redesign Phase 1: these paths are config-schema or
 # behavior-only changes — no on-disk layout changes. Justifications:
-#   - process_simulation.py: Phase 3 — replaces structurally broken
-#     `_clear_raw_TRITON_outputs` + `_clear_raw_SWMM_outputs` with a single
-#     corrected `_clear_raw_outputs(model_type)`. Behavior change; existing
-#     on-disk analyses continue to work post-upgrade.
 #   - scenario.py: Phase 3 — incidental method-signature touch to remove
 #     `clear_raw_outputs` references. No path or layout changes.
 #   - sensitivity_analysis.py: Phases 2 + 3 + 4 — adds `delete()` method,
@@ -31,7 +27,6 @@ layout_relevant:
 #   - config/analysis.py: Phase 1 — adds Pydantic `clear_raw` and
 #     `force_rerun` fields. Config schema is NOT on-disk layout.
 non_breaking_allowlist:
-  - src/hhemt/process_simulation.py
   - src/hhemt/scenario.py
   # hpc-system-profile-config Phase 4 (4d): config/analysis.py + sensitivity_analysis.py
   # REMOVED from the allowlist — the partition-axis field retirement changes the per-sa
