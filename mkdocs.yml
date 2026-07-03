@@ -54,6 +54,7 @@ nav:
   - Tutorials:
       - tutorials/index.md
       - Quickstart: tutorials/quickstart.md
+      - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
   - How-To Guides:
       - how-to/index.md
       - Installation: how-to/installation.md
