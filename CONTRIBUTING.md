@@ -30,7 +30,7 @@ open an issue to discuss before submitting.
 
 ## Workflow
 
-- Create a feature branch from `main`
+- Create a feature branch from `develop`
 - Make changes with tests
 - Run `ruff check .` and `ruff format .`
 - Run `pytest`
@@ -44,6 +44,10 @@ Build docs locally:
 pip install -e ".[docs]"
 mkdocs serve
 ```
+
+## Branching and releases
+
+`develop` is the default branch; all work branches from and merges back into `develop`. `main` is release-only and advances only via a validated `develop` → `main` release pull request (all tests green, docs complete), tagged `vX.Y.Z`. See [Branching and release model](docs/explanation/branching-and-release-model.md) for the full model, the release procedure, and the Read-the-Docs default-version runbook.
 
 ---
 
