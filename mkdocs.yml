@@ -52,6 +52,7 @@ nav:
   - Home: index.md
   - Tutorials:
       - tutorials/index.md
+      - Quickstart: tutorials/quickstart.md
   - How-To Guides:
       - how-to/index.md
       - Installation: how-to/installation.md
@@ -61,3 +62,5 @@ nav:
       - Example interactive report: reference/example-report.md
   - Explanation:
       - explanation/index.md
+      - Capabilities: explanation/capabilities.md
+      - Software availability: explanation/software-availability.md
