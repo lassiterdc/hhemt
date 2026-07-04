@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 import warnings
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -405,7 +405,7 @@ def _write_bundle_manifest(
         "layout_version": LAYOUT_VERSION,
         "toolkit_git_sha": git_sha,
         "analysis_id": analysis_id,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "source_paths_by_renderer": {
             name: [str(p) for p in paths]
             for name, paths in sources_by_renderer.items()
