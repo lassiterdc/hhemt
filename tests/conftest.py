@@ -559,8 +559,10 @@ def tritonswmm_cpu_compiled():
     The property reads the in-memory system log; a fresh system init
     shows compile-not-yet-done even when a valid build artifact exists
     on disk. Each test-case family has its own `_software_root`, so the
-    fixture iterates over the 3 families touched by the marked tests
-    (synth_all_models, synth_multi_sim, norfolk_multi_sim).
+    fixture iterates over the 4 families touched by the marked tests
+    (synth_all_models, synth_multi_sim, norfolk_multi_sim,
+    norfolk_single_sim); norfolk families are skipped when their example
+    data is absent.
 
     Process-safety note: this fixture writes to ~/.cache/.../_software/
     or test_data/.../triton/ and assumes no concurrent test sessions are
@@ -588,12 +590,50 @@ def tritonswmm_cpu_compiled():
 
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    for retrieve in (
+    synth_retrievers = (
         Local_TestCases.retrieve_synth_all_models_test_case,
         Local_TestCases.retrieve_synth_multi_sim_test_case,
+    )
+    norfolk_retrievers = (
         Local_TestCases.retrieve_norfolk_multi_sim_test_case,
         Local_TestCases.retrieve_norfolk_single_sim_test_case,
-    ):
+    )
+
+    def _norfolk_example_data_present() -> bool:
+        """True iff the Norfolk HydroShare DATA_DIR is already cached locally.
+        Pure path computation — never triggers a download (unlike retrieve(),
+        which downloads-on-absence via NorfolkIreneExample.load)."""
+        from hhemt import constants as cnst
+        from hhemt.examples import TRITON_SWMM_example
+
+        mapping = TRITON_SWMM_example._get_case_data_and_package_directory_mapping_dict(
+            case_name=cnst.NORFOLK_EX
+        )
+        return Path(mapping["DATA_DIR"]).exists()
+
+    for retrieve in norfolk_retrievers:
+        # Norfolk families are unused by every consumer of this fixture
+        # (test_synth_00/04/07, test_metadata_consolidation all use synth
+        # fixtures). Skip them BEFORE retrieve() can trigger a HydroShare
+        # download: NorfolkIreneExample.load downloads-on-absence
+        # (examples.py:294), so a try/except cannot prevent the download, and a
+        # download failure raises ProcessingError/RuntimeError/bare Exception
+        # (NOT FileNotFoundError/OSError). The pre-check computes DATA_DIR from
+        # local package paths only (no network), so the synth CI tier makes
+        # ZERO HydroShare calls. Local dev boxes with norfolk cached still
+        # compile them.
+        if not _norfolk_example_data_present():
+            continue
+        case = retrieve(start_from_scratch=False)
+        case.analysis._system.compile_TRITON_SWMM(
+            backends=["cpu"],
+            recompile_if_already_done_successfully=False,
+        )
+        if case.analysis._system.cfg_system.toggle_swmm_model:
+            case.analysis._system.compile_SWMM(
+                recompile_if_already_done_successfully=False,
+            )
+    for retrieve in synth_retrievers:
         case = retrieve(start_from_scratch=False)
         case.analysis._system.compile_TRITON_SWMM(
             backends=["cpu"],

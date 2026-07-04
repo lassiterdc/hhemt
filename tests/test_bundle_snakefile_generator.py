@@ -7,6 +7,7 @@ a bundle is the Phase 6 smoketest's scope.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -62,7 +63,13 @@ def multi_sim_bundle(tmp_path: Path) -> Path:
 @pytest.fixture
 def sensitivity_bundle(tmp_path: Path) -> Path:
     if not SENSITIVITY_FIXTURE.exists():
-        pytest.skip(f"sensitivity_master fixture missing at {SENSITIVITY_FIXTURE}")
+        msg = f"sensitivity_master bundle fixture missing at {SENSITIVITY_FIXTURE}"
+        if os.environ.get("TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE") == "1":
+            raise AssertionError(
+                f"{msg} (TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE=1) — the checked-in "
+                "bundle fixture must be present in CI."
+            )
+        pytest.skip(msg)
     dest = tmp_path / "sensitivity_master"
     shutil.copytree(SENSITIVITY_FIXTURE, dest)
     return dest
