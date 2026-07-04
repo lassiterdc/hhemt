@@ -1,0 +1,28 @@
+# Per-cluster HPC system config for the synthetic compute-config experiment on
+# UVA Rivanna. Carries the values the retired system_cfg / analysis_cfg keys used
+# to set (partition-as-axis migration, Gotcha 54). Both GPU partitions are NVIDIA
+# on Rivanna, so BOTH use gpu_compilation_backend: CUDA (do NOT copy the
+# multipartition fixture's HIP value for a6000 — research OE-4).
+system_name: uva_rivanna_synth
+default_account: "{your-allocation}"        # was analysis_cfg.hpc_account
+login_node: login1.hpc.virginia.edu         # was analysis_cfg.hpc_login_node
+gpu_allocation_flavor: gres                  # was system_cfg.preferred_slurm_option_for_allocating_gpus
+additional_modules:                          # was system_cfg.additional_modules_needed_to_run_TRITON_SWMM_on_hpc
+  - miniforge
+  - gompi/14.2.0_5.0.7
+  - cuda/12.8.0
+max_concurrent_jobs: 1000                    # was analysis_cfg.hpc_max_simultaneous_sims
+partitions:
+  gpu-a6000:
+    max_runtime: 4320
+    gpus_per_node: 8                          # was analysis_cfg.hpc_gpus_per_node
+    gpu_hardware: a6000                       # was system_cfg.gpu_hardware
+    gpu_compilation_backend: CUDA            # was system_cfg.gpu_compilation_backend
+  gpu-a100-80:
+    max_runtime: 4320
+    gpus_per_node: 8
+    gpu_hardware: a100
+    gpu_compilation_backend: CUDA
+  standard:
+    max_runtime: 4320
+    cpus_per_node: 40

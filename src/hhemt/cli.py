@@ -873,6 +873,72 @@ def eda_command(
         raise typer.Exit(10) from e
 
 
+@app.command(name="synth-experiment")
+def synth_experiment_command(
+    config: Path = typer.Option(
+        ...,
+        "--config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help="Path to a synthetic_experiment_config YAML file",
+    ),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional per-cluster hpc_system_config YAML; overrides the config's hpc_system_config_yaml.",
+    ),
+    dest_dir: Path = typer.Option(
+        None,
+        "--dest-dir",
+        help="Output dir for the matrix CSV + generated model (non-dry-run).",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Load-smoke: validate config + build matrix in memory, no files written / no model generated.",
+    ),
+):
+    """Load-smoke the synthetic compute-config experiment: validate the config
+    (coupling + partition-cap validators) and build the partition-as-axis matrix;
+    unless --dry-run, also write the matrix CSV and generate the synthetic model.
+    The full ensemble run is via scripts/experiments/synth_compute_config.py (Phase 3)."""
+    try:
+        from .toolkit import Toolkit
+
+        result = Toolkit.synthetic_experiment(
+            config, hpc_system_config=hpc_system_config, dest_dir=dest_dir, dry_run=dry_run
+        )
+        cfg = result["config"]
+        console.print(
+            f"[green]synthetic_experiment_config validated[/green] "
+            f"({result['n_matrix_rows']} matrix rows; ranks={cfg.rank_sweep}, "
+            f"grid={cfg.n_cols}x{cfg.n_rows} @ {cfg.cell_size_m} m)"
+        )
+        if dry_run:
+            console.print("[green]--dry-run load-smoke OK[/green] — config + matrix validated; no files written.")
+        else:
+            console.print(f"[green]Matrix CSV:[/green] {result['matrix_csv']}")
+            console.print(f"[green]Synthetic model:[/green] {result['model_dir']}")
+            console.print(
+                "[yellow]Note:[/yellow] this scaffolds the experiment inputs; the full ensemble "
+                "run is via scripts/experiments/synth_compute_config.py (Phase 3)."
+            )
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(5) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
 @app.command(name="static-plots")
 def static_plots_command(
     system_config: Path = typer.Option(
