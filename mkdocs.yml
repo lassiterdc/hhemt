@@ -2,6 +2,7 @@ site_name: "H&H Ensemble Modeling Toolkit"
 site_description: "Orchestrates coupled TRITON (2D hydrodynamic) and SWMM (stormwater management) simulations across local machines and HPC clusters"
 site_author: "Daniel Lassiter"
 repo_url: "https://github.com/lassiterdc/hhemt"
+edit_uri: "edit/develop/docs/"
 
 theme:
   name: material
@@ -61,3 +62,4 @@ nav:
       - Example interactive report: reference/example-report.md
   - Explanation:
       - explanation/index.md
+      - Branching and release model: explanation/branching-and-release-model.md
