@@ -31,6 +31,8 @@ layout_relevant:
 #   - config/analysis.py: Phase 1 — adds Pydantic `clear_raw` and
 #     `force_rerun` fields. Config schema is NOT on-disk layout.
 non_breaking_allowlist:
+  - src/hhemt/config/base.py  # compile-bearing-synth-ci-tier Phase 1: _check_paths_exist honors json_schema_extra={"toolkit_owned_output": True} to skip the load-time exists() check for clone-gate-created software dirs. Pure validation-logic change — no on-disk layout / _version.json / fingerprint / datatree / path-schema change. Non-breaking.
+  - src/hhemt/config/system.py  # compile-bearing-synth-ci-tier Phase 1: annotate TRITONSWMM_software_directory + SWMM_software_directory json_schema_extra={"toolkit_owned_output": True} (toolkit-owned build outputs, exempt from load-time exists()). Schema-annotation only — no on-disk layout change. Non-breaking.
   - src/hhemt/process_simulation.py
   - src/hhemt/scenario.py
   # hpc-system-profile-config Phase 4 (4d): config/analysis.py + sensitivity_analysis.py

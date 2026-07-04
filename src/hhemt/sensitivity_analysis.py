@@ -1968,6 +1968,11 @@ class TRITONSWMM_sensitivity_analysis:
 
             if overlay_cells:
                 try:
+                    # NOTE: the base model_dump() carries TRITONSWMM/SWMM software-dir
+                    # Paths that may not yet exist on disk (created by system.py's
+                    # clone/build gate at run/setup). They are exempt from
+                    # _check_paths_exist via json_schema_extra={"toolkit_owned_output":
+                    # True}. Do NOT add an existence assertion here.
                     cfg = system_config.model_validate(
                         {
                             **self._system.cfg_system.model_dump(),
