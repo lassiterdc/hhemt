@@ -519,3 +519,40 @@ def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
         Bundle.from_directory(tmp_path)
     assert "Pre-F2" in str(excinfo.value)
     assert "Re-emit" in str(excinfo.value)
+
+
+def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
+    """R5: the RO-Crate sidecar at analysis_dir root is carried into the bundle
+    staging root by _copy_supporting_files."""
+    import types
+
+    from hhemt.bundle._emit import _copy_supporting_files
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    (analysis_dir / "ro-crate-metadata.json").write_text('{"@graph": []}')
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+    )
+    _copy_supporting_files(analysis, staging)
+    assert (staging / "ro-crate-metadata.json").exists()
+
+def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> None:
+    """R5: emission is a no-op (no error) when the sidecar is absent."""
+    import types
+
+    from hhemt.bundle._emit import _copy_supporting_files
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+    )
+    _copy_supporting_files(analysis, staging)  # must not raise
+    assert not (staging / "ro-crate-metadata.json").exists()

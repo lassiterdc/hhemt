@@ -367,6 +367,7 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",
+        "ro-crate-metadata.json",
     ):
         src = analysis_dir / fname
         if src.exists():

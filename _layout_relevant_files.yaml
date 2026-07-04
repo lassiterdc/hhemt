@@ -78,6 +78,13 @@ non_breaking_allowlist:
       reporting-system_publication-static-config-schema ADR-4 — new publication
       static-plot Pydantic config family. Pure in-memory config schema; no on-disk
       layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      reproducibility-system_reprex-foundations (C12) — new ADR-10 field->bucket
+      taxonomy classifier (pure static-table lookup over _PATH_FIELD_POLICY;
+      field_bucket -> user|hpc|experiment). Pure in-memory config schema; no on-disk
+      layout / figure stem / zarr / log / path change. Non-breaking (mirrors
+      viz_vocabulary.py / brand_theme.py / static_plots.py).
   - path: src/hhemt/config/eda.py
     justification: >-
       EDA config-schema addition (eda_config submodel: enabled_plots, plotly_js_mode,
