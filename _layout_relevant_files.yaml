@@ -91,3 +91,10 @@ non_breaking_allowlist:
       retire hpc_restart_times for hpc_restart_times_simulate/_other. Both config-schema
       only; not sensitivity-overlay columns; do not reach the per-sa input fingerprint;
       no on-disk layout change.
+  - path: src/hhemt/config/invalidating_fixes.py
+    justification: >-
+      reproducibility-system_version-provenance-and-recompute Phase 3 (ADR-17) — new
+      Pydantic loader for the invalidating-fix registry. Pure INPUT-schema module
+      (describes bug-fix commits, not on-disk analysis layout); no
+      zarr/log/path/_version.json/fingerprint/datatree change. Layout-relevant only via
+      the config/**/*.py glob; non-breaking, no LAYOUT_VERSION bump.
