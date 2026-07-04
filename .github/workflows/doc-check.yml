@@ -5,9 +5,9 @@ name: Documentation Check
 
 on:
   pull_request:
-    branches: [ "main", "master", "implement_snakemake" ]
+    branches: [ "main", "develop" ]
     paths:
-      - 'src/hhemt/config.py'
+      - 'src/hhemt/config/**'
       - 'src/hhemt/workflow.py'
       - 'src/hhemt/execution.py'
       - 'src/hhemt/resource_management.py'
@@ -20,7 +20,6 @@ on:
       - 'tests/conftest.py'
       - 'tests/utils_for_testing.py'
       - 'pyproject.toml'
-      - 'setup.py'
 
 permissions:
   contents: read
