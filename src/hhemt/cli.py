@@ -25,6 +25,7 @@ from .profile_catalog import (
     list_testcases,
     load_profile_catalog,
 )
+from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
 
 
 def _parse_override_clear_raw(value: str | None) -> str | list | None:
@@ -802,6 +803,123 @@ def reprocess_command(
         else:
             console_err.print(f"[bold red]Reprocess failed:[/bold red] {result.get('message', '(no message)')}")
             raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
+@app.command(name="recompute-plan")
+def recompute_plan_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    commit: str = typer.Option(
+        ...,
+        "--commit",
+        help="Bug-fix commit sha to classify this analysis's scopes against.",
+    ),
+    scope: RecomputeScope = typer.Option(
+        ...,
+        "--scope",
+        help=(
+            "Which production tier the bug lives in (explicit; NEVER inferred from "
+            "changed-file paths): simulation | scenario-processing | consolidation | cosmetic."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        help="Print progress messages",
+    ),
+):
+    """Print the ADR-16 dry-run recompute plan for a bug-fix commit.
+
+    Classifies this analysis's ADR-15-stamped scopes against ``--commit`` via the
+    git ancestry predicate, resolves the recompute tier from the explicit
+    ``--scope`` and the analysis's ``clear_raw`` state, and prints the recommended
+    ``RecomputeAction`` plus the call it would dispatch into. DRY-RUN ONLY: it never
+    submits a workflow and never touches the filesystem.
+
+    Examples:
+
+        # What would repairing bug-fix HEAD require, if the bug is in consolidation?
+        $ triton-swmm recompute-plan --system-config system.yaml \\
+            --analysis-config analysis.yaml --commit HEAD --scope consolidation
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .recompute import plan_recompute
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+        system._analysis = analysis
+
+        plan = plan_recompute(analysis, commit, scope)
+
+        console.print(
+            f"[bold]Recompute plan[/bold] for commit [cyan]{plan['commit']}[/cyan] "
+            f"@ scope [cyan]{plan['scope']}[/cyan] "
+            f"(raw cleared: {plan['clear_raw']})"
+        )
+        console.print(
+            f"Recommended action: [green]{plan['recommended_action']}[/green]"
+        )
+
+        table = Table(title="Per-scope classification")
+        table.add_column("Verdict", style="bold")
+        table.add_column("Scopes")
+        for label, key in (
+            ("pre-fix (affected)", "pre_fix_scopes"),
+            ("post-fix (has fix)", "post_fix_scopes"),
+            ("indeterminate (INFO)", "indeterminate_scopes"),
+        ):
+            scopes = plan[key]
+            table.add_row(label, ", ".join(str(s) for s in scopes) if scopes else "(none)")
+        console.print(table)
+
+        if plan["instruction"] is not None:
+            console.print("[bold]Instruction:[/bold]")
+            console.print_json(data=plan["instruction"])
+        else:
+            console.print(
+                "[dim]No pre-fix scopes detected against this commit — nothing to recompute.[/dim]"
+            )
+
+        raise typer.Exit(0)
 
     except typer.Exit:
         raise
