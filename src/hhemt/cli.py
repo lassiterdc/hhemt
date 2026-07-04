@@ -934,6 +934,123 @@ def recompute_plan_command(
         raise typer.Exit(10) from e
 
 
+@app.command(name="check-invalidating-fixes")
+def check_invalidating_fixes_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    check_remote: bool = typer.Option(
+        False,
+        "--check-remote/--no-check-remote",
+        help=(
+            "Also check the git remote for a newer registry (ADR-17 version-skew "
+            "discovery). Ships in Phase 4; not yet wired — the flag is accepted now "
+            "so the CLI surface is stable."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        help="Print progress messages",
+    ),
+):
+    """Print the ADR-17 invalidating-fix registry-match report for this analysis.
+
+    Classifies this analysis's ADR-15-stamped scopes against the in-repo registry
+    (``src/hhemt/invalidating_fixes.yaml``) and prints any matched calculation-
+    invalidating fixes plus the resolver's recommended ``RecomputeAction``.
+
+    NON-BLOCKING: exits 0 EVEN WHEN matches are found — a registered invalidating fix
+    is INFORMATION, not a CLI failure (ADR-17 forbids mapping matches to a non-zero
+    exit). Non-zero is reserved for genuine config/IO errors. Read-only: never submits
+    a workflow, never touches the filesystem.
+
+    Examples:
+
+        $ triton-swmm check-invalidating-fixes --system-config system.yaml \\
+            --analysis-config analysis.yaml
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .recompute import classify_unstamped_scopes, match_registry_against_stamps
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+        system._analysis = analysis
+
+        if check_remote:
+            console.print(
+                "[yellow]--check-remote is not yet wired (ships in Phase 4); checking the local registry only.[/yellow]"
+            )
+
+        matches = match_registry_against_stamps(analysis)
+        info = classify_unstamped_scopes(analysis)
+
+        if not matches and not info:
+            console.print("[green]No registered calculation-invalidating fixes affect this analysis.[/green]")
+            raise typer.Exit(0)
+
+        if matches:
+            table = Table(title="Invalidating-fix matches")
+            table.add_column("Commit", style="bold")
+            table.add_column("Severity")
+            table.add_column("Action")
+            table.add_column("Scope")
+            table.add_column("Summary")
+            for m in matches:
+                table.add_row(
+                    m.commit_id,
+                    m.severity,
+                    m.recommended_action.value if m.recommended_action else "-",
+                    m.affected_scope,
+                    m.summary,
+                )
+            console.print(table)
+        if info:
+            for m in info:
+                console.print(f"[dim]INFO: {m.summary}[/dim]")
+
+        # Non-blocking: matches are INFORMATION, not a failure. Exit 0 (ADR-17 / Q6).
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
 @app.command(name="eda")
 def eda_command(
     system_config: Path = typer.Option(

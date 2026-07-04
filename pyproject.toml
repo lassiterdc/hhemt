@@ -140,7 +140,8 @@ hhemt = [
     "examples/*.md",
     "examples/*.xlsx",
     "examples/*.csv",
-    "report_templates/**/*"
+    "report_templates/**/*",
+    "invalidating_fixes.yaml"
 ]
 
 [tool.pytest.ini_options]
