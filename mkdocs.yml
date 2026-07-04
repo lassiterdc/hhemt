@@ -58,6 +58,9 @@ nav:
   - How-To Guides:
       - how-to/index.md
       - Installation: how-to/installation.md
+      - HPC-profile setup: how-to/hpc-profile-setup.md
+      - Config filling: how-to/config-filling.md
+      - In-flight operations: how-to/in-flight-operations.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md

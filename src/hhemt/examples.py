@@ -142,7 +142,6 @@ class TRITON_SWMM_example:
         - System and analysis configuration generation
 
         Args:
-            app_name: Application package name (e.g., "hhemt")
             case_name: Case study name (e.g., "norfolk_coastal_flooding")
             system_config_template: System config filename (e.g., "template_system_config.yaml")
             analysis_config_template: Analysis config filename (e.g., "template_analysis_config.yaml")
@@ -194,7 +193,6 @@ class TRITON_SWMM_example:
         Load analysis config for any case study.
 
         Args:
-            app_name: Application package name
             case_name: Case study name
             analysis_config_template: Analysis config template filename
             example_data_dir: Optional data directory override
@@ -267,7 +265,6 @@ class TRITON_SWMM_example:
         Handles template filling, HydroShare download, and config generation.
 
         Args:
-            app_name: Application package name
             case_name: Case study name
             system_config_template: System config template filename
             case_config_filename: Case metadata filename
@@ -322,7 +319,6 @@ class TRITON_SWMM_example:
         Get directory mappings for any case study.
 
         Args:
-            app_name: Application package name
             case_name: Case study name
             example_data_dir: Optional data directory override
 
