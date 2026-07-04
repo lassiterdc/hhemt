@@ -1,0 +1,28 @@
+name: docs-build
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+permissions:
+  contents: read
+
+jobs:
+  docs-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install project with docs extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[docs]"
+      - name: Build docs (strict — includes htmlproofer internal-link-check)
+        run: mkdocs build --strict
+      - name: Assert public-API autodoc coverage
+        run: python scripts/check_autodoc_coverage.py --site-dir site
