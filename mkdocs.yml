@@ -53,13 +53,22 @@ nav:
   - Home: index.md
   - Tutorials:
       - tutorials/index.md
+      - Quickstart: tutorials/quickstart.md
+      - Norfolk end-to-end: tutorials/norfolk-end-to-end.md
   - How-To Guides:
       - how-to/index.md
       - Installation: how-to/installation.md
+      - HPC-profile setup: how-to/hpc-profile-setup.md
+      - Config filling: how-to/config-filling.md
+      - In-flight operations: how-to/in-flight-operations.md
+      - Forcing re-runs: how-to/forcing-reruns.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md
       - Example interactive report: reference/example-report.md
   - Explanation:
       - explanation/index.md
+      - Capabilities: explanation/capabilities.md
+      - Software availability: explanation/software-availability.md
+      - Rerun FAQ: explanation/rerun-faq.md
       - Branching and release model: explanation/branching-and-release-model.md
