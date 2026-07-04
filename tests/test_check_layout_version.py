@@ -1,6 +1,7 @@
 """Tests for scripts/check_layout_version.py."""
 from __future__ import annotations
 
+import importlib.util
 import subprocess
 import sys
 from pathlib import Path
@@ -259,3 +260,64 @@ def test_check_b_passes_when_only_renames(tmp_path: Path) -> None:
     )
     out = _run(repo, "check-b", "main")
     assert out.returncode == 0, out.stdout + out.stderr
+
+
+def _load_check_module():
+    spec = importlib.util.spec_from_file_location("check_layout_version", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    # Register in sys.modules before exec: the module uses `from __future__ import
+    # annotations`, so @dataclass(AllowlistEntry)'s InitVar/ClassVar resolution
+    # looks up sys.modules[cls.__module__]; without registration it is None and
+    # dataclasses raises AttributeError at class-definition time.
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _git_tracked_relpaths(repo_root) -> list[str]:
+    out = subprocess.check_output(["git", "ls-files"], cwd=repo_root, text=True)
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def test_every_sentinel_entry_resolves_on_disk() -> None:
+    """Check-B cannot silently degrade to a vacuous pass on a stale/typo'd entry."""
+    mod = _load_check_module()
+    sentinel = mod._load_sentinel()
+    repo_root = mod.REPO_ROOT
+    tracked = _git_tracked_relpaths(repo_root)
+    for rel in sentinel["layout_relevant"]["paths"]:
+        assert (repo_root / rel).exists(), f"sentinel path {rel} does not exist on disk"
+    for g in sentinel["layout_relevant"]["globs"]:
+        assert any(mod._layout_glob_match(rel, g) for rel in tracked), \
+            f"sentinel glob {g!r} matches no tracked file (stale glob or matcher regression)"
+    # allowlist parses without SystemExit (non-empty justification enforced) and every path exists
+    allow = mod._load_allowlist(sentinel)
+    for rel in allow:
+        assert (repo_root / rel).exists(), f"allowlisted path {rel} does not exist on disk"
+
+
+def test_layout_glob_match_semantics() -> None:
+    mod = _load_check_module()
+    cfg = "src/hhemt/config/**/*.py"
+    assert mod._layout_glob_match("src/hhemt/config/analysis.py", cfg)          # zero-dir direct child
+    assert mod._layout_glob_match("src/hhemt/config/loaders/x.py", cfg)         # one-dir nested
+    assert not mod._layout_glob_match("src/hhemt/config/analysis.txt", cfg)     # wrong ext
+    assert not mod._layout_glob_match("src/hhemt/configXanalysis.py", cfg)      # no false-positive on prefix
+    versions = "src/hhemt/version_migration/versions/*.py"
+    assert mod._layout_glob_match("src/hhemt/version_migration/versions/V0001__x.py", versions)
+    assert not mod._layout_glob_match("src/hhemt/version_migration/versions/sub/x.py", versions)  # single-*
+
+
+def test_check_c_does_not_warn_on_new_direct_child_config_file(tmp_path: Path) -> None:
+    """Post-fix, a new direct-child config/*_config.py is glob-covered, so check-c must not warn."""
+    repo = _make_repo(
+        tmp_path, layout_version_at_head=4, layout_version_at_main=4,
+        extra_files_at_head={"src/hhemt/config/new_thing_config.py": "x = 1\n"},
+        sentinel_yaml=(
+            "layout_relevant:\n  paths: []\n  globs:\n    - \"src/hhemt/config/**/*.py\"\n"
+            "non_breaking_allowlist: []\n"
+        ),
+    )
+    out = _run(repo, "check-c", "main")
+    assert out.returncode == 0
+    assert "new_thing_config.py" not in out.stderr
