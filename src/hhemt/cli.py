@@ -967,9 +967,9 @@ def check_invalidating_fixes_command(
         False,
         "--check-remote/--no-check-remote",
         help=(
-            "Also check the git remote for a newer registry (ADR-17 version-skew "
-            "discovery). Ships in Phase 4; not yet wired — the flag is accepted now "
-            "so the CLI surface is stable."
+            "Also check the canonical git remote for invalidating fixes registered at a "
+            "later version than your install (ADR-17 version-skew discovery, opt-in). "
+            "Best-effort raw HTTPS GET; offline degrades to a non-silent INFO, never blocks."
         ),
     ),
     verbose: bool = typer.Option(
@@ -1003,37 +1003,61 @@ def check_invalidating_fixes_command(
         analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
-        if check_remote:
-            console.print(
-                "[yellow]--check-remote is not yet wired (ships in Phase 4); checking the local registry only.[/yellow]"
-            )
-
         matches = match_registry_against_stamps(analysis)
         info = classify_unstamped_scopes(analysis)
 
         if not matches and not info:
             console.print("[green]No registered calculation-invalidating fixes affect this analysis.[/green]")
-            raise typer.Exit(0)
+        else:
+            if matches:
+                table = Table(title="Invalidating-fix matches")
+                table.add_column("Commit", style="bold")
+                table.add_column("Severity")
+                table.add_column("Action")
+                table.add_column("Scope")
+                table.add_column("Summary")
+                for m in matches:
+                    table.add_row(
+                        m.commit_id,
+                        m.severity,
+                        m.recommended_action.value if m.recommended_action else "-",
+                        m.affected_scope,
+                        m.summary,
+                    )
+                console.print(table)
+            if info:
+                for m in info:
+                    console.print(f"[dim]INFO: {m.summary}[/dim]")
 
-        if matches:
-            table = Table(title="Invalidating-fix matches")
-            table.add_column("Commit", style="bold")
-            table.add_column("Severity")
-            table.add_column("Action")
-            table.add_column("Scope")
-            table.add_column("Summary")
-            for m in matches:
-                table.add_row(
-                    m.commit_id,
-                    m.severity,
-                    m.recommended_action.value if m.recommended_action else "-",
-                    m.affected_scope,
-                    m.summary,
+        # Opt-in remote version-skew discovery (ADR-17 / git Q1). Best-effort, never
+        # blocks: an unreachable remote degrades to a non-silent INFO (exit still 0).
+        if check_remote:
+            from .invalidating_fixes_skew import _REGISTRY_RAW_URL, discover_version_skew
+
+            skew = discover_version_skew()
+            if not skew.reachable:
+                console.print(
+                    "[yellow]Remote version-skew check: could not reach the canonical "
+                    f"registry (offline / unreachable); checked the local registry only. "
+                    f"Verify manually at {_REGISTRY_RAW_URL}.[/yellow]"
                 )
-            console.print(table)
-        if info:
-            for m in info:
-                console.print(f"[dim]INFO: {m.summary}[/dim]")
+            elif skew.new_fixes:
+                console.print(
+                    f"[bold yellow]Remote version-skew: {len(skew.new_fixes)} "
+                    "invalidating fix(es) in the canonical registry affect your installed "
+                    f"version ({skew.local_version}) but are NOT in your local registry:[/bold yellow]"
+                )
+                for f in skew.new_fixes:
+                    console.print(
+                        f"  - {f.commit_id} ({f.severity}) -> "
+                        f"{f.recommended_action.value}: {f.description.strip()[:120]}"
+                    )
+            else:
+                console.print(
+                    "[green]Remote version-skew check: your local registry is up to date "
+                    f"for version {skew.local_version} (no newer affecting fixes on the "
+                    "default branch).[/green]"
+                )
 
         # Non-blocking: matches are INFORMATION, not a failure. Exit 0 (ADR-17 / Q6).
         raise typer.Exit(0)
