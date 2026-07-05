@@ -35,12 +35,15 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Literal
 
 from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
 from hhemt.bundle._compatibility import CompatibilityReport, check_bundle_compatibility
-from hhemt.bundle._emit import _get_toolkit_git_sha
+from hhemt.bundle._emit import _emit_bundle_zip, _get_toolkit_git_sha
 from hhemt.exceptions import ConfigurationError
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -295,21 +298,86 @@ def _write_combined_bundle_manifest(
     (output_path / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
 
-def _render_combined_report(merged, report: CompatibilityReport, output_path: Path) -> None:
+@dataclass(frozen=True)
+class _CombinedRenderContext:
+    """Minimal render-context for the emit-time combined render.
+
+    Exposes ONLY ``analysis_paths.analysis_dir == output_path`` (NOT a
+    BundleableAnalysis, which also requires ``_system`` / ``cfg_analysis`` the
+    combined render has no single value for — see the RENDER DISPATCH note).
+    """
+
+    analysis_dir: Path
+
+    @property
+    def analysis_paths(self) -> SimpleNamespace:
+        return SimpleNamespace(analysis_dir=self.analysis_dir)
+
+
+def _render_combined_report(merged, report, output_path: Path) -> None:
     """Execute the cross-experiment ``combined`` ReportingSet render at emit time.
 
-    Phase-4 seam. See ``_emit_combined_bundle``'s RENDER DISPATCH note: the combined
-    figures are NEW, so the renderer must execute here (writing figures under
-    ``output_path/plots/cross_experiment/`` and the assembled combined HTML/zip under
-    ``output_path/analysis_report.{html,zip}``), driven by a minimal render-context
-    exposing only ``analysis_paths.analysis_dir == output_path``. Wired once the
-    ``combined`` ReportingSet lands in Phase 4.
+    Reads ``get_reporting_set("combined").renderer_selection`` and invokes each
+    renderer module directly (Option A — no snakemake; the combined figures are
+    NEW). Each renderer reads the on-disk ``combined_compatibility.json`` read-model
+    (written before this call), so ``merged`` / ``report`` are unused here (reserved
+    for future cross-experiment-DATA renderers) — which lets
+    ``CombinedBundle.regenerate_report`` re-invoke this with ``None, None`` against
+    the bundle root. Writes figures under ``output_path/plots/cross_experiment/`` and
+    the assembled ``output_path/analysis_report.{html,zip}``.
     """
-    raise NotImplementedError(
-        "The cross-experiment `combined` ReportingSet render is wired in Phase 4 "
-        "(combined ReportingSet + cross-family panel). Phase 3 emits the standalone "
-        "combined crate, compatibility read-model, and manifest; the render executes here."
+    import importlib
+
+    from hhemt.config.report import DEFAULT_REPORT_CONFIG
+    from hhemt.report_renderers._reporting_sets import get_reporting_set
+
+    ctx = _CombinedRenderContext(analysis_dir=output_path)
+    rset = get_reporting_set("combined")
+    figures: list[Path] = []
+    for sel in rset.renderer_selection:
+        for tmpl in sel.rule_spec_template:
+            module = importlib.import_module(f"hhemt.report_renderers.{tmpl.renderer_module}")
+            rel = tmpl.output_path_template.replace("__OUTPUT_EXT__", ".html")
+            fig_path = output_path / rel
+            fig_path.parent.mkdir(parents=True, exist_ok=True)
+            module.render(ctx, DEFAULT_REPORT_CONFIG, fig_path)
+            figures.append(fig_path)
+    _assemble_combined_html(output_path, figures)
+    _combined_report_container(output_path, "zip")  # also materialize the zip container
+
+
+def _assemble_combined_html(output_path: Path, figures: list[Path]) -> Path:
+    """Inline each figure's HTML into a self-contained combined analysis_report.html.
+
+    Deterministic: no timestamps are written into the wrapper (CR4-compatible).
+    """
+    body = "\n".join(fig.read_text() for fig in sorted(figures))
+    html = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<title>Combined cross-experiment report</title></head><body>"
+        "<h1>Combined cross-experiment report</h1>" + body + "</body></html>"
     )
+    report_path = output_path / "analysis_report.html"
+    report_path.write_text(html)
+    return report_path
+
+
+def _combined_report_container(output_path: Path, fmt: Literal["html", "zip"]) -> Path:
+    """Return the requested report container, materializing the zip on demand.
+
+    ``html`` -> the self-contained analysis_report.html. ``zip`` -> a deterministic
+    analysis_report.zip (reuses ``_emit_bundle_zip``'s sorted-entry + fixed-date_time
+    + ZIP_STORED contract) wrapping report.html.
+    """
+    html_path = output_path / "analysis_report.html"
+    if fmt == "html":
+        return html_path
+    zip_path = output_path / "analysis_report.zip"
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp)
+        (staging / "report.html").write_text(html_path.read_text())
+        _emit_bundle_zip(staging, zip_path)
+    return zip_path
 
 
 class CombinedBundle:
@@ -341,11 +409,22 @@ class CombinedBundle:
         return self._root
 
     def regenerate_report(self, *, format: Literal["html", "zip"] = "zip") -> Path:
-        """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report)."""
-        raise NotImplementedError(  # delegates to the combined-report render path (Phase 4 wires the set)
-            "CombinedBundle.regenerate_report is wired in Phase 4 alongside the `combined` ReportingSet render path."
-        )
+        """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report).
+
+        Re-invokes the SAME emit-time render path against the bundle root (no
+        combined Snakefile -> no ``snakemake --report``). The renderer reads the
+        bundled ``combined_compatibility.json`` read-model, so no re-merge is needed.
+        """
+        _render_combined_report(None, None, self._root)
+        report = self._root / f"analysis_report.{format}"
+        if not report.exists():
+            raise FileNotFoundError(f"Combined report {report} was not produced.")
+        return report
 
     def eda(self, *, plots_only: bool = True):
-        """Regenerate the EDA surface from the bundled data (mirrors Bundle.eda)."""
-        raise NotImplementedError("CombinedBundle.eda is wired in Phase 4 alongside the combined render path.")
+        """Combined bundles have no aggregate EDA surface (see child bundles)."""
+        raise NotImplementedError(
+            "Combined bundles have no aggregate EDA surface. The cross-experiment "
+            "byte-identity panel is deferred (R6); run .eda() on each child bundle "
+            "under child_crates/{experiment_id}/ via Bundle.from_directory(...)."
+        )
