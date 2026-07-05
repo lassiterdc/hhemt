@@ -524,7 +524,11 @@ class TRITONSWMM_system:
 
         # Download TRITON-SWMM source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
-        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+            or not (TRITONSWMM_software_directory / "CMakeLists.txt").exists()
+        ):
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -982,7 +986,11 @@ class TRITONSWMM_system:
         # Download TRITON source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+            or not (TRITONSWMM_software_directory / "CMakeLists.txt").exists()
+        ):
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -1301,7 +1309,11 @@ class TRITONSWMM_system:
 
         # Download SWMM source if needed
         # template: git clone --branch v5.2.4 --depth 1 https://github.com/USEPA/Stormwater-Management-Model.git
-        if redownload_swmm_if_exists or not swmm_source_dir.exists():
+        if (
+            redownload_swmm_if_exists
+            or not swmm_source_dir.exists()
+            or not (swmm_source_dir / "CMakeLists.txt").exists()
+        ):
             tag_line = ""
             if self.cfg_system.SWMM_tag_key:
                 tag_line = f"--branch {self.cfg_system.SWMM_tag_key} --depth 1 "

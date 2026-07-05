@@ -105,3 +105,16 @@ non_breaking_allowlist:
       (describes bug-fix commits, not on-disk analysis layout); no
       zarr/log/path/_version.json/fingerprint/datatree change. Layout-relevant only via
       the config/**/*.py glob; non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/base.py
+    justification: >-
+      compile-bearing-synth-ci-tier Phase 1 — _check_paths_exist honors
+      json_schema_extra={"toolkit_owned_output": True} to skip the load-time
+      exists() check for clone-gate-created software dirs. Pure validation-logic
+      change; no on-disk layout / _version.json / fingerprint / datatree /
+      path-schema change. Non-breaking.
+  - path: src/hhemt/config/system.py
+    justification: >-
+      compile-bearing-synth-ci-tier Phase 1 — annotate TRITONSWMM_software_directory
+      + SWMM_software_directory json_schema_extra={"toolkit_owned_output": True}
+      (toolkit-owned build outputs, exempt from load-time exists()). Schema-annotation
+      only; no on-disk layout change. Non-breaking.

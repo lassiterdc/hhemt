@@ -113,10 +113,22 @@ class cfgBaseModel(BaseModel):
     def _check_paths_exist(cls, v: Any, info) -> Any:
         """
         Validate that all Path-like fields exist.
-        Skips non-path fields automatically.
+        Skips non-path fields automatically, and skips fields marked
+        json_schema_extra={"toolkit_owned_output": True} — those name
+        directories the clone/build gate CREATES at run/setup time, so
+        they legitimately do not exist at config-load time.
         """
         if v is None:
             return v  # allow optional
+        # Skip toolkit-owned OUTPUT path fields (created by the clone/build
+        # gate at run/setup, not user-provided inputs). Must precede the
+        # isinstance(v, Path) check because model_dump() (mode="python")
+        # passes these fields as Path objects, so the existence branch would
+        # otherwise fire. See system.py TRITONSWMM/SWMM clone gates.
+        field_info = cls.model_fields.get(info.field_name)
+        extra = field_info.json_schema_extra if field_info is not None else None
+        if isinstance(extra, dict) and extra.get("toolkit_owned_output"):
+            return v
         # Only handle Path or str values
         if isinstance(v, Path):
             p = Path(v).expanduser()
