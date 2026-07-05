@@ -62,6 +62,7 @@ nav:
       - Config filling: how-to/config-filling.md
       - In-flight operations: how-to/in-flight-operations.md
       - Forcing re-runs: how-to/forcing-reruns.md
+      - Combining experiments: how-to/combining-experiments.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md

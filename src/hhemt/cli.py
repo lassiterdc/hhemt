@@ -895,9 +895,7 @@ def recompute_plan_command(
             f"@ scope [cyan]{plan['scope']}[/cyan] "
             f"(raw cleared: {plan['clear_raw']})"
         )
-        console.print(
-            f"Recommended action: [green]{plan['recommended_action']}[/green]"
-        )
+        console.print(f"Recommended action: [green]{plan['recommended_action']}[/green]")
 
         table = Table(title="Per-scope classification")
         table.add_column("Verdict", style="bold")
@@ -915,9 +913,7 @@ def recompute_plan_command(
             console.print("[bold]Instruction:[/bold]")
             console.print_json(data=plan["instruction"])
         else:
-            console.print(
-                "[dim]No pre-fix scopes detected against this commit — nothing to recompute.[/dim]"
-            )
+            console.print("[dim]No pre-fix scopes detected against this commit — nothing to recompute.[/dim]")
 
         raise typer.Exit(0)
 
@@ -1946,6 +1942,38 @@ def bundle_command(
     else:
         bundle_path = analysis.bundle_report_data(output)
     console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+
+
+@app.command(name="combine")
+def combine_command(
+    bundles: list[Path] = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Two or more completed render-bundle directories to combine.",
+    ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=(
+            "Target directory for the combined bundle. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}/."
+        ),
+    ),
+) -> None:
+    """Combine N completed render bundles into one cross-experiment report + standalone bundle.
+
+    Runs a metadata-compatibility check across the bundles (aborting on any
+    blocking divergence), merges their consolidated trees, renders one
+    cross-experiment report, and emits a standalone combined RO-Crate bundle at
+    ``output``. Returns a ``CombinedBundle`` whose report is regenerable.
+    """
+    from hhemt.bundle import combine_bundle
+
+    cb = combine_bundle(bundles, output_path=output)
+    console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
 
 
 @app.command(name="report-from-bundle")
