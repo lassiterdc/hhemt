@@ -31,6 +31,7 @@ from hhemt.bundle._emit import (
 
 if TYPE_CHECKING:
     from hhemt.eda import EdaReportResult
+from hhemt.bundle._combine import CombinedBundle, combine_bundle
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -40,6 +41,8 @@ from hhemt.version_migration.constants import (
 __all__ = [
     "Bundle",
     "BundleSchemaError",
+    "CombinedBundle",
+    "combine_bundle",
     "emit_bundle",
     "_get_toolkit_git_sha",
     "BUNDLE_MANIFEST_FILENAME",
@@ -88,7 +91,7 @@ class Bundle:
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
         if not manifest_path.exists():
-            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} under {root}. " f"Is this a render bundle?")
+            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} under {root}. Is this a render bundle?")
         manifest = json.loads(manifest_path.read_text())
         try:
             bundle_version = manifest["bundle_schema_version"]
@@ -122,7 +125,7 @@ class Bundle:
         invariants = manifest.get("bundle_root_invariants", {})
         if not isinstance(invariants, dict):
             raise ValueError(
-                f"bundle_root_invariants in {manifest_path} must be a " f"dict, got {type(invariants).__name__}."
+                f"bundle_root_invariants in {manifest_path} must be a dict, got {type(invariants).__name__}."
             )
         # Load and Pydantic-validate the bundle's cfg_analysis.yaml at
         # construction time so downstream attribute access
