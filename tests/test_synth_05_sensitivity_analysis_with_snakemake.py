@@ -11,6 +11,15 @@ pytestmark = [
     pytest.mark.skipif(
         tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
     ),
+    pytest.mark.skipif(
+        tst_ut.compile_toolchain_unavailable() and not tst_ut.require_compile_tier(),
+        reason=(
+            "TRITON-SWMM/SWMM compile toolchain (cmake + mpic++) absent; this "
+            "module compiles at run time via analysis.run(). Runs under the "
+            "hhemt conda env; HHEMT_REQUIRE_COMPILE_TIER=1 turns absence into a "
+            "hard failure."
+        ),
+    ),
 ]
 
 def test_snakemake_sensitivity_workflow_generation_and_write(

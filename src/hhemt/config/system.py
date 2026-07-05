@@ -115,11 +115,13 @@ class system_config(cfgBaseModel):
     )
     SWMM_software_directory: Optional[Path] = Field(
         None,
-        description="Folder containing the SWMM model software.",
+        json_schema_extra={"toolkit_owned_output": True},
+        description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
     )
     TRITONSWMM_software_directory: Path = Field(
         ...,
-        description="Folder containing the TRITONSWMM model software.",
+        json_schema_extra={"toolkit_owned_output": True},
+        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup).",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,
