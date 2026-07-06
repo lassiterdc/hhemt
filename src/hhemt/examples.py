@@ -380,8 +380,10 @@ class TRITON_SWMM_example:
             if len(top_level_dirs) == 1:
                 unzipped_folder = extract_to / next(iter(top_level_dirs))
             else:
-                raise RuntimeError(
-                    "ZIP has multiple top-level folders; cannot determine Bag root."
+                raise ProcessingError(
+                    operation="hydroshare_bag_extract",
+                    filepath=str(zip_path),
+                    reason="ZIP has multiple top-level folders; cannot determine Bag root.",
                 )
         # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
         if validate:
@@ -422,7 +424,11 @@ class TRITON_SWMM_example:
                     filepath=str(fpath),
                     reason=f"file declared in case.yaml manifest is absent from the downloaded bag: {rel_name}",
                 )
-            actual_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
+            h = hashlib.sha256()
+            with fpath.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            actual_sha = h.hexdigest()  # streaming read bounds peak RSS on multi-GB assets
             if actual_sha != expected_sha:
                 raise ProcessingError(
                     operation="case_manifest_verification",
@@ -444,10 +450,14 @@ class TRITON_SWMM_example:
         anonymous resource read fails (private/unshared resource).
         """
         if HydroShare is None:
-            raise RuntimeError(
-                "hsclient is not installed. Install optional dependencies with "
-                "`pip install .[tests]`. Alternatively, download the data manually: "
-                f"https://www.hydroshare.org/resource/{res_identifier}/"
+            raise ProcessingError(
+                operation="hydroshare_connect",
+                filepath=None,
+                reason=(
+                    "hsclient is not installed. Install optional dependencies with "
+                    "`pip install .[tests]`. Alternatively, download the data manually: "
+                    f"https://www.hydroshare.org/resource/{res_identifier}/"
+                ),
             )
         hs = HydroShare()  # no args -> unauthenticated requests.Session, no userInfo call
         try:

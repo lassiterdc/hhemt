@@ -57,6 +57,16 @@ def test_compute_manifest(tmp_path: Path):
     }
 
 
+def test_compute_manifest_streaming_digest_parity(tmp_path: Path):
+    # Phase-1 guard: the streaming 1 MiB-chunk sha256 in compute_manifest must be
+    # byte-identical to a whole-file hashlib.sha256(data) digest for a >1 MiB file
+    # (exercises the chunk loop across multiple reads; proves no digest regression).
+    data = b"x" * (2 << 20)  # 2 MiB -> spans two full 1 MiB chunks
+    (tmp_path / "big.bin").write_bytes(data)
+    manifest = gcm.compute_manifest(tmp_path)
+    assert manifest == {"big.bin": hashlib.sha256(data).hexdigest()}
+
+
 def test_populate_case_yaml_roundtrips(tmp_path: Path):
     # R5: the CLI core writes a schema-valid case.yaml with the computed manifest.
     bag = tmp_path / "bag"
