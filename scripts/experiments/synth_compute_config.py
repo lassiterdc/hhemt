@@ -147,15 +147,18 @@ def _build_case(
             "hpc_setup_and_analysis_processing_partition": "standard",
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(sensitivity_csv),
-            # sensitivity report block REQUIRED (validate_sensitivity_independent_vars):
+            # sensitivity report block REQUIRED (validate_sensitivity_independent_vars).
+            # reporting_set lives on report_config (top level), NOT on report.sensitivity
+            # (ADR-5 ReportingSet: config/report.py::report_config.reporting_set; the
+            # sensitivity submodel forbids it as extra and strips a legacy `mode` key).
             "report": {
+                "reporting_set": "benchmarking",
                 "sensitivity": {
-                    "reporting_set": "benchmarking",
                     "independent_vars": ["n_devices"],
                     "dependent_var": "performance.Total",
                     "aggregation": "mean",
                     "group_by_var": "run_mode",
-                }
+                },
             },
         },
     )
