@@ -1,0 +1,59 @@
+# Toolchain-bearing tier: provisions the hhemt conda env (cmake + mpic++ +
+# swmm-toolkit conda-forge pin) so the compile-bearing synth render tests
+# (test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead
+# of skipping. Wireable as a required main status check by the release-gate PIP
+# (ADR-7); no continue-on-error.
+name: Compile-bearing synth render-gate tier
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-synth-render-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision toolchain-bearing conda env
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: hhemt
+          environment-file: environment.yaml
+          auto-activate-base: false
+
+      - name: Install project (editable, test extras)
+        run: pip install -e ".[test]"
+
+      - name: Toolchain sanity (cmake + mpic++ reachable)
+        run: |
+          command -v cmake
+          command -v mpic++
+
+      - name: Guard — environment-lock.yaml swmm-provenance consistency
+        run: python scripts/check_env_lock_consistency.py
+
+      - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
+        env:
+          HHEMT_REQUIRE_COMPILE_TIER: "1"
+          TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE: "1"
+        run: |
+          pytest -p no:xdist -v \
+            tests/test_synth_04_multisim_with_snakemake.py \
+            tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
+            tests/test_synth_eda_facade.py \
+            --deselect tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end

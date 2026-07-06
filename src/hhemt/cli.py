@@ -25,6 +25,7 @@ from .profile_catalog import (
     list_testcases,
     load_profile_catalog,
 )
+from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
 
 
 def _parse_override_clear_raw(value: str | None) -> str | list | None:
@@ -802,6 +803,260 @@ def reprocess_command(
         else:
             console_err.print(f"[bold red]Reprocess failed:[/bold red] {result.get('message', '(no message)')}")
             raise typer.Exit(1)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
+@app.command(name="recompute-plan")
+def recompute_plan_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    commit: str = typer.Option(
+        ...,
+        "--commit",
+        help="Bug-fix commit sha to classify this analysis's scopes against.",
+    ),
+    scope: RecomputeScope = typer.Option(
+        ...,
+        "--scope",
+        help=(
+            "Which production tier the bug lives in (explicit; NEVER inferred from "
+            "changed-file paths): simulation | scenario-processing | consolidation | cosmetic."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        help="Print progress messages",
+    ),
+):
+    """Print the ADR-16 dry-run recompute plan for a bug-fix commit.
+
+    Classifies this analysis's ADR-15-stamped scopes against ``--commit`` via the
+    git ancestry predicate, resolves the recompute tier from the explicit
+    ``--scope`` and the analysis's ``clear_raw`` state, and prints the recommended
+    ``RecomputeAction`` plus the call it would dispatch into. DRY-RUN ONLY: it never
+    submits a workflow and never touches the filesystem.
+
+    Examples:
+
+        # What would repairing bug-fix HEAD require, if the bug is in consolidation?
+        $ triton-swmm recompute-plan --system-config system.yaml \\
+            --analysis-config analysis.yaml --commit HEAD --scope consolidation
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .recompute import plan_recompute
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+        system._analysis = analysis
+
+        plan = plan_recompute(analysis, commit, scope)
+
+        console.print(
+            f"[bold]Recompute plan[/bold] for commit [cyan]{plan['commit']}[/cyan] "
+            f"@ scope [cyan]{plan['scope']}[/cyan] "
+            f"(raw cleared: {plan['clear_raw']})"
+        )
+        console.print(f"Recommended action: [green]{plan['recommended_action']}[/green]")
+
+        table = Table(title="Per-scope classification")
+        table.add_column("Verdict", style="bold")
+        table.add_column("Scopes")
+        for label, key in (
+            ("pre-fix (affected)", "pre_fix_scopes"),
+            ("post-fix (has fix)", "post_fix_scopes"),
+            ("indeterminate (INFO)", "indeterminate_scopes"),
+        ):
+            scopes = plan[key]
+            table.add_row(label, ", ".join(str(s) for s in scopes) if scopes else "(none)")
+        console.print(table)
+
+        if plan["instruction"] is not None:
+            console.print("[bold]Instruction:[/bold]")
+            console.print_json(data=plan["instruction"])
+        else:
+            console.print("[dim]No pre-fix scopes detected against this commit — nothing to recompute.[/dim]")
+
+        raise typer.Exit(0)
+
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Workflow Error:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
+@app.command(name="check-invalidating-fixes")
+def check_invalidating_fixes_command(
+    system_config: Path = typer.Option(
+        ...,
+        "--system-config",
+        help="Path to system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    analysis_config: Path = typer.Option(
+        ...,
+        "--analysis-config",
+        help="Path to analysis configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    check_remote: bool = typer.Option(
+        False,
+        "--check-remote/--no-check-remote",
+        help=(
+            "Also check the canonical git remote for invalidating fixes registered at a "
+            "later version than your install (ADR-17 version-skew discovery, opt-in). "
+            "Best-effort raw HTTPS GET; offline degrades to a non-silent INFO, never blocks."
+        ),
+    ),
+    verbose: bool = typer.Option(
+        True,
+        "--verbose/--quiet",
+        help="Print progress messages",
+    ),
+):
+    """Print the ADR-17 invalidating-fix registry-match report for this analysis.
+
+    Classifies this analysis's ADR-15-stamped scopes against the in-repo registry
+    (``src/hhemt/invalidating_fixes.yaml``) and prints any matched calculation-
+    invalidating fixes plus the resolver's recommended ``RecomputeAction``.
+
+    NON-BLOCKING: exits 0 EVEN WHEN matches are found — a registered invalidating fix
+    is INFORMATION, not a CLI failure (ADR-17 forbids mapping matches to a non-zero
+    exit). Non-zero is reserved for genuine config/IO errors. Read-only: never submits
+    a workflow, never touches the filesystem.
+
+    Examples:
+
+        $ triton-swmm check-invalidating-fixes --system-config system.yaml \\
+            --analysis-config analysis.yaml
+    """
+    try:
+        from .analysis import TRITONSWMM_analysis
+        from .recompute import classify_unstamped_scopes, match_registry_against_stamps
+        from .system import TRITONSWMM_system
+
+        system = TRITONSWMM_system(system_config)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+        system._analysis = analysis
+
+        matches = match_registry_against_stamps(analysis)
+        info = classify_unstamped_scopes(analysis)
+
+        if not matches and not info:
+            console.print("[green]No registered calculation-invalidating fixes affect this analysis.[/green]")
+        else:
+            if matches:
+                table = Table(title="Invalidating-fix matches")
+                table.add_column("Commit", style="bold")
+                table.add_column("Severity")
+                table.add_column("Action")
+                table.add_column("Scope")
+                table.add_column("Summary")
+                for m in matches:
+                    table.add_row(
+                        m.commit_id,
+                        m.severity,
+                        m.recommended_action.value if m.recommended_action else "-",
+                        m.affected_scope,
+                        m.summary,
+                    )
+                console.print(table)
+            if info:
+                for m in info:
+                    console.print(f"[dim]INFO: {m.summary}[/dim]")
+
+        # Opt-in remote version-skew discovery (ADR-17 / git Q1). Best-effort, never
+        # blocks: an unreachable remote degrades to a non-silent INFO (exit still 0).
+        if check_remote:
+            from .invalidating_fixes_skew import _REGISTRY_RAW_URL, discover_version_skew
+
+            skew = discover_version_skew()
+            if not skew.reachable:
+                console.print(
+                    "[yellow]Remote version-skew check: could not reach the canonical "
+                    f"registry (offline / unreachable); checked the local registry only. "
+                    f"Verify manually at {_REGISTRY_RAW_URL}.[/yellow]"
+                )
+            elif skew.new_fixes:
+                console.print(
+                    f"[bold yellow]Remote version-skew: {len(skew.new_fixes)} "
+                    "invalidating fix(es) in the canonical registry affect your installed "
+                    f"version ({skew.local_version}) but are NOT in your local registry:[/bold yellow]"
+                )
+                for f in skew.new_fixes:
+                    console.print(
+                        f"  - {f.commit_id} ({f.severity}) -> "
+                        f"{f.recommended_action.value}: {f.description.strip()[:120]}"
+                    )
+            else:
+                console.print(
+                    "[green]Remote version-skew check: your local registry is up to date "
+                    f"for version {skew.local_version} (no newer affecting fixes on the "
+                    "default branch).[/green]"
+                )
+
+        # Non-blocking: matches are INFORMATION, not a failure. Exit 0 (ADR-17 / Q6).
+        raise typer.Exit(0)
 
     except typer.Exit:
         raise
@@ -1753,6 +2008,38 @@ def bundle_command(
     else:
         bundle_path = analysis.bundle_report_data(output)
     console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+
+
+@app.command(name="combine")
+def combine_command(
+    bundles: list[Path] = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Two or more completed render-bundle directories to combine.",
+    ),
+    output: Path = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help=(
+            "Target directory for the combined bundle. Defaults to {first_bundle}/../combined_{n}bundles_{git_sha}/."
+        ),
+    ),
+) -> None:
+    """Combine N completed render bundles into one cross-experiment report + standalone bundle.
+
+    Runs a metadata-compatibility check across the bundles (aborting on any
+    blocking divergence), merges their consolidated trees, renders one
+    cross-experiment report, and emits a standalone combined RO-Crate bundle at
+    ``output``. Returns a ``CombinedBundle`` whose report is regenerable.
+    """
+    from hhemt.bundle import combine_bundle
+
+    cb = combine_bundle(bundles, output_path=output)
+    console.print(f"[green]Combined bundle emitted:[/green] {cb.root}")
 
 
 @app.command(name="report-from-bundle")

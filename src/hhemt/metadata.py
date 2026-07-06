@@ -12,11 +12,15 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rocrate.model.contextentity import ContextEntity
 from rocrate.rocrate import ROCrate
 
 from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+if TYPE_CHECKING:  # type-only edge — no runtime metadata->config coupling / import cycle
+    from hhemt.config.invalidating_fixes import InvalidatingFix
 
 _CF_PROFILE_ID = "https://cfconventions.org/cf-conventions/cf-conventions.html"
 # Frozen, pinned context (RO-Crate 1.2). Pinning makes the serialized @context
@@ -254,3 +258,89 @@ def write_rocrate_sidecar(analysis_dir: Path, *, graph_json: str) -> bool:
         Path(tmp).unlink(missing_ok=True)  # EXEMPT-DU: transient-intermediate
         raise
     return True
+
+
+# --------------------------------------------------------------------------- #
+# ADR-17 invalidating-fix quality-annotation projection (D7 — pure, deferred).
+#
+# These functions are the data-management-owned registry -> schema.org/DataCite
+# crosswalk. They are SIDE-EFFECT-FREE and are deliberately NOT wired into
+# build_analysis_crate / the consolidation-time emit path: a known-issue annotation
+# is registry-state-dependent and time-varying (a bug can be registered AFTER an
+# analysis's final consolidation), so baking it would either trip the
+# _EMBEDDED_PROV_KEYS byte-determinism grep-guard (if in the embedded core) or churn
+# the compare-and-write sidecar + strand post-consolidation bugs (if in the sidecar).
+# Crate materialization + DOI relations + the report page defer to
+# reproducibility-system_metadata-report-section (ADR-14). This plan ships the pure
+# mapping + unit tests only, keeping the projection importable without pulling in the
+# recompute resolver. Adding these adds ZERO keys to _EMBEDDED_PROV_KEYS.
+# --------------------------------------------------------------------------- #
+def project_invalidating_fix(entry: InvalidatingFix, affected_part_id: str) -> dict:
+    """Pure registry-entry -> ``schema:Comment`` quality-annotation (ADR-17 / D7).
+
+    Returns the known-issue annotation node for ``affected_part_id`` (an existing
+    File/Dataset ``@id`` in a crate @graph). The annotation is a ``schema:Comment``
+    (subset of ``CreativeWork``) attached via ``Comment.about``, carrying
+    severity / recommended-action / version as nested ``schema:PropertyValue``
+    machine-readable fields (severity as a controlled VALUE token, D1 — forward-
+    compatible with a future ``{info, warning, error}`` widening). ``additionalProperty``
+    on a ``CreativeWork`` is used as an RO-Crate extra term (RO-Crate tolerates extra
+    terms; every field stays a schema.org-native ``PropertyValue``).
+    """
+    description = (entry.description or "").rstrip()
+    significance = (entry.significance or "").rstrip()
+    text = f"{description}\n\n{significance}" if significance else description
+    return {
+        "@id": f"#known-issue-{entry.commit_id[:7]}",
+        "@type": "Comment",
+        "about": {"@id": affected_part_id},
+        "text": text,
+        "identifier": entry.commit_id,
+        "additionalProperty": [
+            {
+                "@type": "PropertyValue",
+                "propertyID": "invalidating-fix-severity",
+                "value": entry.severity,
+            },
+            {
+                "@type": "PropertyValue",
+                "propertyID": "recommended-recompute-action",
+                "value": entry.recommended_action.value,
+            },
+            {
+                "@type": "PropertyValue",
+                "propertyID": "introduced-in-version",
+                "value": entry.introduced_in_version,
+            },
+            {
+                "@type": "PropertyValue",
+                "propertyID": "affected-version-range",
+                "value": entry.affected_version_range,
+            },
+        ],
+    }
+
+
+def datacite_supersession_descriptor(*, recomputed_doi: str, affected_doi: str) -> dict:
+    """Pure DataCite ``IsNewVersionOf`` / ``IsPreviousVersionOf`` pair (ADR-17 / D-Q4).
+
+    DOI-granularity supersession — the DATASET-level counterpart of the part-level
+    ``Comment.about`` back-reference in :func:`project_invalidating_fix`. The
+    re-computed dataset's record carries ``isNewVersionOf`` -> the affected DOI; the
+    affected dataset's record carries the inverse ``isPreviousVersionOf`` -> the
+    re-computed DOI. Verified against DataCite Metadata Schema 4.6: the controlled
+    ``relationType`` list contains ``IsNewVersionOf`` / ``IsPreviousVersionOf`` (the
+    ADR-17-named baseline pair) and NO ``IsCorrectedBy`` / ``Corrects``.
+    """
+    return {
+        "isNewVersionOf": {
+            "relatedIdentifier": affected_doi,
+            "relatedIdentifierType": "DOI",
+            "relationType": "IsNewVersionOf",
+        },
+        "isPreviousVersionOf": {
+            "relatedIdentifier": recomputed_doi,
+            "relatedIdentifierType": "DOI",
+            "relationType": "IsPreviousVersionOf",
+        },
+    }

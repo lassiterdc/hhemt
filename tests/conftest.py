@@ -559,8 +559,10 @@ def tritonswmm_cpu_compiled():
     The property reads the in-memory system log; a fresh system init
     shows compile-not-yet-done even when a valid build artifact exists
     on disk. Each test-case family has its own `_software_root`, so the
-    fixture iterates over the 3 families touched by the marked tests
-    (synth_all_models, synth_multi_sim, norfolk_multi_sim).
+    fixture iterates over the 4 families touched by the marked tests
+    (synth_all_models, synth_multi_sim, norfolk_multi_sim,
+    norfolk_single_sim); norfolk families are skipped when their example
+    data is absent.
 
     Process-safety note: this fixture writes to ~/.cache/.../_software/
     or test_data/.../triton/ and assumes no concurrent test sessions are
@@ -588,12 +590,48 @@ def tritonswmm_cpu_compiled():
 
     from tests.fixtures.test_case_catalog import Local_TestCases
 
-    for retrieve in (
+    synth_retrievers = (
         Local_TestCases.retrieve_synth_all_models_test_case,
         Local_TestCases.retrieve_synth_multi_sim_test_case,
+    )
+    norfolk_retrievers = (
         Local_TestCases.retrieve_norfolk_multi_sim_test_case,
         Local_TestCases.retrieve_norfolk_single_sim_test_case,
-    ):
+    )
+
+    def _norfolk_example_data_present() -> bool:
+        """True iff the Norfolk HydroShare DATA_DIR is already cached locally.
+        Pure path computation — never triggers a download (unlike retrieve(),
+        which downloads-on-absence via NorfolkIreneExample.load)."""
+        from hhemt import constants as cnst
+        from hhemt.examples import TRITON_SWMM_example
+
+        mapping = TRITON_SWMM_example._get_case_data_and_package_directory_mapping_dict(case_name=cnst.NORFOLK_EX)
+        return Path(mapping["DATA_DIR"]).exists()
+
+    for retrieve in norfolk_retrievers:
+        # Norfolk families are unused by every consumer of this fixture
+        # (test_synth_00/04/07, test_metadata_consolidation all use synth
+        # fixtures). Skip them BEFORE retrieve() can trigger a HydroShare
+        # download: NorfolkIreneExample.load downloads-on-absence
+        # (examples.py:294), so a try/except cannot prevent the download, and a
+        # download failure raises ProcessingError/RuntimeError/bare Exception
+        # (NOT FileNotFoundError/OSError). The pre-check computes DATA_DIR from
+        # local package paths only (no network), so the synth CI tier makes
+        # ZERO HydroShare calls. Local dev boxes with norfolk cached still
+        # compile them.
+        if not _norfolk_example_data_present():
+            continue
+        case = retrieve(start_from_scratch=False)
+        case.analysis._system.compile_TRITON_SWMM(
+            backends=["cpu"],
+            recompile_if_already_done_successfully=False,
+        )
+        if case.analysis._system.cfg_system.toggle_swmm_model:
+            case.analysis._system.compile_SWMM(
+                recompile_if_already_done_successfully=False,
+            )
+    for retrieve in synth_retrievers:
         case = retrieve(start_from_scratch=False)
         case.analysis._system.compile_TRITON_SWMM(
             backends=["cpu"],
@@ -695,3 +733,59 @@ def rendered_synth_sensitivity():
     yield case.analysis
     final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
     _assert_no_sha_drift("rendered_synth_sensitivity", snapshot, final)
+
+
+@pytest.fixture
+def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
+    """Two hermetic synthetic bundles for the PIP-2 combine proof (R10).
+
+    Emits ONE real SINGLE-ANALYSIS bundle from the cached rendered-multisim
+    analysis to ``tmp_path`` (NEVER the default analysis_dir/render_bundle/, which
+    the session fixture's no-SHA-drift finalizer would flag), unpacks it, and
+    derives a second combine-compatible bundle as a filesystem copy.
+
+    A SINGLE-analysis bundle is required (not a sensitivity-master bundle): the
+    Phase-2 merge layer reads ``bundle_root/analysis_datatree.zarr``
+    (``_combine_merge.CONSOLIDATED_TREE_NAME``), which is the consolidated tree a
+    single analysis ships at its root. A sensitivity master instead ships
+    ``sensitivity_datatree.zarr`` at root (its per-sub trees live under
+    ``subanalyses/sa_N/analysis_datatree.zarr``), so ``combine_bundle`` would raise
+    ``FileNotFoundError`` in merge. Combining sensitivity-master bundles is a
+    routed follow-up (generalize the merge to accept ``sensitivity_datatree.zarr``).
+
+    The two bundles differ only in ways the checker cannot see (compute config is
+    not bundled — the checker reads cfg_system/cfg_analysis identity fields only),
+    so combine() proceeds non-blocking; the copy's ro-crate schemaVersion is bumped
+    to surface ONE non-blocking WARNING (a plain-JSON field NOT re-validated by
+    Bundle.from_directory), exercising the renderer's divergence-row branch too.
+    Returns (dir_a, dir_b) — two on-disk bundle DIRECTORIES (combine consumes
+    directories; emit produces a zip, so we unpack)."""
+    import json
+    import shutil
+    import zipfile
+
+    from hhemt.bundle._combine_merge import CONSOLIDATED_TREE_NAME
+
+    analysis = rendered_synth_multi_sim
+    zip_a = tmp_path / "bundle_a.zip"
+    analysis.bundle_report_data(zip_a)
+    dir_a = tmp_path / "bundle_a"
+    with zipfile.ZipFile(zip_a) as zf:
+        zf.extractall(dir_a)
+    # Fail fast with a clear message if the bundle shape ever drifts from the
+    # merge contract (single-analysis consolidated tree at the bundle root).
+    assert (dir_a / CONSOLIDATED_TREE_NAME).exists(), (
+        f"single-analysis bundle must ship {CONSOLIDATED_TREE_NAME} at its root for combine merge; "
+        f"got: {sorted(p.name for p in dir_a.iterdir())}"
+    )
+    dir_b = tmp_path / "bundle_b"
+    shutil.copytree(dir_a, dir_b)
+    # Non-blocking WARNING (safe: rocrate schemaVersion is plain JSON, not Pydantic-loaded).
+    rocrate_b = dir_b / "ro-crate-metadata.json"
+    if rocrate_b.exists():
+        doc = json.loads(rocrate_b.read_text())
+        for ent in doc.get("@graph", []):
+            if ent.get("@id") == "./" and isinstance(ent.get("schemaVersion"), int):
+                ent["schemaVersion"] = ent["schemaVersion"] + 1
+        rocrate_b.write_text(json.dumps(doc, indent=2))
+    return dir_a, dir_b

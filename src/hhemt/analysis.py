@@ -2050,6 +2050,38 @@ class TRITONSWMM_analysis:
         self._active_reporting_set = get_reporting_set(_resolved_set_name)
         self._cfg_report = cfg_report
 
+        # ADR-17: non-blocking invalidating-fix registry emission at run()-entry.
+        # Prints a console warning for any registered calculation-invalidating fix
+        # that affects this analysis's ADR-15-stamped scopes, reflecting the CURRENT
+        # registry even when the persisted validation_report.json is stale (OE-3).
+        # NEVER raises (load-time emission is non-blocking by construction,
+        # C-NON-BLOCKING-BUGEMIT); the durable report surface is
+        # check_invalidating_fixes in validate_analysis. Graceful-absent: an absent
+        # registry or an unstamped/unconsolidated tree prints nothing.
+        try:
+            from .recompute import match_registry_against_stamps
+
+            _fix_matches = match_registry_against_stamps(self)
+            if _fix_matches:
+                print(
+                    f"[hhemt] WARNING: {len(_fix_matches)} registered "
+                    "calculation-invalidating fix(es) affect this analysis:",
+                    flush=True,
+                )
+                for _m in _fix_matches:
+                    _action = _m.recommended_action.value if _m.recommended_action else "-"
+                    print(
+                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: "
+                        f"{_action} [scope {_m.affected_scope}]",
+                        flush=True,
+                    )
+                print(
+                    "  Run `check-invalidating-fixes` for details; this is non-blocking.",
+                    flush=True,
+                )
+        except Exception:
+            pass  # load-time emission is strictly non-blocking — never crash run()
+
         # Pre-run brand-theme resolution (ADR-7 layer 2 — 3-step, fail-fast).
         from .config.brand_theme import DEFAULT_BRAND_THEME
         from .config.brand_theme import brand_theme as BrandThemeModel

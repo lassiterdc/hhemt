@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import argparse
 import ast
-import fnmatch
 import hashlib
 import re
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -135,6 +135,98 @@ def _load_sentinel() -> dict:
     return yaml.safe_load(SENTINEL_PATH.read_text())
 
 
+def _glob_to_regex(glob: str) -> str:
+    """Translate a layout-sentinel glob to an anchored regex.
+
+    Supports ``**`` (any depth, slash-crossing), ``*`` (single path segment),
+    and ``?`` (single non-slash char). ``**/`` absorbs its trailing slash so it
+    matches ZERO OR MORE directories — this is the fix for the ``fnmatch``
+    failure where ``config/**/*.py`` did not match the direct child
+    ``config/analysis.py``. Char-class ``[...]`` brackets are NOT supported
+    (rendered literal via re.escape); no current glob uses them.
+    """
+    i, n, out = 0, len(glob), []
+    while i < n:
+        c = glob[i]
+        if c == "*":
+            if i + 1 < n and glob[i + 1] == "*":
+                i += 2
+                if i < n and glob[i] == "/":
+                    out.append("(?:.*/)?")  # **/ matches zero or more dirs
+                    i += 1
+                else:
+                    out.append(".*")  # trailing ** matches anything
+            else:
+                out.append("[^/]*")  # single segment
+                i += 1
+        elif c == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return "".join(out)
+
+
+def _layout_glob_match(rel: str, glob: str) -> bool:
+    """True iff `rel` (a repo-relative POSIX path) matches `glob`."""
+    return re.fullmatch(_glob_to_regex(glob), rel) is not None
+
+
+@dataclass(frozen=True)
+class AllowlistEntry:
+    justification: str | None  # None for legacy bare-string entries
+    layout_signature: str | None = None  # change-scoped hash; None => path-permanent
+
+
+def _load_allowlist(sentinel: dict) -> dict[str, AllowlistEntry]:
+    """Parse `non_breaking_allowlist` into path -> AllowlistEntry.
+
+    Accepts two entry forms:
+      - bare string `path`                    -> AllowlistEntry(None, None)
+      - mapping {path, justification[, layout_signature]}
+        (justification REQUIRED and non-empty for the mapping form)
+    Exits non-zero (SystemExit) on any malformed entry.
+    """
+    out: dict[str, AllowlistEntry] = {}
+    for raw in sentinel.get("non_breaking_allowlist", []) or []:
+        if isinstance(raw, str):
+            out[raw] = AllowlistEntry(justification=None)
+            continue
+        if not isinstance(raw, dict) or "path" not in raw:
+            raise SystemExit(f"check_layout_version: malformed allowlist entry: {raw!r}")
+        unknown = set(raw) - {"path", "justification", "layout_signature"}
+        if unknown:
+            raise SystemExit(
+                f"check_layout_version: unknown allowlist keys {sorted(unknown)} in {raw['path']!r}"
+            )
+        just = raw.get("justification")
+        if not isinstance(just, str) or not just.strip():
+            raise SystemExit(
+                f"check_layout_version: dict allowlist entry {raw['path']!r} needs a non-empty justification"
+            )
+        sig = raw.get("layout_signature")
+        if sig is not None and not isinstance(sig, str):
+            raise SystemExit(
+                f"check_layout_version: layout_signature for {raw['path']!r} must be a string"
+            )
+        out[raw["path"]] = AllowlistEntry(justification=just, layout_signature=sig)
+    return out
+
+
+def _file_content_hash(path: Path) -> str | None:
+    """Whole-file sha256 hexdigest, or None when the file is absent.
+
+    Returning None (rather than raising on read_bytes) means a DELETED
+    allowlisted path that carries a stamped layout_signature re-fires Check-B
+    (None != the pinned hash -> the change-scoped gate falls through to path/glob
+    enforcement) instead of crashing the guard with FileNotFoundError.
+    """
+    if not path.exists():
+        return None
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _slug_function_hash(source: str) -> str | None:
     """AST-normalized hash of (signature, body) for compute_event_id_slug.
 
@@ -214,13 +306,18 @@ def check_b(base_ref: str) -> int:
         return 0
     paths = set(sentinel["layout_relevant"]["paths"])
     globs = sentinel["layout_relevant"]["globs"]
-    allow = set(sentinel.get("non_breaking_allowlist", []))
+    allow = _load_allowlist(sentinel)
     layout_relevant_changed: list[Path] = []
     for p in _changed_files(base_ref):
         rel = str(p.relative_to(REPO_ROOT))
         if rel in allow:
-            continue
-        if rel in paths or any(fnmatch.fnmatch(rel, g) for g in globs):
+            expected_sig = allow[rel].layout_signature
+            if expected_sig is None:
+                continue  # legacy path-permanent exemption (no layout_signature)
+            if _file_content_hash(REPO_ROOT / rel) == expected_sig:
+                continue  # change-scoped exemption still valid for this content
+            # signature drifted: exemption no longer covers this change -> re-fire Check-B
+        if rel in paths or any(_layout_glob_match(rel, g) for g in globs):
             layout_relevant_changed.append(p)
     failed = False
     if layout_relevant_changed:
@@ -234,8 +331,10 @@ def check_b(base_ref: str) -> int:
             "\nResolution paths:\n"
             f"  1. If breaking: bump LAYOUT_VERSION to {head_v + 1}, write "
             f"versions/V{head_v + 1:04d}__*.py, add fixtures v{head_v}/ and v{head_v + 1}/.\n"
-            "  2. If non-breaking: add the file path(s) to "
-            "_layout_relevant_files.yaml under non_breaking_allowlist with a justifying commit message.",
+            "  2. If non-breaking: add or update the file's non_breaking_allowlist entry in "
+            "_layout_relevant_files.yaml (prefer the dict form {path, justification}). If the entry "
+            "carries a layout_signature and this change is still non-breaking, re-stamp layout_signature "
+            "with the file's current sha256.",
             file=sys.stderr,
         )
         failed = True
@@ -264,7 +363,7 @@ def check_c(base_ref: str) -> int:
     sentinel = _load_sentinel()
     paths = set(sentinel["layout_relevant"]["paths"])
     globs = sentinel["layout_relevant"]["globs"]
-    allow = set(sentinel.get("non_breaking_allowlist", []))
+    allow = _load_allowlist(sentinel)
     suspicious: list[Path] = []
     for p in _added_files(base_ref):
         rel = str(p.relative_to(REPO_ROOT))
@@ -272,7 +371,7 @@ def check_c(base_ref: str) -> int:
             continue
         if rel in paths or rel in allow:
             continue
-        if any(fnmatch.fnmatch(rel, g) for g in globs):
+        if any(_layout_glob_match(rel, g) for g in globs):
             continue
         name = p.name.lower()
         if any(s in name for s in LAYOUT_SUSPICIOUS_SUBSTRINGS):

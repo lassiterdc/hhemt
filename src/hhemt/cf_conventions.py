@@ -6,6 +6,7 @@ map receive a `long_name` only (auto-generated from the variable name).
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import xarray as xr
@@ -245,3 +246,62 @@ def apply_provenance_core(tree: xr.DataTree, *, core_json_str: str) -> xr.DataTr
     gains no NEW volatile field beyond the pre-existing output_creation_date."""
     tree.attrs["ro_crate_metadata"] = core_json_str
     return tree
+
+
+def apply_producing_stamp(
+    tree: xr.DataTree,
+    sha_values: list[str],
+    semver_values: list[str],
+) -> xr.DataTree:
+    """Set the scalar per-tree version-provenance fast-path on the DataTree root (ADR-15).
+
+    The per-``event_iloc`` ``hhemt_producing_sha`` / ``hhemt_producing_version``
+    COORDINATES (attached at ``_write_output`` write time) are the authoritative
+    ground truth and survive the per-scenario ``xr.concat(..., combine_attrs=
+    'drop_conflicts')``. This root attr is a cheap O(1) fast-path for the uniform
+    common case ONLY: a scalar ``tree.attrs`` value is set iff EVERY event shares
+    one value. Under drift the scalar is left ABSENT (the coordinate remains the
+    source of truth) and a distinct ``*_divergent`` JSON breadcrumb key enumerates
+    the observed set, so a consumer never has to type-sniff whether the scalar key
+    is a bare value or a JSON map. Set AFTER ``apply_provenance_core`` (parallel
+    seam), reading the coordinate off the assembled mode datasets. Empty input
+    (no stamped scope) writes neither the scalar nor the breadcrumb — graceful.
+    """
+    for attr_key, values in (
+        ("hhemt_producing_sha", sha_values),
+        ("hhemt_producing_version", semver_values),
+    ):
+        if not values:
+            continue
+        distinct = sorted(set(values))
+        if len(distinct) == 1:
+            tree.attrs[attr_key] = distinct[0]
+        else:
+            # Divergent producers across events — the scalar fast-path is invalid;
+            # leave it absent and drop a human-readable breadcrumb of the set.
+            tree.attrs[f"{attr_key}_divergent"] = json.dumps(distinct)
+    return tree
+
+
+def read_producing_stamp(obj: xr.Dataset | xr.DataTree) -> dict | None:
+    """Return the producing-sha provenance, tolerating legacy/unstamped scopes (ADR-15 D6).
+
+    Contract:
+    - coordinate ABSENT   -> return None   (pre-v17 legacy; caller emits INFO)
+    - coordinate PRESENT  -> return {"per_event": {event_iloc: sha, ...},
+                                     "uniform": <sha-or-None>}
+      where a value of ``"unknown"`` for any event denotes an unresolvable
+      (dirty / detached) checkout at write time — distinct from absence.
+
+    Never raises on absence. Reads only the per-event coordinate (the
+    authoritative ground truth); a consumer wanting the cheap root fast-path
+    checks ``tree.attrs.get("hhemt_producing_sha")`` first (uniform common case)
+    and falls back to this helper only under absence/divergence.
+    """
+    coords = getattr(obj, "coords", {})
+    if "hhemt_producing_sha" not in coords:
+        return None
+    series = obj["hhemt_producing_sha"].to_series()
+    values = series.tolist()
+    uniform = values[0] if len(set(values)) == 1 else None
+    return {"per_event": series.to_dict(), "uniform": uniform}
