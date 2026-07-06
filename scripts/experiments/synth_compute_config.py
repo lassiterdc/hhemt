@@ -86,6 +86,7 @@ def _build_case(
     resume: bool,
     system_directory: str | None,
     cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -106,6 +107,15 @@ def _build_case(
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
 
+    # Config-injectable (no hardcoded config — CLAUDE.md style #9): callers (the private-estate
+    # runner) pass the git-tracked estate config carrying the real account; None preserves the
+    # in-toolkit placeholder path (its {your-allocation} is anonymization-safe for the public repo).
+    hpc_cfg = (
+        hpc_system_config_yaml
+        if hpc_system_config_yaml is not None
+        else Path(__file__).parent / "hpc_system_config_synth_uva.yaml"
+    )
+
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
         params=_params_for_resolution(cell_size_m),
@@ -115,7 +125,7 @@ def _build_case(
         toggle_swmm_model=False,
         start_from_scratch=start_from_scratch,
         additional_system_configs=system_cfg,
-        hpc_system_config_yaml=Path(__file__).parent / "hpc_system_config_synth_uva.yaml",
+        hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
             "multi_sim_run_method": "batch_job",
             # batch_job REQUIRED fields (default None -> raise at load if omitted). The retired
@@ -153,7 +163,10 @@ def _build_case(
 
 
 def clean_case(
-    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5
+    start_from_scratch: bool = False,
+    system_directory: str | None = None,
+    cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -175,6 +188,7 @@ def clean_case(
         resume=False,
         system_directory=system_directory,
         cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
     )
 
 
@@ -183,6 +197,7 @@ def resume_case(
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
     runtime_min_by_sa: dict[str, float] | None = None,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
 
@@ -214,6 +229,7 @@ def resume_case(
         resume=True,
         system_directory=system_directory,
         cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
     )
 
 
@@ -222,6 +238,7 @@ def build_resume_from_clean_runtimes(
     clean_system_directory: str,
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -234,10 +251,15 @@ def build_resume_from_clean_runtimes(
     """
     from hhemt.synthetic_experiment import size_resume_walltimes
 
-    clean = clean_case(system_directory=clean_system_directory, cell_size_m=cell_size_m)
+    clean = clean_case(
+        system_directory=clean_system_directory,
+        cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
+    )
     runtime_min_by_sa = size_resume_walltimes(clean.analysis)
     return resume_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
         runtime_min_by_sa=runtime_min_by_sa,
+        hpc_system_config_yaml=hpc_system_config_yaml,
     )
