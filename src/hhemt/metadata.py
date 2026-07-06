@@ -28,6 +28,22 @@ _CF_PROFILE_ID = "https://cfconventions.org/cf-conventions/cf-conventions.html"
 # Confirm the exact profile URIs against the live w3id registry at impl time (Follow-up Ideas).
 _CANONICAL_CONTEXT = "https://w3id.org/ro/crate/1.2/context"
 
+# Single source of truth for the frozen 2-entry dataset-license vocab (ADR-8). Feeds BOTH
+# the RO-Crate root Dataset.license CreativeWork entity (here) AND the DataCite rightsList
+# (publishing.py, Phase 4) — the two serializations can never drift.
+_SPDX_LICENSE_TABLE: dict[str, dict[str, str]] = {
+    "CC0-1.0": {
+        "name": "Creative Commons Zero v1.0 Universal",
+        "uri": "https://spdx.org/licenses/CC0-1.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-NC-4.0": {
+        "name": "Creative Commons Attribution Non Commercial 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-NC-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+}
+
 # Single source of truth for what may live in the embedded core (CI grep-guard in
 # test_metadata.py asserts no other key reaches tree.attrs["ro_crate_metadata"]).
 _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
@@ -57,6 +73,7 @@ _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
         "propertyID",
         "measurementTechnique",
         "wasGeneratedBy",
+        "license",
     }
 )
 # Keys that MUST never appear in the embedded core (wall-clock/host/jobid/run-ordinal).
@@ -86,6 +103,7 @@ def build_analysis_crate(
     toolkit_git_sha: str,
     code_repository: str,
     cfg_case,  # CaseManifest
+    dataset_license: str = "CC0-1.0",  # frozen 2-entry SPDX id (ADR-8 D1); strategy owned by reprex-specialist
     sif_spec,  # {@id, softwareVersion, sha256, downloadUrl} | None (native run)
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
@@ -99,6 +117,16 @@ def build_analysis_crate(
     if system_id is not None:
         root["system_id"] = system_id
     root["schemaVersion"] = str(layout_version)
+
+    _lic = _SPDX_LICENSE_TABLE[dataset_license]
+    crate.add(
+        ContextEntity(
+            crate,
+            _lic["uri"],
+            properties={"@type": "CreativeWork", "name": _lic["name"]},
+        )
+    )
+    root["license"] = {"@id": _lic["uri"]}
 
     toolkit_src = crate.add(
         ContextEntity(

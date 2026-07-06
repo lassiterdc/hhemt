@@ -57,6 +57,31 @@ def test_partition_strips_volatile_and_guards_allowlist():
         assert not (metadata._VOLATILE_PROV_KEYS & set(entity))
 
 
+def test_dataset_license_creativework_entity_survives_into_core():
+    # R6/R7: dataset_license threads into a root `license` reference plus a CreativeWork
+    # contextual entity, and "license" survives partition into the embedded deterministic core.
+    crate = _build(dataset_license="CC-BY-NC-4.0")
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+    assert root["license"] == {"@id": "https://spdx.org/licenses/CC-BY-NC-4.0"}
+    assert any(
+        e.get("@id") == "https://spdx.org/licenses/CC-BY-NC-4.0" and e.get("@type") == "CreativeWork"
+        for e in doc["@graph"]
+    )
+    # R7: "license" is on the embedded allowlist, so it lands in the deterministic core (not the sidecar-only set).
+    assert "license" in metadata._EMBEDDED_PROV_KEYS
+    core = metadata.partition_core_vs_sidecar(crate.metadata.generate())
+    core_root = next(e for e in core["@graph"] if e.get("@id") == "./")
+    assert core_root["license"] == {"@id": "https://spdx.org/licenses/CC-BY-NC-4.0"}
+
+
+def test_default_dataset_license_is_cc0():
+    # R5/R6: the default build (no override) carries CC0-1.0 as the root license.
+    doc = json.loads(metadata.canonical_jsonld(_build()))
+    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+    assert root["license"] == {"@id": "https://spdx.org/licenses/CC0-1.0"}
+
+
 def test_sidecar_compare_and_write_idempotent(tmp_path):
     # R4: a second write of identical content returns False (no rewrite / mtime bump).
     g = metadata.canonical_jsonld(_build())

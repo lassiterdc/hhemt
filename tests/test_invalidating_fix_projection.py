@@ -113,6 +113,9 @@ _EXPECTED_EMBEDDED_PROV_KEYS = frozenset(
         "propertyID",
         "measurementTechnique",
         "wasGeneratedBy",
+        # reproducibility-publishing-and-durable-storage Phase 3 (R6): the frozen dataset
+        # license is deterministic, so it lands in the embedded core (not the volatile sidecar).
+        "license",
     }
 )
 
