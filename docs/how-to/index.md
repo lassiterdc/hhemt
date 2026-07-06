@@ -11,3 +11,5 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   manage a running analysis.
 - [Forcing and suppressing re-runs](forcing-reruns.md) — take control of what
   rebuilds.
+- [Combining experiments](combining-experiments.md) — combine two or more
+  render bundles into one cross-experiment report.

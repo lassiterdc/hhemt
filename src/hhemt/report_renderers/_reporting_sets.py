@@ -177,6 +177,22 @@ _TMPL_DISK_UTILIZATION = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/disk_utilization.log",
 )
+# Cross-experiment combined set (PIP-1 Phase 4). INERT on source/bundle
+# generators (no workflow.py builder, no bundle snakefile rule); consumed ONLY
+# by bundle/_combine.py's emit-time direct-render dispatch (F-B Flag 1(c)).
+_TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_compatibility",
+    renderer_module="cross_experiment_compatibility",
+    output_path_template="plots/cross_experiment/compatibility__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_compatibility.rst",
+        "category": "Cross-Experiment Compatibility",
+        "labels": '{"figure": "Compatibility report"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/cross_experiment_compatibility.log",
+)
 
 # The standard multisim set: the six common renderers, in emission order
 # (matches workflow.py:1913-1918 today). per_sim expands to two bundle figures.
@@ -295,6 +311,22 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_BENCHMARKING_SELECTION,
         validator_key="benchmarking",
+    ),
+    "combined": ReportingSet(
+        name="combined",
+        category_order=(
+            "Cross-Experiment Compatibility",
+            "Cross-Experiment Results",
+            "Per Experiment Results",
+            "Errors and Warnings",
+        ),
+        renderer_selection=(
+            RendererSelection(
+                "cross_experiment_compatibility",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_COMPATIBILITY,),
+            ),
+        ),
+        validator_key="none",
     ),
 }
 
