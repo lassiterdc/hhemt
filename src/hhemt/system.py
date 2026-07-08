@@ -661,9 +661,29 @@ class TRITONSWMM_system:
         # file, the build links
         # clean (no GLIBCXX_3.4.31/CXXABI undefined refs), and ldd resolves
         # libstdc++ => conda.
+        #
+        # libgcc_s: conda's libstdc++.so.6 DT_NEEDEDs libgcc_s.so.1 (the GCC
+        # low-level runtime: _Unwind_* / soft-float). That transitive need is
+        # UNPINNED, so ld.lld (the PrgEnv-amd/ROCm clang linker on Frontier)
+        # resolves it to the wrong-arch /lib/libgcc_s.so.1 (the legacy 32-bit
+        # multilib copy on the Cray/SLES base) and hard-errors
+        # `is incompatible with elf64-x86-64` -- ld.lld, unlike GNU ld, does not
+        # silently skip an incompatible library reached via DT_NEEDED. Pin
+        # conda's EXACT 64-bit libgcc_s.so.1 here, parallel to libstdc++.so.6 and
+        # ordered AFTER it (depender-before-provider): reusing the same
+        # -L${CONDA_PREFIX}/lib and the exact-file `-l:libgcc_s.so.1` form (conda
+        # ships libgcc_s.so.1 without the libgcc_s.so dev symlink, so plain
+        # -lgcc_s would fail like plain -lstdc++). Making it a direct input means
+        # its soname pre-satisfies libstdc++'s transitive need, so the linker
+        # never falls through to /lib. ABI-consistent (conda libstdc++ was built
+        # against conda libgcc_s) and kept inside the push/pop --no-as-needed
+        # scope so it stays on the line. Runtime resolution is already covered by
+        # the ${CONDA_PREFIX}/lib LD_LIBRARY_PATH preamble.
         return (
             "-L${CONDA_PREFIX}/lib "
-            "-Wl,--push-state,--no-as-needed -l:libstdc++.so.6 -Wl,--pop-state"
+            "-Wl,--push-state,--no-as-needed "
+            "-l:libstdc++.so.6 -l:libgcc_s.so.1 "
+            "-Wl,--pop-state"
         )
 
     def _compile_backend(
