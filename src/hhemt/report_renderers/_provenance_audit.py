@@ -242,8 +242,9 @@ def assert_reads_subset_declared(
                 + "\n\nFix: declare the path via the renderer's source_paths "
                 "(emit_plot_with_sources) if it is a real data source, OR add a "
                 "host-portable substring to _INCIDENTAL_READ_SUBSTRINGS if it is "
-                "incidental infrastructure. Set HHEMT_DISABLE_PROVENANCE_AUDIT=1 "
-                "to bypass (not recommended)."
+                "incidental infrastructure. This audit is opt-IN "
+                "(HHEMT_ENABLE_PROVENANCE_AUDIT=1); it is off by default, so this "
+                "failure only fires in an audit-enabled (maintainer/local) run."
             ),
         )
 
@@ -252,13 +253,16 @@ def assert_reads_subset_declared(
 def audit_renderer_io(output_path, analysis_dir, *, renderer_name: str):
     """Capture the wrapped renderer's file reads and assert they were declared.
 
-    Fail-open kill-switch: when HHEMT_DISABLE_PROVENANCE_AUDIT=1 the CM
-    yields WITHOUT installing the hook (zero capture overhead, zero chance the
-    audit machinery raises). Self-pollution guard: the captured set is
+    Opt-IN / default-OFF (ADR-18): the audit runs ONLY when
+    HHEMT_ENABLE_PROVENANCE_AUDIT=1 (the maintainer host / local pytest set it;
+    it is deliberately NOT set in CI — the empirically-derived incidental-read
+    allowlist is host-specific and cannot reliably pass on a GitHub runner). With
+    the flag unset the CM yields WITHOUT installing the hook (zero capture
+    overhead, zero chance the audit machinery raises). Self-pollution guard: the captured set is
     SNAPSHOTTED before the manifest read, so reading <output>.manifest.json
     (which itself fires an "open" event) does not contaminate `actual`.
     """
-    if os.environ.get("HHEMT_DISABLE_PROVENANCE_AUDIT") == "1":
+    if os.environ.get("HHEMT_ENABLE_PROVENANCE_AUDIT") != "1":
         yield
         return
     output_path = Path(output_path)

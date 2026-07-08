@@ -59,6 +59,21 @@ def require_compile_tier() -> bool:
     return os.environ.get("HHEMT_REQUIRE_COMPILE_TIER") == "1"
 
 
+def provenance_audit_enabled() -> bool:
+    """True when the renderer-IO provenance audit is opt-IN-enabled.
+
+    Single-flag design (ADR-18): ``HHEMT_ENABLE_PROVENANCE_AUDIT=1`` both (a)
+    makes ``report_renderers._provenance_audit.audit_renderer_io`` install its
+    hook and enforce declared⊆actual, and (b) un-skips the two
+    ``test_renderer_provenance_audit_passes_for_all_*`` regression tests. The
+    audit runs iff the tests run — no second flag, no in-test env mutation. The
+    flag must be present in the process env before pytest launches (a
+    collection-time ``skipif`` reads it at import), mirroring
+    ``require_compile_tier()`` semantics.
+    """
+    return os.environ.get("HHEMT_ENABLE_PROVENANCE_AUDIT") == "1"
+
+
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):
     """Write Snakefile content to the analysis directory and return the path."""
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"

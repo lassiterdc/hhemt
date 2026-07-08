@@ -957,6 +957,12 @@ def test_slurm_config_requires_hpc_system_config(synth_multi_sim_analysis):
         analysis._workflow_builder.generate_snakemake_config(mode="slurm")
 
 
+@pytest.mark.skipif(
+    not tst_ut.provenance_audit_enabled(),
+    reason="renderer-IO provenance audit is opt-in (ADR-18); set "
+    "HHEMT_ENABLE_PROVENANCE_AUDIT=1 to enable the audit AND run this test.",
+)
+@pytest.mark.slow
 @pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_renderer_provenance_audit_passes_for_all_multisim_renderers(synth_multi_sim_analysis_cached):
     """The renderer-IO provenance audit fires and PASSES for every multisim renderer.
@@ -971,13 +977,11 @@ def test_renderer_provenance_audit_passes_for_all_multisim_renderers(synth_multi
     render through the audited ``_cli`` subprocess path: the ``_cached`` fixture's
     on-disk cache key is the swmm-topology SHA, not the renderer source, so a
     renderer-source regression would otherwise reuse stale (pre-regression) plots
-    and the always-on audit would never re-fire.
+    and the audit (opt-in, enabled for this test) would never re-fire.
     """
-    import os
     import shutil
     from pathlib import Path
 
-    os.environ.pop("HHEMT_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
     analysis = synth_multi_sim_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_MULTISIM_REPORT_CONFIG))
 

@@ -51,6 +51,18 @@ jobs:
         env:
           HHEMT_REQUIRE_COMPILE_TIER: "1"
           TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE: "1"
+          # NOTE (ADR-18): HHEMT_ENABLE_PROVENANCE_AUDIT is deliberately NOT set here.
+          # The renderer-IO provenance audit is opt-IN / default-OFF because its
+          # empirically-derived incidental-read allowlist is host-specific and cannot
+          # reliably pass on a GitHub runner (different cache/font/GDAL/PROJ layout) —
+          # a required audit job would re-introduce the exact false-positive this design
+          # removes. The declared-subset-of-actual invariant is enforced on the
+          # maintainer host / locally:
+          #   HHEMT_ENABLE_PROVENANCE_AUDIT=1 conda run -n hhemt pytest \
+          #     tests/test_synth_04_multisim_with_snakemake.py::test_renderer_provenance_audit_passes_for_all_multisim_renderers \
+          #     tests/test_synth_05_sensitivity_analysis_with_snakemake.py::test_renderer_provenance_audit_passes_for_all_sensitivity_renderers
+          # Re-enable in CI only after the C-open API-wrap (deferred) makes the read
+          # surface host-portable.
         run: |
           pytest -p no:xdist -v \
             tests/test_synth_04_multisim_with_snakemake.py \
