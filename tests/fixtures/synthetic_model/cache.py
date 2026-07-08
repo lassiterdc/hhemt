@@ -40,7 +40,6 @@ from hhemt.synthetic_model import (
     SyntheticCaseArtifacts,
     SyntheticModelParams,
     build_synthetic_case,
-    swmm_template,
 )
 
 # Re-export so existing ``from tests.fixtures.synthetic_model.cache import
@@ -63,21 +62,34 @@ def _toolkit_version() -> str:
         return "0.0.0+unknown"
 
 
-# Computed once at import time. The SHA-1 of swmm_template.py source bytes is
-# baked into the cache key so topology changes in swmm_template.py (which do
-# NOT change SyntheticModelParams) auto-invalidate every existing
-# synthetic-model cache directory. A params-only cache key would serve stale
-# artifacts after a topology edit; this constant closes that gap. Computing
-# at import time raises an observable ImportError if the source is unreadable
-# (far more diagnosable than an opaque cache-miss surfaced inside _cache_key).
-_SWMM_TEMPLATE_SOURCE_HASH: str = hashlib.sha1(Path(swmm_template.__file__).read_bytes()).hexdigest()[:16]
+# Computed once at import time. The SHA-1 of ALL synthetic-model generator source
+# bytes (every ``*.py`` under ``src/hhemt/synthetic_model/``) is baked into the
+# cache key so ANY topology / DEM-geometry / weather / forcing edit — none of which
+# changes ``SyntheticModelParams`` — auto-invalidates every existing synthetic-model
+# cache directory. Hashing ONLY ``swmm_template.py`` (the prior behavior) left
+# geometry.py, weather.py, landuse.py, vectors.py, triton_cfg.py and _build.py
+# cache-blind, so a DEM/node-placement or rainfall/surge edit silently served stale
+# artifacts. Computing at import time raises an observable ImportError if any source
+# is unreadable (far more diagnosable than an opaque cache-miss inside _cache_key).
+def _generator_source_hash() -> str:
+    import hhemt.synthetic_model as _sm
+
+    pkg_dir = Path(_sm.__file__).parent
+    h = hashlib.sha1()
+    for src in sorted(pkg_dir.glob("*.py")):
+        h.update(src.name.encode("utf-8"))
+        h.update(src.read_bytes())
+    return h.hexdigest()[:16]
+
+
+_GENERATOR_SOURCE_HASH: str = _generator_source_hash()
 
 
 def _cache_key(params: SyntheticModelParams) -> str:
     payload = {
         "params": dataclasses.asdict(params),
         "toolkit_version": _toolkit_version(),
-        "swmm_template_source_hash": _SWMM_TEMPLATE_SOURCE_HASH,
+        "generator_source_hash": _GENERATOR_SOURCE_HASH,
     }
     return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
