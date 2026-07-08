@@ -129,3 +129,66 @@ def test_from_scratch_wipe_regenerates_generated_target_yamls(
         # Content check: loads as YAML and carries a system_config field.
         loaded = yaml.safe_load(p.read_text())
         assert isinstance(loaded, dict) and "target_dem_resolution" in loaded, loaded
+
+
+def test_cpu_target_not_gpu_injected_in_setup_runner(
+    synth_sensitivity_mixed_cpu_gpu_fanout,
+):
+    """Regression (synth_cc friction, 2026-07-08): the CPU/`standard` dedup target of a
+    mixed CPU/GPU per-row-partition sensitivity must compile TRITON-SWMM CPU-only. The
+    sensitivity constructor previously overwrote `self._system.gpu_compilation_backend`
+    with the MASTER ensemble partition (gpu-a6000 -> CUDA) UNCONDITIONALLY, including in
+    the `setup_target_N` runner subprocess (is_main_orchestrator=False) where
+    `self._system` IS the compile target that `setup_workflow.py` built with backend=None
+    (and sys_paths.compilation_script_gpu frozen to None). The compile then entered the
+    GPU branch against a None script and crashed at
+    `compilation_script.parent.mkdir` (AttributeError). This reproduces the runner
+    construction and asserts the CPU target's backend is NOT mutated.
+    """
+    from hhemt.analysis import TRITONSWMM_analysis
+    from hhemt.config.hpc_system import resolve_gpu_target
+    from hhemt.system import TRITONSWMM_system
+
+    driver = synth_sensitivity_mixed_cpu_gpu_fanout
+    sensitivity = driver.sensitivity
+
+    # The dedup produces a CPU/standard target (None backend) + a gpu-a6000 target.
+    std_targets = [t for t in sensitivity.unique_system_targets if t.target_partition == "standard"]
+    assert len(std_targets) == 1, (
+        f"expected exactly one CPU/standard UniqueSystemTarget, got "
+        f"{[t.target_partition for t in sensitivity.unique_system_targets]}"
+    )
+    std_target = std_targets[0]
+
+    # The standard partition genuinely resolves to no GPU (the CPU/no-GPU path).
+    assert resolve_gpu_target(driver.cfg_hpc_system, "standard") == (None, None)
+
+    # Reproduce the setup_target_2 (standard) RUNNER construction: setup_workflow.py
+    # builds the system with the --target-partition-resolved pair (None), freezing
+    # sys_paths.compilation_script_gpu to None.
+    runner_system = TRITONSWMM_system(
+        std_target.system_config_yaml,
+        gpu_hardware=None,
+        gpu_compilation_backend=None,
+    )
+    assert runner_system.gpu_compilation_backend is None
+    assert runner_system.sys_paths.compilation_script_gpu is None
+
+    # The runner then builds the analysis in RUNNER mode. This must NOT flip the CPU
+    # target's backend to the master ensemble (the fix gates the injection on
+    # is_main_orchestrator).
+    _ = TRITONSWMM_analysis(
+        driver.analysis_config_yaml,
+        runner_system,
+        hpc_system_config_yaml=driver.hpc_system_config_yaml,
+        is_main_orchestrator=False,
+    )
+
+    assert runner_system.gpu_compilation_backend is None, (
+        "REGRESSION: CPU/standard runner system backend leaked to the master ensemble; "
+        "the setup_target runner would enter the GPU compile branch and crash."
+    )
+    assert runner_system.sys_paths.compilation_script_gpu is None, (
+        "REGRESSION: CPU/standard runner system gpu compile-script path is non-None; "
+        "sys_paths desynced from the backend."
+    )

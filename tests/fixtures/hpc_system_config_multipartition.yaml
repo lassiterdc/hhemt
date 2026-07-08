@@ -20,3 +20,10 @@ partitions:
     cpus_per_node: 64
     gpu_hardware: a100
     gpu_compilation_backend: CUDA
+  # CPU-only partition (no gpu_hardware / gpu_compilation_backend) — the synth_cc
+  # friction target. A sensitivity row on `standard` resolves to (None, None), so its
+  # dedup target must compile TRITON-SWMM CPU-only. Adding this partition does NOT
+  # change the existing all-GPU fan-out test (its CSV uses only gpu-a6000 + gpu-a100).
+  standard:
+    max_runtime: 4320
+    cpus_per_node: 40

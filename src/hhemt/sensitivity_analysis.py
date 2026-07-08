@@ -273,9 +273,17 @@ class TRITONSWMM_sensitivity_analysis:
             _fast_hw, _fast_backend = resolve_gpu_target(self.master_analysis.cfg_hpc_system, _master_partition)
             _fast_target_partition = None
             if _fast_backend is not None:
-                self._system.gpu_hardware = _fast_hw
-                self._system.gpu_compilation_backend = _fast_backend
-                self._system.additional_modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
+                # synth_cc friction fix (2026-07-08): same invariant as the build-path
+                # site — inject the master-ensemble GPU pair into self._system only on
+                # the DRIVER. On a setup_target runner (is_main_orchestrator=False)
+                # self._system already carries the correct --target-partition pair (the
+                # fast path fires only for single-partition suites, so runner partition
+                # == master ensemble; this is a no-op-same-value today, gated to keep the
+                # "runner never mutates the compile target's gpu fields" invariant explicit).
+                if is_main_orchestrator:
+                    self._system.gpu_hardware = _fast_hw
+                    self._system.gpu_compilation_backend = _fast_backend
+                    self._system.additional_modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
                 _fast_target_partition = _master_partition
             self.unique_system_targets = [
                 UniqueSystemTarget(
@@ -2041,9 +2049,23 @@ class TRITONSWMM_sensitivity_analysis:
             self.master_analysis.cfg_analysis.hpc_ensemble_partition,
         )
         _modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
-        self._system.gpu_hardware = _gpu_hardware
-        self._system.gpu_compilation_backend = _gpu_backend
-        self._system.additional_modules = _modules
+        # synth_cc friction fix (2026-07-08): inject the master-ensemble GPU pair into
+        # self._system ONLY on the DRIVER (is_main_orchestrator=True). It is a
+        # driver-only template feeding the reuse-branch below + the workflow.py GPU-
+        # sensitivity validation (`not self.system.gpu_compilation_backend`). In a
+        # setup_target_N RUNNER subprocess (is_main_orchestrator=False) self._system IS
+        # the compile target that setup_workflow.py already constructed correctly from
+        # --target-partition (backend=None for a CPU/standard partition, with
+        # sys_paths.compilation_script_gpu frozen to None). Overwriting it here with the
+        # master ensemble backend flips the CPU target into the GPU branch of
+        # compile_TRITON_SWMM (system.py:522) against a None compile-script path ->
+        # AttributeError at system.py:813; it also silently rewrites a non-master GPU
+        # target's arch (a100 -> master a6000). sys_paths is frozen at construction and
+        # is NOT rebuilt by this assignment, so the runner MUST keep its constructed pair.
+        if is_main_orchestrator:
+            self._system.gpu_hardware = _gpu_hardware
+            self._system.gpu_compilation_backend = _gpu_backend
+            self._system.additional_modules = _modules
 
         targets: list[UniqueSystemTarget] = []
         for target_id, group in enumerate(groups.values()):
