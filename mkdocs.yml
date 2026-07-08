@@ -63,9 +63,11 @@ nav:
       - In-flight operations: how-to/in-flight-operations.md
       - Forcing re-runs: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
+      - Publishing and fetching: how-to/publishing.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md
+      - FAIR scope table: reference/fair-scope-table.md
       - Example interactive report: reference/example-report.md
   - Explanation:
       - explanation/index.md

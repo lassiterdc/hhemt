@@ -4,6 +4,8 @@ Information-oriented lookup material: the API surface and example interactive
 report bundles.
 
 - [API Reference](api.md) — the `hhemt` package API.
+- [FAIR scope table](fair-scope-table.md) — item-by-item F/A/I/R posture over
+  the whole reproducibility dataset.
 - [Example interactive report](example-report.md) — embedded interactive HTML
   report bundle.
 
