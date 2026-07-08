@@ -37,7 +37,28 @@ jobs:
           auto-activate-base: false
 
       - name: Install project (editable, test extras)
-        run: pip install -e ".[test]"
+        # `--no-deps`: the conda env (environment.yaml) already provides the full
+        # pinned dependency graph, including the conda-forge swmm-toolkit 0.15 pin
+        # that carries pyswmm 2.0.1 and pytest/pytest-xdist. A bare
+        # `pip install -e ".[test]"` re-resolves the project deps and DOWNGRADES
+        # pyswmm 2.0.1 -> 1.5.1 (swmmio 0.8.5 caps pyswmm<2.0; pyproject leaves
+        # pyswmm unpinned), breaking prepare_scenario's SWMM-runoff step (Phase 2a)
+        # upstream of every render. `--no-deps` preserves the conda graph.
+        run: pip install -e . --no-deps
+
+      - name: Guard — pyswmm 2.x preserved (compile-tier prepare_scenario contract)
+        run: |
+          python - <<'PY'
+          import sys, pyswmm
+          v = pyswmm.__version__
+          if not v.startswith("2."):
+              sys.exit(
+                  f"ERROR: pyswmm {v} is not 2.x — the editable install downgraded it "
+                  f"(swmmio<2.0 cap). prepare_scenario's SWMM-runoff step will break. "
+                  f"Ensure `pip install -e . --no-deps` preserves the conda pyswmm 2.0.1."
+              )
+          print(f"OK: pyswmm {v}")
+          PY
 
       - name: Toolchain sanity (cmake + mpic++ reachable)
         run: |
