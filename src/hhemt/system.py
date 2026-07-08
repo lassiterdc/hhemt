@@ -710,6 +710,25 @@ class TRITONSWMM_system:
             bash_script_lines.extend(
                 [
                     "# Load HPC modules",
+                    # This compile script runs as a plain `/bin/bash` subprocess of the
+                    # setup rule. It INHERITS the rule shell's active conda env as
+                    # environment variables (CONDA_PREFIX -> the hhemt env, on which the
+                    # libstdc++ ABI fix below depends) but NOT the `conda` shell function
+                    # (conda init defines `conda` in the rule shell and never `export -f`s
+                    # it; only Lmod's `module`/`ml` functions are exported). On sites whose
+                    # miniforge module carries an Lmod unload hook that runs `conda
+                    # deactivate` (observed on Frontier), `module purge` fires that hook; with
+                    # no `conda` function present it invokes the conda BINARY, which errors
+                    # `Run 'conda init' before 'conda deactivate'` and exits non-zero, and
+                    # `set -e` aborts the build before cmake. Define a no-op `conda` so the
+                    # deactivate hook is a guaranteed no-op: `module purge` succeeds AND the
+                    # inherited CONDA_PREFIX (=hhemt) is preserved untouched. A *working*
+                    # deactivate would instead REPOINT CONDA_PREFIX and break the ABI fix, so
+                    # a no-op (not conda init) is exactly right. This is the narrowest guard --
+                    # genuine `module purge` failures stay fatal. Cluster-agnostic: on sites
+                    # without the hook it is inert; it can only make CONDA_PREFIX MORE likely
+                    # to remain the intended env.
+                    "conda() { return 0; }  # neutralize module-unload conda-deactivate hook; keep CONDA_PREFIX",
                     "module purge",
                     f"module load {modules}",
                     # Pin the compiler to the just-loaded module toolchain. `conda activate`
@@ -721,6 +740,13 @@ class TRITONSWMM_system:
                     # governs the CPU/HIP branches that otherwise inherit conda's CC.)
                     'export CC="$(command -v gcc)"',
                     'export CXX="$(command -v g++)"',
+                    "",
+                    # Confirm the inherited conda env survived module purge/load, so the
+                    # ${CONDA_PREFIX}-based libstdc++ ABI fix targets the intended env. If this
+                    # prints base/empty (or the build still aborts here), the site's deactivate
+                    # hook invoked conda by ABSOLUTE PATH -- the no-op function cannot shadow
+                    # that -- and the fallback is scoped errexit: `set +e; module purge; set -e`.
+                    'echo "[compile] CONDA_PREFIX after module purge/load: ${CONDA_PREFIX}"',
                     "",
                 ]
             )
