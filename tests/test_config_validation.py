@@ -61,6 +61,18 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
     }
 
 
+def test_analysis_config_dataset_license_default_and_frozen_vocab(tmp_path: Path):
+    # R5: dataset_license defaults to CC0-1.0 when omitted; both frozen values load; a third is rejected.
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    assert "dataset_license" not in cfg  # optional field
+    assert analysis_config.model_validate(cfg).dataset_license == "CC0-1.0"
+    cfg["dataset_license"] = "CC-BY-NC-4.0"
+    assert analysis_config.model_validate(cfg).dataset_license == "CC-BY-NC-4.0"
+    cfg["dataset_license"] = "MIT"  # not in the frozen 2-entry SPDX vocab
+    with pytest.raises(ValidationError):
+        analysis_config.model_validate(cfg)
+
+
 def test_system_config_forbids_unknown_keys(tmp_path: Path):
     cfg = _minimal_system_config_dict(tmp_path)
     cfg["unexpected_extra"] = "should fail"

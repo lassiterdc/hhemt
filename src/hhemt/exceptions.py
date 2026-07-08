@@ -266,3 +266,13 @@ class WorkflowPlanningError(TRITONSWMMError):
         self.phase = phase
 
         super().__init__(f"Workflow planning failed during {phase}\n" f"  Reason: {reason}")
+
+
+class PublishError(TRITONSWMMError):
+    """Raised on a publishing-adapter failure (HydroShare/Zenodo deposit or DOI step)."""
+
+    def __init__(self, target: str, doi: str | None = None, status: str = ""):
+        self.target = target
+        self.doi = doi
+        self.status = status
+        super().__init__(f"publish to {target} failed (doi={doi}): {status}")

@@ -13,3 +13,5 @@ Task-oriented recipes for getting specific jobs done with the toolkit.
   rebuilds.
 - [Combining experiments](combining-experiments.md) — combine two or more
   render bundles into one cross-experiment report.
+- [Publishing and fetching](publishing.md) — deposit a dataset to
+  Zenodo/HydroShare and fetch case-study inputs by DOI/PID.

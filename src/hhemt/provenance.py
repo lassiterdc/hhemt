@@ -133,6 +133,7 @@ def emit_provenance(
         toolkit_git_sha=_toolkit_git_sha(),
         code_repository=code_repository,
         cfg_case=cfg_case,
+        dataset_license=str(analysis.cfg_analysis.dataset_license),
         sif_spec=sif_spec,
         consolidated_zarr_relpath=consolidated_zarr_relpath,
         input_parts=input_parts,
