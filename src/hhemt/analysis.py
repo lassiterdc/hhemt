@@ -57,6 +57,7 @@ from hhemt.workflow import (
 )
 
 if TYPE_CHECKING:
+    from .config.case_manifest import CaseManifest
     from .config.globus import PostRunTransferConfig
     from .eda import EdaReportResult
     from .orchestration import WorkflowResult, WorkflowStatus
@@ -161,6 +162,13 @@ class TRITONSWMM_analysis:
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
+        # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
+        # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
+        # no-op today. Populate wiring (examples.py::from_case_study) is deferred to
+        # a follow-up — it flips the embedded core and needs a golden regen.
+        # Quotes are required (no `from __future__ import annotations` in this module —
+        # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        self._case_manifest: "CaseManifest | None" = None  # noqa: UP037
         # Load the per-HPC-system config ONCE (R2). Store BEFORE any
         # _get_config_args read so the direct attribute read is always safe.
         self.hpc_system_config_yaml = hpc_system_config_yaml
@@ -734,6 +742,33 @@ class TRITONSWMM_analysis:
         from hhemt.bundle import emit_bundle
 
         return emit_bundle(self, output_path)
+
+    def publish(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit this analysis to a DOI-minting repository (C6, ADR-11).
+
+        Opt-in only — NEVER invoked from analysis.run() or submit_workflow(), mirroring
+        bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
+        (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
+        the emitted crate sidecar. override_dataset_license does NOT re-stamp the archived
+        license (baked at consolidation into the immutable crate) — it ASSERTS your expected
+        value against the sidecar and raises PublishError on mismatch, directing you to set
+        analysis_config.dataset_license and reprocess(start_with='consolidate'). Returns
+        {"target","data_doi","software_doi","record_url"}.
+        """
+        from hhemt.publishing import publish_analysis
+
+        return publish_analysis(
+            self,
+            target=target,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+        )
 
     def eda(
         self,
