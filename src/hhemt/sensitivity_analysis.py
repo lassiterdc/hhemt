@@ -270,16 +270,12 @@ class TRITONSWMM_sensitivity_analysis:
             # (every Snakefile golden builds with hpc_ensemble_partition null ->
             # _fast_backend is None -> no injection, no target_partition).
             _master_partition = self.master_analysis.cfg_analysis.hpc_ensemble_partition
-            _fast_hw, _fast_backend = resolve_gpu_target(
-                self.master_analysis.cfg_hpc_system, _master_partition
-            )
+            _fast_hw, _fast_backend = resolve_gpu_target(self.master_analysis.cfg_hpc_system, _master_partition)
             _fast_target_partition = None
             if _fast_backend is not None:
                 self._system.gpu_hardware = _fast_hw
                 self._system.gpu_compilation_backend = _fast_backend
-                self._system.additional_modules = resolve_additional_modules(
-                    self.master_analysis.cfg_hpc_system
-                )
+                self._system.additional_modules = resolve_additional_modules(self.master_analysis.cfg_hpc_system)
                 _fast_target_partition = _master_partition
             self.unique_system_targets = [
                 UniqueSystemTarget(
@@ -1858,10 +1854,7 @@ class TRITONSWMM_sensitivity_analysis:
             "input_fingerprints": self.find_orphan_input_fingerprints(),
         }
         any_orphan = bool(
-            result["dirs"]
-            or result["status_flags"]
-            or result["datatree_groups"]
-            or result["input_fingerprints"]
+            result["dirs"] or result["status_flags"] or result["datatree_groups"] or result["input_fingerprints"]
         )
         if verbose:
             if any_orphan:
@@ -2088,9 +2081,7 @@ class TRITONSWMM_sensitivity_analysis:
                     # mode the libstdc++ exact-soname patch must be suppressed (the
                     # SIF carries a self-consistent toolchain); the False default in
                     # native mode keeps the link line byte-identical.
-                    execution_container_mode=(
-                        self.master_analysis.cfg_analysis.execution_environment == "container"
-                    ),
+                    execution_container_mode=(self.master_analysis.cfg_analysis.execution_environment == "container"),
                 )
             targets.append(
                 UniqueSystemTarget(
@@ -2103,6 +2094,43 @@ class TRITONSWMM_sensitivity_analysis:
             )
 
         return targets
+
+    def _materialize_target_yamls(self) -> None:
+        """Re-write the per-target ``_generated/target_*.yaml`` files from the
+        already-resolved in-memory :attr:`unique_system_targets`.
+
+        ``_build_unique_system_targets`` writes these YAMLs at CONSTRUCTION
+        (``is_main_orchestrator=True``), and the ``setup_target_N`` rules emitted by
+        :meth:`SensitivityAnalysisWorkflowBuilder.generate_master_snakefile_content`
+        reference their ABSOLUTE paths. But ``analysis.run(from_scratch=True)``
+        ``fast_rmtree``s the analysis_dir AFTER construction, deleting ``_generated/``
+        with nothing re-materializing it, so the setup rules fail with
+        ``System config not found: .../_generated/target_0.yaml``. The master-Snakefile
+        generator therefore calls this at generation time (post-wipe, before the setup
+        rules are written) so the referenced files always exist.
+
+        Only targets whose ``system_config_yaml`` lives under ``analysis_dir/_generated``
+        are (re)written — the fast-path target points at the master system config
+        (outside analysis_dir, never wiped) and is skipped. Idempotent: a byte-identical
+        re-write on the resume path is harmless because the target YAMLs are shell ARGs,
+        not declared Snakemake ``input:`` (no rerun trigger).
+        """
+        analysis_dir = self.master_analysis.analysis_paths.analysis_dir
+        generated_dir = (analysis_dir / "_generated").resolve()
+        for target in self.unique_system_targets:
+            yaml_path = Path(target.system_config_yaml)
+            try:
+                under_generated = yaml_path.resolve().is_relative_to(generated_dir)
+            except (OSError, ValueError):
+                under_generated = False
+            if not under_generated:
+                continue
+            generated_dir.mkdir(parents=True, exist_ok=True)
+            # Atomic temp-file rename (PID-keyed; mirrors the construction-time write).
+            tmp_yaml = generated_dir / f"{yaml_path.stem}.{os.getpid()}.tmp.yaml"
+            with tmp_yaml.open("w") as fh:
+                yaml.safe_dump(target.system.cfg_system.model_dump(mode="json"), fh, sort_keys=False)
+            tmp_yaml.rename(yaml_path)
 
     def _create_sub_analyses(self):
         sa_id_to_system: dict = {}

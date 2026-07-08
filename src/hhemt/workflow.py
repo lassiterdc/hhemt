@@ -3012,9 +3012,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -3036,9 +3036,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3261,9 +3261,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert (
-                isinstance(gpus_per_node, int) and gpus_per_node > 0
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
@@ -6697,6 +6697,16 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Emit report templates into the master analysis_dir/report/ so the
         # snakemake --report engine can resolve caption= paths.
         _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
+
+        # Re-materialize the per-target `_generated/target_*.yaml` files that the
+        # setup_target_N rules (emitted below) reference by absolute path. The
+        # sensitivity constructor writes them (is_main_orchestrator=True), but
+        # `run(from_scratch=True)` fast_rmtree's the analysis_dir AFTER construction;
+        # regenerating them here — the single guaranteed post-wipe point every run
+        # path reaches — makes the invariant self-enforcing. No-op for the fast-path
+        # target (its config lives outside analysis_dir); byte-identical/idempotent on
+        # resume (the YAMLs are shell ARGs, not Snakemake input:, so no rerun trigger).
+        self.sensitivity_analysis._materialize_target_yamls()
 
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()

@@ -19,9 +19,7 @@ import pytest
 import tests.utils_for_testing as tst_ut
 
 pytestmark = [
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
+    pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
 ]
 
 
@@ -64,17 +62,14 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
     for sub in sensitivity.sub_analyses.values():
         sub.cfg_analysis.n_gpus = 1
 
-    master = sensitivity._workflow_builder.generate_master_snakefile_content(
-        which="both", compression_level=5
-    )
+    master = sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
 
     # (b) Each setup rule threads its target's --target-partition.
     emitted_setup_partitions = set()
     for t in targets:
         block = _setup_rule_block(master, t.target_id)
         assert f"--target-partition {t.target_partition}" in block, (
-            f"setup_target_{t.target_id} missing "
-            f"'--target-partition {t.target_partition}'"
+            f"setup_target_{t.target_id} missing '--target-partition {t.target_partition}'"
         )
         emitted_setup_partitions.add(t.target_partition)
     assert emitted_setup_partitions == {"gpu-a6000", "gpu-a100"}
@@ -87,9 +82,50 @@ def test_multi_partition_fanout_two_targets_distinct_emission(
         assert gpu_hw in {"a6000", "a100"}, (sa_id, partition, gpu_hw)
         block = _sim_rule_block(master, sa_id)
         assert (f"gpu:{gpu_hw}" in block) or (f'gpu_model="{gpu_hw}"' in block), (
-            f"sa_id={sa_id}: partition-derived hardware {gpu_hw!r} not found in the "
-            f"sim rule GPU directive."
+            f"sa_id={sa_id}: partition-derived hardware {gpu_hw!r} not found in the sim rule GPU directive."
         )
         seen_hw.add(gpu_hw)
     # Both hardwares appear across the sub-analyses (genuine cross-hardware fan-out).
     assert seen_hw == {"a6000", "a100"}, seen_hw
+
+
+def test_from_scratch_wipe_regenerates_generated_target_yamls(
+    synth_sensitivity_multi_partition_fanout,
+):
+    """Regression (synth_cc friction, 2026-07-06): a per-row-partition sensitivity
+    build materializes `_generated/target_*.yaml` at CONSTRUCTION, but
+    `run(from_scratch=True)` fast_rmtree's the analysis_dir AFTER construction,
+    deleting them. The master-Snakefile generator must re-materialize them so the
+    `setup_target_N` rules (which reference their absolute paths) do not fail with
+    `System config not found`. A `--dry-run` cannot catch this: the config path is a
+    shell ARG, not a declared Snakemake `input:`.
+    """
+    import yaml
+
+    from hhemt.utils import fast_rmtree
+
+    analysis = synth_sensitivity_multi_partition_fanout
+    sensitivity = analysis.sensitivity
+    generated_dir = analysis.analysis_paths.analysis_dir / "_generated"
+
+    # Baseline: construction wrote one target YAML per distinct build target (2).
+    target_yamls = [generated_dir / f"target_{t.target_id}.yaml" for t in sensitivity.unique_system_targets]
+    assert len(target_yamls) == 2, [t.target_partition for t in sensitivity.unique_system_targets]
+    for p in target_yamls:
+        assert p.is_file(), f"construction should have written {p}"
+
+    # Reproduce the from_scratch wipe that deletes `_generated/`.
+    fast_rmtree(generated_dir)
+    for p in target_yamls:
+        assert not p.exists(), f"{p} should be gone after the wipe"
+
+    # Generating the master Snakefile must re-materialize them (the fix).
+    _ = sensitivity._workflow_builder.generate_master_snakefile_content(which="both", compression_level=5)
+    for p in target_yamls:
+        assert p.is_file(), (
+            f"master Snakefile generation must re-materialize {p} after a from_scratch "
+            f"wipe (the setup_target rule references its absolute path)"
+        )
+        # Content check: loads as YAML and carries a system_config field.
+        loaded = yaml.safe_load(p.read_text())
+        assert isinstance(loaded, dict) and "target_dem_resolution" in loaded, loaded
