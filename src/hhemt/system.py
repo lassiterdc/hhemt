@@ -630,7 +630,10 @@ class TRITONSWMM_system:
             "# Ensure conda env's libstdc++ resolves at runtime for build-time tools (ABI fix)",
             "# Required because the HPC compiler module's libstdc++ may max out below",
             "# the conda env's libgdal/libmuparser requirement (GLIBCXX_3.4.31+).",
-            'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"',
+            # CONDA_LIB is resolved in _emit_module_load_lines() BEFORE `module purge`
+            # clears CONDA_PREFIX; fall back to ${CONDA_PREFIX}/lib on the non-module
+            # (local-dev) path where the module block is not emitted and conda is active.
+            'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}:${LD_LIBRARY_PATH:-}"',
             "",
         ]
 
@@ -679,12 +682,94 @@ class TRITONSWMM_system:
         # against conda libgcc_s) and kept inside the push/pop --no-as-needed
         # scope so it stays on the line. Runtime resolution is already covered by
         # the ${CONDA_PREFIX}/lib LD_LIBRARY_PATH preamble.
+        # CONDA_LIB is resolved in _emit_module_load_lines() BEFORE `module purge`
+        # clears CONDA_PREFIX (see that method); fall back to ${CONDA_PREFIX}/lib on
+        # the non-module (local-dev) path. Without this, an emptied CONDA_PREFIX makes
+        # -L resolve to /lib and ld.lld binds the wrong-arch /lib/libgcc_s.so.1.
         return (
-            "-L${CONDA_PREFIX}/lib "
+            "-L${CONDA_LIB:-${CONDA_PREFIX}/lib} "
             "-Wl,--push-state,--no-as-needed "
             "-l:libstdc++.so.6 -l:libgcc_s.so.1 "
             "-Wl,--pop-state"
         )
+
+    def _emit_module_load_lines(self, modules: str) -> list:
+        """Emit the HPC module-load block shared by the coupled (_compile_backend)
+        and TRITON-only (_compile_triton_only_backend) compile-script emitters.
+
+        Responsibilities: (1) neutralize the miniforge Lmod unload hook so
+        `module purge` does not abort under `set -e`; (2) purge + load the module
+        toolchain and pin CC/CXX to it; (3) unless in container mode, resolve a
+        purge-immune conda lib-dir anchor (CONDA_LIB) that the ${CONDA_LIB}-based
+        libstdc++/libgcc_s ABI-fix flags depend on.
+        """
+        lines = ["# Load HPC modules"]
+        if not self._execution_container_mode:
+            lines.extend(
+                [
+                    # Capture the ACTIVE conda env's lib dir BEFORE `module purge`.
+                    # The miniforge Lmod modulefile's unload action (fired by
+                    # `module purge`) clears CONDA_PREFIX/CONDA_* directly -- observed
+                    # on Frontier as "Deactivating conda environments" -- INDEPENDENT
+                    # of the no-op `conda` guard below (that guard only stops the
+                    # deactivate hook from ERRORING under set -e; it cannot stop a
+                    # modulefile `unsetenv CONDA_PREFIX`). If CONDA_PREFIX stayed the
+                    # anchor, `-L${CONDA_PREFIX}/lib` would degrade to `-L/lib` and
+                    # ld.lld would bind the wrong-arch /lib/libgcc_s.so.1
+                    # ("is incompatible with elf64-x86-64"). CONDA_LIB is a plain
+                    # shell var Lmod does not manage, so it survives the purge.
+                    'CONDA_LIB="${CONDA_PREFIX:+${CONDA_PREFIX}/lib}"',
+                    'echo "[compile] CONDA_PREFIX at entry (before purge): ${CONDA_PREFIX:-(empty)}"',
+                ]
+            )
+        lines.extend(
+            [
+                # This compile script runs as a plain `/bin/bash` subprocess of the
+                # setup rule; it inherits conda's ENV VARS but NOT the `conda` shell
+                # function (conda init never `export -f`s it). On sites whose
+                # miniforge module carries an Lmod unload hook that runs `conda
+                # deactivate`, `module purge` would invoke the conda BINARY -> errors
+                # `Run 'conda init' before 'conda deactivate'` -> non-zero -> `set -e`
+                # aborts before cmake. A no-op `conda` makes that hook a guaranteed
+                # no-op so `module purge` succeeds. (It does NOT preserve
+                # CONDA_PREFIX; that is handled by the CONDA_LIB capture above.)
+                "conda() { return 0; }  # neutralize module-unload conda-deactivate hook",
+                "module purge",
+                f"module load {modules}",
+                'echo "[compile] CONDA_PREFIX after module purge/load: ${CONDA_PREFIX:-(empty)}"',
+                # Pin the compiler to the just-loaded module toolchain. `conda activate`
+                # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which
+                # shadows the module gcc AND whose cc1 backend fails to execute in this
+                # module-purged build env (`posix_spawnp: No such file or directory`).
+                # Re-point CC/CXX at the module gcc so cmake's compiler detection uses
+                # it. (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so
+                # this only governs the CPU/HIP branches that inherit conda's CC.)
+                'export CC="$(command -v gcc)"',
+                'export CXX="$(command -v g++)"',
+                "",
+            ]
+        )
+        if not self._execution_container_mode:
+            lines.extend(
+                [
+                    # Fallback + fail-fast for the conda lib anchor. If the pre-purge
+                    # capture was empty (the runner was NOT conda-activated -- e.g. a
+                    # `uv run`/.venv driver rather than `conda activate hhemt`; the
+                    # cmake FindPython3 line resolving the .venv is the tell), derive
+                    # the named hhemt env from CONDA_EXE (re-provided by the miniforge
+                    # module just loaded). Then hard-fail if the anchor is still
+                    # unresolved or does not actually hold libstdc++.so.6 -- converting
+                    # the otherwise-silent "-L/lib -> wrong-arch libgcc_s" link failure
+                    # into a clear, early error. NOTE: the fallback hardcodes the env
+                    # name `hhemt` (consistent with workflow.py's `conda activate
+                    # hhemt`) and the standard envs/ layout.
+                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)}); the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
+                    'echo "[compile] CONDA_LIB=${CONDA_LIB}"',
+                    "",
+                ]
+            )
+        return lines
 
     def _compile_backend(
         self,
@@ -724,52 +809,11 @@ class TRITONSWMM_system:
             "",
         ]
 
-        # Optional: Load HPC modules
+        # Optional: Load HPC modules (shared with _compile_triton_only_backend).
+        # Emits the no-op conda guard, purge/load, CC/CXX pin, and the purge-immune
+        # CONDA_LIB anchor the ${CONDA_LIB}-based ABI-fix flags depend on.
         if self.additional_modules:
-            modules = self.additional_modules
-            bash_script_lines.extend(
-                [
-                    "# Load HPC modules",
-                    # This compile script runs as a plain `/bin/bash` subprocess of the
-                    # setup rule. It INHERITS the rule shell's active conda env as
-                    # environment variables (CONDA_PREFIX -> the hhemt env, on which the
-                    # libstdc++ ABI fix below depends) but NOT the `conda` shell function
-                    # (conda init defines `conda` in the rule shell and never `export -f`s
-                    # it; only Lmod's `module`/`ml` functions are exported). On sites whose
-                    # miniforge module carries an Lmod unload hook that runs `conda
-                    # deactivate` (observed on Frontier), `module purge` fires that hook; with
-                    # no `conda` function present it invokes the conda BINARY, which errors
-                    # `Run 'conda init' before 'conda deactivate'` and exits non-zero, and
-                    # `set -e` aborts the build before cmake. Define a no-op `conda` so the
-                    # deactivate hook is a guaranteed no-op: `module purge` succeeds AND the
-                    # inherited CONDA_PREFIX (=hhemt) is preserved untouched. A *working*
-                    # deactivate would instead REPOINT CONDA_PREFIX and break the ABI fix, so
-                    # a no-op (not conda init) is exactly right. This is the narrowest guard --
-                    # genuine `module purge` failures stay fatal. Cluster-agnostic: on sites
-                    # without the hook it is inert; it can only make CONDA_PREFIX MORE likely
-                    # to remain the intended env.
-                    "conda() { return 0; }  # neutralize module-unload conda-deactivate hook; keep CONDA_PREFIX",
-                    "module purge",
-                    f"module load {modules}",
-                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
-                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
-                    # the module gcc AND whose cc1 backend fails to execute in this
-                    # module-purged build env (`posix_spawnp: No such file or directory`).
-                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
-                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
-                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
-                    'export CC="$(command -v gcc)"',
-                    'export CXX="$(command -v g++)"',
-                    "",
-                    # Confirm the inherited conda env survived module purge/load, so the
-                    # ${CONDA_PREFIX}-based libstdc++ ABI fix targets the intended env. If this
-                    # prints base/empty (or the build still aborts here), the site's deactivate
-                    # hook invoked conda by ABSOLUTE PATH -- the no-op function cannot shadow
-                    # that -- and the fallback is scoped errexit: `set +e; module purge; set -e`.
-                    'echo "[compile] CONDA_PREFIX after module purge/load: ${CONDA_PREFIX}"',
-                    "",
-                ]
-            )
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
@@ -1096,26 +1140,12 @@ class TRITONSWMM_system:
             "",
         ]
 
-        # Optional: Load HPC modules
+        # Optional: Load HPC modules (shared with _compile_backend). This sibling
+        # previously lacked BOTH the no-op conda guard and the CONDA_LIB anchor; the
+        # shared helper fixes its latent Frontier module-purge abort AND supplies the
+        # CONDA_LIB the shared ABI-fix emitters now reference.
         if self.additional_modules:
-            modules = self.additional_modules
-            bash_script_lines.extend(
-                [
-                    "# Load HPC modules",
-                    "module purge",
-                    f"module load {modules}",
-                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
-                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
-                    # the module gcc AND whose cc1 backend fails to execute in this
-                    # module-purged build env (`posix_spawnp: No such file or directory`).
-                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
-                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
-                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
-                    'export CC="$(command -v gcc)"',
-                    'export CXX="$(command -v g++)"',
-                    "",
-                ]
-            )
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
