@@ -445,6 +445,25 @@ class TRITONSWMM_run:
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",
                         flush=True,
                     )
+                # --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim loud-failure guard) ---
+                # Coupled TRITON-SWMM cannot correctly hotstart-resume: on a TRITON resume
+                # the coupled SWMM engine re-initializes from t=0 (swmm_start(TRUE)), so the
+                # single .out/.rpt covers only the post-checkpoint segment and every
+                # max-flow/max-depth summary is systematically LOW (empirically 29-47% low on
+                # sa_gpu_2_r1 vs the one-shot sa_gpu_1_r1). Fail LOUDLY here, BEFORE launch, so
+                # a resumed coupled sim never silently emits wrong data. n_resumes was just
+                # incremented above, so the report's check_coupled_hotstart_resume counts this
+                # sim. Delete this whole block AND the sibling check in analysis_validation.py
+                # (same marker) once upstream persist-and-replay lands. triton/swmm untouched.
+                if model_type == "tritonswmm":
+                    from hhemt.exceptions import SimulationError
+
+                    raise SimulationError(
+                        event_iloc=self._scenario.event_iloc,
+                        model_type="tritonswmm",
+                        logfile=model_logfile,
+                    )
+                # --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 
         og_env = os.environ.copy()
         env = dict()
