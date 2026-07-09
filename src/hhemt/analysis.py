@@ -810,6 +810,26 @@ class TRITONSWMM_analysis:
 
         return emit_bundle(self, output_path)
 
+    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+        """Emit a reprex-ready Workflow-Run-Crate bundle and return its extracted
+        directory root (ADR-10, D3).
+
+        Peer of ``bundle_report_data()``; opt-in only (never invoked from
+        ``run()``/``submit_workflow()``). ``emit_bundle`` already carries the reprex
+        runnable-template set + WRC crate (Phase 2), so this facade emits the bundle and
+        extracts the zip to a sibling directory so the round-trip consumes a directory
+        root directly (``Bundle.from_directory(...).reprex(...)``). The HARD emit-time
+        zero-user-info gate is deferred to the emit-hardening follow-up (its
+        prerequisite); ``Bundle.reprex()`` runs a consume-side informational scan.
+
+        Returns:
+            Path to the extracted reprex-bundle directory.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        return extract_reprex_bundle(emit_bundle(self, output_path))
+
     def publish(
         self,
         target: "Literal['hydroshare', 'zenodo']",

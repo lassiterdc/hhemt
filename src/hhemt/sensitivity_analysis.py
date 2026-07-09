@@ -1051,6 +1051,25 @@ class TRITONSWMM_sensitivity_analysis:
 
         return emit_bundle(self, output_path)
 
+    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+        """Emit a reprex-ready Workflow-Run-Crate bundle for the sensitivity master and
+        return its extracted directory root (ADR-10, D3).
+
+        Parity peer of ``bundle_report_data()`` — the sensitivity master is the PRIMARY
+        reprex surface (the ``(sa_id, column)`` problem-pair emission is intrinsically a
+        sensitivity concept). ``emit_bundle`` already carries the reprex runnable-template
+        set + WRC crate (Phase 2); this facade extracts the emitted zip to a sibling
+        directory so the round-trip consumes a directory root directly
+        (``Bundle.from_directory(...).reprex(...)``). Opt-in only.
+
+        Returns:
+            Path to the extracted reprex-bundle directory.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        return extract_reprex_bundle(emit_bundle(self, output_path))
+
     def publish(
         self,
         target: "Literal['hydroshare', 'zenodo']",
