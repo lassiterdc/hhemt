@@ -177,6 +177,55 @@ def test_all_path_fields_have_policy() -> None:
     )
 
 
+def test_null_software_dir_synthesized_config_loads(
+    synth_multi_sim_analysis, tmp_path: Path
+) -> None:
+    """D4 relaxation: a synthesized system_config.yaml carrying
+    ``TRITONSWMM_software_directory: null`` loads without raising.
+
+    Proves the Phase-1 ``Path -> Optional[Path]`` widening closes the
+    reconstituted-reprex round-trip config-load path (R5). Sources the other
+    required fields from a real synth fixture (existing paths) and nulls only
+    the toolkit-owned software dir.
+    """
+    from hhemt.config.loaders import load_system_config
+
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_dict = cfg_sys.model_dump(mode="json")
+    cfg_dict["TRITONSWMM_software_directory"] = None
+
+    out = tmp_path / "system_config_null_software.yaml"
+    out.write_text(yaml.safe_dump(cfg_dict))
+
+    loaded = load_system_config(out)  # must not raise
+    assert loaded.TRITONSWMM_software_directory is None
+
+
+def test_reprex_config_loads_minimal() -> None:
+    """R6: the reprex_config model loads a minimal target-user field set and
+    forbids unknown keys (extra="forbid")."""
+    from hhemt.config.reprex_config import reprex_config
+
+    cfg = reprex_config(
+        default_account="acct123",
+        sif_path="/scratch/user/tritonswmm.sif",
+        target_ensemble_partition="gpu",
+    )
+    assert cfg.default_account == "acct123"
+    assert cfg.sif_path == Path("/scratch/user/tritonswmm.sif")
+    assert cfg.login_node is None
+    assert cfg.scratch_dir is None
+    assert cfg.target_setup_and_analysis_processing_partition is None
+
+    with pytest.raises(Exception):  # extra=forbid rejects unknown keys
+        reprex_config(
+            default_account="acct123",
+            sif_path="/x.sif",
+            target_ensemble_partition="gpu",
+            unknown_field="nope",
+        )
+
+
 def test_static_plot_configs_list_rewritten_to_relative(tmp_path: Path) -> None:
     """A non-empty ``static_plot_configs`` list[Path] must be rewritten
     element-wise to its bundle-relative form (BUNDLE_RELATIVE_LIST policy).

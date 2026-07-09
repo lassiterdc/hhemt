@@ -225,6 +225,17 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
     }
 
     for field_name, path_val in required_paths.items():
+        # Exempt toolkit-owned OUTPUT path fields (json_schema_extra
+        # {"toolkit_owned_output": True} -- e.g. TRITONSWMM_software_directory,
+        # SWMM_software_directory). The clone/build gate CREATES these at
+        # run/setup, so they legitimately do not exist at config-load time and
+        # may be None in a reconstituted reprex bundle's synthesized
+        # system_config (bundle-reprex-roundtrip Phase 1). Mirrors
+        # config/base.py::_check_paths_exist.
+        field_info = system_config.model_fields.get(field_name)
+        extra = field_info.json_schema_extra if field_info is not None else None
+        if isinstance(extra, dict) and extra.get("toolkit_owned_output"):
+            continue
         if path_val is None:
             result.add_error(
                 field=f"system.{field_name}",
