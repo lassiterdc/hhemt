@@ -228,14 +228,14 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
         if path_val is None:
             result.add_error(
                 field=f"system.{field_name}",
-                message="Required path is None",
+                message=f"Required path for {field_name} is None",
                 current_value=None,
                 fix_hint=f"Set {field_name} in system config YAML",
             )
         elif not Path(path_val).exists():
             result.add_error(
                 field=f"system.{field_name}",
-                message="Path does not exist",
+                message=f"Path does not exist for {field_name}: {path_val}",
                 current_value=str(path_val),
                 fix_hint=f"Create the file/directory or correct the path in system config",
             )

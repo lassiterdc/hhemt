@@ -73,6 +73,18 @@ class analysis_config(cfgBaseModel):
         ...,
         description="Rainfall units in weather_timeseries mm or mm/hr.",
     )
+    # DATASET PUBLISHING
+    dataset_license: Literal["CC0-1.0", "CC-BY-NC-4.0"] = Field(
+        default="CC0-1.0",
+        description=(
+            "SPDX identifier for the published DATASET license (frozen 2-entry vocab, "
+            "ADR-8). Baked into the RO-Crate root Dataset.license at consolidation and "
+            "read back for the DataCite rightsList at publish time (rightsIdentifierScheme "
+            "'SPDX'). CC0-1.0 default is the open, regret-safe choice across immutable DOIs. "
+            "CC-BY-NC-4.0 is the research/education-leaning slot; note CC 'NonCommercial' is "
+            "broader than 'education only' and does not turn on user type."
+        ),
+    )
     # COMPUTE CONFIG
     run_mode: Literal["serial", "openmp", "mpi", "hybrid", "gpu"] = Field(..., description="Compute configuration")
     n_mpi_procs: int | None = Field(1, description="Number of MPI ranks per simulation.")

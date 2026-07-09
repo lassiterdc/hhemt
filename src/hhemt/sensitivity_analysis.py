@@ -1051,6 +1051,30 @@ class TRITONSWMM_sensitivity_analysis:
 
         return emit_bundle(self, output_path)
 
+    def publish(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit the sensitivity MASTER tree to a DOI-minting repo (C6, ADR-11).
+
+        Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
+        render_report()/bundle_report_data(). Deposits the master
+        sensitivity_datatree.zarr + master-rooted ro-crate sidecar; the license is
+        read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
+        """
+        from hhemt.publishing import publish_analysis
+
+        return publish_analysis(
+            self.master_analysis,
+            target=target,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+            consolidated_zarr_relpath="sensitivity_datatree.zarr",
+        )
+
     def run_all_sims(
         self,
         pickup_where_leftoff,
@@ -1240,6 +1264,23 @@ class TRITONSWMM_sensitivity_analysis:
 
         tree = xr.DataTree.from_dict(tree_dict)
         apply_global_attributes(tree, analysis_id=str(self.master_analysis.cfg_analysis.analysis_id))
+
+        # ADR-15 Phase 1: the per-event hhemt_producing_sha/version coordinates ride
+        # up automatically via the verbatim node.dataset graft above (no new
+        # transmission code). Re-derive the MASTER-level scalar fast-path here by
+        # scanning the grafted sub-nodes for master-wide uniformity (uniform across
+        # ALL sub-analyses' events -> scalar; else absent + divergent breadcrumb).
+        from hhemt.cf_conventions import apply_producing_stamp
+
+        _sha_vals: list[str] = []
+        _semver_vals: list[str] = []
+        for _key, _ds in tree_dict.items():
+            _coords = getattr(_ds, "coords", {})
+            if "hhemt_producing_sha" in _coords:
+                _sha_vals.extend(str(v) for v in _ds["hhemt_producing_sha"].values.tolist())
+            if "hhemt_producing_version" in _coords:
+                _semver_vals.extend(str(v) for v in _ds["hhemt_producing_version"].values.tolist())
+        apply_producing_stamp(tree, _sha_vals, _semver_vals)
         return tree
 
     def consolidate_sensitivity_datatree(
@@ -1968,6 +2009,11 @@ class TRITONSWMM_sensitivity_analysis:
 
             if overlay_cells:
                 try:
+                    # NOTE: the base model_dump() carries TRITONSWMM/SWMM software-dir
+                    # Paths that may not yet exist on disk (created by system.py's
+                    # clone/build gate at run/setup). They are exempt from
+                    # _check_paths_exist via json_schema_extra={"toolkit_owned_output":
+                    # True}. Do NOT add an existence assertion here.
                     cfg = system_config.model_validate(
                         {
                             **self._system.cfg_system.model_dump(),

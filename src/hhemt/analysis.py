@@ -57,6 +57,7 @@ from hhemt.workflow import (
 )
 
 if TYPE_CHECKING:
+    from .config.case_manifest import CaseManifest
     from .config.globus import PostRunTransferConfig
     from .eda import EdaReportResult
     from .orchestration import WorkflowResult, WorkflowStatus
@@ -228,6 +229,13 @@ class TRITONSWMM_analysis:
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
+        # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
+        # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
+        # no-op today. Populate wiring (examples.py::from_case_study) is deferred to
+        # a follow-up — it flips the embedded core and needs a golden regen.
+        # Quotes are required (no `from __future__ import annotations` in this module —
+        # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        self._case_manifest: "CaseManifest | None" = None  # noqa: UP037
         # Load the per-HPC-system config ONCE (R2). Store BEFORE any
         # _get_config_args read so the direct attribute read is always safe.
         self.hpc_system_config_yaml = hpc_system_config_yaml
@@ -801,6 +809,33 @@ class TRITONSWMM_analysis:
         from hhemt.bundle import emit_bundle
 
         return emit_bundle(self, output_path)
+
+    def publish(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit this analysis to a DOI-minting repository (C6, ADR-11).
+
+        Opt-in only — NEVER invoked from analysis.run() or submit_workflow(), mirroring
+        bundle_report_data()/transfer_results(). Requires the analysis to have consolidated
+        (ro-crate-metadata.json + analysis_datatree.zarr present); the license is read from
+        the emitted crate sidecar. override_dataset_license does NOT re-stamp the archived
+        license (baked at consolidation into the immutable crate) — it ASSERTS your expected
+        value against the sidecar and raises PublishError on mismatch, directing you to set
+        analysis_config.dataset_license and reprocess(start_with='consolidate'). Returns
+        {"target","data_doi","software_doi","record_url"}.
+        """
+        from hhemt.publishing import publish_analysis
+
+        return publish_analysis(
+            self,
+            target=target,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+        )
 
     def eda(
         self,
@@ -2115,6 +2150,38 @@ class TRITONSWMM_analysis:
         self._active_reporting_set_name = _resolved_set_name
         self._active_reporting_set = get_reporting_set(_resolved_set_name)
         self._cfg_report = cfg_report
+
+        # ADR-17: non-blocking invalidating-fix registry emission at run()-entry.
+        # Prints a console warning for any registered calculation-invalidating fix
+        # that affects this analysis's ADR-15-stamped scopes, reflecting the CURRENT
+        # registry even when the persisted validation_report.json is stale (OE-3).
+        # NEVER raises (load-time emission is non-blocking by construction,
+        # C-NON-BLOCKING-BUGEMIT); the durable report surface is
+        # check_invalidating_fixes in validate_analysis. Graceful-absent: an absent
+        # registry or an unstamped/unconsolidated tree prints nothing.
+        try:
+            from .recompute import match_registry_against_stamps
+
+            _fix_matches = match_registry_against_stamps(self)
+            if _fix_matches:
+                print(
+                    f"[hhemt] WARNING: {len(_fix_matches)} registered "
+                    "calculation-invalidating fix(es) affect this analysis:",
+                    flush=True,
+                )
+                for _m in _fix_matches:
+                    _action = _m.recommended_action.value if _m.recommended_action else "-"
+                    print(
+                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: "
+                        f"{_action} [scope {_m.affected_scope}]",
+                        flush=True,
+                    )
+                print(
+                    "  Run `check-invalidating-fixes` for details; this is non-blocking.",
+                    flush=True,
+                )
+        except Exception:
+            pass  # load-time emission is strictly non-blocking — never crash run()
 
         # Pre-run brand-theme resolution (ADR-7 layer 2 — 3-step, fail-fast).
         from .config.brand_theme import DEFAULT_BRAND_THEME

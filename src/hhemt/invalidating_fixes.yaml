@@ -1,0 +1,54 @@
+# src/hhemt/invalidating_fixes.yaml — ADR-17 in-repo invalidating-fix registry (package-data).
+#
+# One entry per calculation-invalidating bug-fix commit. Human+machine-readable;
+# hand-edited in a PR with a readable diff. Loaded via
+# hhemt.config.invalidating_fixes.load_invalidating_fixes (Pydantic, fail-loud on a
+# malformed entry). The Phase-4 git-remote skew check raw-fetches THIS path from the
+# default branch, so keep the path stable.
+#
+# `fixes` ships EMPTY: an invalidating fix is added only when a real bug is
+# discovered, so an empty registry produces zero matches (graceful-absent → every
+# analysis passes the check with a "no registered fixes" row). The commented block
+# below documents the entry schema.
+#
+# Entry schema (all fields required):
+#   commit_id:              full 40-char git sha of the fix commit (git OE-3 — NOT a
+#                           short sha; the ancestry predicate needs the full sha).
+#   severity:               {warning, error}. warning = cosmetic/non-invalidating
+#                           (surfaced, non-blocking); error = invalidates processed
+#                           outputs. ADR-17 authoritative enum (D1).
+#   affected_scope:         descriptive tier the bug lives in, e.g. {scenario,
+#                           consolidation}. NOT evaluated by the classifier (the
+#                           operator supplies --scope on the ad-hoc CLI path); kept
+#                           for the human-readable report row.
+#   recommended_action:     an ADR-16 RecomputeAction value — one of
+#                           {re-run, reprocess-scenario, re-consolidate, none-cosmetic}.
+#   affected_version_range: a PEP 440 SpecifierSet string (e.g. ">=0.8.0,<0.9.3").
+#                           The SOLE evaluated version predicate (T1 Option C): both
+#                           the Phase-2 resolver semver fallback and the Phase-4 skew
+#                           check evaluate `scope_semver in SpecifierSet(...)`. Keeps
+#                           the full affected INTERVAL (a bug introduced AT a version,
+#                           not only always-present).
+#   introduced_in_version:  the semver that SHIPPED the fix (a point). DESCRIPTIVE
+#                           metadata only — NEVER evaluated by the classifier. Retained
+#                           because the pure RO-Crate projection emits it as the
+#                           `introduced-in-version` PropertyValue version-context.
+#   description:            one-paragraph human description of what was wrong.
+#   significance:           why it invalidates results (magnitude / which variables).
+#
+# Example (commented — copy, uncomment, and fill for a real fix):
+#
+#   - commit_id: "0123456789abcdef0123456789abcdef01234567"
+#     severity: "error"
+#     affected_scope: "scenario"
+#     recommended_action: "re-run"
+#     affected_version_range: ">=0.8.0,<0.9.3"
+#     introduced_in_version: "0.9.3"
+#     description: |
+#       The manning-roughness raster was read with the wrong band index, so every
+#       simulation produced depths against an incorrect friction field.
+#     significance: |
+#       Affects peak-depth and inundation-extent for all scenarios produced by an
+#       affected toolkit version; magnitude is scenario-dependent but non-cosmetic.
+schema_version: 1
+fixes: []

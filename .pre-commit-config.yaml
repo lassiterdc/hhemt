@@ -66,3 +66,17 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+
+  # environment-lock.yaml swmm-provenance drift guard (scripts/check_env_lock_consistency.py)
+  # Fails if the lock re-introduces the pyswmm/swmm-toolkit teardown heap-corruption:
+  # any pip-block swmm-toolkit/pyswmm, or a conda pin drifted off environment.yaml's
+  # 0.15.x swmm-toolkit / pyswmm 2.x. Authoring-time tripwire; CI (compile-tests.yml)
+  # is the enforcement layer. Scoped to the env files so it fires only when they change.
+  - repo: local
+    hooks:
+      - id: check-env-lock-consistency
+        name: environment-lock.yaml swmm-provenance consistency
+        entry: python scripts/check_env_lock_consistency.py
+        language: system
+        pass_filenames: false
+        files: ^environment(-lock)?\.yaml$

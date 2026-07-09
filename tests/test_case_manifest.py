@@ -57,6 +57,16 @@ def test_compute_manifest(tmp_path: Path):
     }
 
 
+def test_compute_manifest_streaming_digest_parity(tmp_path: Path):
+    # Phase-1 guard: the streaming 1 MiB-chunk sha256 in compute_manifest must be
+    # byte-identical to a whole-file hashlib.sha256(data) digest for a >1 MiB file
+    # (exercises the chunk loop across multiple reads; proves no digest regression).
+    data = b"x" * (2 << 20)  # 2 MiB -> spans two full 1 MiB chunks
+    (tmp_path / "big.bin").write_bytes(data)
+    manifest = gcm.compute_manifest(tmp_path)
+    assert manifest == {"big.bin": hashlib.sha256(data).hexdigest()}
+
+
 def test_populate_case_yaml_roundtrips(tmp_path: Path):
     # R5: the CLI core writes a schema-valid case.yaml with the computed manifest.
     bag = tmp_path / "bag"
@@ -144,3 +154,94 @@ def test_manifest_generation_verification_parity(tmp_path):
     (bag / "bagit.txt").write_bytes(b"BagIt-Version: 0.97")
     manifest = gcm.compute_manifest(bag)            # keys relative to bag root
     ex.TRITON_SWMM_example._verify_manifest(bag, manifest)  # must not raise
+
+
+def test_casemanifest_zenodo_requires_doi_or_pid():
+    # R3: host="zenodo" with neither doi nor pid fails Pydantic validation.
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        CaseManifest.model_validate(
+            {"case_name": "x", "res_identifier": "y", "host": "zenodo"}
+        )
+
+
+def test_casemanifest_zenodo_with_doi_or_pid_validates():
+    # R3: host="zenodo" validates when a doi (or a pid alone) is present.
+    by_doi = CaseManifest.model_validate(
+        {"case_name": "x", "res_identifier": "y", "host": "zenodo", "doi": "10.5281/zenodo.1"}
+    )
+    assert by_doi.host == "zenodo"
+    assert by_doi.doi == "10.5281/zenodo.1"
+    by_pid = CaseManifest.model_validate(
+        {"case_name": "x", "res_identifier": "y", "host": "zenodo", "pid": "1234567"}
+    )
+    assert by_pid.pid == "1234567"
+
+
+def test_download_data_from_zenodo_writes_and_verifies(tmp_path, monkeypatch):
+    # R4: host="zenodo" fetch resolves the record id from the DOI, downloads each
+    # file, then runs the host-agnostic _verify_manifest (passes on sha256 match).
+    import requests
+
+    content = b"zenodo-bag-bytes"
+    sha = hashlib.sha256(content).hexdigest()
+
+    class FakeStreamResp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_content(self, chunk_size=1):
+            yield content
+
+    class FakeMetaResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "files": [
+                    {
+                        "key": "data/contents/a.txt",
+                        "links": {"self": "https://zenodo.org/api/files/abc/a.txt"},
+                    }
+                ]
+            }
+
+    def fake_get(url, *args, **kwargs):
+        if "/api/records/" in url:
+            return FakeMetaResp()
+        return FakeStreamResp()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    cm = CaseManifest.model_validate(
+        {
+            "case_name": "z",
+            "res_identifier": "unused",
+            "host": "zenodo",
+            "doi": "10.5281/zenodo.123456",
+            "manifest": {"data/contents/a.txt": sha},
+        }
+    )
+    target = tmp_path / "bag"
+    ex.TRITON_SWMM_example._download_data_from_zenodo(
+        cm, target, download_if_exists=False, expected_manifest=cm.manifest
+    )
+    assert (target / "data" / "contents" / "a.txt").read_bytes() == content
+
+
+def test_download_data_from_zenodo_unresolvable_recid_raises(tmp_path):
+    # R4: host="zenodo" with a non-zenodo DOI and no pid cannot resolve a record id.
+    from hhemt.exceptions import ProcessingError
+
+    cm = CaseManifest.model_construct(
+        case_name="z", res_identifier="unused", host="zenodo", doi=None, pid=None, manifest={}
+    )
+    with pytest.raises(ProcessingError):
+        ex.TRITON_SWMM_example._download_data_from_zenodo(cm, tmp_path / "bag")
