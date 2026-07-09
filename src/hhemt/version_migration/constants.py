@@ -17,7 +17,10 @@ MINIMUM_SUPPORTED_VERSION: int = 0
 
 #: Render-bundle manifest schema version. Stamped into bundle_manifest.json
 #: at emit time and validated at consume time (report-from-bundle CLI).
-BUNDLE_SCHEMA_VERSION: int = 2
+#: v3: round-trippable Workflow-Run-Crate (mainEntity) + reprex carriage.
+#: The consume-side guard in bundle/__init__.py rejects both >3 and <3, so this
+#: 2->3 bump hard-breaks pre-existing v2 bundles (re-emit from source).
+BUNDLE_SCHEMA_VERSION: int = 3
 
 #: Default _version.json filename (used by both analysis and system stamps).
 VERSION_FILE_NAME: str = "_version.json"

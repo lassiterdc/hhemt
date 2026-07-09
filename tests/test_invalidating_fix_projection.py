@@ -116,6 +116,13 @@ _EXPECTED_EMBEDDED_PROV_KEYS = frozenset(
         # reproducibility-publishing-and-durable-storage Phase 3 (R6): the frozen dataset
         # license is deterministic, so it lands in the embedded core (not the volatile sidecar).
         "license",
+        # reproducibility-bundle-reprex-roundtrip Phase 2 (C8): the Workflow-Run-Crate
+        # mainEntity keys are deterministic. They are added bundle-side only (NOT at
+        # consolidation), so the on-disk embedded core is byte-unchanged; this mirror
+        # tracks the allowlist widening so the projection guard stays exact.
+        "programmingLanguage",
+        "mainEntity",
+        "url",
     }
 )
 
