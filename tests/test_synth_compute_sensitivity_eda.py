@@ -280,12 +280,12 @@ def test_resume_sensitivity_pairs_clean_and_resume_by_config(tmp_path, monkeypat
     }
     master = _fake_master(tmp_path, subs)
 
-    # df_status carries n_resumes per subanalysis_id (R9): r1 was resumed once.
+    # df_status carries n_resumes per sa_id (R9): r1 was resumed once.
     import pandas as pd
 
     master.df_status = pd.DataFrame(
         {
-            "subanalysis_id": ["serial_0_r0", "serial_0_r1"],
+            "sa_id": ["serial_0_r0", "serial_0_r1"],
             "event_iloc": [0, 0],
             "n_resumes": [0, 1],
         }

@@ -218,7 +218,7 @@ def _config_identity(sub) -> tuple:
 def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[str, int]:
     """Max ``n_resumes`` per ``sa_id`` from ``master.df_status`` (R9).
 
-    ``df_status``'s ``subanalysis_id`` may carry the ``sa_`` prefix while
+    ``df_status``'s ``sa_id`` may carry the ``sa_`` prefix while
     ``sub_analyses`` keys are bare — normalize both directions so the mapping is
     robust to either convention.
     """
@@ -229,7 +229,7 @@ def _resumes_by_sa_id(master: TRITONSWMM_analysis, sa_ids: list[str]) -> dict[st
         return out
     if df is None or "n_resumes" not in getattr(df, "columns", []):
         return out
-    id_col = "subanalysis_id" if "subanalysis_id" in df.columns else None
+    id_col = "sa_id" if "sa_id" in df.columns else None
     if id_col is None:
         return out
 

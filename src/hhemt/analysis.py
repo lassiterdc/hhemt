@@ -4365,7 +4365,7 @@ class TRITONSWMM_analysis:
             DataFrame with columns in canonical order.
         """
         fixed_identity = [
-            "subanalysis_id",
+            "sa_id",
             "sub_analysis_iloc",
             "event_iloc",
             "model_type",

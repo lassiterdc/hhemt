@@ -174,7 +174,7 @@ def size_resume_walltimes(clean_analysis) -> dict[str, int]:
     return (
         df.dropna(subset=["perf_Total"])
         .assign(_min=lambda d: d["perf_Total"] / 60.0)
-        .groupby("subanalysis_id")["_min"]
+        .groupby("sa_id")["_min"]
         .max()
         .round()
         .astype(int)
