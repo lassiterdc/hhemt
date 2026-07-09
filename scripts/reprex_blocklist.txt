@@ -1,0 +1,9 @@
+# Independent hand-authored denylist for the reprex zero-user-info gate (ADR-9).
+# NOT derived from the scrub/taxonomy (independence invariant). Mirrors
+# scripts/anonymization_blocklist.txt tokens; keep in sync when new private
+# identifiers are added there. Doc-derivable/public identifiers (sso.ccs.ornl.gov,
+# institutional Globus UUIDs, login1.hpc.virginia.edu) are KEPT, never listed.
+quinnlab
+atm112
+cli190
+dcl3nd
