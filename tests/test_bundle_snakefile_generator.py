@@ -34,6 +34,7 @@ REGEN_RULE_SET = {
     "plot_scenario_status_appendix",
     "plot_errors_and_warnings",
     "plot_disk_utilization",  # P1b: registry-driven bundle now emits it (drift-fix)
+    "plot_metadata",  # ADR-14 / C10: auto-carried into the bundle via _TMPL_METADATA
     "plot_sensitivity_benchmarking",
     "plot_per_sim_per_sa_peak_flood_depth",
     "plot_per_sim_per_sa_conduit_flow",

@@ -47,7 +47,7 @@ onerror:
 
 rule all:
     input:
-        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
+        "_status/a_setup_target_0_complete.flag", "_status/e_consolidate_sa-0_complete.flag", "_status/e_consolidate_sa-1_complete.flag", "_status/e_consolidate_sa-2_complete.flag", "_status/e_consolidate_sa-3_complete.flag", "_status/f_consolidate_master_complete.flag", "plots/system_overview.html", "plots/per_analysis/summary_table.html", "plots/appendix/scenario_status.html", "plots/errors_and_warnings/validation_report.html", "plots/disk_utilization.html", "plots/metadata.html", "scenario_status.csv", "workflow_summary.md", expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/conduit_flow__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT), expand("plots/sensitivity/benchmarking/benchmarking__{independent_var}.vs.total.html", independent_var=['n_devices']), "analysis_report.zip"
 
 rule setup_target_0:
     output: "_status/a_setup_target_0_complete.flag"
@@ -716,6 +716,31 @@ rule plot_disk_utilization:
             > {log} 2>&1
         """
 
+rule plot_metadata:
+    input:
+        consolidated = "_status/f_consolidate_master_complete.flag",
+    output:
+        report(
+            "plots/metadata.html",
+            caption="report/captions/metadata.rst",
+            category="Metadata",
+            labels={"figure": "Metadata"},
+        )
+    params:
+        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
+        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+    log: "logs/plots/metadata.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        python -m hhemt.report_renderers._cli metadata \
+            --system-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_sensitivity_master_byte_i0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -875,6 +900,7 @@ rule render_report:
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
+        "plots/metadata.html",
         "scenario_status.csv",
         "workflow_summary.md",
         expand("plots/sensitivity/per_sim/sa-{sa_id}/{event_id}/peak_flood_depth__sa.{sa_id}__evt.{event_id}.html", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT),
