@@ -4029,21 +4029,21 @@ class TRITONSWMM_analysis:
             return  # set unchanged — no invalidation needed
         # Set changed: drop the analysis-level consolidate flag so the added chain is
         # re-demanded; drop orphan per-event flags for removed events.
-        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)
-        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
         removed = prepared_event_ids - config_event_ids
         for ev in removed:
             for stem in (
                 f"b_prepare_evt-{ev}_complete",
                 f"f_consolidate_scenario_evt-{ev}_complete",
             ):
-                (status_dir / f"{stem}.flag").unlink(missing_ok=True)
-                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+                (status_dir / f"{stem}.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
             for model_type in ("triton", "tritonswmm", "swmm"):
                 for phase in ("c_run", "d_process"):
                     stem = f"{phase}_{model_type}_evt-{ev}_complete"
-                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)
-                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
 
     def _reconcile_stale_process_flags_against_summaries(
         self, *, sa_id: str | None = None, master_dir: Path | None = None
