@@ -31,10 +31,12 @@ from hhemt.config.invalidating_fixes import (
 logger = logging.getLogger(__name__)
 
 # --- pinned remote-registry coordinates (git Q4 — module constants, NOT runtime-derived) ---
-# `lassiterdc` is the PUBLIC GitHub owner handle (functional-public); the blocklisted
-# private username is `dcl3nd` (ADR-14). Hardcoded (not derived from `git remote get-url`)
-# so the URL is deterministic and wheel-safe. test_invalidating_fixes_skew asserts the
-# constructed URL carries no blocklisted token.
+# `lassiterdc` is the PUBLIC GitHub owner handle (functional-public), deliberately NOT
+# the maintainer's private username, which is on the ADR-14 anonymization blocklist and
+# must therefore never appear in a tracked file — including in a comment explaining it.
+# Hardcoded (not derived from `git remote get-url`) so the URL is deterministic and
+# wheel-safe. test_invalidating_fixes_skew asserts the constructed URL carries no
+# blocklisted token; scripts/check_anonymization.py asserts this file carries none either.
 _REGISTRY_REMOTE_OWNER = "lassiterdc"
 _REGISTRY_REMOTE_REPO = "hhemt"
 _REGISTRY_REMOTE_BRANCH = "main"

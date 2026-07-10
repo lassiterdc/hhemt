@@ -17,16 +17,38 @@ import json as _json
 from pathlib import Path
 
 from hhemt.report_renderers._figure_emission import emit_plot_with_sources
+from hhemt.report_renderers._provenance import (
+    ProvenanceLog,
+    ProvenanceRef,
+)
 
 
 def render(analysis, report_cfg, output_path: Path, **kwargs) -> None:
-    source = Path(analysis.analysis_paths.analysis_dir) / "combined_compatibility.json"
-    html = _render_compatibility_html(source)
+    analysis_dir = Path(analysis.analysis_paths.analysis_dir)
+    source = analysis_dir / "combined_compatibility.json"
+
+    # Per the report-renderer provenance convention (matching the peer table
+    # renderers disk_utilization / errors_and_warnings / metadata), the data
+    # source is recorded via a `with prov.artist(kind="table")` block and
+    # threaded into the manifest sidecar through `provenance=prov`.
+    prov = ProvenanceLog()
+    with prov.artist(
+        axes_id="html_section",
+        kind="table",
+        note="cross-experiment compatibility table (combined_compatibility.json)",
+    ) as artist:
+        artist.add_channel(
+            "data",
+            ProvenanceRef(source_path="combined_compatibility.json"),
+        )
+        html = _render_compatibility_html(source)
+
     emit_plot_with_sources(
         html,
         output_path,
         source_paths=[source],
-        analysis_dir=analysis.analysis_paths.analysis_dir,
+        analysis_dir=analysis_dir,
+        provenance=prov,
     )
 
 
