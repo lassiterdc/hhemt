@@ -81,14 +81,14 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
-        python -m hhemt.report_renderers._cli system_overview \
+        {PYTHON} -m hhemt.report_renderers._cli system_overview \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
@@ -107,14 +107,14 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}],
-        source_paths_rst = '- ``subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_0/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_1/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_2/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_3/sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n',
+        source_paths = [{'path': 'subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}],
+        source_paths_rst = '- ``subanalyses/sa_0/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_1/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_2/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``subanalyses/sa_3/sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli per_analysis_summary \
+        {PYTHON} -m hhemt.report_renderers._cli per_analysis_summary \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
@@ -141,7 +141,7 @@ rule plot_scenario_status_appendix:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli scenario_status_appendix \
+        {PYTHON} -m hhemt.report_renderers._cli scenario_status_appendix \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
@@ -168,7 +168,7 @@ rule plot_errors_and_warnings:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli errors_and_warnings \
+        {PYTHON} -m hhemt.report_renderers._cli errors_and_warnings \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
@@ -193,7 +193,7 @@ rule plot_disk_utilization:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli disk_utilization \
+        {PYTHON} -m hhemt.report_renderers._cli disk_utilization \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --output {output} \
@@ -256,7 +256,7 @@ rule plot_sensitivity_benchmarking:
     resources: mem_mb=4000, time_min=10
     shell:
         """
-        python -m hhemt.report_renderers._cli sensitivity_benchmarking \
+        {PYTHON} -m hhemt.report_renderers._cli sensitivity_benchmarking \
             --system-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_reprocess_master_byte_ide0/synthetic_test_runs/synth_sensitivity/analysis_config.yaml \
             --independent-var {wildcards.independent_var} \

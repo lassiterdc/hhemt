@@ -162,6 +162,14 @@ class RuleEmissionContext:
         Per D3 — selects ``output_ext`` per renderer (".png" for matplotlib,
         ".html" for plotly chart figures so Snakemake's report engine
         dispatches via iframe instead of <img>). Required; no in-code default.
+    report_tail_slurm_partition : str
+        CPU processing partition the report-tail plot rules submit to under
+        ``--executor slurm`` (source-side). Empty string on the consume side
+        and in ``local`` mode — the plot rules then emit no ``slurm_partition``
+        and inherit nothing (local ``--cores`` ignores it). Prevents the plot
+        rules from inheriting the GPU ensemble partition from
+        ``default-resources`` and being rejected/auto-cancelled on GPU-only
+        partitions.
     """
 
     python_executable: str
@@ -170,6 +178,7 @@ class RuleEmissionContext:
     config_args_str: str
     is_sensitivity: bool
     static_backend: Literal["matplotlib", "plotly"]
+    report_tail_slurm_partition: str = ""
 
 
 @dataclass(frozen=True)
@@ -347,9 +356,21 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     else:
         wildcard_constraints_block = ""
 
-    # Plot-rule shell uses literal "python" (the rule's conda: env
-    # provides the interpreter); only setup / run / process / consolidate
-    # / render_report rules use ctx.python_executable's full path.
+    # Report-tail plot rules are CPU-only; under `--executor slurm` they must
+    # target the CPU processing partition. Without an explicit slurm_partition
+    # they inherit `default-resources`' GPU ensemble partition and are
+    # rejected/auto-cancelled on GPU-only partitions (the batch_job render
+    # failure). Empty report_tail_slurm_partition (consume-side, local mode)
+    # emits no partition — byte-identical to the pre-fix form.
+    if ctx.report_tail_slurm_partition:
+        resources_line = f'slurm_partition="{ctx.report_tail_slurm_partition}", {spec.resources_yaml}'
+    else:
+        resources_line = spec.resources_yaml
+
+    # Use ctx.python_executable (the full interpreter every other DAG rule
+    # uses, e.g. render_report) rather than bare `python`: byte-identical
+    # consume-side (ctx.python_executable == "python" there) and deterministic
+    # source-side. The rule's conda: directive is inert (use-conda: False).
     return f'''
 rule {spec.rule_name}:
     {input_block}
@@ -359,10 +380,10 @@ rule {spec.rule_name}:
 {params_block}
     log: "{spec.log_path_template}"
     conda: "{ctx.conda_env_path}"
-    resources: {spec.resources_yaml}
+    resources: {resources_line}
     shell:
         """
-        python -m hhemt.report_renderers._cli {spec.renderer_module} \\
+        {ctx.python_executable} -m hhemt.report_renderers._cli {spec.renderer_module} \\
             {ctx.config_args_str} \\
 {extra_flags_block}            --output {{output}} \\
             > {{log}} 2>&1
@@ -1746,6 +1767,15 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         config-args string suffices.
         """
         log_dir_rel = str(self.analysis_paths.analysis_log_directory.relative_to(self.analysis_paths.analysis_dir))
+        # Report-tail plot rules submit to the CPU processing partition under
+        # `--executor slurm` (matching render_report/setup/process/consolidate).
+        # Empty in `local` mode so the emitted Snakefile is byte-identical there
+        # and no literal "None" partition leaks.
+        _report_tail_partition = (
+            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
+            if self.cfg_analysis.multi_sim_run_method != "local"
+            else ""
+        )
         return RuleEmissionContext(
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
@@ -1753,6 +1783,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             config_args_str=self._get_config_args(),
             is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
+            report_tail_slurm_partition=_report_tail_partition,
         )
 
     def _build_plot_rule_block_system_overview(
