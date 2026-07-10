@@ -2643,15 +2643,22 @@ rule render_report:
             if sim_folder is not None:
                 for mt in enabled:
                     log_file = Path(sim_folder) / f"log_{mt}.json"
-                    if log_file.exists():
-                        sources.append(
-                            {
-                                "path": _os.path.relpath(str(log_file.resolve()), analysis_root),
-                                "variables": [
-                                    f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
-                                ],
-                            }
-                        )
+                    # Emit unconditionally from the config-derived scenario set — never
+                    # gate on `log_file.exists()`. Snakefile emission must be a pure
+                    # function of config, not of current disk state: an existence gate
+                    # makes the emitted `source_paths` vary with whatever happens to be
+                    # on disk at generation time, which is nondeterministic across a
+                    # fresh tree vs. a completed run (and silently reddened the byte-
+                    # identity goldens). Mirrors the `is not None` treatment of the
+                    # sibling .rpt gates above.
+                    sources.append(
+                        {
+                            "path": _os.path.relpath(str(log_file.resolve()), analysis_root),
+                            "variables": [
+                                f"model_run_completed[{mt}] (status flag for n_successful / n_pending counts)",
+                            ],
+                        }
+                    )
         return sources
 
     def _build_plot_rule_block_per_analysis_summary(
