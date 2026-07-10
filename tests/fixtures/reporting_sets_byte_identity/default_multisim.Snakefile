@@ -36,6 +36,7 @@ rule all:
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
+        "plots/metadata.html",
         "analysis_report.zip",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
@@ -559,6 +560,31 @@ rule plot_disk_utilization:
             > {log} 2>&1
         """
 
+rule plot_metadata:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/metadata.html",
+            caption="report/captions/metadata.rst",
+            category="Metadata",
+            labels={"figure": "Metadata"},
+        )
+    params:
+        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
+        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+    log: "logs/plots/metadata.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        python -m hhemt.report_renderers._cli metadata \
+            --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -592,6 +618,7 @@ rule render_report:
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
+        "plots/metadata.html",
         "scenario_status.csv",
     output:
         "analysis_report.{format}"

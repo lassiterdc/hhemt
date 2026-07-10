@@ -644,6 +644,7 @@ class _ReportingSetDispatchMixin:
             "scenario_status_appendix",
             "errors_and_warnings",
             "disk_utilization",
+            "metadata",
         ):
             return {"input_flag": input_flag, "ctx": ctx}
         if builder_key in ("per_sim", "per_sim_per_sa"):
@@ -685,6 +686,7 @@ class _ReportingSetDispatchMixin:
             "scenario_status_appendix": base._build_plot_rule_block_scenario_status_appendix,
             "errors_and_warnings": base._build_plot_rule_block_errors_and_warnings,
             "disk_utilization": base._build_plot_rule_block_disk_utilization,
+            "metadata": base._build_plot_rule_block_metadata,
             "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
             "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
         }
@@ -1864,6 +1866,48 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         )
         return _emit_plot_rule(spec, ctx)
 
+    def _build_plot_rule_block_metadata(
+        self,
+        input_flag: str = "_status/e_consolidate_complete.flag",
+        *,
+        ctx: RuleEmissionContext | None = None,
+    ) -> str:
+        """Emit the Snakemake rule for the Metadata report page (ADR-14 / C10).
+
+        Projects the `ro-crate-metadata.json` provenance sidecar written at
+        consolidation, the reprex reproduction guide (pure config-schema
+        introspection), and the SLURM efficiency report into one static HTML page.
+
+        `report_kwargs["category"]` MUST equal `_TMPL_METADATA`'s
+        (`"Metadata"`) — the co-sourcing guard checks exactly this.
+        """
+        if ctx is None:
+            ctx = self._make_rule_emission_context(static_backend=self._get_report_cfg_static_backend())
+
+        spec = RuleSpec(
+            rule_name="plot_metadata",
+            renderer_module="metadata",
+            input_flags=(input_flag,),
+            output_path_template="plots/metadata__OUTPUT_EXT__",
+            source_paths=(
+                {
+                    "path": "ro-crate-metadata.json",
+                    "variables": ["provenance"],
+                },
+            ),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/metadata.rst",
+                "category": "Metadata",
+                "labels": '{"figure": "Metadata"}',
+            },
+            resources_yaml="mem_mb=1000, time_min=5",
+            log_path_template="logs/plots/metadata.log",
+        )
+        return _emit_plot_rule(spec, ctx)
+
     def _build_process_rule_block(
         self,
         model_type: str,
@@ -2283,7 +2327,8 @@ rule all:
         "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}"{render_targets_in_rule_all},
+        "plots/disk_utilization{_ext["disk_utilization"]}",
+        "plots/metadata{_ext["metadata"]}"{render_targets_in_rule_all},
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -2545,6 +2590,7 @@ rule render_report:
         "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
         "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
         "plots/disk_utilization{_ext["disk_utilization"]}",
+        "plots/metadata{_ext["metadata"]}",
         "scenario_status.csv",
     output:
         "analysis_report.{{format}}"
@@ -6874,6 +6920,7 @@ onerror:
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
         rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
@@ -7581,6 +7628,7 @@ onerror:
         rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
         rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
         rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
         if sa_event_pairs_sa:
