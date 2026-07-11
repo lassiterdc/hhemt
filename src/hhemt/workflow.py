@@ -624,6 +624,10 @@ class _ReportingSetDispatchMixin:
     _RENDERER_PREDICATES = {
         "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
         "has_sa_event_pairs": lambda inp: bool(inp.get("sa_event_pairs_sa")),
+        # R11: the compute-sensitivity EDA adapter fires only when the master
+        # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
+        # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
+        "has_eda_artifact": lambda inp: bool(inp.get("has_eda_artifact")),
     }
 
     def _resolve_active_reporting_set(self, analysis):
@@ -668,8 +672,8 @@ class _ReportingSetDispatchMixin:
             "metadata",
         ):
             return {"input_flag": input_flag, "ctx": ctx}
-        if builder_key in ("per_sim", "per_sim_per_sa"):
-            return {"ctx": ctx}  # wildcard over event_id; no input_flag in signature
+        if builder_key in ("per_sim", "per_sim_per_sa", "eda_compute_sensitivity"):
+            return {"ctx": ctx}  # wildcard over event_id (per_sim) / no wildcards (eda); no input_flag
         if builder_key == "sensitivity_benchmarking":
             # positional independent_vars, forwarded from predicate_inputs (the
             # value the master/reprocess call sites already thread); NO input_flag.
@@ -710,6 +714,7 @@ class _ReportingSetDispatchMixin:
             "metadata": base._build_plot_rule_block_metadata,
             "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
             "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
+            "eda_compute_sensitivity": getattr(self, "_build_plot_rule_block_eda_compute_sensitivity", None),
         }
         out = ""
         inputs = predicate_inputs or {}
@@ -7008,6 +7013,17 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
+        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
+        # Inert for the benchmarking/default sets (no eda renderer in the selection),
+        # so byte-identity for those sets is preserved.
+        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _eda_in_set = any(
+            sel.builder_key == "eda_compute_sensitivity"
+            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
+        )
+        if _eda_in_set and _has_eda_artifact:
+            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
         # planner re-fires the render whenever any plot output is newer than
@@ -7389,6 +7405,7 @@ onerror:
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
+                "has_eda_artifact": _has_eda_artifact,
             },
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
@@ -7715,6 +7732,17 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
+        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
+        # Inert for the benchmarking/default sets (no eda renderer in the selection),
+        # so byte-identity for those sets is preserved.
+        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _eda_in_set = any(
+            sel.builder_key == "eda_compute_sensitivity"
+            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
+        )
+        if _eda_in_set and _has_eda_artifact:
+            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
             rule_all_inputs.append(f'"analysis_report.{_fmt}"')
@@ -7976,6 +8004,7 @@ onerror:
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
+                "has_eda_artifact": _has_eda_artifact,
             },
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
@@ -8016,6 +8045,47 @@ rule render_report:
 '''
 
         return snakefile_content
+
+    def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
+        """Generate the compute-sensitivity EDA adapter plot rule (R11).
+
+        Emits ONE report()-annotated rule for the config_diff_maps EDA figure under
+        master-rooted ``plots/eda/``. The rule shells out to
+        ``_cli eda_compute_sensitivity``, whose ``render()`` delegates to
+        ``eda/_plotting.render_eda_plots`` — the renderer self-declares its data
+        sources via ``emit_plot_with_sources`` (the consolidated tree + one
+        hydraulics.inp), so the rule's ``source_paths`` here feeds only the caption
+        Sources block. Lands under "Key Results" (Decision 1). Gated on the
+        has_eda_artifact predicate at the dispatcher, so it fires only when the
+        master carries an EDA artifact.
+        """
+        if ctx is None:
+            ctx = self._base_builder._make_rule_emission_context(
+                static_backend=self._base_builder._get_report_cfg_static_backend()
+            )
+        spec = RuleSpec(
+            rule_name="plot_eda_compute_sensitivity",
+            renderer_module="eda_compute_sensitivity",
+            input_flags=("_status/f_consolidate_master_complete.flag",),
+            output_path_template=_plot_output_template(
+                renderer_kind="config_diff_maps",
+                subdir="plots/eda",
+            ),
+            source_paths=("sensitivity_datatree.zarr",),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/eda_compute_sensitivity.rst",
+                "category": "Key Results",
+                "subcategory": "Compute-config EDA",
+                "labels": '{"figure": "Config-diff maps"}',
+            },
+            resources_yaml="mem_mb=4000, time_min=10",
+            log_path_template="logs/plots/eda_compute_sensitivity.log",
+            input_label="master",
+        )
+        return _emit_plot_rule(spec, ctx)
 
     def _build_plot_rule_block_sensitivity_benchmarking(
         self, independent_vars: list[str], *, ctx: RuleEmissionContext | None = None

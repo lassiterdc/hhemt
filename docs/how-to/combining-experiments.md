@@ -11,8 +11,9 @@ report that presents them side by side.
 
 ## Prerequisites
 
-- **Two or more emitted single-analysis bundles on disk.** Produce each with
-  `hhemt bundle` (or `Analysis.bundle_report_data()`) after a completed
+- **Two or more emitted bundles on disk.** Produce each with
+  `hhemt bundle` (or `Analysis.bundle_report_data()` / the sensitivity-master
+  `TRITONSWMM_sensitivity_analysis.bundle_report_data()`) after a completed
   `analysis.run()` + `render_report()`.
 - The bundles must be **unpacked directories**, not the emitted `.zip`.
   `hhemt bundle` writes a `ZIP_STORED` archive; unzip each before combining:
@@ -22,9 +23,13 @@ report that presents them side by side.
   unzip bundle_b.zip -d bundle_b/
   ```
 
-- Combine currently operates on **single-analysis** bundles (each ships its
-  consolidated `analysis_datatree.zarr` at the bundle root). Combining
-  sensitivity-master bundles is not yet supported.
+- Combine operates on **single-analysis** bundles (each ships its consolidated
+  `analysis_datatree.zarr` at the bundle root) **and on sensitivity-master
+  bundles** (each ships `sensitivity_datatree.zarr` at the bundle root). The
+  combine step resolves whichever consolidated tree a bundle ships. The
+  cross-experiment report presents the compatibility table across the combined
+  set; a cross-experiment byte-identity data panel over the deeper
+  sensitivity-master tree shape is a future addition.
 
 ## Combine the bundles
 

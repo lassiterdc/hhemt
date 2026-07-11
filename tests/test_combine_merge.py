@@ -64,3 +64,16 @@ def test_identity_rides_every_child_group(tmp_path, monkeypatch):
         assert child[group].coords["experiment"].item() == "exp_a"
     # laziness preserved — the scalar-coord stamp must not load data vars:
     assert hasattr(child["triton"]["max_wlevel_m"].data, "dask")
+
+
+def test_merge_accepts_sensitivity_master_tree(tmp_path, monkeypatch):
+    """A sensitivity-master bundle ships sensitivity_datatree.zarr at root; the
+    resolver must accept it (R12 generalization)."""
+    monkeypatch.setattr(M, "_experiment_id", lambda r: r.name)
+    root = tmp_path / "sens_exp"
+    root.mkdir(parents=True)
+    ds = xr.Dataset({"max_wlevel_m": ("event_iloc", [1.0, 2.0])})
+    xr.DataTree(dataset=ds).to_zarr(root / M.SENSITIVITY_TREE_NAME)
+    merged = M.merge_experiment_trees([root])
+    assert set(merged.children) == {"experiment_sens_exp"}
+    assert merged["experiment_sens_exp"].coords["experiment"].item() == "sens_exp"
