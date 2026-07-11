@@ -36,6 +36,7 @@ rule all:
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
+        "plots/metadata.html",
         "analysis_report.zip",
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
@@ -356,8 +357,8 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
@@ -380,7 +381,7 @@ def _per_sim_flood_depth_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
     )
 
 def _per_sim_conduit_flow_sources(wildcards):
@@ -393,7 +394,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/d666c6bd4c15695c/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
     )
 
 rule plot_per_sim_peak_flood_depth:
@@ -456,6 +457,7 @@ rule plot_per_sim_conduit_flow:
 
 rule plot_per_analysis_summary_table:
     input:
+        "scenario_status.csv",
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
@@ -466,8 +468,8 @@ rule plot_per_analysis_summary_table:
             labels={"figure": "Summary table"},
         )
     params:
-        source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}],
-        source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n',
+        source_paths = [{'path': 'sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.0/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.0/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.1/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.1/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt', 'variables': ['Flow Routing Continuity error (%)']}, {'path': 'sims/event_index.2/log_triton.json', 'variables': ['model_run_completed[triton] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_tritonswmm.json', 'variables': ['model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)']}, {'path': 'sims/event_index.2/log_swmm.json', 'variables': ['model_run_completed[swmm] (status flag for n_successful / n_pending counts)']}],
+        source_paths_rst = '- ``sims/event_index.0/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.0/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.0/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.1/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.1/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/out_tritonswmm/swmm/hydraulics.rpt``\n\n  - ``Flow Routing Continuity error (%)``\n\n- ``sims/event_index.2/log_triton.json``\n\n  - ``model_run_completed[triton] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_tritonswmm.json``\n\n  - ``model_run_completed[tritonswmm] (status flag for n_successful / n_pending counts)``\n\n- ``sims/event_index.2/log_swmm.json``\n\n  - ``model_run_completed[swmm] (status flag for n_successful / n_pending counts)``\n',
     log: "logs/plots/per_analysis_summary_table.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=5
@@ -559,6 +561,31 @@ rule plot_disk_utilization:
             > {log} 2>&1
         """
 
+rule plot_metadata:
+    input:
+        consolidated = "_status/e_consolidate_complete.flag",
+    output:
+        report(
+            "plots/metadata.html",
+            caption="report/captions/metadata.rst",
+            category="Metadata",
+            labels={"figure": "Metadata"},
+        )
+    params:
+        source_paths = [{'path': 'ro-crate-metadata.json', 'variables': ['provenance']}],
+        source_paths_rst = '- ``ro-crate-metadata.json``\n\n  - ``provenance``\n',
+    log: "logs/plots/metadata.log"
+    conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
+    resources: mem_mb=1000, time_min=5
+    shell:
+        """
+        {PYTHON} -m hhemt.report_renderers._cli metadata \
+            --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
+            --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
+            --output {output} \
+            > {log} 2>&1
+        """
+
 localrules: export_scenario_status
 
 rule export_scenario_status:
@@ -592,6 +619,7 @@ rule render_report:
         "plots/appendix/scenario_status.html",
         "plots/errors_and_warnings/validation_report.html",
         "plots/disk_utilization.html",
+        "plots/metadata.html",
         "scenario_status.csv",
     output:
         "analysis_report.{format}"

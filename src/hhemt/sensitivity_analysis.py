@@ -1055,6 +1055,49 @@ class TRITONSWMM_sensitivity_analysis:
 
         return emit_bundle(self, output_path)
 
+    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+        """Emit a reprex-ready Workflow-Run-Crate bundle for the sensitivity master and
+        return its extracted directory root (ADR-10, D3).
+
+        Parity peer of ``bundle_report_data()`` — the sensitivity master is the PRIMARY
+        reprex surface (the ``(sa_id, column)`` problem-pair emission is intrinsically a
+        sensitivity concept). ``emit_bundle`` already carries the reprex runnable-template
+        set + WRC crate (Phase 2); this facade extracts the emitted zip to a sibling
+        directory so the round-trip consumes a directory root directly
+        (``Bundle.from_directory(...).reprex(...)``). Opt-in only.
+
+        Returns:
+            Path to the extracted reprex-bundle directory.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        return extract_reprex_bundle(emit_bundle(self, output_path))
+
+    def publish(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit the sensitivity MASTER tree to a DOI-minting repo (C6, ADR-11).
+
+        Opt-in only — NEVER invoked from run()/submit_workflow(), mirroring
+        render_report()/bundle_report_data(). Deposits the master
+        sensitivity_datatree.zarr + master-rooted ro-crate sidecar; the license is
+        read from the emitted crate. Returns {"target","data_doi","software_doi","record_url"}.
+        """
+        from hhemt.publishing import publish_analysis
+
+        return publish_analysis(
+            self.master_analysis,
+            target=target,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+            consolidated_zarr_relpath="sensitivity_datatree.zarr",
+        )
+
     def run_all_sims(
         self,
         pickup_where_leftoff,

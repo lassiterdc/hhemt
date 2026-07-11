@@ -118,3 +118,10 @@ non_breaking_allowlist:
       + SWMM_software_directory json_schema_extra={"toolkit_owned_output": True}
       (toolkit-owned build outputs, exempt from load-time exists()). Schema-annotation
       only; no on-disk layout change. Non-breaking.
+      ; bundle-reprex-roundtrip Phase 1 — relax TRITONSWMM_software_directory
+      Path -> Optional[Path] (default None) so a reconstituted reprex bundle's
+      synthesized system_config.yaml can carry null and still pass
+      cfgBaseModel._check_paths_exist. Config-schema widening; no on-disk layout
+      / _version.json / datatree change. Non-breaking.
+  - path: src/hhemt/config/reprex_config.py
+    justification: "bundle-reprex-roundtrip Phase 1 — NEW reprex_config Pydantic model (minimal target-user field set for the round-trip). Pure config schema (config/**/*.py glob); no on-disk layout change. Non-breaking, no LAYOUT_VERSION bump (mirrors reprex_taxonomy.py)."

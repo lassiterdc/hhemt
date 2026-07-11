@@ -96,6 +96,7 @@ _STANDARD_CATEGORY_ORDER: tuple[str, ...] = (
     "System Information",
     "Simulation Health (placeholder)",
     "Per Simulation Results",
+    "Metadata",
 )
 
 # --- Bundle-side RuleSpecTemplates (P1b) -------------------------------------
@@ -177,6 +178,26 @@ _TMPL_DISK_UTILIZATION = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/disk_utilization.log",
 )
+# metadata (ADR-14 / C10): the Metadata page -- RO-Crate provenance summary +
+# reprex reproduction guide + SLURM efficiency. Unconditional table renderer
+# (emits .html under both static backends); shared by the default and
+# benchmarking sets. Facts mirror the source-side builder
+# (workflow.py _build_plot_rule_block_metadata); the `category` here is
+# cross-checked against that builder's report(category=) by
+# tests/test_reporting_set_cosourcing.py.
+_TMPL_METADATA = RuleSpecTemplate(
+    rule_name="plot_metadata",
+    renderer_module="metadata",
+    output_path_template="plots/metadata__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/metadata.rst",
+        "category": "Metadata",
+        "labels": '{"figure": "Metadata"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/metadata.log",
+)
 # Cross-experiment combined set (PIP-1 Phase 4). INERT on source/bundle
 # generators (no workflow.py builder, no bundle snakefile rule); consumed ONLY
 # by bundle/_combine.py's emit-time direct-render dispatch (F-B Flag 1(c)).
@@ -233,6 +254,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
+    RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
 )
 
 # The benchmarking (sensitivity-master) set: the five common renderers shared by
@@ -245,6 +267,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
+    RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
     RendererSelection(
         "per_sim_per_sa",
         predicate_key="has_sa_event_pairs",

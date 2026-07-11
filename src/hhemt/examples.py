@@ -295,14 +295,22 @@ class TRITON_SWMM_example:
                 print(
                     f"Download example data to {mapping['DATA_DIR']} using Hydroshare"
                 )
-            hs = cls._connect_to_hydroshare(res_identifier)
-            cls._download_data_from_hydroshare(
-                res_identifier,
-                Path(mapping["HYDROSHARE_ROOT"]),
-                hs,
-                download_if_exists=download_if_exists,
-                expected_manifest=case_manifest.manifest,
-            )
+            if case_manifest.host == "zenodo":
+                cls._download_data_from_zenodo(
+                    case_manifest,
+                    Path(mapping["HYDROSHARE_ROOT"]),
+                    download_if_exists=download_if_exists,
+                    expected_manifest=case_manifest.manifest,
+                )
+            else:
+                hs = cls._connect_to_hydroshare(res_identifier)
+                cls._download_data_from_hydroshare(
+                    res_identifier,
+                    Path(mapping["HYDROSHARE_ROOT"]),
+                    hs,
+                    download_if_exists=download_if_exists,
+                    expected_manifest=case_manifest.manifest,
+                )
 
         cfg_yaml = Path(filled_yaml_data["system_directory"]) / "config_system.yaml"
         cfg_yaml.parent.mkdir(parents=True, exist_ok=True)
@@ -380,8 +388,10 @@ class TRITON_SWMM_example:
             if len(top_level_dirs) == 1:
                 unzipped_folder = extract_to / next(iter(top_level_dirs))
             else:
-                raise RuntimeError(
-                    "ZIP has multiple top-level folders; cannot determine Bag root."
+                raise ProcessingError(
+                    operation="hydroshare_bag_extract",
+                    filepath=str(zip_path),
+                    reason="ZIP has multiple top-level folders; cannot determine Bag root.",
                 )
         # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
         if validate:
@@ -422,7 +432,11 @@ class TRITON_SWMM_example:
                     filepath=str(fpath),
                     reason=f"file declared in case.yaml manifest is absent from the downloaded bag: {rel_name}",
                 )
-            actual_sha = hashlib.sha256(fpath.read_bytes()).hexdigest()
+            h = hashlib.sha256()
+            with fpath.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            actual_sha = h.hexdigest()  # streaming read bounds peak RSS on multi-GB assets
             if actual_sha != expected_sha:
                 raise ProcessingError(
                     operation="case_manifest_verification",
@@ -444,10 +458,14 @@ class TRITON_SWMM_example:
         anonymous resource read fails (private/unshared resource).
         """
         if HydroShare is None:
-            raise RuntimeError(
-                "hsclient is not installed. Install optional dependencies with "
-                "`pip install .[tests]`. Alternatively, download the data manually: "
-                f"https://www.hydroshare.org/resource/{res_identifier}/"
+            raise ProcessingError(
+                operation="hydroshare_connect",
+                filepath=None,
+                reason=(
+                    "hsclient is not installed. Install optional dependencies with "
+                    "`pip install .[tests]`. Alternatively, download the data manually: "
+                    f"https://www.hydroshare.org/resource/{res_identifier}/"
+                ),
             )
         hs = HydroShare()  # no args -> unauthenticated requests.Session, no userInfo call
         try:
@@ -472,6 +490,55 @@ class TRITON_SWMM_example:
                 ) from sign_in_exc
             print("Signed into HydroShare successfully.", flush=True)
             return hs
+
+    @classmethod
+    def _download_data_from_zenodo(
+        cls,
+        case_manifest: "CaseManifest",
+        target: Path,
+        download_if_exists: bool = False,
+        expected_manifest: dict[str, str] | None = None,
+    ):
+        """Fetch a Zenodo deposit's files by DOI/record id and sha256-verify (ADR-12/C7).
+
+        Resolves the Zenodo record id from case_manifest.doi (suffix after 'zenodo.')
+        or case_manifest.pid, GETs the record metadata, downloads each file, then runs
+        the host-agnostic _verify_manifest. Prefer a versioned DOI (pins one version).
+        """
+        import requests  # explicit dep declared in pyproject (Phase 4)
+
+        if target.exists() and download_if_exists:
+            fast_rmtree(target)  # EXEMPT-DU: test-example-fixture
+        if target.exists() and not download_if_exists:
+            return
+        target.mkdir(parents=True, exist_ok=True)
+
+        recid = (case_manifest.pid or "").strip()
+        if not recid and case_manifest.doi:
+            recid = case_manifest.doi.rsplit("zenodo.", 1)[-1].strip()
+        if not recid:
+            raise ProcessingError(
+                operation="zenodo_resolve",
+                filepath=None,
+                reason=f"cannot resolve a Zenodo record id from doi={case_manifest.doi!r} pid={case_manifest.pid!r}",
+            )
+        resp = requests.get(f"https://zenodo.org/api/records/{recid}", timeout=60)
+        if resp.status_code != 200:
+            raise ProcessingError(
+                operation="zenodo_fetch",
+                filepath=None,
+                reason=f"Zenodo record {recid} returned HTTP {resp.status_code}",
+            )
+        for entry in resp.json().get("files", []):
+            url = entry["links"]["self"]
+            dest = target / entry["key"]
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with requests.get(url, stream=True, timeout=600) as fr:
+                fr.raise_for_status()
+                with dest.open("wb") as fh:
+                    for chunk in fr.iter_content(chunk_size=1 << 20):
+                        fh.write(chunk)
+        cls._verify_manifest(target, expected_manifest)  # host-agnostic sha256 (Zenodo md5 is advisory)
 
     @classmethod
     def _return_filled_template_yaml_dictionary(cls, cfg_template: Path, mapping: dict):

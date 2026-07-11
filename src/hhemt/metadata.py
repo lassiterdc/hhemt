@@ -28,6 +28,35 @@ _CF_PROFILE_ID = "https://cfconventions.org/cf-conventions/cf-conventions.html"
 # Confirm the exact profile URIs against the live w3id registry at impl time (Follow-up Ideas).
 _CANONICAL_CONTEXT = "https://w3id.org/ro/crate/1.2/context"
 
+# Root-level profile set for the round-trip Workflow-Run-Crate (ADR-9 primary,
+# D1/NQ-7 resolved: a GENERATED Snakefile is a valid mainEntity ComputationalWorkflow).
+# Profiles go on the ROOT per the RO-Crate spec (NOT the descriptor, where ro-crate-py's
+# add_workflow puts WORKFLOW_PROFILE); the descriptor keeps only the version permalink.
+_WFRUN_ROOT_PROFILES: tuple[str, ...] = (
+    "https://w3id.org/workflowhub/workflow-ro-crate/1.0",  # structural Workflow-RO-Crate
+    "https://w3id.org/ro/wfrun/process/0.5",
+    "https://w3id.org/ro/wfrun/workflow/0.5",
+    "https://w3id.org/ro/wfrun/provenance/0.5",
+)
+# ro-crate-py's built-in Snakemake ComputerLanguage @id (rocrate/model/computerlanguage.py::snakemake).
+_SNAKEMAKE_LANG_ID = "https://w3id.org/workflowhub/workflow-ro-crate#snakemake"
+
+# Single source of truth for the frozen 2-entry dataset-license vocab (ADR-8). Feeds BOTH
+# the RO-Crate root Dataset.license CreativeWork entity (here) AND the DataCite rightsList
+# (publishing.py, Phase 4) — the two serializations can never drift.
+_SPDX_LICENSE_TABLE: dict[str, dict[str, str]] = {
+    "CC0-1.0": {
+        "name": "Creative Commons Zero v1.0 Universal",
+        "uri": "https://spdx.org/licenses/CC0-1.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+    "CC-BY-NC-4.0": {
+        "name": "Creative Commons Attribution Non Commercial 4.0 International",
+        "uri": "https://spdx.org/licenses/CC-BY-NC-4.0",
+        "scheme_uri": "https://spdx.org/licenses/",
+    },
+}
+
 # Single source of truth for what may live in the embedded core (CI grep-guard in
 # test_metadata.py asserts no other key reaches tree.attrs["ro_crate_metadata"]).
 _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
@@ -57,6 +86,12 @@ _EMBEDDED_PROV_KEYS: frozenset[str] = frozenset(
         "propertyID",
         "measurementTechnique",
         "wasGeneratedBy",
+        "license",
+        # C8 Workflow-Run-Crate mainEntity (deterministic; bundle-side upgrade only,
+        # NOT emitted at consolidation — see upgrade_doc_to_workflow_run_crate):
+        "programmingLanguage",  # mainEntity ComputationalWorkflow runtime ref
+        "mainEntity",           # Root focus -> the workflow
+        "url",                  # ComputerLanguage.url (fixed vocab URI)
     }
 )
 # Keys that MUST never appear in the embedded core (wall-clock/host/jobid/run-ordinal).
@@ -86,6 +121,7 @@ def build_analysis_crate(
     toolkit_git_sha: str,
     code_repository: str,
     cfg_case,  # CaseManifest
+    dataset_license: str = "CC0-1.0",  # frozen 2-entry SPDX id (ADR-8 D1); strategy owned by reprex-specialist
     sif_spec,  # {@id, softwareVersion, sha256, downloadUrl} | None (native run)
     consolidated_zarr_relpath: str,  # e.g. "analysis_datatree.zarr"
     input_parts: list[dict],  # [{"@id", "sha256", "contentSize", "encodingFormat"}]
@@ -99,6 +135,16 @@ def build_analysis_crate(
     if system_id is not None:
         root["system_id"] = system_id
     root["schemaVersion"] = str(layout_version)
+
+    _lic = _SPDX_LICENSE_TABLE[dataset_license]
+    crate.add(
+        ContextEntity(
+            crate,
+            _lic["uri"],
+            properties={"@type": "CreativeWork", "name": _lic["name"]},
+        )
+    )
+    root["license"] = {"@id": _lic["uri"]}
 
     toolkit_src = crate.add(
         ContextEntity(
@@ -209,6 +255,57 @@ def canonical_jsonld_from_doc(doc: dict, *, context: str = _CANONICAL_CONTEXT) -
 
 def canonical_jsonld(crate, *, context: str = _CANONICAL_CONTEXT) -> str:
     return canonical_jsonld_from_doc(crate.metadata.generate(), context=context)
+
+
+def upgrade_doc_to_workflow_run_crate(doc: dict, *, workflow_relpath: str) -> dict:
+    """Upgrade a built RO-Crate ``{"@context","@graph"}`` doc to a Workflow-Run-Crate.
+
+    D1/NQ-7 (data-management FQ1, Option B): types the (already-bundled, generated)
+    Snakefile as the crate ``mainEntity`` ``ComputationalWorkflow`` with a Snakemake
+    ``programmingLanguage``, and appends the ``wfrun`` profiles to the ROOT
+    ``conformsTo`` (spec-correct placement — profiles attach to the Root Data Entity,
+    NOT the descriptor). A GENERATED Snakefile is a spec-valid ``mainEntity``; "generated
+    vs hand-written" is not a spec-visible property of the file.
+
+    This is a pure doc-level transform (mutates and returns ``doc``) so callers on the
+    hand-emit + :func:`canonical_jsonld_from_doc` byte-deterministic path — the
+    ``bundle/_combine.py`` pattern — can patch a copied ``ro-crate-metadata.json`` in
+    place, reusing the by-reference SIF + ``input_parts`` already present without
+    reconstructing ``sif_spec`` (sidesteps the ``_case_manifest`` gap). It is NOT wired
+    into the consolidation-time :func:`build_analysis_crate` emit, so the on-disk
+    embedded core stays byte-unchanged. Idempotent.
+    """
+    graph = doc["@graph"]
+    # Snakemake ComputerLanguage context entity (fixed vocab term; add once).
+    if not any(e.get("@id") == _SNAKEMAKE_LANG_ID for e in graph):
+        graph.append(
+            {
+                "@id": _SNAKEMAKE_LANG_ID,
+                "@type": "ComputerLanguage",
+                "name": "Snakemake",
+                "url": {"@id": "https://snakemake.readthedocs.io"},
+            }
+        )
+    # The generated Snakefile as the mainEntity ComputationalWorkflow (upgrade if the
+    # bundle already carries a plain File node for it; else add the node by-reference).
+    wf_node = next((e for e in graph if e.get("@id") == workflow_relpath), None)
+    if wf_node is None:
+        wf_node = {"@id": workflow_relpath}
+        graph.append(wf_node)
+    wf_node["@type"] = ["File", "SoftwareSourceCode", "ComputationalWorkflow"]
+    wf_node["name"] = "TRITON-SWMM ensemble Snakemake workflow (toolkit-generated)"
+    wf_node["programmingLanguage"] = {"@id": _SNAKEMAKE_LANG_ID}
+    # Root: mainEntity focus + the wfrun profiles (spec-correct: profiles on the ROOT).
+    root = next(e for e in graph if e.get("@id") == "./")
+    root["mainEntity"] = {"@id": workflow_relpath}
+    existing = root.get("conformsTo") or []
+    if isinstance(existing, dict):
+        existing = [existing]
+    existing_ids = {c.get("@id") for c in existing if isinstance(c, dict)}
+    root["conformsTo"] = list(existing) + [
+        {"@id": p} for p in _WFRUN_ROOT_PROFILES if p not in existing_ids
+    ]
+    return doc
 
 
 def partition_core_vs_sidecar(full_doc: dict) -> dict:

@@ -126,7 +126,7 @@ class system_config(cfgBaseModel):
     TRITONSWMM_software_directory: Optional[Path] = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True},
-        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup).",
+        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). May be null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it from the by-reference software.",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,
