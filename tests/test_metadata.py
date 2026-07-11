@@ -82,6 +82,36 @@ def test_default_dataset_license_is_cc0():
     assert root["license"] == {"@id": "https://spdx.org/licenses/CC0-1.0"}
 
 
+def test_upgrade_doc_to_workflow_run_crate():
+    # C8 D1/NQ-7 (Option C shared helper): a GENERATED Snakefile is typed as the crate
+    # mainEntity ComputationalWorkflow with a Snakemake programmingLanguage, and the
+    # wfrun profiles land on the ROOT (spec-correct placement, NOT the descriptor).
+    doc = json.loads(metadata.canonical_jsonld(_build()))
+    metadata.upgrade_doc_to_workflow_run_crate(doc, workflow_relpath="Snakefile.source")
+    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+    assert root["mainEntity"] == {"@id": "Snakefile.source"}
+    wf = next(e for e in doc["@graph"] if e.get("@id") == "Snakefile.source")
+    assert wf["@type"] == ["File", "SoftwareSourceCode", "ComputationalWorkflow"]
+    assert wf["programmingLanguage"] == {"@id": metadata._SNAKEMAKE_LANG_ID}
+    lang = next(e for e in doc["@graph"] if e.get("@id") == metadata._SNAKEMAKE_LANG_ID)
+    assert lang["@type"] == "ComputerLanguage"
+    assert lang["url"] == {"@id": "https://snakemake.readthedocs.io"}
+    profile_ids = {c["@id"] for c in root["conformsTo"]}
+    assert set(metadata._WFRUN_ROOT_PROFILES) <= profile_ids  # all four wfrun profiles
+    # R10: byte-deterministic reserialize + idempotent re-upgrade.
+    s1 = metadata.canonical_jsonld_from_doc(doc)
+    doc2 = json.loads(s1)
+    metadata.upgrade_doc_to_workflow_run_crate(doc2, workflow_relpath="Snakefile.source")
+    assert metadata.canonical_jsonld_from_doc(doc2) == s1
+
+
+def test_bundle_schema_version_bumped_to_v3():
+    # C8: round-trippable Workflow-Run-Crate + reprex carriage = bundle schema v3.
+    from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
+
+    assert BUNDLE_SCHEMA_VERSION == 3
+
+
 def test_sidecar_compare_and_write_idempotent(tmp_path):
     # R4: a second write of identical content returns False (no rewrite / mtime bump).
     g = metadata.canonical_jsonld(_build())

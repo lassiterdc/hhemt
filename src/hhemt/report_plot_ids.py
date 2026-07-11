@@ -47,6 +47,13 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # (no matplotlib raster branch). Matches per_analysis_summary /
     # scenario_status_appendix / errors_and_warnings.
     "disk_utilization": {"matplotlib": ".html", "plotly": ".html"},
+    # Metadata (ADR-14 / C10) is an all-static table/prose page -- emits HTML
+    # unconditionally, like the other table renderers above.
+    "metadata": {"matplotlib": ".html", "plotly": ".html"},
+    # eda_compute_sensitivity (R11): the in-report adapter for the compute-sensitivity
+    # EDA figure family. The EDA free-functions emit interactive Plotly HTML
+    # unconditionally (no matplotlib branch), so both backends resolve to .html.
+    "eda_compute_sensitivity": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 

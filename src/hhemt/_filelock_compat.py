@@ -80,6 +80,7 @@ def flock_supported(directory: Path) -> bool:
         finally:
             os.close(fd)
             try:
+                # EXEMPT-DU: transient-intermediate
                 probe_path.unlink()
             except OSError:
                 pass

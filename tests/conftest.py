@@ -372,6 +372,14 @@ def synth_sensitivity_multi_partition_fanout():
 
 
 @pytest.fixture
+def synth_sensitivity_mixed_cpu_gpu_fanout():
+    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_mixed_cpu_gpu_fanout(
+        start_from_scratch=True
+    )
+    return case.analysis
+
+
+@pytest.fixture
 def synth_sensitivity_all_analysis_prefixed():
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case_all_analysis_prefixed(
         start_from_scratch=True
@@ -799,4 +807,37 @@ def synthetic_two_bundle_fixture(rendered_synth_multi_sim, tmp_path):
             if ent.get("@id") == "./" and isinstance(ent.get("schemaVersion"), int):
                 ent["schemaVersion"] = ent["schemaVersion"] + 1
         rocrate_b.write_text(json.dumps(doc, indent=2))
+    return dir_a, dir_b
+
+
+@pytest.fixture
+def synthetic_two_sensitivity_bundle_fixture(rendered_synth_sensitivity, tmp_path):
+    """Two hermetic synthetic SENSITIVITY-MASTER bundles for the R12 combine proof.
+
+    Mirrors ``synthetic_two_bundle_fixture`` but over the sensitivity master,
+    which ships ``sensitivity_datatree.zarr`` at its root (SENSITIVITY_TREE_NAME)
+    rather than ``analysis_datatree.zarr``. Proves the combine generalization
+    (``_open_experiment_tree`` resolves either root tree name). Emits ONE real
+    sensitivity-master bundle to ``tmp_path`` (NEVER the default
+    analysis_dir/render_bundle/, which the session fixture's no-SHA-drift
+    finalizer would flag), unpacks it, and derives a second combine-compatible
+    bundle as a filesystem copy. Returns (dir_a, dir_b) — two on-disk directories.
+    """
+    import shutil
+    import zipfile
+
+    from hhemt.bundle._combine_merge import SENSITIVITY_TREE_NAME
+
+    analysis = rendered_synth_sensitivity
+    zip_a = tmp_path / "sens_bundle_a.zip"
+    analysis.bundle_report_data(zip_a)
+    dir_a = tmp_path / "sens_bundle_a"
+    with zipfile.ZipFile(zip_a) as zf:
+        zf.extractall(dir_a)
+    assert (dir_a / SENSITIVITY_TREE_NAME).exists(), (
+        f"sensitivity-master bundle must ship {SENSITIVITY_TREE_NAME} at its root "
+        f"for combine merge; got: {sorted(p.name for p in dir_a.iterdir())}"
+    )
+    dir_b = tmp_path / "sens_bundle_b"
+    shutil.copytree(dir_a, dir_b)
     return dir_a, dir_b

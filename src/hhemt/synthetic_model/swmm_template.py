@@ -120,8 +120,8 @@ Units      None
 # J3, J4, sewer_outflow share col 7 (centered), so C3+C4 form the vertical
 # stem of the Y. dummy_outfall stays disconnected at col 7.
 # Number of in-line coupling junctions. MUST be >= the largest MPI rank count
-# the experiment matrix exercises (8, from scripts/experiments/_matrix_builder.py
-# _CLEAN_CONFIGS mpi=8 / hybrid rows) so that under a row-strip static
+# the experiment matrix exercises (8, from hhemt.synthetic_experiment's rank_sweep
+# default (2,4,8) max = 8 / hybrid rows) so that under a row-strip static
 # decomposition EVERY rank owns >= 1 coupling node and participates in the
 # TRITON-SWMM ENSIFY_COMM_WORLD collective. Fewer nodes than ranks => a
 # node-free top rank => coupling-collective deadlock (triton.h:2363-2404).

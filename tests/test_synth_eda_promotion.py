@@ -69,12 +69,12 @@ def test_default_output_path_is_cwd_relative_not_analysis_dir(eda_plot_id, monke
 
 
 def test_register_in_reporting_set_records_intent():
-    rec = register_eda_plot_in_reporting_set("eda_cross_sim_identity", "default")
-    assert rec.plot_id == "eda_cross_sim_identity"
+    rec = register_eda_plot_in_reporting_set("config_diff_maps", "default")
+    assert rec.plot_id == "config_diff_maps"
     assert rec.set_name == "default"
     assert "deferred" in rec.routing  # D-1 option (c): routing deferred to eda-skill
 
 
 def test_register_unknown_set_raises():
     with pytest.raises(ValueError, match="ReportingSet"):
-        register_eda_plot_in_reporting_set("eda_cross_sim_identity", "no_such_set")
+        register_eda_plot_in_reporting_set("config_diff_maps", "no_such_set")

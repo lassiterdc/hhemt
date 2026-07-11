@@ -198,6 +198,32 @@ class Bundle:
             verdicts=[],
         )
 
+    def reprex(self, reprex_config, target_hpc_profile):
+        """Validate round-trip runnability against a target HPC profile (ADR-10).
+
+        Verifies the SIF (mandatory sha256 digest match when the crate references
+        one, fail-closed; best-effort ``apptainer verify`` PGP), re-aims
+        ``validation.py`` preflight at ``target_hpc_profile``, and emits per-``(sa_id,
+        column)`` problem pairs plus per-field graduated experiment amendments for
+        closest-possible cross-system reproduction. Mirrors ``Bundle.eda()`` —
+        delegates to the ``bundle._reprex`` free function with ``bundle.root``.
+
+        Parameters
+        ----------
+        reprex_config : hhemt.config.reprex_config.reprex_config
+            The target user's minimal runnable-field set (account / login node /
+            SIF path / scratch + target partition selectors).
+        target_hpc_profile : hhemt.config.hpc_system.hpc_system_config
+            The reproducer's own HPC profile (partition caps, container spec).
+
+        Returns
+        -------
+        hhemt.bundle._reprex.ReprexResult
+        """
+        from hhemt.bundle._reprex import reprex as _reprex
+
+        return _reprex(self._root, reprex_config, target_hpc_profile)
+
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
         # Resolution (post-F2 rev v2): cfg_analysis.report is required by
         # analysis_config Pydantic schema (Phase 1, R1). The 3-step F1

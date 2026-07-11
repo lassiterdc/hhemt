@@ -6,14 +6,16 @@ import nbformat
 
 
 class _FakeEdaCfg:
-    enabled_plots = ["eda_cross_sim_identity"]
+    enabled_plots = ["config_diff_maps"]
     plotly_js_mode = "inline"
     tabulator_js_mode = "cdn"
     eda = None  # the seed cell reads ctx.cfg_analysis.eda at EXECUTION, not at emit.
 
+
 class _FakeAnalysisCfg:
     analysis_id = "synth_demo"
     eda = _FakeEdaCfg()
+
 
 def test_resolve_notebook_path_normalizes_and_is_non_clobbering(tmp_path):
     from hhemt.eda._notebook import _resolve_notebook_path
@@ -26,6 +28,7 @@ def test_resolve_notebook_path_normalizes_and_is_non_clobbering(tmp_path):
     (tmp_path / "eda_1.ipynb").write_text("{}")
     assert _resolve_notebook_path(tmp_path, None) == tmp_path / "eda_2.ipynb"
 
+
 def test_emit_eda_notebook_validates_and_does_not_clobber(tmp_path):
     from hhemt.eda._notebook import emit_eda_notebook
 
@@ -37,6 +40,7 @@ def test_emit_eda_notebook_validates_and_does_not_clobber(tmp_path):
     p2 = emit_eda_notebook(tmp_path, cfg_analysis=cfg, eda_cfg=cfg.eda, is_bundle=False)
     assert p2 == tmp_path / "eda_1.ipynb"
     assert p1.exists() and p2.exists()
+
 
 def test_is_bundle_omits_calc_cell(tmp_path):
     from hhemt.eda._notebook import emit_eda_notebook

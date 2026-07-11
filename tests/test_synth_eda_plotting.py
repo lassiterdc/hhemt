@@ -13,10 +13,16 @@ from hhemt.eda._plotting import render_eda_plots
 def test_render_cross_sim_identity_emits_master_rooted_with_source(
     synthetic_sensitivity_completed,
 ):
-    """The first EDA plot emits under MASTER-ROOTED plots/eda/ and declares the
-    eda/<plot_id>.zarr artifact as a source (R3/D1 carriage guard)."""
+    """The config-diff EDA plot emits under MASTER-ROOTED plots/eda/ and declares a
+    BUNDLE-CARRIED data source (R3/D1 carriage guard). The redesigned plot reads the
+    consolidated sensitivity_datatree.zarr directly (per-cell max_wlevel_m + per-conduit
+    max_flow_cms + per-sub compute-config attrs -- no smaller per-plot summary zarr
+    suffices), so it declares that tree (the primary consolidated output carried into
+    every render bundle) rather than an eda/<plot_id>.zarr artifact."""
     analysis = synthetic_sensitivity_completed.master_analysis  # NOT the wrapper (D4)
-    # Calc must run first so the eda/<plot_id>.zarr artifact exists.
+    # Run the calc first, mirroring analysis.eda()'s calc->plots order. The config-diff
+    # plot itself reads the consolidated tree (not the calc's eda zarr), but the real
+    # facade always runs calc before plots, so exercise that order here.
     check_cross_sim_identity(analysis)
     root = Path(analysis.analysis_paths.analysis_dir)
 
@@ -26,10 +32,13 @@ def test_render_cross_sim_identity_emits_master_rooted_with_source(
     # MASTER-ROOTED: under {root}/plots/eda/, NOT under plots/sensitivity/per_sim/.
     assert out.parent == root / "plots" / "eda"
     assert out.exists()
-    # Source declared relative to root as eda/<plot_id>.zarr (the carriage chain).
+    # Declares a BUNDLE-CARRIED data source: the consolidated sensitivity_datatree.zarr,
+    # which the config-diff plot reads directly and which the harvest chain carries into
+    # the bundle (verified green by test_synth_eda_facade.py::test_bundle_eda_from_bundle,
+    # the fresh-emit bundle_report_data() -> Bundle.eda() round-trip).
     manifest = out.parent / f"{out.stem}.manifest.json"
     payload = json.loads(manifest.read_text())
-    assert any(s.startswith("eda/") and s.endswith(".zarr") for s in payload["source_paths_relative"])
+    assert "sensitivity_datatree.zarr" in payload["source_paths_relative"]
     assert payload["output_format"] == "html"
 
 

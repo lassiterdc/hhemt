@@ -22,7 +22,7 @@ from hhemt.eda._promote import (
     promote_eda_plot_to_static_config,
     register_eda_plot_in_reporting_set,
 )
-from hhemt.eda._report import cross_sim_identity_figure_from_root
+from hhemt.eda._report import config_diff_maps_figure_from_root
 from hhemt.eda._result import EdaReportResult, EdaResult
 from hhemt.eda.cross_sim_identity import check_cross_sim_identity
 
@@ -31,7 +31,7 @@ __all__ = [
     "EdaReportResult",
     "EdaResult",
     "check_cross_sim_identity",
-    "cross_sim_identity_figure_from_root",
+    "config_diff_maps_figure_from_root",
     "load_eda_context",
     "promote_eda_plot_to_static_config",
     "register_eda_plot_in_reporting_set",

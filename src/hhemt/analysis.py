@@ -110,16 +110,83 @@ class TestRepresentative:
     source_analysis: "TRITONSWMM_analysis"
     partition: str | None
 
+    @property
+    def axes(self) -> dict:
+        """Name the declared axes this representative is SELECTED to exercise,
+        unpacked from ``key`` = (model_toggles, backend, partition,
+        compute_config). ``compilation_backend`` is "CUDA"/"HIP"/None; a None
+        backend on an ``n_gpus>=1`` rep is the diagnostic that the GPU-compile
+        axis will not resolve (``hpc_system_config`` not threaded)."""
+        model_toggles, backend, partition, compute_config = self.key
+        run_mode, n_mpi_procs, n_omp_threads, n_gpus, n_nodes = compute_config
+        return {
+            "model_toggles": model_toggles,
+            "compilation_backend": backend,
+            "partition": partition,
+            "run_mode": run_mode,
+            "n_mpi_procs": n_mpi_procs,
+            "n_omp_threads": n_omp_threads,
+            "n_gpus": n_gpus,
+            "n_nodes": n_nodes,
+        }
+
+
+@dataclass
+class TestSubResult:
+    """One representative's REALIZED ``_test`` run: declared axes (via
+    ``representative.axes``) plus the RESOLVED execution the old
+    ``(analysis_id, sub)`` tuple discarded, plus informational binary
+    provenance. ``workflow_result.mode`` is "slurm" (real allocation) vs
+    "local" (login-node ThreadPool, NO allocation); ``.job_id`` the real SLURM
+    job id; ``.success`` the per-rep pass/fail. ``binary_provenance`` is
+    captured-not-asserted (ldd/readelf text of the compiled triton.exe; None
+    when absent) — NEVER parsed/gated in the engine (empirical judgment only)."""
+
+    representative: "TestRepresentative"
+    analysis_id: str
+    analysis: "TRITONSWMM_analysis"
+    workflow_result: "WorkflowResult"
+    binary_provenance: dict | None = None
+
 
 @dataclass
 class TestResult:
     """Result of ``TRITONSWMM_analysis.test()`` -- the selected representatives,
-    the materialized ``_test/`` sub-analyses as ``(analysis_id, analysis)`` pairs,
-    and the ``{analysis_dir}/_test`` root directory."""
+    the materialized ``_test/`` sub-analyses as ``TestSubResult`` records (each
+    carrying the representative's declared ``axes``, the resolved
+    ``workflow_result``, and informational ``binary_provenance``), and the
+    ``{analysis_dir}/_test`` root directory."""
 
     representatives: list
     subanalyses: list
     root: Path
+
+
+def _capture_binary_provenance(sub: "TRITONSWMM_analysis") -> dict | None:
+    """ldd + readelf -d of the compiled triton.exe under the sub's _test tree.
+    Informational only — stored verbatim, never parsed/asserted (hpc-build-env
+    D1: cluster-specific sonames drift; the runtime fix owns enforcement).
+    Returns None when no triton.exe exists (e.g. a SWMM-only representative)."""
+    import shutil
+    import subprocess
+
+    matches = sorted(sub.analysis_paths.analysis_dir.glob("**/build/triton.exe"))
+    if not matches:
+        return None
+    exe = str(matches[0])
+    prov: dict = {}
+    for key, argv in (
+        ("ldd_libs", ["ldd", exe]),
+        ("dynamic_tags", ["readelf", "-d", exe]),
+    ):
+        tool = shutil.which(argv[0])
+        if tool is None:
+            continue
+        try:
+            prov[key] = subprocess.run(argv, capture_output=True, text=True, timeout=60).stdout
+        except (subprocess.SubprocessError, OSError) as exc:
+            prov[key] = f"<capture failed: {exc}>"
+    return prov or None
 
 
 class TRITONSWMM_analysis:
@@ -742,6 +809,26 @@ class TRITONSWMM_analysis:
         from hhemt.bundle import emit_bundle
 
         return emit_bundle(self, output_path)
+
+    def reprex_bundle(self, output_path: "Path | None" = None) -> "Path":
+        """Emit a reprex-ready Workflow-Run-Crate bundle and return its extracted
+        directory root (ADR-10, D3).
+
+        Peer of ``bundle_report_data()``; opt-in only (never invoked from
+        ``run()``/``submit_workflow()``). ``emit_bundle`` already carries the reprex
+        runnable-template set + WRC crate (Phase 2), so this facade emits the bundle and
+        extracts the zip to a sibling directory so the round-trip consumes a directory
+        root directly (``Bundle.from_directory(...).reprex(...)``). The HARD emit-time
+        zero-user-info gate is deferred to the emit-hardening follow-up (its
+        prerequisite); ``Bundle.reprex()`` runs a consume-side informational scan.
+
+        Returns:
+            Path to the extracted reprex-bundle directory.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        return extract_reprex_bundle(emit_bundle(self, output_path))
 
     def publish(
         self,
@@ -1870,6 +1957,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         override_hpc_restart_times_simulate: int | None = None,
         override_hpc_restart_times_other: int | None = None,
+        override_pickup_where_leftoff: bool | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2036,8 +2124,7 @@ class TRITONSWMM_analysis:
             size_mb = size_bytes / (1024 * 1024)
             if not sys.stdin.isatty():
                 print(
-                    f"[test] Existing _test/ ({size_mb:.1f} MB) left in place "
-                    f"(non-interactive stdin — not prompting).",
+                    f"[test] Existing _test/ ({size_mb:.1f} MB) left in place (non-interactive stdin — not prompting).",
                     flush=True,
                 )
             else:
@@ -2329,6 +2416,14 @@ class TRITONSWMM_analysis:
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
         }
+        # override_pickup_where_leftoff decouples resume-on-retry from the mode:
+        # translate_mode("fresh") (from_scratch=True) sets pickup_where_leftoff=False,
+        # but a resume EXPERIMENT wants a fresh wipe AND within-run hotstart-resume (the
+        # wipe is once at run-start, before any checkpoint exists; pickup governs the
+        # Snakemake-retry behavior AFTER checkpoints are written). None = use the
+        # mode-derived value (no behavior change for existing callers).
+        if override_pickup_where_leftoff is not None:
+            workflow_params["pickup_where_leftoff"] = override_pickup_where_leftoff
 
         if verbose:
             print("Submitting workflow with args:")
@@ -2396,6 +2491,15 @@ class TRITONSWMM_analysis:
         reporting frames, and runs the full compile->run->process->consolidate->
         report path. A strict subset of the user's defined analysis -- no sweeps,
         no synthetic substitution (PIP O-f requirements 1-7).
+
+        Note:
+            This is a user-facing smoke-test ENTRY POINT (ADR-8), not a
+            pytest-collected test function. pytest's default collection
+            (``python_functions = test*``) collects only module-level
+            functions and ``Test``-prefixed-class methods, so this instance
+            method on ``TRITONSWMM_analysis`` is never collected as a test.
+            Invoke it directly (``analysis.test()`` or via the
+            ``test_analysis_test_end_to_end.py`` real-data smoke).
         """
         reps = self._select_test_representatives()
         # Truncation happens INSIDE _build_test_subanalyses: the sliced-weather path
@@ -2411,15 +2515,25 @@ class TRITONSWMM_analysis:
             reporting_timestep_s=reporting_timestep_s,
         )
         results: list = []
-        for sub in test_subs:
-            sub.run(
+        # reps and test_subs are index-aligned: _build_test_subanalyses appends
+        # one sub per rep in `representatives` order.
+        for rep, sub in zip(reps, test_subs, strict=True):
+            wf_result = sub.run(
                 from_scratch=True,
                 execution_mode=execution_mode,
                 verbose=verbose,
                 wait_for_job_completion=wait_for_job_completion,
                 dry_run=dry_run,
             )  # full compile->run->process->consolidate->report
-            results.append((sub.cfg_analysis.analysis_id, sub))
+            results.append(
+                TestSubResult(
+                    representative=rep,
+                    analysis_id=sub.cfg_analysis.analysis_id,
+                    analysis=sub,
+                    workflow_result=wf_result,
+                    binary_provenance=_capture_binary_provenance(sub),
+                )
+            )
         return TestResult(
             representatives=reps,
             subanalyses=results,
@@ -3924,21 +4038,21 @@ class TRITONSWMM_analysis:
             return  # set unchanged — no invalidation needed
         # Set changed: drop the analysis-level consolidate flag so the added chain is
         # re-demanded; drop orphan per-event flags for removed events.
-        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)
-        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)
+        (status_dir / "e_consolidate_complete.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+        (status_dir / "e_consolidate_complete.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
         removed = prepared_event_ids - config_event_ids
         for ev in removed:
             for stem in (
                 f"b_prepare_evt-{ev}_complete",
                 f"f_consolidate_scenario_evt-{ev}_complete",
             ):
-                (status_dir / f"{stem}.flag").unlink(missing_ok=True)
-                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+                (status_dir / f"{stem}.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+                (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
             for model_type in ("triton", "tritonswmm", "swmm"):
                 for phase in ("c_run", "d_process"):
                     stem = f"{phase}_{model_type}_evt-{ev}_complete"
-                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)
-                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)
+                    (status_dir / f"{stem}.flag").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
+                    (status_dir / f"{stem}.flag.json").unlink(missing_ok=True)  # EXEMPT-DU: status-flag
 
     def _reconcile_stale_process_flags_against_summaries(
         self, *, sa_id: str | None = None, master_dir: Path | None = None
@@ -4030,9 +4144,9 @@ class TRITONSWMM_analysis:
         # path from either would miss (wrong dir and/or doubled "sa-sa_" token),
         # silently breaking the rebuild. None/None => non-sensitivity: flags live
         # in THIS analysis's own _status/.
-        assert (sa_id is None) == (
-            master_dir is None
-        ), "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        assert (sa_id is None) == (master_dir is None), (
+            "sa_id and master_dir must be passed together (sensitivity) or both omitted (non-sensitivity)"
+        )
         is_sub = sa_id is not None
 
         reconciled: set[tuple[str, str]] = set()
@@ -4400,7 +4514,7 @@ class TRITONSWMM_analysis:
             DataFrame with columns in canonical order.
         """
         fixed_identity = [
-            "subanalysis_id",
+            "sa_id",
             "sub_analysis_iloc",
             "event_iloc",
             "model_type",
@@ -4518,7 +4632,7 @@ class TRITONSWMM_analysis:
                 row["model_type"] = model_type
                 row["scenario_setup"] = scenario_setup
                 row["run_completed"] = scen.model_run_completed(model_type)
-                row["n_resumes"] = (scen.get_log(model_type).n_resumes.get() or 0)
+                row["n_resumes"] = scen.get_log(model_type).n_resumes.get() or 0
                 row["scenario_directory"] = scenario_dir
                 row["disk_utilization_bytes"] = scenario_du
 
