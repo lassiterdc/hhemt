@@ -2722,6 +2722,16 @@ rule render_report:
             },
             resources_yaml="mem_mb=2000, time_min=5",
             log_path_template="logs/plots/per_analysis_summary_table.log",
+            # scenario_status.csv is produced by the `export_scenario_status`
+            # rule (same consolidation-flag input). Without this dependency the
+            # two rules race after the flag; when this plot rule wins the CSV is
+            # absent and the renderer's fallback path reads per-scenario logs +
+            # the coupled `out_tritonswmm/swmm/hydraulics.rpt`, which the
+            # renderer-IO audit (Gotcha 53) flags as an undeclared read. Making
+            # the CSV a hard DAG input forces the renderer's CSV-authoritative
+            # path (reads only the CSV), matching plot_scenario_status_appendix
+            # and plot_errors_and_warnings, which already declare it.
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
 
