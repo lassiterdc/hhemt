@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from hhemt.config.base import cfgBaseModel
 
@@ -21,12 +21,44 @@ from hhemt.config.base import cfgBaseModel
 class eda_config(cfgBaseModel):
     """EDA-loop config: selected plots + the eda_report.html JS-bundling mode."""
 
+    @model_validator(mode="before")
+    @classmethod
+    def _rewrite_legacy_eda_plot_kind(cls, data):
+        """One-cycle config-format compat: the config-diff EDA plot was renamed
+        eda_cross_sim_identity -> config_diff_maps (the on-disk figure stem +
+        _EDA_RENDERERS key). A pre-rename cfg_analysis.yaml (or a baked render
+        bundle) still carries enabled_plots: [eda_cross_sim_identity]. Rewrite
+        the legacy key to config_diff_maps with an actionable DeprecationWarning
+        so Bundle.eda() renders instead of raising the render_eda_plots
+        "unknown EDA plot kind" ValueError. Pure string rewrite on the raw dict
+        (no _EDA_RENDERERS import) so no config->plotting dependency edge.
+        Mirrors config/report.py::_rewrite_legacy_mode_key (Gotcha-45).
+        Remove next cycle."""
+        if isinstance(data, dict) and isinstance(data.get("enabled_plots"), list):
+            plots = data["enabled_plots"]
+            if "eda_cross_sim_identity" in plots:
+                import warnings
+
+                data = {
+                    **data,
+                    "enabled_plots": ["config_diff_maps" if p == "eda_cross_sim_identity" else p for p in plots],
+                }
+                warnings.warn(
+                    "eda.enabled_plots entry 'eda_cross_sim_identity' is retired; "
+                    "the config-diff EDA plot is now 'config_diff_maps'. The legacy "
+                    "key is rewritten this cycle and will be rejected in a future release.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+        return data
+
     enabled_plots: list[str] = Field(
-        default_factory=lambda: ["eda_cross_sim_identity"],
+        default_factory=lambda: ["config_diff_maps"],
         description=(
             "Renderer-kind keys of the EDA plots to render into eda_report.html, "
-            "in order. Default is the single shipped first member (the cross-sim "
-            "byte-identity visualization over eda/<plot_id>.zarr). Membership is "
+            "in order. Default is the single shipped first member (config_diff_maps, "
+            "the config-diff visualization read from the consolidated "
+            "sensitivity_datatree.zarr). Membership is "
             "VALIDATED AT RENDER TIME (not config-load): an unknown key raises "
             "ValueError in render_eda_plots, which fails fast at the eda() facade "
             "boundary. Config-load validation is deliberately NOT done here — the "
