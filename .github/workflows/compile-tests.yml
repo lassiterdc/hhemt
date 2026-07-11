@@ -33,7 +33,15 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: hhemt
-          environment-file: environment.yaml
+          # environment-lock.yaml (NOT environment.yaml): the loose spec leaves
+          # `pyswmm` unpinned, so a fresh solve lets the pip-block's swmmio 0.8.5
+          # (which caps pyswmm<2.0) DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 during
+          # env creation, breaking prepare_scenario's SWMM-runoff step upstream of
+          # every render. The lock pins the proven-good trio exactly
+          # (pyswmm=2.0.1 / swmm-toolkit=0.15.2 / swmmio==0.8.5) and is the
+          # documented reproducible-install path, guarded by
+          # scripts/check_env_lock_consistency.py.
+          environment-file: environment-lock.yaml
           auto-activate-base: false
 
       - name: Install project (editable, test extras)
