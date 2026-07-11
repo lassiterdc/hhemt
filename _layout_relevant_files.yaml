@@ -125,6 +125,8 @@ non_breaking_allowlist:
       / _version.json / datatree change. Non-breaking.
   - path: src/hhemt/config/reprex_config.py
     justification: "bundle-reprex-roundtrip Phase 1 — NEW reprex_config Pydantic model (minimal target-user field set for the round-trip). Pure config schema (config/**/*.py glob); no on-disk layout change. Non-breaking, no LAYOUT_VERSION bump (mirrors reprex_taxonomy.py)."
+  - path: src/hhemt/config/synthetic_experiment.py
+    justification: "synthetic-experiment-sensitivity-reporting Phase 1 — NEW synthetic_experiment_config Pydantic model (grid + forcing + rank_sweep + partition selectors + per-partition cap validators). Pure config schema; no on-disk analysis-tree/_version.json/datatree change. Non-breaking, no LAYOUT_VERSION bump (belt-and-suspenders — the config/**/*.py glob does not match direct-child config modules)."
   - path: src/hhemt/report_plot_ids.py
     justification: >-
       synthetic-experiment-sensitivity-reporting Phase 4 (R11) — additive
