@@ -162,6 +162,14 @@ class RuleEmissionContext:
         Per D3 — selects ``output_ext`` per renderer (".png" for matplotlib,
         ".html" for plotly chart figures so Snakemake's report engine
         dispatches via iframe instead of <img>). Required; no in-code default.
+    report_tail_slurm_partition : str
+        CPU processing partition the report-tail plot rules submit to under
+        ``--executor slurm`` (source-side). Empty string on the consume side
+        and in ``local`` mode — the plot rules then emit no ``slurm_partition``
+        and inherit nothing (local ``--cores`` ignores it). Prevents the plot
+        rules from inheriting the GPU ensemble partition from
+        ``default-resources`` and being rejected/auto-cancelled on GPU-only
+        partitions.
     """
 
     python_executable: str
@@ -170,6 +178,7 @@ class RuleEmissionContext:
     config_args_str: str
     is_sensitivity: bool
     static_backend: Literal["matplotlib", "plotly"]
+    report_tail_slurm_partition: str = ""
 
 
 @dataclass(frozen=True)
@@ -347,9 +356,21 @@ def _emit_plot_rule(spec: RuleSpec, ctx: RuleEmissionContext) -> str:
     else:
         wildcard_constraints_block = ""
 
-    # Plot-rule shell uses literal "python" (the rule's conda: env
-    # provides the interpreter); only setup / run / process / consolidate
-    # / render_report rules use ctx.python_executable's full path.
+    # Report-tail plot rules are CPU-only; under `--executor slurm` they must
+    # target the CPU processing partition. Without an explicit slurm_partition
+    # they inherit `default-resources`' GPU ensemble partition and are
+    # rejected/auto-cancelled on GPU-only partitions (the batch_job render
+    # failure). Empty report_tail_slurm_partition (consume-side, local mode)
+    # emits no partition — byte-identical to the pre-fix form.
+    if ctx.report_tail_slurm_partition:
+        resources_line = f'slurm_partition="{ctx.report_tail_slurm_partition}", {spec.resources_yaml}'
+    else:
+        resources_line = spec.resources_yaml
+
+    # Use ctx.python_executable (the full interpreter every other DAG rule
+    # uses, e.g. render_report) rather than bare `python`: byte-identical
+    # consume-side (ctx.python_executable == "python" there) and deterministic
+    # source-side. The rule's conda: directive is inert (use-conda: False).
     return f'''
 rule {spec.rule_name}:
     {input_block}
@@ -359,10 +380,10 @@ rule {spec.rule_name}:
 {params_block}
     log: "{spec.log_path_template}"
     conda: "{ctx.conda_env_path}"
-    resources: {spec.resources_yaml}
+    resources: {resources_line}
     shell:
         """
-        python -m hhemt.report_renderers._cli {spec.renderer_module} \\
+        {ctx.python_executable} -m hhemt.report_renderers._cli {spec.renderer_module} \\
             {ctx.config_args_str} \\
 {extra_flags_block}            --output {{output}} \\
             > {{log}} 2>&1
@@ -603,6 +624,10 @@ class _ReportingSetDispatchMixin:
     _RENDERER_PREDICATES = {
         "has_independent_vars": lambda inp: bool(inp.get("independent_vars")),
         "has_sa_event_pairs": lambda inp: bool(inp.get("sa_event_pairs_sa")),
+        # R11: the compute-sensitivity EDA adapter fires only when the master
+        # carries an EDA artifact (the eda calc ran, producing plots/eda/*.zarr).
+        # Threaded via predicate_inputs["has_eda_artifact"] at the generator sites.
+        "has_eda_artifact": lambda inp: bool(inp.get("has_eda_artifact")),
     }
 
     def _resolve_active_reporting_set(self, analysis):
@@ -647,8 +672,8 @@ class _ReportingSetDispatchMixin:
             "metadata",
         ):
             return {"input_flag": input_flag, "ctx": ctx}
-        if builder_key in ("per_sim", "per_sim_per_sa"):
-            return {"ctx": ctx}  # wildcard over event_id; no input_flag in signature
+        if builder_key in ("per_sim", "per_sim_per_sa", "eda_compute_sensitivity"):
+            return {"ctx": ctx}  # wildcard over event_id (per_sim) / no wildcards (eda); no input_flag
         if builder_key == "sensitivity_benchmarking":
             # positional independent_vars, forwarded from predicate_inputs (the
             # value the master/reprocess call sites already thread); NO input_flag.
@@ -689,6 +714,7 @@ class _ReportingSetDispatchMixin:
             "metadata": base._build_plot_rule_block_metadata,
             "per_sim_per_sa": getattr(self, "_build_plot_rule_block_per_sim_per_sa", None),
             "sensitivity_benchmarking": getattr(self, "_build_plot_rule_block_sensitivity_benchmarking", None),
+            "eda_compute_sensitivity": getattr(self, "_build_plot_rule_block_eda_compute_sensitivity", None),
         }
         out = ""
         inputs = predicate_inputs or {}
@@ -1748,6 +1774,15 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         config-args string suffices.
         """
         log_dir_rel = str(self.analysis_paths.analysis_log_directory.relative_to(self.analysis_paths.analysis_dir))
+        # Report-tail plot rules submit to the CPU processing partition under
+        # `--executor slurm` (matching render_report/setup/process/consolidate).
+        # Empty in `local` mode so the emitted Snakefile is byte-identical there
+        # and no literal "None" partition leaks.
+        _report_tail_partition = (
+            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
+            if self.cfg_analysis.multi_sim_run_method != "local"
+            else ""
+        )
         return RuleEmissionContext(
             python_executable=self.python_executable,
             log_dir_rel=log_dir_rel,
@@ -1755,6 +1790,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             config_args_str=self._get_config_args(),
             is_sensitivity=bool(getattr(self.cfg_analysis, "toggle_sensitivity_analysis", False)),
             static_backend=static_backend,
+            report_tail_slurm_partition=_report_tail_partition,
         )
 
     def _build_plot_rule_block_system_overview(
@@ -2744,6 +2780,16 @@ rule render_report:
             },
             resources_yaml="mem_mb=2000, time_min=5",
             log_path_template="logs/plots/per_analysis_summary_table.log",
+            # scenario_status.csv is produced by the `export_scenario_status`
+            # rule (same consolidation-flag input). Without this dependency the
+            # two rules race after the flag; when this plot rule wins the CSV is
+            # absent and the renderer's fallback path reads per-scenario logs +
+            # the coupled `out_tritonswmm/swmm/hydraulics.rpt`, which the
+            # renderer-IO audit (Gotcha 53) flags as an undeclared read. Making
+            # the CSV a hard DAG input forces the renderer's CSV-authoritative
+            # path (reads only the CSV), matching plot_scenario_status_appendix
+            # and plot_errors_and_warnings, which already declare it.
+            additional_inputs=("scenario_status.csv",),
         )
         return _emit_plot_rule(spec, ctx)
 
@@ -3065,9 +3111,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             # default under configargparse precedence, so they are unaffected.
             "rerun-triggers": ["mtime"],
         }
-        assert isinstance(
-            self.cfg_analysis.local_cpu_cores_for_workflow, int
-        ), "local_cpu_cores_for_workflow must be specified for local runs"
+        assert isinstance(self.cfg_analysis.local_cpu_cores_for_workflow, int), (
+            "local_cpu_cores_for_workflow must be specified for local runs"
+        )
         if mode == "local":
             config.update(
                 {
@@ -3089,9 +3135,9 @@ def _per_sim_conduit_flow_sources(wildcards):
             slurm_partition = self.cfg_analysis.hpc_ensemble_partition
             # Phase-4 (4d): concurrency cap moved to hpc_system_config.max_concurrent_jobs.
             max_concurrent = self.cfg_hpc_system.max_concurrent_jobs if self.cfg_hpc_system else None
-            assert isinstance(
-                max_concurrent, int
-            ), "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            assert isinstance(max_concurrent, int), (
+                "hpc_system_config.max_concurrent_jobs is required for generate_snakemake_config (slurm mode)"
+            )
             # Modern executor mode: uses 'executor: slurm' with job steps
             config.update(
                 {
@@ -3314,9 +3360,9 @@ echo ""
             # per-node count is required) — _resolve_gpus_per_node resolves an
             # absent value to 0, which is a misconfiguration in the GPU branch.
             gpus_per_node = self._resolve_gpus_per_node(self.cfg_analysis.hpc_ensemble_partition)
-            assert (
-                isinstance(gpus_per_node, int) and gpus_per_node > 0
-            ), "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            assert isinstance(gpus_per_node, int) and gpus_per_node > 0, (
+                "hpc_gpus_per_node required when using GPUs in 1_job_many_srun_tasks mode"
+            )
             # --gres/--gpus-per-node are per-node, SLURM will multiply by --nodes automatically
             gpu_hardware = self._resolve_gpu_hardware(self.cfg_analysis.hpc_ensemble_partition)
             if gpu_hardware:
@@ -6751,6 +6797,16 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # snakemake --report engine can resolve caption= paths.
         _emit_report_artifacts(self.master_analysis.analysis_paths.analysis_dir)
 
+        # Re-materialize the per-target `_generated/target_*.yaml` files that the
+        # setup_target_N rules (emitted below) reference by absolute path. The
+        # sensitivity constructor writes them (is_main_orchestrator=True), but
+        # `run(from_scratch=True)` fast_rmtree's the analysis_dir AFTER construction;
+        # regenerating them here — the single guaranteed post-wipe point every run
+        # path reaches — makes the invariant self-enforcing. No-op for the fast-path
+        # target (its config lives outside analysis_dir); byte-identical/idempotent on
+        # resume (the YAMLs are shell ARGs, not Snakemake input:, so no rerun trigger).
+        self.sensitivity_analysis._materialize_target_yamls()
+
         # Get absolute path to conda environment file using helper
         conda_env_path = self._base_builder._get_conda_env_path()
         master_config_args = self._base_builder._get_config_args(
@@ -6957,6 +7013,17 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
+        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
+        # Inert for the benchmarking/default sets (no eda renderer in the selection),
+        # so byte-identity for those sets is preserved.
+        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _eda_in_set = any(
+            sel.builder_key == "eda_compute_sensitivity"
+            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
+        )
+        if _eda_in_set and _has_eda_artifact:
+            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
         # planner re-fires the render whenever any plot output is newer than
@@ -7338,6 +7405,7 @@ onerror:
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
+                "has_eda_artifact": _has_eda_artifact,
             },
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
@@ -7664,6 +7732,17 @@ onerror:
                 descriptor="{independent_var}.vs.total",
             ).replace("__OUTPUT_EXT__", _e_bench)
             rule_all_inputs.append(f'expand("{_bench_path}", independent_var={_independent_vars!r})')
+        # R11: gate the compute-sensitivity EDA figure on (a) the active set carrying
+        # the eda renderer AND (b) eda being configured (enabled_plots non-empty).
+        # Inert for the benchmarking/default sets (no eda renderer in the selection),
+        # so byte-identity for those sets is preserved.
+        _has_eda_artifact = bool(self.master_analysis.cfg_analysis.eda.enabled_plots)
+        _eda_in_set = any(
+            sel.builder_key == "eda_compute_sensitivity"
+            for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
+        )
+        if _eda_in_set and _has_eda_artifact:
+            rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
             rule_all_inputs.append(f'"analysis_report.{_fmt}"')
@@ -7925,6 +8004,7 @@ onerror:
             predicate_inputs={
                 "independent_vars": _independent_vars,
                 "sa_event_pairs_sa": sa_event_pairs_sa,
+                "has_eda_artifact": _has_eda_artifact,
             },
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
@@ -7965,6 +8045,47 @@ rule render_report:
 '''
 
         return snakefile_content
+
+    def _build_plot_rule_block_eda_compute_sensitivity(self, *, ctx: RuleEmissionContext | None = None) -> str:
+        """Generate the compute-sensitivity EDA adapter plot rule (R11).
+
+        Emits ONE report()-annotated rule for the config_diff_maps EDA figure under
+        master-rooted ``plots/eda/``. The rule shells out to
+        ``_cli eda_compute_sensitivity``, whose ``render()`` delegates to
+        ``eda/_plotting.render_eda_plots`` — the renderer self-declares its data
+        sources via ``emit_plot_with_sources`` (the consolidated tree + one
+        hydraulics.inp), so the rule's ``source_paths`` here feeds only the caption
+        Sources block. Lands under "Key Results" (Decision 1). Gated on the
+        has_eda_artifact predicate at the dispatcher, so it fires only when the
+        master carries an EDA artifact.
+        """
+        if ctx is None:
+            ctx = self._base_builder._make_rule_emission_context(
+                static_backend=self._base_builder._get_report_cfg_static_backend()
+            )
+        spec = RuleSpec(
+            rule_name="plot_eda_compute_sensitivity",
+            renderer_module="eda_compute_sensitivity",
+            input_flags=("_status/f_consolidate_master_complete.flag",),
+            output_path_template=_plot_output_template(
+                renderer_kind="config_diff_maps",
+                subdir="plots/eda",
+            ),
+            source_paths=("sensitivity_datatree.zarr",),
+            wildcards=(),
+            extra_cli_flags=(),
+            extra_params=(),
+            report_kwargs={
+                "caption": "report/captions/eda_compute_sensitivity.rst",
+                "category": "Key Results",
+                "subcategory": "Compute-config EDA",
+                "labels": '{"figure": "Config-diff maps"}',
+            },
+            resources_yaml="mem_mb=4000, time_min=10",
+            log_path_template="logs/plots/eda_compute_sensitivity.log",
+            input_label="master",
+        )
+        return _emit_plot_rule(spec, ctx)
 
     def _build_plot_rule_block_sensitivity_benchmarking(
         self, independent_vars: list[str], *, ctx: RuleEmissionContext | None = None

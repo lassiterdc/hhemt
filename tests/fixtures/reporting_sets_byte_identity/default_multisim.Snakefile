@@ -357,14 +357,14 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
     shell:
         """
-        python -m hhemt.report_renderers._cli system_overview \
+        {PYTHON} -m hhemt.report_renderers._cli system_overview \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
@@ -381,7 +381,7 @@ def _per_sim_flood_depth_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
     )
 
 def _per_sim_conduit_flow_sources(wildcards):
@@ -394,7 +394,7 @@ def _per_sim_conduit_flow_sources(wildcards):
         rainfall_datavar='RG_synth',
         storm_tide_datavar='water_level',
         dem_rel_path='../elevation_10.00m.dem',
-        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/9892e5a53f524d98/watershed.geojson',
+        watershed_rel_path='../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/watershed.geojson',
     )
 
 rule plot_per_sim_peak_flood_depth:
@@ -418,7 +418,7 @@ rule plot_per_sim_peak_flood_depth:
     resources: mem_mb=4000, time_min=15
     shell:
         """
-        python -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
+        {PYTHON} -m hhemt.report_renderers._cli per_sim_peak_flood_depth \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
@@ -447,7 +447,7 @@ rule plot_per_sim_conduit_flow:
     resources: mem_mb=4000, time_min=15
     shell:
         """
-        python -m hhemt.report_renderers._cli per_sim_conduit_flow \
+        {PYTHON} -m hhemt.report_renderers._cli per_sim_conduit_flow \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --event-iloc {params.event_iloc} \
@@ -457,6 +457,7 @@ rule plot_per_sim_conduit_flow:
 
 rule plot_per_analysis_summary_table:
     input:
+        "scenario_status.csv",
         consolidated = "_status/e_consolidate_complete.flag",
     output:
         report(
@@ -474,7 +475,7 @@ rule plot_per_analysis_summary_table:
     resources: mem_mb=2000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli per_analysis_summary \
+        {PYTHON} -m hhemt.report_renderers._cli per_analysis_summary \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
@@ -501,7 +502,7 @@ rule plot_scenario_status_appendix:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli scenario_status_appendix \
+        {PYTHON} -m hhemt.report_renderers._cli scenario_status_appendix \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
@@ -528,7 +529,7 @@ rule plot_errors_and_warnings:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli errors_and_warnings \
+        {PYTHON} -m hhemt.report_renderers._cli errors_and_warnings \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
@@ -553,7 +554,7 @@ rule plot_disk_utilization:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli disk_utilization \
+        {PYTHON} -m hhemt.report_renderers._cli disk_utilization \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \
@@ -578,7 +579,7 @@ rule plot_metadata:
     resources: mem_mb=1000, time_min=5
     shell:
         """
-        python -m hhemt.report_renderers._cli metadata \
+        {PYTHON} -m hhemt.report_renderers._cli metadata \
             --system-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/system_config.yaml \
             --analysis-config {PYTEST_TMP}/test_multisim_default_byte_ide0/synthetic_test_runs/synth_multi_sim/analysis_config.yaml \
             --output {output} \

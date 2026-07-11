@@ -23,10 +23,10 @@ Example:
 """
 
 from pathlib import Path
-from typing import Literal, Optional, List
+from typing import Literal
 
-from .system import TRITONSWMM_system
 from .orchestration import WorkflowResult, WorkflowStatus
+from .system import TRITONSWMM_system
 
 __all__ = ["Toolkit"]
 
@@ -139,8 +139,8 @@ class Toolkit:
             >>> print(f"Analysis directory: {tk.analysis.analysis_dir}")
             >>> print(f"Total simulations: {tk.analysis.n_simulations}")
         """
-        from .system import TRITONSWMM_system
         from .analysis import TRITONSWMM_analysis
+        from .system import TRITONSWMM_system
 
         # Load system and analysis
         system = TRITONSWMM_system(Path(system_config))
@@ -158,11 +158,77 @@ class Toolkit:
 
         return cls(system)
 
+    @classmethod
+    def synthetic_experiment(
+        cls,
+        config: str | Path,
+        *,
+        hpc_system_config: str | Path | None = None,
+        dest_dir: str | Path | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Load-smoke facade for the synthetic compute-config experiment (PIP-2 Phase 1).
+
+        Loads and validates the ``synthetic_experiment_config`` (firing the
+        coupling-invariant AND partition-cap validators — the latter loads the
+        per-cluster ``hpc_system_config``), builds the partition-as-axis experiment
+        matrix, and — unless ``dry_run`` — writes the matrix CSV and generates the
+        synthetic model under ``dest_dir``.
+
+        Args:
+            config: Path to a ``synthetic_experiment_config`` YAML.
+            hpc_system_config: Optional path to the per-cluster ``hpc_system_config``
+                YAML; when given it overrides the config's ``hpc_system_config_yaml``.
+            dest_dir: Output dir for the matrix CSV + generated model (non-dry-run).
+                Defaults to ``{config parent}/synth_experiment_out``.
+            dry_run: When True, validate the config + build the matrix in memory and
+                return WITHOUT writing files or generating the model (the DoD
+                "load-smoke").
+
+        Returns:
+            ``{"config": synthetic_experiment_config, "n_matrix_rows": int,
+               "matrix_csv": Path | None, "model_dir": Path | None}``.
+
+        Note:
+            This Phase-1 scaffold does NOT compose and run a full analysis ensemble;
+            that composition currently lives in
+            ``scripts/experiments/synth_compute_config.py`` and is promoted into the
+            framework in a later phase (see the deferred follow-up).
+        """
+        import yaml
+
+        from .config.synthetic_experiment import synthetic_experiment_config
+        from .synthetic_experiment import build_experiment_matrix, generate_synthetic_experiment
+
+        config = Path(config)
+        cfg_dict = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+        if hpc_system_config is not None:
+            cfg_dict["hpc_system_config_yaml"] = str(hpc_system_config)
+        cfg = synthetic_experiment_config.model_validate(cfg_dict)  # fires both validators
+
+        matrix = build_experiment_matrix(cfg)
+        result: dict = {
+            "config": cfg,
+            "n_matrix_rows": len(matrix),
+            "matrix_csv": None,
+            "model_dir": None,
+        }
+        if not dry_run:
+            dest = Path(dest_dir) if dest_dir is not None else config.parent / "synth_experiment_out"
+            dest.mkdir(parents=True, exist_ok=True)
+            matrix_csv = dest / "experiment_matrix.csv"
+            matrix.to_csv(matrix_csv, index=False)
+            model_dir = dest / "model"
+            generate_synthetic_experiment(cfg, model_dir)
+            result["matrix_csv"] = matrix_csv
+            result["model_dir"] = model_dir
+        return result
+
     def run(
         self,
         mode: Literal["fresh", "resume", "overwrite"] = "resume",
-        phases: Optional[List[str]] = None,
-        events: Optional[List[int]] = None,
+        phases: list[str] | None = None,
+        events: list[int] | None = None,
         dry_run: bool = False,
         verbose: bool = True,
         report_config: Path | None = None,
@@ -337,8 +403,7 @@ class Toolkit:
             "slurm" if in SLURM context or configured for SLURM,
             "local" otherwise
         """
-        if self.analysis.in_slurm or \
-           self.analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
+        if self.analysis.in_slurm or self.analysis.cfg_analysis.multi_sim_run_method == "1_job_many_srun_tasks":
             return "slurm"
         return "local"
 

@@ -104,6 +104,28 @@ class TRITONSWMM_run:
         """Legacy completion check for the coupled TRITON-SWMM model."""
         return self.model_run_completed("tritonswmm")
 
+    def _coupled_swmm_report_finalized(self, model_type: str) -> bool:
+        """Return False only for a coupled TRITON-SWMM run whose SWMM report is unfinalized.
+
+        Coupled completion is detected from the TRITON ``"Simulation ends"`` marker
+        (Gotcha 6), which does NOT prove the coupled SWMM report was written. A
+        resumed (or crashed / early-exited) coupled run can leave a 0-byte or
+        truncated ``out_tritonswmm/swmm/hydraulics.rpt``. This gate additionally
+        requires that rpt to be finalized (carry the terminal ``"Analysis ended on"``
+        marker, via ``swmm_output_parser.rpt_is_complete``). Non-``tritonswmm`` model
+        types are unaffected (always True). Returning False here converts a silent
+        bad coupled output into a RETRIABLE failure, so the existing ``retries:`` +
+        ``--pickup-where-leftoff`` machinery re-runs (and resumes) the sim.
+        """
+        if model_type != "tritonswmm":
+            return True
+        rpt = self._scenario.scen_paths.swmm_hydraulics_rpt
+        if rpt is None or not rpt.exists():
+            return False
+        from hhemt.swmm_output_parser import rpt_is_complete
+
+        return rpt_is_complete(rpt)
+
     def model_run_completed(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> bool:
         """Check if a simulation completed for a specific model type.
 
@@ -120,7 +142,7 @@ class TRITONSWMM_run:
             model_log = self._scenario.get_log(model_type)
             completed = model_log.simulation_completed.get()
             if completed is not None:
-                return bool(completed)
+                return bool(completed) and self._coupled_swmm_report_finalized(model_type)
         except (AttributeError, FileNotFoundError):
             pass  # log not yet written — fall through to raw-file check
 
@@ -146,7 +168,7 @@ class TRITONSWMM_run:
                     "user-visible error.",
                     model_type, perf_file,
                 )
-        return success
+        return success and self._coupled_swmm_report_finalized(model_type)
 
     def _classify_model_log_failure(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> str:
         """Classify the failure mode of an incomplete simulation from its model log.
@@ -423,6 +445,25 @@ class TRITONSWMM_run:
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",
                         flush=True,
                     )
+                # --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim loud-failure guard) ---
+                # Coupled TRITON-SWMM cannot correctly hotstart-resume: on a TRITON resume
+                # the coupled SWMM engine re-initializes from t=0 (swmm_start(TRUE)), so the
+                # single .out/.rpt covers only the post-checkpoint segment and every
+                # max-flow/max-depth summary is systematically LOW (empirically 29-47% low on
+                # sa_gpu_2_r1 vs the one-shot sa_gpu_1_r1). Fail LOUDLY here, BEFORE launch, so
+                # a resumed coupled sim never silently emits wrong data. n_resumes was just
+                # incremented above, so the report's check_coupled_hotstart_resume counts this
+                # sim. Delete this whole block AND the sibling check in analysis_validation.py
+                # (same marker) once upstream persist-and-replay lands. triton/swmm untouched.
+                if model_type == "tritonswmm":
+                    from hhemt.exceptions import SimulationError
+
+                    raise SimulationError(
+                        event_iloc=self._scenario.event_iloc,
+                        model_type="tritonswmm",
+                        logfile=model_logfile,
+                    )
+                # --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 
         og_env = os.environ.copy()
         env = dict()

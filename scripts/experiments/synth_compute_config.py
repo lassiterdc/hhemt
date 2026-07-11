@@ -1,9 +1,10 @@
 """UVA synthetic compute-config experiment factories (scripts-side; D5 option a).
 
-Seed of the ADR-8 ``tests/fixtures`` -> ``src/`` synth-machinery lift; coordinate with the
-``analysis-test-end-to-end`` predetermined plan before promoting to ``src/``. Imports the
-synthetic-model builder from ``tests/`` — run from the repo root (where ``tests/`` is on
-sys.path). Emits CSV (not XLSX) sensitivity definitions to sidestep Gotcha 15 (A3).
+The synthetic-model generators and the experiment-matrix builder are now lifted to
+``src`` (``hhemt.synthetic_model`` + ``hhemt.synthetic_experiment``, PIP-2 Phase 1);
+this scripts-side driver composes them into the UVA sensitivity cases and emits CSV
+(not XLSX) sensitivity definitions to sidestep Gotcha 15 (A3). Run from the repo root
+(where ``tests/`` is on sys.path for the test-case builder).
 """
 
 from __future__ import annotations
@@ -18,10 +19,9 @@ from pathlib import Path
 # first makes the later swmmio import safe. Must precede the tests.fixtures imports.
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
+from hhemt.synthetic_experiment import write_clean_matrix_csv, write_resume_matrix_csv
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
-
-from ._matrix_builder import write_clean_matrix_csv, write_resume_matrix_csv
 
 _GENERATED = Path(__file__).parent / "_generated"  # gitignored (D3)
 
@@ -37,20 +37,20 @@ _EXPERIMENT_PARAMS = dataclasses.replace(
     cell_size_m=3.5,
     n_cols=64,
     n_rows=120,
-    sim_duration_min=1440,        # 24 h event — TUNE: smallest sim_duration whose FASTEST
-                                  # GPU config's clean SLURM Elapsed is ~2-4 min (> the 1-min
-                                  # walltime floor so resume kills fire), measured in step C4.
-    rainfall_peak_min=120,        # rain + surge peak at 2 h
-    rainfall_duration_min=720,    # rain over 0..12 h (rise to 2 h, fall to 12 h), then dry
+    sim_duration_min=1440,  # 24 h event — TUNE: smallest sim_duration whose FASTEST
+    # GPU config's clean SLURM Elapsed is ~2-4 min (> the 1-min
+    # walltime floor so resume kills fire), measured in step C4.
+    rainfall_peak_min=120,  # rain + surge peak at 2 h
+    rainfall_duration_min=720,  # rain over 0..12 h (rise to 2 h, fall to 12 h), then dry
     rainfall_peak_mm_per_hr=100.0,
-    stormsurge_peak_m=1.0,        # +1 m surge on the base tide, co-peaking with the rain
-    reporting_timestep_s=600.0,   # 10-min dumps -> ~288 over 48 h (manageable output)
+    stormsurge_peak_m=1.0,  # +1 m surge on the base tide, co-peaking with the rain
+    reporting_timestep_s=600.0,  # 10-min dumps -> ~288 over 48 h (manageable output)
     compound_event=True,
 )
 
 # Fixed physical domain (m), preserved across resolutions so a model at any cell
 # size is the SAME watershed (224 m × 420 m) — only the grid density changes.
-_DOMAIN_WIDTH_M = _EXPERIMENT_PARAMS.n_cols * _EXPERIMENT_PARAMS.cell_size_m   # 224.0
+_DOMAIN_WIDTH_M = _EXPERIMENT_PARAMS.n_cols * _EXPERIMENT_PARAMS.cell_size_m  # 224.0
 _DOMAIN_HEIGHT_M = _EXPERIMENT_PARAMS.n_rows * _EXPERIMENT_PARAMS.cell_size_m  # 420.0
 
 
@@ -69,9 +69,7 @@ def _params_for_resolution(cell_size_m: float) -> SyntheticModelParams:
     """
     n_cols = max(round(_DOMAIN_WIDTH_M / cell_size_m), 1)
     n_rows = max(round(_DOMAIN_HEIGHT_M / cell_size_m), 1)
-    return dataclasses.replace(
-        _EXPERIMENT_PARAMS, cell_size_m=cell_size_m, n_cols=n_cols, n_rows=n_rows
-    )
+    return dataclasses.replace(_EXPERIMENT_PARAMS, cell_size_m=cell_size_m, n_cols=n_cols, n_rows=n_rows)
 
 
 @dataclasses.dataclass
@@ -81,8 +79,14 @@ class _Case:
 
 
 def _build_case(
-    *, analysis_name: str, sensitivity_csv: Path, start_from_scratch: bool, resume: bool,
-    system_directory: str | None, cell_size_m: float = 3.5,
+    *,
+    analysis_name: str,
+    sensitivity_csv: Path,
+    start_from_scratch: bool,
+    resume: bool,
+    system_directory: str | None,
+    cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -95,31 +99,22 @@ def _build_case(
     off-cluster, where ``/project`` does not exist (the system constructor mkdir's this path).
     """
     system_cfg = {
-        "gpu_compilation_backend": "CUDA",
-        "gpu_hardware": "a6000",
-        # Match the native synth grid resolution (no resample). Tracks cell_size_m
-        # so a re-gridded model keeps identity DEM handling.
+        # ONLY surviving system_config key. GPU hardware/backend, the gres allocation
+        # flavor, and the module set moved to hpc_system_config_synth_uva.yaml
+        # (partition-as-axis migration, Gotcha 54).
         "target_dem_resolution": cell_size_m,
-        # HPC module set the generated compile/run scripts must `module load` (system.py:663):
-        # without it the field is None, no `module load` is emitted, and the build node lacks
-        # both `nvcc` and a new-enough libstdc++ -> GPU compile fails (first nvcc-not-found,
-        # then a GLIBCXX ABI link error in CMake's TryCompile).
-        # gompi/14.2.0_5.0.7 = GCC 14.2, whose libstdc++ provides GLIBCXX_3.4.33 — clears the
-        # conda env's GLIBCXX_3.4.30+ floor that CMake's TryCompile needs (it runs before the
-        # project's conda-libstdc++ link flag applies). The previously-working set
-        # gcc/12.4.0+openmpi/4.1.4+cuda/12.2.2 is no longer on Rivanna; the only other bundle,
-        # gompi/11.4.0_4.1.4 (GCC 11.4 / GLIBCXX_3.4.29), is too old. cuda/12.8.0 supports
-        # GCC <=14 (cuda/12.4.1 caps at GCC 13). GCC 14.2 already builds the CPU backend OK.
-        "additional_modules_needed_to_run_TRITON_SWMM_on_hpc": "miniforge gompi/14.2.0_5.0.7 cuda/12.8.0",
-        # GPU SLURM allocation mode. Unset -> defaults to "gpus" (Frontier --gpus-per-task=1,
-        # run_simulation.py:651), which on UVA's gres allocation fails at sim launch:
-        # "srun: fatal: --gpus-per-task is mutually exclusive with ... SLURM_NTASKS_PER_GPU".
-        # UVA requires "gres" (UVA_DEFAULT_PLATFORM_CONFIG). This is the last cfg_system field
-        # the hand-built dict was missing vs PlatformConfig.to_system_dict().
-        "preferred_slurm_option_for_allocating_gpus": "gres",
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
+
+    # Config-injectable (no hardcoded config — CLAUDE.md style #9): callers (the private-estate
+    # runner) pass the git-tracked estate config carrying the real account; None preserves the
+    # in-toolkit placeholder path (its {your-allocation} is anonymization-safe for the public repo).
+    hpc_cfg = (
+        hpc_system_config_yaml
+        if hpc_system_config_yaml is not None
+        else Path(__file__).parent / "hpc_system_config_synth_uva.yaml"
+    )
 
     case = retrieve_synth_TRITON_SWMM_test_case(
         analysis_name=analysis_name,
@@ -130,46 +125,40 @@ def _build_case(
         toggle_swmm_model=False,
         start_from_scratch=start_from_scratch,
         additional_system_configs=system_cfg,
+        hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
             "multi_sim_run_method": "batch_job",
-            "hpc_account": "{your-allocation}",
-            "hpc_login_node": "login1.hpc.virginia.edu",
-            # batch_job REQUIRED fields (analysis_config check_consistency, config/analysis.py
-            # lines 620/625/628/633) — all default None and raise at load if omitted:
-            "hpc_max_simultaneous_sims": 1000,  # set high so it does NOT cap concurrent sbatch
-            # jobs (Decision 2 — ~28 sims/case, so 1000 is an effective no-cap)
+            # batch_job REQUIRED fields (default None -> raise at load if omitted). The retired
+            # hpc_account / hpc_login_node / hpc_max_simultaneous_sims / hpc_gpus_per_node keys
+            # moved to hpc_system_config_synth_uva.yaml (default_account / login_node /
+            # max_concurrent_jobs / partitions.*.gpus_per_node).
             "hpc_total_job_duration_min": 60,  # SBATCH --time; Phase 3 tunes from observed runtimes
-            "hpc_gpus_per_node": 8,  # UVA a6000/a100 nodes hold 8 GPUs
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
-            # Snakemake retries: high for resume so a walltime-killed sim auto-resumes
-            # to completion within ONE analysis.run() (no manual re-run loop); 2 for clean
-            # (clean has a single-allocation walltime and is never killed). The simulate
-            # knob drives the per-rule retries: on the sim rules; _other seeds the global
-            # baseline for the idempotent non-sim rules (old single value seeds both,
-            # preserving the prior global-restart-times semantics).
+            # Snakemake retries: high for resume so a walltime-killed sim auto-resumes to
+            # completion within ONE analysis.run(); 2 for clean (never killed).
             "hpc_restart_times_simulate": 20 if resume else 2,
             "hpc_restart_times_other": 20 if resume else 2,
-            # base partitions REQUIRED for SLURM resource-block generation (workflow.py:1044):
-            # the sim resource block reads hpc_ensemble_partition (CSV overrides it per-row);
-            # setup/prepare/process/consolidate jobs read hpc_setup_and_analysis_processing_partition.
-            "hpc_ensemble_partition": "standard",
+            # base partition selectors (the CSV overrides ensemble per-row). The master ensemble
+            # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
+            # setup/prepare/process/consolidate run on standard.
+            "hpc_ensemble_partition": "gpu-a6000",
             "hpc_setup_and_analysis_processing_partition": "standard",
-            # NOTE: gres GPU allocation is the workflow.run() default (gpu_alloc_mode="gres");
-            # it is NOT an analysis_config field, so it must not be set here (extra="forbid").
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": str(sensitivity_csv),
-            # sensitivity report block REQUIRED (validate_sensitivity_independent_vars,
-            # analysis.py:1761) — reuse the synth sensitivity report yaml content:
+            # sensitivity report block REQUIRED (validate_sensitivity_independent_vars).
+            # reporting_set lives on report_config (top level), NOT on report.sensitivity
+            # (ADR-5 ReportingSet: config/report.py::report_config.reporting_set; the
+            # sensitivity submodel forbids it as extra and strips a legacy `mode` key).
             "report": {
+                "reporting_set": "benchmarking",
                 "sensitivity": {
-                    "mode": "benchmarking",
                     "independent_vars": ["n_devices"],
                     "dependent_var": "performance.Total",
                     "aggregation": "mean",
                     "group_by_var": "run_mode",
-                }
+                },
             },
         },
     )
@@ -177,7 +166,10 @@ def _build_case(
 
 
 def clean_case(
-    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5
+    start_from_scratch: bool = False,
+    system_directory: str | None = None,
+    cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -199,12 +191,16 @@ def clean_case(
         resume=False,
         system_directory=system_directory,
         cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
     )
 
 
 def resume_case(
-    start_from_scratch: bool = False, system_directory: str | None = None, cell_size_m: float = 3.5,
+    start_from_scratch: bool = False,
+    system_directory: str | None = None,
+    cell_size_m: float = 3.5,
     runtime_min_by_sa: dict[str, float] | None = None,
+    hpc_system_config_yaml: Path | None = None,
 ) -> _Case:
     """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
 
@@ -236,4 +232,37 @@ def resume_case(
         resume=True,
         system_directory=system_directory,
         cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
+    )
+
+
+def build_resume_from_clean_runtimes(
+    *,
+    clean_system_directory: str,
+    system_directory: str | None = None,
+    cell_size_m: float = 3.5,
+    hpc_system_config_yaml: Path | None = None,
+) -> _Case:
+    """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
+    wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
+    materialize the resume case. Run AFTER the clean sweep has completed.
+
+    Delegates the per-sa runtime read to
+    ``hhemt.synthetic_experiment.size_resume_walltimes`` (df_status['perf_Total'];
+    on the clean run this equals SLURM Elapsed because clean is never resumed).
+    ``cell_size_m`` MUST match the clean sweep's for a valid byte-identity compare.
+    """
+    from hhemt.synthetic_experiment import size_resume_walltimes
+
+    clean = clean_case(
+        system_directory=clean_system_directory,
+        cell_size_m=cell_size_m,
+        hpc_system_config_yaml=hpc_system_config_yaml,
+    )
+    runtime_min_by_sa = size_resume_walltimes(clean.analysis)
+    return resume_case(
+        system_directory=system_directory,
+        cell_size_m=cell_size_m,
+        runtime_min_by_sa=runtime_min_by_sa,
+        hpc_system_config_yaml=hpc_system_config_yaml,
     )

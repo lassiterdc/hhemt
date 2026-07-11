@@ -118,6 +118,11 @@ class system_config(cfgBaseModel):
         json_schema_extra={"toolkit_owned_output": True},
         description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
     )
+    # Optional[Path] (not required) ONLY so a portability-scrubbed render bundle's
+    # cfg_system.yaml (which nulls this per bundle/_path_policy.py IS_NONE_ACCEPTABLE)
+    # loads for bundle-local EDA/render; requiredness is enforced at the
+    # TRITONSWMM_system constructor chokepoint, not at load time. Mirrors the
+    # SWMM_software_directory sibling above.
     TRITONSWMM_software_directory: Optional[Path] = Field(
         None,
         json_schema_extra={"toolkit_owned_output": True},

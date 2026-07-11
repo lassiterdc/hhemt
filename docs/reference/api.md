@@ -10,4 +10,6 @@
 
 ::: hhemt.eda
 
+::: hhemt.synthetic_experiment
+
 ::: hhemt.version_migration

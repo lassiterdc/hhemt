@@ -91,6 +91,15 @@ def promote_eda_plot_to_static_config(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     body = yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False)
     output_path.write_text(_PROMOTED_HEADER + body)
+    # lean (c): surface the paste-ready cfg_analysis line so the user can wire the
+    # emitted static config into their analysis config without hunting for the field.
+    print(
+        f"[eda-promote] Static config for {plot_id!r} written to {output_path}.\n"
+        f"[eda-promote] Add it to your analysis config to render it as a publication static plot:\n"
+        f"[eda-promote]   static_plot_configs:\n"
+        f"[eda-promote]     - {output_path}",
+        flush=True,
+    )
     return output_path
 
 
@@ -109,6 +118,26 @@ def register_eda_plot_in_reporting_set(plot_id: str, set_name: str) -> EdaReport
     if set_name not in REPORTING_SETS:
         raise ValueError(
             f"set_name {set_name!r} is not a registered ReportingSet; valid sets: {sorted(REPORTING_SETS)}."
+        )
+    # lean (d): diagnose whether the target set already renders this plot. R11
+    # wired the compute-sensitivity set's eda_compute_sensitivity adapter, so a
+    # registration against a set whose selection already carries that renderer IS
+    # routed (config-selectable via report_config.reporting_set); other sets are
+    # register-only (report()-routing deferred to reporting-system_eda-skill).
+    _wired = any(sel.builder_key == "eda_compute_sensitivity" for sel in REPORTING_SETS[set_name].renderer_selection)
+    if _wired:
+        print(
+            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
+            f"this set already renders the EDA adapter; select it with "
+            f"report_config.reporting_set={set_name!r}.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[eda-promote] {plot_id!r} registered against reporting set {set_name!r} — "
+            f"NOT yet routed (this set has no EDA render adapter; report()-routing is "
+            f"deferred to reporting-system_eda-skill).",
+            flush=True,
         )
     return EdaReportingSetRegistration(
         plot_id=plot_id,

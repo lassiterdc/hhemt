@@ -20,10 +20,6 @@ from typing import Any
 import jinja2
 import plotly.graph_objects as go
 import plotly.io as pio
-import xarray as xr
-
-from hhemt.eda._plotting import _cross_sim_identity_figure
-from hhemt.report_plot_ids import canonical_plot_id
 
 
 # FigureSpec + _figure_divs: the data-visualization-specialist FQ1 VMS (the
@@ -117,15 +113,14 @@ def render_scrollable_report(
     )
 
 
-def cross_sim_identity_figure_from_root(root: Path) -> go.Figure:
-    """Re-build the cross-sim-identity figure from the carried eda/<plot_id>.zarr.
+def config_diff_maps_figure_from_root(root: Path) -> go.Figure:
+    """Re-build the config-diff-maps figure from the carried sensitivity_datatree.zarr.
 
-    The scrollable doc is RE-RENDERED from the data-prep dataset (NOT assembled
-    from the saved standalone plots/eda/*.html fragments, which are full_html=True
-    documents that cannot be concatenated — master open-exploration (d)). This
-    reuses the exact Phase-1 builder so the doc figure matches the per-figure
-    artifact.
+    The scrollable doc is RE-RENDERED from the consolidated tree (NOT assembled from
+    the saved standalone plots/eda/*.html fragments, which are full_html=True documents
+    that cannot be concatenated). Delegates to the same builder the per-figure renderer
+    uses so the doc figure matches the standalone artifact.
     """
-    plot_id = canonical_plot_id("eda_cross_sim_identity")
-    ds = xr.open_zarr(root / "eda" / f"{plot_id}.zarr", consolidated=False)
-    return _cross_sim_identity_figure(ds)
+    from hhemt.eda._config_diff import build_config_diff_figure
+
+    return build_config_diff_figure(root)

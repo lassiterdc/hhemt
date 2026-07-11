@@ -126,6 +126,29 @@ class TRITONSWMM_system:
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
         swmm_dir = self.cfg_system.SWMM_software_directory
 
+        # TRITONSWMM_software_directory is Optional[Path] on the model ONLY so a
+        # portability-scrubbed render bundle's cfg_system.yaml (which nulls it per
+        # bundle/_path_policy.py IS_NONE_ACCEPTABLE) loads for bundle-local
+        # EDA/render (load_eda_context never constructs a TRITONSWMM_system). But a
+        # TRITONSWMM_system needs it for every build-dir/compile/download path, and
+        # the SysPaths construction below derefs it unconditionally (tritonswmm_dir /
+        # "build_tritonswmm_cpu"), which would TypeError on None. Fail LOUDLY here at
+        # the earliest chokepoint (dominates all compile paths) so a real compile
+        # raises ConfigurationError, never a TypeError/AttributeError.
+        if tritonswmm_dir is None:
+            raise ConfigurationError(
+                field="TRITONSWMM_software_directory",
+                message=(
+                    "TRITONSWMM_software_directory is None. It is required to "
+                    "construct a TRITONSWMM_system (build dirs, source download, "
+                    "compile). A None value only arises from a portability-scrubbed "
+                    "render bundle; for bundle-local rendering use "
+                    "Bundle.eda(plots_only=True) / load_eda_context, which do not "
+                    "construct a TRITONSWMM_system."
+                ),
+                config_path=self.system_config_yaml,
+            )
+
         gpu_suffix = (
             f"_{self.gpu_hardware}"
             if self.gpu_compilation_backend and self.gpu_hardware

@@ -125,3 +125,15 @@ non_breaking_allowlist:
       / _version.json / datatree change. Non-breaking.
   - path: src/hhemt/config/reprex_config.py
     justification: "bundle-reprex-roundtrip Phase 1 — NEW reprex_config Pydantic model (minimal target-user field set for the round-trip). Pure config schema (config/**/*.py glob); no on-disk layout change. Non-breaking, no LAYOUT_VERSION bump (mirrors reprex_taxonomy.py)."
+  - path: src/hhemt/config/synthetic_experiment.py
+    justification: "synthetic-experiment-sensitivity-reporting Phase 1 — NEW synthetic_experiment_config Pydantic model (grid + forcing + rank_sweep + partition selectors + per-partition cap validators). Pure config schema; no on-disk analysis-tree/_version.json/datatree change. Non-breaking, no LAYOUT_VERSION bump (belt-and-suspenders — the config/**/*.py glob does not match direct-child config modules)."
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      synthetic-experiment-sensitivity-reporting Phase 4 (R11) — additive
+      _OUTPUT_EXT_BY_RENDERER key "eda_compute_sensitivity" (.html/.html) for the
+      in-report EDA adapter. A NEW renderer key changes NO existing analysis's
+      on-disk figure filenames (the C-LAYOUT invariant the mandate protects), so it
+      is non-breaking. CHANGE-SCOPED via layout_signature: this exemption covers
+      ONLY the current file content; any future grammar/stem edit yields a different
+      hash and re-fires Check B (preserving layout-relevance per _load_allowlist).
+    layout_signature: "849fd071bb7f9fb70cd935a3920c189cc42e5c5991463c8b7883865f49b0688c"

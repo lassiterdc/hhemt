@@ -24,10 +24,9 @@ def test_analysis_eda_end_to_end(synthetic_sensitivity_completed_isolated):
     # aggregate HTML export (which may no-op in CI).
     eda_html_plots = [p for p in result.plot_paths if p.suffix == ".html"]
     assert eda_html_plots, "no plots/eda/*.html artifact produced"
-    assert any(
-        ("plotly-graph-div" in p.read_text() or "Plotly.newPlot" in p.read_text())
-        for p in eda_html_plots
-    ), "no plots/eda/*.html artifact carries a rendered Plotly figure"
+    assert any(("plotly-graph-div" in p.read_text() or "Plotly.newPlot" in p.read_text()) for p in eda_html_plots), (
+        "no plots/eda/*.html artifact carries a rendered Plotly figure"
+    )
     # Retained: when the best-effort aggregate HTML also exists, it too must carry a figure.
     if result.report_path is not None:
         html = result.report_path.read_text()
@@ -38,8 +37,8 @@ def test_analysis_eda_end_to_end(synthetic_sensitivity_completed_isolated):
 def test_bundle_eda_from_bundle(synthetic_sensitivity_completed_isolated, tmp_path):
     """Bundle.eda(plots_only=True) re-renders the doc from a bundle emitted AFTER eda()."""
     analysis = synthetic_sensitivity_completed_isolated.master_analysis
-    analysis.eda()  # calc + plots so the eda/<plot_id>.zarr is declared
-    bundle_path = analysis.bundle_report_data()  # harvest carries eda/ zarr + plots/eda/
+    analysis.eda()  # calc + plots; config_diff_maps declares the consolidated sensitivity_datatree.zarr
+    bundle_path = analysis.bundle_report_data()  # harvest carries the declared tree source + plots/eda/
     bundle = Bundle.from_directory(bundle_path if bundle_path.is_dir() else _unpack(bundle_path, tmp_path))
     result = bundle.eda(plots_only=True)
     assert result.notebook_path is not None and result.notebook_path.exists()

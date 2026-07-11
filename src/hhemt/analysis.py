@@ -1957,6 +1957,7 @@ class TRITONSWMM_analysis:
         override_hpc_total_nodes: int | None = None,
         override_hpc_restart_times_simulate: int | None = None,
         override_hpc_restart_times_other: int | None = None,
+        override_pickup_where_leftoff: bool | None = None,
         transfer_config: "PostRunTransferConfig | None" = None,
         report_config: "Path | None" = None,
         override_brand_theme: "Path | None" = None,
@@ -2415,6 +2416,14 @@ class TRITONSWMM_analysis:
             "extra_sbatch_args": extra_sbatch_args,
             "snakemake_diagnostics": snakemake_diagnostics,
         }
+        # override_pickup_where_leftoff decouples resume-on-retry from the mode:
+        # translate_mode("fresh") (from_scratch=True) sets pickup_where_leftoff=False,
+        # but a resume EXPERIMENT wants a fresh wipe AND within-run hotstart-resume (the
+        # wipe is once at run-start, before any checkpoint exists; pickup governs the
+        # Snakemake-retry behavior AFTER checkpoints are written). None = use the
+        # mode-derived value (no behavior change for existing callers).
+        if override_pickup_where_leftoff is not None:
+            workflow_params["pickup_where_leftoff"] = override_pickup_where_leftoff
 
         if verbose:
             print("Submitting workflow with args:")
@@ -4505,7 +4514,7 @@ class TRITONSWMM_analysis:
             DataFrame with columns in canonical order.
         """
         fixed_identity = [
-            "subanalysis_id",
+            "sa_id",
             "sub_analysis_iloc",
             "event_iloc",
             "model_type",

@@ -420,6 +420,70 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
+# --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim report surface) ---
+def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Count coupled sims blocked by the interim hotstart-resume guard (run_simulation.py).
+
+    A coupled (``tritonswmm``) sim that got walltime-killed and re-dispatched hits the
+    guard, which increments ``n_resumes`` and raises ``SimulationError`` before launch, so
+    the sim never completes. Counting coupled ``df_status`` rows with ``n_resumes >= 1`` and
+    ``run_completed`` False surfaces the population in the report with a COUNT (no renderer
+    edit — the errors_and_warnings renderer prints each check's ``summary``). Reads
+    ``analysis.df_status`` (order-independent of the export_scenario_status rule).
+    """
+    import pandas as pd
+
+    try:
+        df = analysis.df_status
+    except Exception:
+        return CheckResult(
+            name="Coupled hotstart resume",
+            level="aggregate",
+            passed=True,
+            summary="No coupled hotstart-resume failures detected.",
+            details=[],
+        )
+    needed = {"model_type", "n_resumes", "run_completed"}
+    if not needed.issubset(df.columns):
+        return CheckResult(
+            name="Coupled hotstart resume",
+            level="aggregate",
+            passed=True,
+            summary="No coupled hotstart-resume failures detected.",
+            details=[],
+        )
+    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    completed = df["run_completed"].astype("boolean").fillna(False)
+    mask = (df["model_type"] == "tritonswmm") & (n_resumes >= 1) & (~completed)
+    blocked = df[mask]
+    details = [
+        {
+            "scenario": str(row.get("scenario_directory", "")),
+            "detail": (
+                "coupled hotstart resume unsupported — known TRITON-SWMM bug "
+                "(coupled SWMM re-inits from t=0 on resume; max-flow/depth summaries "
+                "systematically low). Sim halted before launch by the interim guard."
+            ),
+        }
+        for _, row in blocked.iterrows()
+    ]
+    n = len(details)
+    passed = n == 0
+    summary = (
+        "No coupled hotstart-resume failures detected."
+        if passed
+        else f"{n} sim(s) failed: coupled hotstart resume unsupported — known TRITON-SWMM bug"
+    )
+    return CheckResult(
+        name="Coupled hotstart resume",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
+# --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -439,6 +503,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_scenario_status_csv(analysis),
             check_resource_usage(analysis),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
+            check_coupled_hotstart_resume(analysis),  # REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
