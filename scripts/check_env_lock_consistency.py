@@ -1,23 +1,37 @@
 #!/usr/bin/env python3
-"""Guard: environment-lock.yaml must not re-introduce the pyswmm/swmm-toolkit
-teardown heap-corruption pairing.
+"""Guard: no `pip:`-block entry in environment.yaml or environment-lock.yaml may
+constrain pyswmm / swmm-toolkit / swmmio.
+
+conda runs an entire ``pip:`` block as ONE ``pip install -U -r <tmpfile>``
+(``conda/env/installers/pip.py``), and pip freely uninstalls conda-installed
+distributions to satisfy a cap. So ANY pip spec that constrains ``pyswmm``
+silently downgrades the conda ``pyswmm 2.0.1`` -> ``1.5.1`` during
+``conda env create``, breaking ``prepare_scenario``'s SWMM-runoff step upstream
+of every render. ``swmmio`` is such a spec: its 0.8.5 metadata declares
+``pyswmm<2.0,>=1.2`` (and ``numpy<2.0``). swmmio is therefore installed
+post-create with ``pip install --no-deps "swmmio==0.8.5"`` and MUST NOT appear
+in any ``pip:`` block. ``pyswmm``/``swmm-toolkit`` from PyPI additionally
+re-ship the exit-134 ``free(): double free detected in tcache 2`` teardown
+crash and MUST come from conda-forge.
 
 ``environment-lock.yaml`` is ``conda env export``-generated (drift-prone — only
-as clean as the env it was exported from) AND is the documented reproducible-
-install path (``ENVIRONMENT_SNAPSHOT.md``, ``docs/how-to/installation.md``). An
-unguarded re-drift silently re-ships the exit-134 ``free(): double free detected
-in tcache 2`` teardown crash down the recommended install path. This guard
-closes the recurrence vector surfaced during the compile-bearing-synth-ci-tier
-Phase 2 implementation (the lock was found pinning pip ``swmm-toolkit==0.16.2`` /
-``pyswmm==2.1.0``).
+as clean as the env it was exported from) AND is a documented install path
+(``ENVIRONMENT_SNAPSHOT.md``, ``docs/how-to/installation.md``), so an unguarded
+re-export silently re-poisons it — this is exactly how ``hhemt==0.1.0`` and a
+placeholder ``prefix:`` got committed.
 
-FAIL (exit 1, naming the offending line) if EITHER:
-  (a) any ``pip:``-block entry in the lock names ``swmm-toolkit`` or ``pyswmm``
-      (these MUST come from conda-forge, never PyPI), OR
+FAIL (exit 1, naming the offending line) if ANY of:
+  (a) any ``pip:``-block entry in EITHER file names ``swmm-toolkit``, ``pyswmm``,
+      or ``swmmio``;
   (b) the lock's conda ``swmm-toolkit`` pin is inconsistent with
       ``environment.yaml``'s major.minor (currently ``0.15.x``), or the lock's
-      conda ``pyswmm`` is not ``2.x``.
-Exit 0 when the lock is consistent.
+      conda ``pyswmm`` is not ``2.x``;
+  (c) the lock's ``pip:`` block carries a self-referential ``hhemt==`` entry
+      (a ``conda env export`` artifact — the editable project install — which is
+      un-findable on PyPI and aborts ``conda env create``);
+  (d) the lock declares a ``prefix:`` key (an export artifact leaking a
+      machine-local path; ``conda env create`` does not need it).
+Exit 0 when both files are consistent.
 """
 
 from __future__ import annotations
@@ -32,8 +46,42 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = REPO_ROOT / "environment.yaml"
 LOCK_FILE = REPO_ROOT / "environment-lock.yaml"
 
-# The two packages whose pip/version drift re-introduces the teardown crash.
+# Packages that must never be named in a `pip:` block. swmm-toolkit/pyswmm from
+# PyPI re-ship the teardown crash; swmmio's `pyswmm<2.0` metadata cap makes pip
+# downgrade the conda pyswmm during the block's single joint resolve.
 GUARDED = ("swmm-toolkit", "pyswmm")
+GUARDED_PIP = ("swmm-toolkit", "pyswmm", "swmmio")
+
+# The project's own distribution name — a `conda env export` records the editable
+# install as a pip requirement, which is un-findable on PyPI and aborts env creation.
+PROJECT_DIST_NAME = "hhemt"
+
+PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
+
+# pyproject CORE deps that environment.yaml is NOT required to declare.
+# `swmmio` is the ONLY sanctioned omission: it must stay out of every `pip:` block
+# (its `pyswmm<2.0` cap downgrades the conda pyswmm), so it is installed post-create
+# with `pip install --no-deps "swmmio==0.8.5"`. Anything else missing is a real bug.
+CORE_DEP_EXEMPT = {"swmmio"}
+
+
+def _canon(name: str) -> str:
+    """Canonical distribution name: lowercase, PEP-503 separators unified, extras dropped."""
+    base = re.split(r"[<>=!~;\[ ]", name.strip().strip('"').strip("'"), 1)[0]
+    return base.lower().replace("_", "-").replace(".", "-")
+
+
+def _pyproject_core_deps() -> list[str]:
+    """The `[project].dependencies` list, or [] if pyproject is unreadable."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # py<3.11 — the guard degrades to a no-op rather than lying
+        return []
+    try:
+        data = tomllib.loads(PYPROJECT_FILE.read_text())
+    except (OSError, ValueError):
+        return []
+    return list(data.get("project", {}).get("dependencies", []))
 
 
 def _split_conda_and_pip(deps: list) -> tuple[list[str], list[str]]:
@@ -91,15 +139,48 @@ def main() -> int:
     lock = yaml.safe_load(LOCK_FILE.read_text())
     conda_specs, pip_specs = _split_conda_and_pip(lock.get("dependencies", []))
 
-    # (a) The pip block must not name the guarded packages — pip swmm-toolkit /
-    #     pyswmm re-ships the teardown heap-corruption.
+    env_data = yaml.safe_load(ENV_FILE.read_text())
+    env_conda_specs, env_pip_specs = _split_conda_and_pip(env_data.get("dependencies", []))
+
+    # (a) NEITHER file's pip block may name a guarded package. conda runs the whole
+    #     `pip:` block as one `pip install -U -r`, and pip will uninstall a
+    #     conda-installed distribution to satisfy a cap — so a pip `swmmio` (which
+    #     caps `pyswmm<2.0`) downgrades the conda pyswmm 2.0.1 -> 1.5.1, and a pip
+    #     `pyswmm`/`swmm-toolkit` re-ships the exit-134 teardown crash.
+    for source, specs in ((ENV_FILE, env_pip_specs), (LOCK_FILE, pip_specs)):
+        for spec in specs:
+            base = _pip_base_name(spec)
+            if base in GUARDED_PIP:
+                errors.append(
+                    f"{source.name}: pip-block entry `{spec}` is forbidden — `{base}` "
+                    f"must never appear in a `pip:` block. conda installs the whole "
+                    f"block with a single `pip install -U -r`, and pip will downgrade "
+                    f"the conda pyswmm 2.0.1 -> 1.5.1 to satisfy it (swmmio 0.8.5 caps "
+                    f"`pyswmm<2.0`; PyPI pyswmm/swmm-toolkit additionally re-ship the "
+                    f'exit-134 teardown crash). Install swmmio post-create with '
+                    f'`pip install --no-deps "swmmio==0.8.5"` instead.'
+                )
+
+    # (c) The lock must not carry a self-referential project entry — `conda env export`
+    #     records the editable install as `hhemt==<version>`, which pip cannot find on
+    #     PyPI, aborting `conda env create -f environment-lock.yaml`.
     for spec in pip_specs:
-        if _pip_base_name(spec) in GUARDED:
+        if _pip_base_name(spec) == PROJECT_DIST_NAME:
             errors.append(
-                f"{LOCK_FILE.name}: pip-block entry `{spec}` re-introduces a PyPI "
-                f"`{_pip_base_name(spec)}` — it MUST come from conda-forge, not pip "
-                f"(pip swmm-toolkit/pyswmm re-ships the exit-134 teardown crash)."
+                f"{LOCK_FILE.name}: pip-block entry `{spec}` is a self-referential "
+                f"`conda env export` artifact — it is un-findable on PyPI and aborts "
+                f"`conda env create`. Delete it; the project is installed separately "
+                f"with `pip install -e . --no-deps`."
             )
+
+    # (d) The lock must not declare a `prefix:` key — another export artifact, leaking a
+    #     machine-local path. `conda env create` does not need it.
+    if "prefix" in lock:
+        errors.append(
+            f"{LOCK_FILE.name}: declares `prefix: {lock['prefix']}` — a `conda env "
+            f"export` artifact leaking a machine-local path. Delete the key; "
+            f"`conda env create` does not need it."
+        )
 
     # (b) The conda pins must stay on the clean major.minor pairing.
     conda_versions: dict[str, tuple[str, str | None]] = {}
@@ -128,6 +209,30 @@ def main() -> int:
                 f"{LOCK_FILE.name}: conda `{spec}` pins pyswmm {version}, but the "
                 f"clean pairing requires pyswmm 2.x."
             )
+
+    # (e) environment.yaml MUST be a superset of pyproject's CORE dependencies.
+    #     The compile tier installs the project with `pip install -e . --no-deps` (so the
+    #     project's unpinned pyswmm/swmmio cannot re-resolve the graph). --no-deps installs
+    #     NO project dependencies, which makes the conda env the ONLY source of the runtime
+    #     graph. A core dep declared in pyproject but absent from environment.yaml therefore
+    #     never gets installed, and surfaces as an opaque ModuleNotFoundError at test
+    #     collection inside a 90-minute CI job (this is exactly how `plotly` broke run
+    #     29175069823). `swmmio` is the sole sanctioned omission (CORE_DEP_EXEMPT).
+    core_deps = _pyproject_core_deps()
+    env_declared = {_canon(s) for s in env_conda_specs} | {_canon(s) for s in env_pip_specs}
+    for dep in core_deps:
+        name = _canon(dep)
+        if name in CORE_DEP_EXEMPT or name in env_declared:
+            continue
+        errors.append(
+            f"{ENV_FILE.name}: pyproject core dependency `{dep}` is NOT declared in "
+            f"environment.yaml. The compile tier installs the project with "
+            f"`pip install -e . --no-deps`, so the conda env is the ONLY source of the "
+            f"runtime graph — an undeclared core dep is simply never installed and fails "
+            f"as a ModuleNotFoundError at test collection. Add `{name}` to "
+            f"environment.yaml's conda section (or, if it must be pip-installed post-create "
+            f"like swmmio, add it to CORE_DEP_EXEMPT with a comment saying why)."
+        )
 
     if errors:
         print("environment-lock.yaml swmm-provenance drift guard: FAIL", file=sys.stderr)
