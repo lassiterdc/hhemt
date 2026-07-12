@@ -33,16 +33,30 @@ jobs:
         uses: conda-incubator/setup-miniconda@v3
         with:
           activate-environment: hhemt
-          # environment-lock.yaml (NOT environment.yaml): the loose spec leaves
-          # `pyswmm` unpinned, so a fresh solve lets the pip-block's swmmio 0.8.5
-          # (which caps pyswmm<2.0) DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 during
-          # env creation, breaking prepare_scenario's SWMM-runoff step upstream of
-          # every render. The lock pins the proven-good trio exactly
-          # (pyswmm=2.0.1 / swmm-toolkit=0.15.2 / swmmio==0.8.5) and is the
-          # documented reproducible-install path, guarded by
-          # scripts/check_env_lock_consistency.py.
-          environment-file: environment-lock.yaml
+          # environment.yaml (NOT environment-lock.yaml). The lock is NOT a fix:
+          # its own `pip:` block still carried `swmmio==0.8.5` with no pip-side
+          # pyswmm pin, so `conda env create -f environment-lock.yaml` re-ran the
+          # identical downgrade (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
+          # records observed state, not a solvable spec, and cannot even reproduce
+          # its own conda pyswmm=2.0.1 line. The root-cause fix lives in
+          # environment.yaml: swmmio is out of the `pip:` block (installed
+          # --no-deps below) and numpy<2 / pandas<3 are pinned in the conda
+          # section, so a fresh solve deterministically lands on the validated
+          # pyswmm 2.0.1 / swmm-toolkit 0.15.2 / numpy 1.26.4 / pandas 2.3.3.
+          # Provisioning from environment.yaml also means CI tests the path a
+          # developer actually runs (docs/how-to/installation.md Option A).
+          environment-file: environment.yaml
           auto-activate-base: false
+
+      - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
+        # swmmio 0.8.5 metadata caps `pyswmm<2.0` and `numpy<2.0`. A dependency-
+        # resolving install would DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 (breaking
+        # prepare_scenario's SWMM-runoff step upstream of every render) and clobber a
+        # dozen conda packages with PyPI wheels. hhemt only uses `swmmio.Model` (.inp
+        # parsing) — swmmio imports pyswmm solely in its CLI wrapper and own tests — so
+        # the cap is not load-bearing and --no-deps is safe. swmmio's real runtime deps
+        # (geojson / pyshp / networkx / numpy / pandas / pyproj / ...) come from conda.
+        run: pip install --no-deps "swmmio==0.8.5"
 
       - name: Install project (editable, test extras)
         # `--no-deps`: the conda env (environment.yaml) already provides the full
