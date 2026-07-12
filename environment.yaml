@@ -72,6 +72,18 @@ dependencies:
   - geojson
   - pyshp
   - networkx
+  # pyproject CORE deps that `pip install -e . --no-deps` does NOT install.
+  # `--no-deps` (required — see header) means the conda env is the ONLY source of the
+  # project's runtime graph, so environment.yaml MUST be a superset of pyproject.toml's
+  # `[project].dependencies`. Enforced by scripts/check_env_lock_consistency.py; the sole
+  # sanctioned exception is `swmmio`, installed post-create with --no-deps (see header).
+  # Omitting any of these surfaces as an opaque ModuleNotFoundError at test-collection
+  # time in a 90-minute CI job (this is exactly how `plotly` broke run 29175069823).
+  - plotly=5.24.1
+  - rich
+  - requests>=2.25
+  - globus-sdk>=3.0
+  - datashader>=0.16
   # build tools
   - cmake
   - openmpi

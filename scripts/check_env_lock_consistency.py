@@ -56,6 +56,33 @@ GUARDED_PIP = ("swmm-toolkit", "pyswmm", "swmmio")
 # install as a pip requirement, which is un-findable on PyPI and aborts env creation.
 PROJECT_DIST_NAME = "hhemt"
 
+PYPROJECT_FILE = REPO_ROOT / "pyproject.toml"
+
+# pyproject CORE deps that environment.yaml is NOT required to declare.
+# `swmmio` is the ONLY sanctioned omission: it must stay out of every `pip:` block
+# (its `pyswmm<2.0` cap downgrades the conda pyswmm), so it is installed post-create
+# with `pip install --no-deps "swmmio==0.8.5"`. Anything else missing is a real bug.
+CORE_DEP_EXEMPT = {"swmmio"}
+
+
+def _canon(name: str) -> str:
+    """Canonical distribution name: lowercase, PEP-503 separators unified, extras dropped."""
+    base = re.split(r"[<>=!~;\[ ]", name.strip().strip('"').strip("'"), 1)[0]
+    return base.lower().replace("_", "-").replace(".", "-")
+
+
+def _pyproject_core_deps() -> list[str]:
+    """The `[project].dependencies` list, or [] if pyproject is unreadable."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # py<3.11 — the guard degrades to a no-op rather than lying
+        return []
+    try:
+        data = tomllib.loads(PYPROJECT_FILE.read_text())
+    except (OSError, ValueError):
+        return []
+    return list(data.get("project", {}).get("dependencies", []))
+
 
 def _split_conda_and_pip(deps: list) -> tuple[list[str], list[str]]:
     """Partition a conda ``dependencies:`` list into conda specs and pip specs.
@@ -113,7 +140,7 @@ def main() -> int:
     conda_specs, pip_specs = _split_conda_and_pip(lock.get("dependencies", []))
 
     env_data = yaml.safe_load(ENV_FILE.read_text())
-    _, env_pip_specs = _split_conda_and_pip(env_data.get("dependencies", []))
+    env_conda_specs, env_pip_specs = _split_conda_and_pip(env_data.get("dependencies", []))
 
     # (a) NEITHER file's pip block may name a guarded package. conda runs the whole
     #     `pip:` block as one `pip install -U -r`, and pip will uninstall a
@@ -182,6 +209,30 @@ def main() -> int:
                 f"{LOCK_FILE.name}: conda `{spec}` pins pyswmm {version}, but the "
                 f"clean pairing requires pyswmm 2.x."
             )
+
+    # (e) environment.yaml MUST be a superset of pyproject's CORE dependencies.
+    #     The compile tier installs the project with `pip install -e . --no-deps` (so the
+    #     project's unpinned pyswmm/swmmio cannot re-resolve the graph). --no-deps installs
+    #     NO project dependencies, which makes the conda env the ONLY source of the runtime
+    #     graph. A core dep declared in pyproject but absent from environment.yaml therefore
+    #     never gets installed, and surfaces as an opaque ModuleNotFoundError at test
+    #     collection inside a 90-minute CI job (this is exactly how `plotly` broke run
+    #     29175069823). `swmmio` is the sole sanctioned omission (CORE_DEP_EXEMPT).
+    core_deps = _pyproject_core_deps()
+    env_declared = {_canon(s) for s in env_conda_specs} | {_canon(s) for s in env_pip_specs}
+    for dep in core_deps:
+        name = _canon(dep)
+        if name in CORE_DEP_EXEMPT or name in env_declared:
+            continue
+        errors.append(
+            f"{ENV_FILE.name}: pyproject core dependency `{dep}` is NOT declared in "
+            f"environment.yaml. The compile tier installs the project with "
+            f"`pip install -e . --no-deps`, so the conda env is the ONLY source of the "
+            f"runtime graph — an undeclared core dep is simply never installed and fails "
+            f"as a ModuleNotFoundError at test collection. Add `{name}` to "
+            f"environment.yaml's conda section (or, if it must be pip-installed post-create "
+            f"like swmmio, add it to CORE_DEP_EXEMPT with a comment saying why)."
+        )
 
     if errors:
         print("environment-lock.yaml swmm-provenance drift guard: FAIL", file=sys.stderr)
