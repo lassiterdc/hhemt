@@ -231,7 +231,7 @@ class TRITONSWMM_analysis:
         self.cfg_analysis = cfg_analysis
         # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
         # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
-        # no-op today. Populate wiring (examples.py::from_case_study) is deferred to
+        # no-op today. Populate wiring (experiments.py::from_case_study) is deferred to
         # a follow-up — it flips the embedded core and needs a golden regen.
         # Quotes are required (no `from __future__ import annotations` in this module —
         # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).

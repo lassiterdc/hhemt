@@ -6,11 +6,11 @@ Examples are organized as case studies (e.g., Norfolk coastal flooding) with
 associated HydroShare data and configuration templates.
 
 Generic API (for any case study):
-    from hhemt.examples import TRITON_SWMM_example
+    from hhemt.experiments import TRITON_SWMM_experiment
     from hhemt.constants import *
 
     # Load any case study
-    example = TRITON_SWMM_example.from_case_study(
+    example = TRITON_SWMM_experiment.from_case_study(
         case_name="norfolk_coastal_flooding",
         system_config_template="template_system_config.yaml",
         analysis_config_template="template_analysis_config.yaml",
@@ -19,10 +19,10 @@ Generic API (for any case study):
     system = example.system
 
 Case-Specific API (convenience wrappers):
-    from hhemt.examples import NorfolkIreneExample
+    from hhemt.experiments import NorfolkIreneExperiment
 
     # Load Norfolk example (convenience wrapper)
-    norfolk = NorfolkIreneExample.load()
+    norfolk = NorfolkIreneExperiment.load()
     system = norfolk.system
 
 Adding New Case Studies:
@@ -31,7 +31,7 @@ Adding New Case Studies:
     class MiamiExample:
         @classmethod
         def load(cls, download_if_exists=False, example_data_dir=None):
-            return TRITON_SWMM_example.from_case_study(
+            return TRITON_SWMM_experiment.from_case_study(
                 case_name="miami_flooding",
                 system_config_template="template_system_config.yaml",
                 analysis_config_template="template_analysis_config.yaml",
@@ -90,7 +90,7 @@ from hhemt.config.case_manifest import CaseManifest
 from hhemt.exceptions import ProcessingError
 
 
-class TRITON_SWMM_example:
+class TRITON_SWMM_experiment:
     """
     Generic example loader for TRITON-SWMM case studies.
 
@@ -150,11 +150,11 @@ class TRITON_SWMM_example:
             example_data_dir: Optional override for data storage location
 
         Returns:
-            TRITON_SWMM_example instance with loaded system and analysis
+            TRITON_SWMM_experiment instance with loaded system and analysis
 
         Example:
             from hhemt.constants import *
-            example = TRITON_SWMM_example.from_case_study(
+            example = TRITON_SWMM_experiment.from_case_study(
                 case_name=NORFOLK_EX,
                 system_config_template=NORFOLK_SYSTEM_CONFIG,
                 analysis_config_template=NORFOLK_ANALYSIS_CONFIG,
@@ -551,19 +551,19 @@ class TRITON_SWMM_example:
         return cfg_filled_yaml
 
 
-class NorfolkIreneExample:
+class NorfolkIreneExperiment:
     """
     Convenience wrapper for Norfolk coastal flooding case study.
 
-    This is a thin wrapper around TRITON_SWMM_example that provides
+    This is a thin wrapper around TRITON_SWMM_experiment that provides
     Norfolk-specific defaults. Makes it easy to load the Norfolk example
     without remembering all the constant names.
 
     Example:
-        from hhemt.examples import NorfolkIreneExample
+        from hhemt.experiments import NorfolkIreneExperiment
 
         # Load Norfolk example with Hurricane Irene data
-        norfolk = NorfolkIreneExample.load()
+        norfolk = NorfolkIreneExperiment.load()
         system = norfolk.system
 
         # Or just load the analysis template
@@ -574,7 +574,7 @@ class NorfolkIreneExample:
         cls,
         download_if_exists: bool = False,
         example_data_dir: Optional[Path] = None,
-    ) -> TRITON_SWMM_example:
+    ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
 
@@ -583,13 +583,13 @@ class NorfolkIreneExample:
             example_data_dir: Optional override for data directory
 
         Returns:
-            TRITON_SWMM_example instance with Norfolk system loaded
+            TRITON_SWMM_experiment instance with Norfolk system loaded
         """
 
         weather_events_to_simulate = "hurricane_irene_event_index.csv"
         analysis_description = "Single Simulation of Hurricane Irene 8-27-2011"
 
-        return TRITON_SWMM_example.from_case_study(
+        return TRITON_SWMM_experiment.from_case_study(
             case_name=cnst.NORFOLK_EX,
             system_config_template=cnst.NORFOLK_SYSTEM_CONFIG,
             analysis_config_template=cnst.NORFOLK_ANALYSIS_CONFIG,
@@ -601,19 +601,19 @@ class NorfolkIreneExample:
         )
 
 
-class NorfolkObservedExample:
+class NorfolkObservedExperiment:
     """
     Convenience wrapper for observed event ensemble simulation.
 
-    This is a thin wrapper around TRITON_SWMM_example that provides
+    This is a thin wrapper around TRITON_SWMM_experiment that provides
     Norfolk-specific defaults. Makes it easy to load the Norfolk example
     without remembering all the constant names.
 
     Example:
-        from hhemt.examples import NorfolkObservedExample
+        from hhemt.experiments import NorfolkObservedExperiment
 
         # Load Norfolk example with Hurricane Irene data
-        norfolk = NorfolkObservedExample.load()
+        norfolk = NorfolkObservedExperiment.load()
         system = norfolk.system
 
         # Or just load the analysis template
@@ -624,7 +624,7 @@ class NorfolkObservedExample:
         cls,
         download_if_exists: bool = False,
         example_data_dir: Optional[Path] = None,
-    ) -> TRITON_SWMM_example:
+    ) -> TRITON_SWMM_experiment:
         """
         Load Norfolk coastal flooding example.
 
@@ -633,7 +633,7 @@ class NorfolkObservedExample:
             example_data_dir: Optional override for data directory
 
         Returns:
-            TRITON_SWMM_example instance with Norfolk system loaded
+            TRITON_SWMM_experiment instance with Norfolk system loaded
         """
 
         # this method just changes the weather_events_to_simulate
@@ -643,7 +643,7 @@ class NorfolkObservedExample:
             "obs_event_summaries_from_yrs_with_complete_coverage.csv"
         )
         analysis_description = "Observed event ensemble"
-        return TRITON_SWMM_example.from_case_study(
+        return TRITON_SWMM_experiment.from_case_study(
             case_name=cnst.NORFOLK_EX,
             system_config_template=cnst.NORFOLK_SYSTEM_CONFIG,
             analysis_config_template=cnst.NORFOLK_ANALYSIS_CONFIG,

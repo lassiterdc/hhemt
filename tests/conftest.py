@@ -610,19 +610,19 @@ def tritonswmm_cpu_compiled():
     def _norfolk_example_data_present() -> bool:
         """True iff the Norfolk HydroShare DATA_DIR is already cached locally.
         Pure path computation — never triggers a download (unlike retrieve(),
-        which downloads-on-absence via NorfolkIreneExample.load)."""
+        which downloads-on-absence via NorfolkIreneExperiment.load)."""
         from hhemt import constants as cnst
-        from hhemt.examples import TRITON_SWMM_example
+        from hhemt.experiments import TRITON_SWMM_experiment
 
-        mapping = TRITON_SWMM_example._get_case_data_and_package_directory_mapping_dict(case_name=cnst.NORFOLK_EX)
+        mapping = TRITON_SWMM_experiment._get_case_data_and_package_directory_mapping_dict(case_name=cnst.NORFOLK_EX)
         return Path(mapping["DATA_DIR"]).exists()
 
     for retrieve in norfolk_retrievers:
         # Norfolk families are unused by every consumer of this fixture
         # (test_synth_00/04/07, test_metadata_consolidation all use synth
         # fixtures). Skip them BEFORE retrieve() can trigger a HydroShare
-        # download: NorfolkIreneExample.load downloads-on-absence
-        # (examples.py:294), so a try/except cannot prevent the download, and a
+        # download: NorfolkIreneExperiment.load downloads-on-absence
+        # (experiments.py:294), so a try/except cannot prevent the download, and a
         # download failure raises ProcessingError/RuntimeError/bare Exception
         # (NOT FileNotFoundError/OSError). The pre-check computes DATA_DIR from
         # local package paths only (no network), so the synth CI tier makes

@@ -23,7 +23,7 @@ import platformdirs
 import pytest
 
 import hhemt.constants as cnst
-from hhemt.examples import NorfolkIreneExample
+from hhemt.experiments import NorfolkIreneExperiment
 from tests.fixtures import worktree_slug
 
 # Import from test fixtures
@@ -47,12 +47,12 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
 
 
 @dataclass
-class all_examples:
-    from hhemt.examples import TRITON_SWMM_example
+class all_experiments:
+    from hhemt.experiments import TRITON_SWMM_experiment
 
     @staticmethod
-    def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return NorfolkIreneExample.load(download_if_exists=download_if_exists)
+    def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_experiment:
+        return NorfolkIreneExperiment.load(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -125,7 +125,7 @@ class GetTS_TestCases:
         final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
         final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
-        example = NorfolkIreneExample.load(download_if_exists=download_if_exists, example_data_dir=example_data_dir)
+        example = NorfolkIreneExperiment.load(download_if_exists=download_if_exists, example_data_dir=example_data_dir)
 
         nrflk_test = retrieve_TRITON_SWMM_test_case(
             example=example,
@@ -155,7 +155,7 @@ class Local_TestCases:
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
+        sensitivity = all_experiments.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
@@ -182,7 +182,7 @@ class Local_TestCases:
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity_triton_only"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
+        sensitivity = all_experiments.ex_Nrflk().test_case_directory / cls.cpu_sensitivity
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
@@ -214,7 +214,7 @@ class Local_TestCases:
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity_swmm_only"
-        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
+        sensitivity = all_experiments.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,

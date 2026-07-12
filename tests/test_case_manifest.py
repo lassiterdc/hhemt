@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from hhemt import examples as ex
+from hhemt import experiments as ex
 from hhemt import generate_case_manifest as gcm
 from hhemt.config.case_manifest import CaseManifest
 
@@ -93,7 +93,7 @@ def test_connect_anonymous_first(monkeypatch):
             calls["sign_in"] += 1
 
     monkeypatch.setattr(ex, "HydroShare", lambda: FakeHS())
-    ex.TRITON_SWMM_example._connect_to_hydroshare("res123")
+    ex.TRITON_SWMM_experiment._connect_to_hydroshare("res123")
     assert calls["resource"] == 1
     assert calls["sign_in"] == 0
 
@@ -110,7 +110,7 @@ def test_connect_falls_back_to_sign_in(monkeypatch):
             calls["sign_in"] += 1
 
     monkeypatch.setattr(ex, "HydroShare", lambda: FakeHS())
-    ex.TRITON_SWMM_example._connect_to_hydroshare("res123")
+    ex.TRITON_SWMM_experiment._connect_to_hydroshare("res123")
     assert calls["sign_in"] == 1
 
 
@@ -124,10 +124,10 @@ def test_verify_manifest_raises_on_mismatch(tmp_path):
     good = {"data/contents/a.txt": hashlib.sha256(b"hello").hexdigest()}
     bad = {"data/contents/a.txt": "00" * 32}
     # matching manifest: no raise
-    ex.TRITON_SWMM_example._verify_manifest(bag, good)
+    ex.TRITON_SWMM_experiment._verify_manifest(bag, good)
     # mismatched manifest: raises
     with pytest.raises(ProcessingError):
-        ex.TRITON_SWMM_example._verify_manifest(bag, bad)
+        ex.TRITON_SWMM_experiment._verify_manifest(bag, bad)
 
 
 def test_verify_manifest_raises_on_absent_file(tmp_path):
@@ -136,14 +136,14 @@ def test_verify_manifest_raises_on_absent_file(tmp_path):
     bag = tmp_path / "bagroot"
     bag.mkdir()
     with pytest.raises(ProcessingError):
-        ex.TRITON_SWMM_example._verify_manifest(bag, {"data/contents/missing.txt": "ab" * 32})
+        ex.TRITON_SWMM_experiment._verify_manifest(bag, {"data/contents/missing.txt": "ab" * 32})
 
 
 def test_verify_manifest_empty_is_noop(tmp_path):
     # R4: an empty manifest skips the sha256 check (no raise).
     bag = tmp_path / "bagroot"
     bag.mkdir()
-    ex.TRITON_SWMM_example._verify_manifest(bag, {})
+    ex.TRITON_SWMM_experiment._verify_manifest(bag, {})
 
 
 def test_manifest_generation_verification_parity(tmp_path):
@@ -153,7 +153,7 @@ def test_manifest_generation_verification_parity(tmp_path):
     (bag / "data" / "contents" / "a.txt").write_bytes(b"x")
     (bag / "bagit.txt").write_bytes(b"BagIt-Version: 0.97")
     manifest = gcm.compute_manifest(bag)            # keys relative to bag root
-    ex.TRITON_SWMM_example._verify_manifest(bag, manifest)  # must not raise
+    ex.TRITON_SWMM_experiment._verify_manifest(bag, manifest)  # must not raise
 
 
 def test_casemanifest_zenodo_requires_doi_or_pid():
@@ -230,7 +230,7 @@ def test_download_data_from_zenodo_writes_and_verifies(tmp_path, monkeypatch):
         }
     )
     target = tmp_path / "bag"
-    ex.TRITON_SWMM_example._download_data_from_zenodo(
+    ex.TRITON_SWMM_experiment._download_data_from_zenodo(
         cm, target, download_if_exists=False, expected_manifest=cm.manifest
     )
     assert (target / "data" / "contents" / "a.txt").read_bytes() == content
@@ -244,4 +244,4 @@ def test_download_data_from_zenodo_unresolvable_recid_raises(tmp_path):
         case_name="z", res_identifier="unused", host="zenodo", doi=None, pid=None, manifest={}
     )
     with pytest.raises(ProcessingError):
-        ex.TRITON_SWMM_example._download_data_from_zenodo(cm, tmp_path / "bag")
+        ex.TRITON_SWMM_experiment._download_data_from_zenodo(cm, tmp_path / "bag")
