@@ -703,7 +703,7 @@ def _assert_no_sha_drift(
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_multi_sim():
+def rendered_synth_multi_sim(tmp_path_factory):
     """Session-scope: build, run, and render the synth multisim analysis once.
 
     Promoted from function-scope per Phase 3a (R7,
@@ -712,13 +712,26 @@ def rendered_synth_multi_sim():
     function-scope ``synth_multi_sim_analysis``). Renders both ``html`` and
     ``zip`` formats so bundle round-trip tests find both artifacts. The
     session finalizer asserts no consumer mutated ``_status/*.flag`` or
-    ``plots/**/*.manifest.json`` via SHA-1 (mtime-only drift tolerated)."""
-    case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
-        start_from_scratch=True,
-    )
-    case.analysis.run()
-    case.analysis.render_report(format="html")
-    case.analysis.render_report(format="zip")
+    ``plots/**/*.manifest.json`` via SHA-1 (mtime-only drift tolerated).
+
+    The runs_root is nested under a per-session tmp dir. Without it, this
+    ``start_from_scratch=True`` build addresses the SHARED ``synth_multi_sim``
+    slug cache — the same on-disk tree ``synth_multi_sim_analysis_cached`` and
+    ``synthetic_multisim_completed`` hand out unisolated. Later tests that
+    legitimately mutate that shared tree (e.g.
+    ``test_synth_04_multisim_with_snakemake.py::test_run_and_render_report``,
+    which calls ``analysis.run()`` + ``render_report()`` on it) then trip this
+    fixture's R7 no-drift finalizer, whose ``pytest.fail`` surfaces as an ERROR
+    against whichever test happens to be LAST in the session. A private
+    runs_root makes the snapshotted tree unreachable by non-consumers, so the
+    R7 guard polices exactly what it claims to police."""
+    with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_multi_sim")):
+        case = cases.Local_TestCases.retrieve_synth_multi_sim_test_case(
+            start_from_scratch=True,
+        )
+        case.analysis.run()
+        case.analysis.render_report(format="html")
+        case.analysis.render_report(format="zip")
     snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
     yield case.analysis
     final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
@@ -726,17 +739,18 @@ def rendered_synth_multi_sim():
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_sensitivity():
+def rendered_synth_sensitivity(tmp_path_factory):
     """Session-scope: build, run, and render the synth sensitivity analysis
-    once. See ``rendered_synth_multi_sim`` for contract details. Uses
-    ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` (relocated from
-    ``test_synth_08_bundle_round_trip.py`` in Phase 3a)."""
-    case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
-        start_from_scratch=True,
-    )
-    case.analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
-    case.analysis.render_report(format="html")
-    case.analysis.render_report(format="zip")
+    once. See ``rendered_synth_multi_sim`` for contract details (including why
+    the runs_root is private). Uses ``_SYNTH_SENSITIVITY_REPORT_CONFIG``
+    (relocated from ``test_synth_08_bundle_round_trip.py`` in Phase 3a)."""
+    with _runs_root_override_env(tmp_path_factory.mktemp("rendered_synth_sensitivity")):
+        case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
+            start_from_scratch=True,
+        )
+        case.analysis.run(report_config=_SYNTH_SENSITIVITY_REPORT_CONFIG)
+        case.analysis.render_report(format="html")
+        case.analysis.render_report(format="zip")
     snapshot = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)
     yield case.analysis
     final = _mtime_sha_snapshot(case.analysis.analysis_paths.analysis_dir)

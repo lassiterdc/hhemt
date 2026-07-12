@@ -62,6 +62,13 @@ def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple
         # validator early-returns unless multi_sim_run_method == "1_job_many_srun_tasks".
         multi_sim_run_method="local",
         toggle_sensitivity_analysis=True,
+        # Container-mode (M-7): _build_unique_system_targets reads
+        # `cfg_analysis.execution_environment` to set the per-target
+        # `execution_container_mode` constructor kwarg (sensitivity_analysis.py:2149).
+        # This hand-rolled SimpleNamespace stub predates the field; without it the
+        # method raises AttributeError. "native" is the non-container default and is
+        # what this CPU/no-HPC unit path exercises.
+        execution_environment="native",
     )
     instance.master_analysis = SimpleNamespace(
         cfg_analysis=master_cfg,

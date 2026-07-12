@@ -956,10 +956,21 @@ def test_df_setup_with_system_overlays_carries_prefixed_system_columns(
 # ============================================================================
 
 
-def test_bare_name_analysis_config_column_emits_deprecation_warning():
+def test_bare_name_analysis_config_column_emits_deprecation_warning(tmp_path, monkeypatch):
     """Phase 2 R2 — bare-name analysis-config columns emit DeprecationWarning at construction."""
     # The default synth sensitivity CSV uses bare names (run_mode, n_mpi_procs, etc.),
     # so a fresh load must surface a DeprecationWarning naming a bare analysis-config column.
+    #
+    # census-green-up Phase 1 isolation (mirrors tests/conftest.py::synth_sensitivity_analysis):
+    # this is a DIRECT start_from_scratch=True call, so it escapes the runs-root override that
+    # every equivalent conftest fixture applies. Without the override it fast_rmtree's the SHARED
+    # `synth_sensitivity` slug cache (test_case_builder.py:361-362) and rebuilds only the
+    # config/preprocess tier, leaving subanalyses/sa_*/sims/ EMPTY — after which
+    # test_synth_07_validation_report.py::failing_synth_sensitivity_analysis clones the gutted
+    # tree and dies with StopIteration in _failing_fixture_helpers._first_scenario_in_sa.
+    # Nesting runs_root under tmp_path confines the wipe; _software_root stays pinned to the slug
+    # runs_root (test_case_builder.py:360), so the compile cache is still shared (Gotcha 52).
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
     with pytest.warns(DeprecationWarning, match=r"Bare-name analysis-config column"):
         _cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(
             start_from_scratch=True
