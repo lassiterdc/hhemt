@@ -3,7 +3,7 @@
 Drives ``tests/fixtures/container_validation/container_validation_suite.csv`` (the
 4-row ``{native,container}×{1-GPU,2-GPU}`` matrix) on UVA or Frontier via the
 **partition-derives-hardware** DI pattern — NOT the retired ``gpu_compilation_backend``
-backend-DI, and NOT the stale ``scripts/experiments/_matrix_builder.py``.
+backend-DI. The matrix single-source is ``hhemt.synthetic_experiment``.
 
 The single cross-cluster axis is the per-cluster ``hpc_system_config`` yaml: the GPU
 hardware/backend and the container ``ContainerSpec`` (Frontier host-Cray-MPICH-ABI
