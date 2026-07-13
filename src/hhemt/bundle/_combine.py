@@ -66,6 +66,32 @@ def combine_bundle(
     bundle_paths: list[Path],
     output_path: Path | None = None,
 ) -> CombinedBundle:
+    """Combine two or more render bundles into one standalone combined bundle.
+
+    The inputs are checked for combine-compatibility first; a blocking divergence
+    aborts before anything is written. Compatible bundles have their experiment
+    trees merged and re-emitted as a new self-contained bundle directory.
+
+    Parameters
+    ----------
+    bundle_paths : list of Path
+        Paths to at least two bundle roots. Order does not matter — the roots are
+        resolved and sorted, so the combined output is deterministic.
+    output_path : Path, optional
+        Destination directory for the combined bundle. When omitted, it is created
+        alongside the first bundle as ``combined_{n}bundles_{toolkit_sha}``.
+
+    Returns
+    -------
+    CombinedBundle
+        A consume-side handle to the newly emitted combined bundle.
+
+    Raises
+    ------
+    ConfigurationError
+        If fewer than two bundles are supplied, or if the bundles carry blocking
+        divergences that make them incompatible for combination.
+    """
     roots = sorted(Path(p).resolve() for p in bundle_paths)
     if len(roots) < 2:
         raise ConfigurationError(

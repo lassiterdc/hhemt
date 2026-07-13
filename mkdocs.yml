@@ -65,6 +65,7 @@ nav:
       - Combining experiments: how-to/combining-experiments.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
+      - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
   - Reference:
       - reference/index.md
       - API Reference: reference/api.md
