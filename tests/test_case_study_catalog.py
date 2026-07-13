@@ -25,7 +25,7 @@ def example_data_available() -> bool:
     silent skip, so the regression guard cannot pass vacuously on CI.
     """
     try:
-        cat.all_examples.norfolk_irene(download_if_exists=False)
+        cat.all_experiments.norfolk_irene(download_if_exists=False)
     except Exception as exc:
         if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
             raise AssertionError(
@@ -48,7 +48,7 @@ def _require_software_dirs() -> None:
     this gate. Under HHEMT_REQUIRE_EXAMPLE_DATA=1 the absence is a hard
     error rather than a silent skip.
     """
-    example_dir = cat.all_examples.norfolk_irene().test_case_directory
+    example_dir = cat.all_experiments.norfolk_irene().test_case_directory
     missing = [name for name in ("swmm", "triton") if not (example_dir / name).exists()]
     if missing:
         msg = (

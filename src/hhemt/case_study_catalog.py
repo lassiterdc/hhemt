@@ -9,10 +9,10 @@ from hhemt.config.analysis import analysis_config
 from hhemt.config.loaders import yaml_to_model
 from hhemt.config.report import report_config as report_config_model
 from hhemt.config.system import system_config
-from hhemt.examples import (
-    NorfolkIreneExample,
-    NorfolkObservedExample,
-    TRITON_SWMM_example,
+from hhemt.experiments import (
+    NorfolkIreneExperiment,
+    NorfolkObservedExperiment,
+    TRITON_SWMM_experiment,
 )
 from hhemt.system import TRITONSWMM_system
 from hhemt.utils import fast_rmtree
@@ -68,14 +68,14 @@ _FRONTIER_SYSTEM_OVERLAY: dict = {
 }
 
 
-class all_examples:
+class all_experiments:
     @staticmethod
-    def norfolk_irene(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return NorfolkIreneExample.load(download_if_exists=download_if_exists)
+    def norfolk_irene(download_if_exists: bool = False) -> TRITON_SWMM_experiment:
+        return NorfolkIreneExperiment.load(download_if_exists=download_if_exists)
 
     @staticmethod
-    def norfolk_observed(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return NorfolkObservedExample.load(download_if_exists=download_if_exists)
+    def norfolk_observed(download_if_exists: bool = False) -> TRITON_SWMM_experiment:
+        return NorfolkObservedExperiment.load(download_if_exists=download_if_exists)
 
 
 class CaseStudyBuilder:
@@ -95,9 +95,9 @@ class CaseStudyBuilder:
 
         #
         if example_name == "norfolk_irene":
-            example = all_examples.norfolk_irene(download_if_exists=download_if_exists)
+            example = all_experiments.norfolk_irene(download_if_exists=download_if_exists)
         elif example_name == "norfolk_observed_ensemble":
-            example = all_examples.norfolk_observed(download_if_exists=download_if_exists)
+            example = all_experiments.norfolk_observed(download_if_exists=download_if_exists)
 
         self.example = example
         self.system = example.system
@@ -221,7 +221,7 @@ class UVACaseStudies:
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite"
-        example_dir = all_examples.norfolk_irene().test_case_directory
+        example_dir = all_experiments.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
         report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
 
@@ -262,7 +262,7 @@ class UVACaseStudies:
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite_triton_only"
-        example_dir = all_examples.norfolk_irene().test_case_directory
+        example_dir = all_experiments.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_analysis_uva_suite
         report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene.yaml"
 
@@ -303,7 +303,7 @@ class UVACaseStudies:
         """UVA HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "uva_sensitivity_suite_swmm_only"
-        example_dir = all_examples.norfolk_irene().test_case_directory
+        example_dir = all_experiments.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_analysis_uva_suite_swmm
         report_config_yaml = example_dir / "report_config_uva_benchmarking_norfolk_irene_swmm.yaml"
 
@@ -350,7 +350,7 @@ class FrontierCaseStudies:
         """Frontier HPC sensitivity analysis."""
         example_name = "norfolk_irene"
         analysis_name = "frontier_sensitivity_suite"
-        example_dir = all_examples.norfolk_irene().test_case_directory
+        example_dir = all_experiments.norfolk_irene().test_case_directory
         sensitivity = example_dir / cls.sensitivity_frontier_suite
         report_config_yaml = example_dir / "report_config_frontier_norfolk_sensitivity_suite.yaml"
         analysis_overrides = {
