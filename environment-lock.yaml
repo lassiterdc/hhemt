@@ -1,7 +1,6 @@
 name: hhemt
 channels:
   - conda-forge
-  - defaults
 dependencies:
   - _openmp_mutex=4.5=20_gnu
   - _python_abi3_support=1.0=hd8ed1ab_2
@@ -445,7 +444,6 @@ dependencies:
       - globus-sdk==4.8.1
       - griffelib==2.1.0
       - h11==0.16.0
-      - hhemt==0.1.0
       - hsclient==1.1.6
       - hsmodels==1.0.4
       - httpcore==1.0.9
@@ -533,7 +531,6 @@ dependencies:
       - snakemake-interface-scheduler-plugins==2.0.2
       - snakemake-interface-storage-plugins==4.4.1
       - snakemake-storage-plugin-fs==1.1.3
-      - swmmio==0.8.5
       - sysrsync==1.1.1
       - tabulate==0.10.0
       - tenacity==9.1.4
@@ -549,4 +546,3 @@ dependencies:
       - widgetsnbextension==4.0.15
       - yte==1.9.4
       - zarr==3.1.5
-prefix: /path/to/conda/envs/hhemt

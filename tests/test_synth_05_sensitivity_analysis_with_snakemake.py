@@ -1136,6 +1136,11 @@ def test_reprocess_render_report_over_partial_completion(synth_sensitivity_analy
     )
 
 
+@pytest.mark.skipif(
+    not tst_ut.provenance_audit_enabled(),
+    reason="renderer-IO provenance audit is opt-in (ADR-18); set "
+    "HHEMT_ENABLE_PROVENANCE_AUDIT=1 to enable the audit AND run this test.",
+)
 @pytest.mark.slow
 def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_sensitivity_analysis_cached):
     """Sensitivity-tier audit-passes guard — exercises sensitivity_benchmarking
@@ -1148,11 +1153,9 @@ def test_renderer_provenance_audit_passes_for_all_sensitivity_renderers(synth_se
     figure to exist (Gotcha 39), so its success is the audit-passed-for-every-renderer
     signal: a single renderer's audit ProcessingError leaves its figure missing.
     """
-    import os
     import shutil
     from pathlib import Path
 
-    os.environ.pop("HHEMT_DISABLE_PROVENANCE_AUDIT", None)  # force audit ON
     analysis = synth_sensitivity_analysis_cached
     analysis.run(from_scratch=False, report_config=Path(_SYNTH_SENSITIVITY_REPORT_CONFIG_PHASE7))
 

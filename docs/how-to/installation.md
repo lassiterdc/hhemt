@@ -9,10 +9,13 @@ The repo ships an `environment.yaml` that pins every runtime dependency includin
 ```bash
 conda env create -n hhemt --file environment.yaml
 conda activate hhemt
-pip install -e .
+pip install --no-deps "swmmio==0.8.5"
+pip install -e . --no-deps
 ```
 
-For exactly-reproducible installs (e.g., debugging cross-machine drift), use `environment-lock.yaml` instead — it pins every transitive dependency.
+Both `--no-deps` flags are required, not optional. `swmmio 0.8.5` declares `pyswmm<2.0` and `numpy<2.0` in its metadata; a dependency-resolving install downgrades the conda-installed `pyswmm 2.0.1` to `1.5.1`, which breaks `prepare_scenario`'s SWMM-runoff step upstream of every render. hhemt uses only `swmmio.Model` (`.inp` parsing), so the cap is not load-bearing and `--no-deps` is safe; swmmio's real runtime dependencies are declared in `environment.yaml`'s conda section. `pip install -e . --no-deps` for the same reason (`pyproject.toml` leaves `pyswmm` unpinned). `scripts/check_env_lock_consistency.py` enforces this invariant in CI.
+
+`environment-lock.yaml` is a `conda env export` snapshot, useful for *inspecting* the exact versions of a known-good env. It is **not** a portable lockfile: it is single-platform, and recreating an env from it still runs its `pip:` block. If you use it, apply the same two `--no-deps` post-create steps above. For genuine bit-level cross-machine reproducibility, generate a multi-platform `conda-lock.yml` instead.
 
 ### Option B (lightweight — pip extras only)
 

@@ -59,6 +59,55 @@ def require_compile_tier() -> bool:
     return os.environ.get("HHEMT_REQUIRE_COMPILE_TIER") == "1"
 
 
+def provenance_audit_enabled() -> bool:
+    """True when the renderer-IO provenance audit is opt-IN-enabled.
+
+    Single-flag design (ADR-18): ``HHEMT_ENABLE_PROVENANCE_AUDIT=1`` both (a)
+    makes ``report_renderers._provenance_audit.audit_renderer_io`` install its
+    hook and enforce declared⊆actual, and (b) un-skips the two
+    ``test_renderer_provenance_audit_passes_for_all_*`` regression tests. The
+    audit runs iff the tests run — no second flag, no in-test env mutation. The
+    flag must be present in the process env before pytest launches (a
+    collection-time ``skipif`` reads it at import), mirroring
+    ``require_compile_tier()`` semantics.
+    """
+    return os.environ.get("HHEMT_ENABLE_PROVENANCE_AUDIT") == "1"
+
+
+def swmm_stack_version_mismatch() -> str | None:
+    """Return a diagnostic message when the installed pyswmm / swmm-toolkit
+    versions are outside the compile tier's required majors, else None.
+
+    The compile tier's prepare_scenario path hard-requires pyswmm 2.x with its
+    paired swmm-toolkit 0.15.x C-extension. A ``pip install -e .[test]`` that
+    resolves swmmio 0.8.5 (which caps ``pyswmm<2.0``) silently downgrades pyswmm
+    to 1.5.x, breaking prepare_scenario upstream of any render. Keyed on
+    ``importlib.metadata.version`` (no pyswmm import — cheap, and robust to a
+    partially-broken install).
+    """
+    from importlib.metadata import PackageNotFoundError, version
+
+    problems: list[str] = []
+    for pkg, want in (("pyswmm", "2."), ("swmm-toolkit", "0.15.")):
+        try:
+            got = version(pkg)
+        except PackageNotFoundError:
+            problems.append(f"{pkg} not installed (need {want}x)")
+            continue
+        if not got.startswith(want):
+            problems.append(f"{pkg}=={got} (need {want}x)")
+    if not problems:
+        return None
+    return (
+        "SWMM Python stack version mismatch — the compile tier's prepare_scenario "
+        "requires pyswmm 2.x + swmm-toolkit 0.15.x: "
+        + "; ".join(problems)
+        + ". A `pip install -e .[test]` that pulls swmmio 0.8.5 downgrades pyswmm "
+        "to 1.5.x; reinstall the conda-pinned stack or use `pip install -e . "
+        "--no-deps` plus explicit test extras."
+    )
+
+
 def write_snakefile(analysis: TRITONSWMM_analysis, content: str):
     """Write Snakefile content to the analysis directory and return the path."""
     snakefile_path = analysis.analysis_paths.analysis_dir / "Snakefile"

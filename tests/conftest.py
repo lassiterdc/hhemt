@@ -579,6 +579,7 @@ def tritonswmm_cpu_compiled():
     from tests.utils_for_testing import (
         compile_toolchain_unavailable,
         require_compile_tier,
+        swmm_stack_version_mismatch,
     )
 
     if compile_toolchain_unavailable():
@@ -595,6 +596,16 @@ def tritonswmm_cpu_compiled():
                 pytrace=False,
             )
         pytest.skip(msg, allow_module_level=False)
+
+    swmm_mismatch = swmm_stack_version_mismatch()
+    if swmm_mismatch is not None:
+        if require_compile_tier():
+            pytest.fail(
+                "HHEMT_REQUIRE_COMPILE_TIER=1 but the SWMM Python stack is wrong "
+                "— the compile tier MUST run with pyswmm 2.x and cannot. " + swmm_mismatch,
+                pytrace=False,
+            )
+        pytest.skip(swmm_mismatch, allow_module_level=False)
 
     from tests.fixtures.test_case_catalog import Local_TestCases
 
