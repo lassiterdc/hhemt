@@ -1,6 +1,6 @@
 # Fill in your configuration
 
-hhemt takes two user configs (system + analysis) plus an optional HPC-system profile. Start from the in-repo templates: `test_data/norfolk_coastal_flooding/template_system_config.yaml` and `template_analysis_config.yaml`. The `${DATA_DIR}` / `${PACKAGE_DIR}` placeholders are filled automatically when you load a case study via `TRITON_SWMM_example`; if you author a config by hand, replace them with real paths.
+hhemt takes two user configs (system + analysis) plus an optional HPC-system profile. Start from the in-repo templates: `test_data/norfolk_coastal_flooding/template_system_config.yaml` and `template_analysis_config.yaml`. The `${DATA_DIR}` / `${PACKAGE_DIR}` placeholders are filled automatically when you load a case study via `TRITON_SWMM_experiment`; if you author a config by hand, replace them with real paths.
 
 ## Annotated system config
 

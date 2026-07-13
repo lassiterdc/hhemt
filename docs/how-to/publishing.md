@@ -96,9 +96,9 @@ Then load the case study — the toolkit dispatches on `host`, fetches over anon
 HTTPS, and verifies every file against the `manifest` sha256 map:
 
 ```python
-from hhemt.examples import TRITON_SWMM_example
+from hhemt.experiments import TRITON_SWMM_experiment
 
-example = TRITON_SWMM_example.from_case_study(
+experiment = TRITON_SWMM_experiment.from_case_study(
     case_name="norfolk_coastal_flooding",
     download_if_exists=False,   # set True to re-download even if the data is already local
 )

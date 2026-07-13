@@ -14,8 +14,8 @@
 Start with the one path that is guaranteed to succeed on a laptop: load the Norfolk example, optionally smoke-test it, run it locally, and render the report. Every later section varies this same run by editing config fields — the calls below never change.
 
 ```python
-from hhemt.examples import NorfolkIreneExample
-norfolk = NorfolkIreneExample.load()
+from hhemt.experiments import NorfolkIreneExperiment
+norfolk = NorfolkIreneExperiment.load()
 norfolk.analysis.test()                         # optional smoke first
 result = norfolk.analysis.run(from_scratch=False, execution_mode="local")
 norfolk.analysis.render_report()                # renders the analysis report
@@ -23,7 +23,7 @@ norfolk.analysis.render_report()                # renders the analysis report
 
 Here is what each step does:
 
-- **`NorfolkIreneExample.load()`** downloads the Norfolk case-study data once (anonymously — no HydroShare account needed), builds the system and analysis objects, and hands you back an example whose `.analysis` is the orchestrator and whose `.system` holds the DEM/compilation state.
+- **`NorfolkIreneExperiment.load()`** downloads the Norfolk case-study data once (anonymously — no HydroShare account needed), builds the system and analysis objects, and hands you back an experiment whose `.analysis` is the orchestrator and whose `.system` holds the DEM/compilation state.
 - **`norfolk.analysis.test()`** is the optional smoke test. It runs a strict, least-demanding `_test/` subset of the analysis end-to-end — compile → run → process → consolidate → report — under `{analysis_dir}/_test/`, so you find a broken compile or a missing input in minutes instead of hours into the real run.
 - **`norfolk.analysis.run(from_scratch=False, execution_mode="local")`** does the real work. `from_scratch=False` resumes any completed work rather than rebuilding, and `execution_mode="local"` forces a local run (no SLURM) using a thread pool sized to your machine.
 - **`norfolk.analysis.render_report()`** assembles the self-contained report from the completed outputs.
