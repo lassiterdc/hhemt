@@ -37,6 +37,14 @@ def test_compile_swmm(synth_all_models_analysis):
     tst_ut.assert_swmm_compiled(analysis)
 
 
+# The two TRITON compiles hard-require cmake + mpic++ (TRITON's machine.cmake
+# FORCE-sets mpic++ and main.cpp #includes mpi.h). `tritonswmm_cpu_compiled` is
+# the capability gate: it SKIPS when the toolchain is absent (bare ubuntu-latest
+# CI runner) and HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1 (compile-tests.yml),
+# so a real compile regression cannot hide behind the skip. `test_compile_swmm`
+# below is deliberately NOT gated -- SWMM needs only cmake + a C compiler and
+# compiles fine on the bare runner, so that coverage is preserved.
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_compile_tritonswmm(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.compile_TRITON_SWMM(
@@ -47,6 +55,7 @@ def test_compile_tritonswmm(synth_all_models_analysis):
     tst_ut.assert_tritonswmm_compiled(analysis)
 
 
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_compile_triton_only(synth_all_models_analysis):
     analysis = synth_all_models_analysis
     analysis._system.compile_TRITON_only(

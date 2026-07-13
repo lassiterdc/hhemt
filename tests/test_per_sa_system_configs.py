@@ -62,6 +62,13 @@ def _make_sa_instance_for_unit_test(monkeypatch, yaml_to_attrs: dict[Path, tuple
         # validator early-returns unless multi_sim_run_method == "1_job_many_srun_tasks".
         multi_sim_run_method="local",
         toggle_sensitivity_analysis=True,
+        # ADR-1 / M-7: _build_unique_system_targets reads this to set
+        # execution_container_mode on each per-target TRITONSWMM_system
+        # (sensitivity_analysis.py:2149). It is a REAL analysis_config field
+        # (config/analysis.py:426, Literal["native","container"], default "native").
+        # "native" is the production default and makes the container branch a
+        # provable no-op, so the dedup assertions below are unchanged in meaning.
+        execution_environment="native",
     )
     instance.master_analysis = SimpleNamespace(
         cfg_analysis=master_cfg,

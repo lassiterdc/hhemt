@@ -35,6 +35,10 @@ from hhemt.exceptions import ConfigurationError
 pytestmark = [
     pytest.mark.requires_snakemake_subprocess,
     pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
+    # Runs the sensitivity workflow to completion (real summaries on disk) before
+    # deleting one; needs the compiled binaries. Skips without cmake+mpic++;
+    # HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.
+    pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
 ]
 
 # model_type -> the FULL consolidate-consumed per-enabled-mode summary attrs
