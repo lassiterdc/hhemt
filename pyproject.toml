@@ -20,7 +20,7 @@ license-files = ["LICENSE"]
 
 dependencies = [
     "filelock",
-    "pydantic",
+    "pydantic==2.7.*",
     "pyyaml",
     "zarr",
     "netcdf4",
