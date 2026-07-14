@@ -98,6 +98,7 @@ def emit_bundle(
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
+        _copy_declared_inputs(analysis, staging)
         _emit_runnable_template_set(staging)
         _upgrade_crate_to_workflow_run_crate(staging)
         _write_bundle_manifest(
@@ -407,26 +408,79 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         src = analysis_dir / fname
         if src.exists():
             shutil.copy2(src, staging / fname)
-    # Copy the weather-events CSV referenced by cfg_analysis.weather_events_to_simulate.
-    # The cfg rewrite preserves its relative position (typically directly under
-    # analysis_dir for synth fixtures); the file itself must travel with the bundle
-    # so analysis.py:164's pd.read_csv resolves at consume time.
-    weather_events_csv = analysis.cfg_analysis.weather_events_to_simulate
-    if weather_events_csv is not None and Path(weather_events_csv).exists():
-        src = Path(weather_events_csv).resolve()
-        try:
-            rel = src.relative_to(analysis_dir.resolve())
-        except ValueError:
-            rel = Path(src.name)
-        dest = staging / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dest)
+    # NOTE: the weather-events CSV (cfg_analysis.weather_events_to_simulate) is no
+    # longer copied here. It is a BUNDLE_RELATIVE cfg-declared input, so the
+    # self-contained harvest (_copy_declared_inputs) carries it to EXACTLY the
+    # location _rewrite_paths_to_relative writes into the cfg (external/{name} when
+    # it lives outside analysis_dir). The old ad-hoc copy targeted the bundle ROOT
+    # (Path(src.name)) for out-of-tree CSVs, which disagreed with the cfg rewrite's
+    # external/{name} — reconciled by routing every declared input through the one
+    # policy-driven copy path.
     status_dir = analysis_dir / BUNDLE_STATUS_SUBDIR
     if status_dir.exists():
         shutil.copytree(status_dir, staging / BUNDLE_STATUS_SUBDIR, dirs_exist_ok=True)
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if plots_dir.exists():
         shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
+
+
+#: Path policies whose fields name a bundle-carried input file (self-contained emit).
+#: FORCED_DOT (analysis_dir / system_directory) are directory markers, IS_NONE_ACCEPTABLE
+#: (software dirs) are nulled and never bundled, HELPER_RESOLVED is runtime-derived — none
+#: names a file to carry.
+_SELF_CONTAINED_POLICIES = frozenset(
+    {
+        PathPolicy.BUNDLE_RELATIVE,
+        PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+        PathPolicy.BUNDLE_RELATIVE_LIST,
+    }
+)
+
+
+def _copy_declared_inputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
+    """Self-contained emit (ADR-9): copy EVERY cfg-declared input file into the bundle
+    at exactly the location ``_rewrite_paths_to_relative`` writes into the cfg, so a
+    reconstituted config resolves every declared input on disk.
+
+    Driven by the same ``_PATH_FIELD_POLICY`` table the rewrite consumes (one
+    policy-driven copy path — never a second source list, so
+    ``test_all_path_fields_have_policy``'s bidirectional guard already covers it). The
+    harvest is UNCONDITIONAL (ADR-9 makes self-containment the primary contract; the
+    governed ``bundle_exclude_config`` opt-out is a Phase-3 addition). Overlaps with
+    ``_harvest_and_copy_sources`` (a renderer-declared input that is also a cfg field) are
+    idempotent overwrites. A declared-but-absent input is SKIPPED here; ``from_doi``'s
+    fail-closed materialize gate raises on it at ingest.
+    """
+    analysis_dir = analysis.analysis_paths.analysis_dir
+    analysis_root = analysis_dir.resolve()
+    system_root = analysis._system.cfg_system.system_directory.resolve()
+    for cfg in (analysis._system.cfg_system, analysis.cfg_analysis):
+        for name in enumerate_path_fields(type(cfg)):
+            if _PATH_FIELD_POLICY.get(name) not in _SELF_CONTAINED_POLICIES:
+                continue
+            value = getattr(cfg, name, None)
+            if value is None:
+                continue
+            for elem in value if isinstance(value, list) else [value]:
+                if elem is None:
+                    continue
+                src = Path(elem)
+                if not src.is_absolute():
+                    src = analysis_root / src
+                src = src.resolve()
+                if not src.exists():
+                    continue  # declared-but-absent: ingest fail-closed handles it
+                rel = _rewrite_absolute_to_relative(
+                    str(src), analysis_root=analysis_root, system_root=system_root
+                )
+                if not isinstance(rel, str) or Path(rel).is_absolute():
+                    continue  # unresolvable dest; leave for the ingest fail-closed gate
+                dest = staging / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if src.is_dir():
+                    shutil.copytree(src, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dest)
 
 
 #: Bundle-root filenames for the minimal runnable set (reprex carriage, ADR-10).
@@ -502,17 +556,34 @@ def _upgrade_crate_to_workflow_run_crate(staging: Path) -> None:
 
 
 def reconstitute_runnable_config(
-    bundle_root: Path, *, target_path: Path | None = None
+    bundle_root: Path,
+    *,
+    target_path: Path | None = None,
+    software_dir: Path | None = None,
 ) -> Path:
     """Synthesize a runnable ``system_config.yaml`` from a reprex bundle (ADR-10, R5).
 
     Reads the bundle's scrubbed ``cfg_system.yaml`` and writes a ``system_config.yaml``
     whose bundle-relative Path fields are resolved to absolute paths under
-    ``bundle_root`` (so the by-reference inputs the target user fetched into the bundle
-    resolve at load-time), the two software-dir fields stay ``null`` (toolkit-owned,
-    exempt from the load-time existence check via the Phase-1 D4 relaxation), and every
-    EXPERIMENT-bucket field is preserved verbatim. Returns the written path
+    ``bundle_root`` (so the carried, self-contained inputs resolve at load-time), and
+    every EXPERIMENT-bucket field is preserved verbatim. Returns the written path
     (``bundle_root/system_config.yaml`` unless ``target_path`` overrides).
+
+    The two software-dir fields (``SWMM_software_directory`` /
+    ``TRITONSWMM_software_directory``) are toolkit-owned OUTPUTS — build dirs the toolkit
+    creates at target-side setup, exempt from the load-time existence check (D4). Their
+    treatment splits by consume path:
+
+    - ``software_dir=None`` (the RENDER path): both stay ``null``. Correct for
+      bundle-local EDA/render (``load_eda_context`` never constructs a
+      ``TRITONSWMM_system``).
+    - ``software_dir`` provided (the RUN path, e.g. ``from_doi``): both are set to
+      writable target-side subdirs (``software_dir/'tritonswmm'`` /
+      ``software_dir/'swmm'``) so ``TRITONSWMM_system`` constructs (its ``__init__``
+      hard-raises on a null ``TRITONSWMM_software_directory``) and a later ``run()`` can
+      clone+build there. A runnable experiment needs REAL (not-yet-existing,
+      existence-exempt) paths, not null — the null-ing is correct for render and wrong
+      for run.
     """
     import yaml
 
@@ -534,10 +605,61 @@ def reconstitute_runnable_config(
             continue
         if isinstance(value, str) and not Path(value).is_absolute():
             out[name] = str((bundle_root / value).resolve())
-    # Software dirs stay null: toolkit-owned, created at target-side setup, never bundled.
-    out["SWMM_software_directory"] = None
-    out["TRITONSWMM_software_directory"] = None
+    if software_dir is None:
+        # RENDER path: toolkit-owned build dirs stay null (bundle-local EDA only).
+        out["SWMM_software_directory"] = None
+        out["TRITONSWMM_software_directory"] = None
+    else:
+        # RUN path: point the build dirs at a writable target-side location so a
+        # TRITONSWMM_system constructs and run() can build there.
+        software_dir = Path(software_dir).resolve()
+        out["SWMM_software_directory"] = str(software_dir / "swmm")
+        out["TRITONSWMM_software_directory"] = str(software_dir / "tritonswmm")
     target = target_path if target_path is not None else bundle_root / "system_config.yaml"
+    Path(target).write_text(yaml.safe_dump(out, sort_keys=False))
+    return Path(target)
+
+
+def reconstitute_runnable_analysis_config(
+    bundle_root: Path, *, target_path: Path | None = None
+) -> Path:
+    """Synthesize a runnable ``analysis_config.yaml`` from a reprex bundle — the
+    analysis-side sibling of :func:`reconstitute_runnable_config`.
+
+    The bundle's ``cfg_analysis.yaml`` stores its Path fields bundle-relative
+    (``_PATH_FIELD_POLICY``): ``analysis_dir`` is the FORCED_DOT ``"."`` bundle-root
+    marker, list fields (``static_plot_configs``) are element-wise relative, and every
+    other declared input is ``BUNDLE_RELATIVE``/``BUNDLE_RELATIVE_OR_NONE``. This helper
+    rewrites every non-absolute Path value to ``str((bundle_root / v).resolve())`` — which
+    maps ``analysis_dir: "."`` to ``bundle_root`` (honoring the FORCED_DOT invariant) and
+    rebases ``sensitivity_analysis`` and the rest onto the carried, self-contained inputs.
+    It is the SINGLE rebase implementation: ``reprex()`` composes it rather than
+    hand-rebasing ``sensitivity_analysis`` inline. Returns the written path
+    (``bundle_root/analysis_config.yaml`` unless ``target_path`` overrides).
+    """
+    import yaml
+
+    from hhemt.config.analysis import analysis_config
+
+    bundle_root = Path(bundle_root).resolve()
+    cfg_dict = yaml.safe_load((bundle_root / "cfg_analysis.yaml").read_text())
+    path_fields = set(enumerate_path_fields(analysis_config))
+    out = dict(cfg_dict)
+    for name in path_fields:
+        value = out.get(name)
+        if value is None:
+            continue
+        if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (e.g. static_plot_configs)
+            out[name] = [
+                str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v
+                for v in value
+            ]
+            continue
+        if isinstance(value, str) and not Path(value).is_absolute():
+            out[name] = str((bundle_root / value).resolve())
+    target = (
+        target_path if target_path is not None else bundle_root / "analysis_config.yaml"
+    )
     Path(target).write_text(yaml.safe_dump(out, sort_keys=False))
     return Path(target)
 

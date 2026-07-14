@@ -6,6 +6,7 @@ including exception-to-exit-code mapping and argument validation.
 
 from typing import Type
 from .exceptions import (
+    BundleSchemaError,
     CLIValidationError,
     ConfigurationError,
     CompilationError,
@@ -23,6 +24,7 @@ from .exceptions import (
 #   3: workflow planning/build errors
 #   4: simulation execution failure
 #   5: output processing/summarization failure
+#   6: bundle schema-version mismatch
 #  10+: unexpected internal errors
 
 EXIT_CODE_MAP: dict[Type[Exception] | str, int] = {
@@ -34,6 +36,11 @@ EXIT_CODE_MAP: dict[Type[Exception] | str, int] = {
     CompilationError: 3,
     SimulationError: 4,
     ProcessingError: 5,
+    # BundleSchemaError (a ValueError, not a TRITONSWMMError) MUST precede the
+    # Exception catch-all: map_exception_to_exit_code returns the first isinstance
+    # match in insertion order, so a post-catch-all entry would be dead code and the
+    # schema mismatch would resolve to 10 (Gotcha 27).
+    BundleSchemaError: 6,
     Exception: 10,  # Catch-all for unexpected errors
 }
 

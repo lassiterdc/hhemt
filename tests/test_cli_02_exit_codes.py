@@ -214,6 +214,43 @@ def test_exit_code_mapping_utility():
     # Exit code 5: Processing errors
     assert map_exception_to_exit_code(ProcessingError("op", None, "msg")) == 5
 
+    # Exit code 6: BundleSchemaError (a ValueError, not a TRITONSWMMError) — MUST NOT
+    # fall through to the exit-10 catch-all (Gotcha 27; R2).
+    from hhemt.exceptions import BundleSchemaError
+
+    assert map_exception_to_exit_code(BundleSchemaError("schema skew")) == 6
+    # A plain ValueError still resolves to the catch-all — the 6 is scoped to the
+    # BundleSchemaError subclass, not to ValueError generally.
+    assert map_exception_to_exit_code(ValueError("unrelated")) == 10
+
     # Exit code 10: Unexpected exceptions
     assert map_exception_to_exit_code(ValueError("unexpected")) == 10
     assert map_exception_to_exit_code(RuntimeError("unexpected")) == 10
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Exit Code 6: BundleSchemaError via `hhemt ingest` (R2 — CLI contract)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def test_exit_code_6_ingest_bundle_schema_error(monkeypatch):
+    """`hhemt ingest` maps a BundleSchemaError (bundle emitted by a different toolkit
+    version) to exit code 6 via the CLI's map_exception_to_exit_code, not the exit-10
+    catch-all."""
+    from hhemt.exceptions import BundleSchemaError
+    from hhemt.experiments import TRITON_SWMM_experiment
+
+    def _raise_schema_error(*args, **kwargs):
+        raise BundleSchemaError("bundle_schema_version mismatch")
+
+    monkeypatch.setattr(
+        TRITON_SWMM_experiment, "from_doi", classmethod(_raise_schema_error)
+    )
+    result = runner.invoke(app, ["ingest", "--doi", "10.5281/zenodo.1", "--host", "zenodo"])
+    assert result.exit_code == 6
+
+
+def test_exit_code_2_ingest_missing_doi_and_pid():
+    """`hhemt ingest` with neither --doi nor --pid is a CLI validation error (exit 2)."""
+    result = runner.invoke(app, ["ingest", "--host", "zenodo"])
+    assert result.exit_code == 2

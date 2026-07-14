@@ -2010,6 +2010,83 @@ def bundle_command(
     console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
 
 
+@app.command(name="ingest")
+def ingest_command(
+    doi: str = typer.Option(
+        None,
+        "--doi",
+        help="DOI of the published reprex bundle (e.g. 10.5281/zenodo.123456).",
+    ),
+    pid: str = typer.Option(
+        None,
+        "--pid",
+        help="Host-native id (Zenodo record id / HydroShare resource id).",
+    ),
+    host: str = typer.Option(
+        "zenodo",
+        "--host",
+        help="Deposit host: 'zenodo' or 'hydroshare'.",
+    ),
+    sha256: str = typer.Option(
+        None,
+        "--sha256",
+        help="Optional sha256 pin on the fetched bundle zip (integrity check).",
+    ),
+    target_dir: Path = typer.Option(
+        None,
+        "--target-dir",
+        help="Directory to fetch + reconstitute into (default: a fresh temp dir).",
+    ),
+    software_dir: Path = typer.Option(
+        None,
+        "--software-dir",
+        help=(
+            "Target-side directory for the toolkit's SWMM/TRITON build dirs "
+            "(default: {bundle_root}/software). These are toolkit-owned build outputs, "
+            "not bundled inputs."
+        ),
+    ),
+) -> None:
+    """Fetch a published reprex bundle by DOI/PID, reconstitute it, and print the
+    runnable configs (ADR-13 C9).
+
+    A self-contained bundle (the default emit) carries every declared input, so the
+    reconstituted experiment runs from scratch. Ingesting a DOI and running it executes
+    shell derived from the fetched config — ingest only deposits you trust. Use
+    ``--sha256`` to pin the fetched bundle-zip integrity.
+    """
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.experiments import TRITON_SWMM_experiment
+
+    try:
+        if not (doi or pid):
+            raise CLIValidationError(
+                "doi", "Provide at least one of --doi or --pid."
+            )
+        exp = TRITON_SWMM_experiment.from_doi(
+            doi=doi,
+            pid=pid,
+            host=host,
+            expected_sha256=sha256,
+            target_dir=target_dir,
+            software_dir=software_dir,
+        )
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]ingest failed:[/red] {exc}")
+        raise typer.Exit(code) from exc
+
+    bundle_root = exp.bundle_root
+    analysis_dir = exp.analysis.analysis_paths.analysis_dir
+    console.print(f"[green]Ingested bundle:[/green] {bundle_root}")
+    console.print(f"[green]Reconstituted analysis_dir:[/green] {analysis_dir}")
+    console.print(
+        "Run it with:\n"
+        f"  hhemt run --system-config {bundle_root}/system_config.yaml "
+        f"--analysis-config {bundle_root}/analysis_config.yaml"
+    )
+
+
 @app.command(name="combine")
 def combine_command(
     bundles: list[Path] = typer.Argument(

@@ -85,9 +85,11 @@ from hhemt.config.loaders import (
 )
 
 import hashlib
+import json
+import re
 
 from hhemt.config.case_manifest import CaseManifest
-from hhemt.exceptions import ProcessingError
+from hhemt.exceptions import ConfigurationError, ProcessingError
 
 
 class TRITON_SWMM_experiment:
@@ -101,20 +103,35 @@ class TRITON_SWMM_experiment:
         system: Configured TRITONSWMM_system instance with analysis loaded
     """
 
-    def __init__(self, cfg_system_yaml: Path, cfg_analysis_yaml: Path, case_name: str):
+    def __init__(
+        self,
+        cfg_system_yaml: Path,
+        cfg_analysis_yaml: Path,
+        case_name: str | None = None,
+    ):
         """
-        Initialize example from system and analysis configuration files.
+        Initialize an experiment from system and analysis configuration files.
 
         Args:
             cfg_system_yaml: Path to system configuration YAML
             cfg_analysis_yaml: Path to analysis configuration YAML
+            case_name: In-repo case-study name, used to resolve the packaged
+                ``test_data/{case_name}/`` tree. ``None`` for a DOI-ingested bundle
+                (``from_doi``), which carries no in-repo test-data tree — the
+                ``retrieve_test_data_directory`` lookup is skipped and
+                ``test_case_directory`` is ``None``; ``from_doi`` sets
+                ``bundle_root`` instead.
         """
         self.system = TRITONSWMM_system(cfg_system_yaml)
         self.analysis = TRITONSWMM_analysis(
             analysis_config_yaml=cfg_analysis_yaml, system=self.system
         )
-        self.test_case_directory = self.retrieve_test_data_directory(case_name)
-        #   # type: ignore
+        self.test_case_directory = (
+            self.retrieve_test_data_directory(case_name)
+            if case_name is not None
+            else None
+        )
+        self.bundle_root: Path | None = None
 
     @classmethod
     def retrieve_test_data_directory(cls, case_name: str):
@@ -178,6 +195,275 @@ class TRITON_SWMM_experiment:
         )
 
         return cls(cfg_system_yaml, cfg_analysis_yaml, case_name)
+
+    @classmethod
+    def from_doi(
+        cls,
+        doi: str | None = None,
+        *,
+        pid: str | None = None,
+        host: str,
+        expected_sha256: str | None = None,
+        target_dir: Path | None = None,
+        software_dir: Path | None = None,
+    ) -> "TRITON_SWMM_experiment":
+        """Fetch a published reprex bundle by DOI/PID, reconstitute it, and return a
+        runnable experiment (ADR-13 C9; R1-R4).
+
+        Under the ADR-9 self-contained-by-default contract the emitted bundle carries
+        every cfg-declared simulation input at its bundle-relative location, so a
+        self-contained bundle reconstitutes to inputs that all exist on disk — a
+        from-scratch runnable experiment, dependent externally only on the reproducer's
+        USER-specific + HPC-specific configs and the container SIF (built on ingest from
+        the carried ``.def`` recipe, or transferred per ADR-2 — a separate phase). A
+        bundle emitted with a ``bundle_exclude_config`` opt-out carries the excluded
+        inputs by-reference via an ``input_deposit`` block fetched on ingest.
+
+        Trust boundary: ingesting a DOI and running it executes shell derived from the
+        fetched config — ingest only deposits you trust. ``expected_sha256`` pins the
+        fetched bundle-zip integrity.
+
+        Args:
+            doi: The bundle's DOI (e.g. ``'10.5281/zenodo.123456'``). Either ``doi`` or ``pid``.
+            pid: The host-native id (Zenodo record id / HydroShare resource id).
+            host: ``'zenodo'`` or ``'hydroshare'`` — REQUIRED, no default (the sibling
+                case-study fetch defaults to hydroshare; two DOI entry points with
+                opposite host defaults is a trap).
+            expected_sha256: Optional sha256 pin on the fetched bundle zip.
+            target_dir: Optional directory to fetch into (default: a fresh temp dir).
+            software_dir: Target-side directory for the toolkit-owned SWMM/TRITON build
+                dirs (default: ``{bundle_root}/software``). These are build OUTPUTS the
+                toolkit creates at setup, not bundled inputs; they must be non-null for
+                ``TRITONSWMM_system`` to construct.
+        """
+        from hhemt.bundle import Bundle
+        from hhemt.bundle._emit import (
+            reconstitute_runnable_analysis_config,
+            reconstitute_runnable_config,
+        )
+        from hhemt.bundle._reprex import extract_reprex_bundle
+
+        if not (doi or pid):
+            raise ConfigurationError(
+                field="doi",
+                message="from_doi requires either `doi` or `pid`.",
+                config_path=None,
+            )
+        if host not in ("zenodo", "hydroshare"):
+            raise ConfigurationError(
+                field="host",
+                message=f"host must be 'zenodo' or 'hydroshare', got {host!r}.",
+                config_path=None,
+            )
+
+        if target_dir is None:
+            import tempfile
+
+            target_dir = Path(tempfile.mkdtemp(prefix="hhemt_ingest_"))
+        else:
+            target_dir = Path(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+        zip_path = cls._fetch_bundle_zip(
+            host,
+            doi=doi,
+            pid=pid,
+            res_identifier=pid,
+            dest=target_dir,
+            expected_sha256=expected_sha256,
+        )
+        bundle_root = extract_reprex_bundle(zip_path)
+
+        # Schema guard: raises BundleSchemaError on version skew, FileNotFoundError when
+        # the directory carries no bundle_manifest.json.
+        Bundle.from_directory(bundle_root)
+
+        # R3: fail closed unless the crate names a runnable workflow (mainEntity).
+        cls._assert_bundle_has_workflow(bundle_root)
+
+        # Reconstitute the runnable config pair with bundle-relative paths resolved
+        # absolute under bundle_root (system + analysis). software_dir points the
+        # toolkit-owned build dirs at a writable target-side location (default
+        # {bundle_root}/software) so TRITONSWMM_system constructs and run() can build
+        # there — the render-path null-ing would raise at construction.
+        system_config_path = reconstitute_runnable_config(
+            bundle_root, software_dir=software_dir or (bundle_root / "software")
+        )
+        analysis_config_path = reconstitute_runnable_analysis_config(bundle_root)
+
+        # Materialize-or-fail: a self-contained bundle carries every declared input, so
+        # this passes; it fails closed (naming every absent input) on a malformed/partial
+        # bundle. This is the only real gate — the load-time existence check is inert on
+        # the reconstituted YAML string values.
+        cls._assert_declared_inputs_exist(system_config_path, analysis_config_path)
+
+        exp = cls(system_config_path, analysis_config_path, case_name=None)
+        exp.bundle_root = bundle_root
+        return exp
+
+    @classmethod
+    def _fetch_bundle_zip(
+        cls,
+        host: str,
+        *,
+        doi: str | None = None,
+        pid: str | None = None,
+        res_identifier: str | None = None,
+        dest: Path,
+        expected_sha256: str | None = None,
+    ) -> Path:
+        """Fetch a deposit and locate the single reprex-bundle ``.zip`` within its
+        payload root. Raises ``ProcessingError`` when zero or more than one candidate
+        zip is present."""
+        payload_root = cls._fetch_deposit_files(
+            host,
+            doi=doi,
+            pid=pid,
+            res_identifier=res_identifier,
+            dest=Path(dest),
+            download_if_exists=True,
+        )
+        candidates = sorted(payload_root.rglob("*.zip"))
+        if len(candidates) != 1:
+            rel = [str(c.relative_to(payload_root)) for c in candidates]
+            raise ProcessingError(
+                operation="doi_ingest_bundle_zip",
+                filepath=str(payload_root),
+                reason=(
+                    f"expected exactly one bundle .zip in the fetched deposit, found "
+                    f"{len(candidates)}: {rel}"
+                ),
+            )
+        zip_path = candidates[0]
+        if expected_sha256 is not None:
+            cls._verify_sha256(zip_path, expected_sha256)
+        return zip_path
+
+    @staticmethod
+    def _verify_sha256(path: Path, expected_sha256: str) -> None:
+        h = hashlib.sha256()
+        with Path(path).open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)  # streaming read bounds peak RSS on multi-GB assets
+        actual = h.hexdigest()
+        if actual != expected_sha256:
+            raise ProcessingError(
+                operation="doi_ingest_sha256",
+                filepath=str(path),
+                reason=(
+                    f"sha256 mismatch on the fetched bundle: expected "
+                    f"{expected_sha256}, got {actual}"
+                ),
+            )
+
+    @staticmethod
+    def _assert_bundle_has_workflow(bundle_root: Path) -> None:
+        """R3: fail closed unless the bundle's RO-Crate names a runnable workflow.
+
+        Reads the crate ROOT entity's ``mainEntity`` ``@id`` (the placement
+        ``metadata.upgrade_doc_to_workflow_run_crate`` writes) and verifies the
+        referenced workflow file exists under ``bundle_root``. A crate that is absent,
+        carries no ``mainEntity``, or points at a missing workflow file is a mis-pointed
+        ADR-11 data deposit rather than a runnable reprex bundle — a key-presence test
+        alone is a weaker gate than "this bundle carries a runnable workflow"."""
+        crate_path = bundle_root / "ro-crate-metadata.json"
+        if not crate_path.exists():
+            raise ProcessingError(
+                operation="doi_ingest_crate",
+                filepath=str(crate_path),
+                reason=(
+                    "the fetched bundle carries no ro-crate-metadata.json; it is not a "
+                    "runnable reprex bundle (likely a mis-pointed ADR-11 data deposit). "
+                    "Ingest the reprex-bundle DOI, not the data-deposit DOI."
+                ),
+            )
+        graph = json.loads(crate_path.read_text()).get("@graph", [])
+        root = next((e for e in graph if e.get("@id") == "./"), None)
+        main_entity = (root or {}).get("mainEntity")
+        workflow_id = main_entity.get("@id") if isinstance(main_entity, dict) else None
+        if not workflow_id:
+            raise ProcessingError(
+                operation="doi_ingest_crate",
+                filepath=str(crate_path),
+                reason=(
+                    "the fetched crate has no root `mainEntity` (not a Workflow-Run-"
+                    "Crate); it is a plain RO-Crate or a mis-pointed ADR-11 data "
+                    "deposit, not a runnable reprex bundle."
+                ),
+            )
+        workflow_path = bundle_root / workflow_id
+        if not workflow_path.exists():
+            raise ProcessingError(
+                operation="doi_ingest_crate",
+                filepath=str(workflow_path),
+                reason=(
+                    f"the crate names a workflow mainEntity ({workflow_id}) but that "
+                    f"file is absent from the bundle — the bundle does not carry a "
+                    f"runnable workflow."
+                ),
+            )
+
+    @staticmethod
+    def _assert_declared_inputs_exist(
+        system_config_path: Path, analysis_config_path: Path
+    ) -> None:
+        """Fail-closed materialize gate: raise ``ProcessingError`` naming EVERY
+        reconstituted input Path that does not exist on disk.
+
+        The reconstituted configs carry ABSOLUTE resolved paths under ``bundle_root``.
+        ``cfgBaseModel._check_paths_exist`` is ``mode='before'`` + ``isinstance(v, Path)``
+        -gated, so it never fires on these YAML strings — this gate is the only thing
+        standing between a partial bundle and a silent hours-later setup failure.
+
+        Only CARRIED-INPUT fields are checked (the same ``BUNDLE_RELATIVE`` family the
+        self-contained harvest carries). The toolkit-owned build dirs
+        (``IS_NONE_ACCEPTABLE`` — set by ``reconstitute_runnable_config`` to a
+        not-yet-existing, existence-exempt target-side location) and the ``FORCED_DOT``
+        bundle-root markers (``analysis_dir`` / ``system_directory``) are NOT inputs and
+        are skipped — checking them would false-fail on a runnable bundle."""
+        from hhemt.bundle._path_policy import (
+            _PATH_FIELD_POLICY,
+            PathPolicy,
+            enumerate_path_fields,
+        )
+        from hhemt.config.analysis import analysis_config
+        from hhemt.config.system import system_config
+
+        carried = {
+            PathPolicy.BUNDLE_RELATIVE,
+            PathPolicy.BUNDLE_RELATIVE_OR_NONE,
+            PathPolicy.BUNDLE_RELATIVE_LIST,
+        }
+        missing: list[str] = []
+        for cfg_path, cfg_model in (
+            (system_config_path, system_config),
+            (analysis_config_path, analysis_config),
+        ):
+            data = yaml.safe_load(Path(cfg_path).read_text())
+            for name in enumerate_path_fields(cfg_model):
+                if _PATH_FIELD_POLICY.get(name) not in carried:
+                    continue
+                value = data.get(name)
+                if value is None:
+                    continue
+                for v in value if isinstance(value, list) else [value]:
+                    if v is None:
+                        continue
+                    if not Path(v).exists():
+                        missing.append(f"{name}: {v}")
+        if missing:
+            raise ProcessingError(
+                operation="doi_ingest_inputs",
+                filepath=None,
+                reason=(
+                    "the reconstituted experiment declares inputs that do not exist on "
+                    "disk — the bundle is not self-contained (or was emitted with an "
+                    "exclude-config whose input_deposit fetch is unavailable). Place "
+                    "these under {bundle_root}/external/ and re-run, or re-emit the "
+                    "bundle self-contained. Missing inputs:\n  "
+                    + "\n  ".join(sorted(missing))
+                ),
+            )
 
     @classmethod
     def _load_case_analysis_config(
@@ -360,6 +646,161 @@ class TRITON_SWMM_experiment:
         return CaseManifest.model_validate(read_yaml(path))
 
     @classmethod
+    def _fetch_deposit_files(
+        cls,
+        host: str,
+        *,
+        doi: str | None = None,
+        pid: str | None = None,
+        res_identifier: str | None = None,
+        dest: Path,
+        expected_manifest: dict[str, str] | None = None,
+        download_if_exists: bool = False,
+        hs=None,
+        validate: bool = True,
+    ) -> Path:
+        """Generic host-dispatched deposit fetch (ADR-12/C7; R4) — the single
+        implementation the case-study data fetch AND the bundle-zip ingestion both route
+        through. Returns the PAYLOAD ROOT: ``dest`` for Zenodo (flat files under their
+        record keys), the extracted BAG ROOT (renamed to ``dest``) for HydroShare
+        (deposited files under ``data/contents/``). Both hosts run the host-agnostic
+        streaming-sha256 ``_verify_manifest`` against the returned root, preserving the
+        ``case manifest sha256 uses streaming chunked read`` stipulation.
+
+        Contract points the seam owns: (i) host-key resolution — Zenodo resolves
+        ``pid or doi.rsplit('zenodo.', 1)[-1]`` and rejects a non-numeric record id
+        (it is interpolated into the records API URL); HydroShare keys on
+        ``res_identifier or pid``. (ii) client construction — the seam connects via
+        ``_connect_to_hydroshare`` internally unless a pre-connected ``hs`` is passed.
+        (iii) caching — ``download_if_exists`` reproduces the early-return-if-present /
+        ``fast_rmtree``-and-refetch behavior so ``from_case_study`` stays byte-behavioral.
+        """
+        dest = Path(dest)
+        if host == "zenodo":
+            recid = (pid or "").strip()
+            if not recid and doi:
+                recid = doi.rsplit("zenodo.", 1)[-1].strip()
+            if not recid:
+                raise ProcessingError(
+                    operation="zenodo_resolve",
+                    filepath=None,
+                    reason=(
+                        f"cannot resolve a Zenodo record id from doi={doi!r} pid={pid!r}"
+                    ),
+                )
+            if not re.fullmatch(r"[0-9]+", recid):
+                raise ProcessingError(
+                    operation="zenodo_resolve",
+                    filepath=None,
+                    reason=(
+                        f"resolved Zenodo record id {recid!r} is not numeric; refusing "
+                        f"to interpolate it into the records API URL"
+                    ),
+                )
+            if dest.exists() and download_if_exists:
+                fast_rmtree(dest)  # EXEMPT-DU: test-example-fixture
+            if dest.exists() and not download_if_exists:
+                return dest
+            dest.mkdir(parents=True, exist_ok=True)
+            import requests  # explicit dep declared in pyproject
+
+            resp = requests.get(
+                f"https://zenodo.org/api/records/{recid}", timeout=60
+            )
+            if resp.status_code != 200:
+                raise ProcessingError(
+                    operation="zenodo_fetch",
+                    filepath=None,
+                    reason=f"Zenodo record {recid} returned HTTP {resp.status_code}",
+                )
+            for entry in resp.json().get("files", []):
+                cls._fetch_file_by_url(entry["links"]["self"], dest / entry["key"])
+            if validate:
+                # host-agnostic sha256 (Zenodo md5 is advisory)
+                cls._verify_manifest(dest, expected_manifest)
+            return dest
+
+        if host == "hydroshare":
+            key = res_identifier or pid
+            if not key:
+                raise ProcessingError(
+                    operation="hydroshare_resolve",
+                    filepath=None,
+                    reason="HydroShare fetch requires res_identifier or pid",
+                )
+            if dest.exists() and download_if_exists:
+                fast_rmtree(dest)  # EXEMPT-DU: test-example-fixture
+            if dest.exists() and not download_if_exists:
+                return dest
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if hs is None:
+                hs = cls._connect_to_hydroshare(key)
+            hs_resource = hs.resource(key)
+            zip_path = Path(hs_resource.download(dest.parent))
+            with ZipFile(zip_path, "r") as z:
+                z.extractall(dest.parent)
+            with ZipFile(zip_path, "r") as z:
+                top_level_dirs = {
+                    Path(f).parts[0] for f in z.namelist() if Path(f).parts
+                }
+            if len(top_level_dirs) == 1:
+                bag_root = dest.parent / next(iter(top_level_dirs))
+            else:
+                raise ProcessingError(
+                    operation="hydroshare_bag_extract",
+                    filepath=str(zip_path),
+                    reason=(
+                        "ZIP has multiple top-level folders; cannot determine Bag root."
+                    ),
+                )
+            if validate:
+                bag = bagit.Bag(str(bag_root))
+                if bag.is_valid():
+                    print("Bag verified! All bagit checksums match.", flush=True)
+                else:
+                    raise ProcessingError(
+                        operation="hydroshare_bag_validation",
+                        filepath=str(bag_root),
+                        reason=(
+                            "bagit manifest validation failed (bag is not "
+                            "self-consistent)."
+                        ),
+                    )
+            cls._verify_manifest(bag_root, expected_manifest)
+            bag_root.rename(dest)
+            zip_path.unlink()  # EXEMPT-DU: test-example-fixture
+            return dest
+
+        raise ProcessingError(
+            operation="deposit_fetch",
+            filepath=None,
+            reason=f"unknown deposit host {host!r} (expected 'zenodo' or 'hydroshare')",
+        )
+
+    @classmethod
+    def _fetch_file_by_url(
+        cls, url: str, dest: Path, *, expected_sha256: str | None = None
+    ) -> Path:
+        """Streaming 1 MiB-chunk download of a single URL to ``dest`` (the digest core).
+
+        Used by the Zenodo per-file branch of ``_fetch_deposit_files`` AND by the crate's
+        by-reference SIF fetch (``downloadUrl`` + ``sha256``), which is a URL fetch that
+        cannot be expressed through the ``(host, doi|pid)`` deposit signature. When
+        ``expected_sha256`` is given, the downloaded file is sha256-verified."""
+        import requests  # explicit dep declared in pyproject
+
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with requests.get(url, stream=True, timeout=600) as fr:
+            fr.raise_for_status()
+            with dest.open("wb") as fh:
+                for chunk in fr.iter_content(chunk_size=1 << 20):
+                    fh.write(chunk)
+        if expected_sha256 is not None:
+            cls._verify_sha256(dest, expected_sha256)
+        return dest
+
+    @classmethod
     def _download_data_from_hydroshare(
         cls,
         res_identifier: str,
@@ -369,47 +810,18 @@ class TRITON_SWMM_experiment:
         validate=True,
         expected_manifest: dict[str, str] | None = None,
     ):
-        if target.exists() and download_if_exists:
-            # EXEMPT-DU: test-example-fixture
-            fast_rmtree(target)
-        if target.exists() and not download_if_exists:
-            return
-        target.parent.mkdir(parents=True, exist_ok=True)
-        hs_resource = hs.resource(res_identifier)
-        zip_path = Path(hs_resource.download(target.parent))
-        extract_to = target.parent
-
-        with ZipFile(zip_path, "r") as z:
-            z.extractall(extract_to)
-
-        # Detect the actual top-level folder
-        with ZipFile(zip_path, "r") as z:
-            top_level_dirs = {Path(f).parts[0] for f in z.namelist() if Path(f).parts}
-            if len(top_level_dirs) == 1:
-                unzipped_folder = extract_to / next(iter(top_level_dirs))
-            else:
-                raise ProcessingError(
-                    operation="hydroshare_bag_extract",
-                    filepath=str(zip_path),
-                    reason="ZIP has multiple top-level folders; cannot determine Bag root.",
-                )
-        # unzipped_folder = Path(extract_to).joinpath(zip_path.name.split(".")[0])
-        if validate:
-            bag = bagit.Bag(str(unzipped_folder))
-            if bag.is_valid():
-                print("Bag verified! All bagit checksums match.", flush=True)
-            else:
-                raise ProcessingError(
-                    operation="hydroshare_bag_validation",
-                    filepath=str(unzipped_folder),
-                    reason="bagit manifest validation failed (bag is not self-consistent).",
-                )
-
-        cls._verify_manifest(unzipped_folder, expected_manifest)
-
-        outdir = unzipped_folder.rename(target)
-        # EXEMPT-DU: test-example-fixture
-        zip_path.unlink()
+        """Thin wrapper preserving the case-study call site; delegates to the single
+        ``_fetch_deposit_files`` seam (passing the already-connected ``hs`` so the
+        seam does not reconnect)."""
+        return cls._fetch_deposit_files(
+            "hydroshare",
+            res_identifier=res_identifier,
+            dest=Path(target),
+            expected_manifest=expected_manifest,
+            download_if_exists=download_if_exists,
+            hs=hs,
+            validate=validate,
+        )
 
     @classmethod
     def _verify_manifest(cls, bag_root: Path, expected_manifest: dict[str, str] | None) -> None:
@@ -499,46 +911,19 @@ class TRITON_SWMM_experiment:
         download_if_exists: bool = False,
         expected_manifest: dict[str, str] | None = None,
     ):
-        """Fetch a Zenodo deposit's files by DOI/record id and sha256-verify (ADR-12/C7).
-
-        Resolves the Zenodo record id from case_manifest.doi (suffix after 'zenodo.')
-        or case_manifest.pid, GETs the record metadata, downloads each file, then runs
-        the host-agnostic _verify_manifest. Prefer a versioned DOI (pins one version).
-        """
-        import requests  # explicit dep declared in pyproject (Phase 4)
-
-        if target.exists() and download_if_exists:
-            fast_rmtree(target)  # EXEMPT-DU: test-example-fixture
-        if target.exists() and not download_if_exists:
-            return
-        target.mkdir(parents=True, exist_ok=True)
-
-        recid = (case_manifest.pid or "").strip()
-        if not recid and case_manifest.doi:
-            recid = case_manifest.doi.rsplit("zenodo.", 1)[-1].strip()
-        if not recid:
-            raise ProcessingError(
-                operation="zenodo_resolve",
-                filepath=None,
-                reason=f"cannot resolve a Zenodo record id from doi={case_manifest.doi!r} pid={case_manifest.pid!r}",
-            )
-        resp = requests.get(f"https://zenodo.org/api/records/{recid}", timeout=60)
-        if resp.status_code != 200:
-            raise ProcessingError(
-                operation="zenodo_fetch",
-                filepath=None,
-                reason=f"Zenodo record {recid} returned HTTP {resp.status_code}",
-            )
-        for entry in resp.json().get("files", []):
-            url = entry["links"]["self"]
-            dest = target / entry["key"]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with requests.get(url, stream=True, timeout=600) as fr:
-                fr.raise_for_status()
-                with dest.open("wb") as fh:
-                    for chunk in fr.iter_content(chunk_size=1 << 20):
-                        fh.write(chunk)
-        cls._verify_manifest(target, expected_manifest)  # host-agnostic sha256 (Zenodo md5 is advisory)
+        """Thin wrapper preserving the case-study call site; delegates to the single
+        ``_fetch_deposit_files`` seam. Resolves the Zenodo record id from
+        ``case_manifest.doi`` (suffix after ``'zenodo.'``) or ``case_manifest.pid``,
+        downloads each file, then runs the host-agnostic ``_verify_manifest``. Prefer a
+        versioned DOI (pins one version)."""
+        return cls._fetch_deposit_files(
+            "zenodo",
+            doi=case_manifest.doi,
+            pid=case_manifest.pid,
+            dest=Path(target),
+            expected_manifest=expected_manifest,
+            download_if_exists=download_if_exists,
+        )
 
     @classmethod
     def _return_filled_template_yaml_dictionary(cls, cfg_template: Path, mapping: dict):
