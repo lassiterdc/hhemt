@@ -87,6 +87,7 @@ def _build_case(
     system_directory: str | None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -106,6 +107,13 @@ def _build_case(
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
+    # Config-injectable TRITON pin (no hardcoded config -- CLAUDE.md style #9; mirrors the
+    # hpc_system_config_yaml estate->toolkit threading below). When set by the estate runner,
+    # this OVERRIDES the test-fixture default TRITONSWMM_branch_key (test_case_builder.py:415,
+    # "15eb18a5...") via the additional_system_configs merge at test_case_builder.py:450, so the
+    # experiment runs under the pinned TRITON while the synth test tier keeps the fixture default.
+    if tritonswmm_branch_key is not None:
+        system_cfg["TRITONSWMM_branch_key"] = tritonswmm_branch_key
 
     # Config-injectable (no hardcoded config — CLAUDE.md style #9): callers (the private-estate
     # runner) pass the git-tracked estate config carrying the real account; None preserves the
@@ -170,6 +178,7 @@ def clean_case(
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -192,6 +201,7 @@ def clean_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
 
 
@@ -201,6 +211,7 @@ def resume_case(
     cell_size_m: float = 3.5,
     runtime_min_by_sa: dict[str, float] | None = None,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
 
@@ -233,6 +244,7 @@ def resume_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
 
 
@@ -242,6 +254,7 @@ def build_resume_from_clean_runtimes(
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -258,6 +271,7 @@ def build_resume_from_clean_runtimes(
         system_directory=clean_system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
     runtime_min_by_sa = size_resume_walltimes(clean.analysis)
     return resume_case(
@@ -265,4 +279,5 @@ def build_resume_from_clean_runtimes(
         cell_size_m=cell_size_m,
         runtime_min_by_sa=runtime_min_by_sa,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
