@@ -1416,6 +1416,16 @@ class TRITONSWMM_sensitivity_analysis:
             with_run_units=False,
         )
         apply_provenance_core(tree, core_json_str=_core_json)
+
+        # TRITON provenance (D2/R5): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the sensitivity-MASTER tree root as plain attrs. This is a
+        # SEPARATE wiring site from consolidate_to_datatree: check_coupled_resume_validity's
+        # reader resolves sensitivity_datatree.zarr for a sensitivity master, so omitting
+        # this site would leave the reader permanently INDETERMINATE on the primary
+        # experiment shape (the c2c3 dual-wiring seam).
+        from hhemt.processing_analysis import _stamp_triton_provenance
+
+        _stamp_triton_provenance(tree, self.master_analysis)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.master_analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 

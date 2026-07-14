@@ -176,6 +176,8 @@ class TRITONSWMM_analysis_post_processing:
                 _semver_vals.extend(str(v) for v in _mode_ds["hhemt_producing_version"].values.tolist())
         apply_producing_stamp(tree, _sha_vals, _semver_vals)
 
+        _stamp_triton_provenance(tree, self._analysis)
+
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
         from hhemt.metadata import write_rocrate_sidecar
@@ -422,6 +424,40 @@ class TRITONSWMM_analysis_post_processing:
             if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
+
+
+def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
+    """Stamp the producing-TRITON provenance onto a consolidated-tree ROOT as plain attrs.
+
+    Carries ``triton_producing_sha`` + ``triton_has_coupled_resume_fix`` — captured at
+    COMPILE time onto the system log (a DIFFERENT process on HPC; see
+    ``system.py::_capture_tritonswmm_provenance``) — onto the consolidated tree root. Kept
+    as PLAIN root attrs (NOT ``metadata._EMBEDDED_PROV_KEYS``) so an additive provenance
+    stamp does not churn the Gotcha-63 byte-identity golden fixtures and needs no
+    LAYOUT_VERSION bump. Shared by both consolidation sites
+    (``consolidate_to_datatree`` here + ``consolidate_sensitivity_datatree`` in
+    ``sensitivity_analysis.py``). Graceful-absent: when the system log is missing or
+    unstamped (a pre-provenance build, or a reconstituted reprex bundle), the attrs are
+    simply omitted and ``check_coupled_resume_validity`` treats their absence as
+    INDETERMINATE — never a false pre-fix warn. Never raises.
+    """
+    _sys = getattr(analysis, "_system", None)
+    _sys_log = getattr(_sys, "log", None)
+    if _sys_log is None:
+        return
+    try:
+        _sys_log.refresh()  # pick up the compile-process write in the cross-process case
+    except Exception:
+        pass
+    try:
+        _sha = _sys_log.triton_head_sha.get()
+        _has_fix = _sys_log.triton_has_coupled_resume_fix.get()
+    except Exception:
+        return
+    if _sha is not None:
+        tree.attrs["triton_producing_sha"] = str(_sha)
+    if _has_fix is not None:
+        tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
 
 
 def prev_power_of_two(n: int | float) -> int:

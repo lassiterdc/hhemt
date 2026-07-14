@@ -223,7 +223,7 @@ def test_reporting_sets_registry_imports_cleanly():
         get_reporting_set,
     )
 
-    assert set(REPORTING_SETS) == {"default", "benchmarking"}
+    assert set(REPORTING_SETS) == {"default", "benchmarking", "compute-sensitivity", "combined"}
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
 

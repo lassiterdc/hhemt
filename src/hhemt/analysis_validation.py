@@ -420,62 +420,185 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim report surface) ---
-def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """Count coupled sims blocked by the interim hotstart-resume guard (run_simulation.py).
+#: The pinned TRITON coupled-resume-fix commit. Every experiment's TRITON binary is
+#: pinned here (D3 clone-gate enforcement); a consolidated tree whose
+#: ``triton_has_coupled_resume_fix`` is False was produced by PRE-FIX TRITON. Full
+#: 40-char sha (the short pin ``3a832f7d`` resolves to this). Mirrored in
+#: ``system.py::_PINNED_TRITON_COUPLED_RESUME_FIX_SHA`` (compile-time capture).
+_PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 
-    A coupled (``tritonswmm``) sim that got walltime-killed and re-dispatched hits the
-    guard, which increments ``n_resumes`` and raises ``SimulationError`` before launch, so
-    the sim never completes. Counting coupled ``df_status`` rows with ``n_resumes >= 1`` and
-    ``run_completed`` False surfaces the population in the report with a COUNT (no renderer
-    edit — the errors_and_warnings renderer prints each check's ``summary``). Reads
-    ``analysis.df_status`` (order-independent of the export_scenario_status rule).
+#: The positive marker TRITON prints to its stderr log on every SUCCESSFUL exchange-
+#: history replay (``swmm_triton.h:672-673`` @ 3a832f7d). Its ABSENCE from a resumed
+#: coupled sim's log means the replay never engaged (rank-0-local engage guard, or a
+#: purged side-file) and SWMM re-initialized from t=0 — the pre-fix truncation,
+#: recurring silently at the fixed commit.
+_TRITON_REPLAY_MARKER = "SWMM exchange history replayed to t="
+
+
+def _read_triton_provenance(
+    analysis: TRITONSWMM_analysis,
+) -> tuple[str | None, bool | None]:
+    """Graceful-absent read of the consolidated-tree TRITON provenance root attrs.
+
+    Returns ``(triton_producing_sha, triton_has_coupled_resume_fix)``. Mirrors
+    ``recompute.py::_iter_scope_stamps``: a sensitivity master resolves
+    ``sensitivity_datatree.zarr``, else ``analysis_datatree.zarr``. Either element is
+    None when the attr / tree is absent or unreadable (a pre-provenance tree, or an
+    off-checkout install) -> the caller treats None as INDETERMINATE, never a false
+    pre-fix warn. NEVER raises.
+    """
+    import xarray as xr
+
+    paths = analysis.analysis_paths
+    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        zarr_path = getattr(paths, "sensitivity_datatree_zarr", None)
+    else:
+        zarr_path = getattr(paths, "analysis_datatree_zarr", None)
+    if zarr_path is None or not zarr_path.exists():
+        return None, None
+    try:
+        tree = xr.open_datatree(zarr_path, engine="zarr", chunks="auto", consolidated=False)
+    except Exception:
+        return None, None
+    sha = tree.attrs.get("triton_producing_sha")
+    has_fix = tree.attrs.get("triton_has_coupled_resume_fix")
+    # zarr may round-trip the bool as numpy bool_/0-1; normalize to Python bool-or-None.
+    if has_fix is not None:
+        has_fix = bool(has_fix)
+    return (str(sha) if sha is not None else None), has_fix
+
+
+def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Warn when a COMPLETED coupled analysis's resumed data is invalid.
+
+    Two independent invalidity paths, both keyed on a coupled model that resumed:
+
+    (A) PRE-FIX TRITON. When ``triton_has_coupled_resume_fix`` is False the producing
+        TRITON predates 3a832f7d, so any ``tritonswmm`` sim with ``n_resumes >= 1``
+        re-inited SWMM from t=0 and its max-flow/depth summaries are systematically low.
+
+    (B) POST-FIX but the REPLAY NEVER ENGAGED. Even at the pinned fix, TRITON's exchange-
+        replay engage guard is rank-0-LOCAL (``triton.h:435``), so a rank-0 row-strip
+        owning no manhole skips the replay and the pre-fix truncation recurs SILENTLY. A
+        sha-only check would launder that as "data valid" — worse than emitting no check.
+        The sound detector is the positive replay marker TRITON prints on every successful
+        replay; its ABSENCE from a resumed coupled sim's TRITON log is the failure. Reads a
+        per-sim LOG (not the tree) so it stays at consolidation-time
+        ``persist_validation_report``, NOT render time (Gotcha 53 audit-safety).
+
+    Distinct from the removed interim ``check_coupled_hotstart_resume`` (which counted
+    sims BLOCKED by the interim guard, ``run_completed`` False); this warns about
+    COMPLETED-but-invalid data after the fix ships. Non-blocking (``validate_analysis``
+    never raises). Graceful-absent throughout: an unstamped tree / unreadable log ->
+    INDETERMINATE INFO (``passed=True``), NEVER a false warn. The pre/post-fix predicate
+    reads the stamped BOOLEAN, NOT sha-equality — a DESCENDANT of 3a832f7d (a routine pin
+    bump) must not be misclassified pre-fix.
     """
     import pandas as pd
 
+    if not getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False):
+        return CheckResult(
+            name="Coupled resume validity",
+            level="aggregate",
+            passed=True,
+            summary="Coupled model not enabled — coupled-resume validity N/A.",
+            details=[],
+        )
+    triton_sha, has_fix = _read_triton_provenance(analysis)
+    if has_fix is None:
+        return CheckResult(
+            name="Coupled resume validity",
+            level="aggregate",
+            passed=True,
+            summary=(
+                "Producing-TRITON coupled-resume-fix status unknown (pre-provenance tree "
+                "or off-checkout); cannot determine coupled-resume validity. Re-consolidate "
+                "to stamp it."
+            ),
+            details=[],
+        )
+
+    # Resume record needed for BOTH the pre-fix arm and the replay-marker arm.
     try:
         df = analysis.df_status
     except Exception:
+        df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         return CheckResult(
-            name="Coupled hotstart resume",
+            name="Coupled resume validity",
             level="aggregate",
             passed=True,
-            summary="No coupled hotstart-resume failures detected.",
-            details=[],
-        )
-    needed = {"model_type", "n_resumes", "run_completed"}
-    if not needed.issubset(df.columns):
-        return CheckResult(
-            name="Coupled hotstart resume",
-            level="aggregate",
-            passed=True,
-            summary="No coupled hotstart-resume failures detected.",
+            summary=(
+                "Coupled-resume-fix status known but no resume record available — "
+                "no coupled-resume invalidity found."
+            ),
             details=[],
         )
     n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
-    completed = df["run_completed"].astype("boolean").fillna(False)
-    mask = (df["model_type"] == "tritonswmm") & (n_resumes >= 1) & (~completed)
-    blocked = df[mask]
-    details = [
-        {
-            "scenario": str(row.get("scenario_directory", "")),
-            "detail": (
-                "coupled hotstart resume unsupported — known TRITON-SWMM bug "
-                "(coupled SWMM re-inits from t=0 on resume; max-flow/depth summaries "
-                "systematically low). Sim halted before launch by the interim guard."
-            ),
-        }
-        for _, row in blocked.iterrows()
-    ]
+    resumed = df[(df["model_type"] == "tritonswmm") & (n_resumes >= 1)]
+
+    details: list[dict] = []
+    if not has_fix:
+        # Arm A — PRE-FIX TRITON: every resumed coupled sim is invalid.
+        for _, row in resumed.iterrows():
+            details.append(
+                {
+                    "scenario": str(row.get("scenario_directory", "")),
+                    "detail": (
+                        f"produced by PRE-FIX TRITON ({triton_sha}) with a coupled hotstart "
+                        f"resume (n_resumes={int(row.get('n_resumes') or 0)}); coupled SWMM "
+                        "re-inits from t=0 on resume so max-flow/depth summaries are "
+                        "systematically low. Re-run these sims with the pinned "
+                        "coupled-resume-fix TRITON."
+                    ),
+                }
+            )
+    else:
+        # Arm B — POST-FIX: a resumed coupled sim whose TRITON log lacks the replay
+        # marker had its replay silently skipped (rank-0-local engage guard, or a purged
+        # side-file) -> truncated exactly as pre-fix. An absent/unreadable log is
+        # INDETERMINATE (no detail row), never a false warn.
+        for _, row in resumed.iterrows():
+            scen_dir = str(row.get("scenario_directory", ""))
+            log_path = Path(scen_dir) / "logs" / "run_tritonswmm.log"
+            try:
+                engaged = _TRITON_REPLAY_MARKER in log_path.read_text()
+            except Exception:
+                continue  # INDETERMINATE — cannot read the log
+            if not engaged:
+                details.append(
+                    {
+                        "scenario": scen_dir,
+                        "detail": (
+                            f"resumed (n_resumes={int(row.get('n_resumes') or 0)}) at the "
+                            "pinned coupled-resume-fix TRITON, but the exchange-replay marker "
+                            "is ABSENT from the TRITON log — the replay never engaged, so SWMM "
+                            "re-initialized from t=0 and this sim's max-flow/depth summaries "
+                            "are truncated exactly as under pre-fix TRITON. Cause: rank 0's "
+                            "row-strip owned no SWMM node (TRITON's engage guard is rank-0-"
+                            "local, triton.h:435), or the exchange-replay side-file was purged. "
+                            "Re-run from a clean start, or re-run at a rank count whose rank-0 "
+                            "strip contains at least one manhole."
+                        ),
+                    }
+                )
+
     n = len(details)
     passed = n == 0
-    summary = (
-        "No coupled hotstart-resume failures detected."
-        if passed
-        else f"{n} sim(s) failed: coupled hotstart resume unsupported — known TRITON-SWMM bug"
-    )
+    if passed:
+        summary = "No coupled-resume invalidity detected."
+    elif not has_fix:
+        summary = (
+            f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
+            "summaries likely invalid."
+        )
+    else:
+        summary = (
+            f"{n} resumed coupled sim(s) at the pinned TRITON lack the exchange-replay "
+            "marker — replay never engaged; summaries likely truncated."
+        )
     return CheckResult(
-        name="Coupled hotstart resume",
+        name="Coupled resume validity",
         level="aggregate",
         passed=passed,
         summary=summary,
@@ -483,7 +606,6 @@ def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -503,7 +625,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_scenario_status_csv(analysis),
             check_resource_usage(analysis),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
-            check_coupled_hotstart_resume(analysis),  # REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED
+            check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
         ]
         + _read_persisted_eda_verdicts(analysis)
     )
