@@ -19,6 +19,14 @@ Both `--no-deps` flags are required, not optional. `swmmio 0.8.5` declares `pysw
 
 ### Option B (lightweight — pip extras only)
 
+> **SWMM execution is not supported on a pip-only install.** The validated SWMM
+> engine ships only from conda-forge; a pip-only environment resolves an
+> unvalidated `swmm-toolkit`/`pyswmm` stack, and `prepare_scenario`'s SWMM step
+> fails closed with an actionable error (override: `HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1`,
+> at your own risk). Use Option A for any workflow that runs SWMM. Option B is for
+> non-SWMM use (reporting, consolidation, publishing, `.inp` parsing) or when you
+> provide the conda-forge SWMM stack yourself.
+
 When you control the conda env separately (e.g., shared HPC env, CI), install the toolkit via pip extras matched to your usage:
 
 ```bash
