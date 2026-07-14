@@ -18,29 +18,6 @@ runner = CliRunner()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Exit Code 0: Success
-# ═══════════════════════════════════════════════════════════════════════
-
-
-def test_exit_code_0_list_testcases():
-    """Test --list-testcases exits with code 0."""
-    result = runner.invoke(app, ["run",
-        "--list-testcases",
-        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
-    ])
-    assert result.exit_code == 0
-
-
-def test_exit_code_0_list_case_studies():
-    """Test --list-case-studies exits with code 0."""
-    result = runner.invoke(app, ["run",
-        "--list-case-studies",
-        "--tests-case-config", "test_data/tests_and_case_studies_example.yaml",
-    ])
-    assert result.exit_code == 0
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # Exit Code 2: CLIValidationError, ConfigurationError
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -53,7 +30,6 @@ def test_exit_code_2_cli_validation_error_mutually_exclusive(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     result = runner.invoke(app, ["run",
-        "--profile", "production",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
         "--from-scratch",
@@ -71,60 +47,22 @@ def test_exit_code_2_cli_validation_error_invalid_enum(tmp_path):
     analysis_config.write_text("version: 1\n")
 
     result = runner.invoke(app, ["run",
-        "--profile", "invalid_profile",
+        "--model", "invalid_model",
         "--system-config", str(system_config),
         "--analysis-config", str(analysis_config),
     ])
     assert result.exit_code == 2
-    assert "Argument Error" in result.output or "Invalid profile" in result.output
-
-
-def test_exit_code_2_cli_validation_error_conditional_requirement(tmp_path):
-    """Test CLIValidationError (missing conditional requirement) exits with code 2."""
-    system_config = tmp_path / "system.yaml"
-    analysis_config = tmp_path / "analysis.yaml"
-    system_config.write_text("version: 1\n")
-    analysis_config.write_text("version: 1\n")
-
-    result = runner.invoke(app, ["run",
-        "--profile", "testcase",
-        "--system-config", str(system_config),
-        "--analysis-config", str(analysis_config),
-        # Missing --testcase NAME
-    ])
-    assert result.exit_code == 2
-    assert "Argument Error" in result.output
-
-
-def test_exit_code_2_missing_required_argument():
-    """Test missing required argument exits with code 2."""
-    result = runner.invoke(app, ["run",
-        "--system-config", "system.yaml",
-        "--analysis-config", "analysis.yaml",
-        # Missing --profile
-    ])
-    assert result.exit_code == 2
+    assert "Argument Error" in result.output or "Invalid model" in result.output
 
 
 def test_exit_code_2_configuration_error_nonexistent_file():
     """Test ConfigurationError (nonexistent file) exits with code 2."""
     result = runner.invoke(app, ["run",
-        "--profile", "production",
         "--system-config", "/nonexistent/system.yaml",
         "--analysis-config", "/nonexistent/analysis.yaml",
     ])
     # Typer catches file validation first, but still exit code 2
     assert result.exit_code == 2
-
-
-def test_exit_code_2_configuration_error_invalid_catalog_path():
-    """Test ConfigurationError (invalid catalog) exits with code 2."""
-    result = runner.invoke(app, ["run",
-        "--list-testcases",
-        "--tests-case-config", "/nonexistent/catalog.yaml",
-    ])
-    assert result.exit_code == 2
-    assert "Error loading catalog" in result.output or "does not exist" in result.output
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -54,8 +54,7 @@ def _load_norfolk_example_or_skip(**kwargs) -> "NorfolkIreneExperiment":
     sensitivity path) funnels through this helper, so gating here converts an
     absent-data ERROR into a SKIP for all of them at a single point.
 
-    Mirrors the canonical gate in ``tests/test_case_study_catalog.py`` (which
-    wraps the identical ``NorfolkIreneExperiment.load``): under
+    This is the canonical gate: under
     ``HHEMT_REQUIRE_EXAMPLE_DATA=1`` (CI runners that cache the example data) a
     load failure is re-raised as a hard error instead of a silent skip, so a
     data-required run cannot pass vacuously. Bare ``pytest`` (test.yml) does not
@@ -90,8 +89,9 @@ class GetTS_TestCases:
     - Platform-specific HPC configurations (via analysis/system overlay dicts)
     - Isolated test directories
 
-    Platform-specific methods apply centralized analysis/system overlay dicts
-    (defined in case_study_catalog.py) to eliminate configuration duplication.
+    Platform-specific methods apply analysis/system overlay dicts supplied by
+    the caller (``analysis_overlay`` / ``system_overlay``) to eliminate
+    configuration duplication.
 
     Caching Strategy:
         Use start_from_scratch=False to reuse processed inputs from previous runs,

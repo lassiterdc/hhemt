@@ -1,7 +1,7 @@
 """Command-line interface for H&H Ensemble Modeling Toolkit.
 
 Provides a Snakemake-first single-command CLI for running TRITON-SWMM
-workflows with support for production, testcase, and case-study profiles.
+workflows.
 """
 
 import json
@@ -19,11 +19,6 @@ from .exceptions import (
     SimulationError,
     WorkflowError,
     WorkflowPlanningError,
-)
-from .profile_catalog import (
-    list_case_studies,
-    list_testcases,
-    load_profile_catalog,
 )
 from .recompute import RecomputeScope  # typer reads the --scope enum annotation at import time
 
@@ -83,13 +78,8 @@ console_err = Console(stderr=True)
 @app.command(name="run")
 def run_command(
     # ═══════════════════════════════════════════════════════════════
-    # Required Arguments (unless using list actions)
+    # Required Arguments
     # ═══════════════════════════════════════════════════════════════
-    profile: str | None = typer.Option(
-        None,
-        "--profile",
-        help="Execution profile: production, testcase, or case-study",
-    ),
     system_config: Path | None = typer.Option(
         None,
         "--system-config",
@@ -186,38 +176,6 @@ def run_command(
         "--event-range",
         help="Event range START:END (e.g., '0:100', inclusive start, exclusive end)",
     ),
-    # ═══════════════════════════════════════════════════════════════
-    # Profile-Specific Options
-    # ═══════════════════════════════════════════════════════════════
-    testcase: str | None = typer.Option(
-        None,
-        "--testcase",
-        help="Testcase name (required when --profile testcase)",
-    ),
-    case_study: str | None = typer.Option(
-        None,
-        "--case-study",
-        help="Case study name (required when --profile case-study)",
-    ),
-    tests_case_config: Path | None = typer.Option(
-        None,
-        "--tests-case-config",
-        help="Path to tests_and_case_studies.yaml profile catalog",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-        readable=True,
-    ),
-    list_testcases_flag: bool = typer.Option(
-        False,
-        "--list-testcases",
-        help="Print available testcases and exit",
-    ),
-    list_case_studies_flag: bool = typer.Option(
-        False,
-        "--list-case-studies",
-        help="Print available case studies and exit",
-    ),
     status_flag: bool = typer.Option(
         False,
         "--status",
@@ -284,49 +242,32 @@ def run_command(
         help="Python logging level: DEBUG, INFO, WARNING, ERROR",
     ),
 ):
-    """Run TRITON-SWMM workflow with specified profile and configuration.
+    """Run TRITON-SWMM workflow from a system and analysis configuration.
 
     This command orchestrates the full TRITON-SWMM workflow including system
     setup, scenario preparation, simulation execution, and output processing.
 
     Examples:
 
-        # Production run with default resume behavior
-        $ triton-swmm run --profile production \\
+        # Run with default resume behavior
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml
 
         # Fresh run with selected events
-        $ triton-swmm run --profile production \\
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --from-scratch --event-ilocs 0,1,2
 
-        # Testcase with HPC overrides
-        $ triton-swmm run --profile testcase --testcase norfolk_smoke \\
+        # Run with HPC overrides
+        $ triton-swmm run \\
             --system-config system.yaml --analysis-config analysis.yaml \\
             --partition debug --walltime 00:20:00
 
     """
     try:
         # ═══════════════════════════════════════════════════════════════
-        # Stage 1: Action Flags (Early Exit)
+        # Stage 1: Required Argument Check
         # ═══════════════════════════════════════════════════════════════
-        if list_testcases_flag:
-            _handle_list_testcases(tests_case_config)
-            raise typer.Exit(0)
-
-        if list_case_studies_flag:
-            _handle_list_case_studies(tests_case_config)
-            raise typer.Exit(0)
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 2: Required Argument Check (for non-list actions)
-        # ═══════════════════════════════════════════════════════════════
-        if not profile:
-            raise CLIValidationError(
-                argument="--profile",
-                message="--profile is required",
-                fix_hint="Specify production, testcase, or case-study",
-            )
         if not system_config:
             raise CLIValidationError(
                 argument="--system-config",
@@ -341,18 +282,15 @@ def run_command(
             )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 3: Argument Validation
+        # Stage 2: Argument Validation
         # ═══════════════════════════════════════════════════════════════
         _validate_cli_arguments(
-            profile=profile,
             from_scratch=from_scratch,
             resume=resume,
             verbose=verbose,
             quiet=quiet,
             event_ilocs=event_ilocs,
             event_range=event_range,
-            testcase=testcase,
-            case_study=case_study,
             model=model,
             which=which,
             redownload=redownload,
@@ -361,22 +299,7 @@ def run_command(
         )
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 4: Profile Resolution (if applicable)
-        # ═══════════════════════════════════════════════════════════════
-        # Note: Profile resolution for testcase/case-study profiles is
-        # deferred to future phases. For now, production profiles use
-        # config files directly without merging profile catalog entries.
-
-        if profile in ["testcase", "case-study"]:
-            # Future: Load catalog, resolve profile entry, merge with configs
-            raise CLIValidationError(
-                argument="--profile",
-                message=f"Profile type '{profile}' not yet implemented",
-                fix_hint="Use --profile production for now",
-            )
-
-        # ═══════════════════════════════════════════════════════════════
-        # Stage 5: Config Loading & System/Analysis Instantiation
+        # Stage 3: Config Loading & System/Analysis Instantiation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Loading configurations...[/cyan]")
@@ -392,7 +315,7 @@ def run_command(
             console.print("[green]✓[/green] Configurations loaded")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 6: Preflight Validation
+        # Stage 4: Preflight Validation
         # ═══════════════════════════════════════════════════════════════
         if not quiet:
             console.print("[cyan]Running preflight validation...[/cyan]")
@@ -413,7 +336,7 @@ def run_command(
             console.print("[green]✓[/green] Validation passed")
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7a: Status Report (if requested)
+        # Stage 5a: Status Report (if requested)
         # ═══════════════════════════════════════════════════════════════
         if status_flag:
             status = analysis.get_workflow_status()
@@ -421,15 +344,15 @@ def run_command(
             raise typer.Exit(0)
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 7b: Dry-Run Output (if requested)
+        # Stage 5b: Dry-Run Output (if requested)
         # ═══════════════════════════════════════════════════════════════
         if dry_run:
             _print_dry_run_summary(locals())
             console.print("\n[yellow]Dry-run mode: Snakemake DAG will be validated but not executed[/yellow]")
-            # Continue to Stage 8 with dry_run=True
+            # Continue to Stage 6 with dry_run=True
 
         # ═══════════════════════════════════════════════════════════════
-        # Stage 8: Workflow Orchestration
+        # Stage 6: Workflow Orchestration
         # ═══════════════════════════════════════════════════════════════
 
         # Determine execution mode from CLI flags
@@ -1763,54 +1686,6 @@ def cleanup_settled_markers_command(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _handle_list_testcases(catalog_path: Path | None) -> None:
-    """Print available testcases and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        testcases = list_testcases(catalog)
-
-        if not testcases:
-            console.print("[yellow]No testcases defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Testcases", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in testcases:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
-def _handle_list_case_studies(catalog_path: Path | None) -> None:
-    """Print available case studies and exit."""
-    try:
-        catalog = load_profile_catalog(catalog_path)
-        case_studies = list_case_studies(catalog)
-
-        if not case_studies:
-            console.print("[yellow]No case studies defined in catalog.[/yellow]")
-            return
-
-        table = Table(title="Available Case Studies", show_header=True, header_style="bold cyan")
-        table.add_column("Name", style="green")
-        table.add_column("Description")
-
-        for name, description in case_studies:
-            table.add_row(name, description)
-
-        console.print(table)
-
-    except ConfigurationError as e:
-        console_err.print(f"[bold red]Error loading catalog:[/bold red] {e}")
-        raise typer.Exit(2) from e
-
-
 def _validate_cli_arguments(**kwargs) -> None:
     """Validate business logic constraints on CLI arguments.
 
@@ -1838,31 +1713,6 @@ def _validate_cli_arguments(**kwargs) -> None:
             argument="--verbose/--quiet",
             message="Cannot use both --verbose and --quiet",
             fix_hint="Choose one output mode",
-        )
-
-    # Profile validation
-    valid_profiles = ["production", "testcase", "case-study"]
-    if kwargs["profile"] not in valid_profiles:
-        raise CLIValidationError(
-            argument="--profile",
-            message=f"Invalid profile: {kwargs['profile']}",
-            fix_hint=f"Must be one of: {', '.join(valid_profiles)}",
-        )
-
-    # Conditional requirement: testcase profile requires --testcase
-    if kwargs["profile"] == "testcase" and not kwargs["testcase"]:
-        raise CLIValidationError(
-            argument="--testcase",
-            message="--testcase NAME required when --profile testcase",
-            fix_hint="Specify testcase name or use --list-testcases to see available options",
-        )
-
-    # Conditional requirement: case-study profile requires --case-study
-    if kwargs["profile"] == "case-study" and not kwargs["case_study"]:
-        raise CLIValidationError(
-            argument="--case-study",
-            message="--case-study NAME required when --profile case-study",
-            fix_hint="Specify case study name or use --list-case-studies to see available options",
         )
 
     # Model validation
@@ -1916,13 +1766,6 @@ def _validate_cli_arguments(**kwargs) -> None:
 def _print_dry_run_summary(args: dict) -> None:
     """Print dry-run summary showing resolved configuration without execution."""
     console.print("\n[bold cyan]═══ Dry-Run Summary ═══[/bold cyan]\n")
-
-    # Profile information
-    console.print(f"[bold]Profile:[/bold] {args['profile']}")
-    if args["profile"] == "testcase":
-        console.print(f"[bold]Testcase:[/bold] {args['testcase']}")
-    elif args["profile"] == "case-study":
-        console.print(f"[bold]Case Study:[/bold] {args['case_study']}")
 
     # Configuration files
     console.print("\n[bold]Configuration Files:[/bold]")
