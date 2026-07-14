@@ -225,17 +225,28 @@ def _validate_system_paths(cfg: system_config, result: ValidationResult):
     }
 
     for field_name, path_val in required_paths.items():
+        # Exempt toolkit-owned OUTPUT path fields (json_schema_extra
+        # {"toolkit_owned_output": True} -- e.g. TRITONSWMM_software_directory,
+        # SWMM_software_directory). The clone/build gate CREATES these at
+        # run/setup, so they legitimately do not exist at config-load time and
+        # may be None in a reconstituted reprex bundle's synthesized
+        # system_config (bundle-reprex-roundtrip Phase 1). Mirrors
+        # config/base.py::_check_paths_exist.
+        field_info = system_config.model_fields.get(field_name)
+        extra = field_info.json_schema_extra if field_info is not None else None
+        if isinstance(extra, dict) and extra.get("toolkit_owned_output"):
+            continue
         if path_val is None:
             result.add_error(
                 field=f"system.{field_name}",
-                message="Required path is None",
+                message=f"Required path for {field_name} is None",
                 current_value=None,
                 fix_hint=f"Set {field_name} in system config YAML",
             )
         elif not Path(path_val).exists():
             result.add_error(
                 field=f"system.{field_name}",
-                message="Path does not exist",
+                message=f"Path does not exist for {field_name}: {path_val}",
                 current_value=str(path_val),
                 fix_hint=f"Create the file/directory or correct the path in system config",
             )
@@ -1421,6 +1432,123 @@ def _validate_setup_mem_sizing(
         )
 
 
+def _validate_per_sa_row_caps(
+    cfg_analysis: analysis_config,
+    cfg_hpc_system: Any | None,
+    result: ValidationResult,
+) -> None:
+    """Per-``(sa_id, resource-column)`` partition-cap scanner (reproducibility C8, ADR-10).
+
+    Generalizes the master-level per-partition runtime cap check (the batch_job /
+    1_job_many_srun_tasks bounds in ``validate_analysis_config``) to EACH sensitivity
+    row: resolve the row's target partition (its ``hpc.partition`` /
+    ``analysis.hpc_ensemble_partition`` overlay column when present, else
+    ``cfg_analysis.hpc_ensemble_partition``), then check each requested resource
+    column in the row against THAT partition's ``PartitionSpec`` caps. Emits one
+    ``ValidationIssue`` per ``(sa_id, column)`` that exceeds its cap — the reprex
+    "problem pair" surface consumed by ``hhemt.bundle._reprex.reprex`` when a bundle
+    is re-aimed at a target HPC profile.
+
+    No-op unless sensitivity analysis is on AND a ``cfg_hpc_system`` is supplied AND
+    the sensitivity CSV is readable (mirrors ``_validate_per_sa_system_configs``
+    gating; a relative/absent/unreadable CSV path silently returns — the reprex
+    caller rebases the CSV onto the bundle root before invoking preflight).
+    """
+    if cfg_hpc_system is None:
+        return
+    if not cfg_analysis.toggle_sensitivity_analysis:
+        return
+    sensitivity_csv = cfg_analysis.sensitivity_analysis
+    if sensitivity_csv is None:
+        return
+    sensitivity_csv = Path(sensitivity_csv)
+    if not sensitivity_csv.is_file():
+        return
+
+    import pandas as pd
+
+    try:
+        if sensitivity_csv.suffix.lower() in {".xlsx", ".xls"}:
+            df = pd.read_excel(sensitivity_csv)
+        else:
+            df = pd.read_csv(sensitivity_csv)
+    except Exception:
+        return
+
+    # Candidate column spellings -> the PartitionSpec cap attribute they bound. A row
+    # may spell a resource bare ("n_gpus") or prefixed ("analysis.n_gpus"/"hpc.n_gpus")
+    # per the sensitivity-CSV column-prefix convention (Gotcha 54); the first present
+    # candidate wins.
+    _resource_caps = [
+        (("n_gpus", "analysis.n_gpus", "hpc.n_gpus"), "max_gpu", "GPUs"),
+        (("n_nodes", "hpc_total_nodes", "analysis.n_nodes", "hpc.n_nodes"), "max_nodes", "nodes"),
+        (
+            ("hpc_time_min_per_sim", "hpc_total_job_duration_min", "runtime_min",
+             "analysis.hpc_time_min_per_sim", "hpc.runtime_min"),
+            "max_runtime",
+            "runtime (min)",
+        ),
+        (("mem_mb", "hpc_mem_allocation_for_setup_mb", "hpc.mem_mb"), "max_mem_mb", "memory (MB)"),
+    ]
+    partition_cols = [
+        c for c in df.columns if c in ("hpc.partition", "analysis.hpc_ensemble_partition")
+    ]
+
+    for sa_id, row in df.iterrows():
+        sa_id_str = str(sa_id)
+        # Resolve the row's target partition: an overlay column wins, else the
+        # analysis-config default ensemble partition (the re-aimed target profile).
+        partition_name = None
+        for pc in partition_cols:
+            val = row.get(pc)
+            if not pd.isna(val) and str(val).strip():
+                partition_name = str(val).strip()
+                break
+        if partition_name is None:
+            partition_name = cfg_analysis.hpc_ensemble_partition
+        if partition_name is None:
+            continue
+        spec = cfg_hpc_system.partitions.get(partition_name)
+        if spec is None:
+            result.add_error(
+                field=f"sensitivity_analysis.row[{sa_id_str}].hpc.partition",
+                message=(
+                    f"sa_id={sa_id_str}: target partition '{partition_name}' is not "
+                    f"declared in the target hpc_system_config partitions block."
+                ),
+                current_value=partition_name,
+                fix_hint=(
+                    f"Choose a declared partition: {sorted(cfg_hpc_system.partitions)}."
+                ),
+            )
+            continue
+        for candidates, cap_attr, label in _resource_caps:
+            col = next((c for c in candidates if c in df.columns), None)
+            if col is None:
+                continue
+            raw = row.get(col)
+            if pd.isna(raw):
+                continue
+            try:
+                requested = float(raw)
+            except (TypeError, ValueError):
+                continue
+            cap = getattr(spec, cap_attr, None)
+            if cap is not None and requested > cap:
+                result.add_error(
+                    field=f"sensitivity_analysis.row[{sa_id_str}].{col}",
+                    message=(
+                        f"sa_id={sa_id_str}: requests {label}={requested:g} on partition "
+                        f"'{partition_name}', exceeding its cap of {cap}."
+                    ),
+                    current_value=requested,
+                    fix_hint=(
+                        f"Reduce {col} to <= {cap} or choose a partition with a higher "
+                        f"{cap_attr} cap."
+                    ),
+                )
+
+
 def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "ValidationResult") -> None:
     """ADR-1 preflight (R10): container mode requires a resolvable ContainerSpec.
 
@@ -1515,6 +1643,12 @@ def preflight_validate(
     # here at the preflight_validate level rather than from inside
     # _validate_toggle_dependencies_analysis (which lacks cfg_system).
     _validate_per_sa_system_configs(cfg_system, cfg_analysis, result)
+
+    # Per-(sa_id, resource-column) partition-cap scan (reproducibility C8, ADR-10).
+    # No-op unless cfg_hpc_system is supplied AND the sensitivity CSV is readable, so
+    # native / non-reprex preflight is byte-identical. Emits the reprex problem pairs
+    # when validation.py is re-aimed at a target HPC profile via bundle._reprex.reprex.
+    _validate_per_sa_row_caps(cfg_analysis, cfg_hpc_system, result)
 
     # Per-row partition variation requires batch_job mode (DQ6). Runs only when
     # the sensitivity CSV varies the ensemble partition across rows.

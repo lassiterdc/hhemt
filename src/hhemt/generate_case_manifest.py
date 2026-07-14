@@ -26,7 +26,11 @@ def compute_manifest(bag_dir: Path) -> dict[str, str]:
     manifest: dict[str, str] = {}
     for fpath in sorted(p for p in bag_dir.rglob("*") if p.is_file()):
         rel = fpath.relative_to(bag_dir).as_posix()
-        manifest[rel] = hashlib.sha256(fpath.read_bytes()).hexdigest()
+        h = hashlib.sha256()
+        with fpath.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        manifest[rel] = h.hexdigest()  # streaming read bounds peak RSS on multi-GB assets
     return manifest
 
 

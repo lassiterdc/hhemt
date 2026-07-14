@@ -975,6 +975,30 @@ class TRITONSWMM_sim_post_processing:
             self._clear_raw_outputs(model)
         return
 
+    @staticmethod
+    def _resolve_producing_stamp() -> tuple[str, str]:
+        """Resolve the ``(producing_git_sha, producing_semver)`` stamp for the running toolkit.
+
+        sha: the toolkit git sha via the provenance layer (``strict=False`` ->
+        ``"unknown"`` when the working tree is dirty / the checkout sha cannot be
+        resolved), the SAME source that feeds the render-bundle ``toolkit_git_sha``.
+        semver: ``importlib.metadata.version("hhemt")``, falling back to
+        ``"0+unknown"`` for an uninstalled/egg-less tree (the version_migration
+        ``state._toolkit_version`` precedent). Called once per write; both values
+        are process-stable for a given checkout, so re-producing at the same
+        checkout yields byte-identical stamps.
+        """
+        from hhemt.provenance import _toolkit_git_sha
+
+        producing_sha = _toolkit_git_sha()
+        try:
+            from importlib.metadata import version
+
+            producing_version = version("hhemt")
+        except Exception:
+            producing_version = "0+unknown"
+        return producing_sha, producing_version
+
     def _write_output(
         self,
         ds: xr.Dataset | xr.DataArray,
@@ -989,6 +1013,20 @@ class TRITONSWMM_sim_post_processing:
 
         if isinstance(ds, xr.Dataset):
             apply_cf_attributes(ds, mode)
+
+        # ADR-15 Phase 1: bake the producing git-sha + semver into the FLAT
+        # per-scenario summary as per-event_iloc COORDINATES. They MUST land here
+        # (capture time), NOT post-concat like event_id, so a later reprocess that
+        # does not re-run this scenario reads its OLD stamp and yields the divergent
+        # {event_iloc -> stamp} vector for free. Object-dtype (VLenUTF8), no index —
+        # parallel to event_id. This is the single model-agnostic write choke point,
+        # so this one attach covers triton / tritonswmm / swmm per-scenario summaries.
+        if isinstance(ds, xr.Dataset) and "event_iloc" in ds.dims:
+            producing_sha, producing_version = self._resolve_producing_stamp()
+            ds = ds.assign_coords(
+                hhemt_producing_sha=("event_iloc", [producing_sha]),
+                hhemt_producing_version=("event_iloc", [producing_version]),
+            )
 
         ds.attrs["sim_date"] = self._scenario.latest_sim_date(model_type=self._current_model_type, astype="str")
         ds.attrs["output_creation_date"] = current_datetime_string()

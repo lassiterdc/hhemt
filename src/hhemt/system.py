@@ -126,6 +126,29 @@ class TRITONSWMM_system:
         tritonswmm_dir = self.cfg_system.TRITONSWMM_software_directory
         swmm_dir = self.cfg_system.SWMM_software_directory
 
+        # TRITONSWMM_software_directory is Optional[Path] on the model ONLY so a
+        # portability-scrubbed render bundle's cfg_system.yaml (which nulls it per
+        # bundle/_path_policy.py IS_NONE_ACCEPTABLE) loads for bundle-local
+        # EDA/render (load_eda_context never constructs a TRITONSWMM_system). But a
+        # TRITONSWMM_system needs it for every build-dir/compile/download path, and
+        # the SysPaths construction below derefs it unconditionally (tritonswmm_dir /
+        # "build_tritonswmm_cpu"), which would TypeError on None. Fail LOUDLY here at
+        # the earliest chokepoint (dominates all compile paths) so a real compile
+        # raises ConfigurationError, never a TypeError/AttributeError.
+        if tritonswmm_dir is None:
+            raise ConfigurationError(
+                field="TRITONSWMM_software_directory",
+                message=(
+                    "TRITONSWMM_software_directory is None. It is required to "
+                    "construct a TRITONSWMM_system (build dirs, source download, "
+                    "compile). A None value only arises from a portability-scrubbed "
+                    "render bundle; for bundle-local rendering use "
+                    "Bundle.eda(plots_only=True) / load_eda_context, which do not "
+                    "construct a TRITONSWMM_system."
+                ),
+                config_path=self.system_config_yaml,
+            )
+
         gpu_suffix = (
             f"_{self.gpu_hardware}"
             if self.gpu_compilation_backend and self.gpu_hardware
@@ -524,7 +547,11 @@ class TRITONSWMM_system:
 
         # Download TRITON-SWMM source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
-        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+            or not (TRITONSWMM_software_directory / "CMakeLists.txt").exists()
+        ):
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -630,7 +657,10 @@ class TRITONSWMM_system:
             "# Ensure conda env's libstdc++ resolves at runtime for build-time tools (ABI fix)",
             "# Required because the HPC compiler module's libstdc++ may max out below",
             "# the conda env's libgdal/libmuparser requirement (GLIBCXX_3.4.31+).",
-            'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"',
+            # CONDA_LIB is resolved in _emit_module_load_lines() BEFORE `module purge`
+            # clears CONDA_PREFIX; fall back to ${CONDA_PREFIX}/lib on the non-module
+            # (local-dev) path where the module block is not emitted and conda is active.
+            'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}:${LD_LIBRARY_PATH:-}"',
             "",
         ]
 
@@ -661,10 +691,112 @@ class TRITONSWMM_system:
         # file, the build links
         # clean (no GLIBCXX_3.4.31/CXXABI undefined refs), and ldd resolves
         # libstdc++ => conda.
+        #
+        # libgcc_s: conda's libstdc++.so.6 DT_NEEDEDs libgcc_s.so.1 (the GCC
+        # low-level runtime: _Unwind_* / soft-float). That transitive need is
+        # UNPINNED, so ld.lld (the PrgEnv-amd/ROCm clang linker on Frontier)
+        # resolves it to the wrong-arch /lib/libgcc_s.so.1 (the legacy 32-bit
+        # multilib copy on the Cray/SLES base) and hard-errors
+        # `is incompatible with elf64-x86-64` -- ld.lld, unlike GNU ld, does not
+        # silently skip an incompatible library reached via DT_NEEDED. Pin
+        # conda's EXACT 64-bit libgcc_s.so.1 here, parallel to libstdc++.so.6 and
+        # ordered AFTER it (depender-before-provider): reusing the same
+        # -L${CONDA_PREFIX}/lib and the exact-file `-l:libgcc_s.so.1` form (conda
+        # ships libgcc_s.so.1 without the libgcc_s.so dev symlink, so plain
+        # -lgcc_s would fail like plain -lstdc++). Making it a direct input means
+        # its soname pre-satisfies libstdc++'s transitive need, so the linker
+        # never falls through to /lib. ABI-consistent (conda libstdc++ was built
+        # against conda libgcc_s) and kept inside the push/pop --no-as-needed
+        # scope so it stays on the line. Runtime resolution is already covered by
+        # the ${CONDA_PREFIX}/lib LD_LIBRARY_PATH preamble.
+        # CONDA_LIB is resolved in _emit_module_load_lines() BEFORE `module purge`
+        # clears CONDA_PREFIX (see that method); fall back to ${CONDA_PREFIX}/lib on
+        # the non-module (local-dev) path. Without this, an emptied CONDA_PREFIX makes
+        # -L resolve to /lib and ld.lld binds the wrong-arch /lib/libgcc_s.so.1.
         return (
-            "-L${CONDA_PREFIX}/lib "
-            "-Wl,--push-state,--no-as-needed -l:libstdc++.so.6 -Wl,--pop-state"
+            "-L${CONDA_LIB:-${CONDA_PREFIX}/lib} "
+            "-Wl,--push-state,--no-as-needed "
+            "-l:libstdc++.so.6 -l:libgcc_s.so.1 "
+            "-Wl,--pop-state"
         )
+
+    def _emit_module_load_lines(self, modules: str) -> list:
+        """Emit the HPC module-load block shared by the coupled (_compile_backend)
+        and TRITON-only (_compile_triton_only_backend) compile-script emitters.
+
+        Responsibilities: (1) neutralize the miniforge Lmod unload hook so
+        `module purge` does not abort under `set -e`; (2) purge + load the module
+        toolchain and pin CC/CXX to it; (3) unless in container mode, resolve a
+        purge-immune conda lib-dir anchor (CONDA_LIB) that the ${CONDA_LIB}-based
+        libstdc++/libgcc_s ABI-fix flags depend on.
+        """
+        lines = ["# Load HPC modules"]
+        if not self._execution_container_mode:
+            lines.extend(
+                [
+                    # Capture the ACTIVE conda env's lib dir BEFORE `module purge`.
+                    # The miniforge Lmod modulefile's unload action (fired by
+                    # `module purge`) clears CONDA_PREFIX/CONDA_* directly -- observed
+                    # on Frontier as "Deactivating conda environments" -- INDEPENDENT
+                    # of the no-op `conda` guard below (that guard only stops the
+                    # deactivate hook from ERRORING under set -e; it cannot stop a
+                    # modulefile `unsetenv CONDA_PREFIX`). If CONDA_PREFIX stayed the
+                    # anchor, `-L${CONDA_PREFIX}/lib` would degrade to `-L/lib` and
+                    # ld.lld would bind the wrong-arch /lib/libgcc_s.so.1
+                    # ("is incompatible with elf64-x86-64"). CONDA_LIB is a plain
+                    # shell var Lmod does not manage, so it survives the purge.
+                    'CONDA_LIB="${CONDA_PREFIX:+${CONDA_PREFIX}/lib}"',
+                    'echo "[compile] CONDA_PREFIX at entry (before purge): ${CONDA_PREFIX:-(empty)}"',
+                ]
+            )
+        lines.extend(
+            [
+                # This compile script runs as a plain `/bin/bash` subprocess of the
+                # setup rule; it inherits conda's ENV VARS but NOT the `conda` shell
+                # function (conda init never `export -f`s it). On sites whose
+                # miniforge module carries an Lmod unload hook that runs `conda
+                # deactivate`, `module purge` would invoke the conda BINARY -> errors
+                # `Run 'conda init' before 'conda deactivate'` -> non-zero -> `set -e`
+                # aborts before cmake. A no-op `conda` makes that hook a guaranteed
+                # no-op so `module purge` succeeds. (It does NOT preserve
+                # CONDA_PREFIX; that is handled by the CONDA_LIB capture above.)
+                "conda() { return 0; }  # neutralize module-unload conda-deactivate hook",
+                "module purge",
+                f"module load {modules}",
+                'echo "[compile] CONDA_PREFIX after module purge/load: ${CONDA_PREFIX:-(empty)}"',
+                # Pin the compiler to the just-loaded module toolchain. `conda activate`
+                # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which
+                # shadows the module gcc AND whose cc1 backend fails to execute in this
+                # module-purged build env (`posix_spawnp: No such file or directory`).
+                # Re-point CC/CXX at the module gcc so cmake's compiler detection uses
+                # it. (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so
+                # this only governs the CPU/HIP branches that inherit conda's CC.)
+                'export CC="$(command -v gcc)"',
+                'export CXX="$(command -v g++)"',
+                "",
+            ]
+        )
+        if not self._execution_container_mode:
+            lines.extend(
+                [
+                    # Fallback + fail-fast for the conda lib anchor. If the pre-purge
+                    # capture was empty (the runner was NOT conda-activated -- e.g. a
+                    # `uv run`/.venv driver rather than `conda activate hhemt`; the
+                    # cmake FindPython3 line resolving the .venv is the tell), derive
+                    # the named hhemt env from CONDA_EXE (re-provided by the miniforge
+                    # module just loaded). Then hard-fail if the anchor is still
+                    # unresolved or does not actually hold libstdc++.so.6 -- converting
+                    # the otherwise-silent "-L/lib -> wrong-arch libgcc_s" link failure
+                    # into a clear, early error. NOTE: the fallback hardcodes the env
+                    # name `hhemt` (consistent with workflow.py's `conda activate
+                    # hhemt`) and the standard envs/ layout.
+                    'if [ -z "${CONDA_LIB:-}" ] && [ -n "${CONDA_EXE:-}" ]; then CONDA_LIB="$(dirname "$(dirname "${CONDA_EXE}")")/envs/hhemt/lib"; fi',
+                    'if [ -z "${CONDA_LIB:-}" ] || [ ! -e "${CONDA_LIB}/libstdc++.so.6" ]; then echo "ERROR: conda env lib dir not resolved (CONDA_LIB=${CONDA_LIB:-(empty)}); the libstdc++/libgcc_s ABI fix would degrade to -L/lib and ld.lld would bind the wrong-arch /lib/libgcc_s.so.1" >&2; exit 1; fi',
+                    'echo "[compile] CONDA_LIB=${CONDA_LIB}"',
+                    "",
+                ]
+            )
+        return lines
 
     def _compile_backend(
         self,
@@ -704,26 +836,11 @@ class TRITONSWMM_system:
             "",
         ]
 
-        # Optional: Load HPC modules
+        # Optional: Load HPC modules (shared with _compile_triton_only_backend).
+        # Emits the no-op conda guard, purge/load, CC/CXX pin, and the purge-immune
+        # CONDA_LIB anchor the ${CONDA_LIB}-based ABI-fix flags depend on.
         if self.additional_modules:
-            modules = self.additional_modules
-            bash_script_lines.extend(
-                [
-                    "# Load HPC modules",
-                    "module purge",
-                    f"module load {modules}",
-                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
-                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
-                    # the module gcc AND whose cc1 backend fails to execute in this
-                    # module-purged build env (`posix_spawnp: No such file or directory`).
-                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
-                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
-                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
-                    'export CC="$(command -v gcc)"',
-                    'export CXX="$(command -v g++)"',
-                    "",
-                ]
-            )
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
@@ -982,7 +1099,11 @@ class TRITONSWMM_system:
         # Download TRITON source if needed (shared across backends)
         TRITONSWMM_software_directory = self.cfg_system.TRITONSWMM_software_directory
 
-        if redownload_triton_swmm_if_exists or not TRITONSWMM_software_directory.exists():
+        if (
+            redownload_triton_swmm_if_exists
+            or not TRITONSWMM_software_directory.exists()
+            or not (TRITONSWMM_software_directory / "CMakeLists.txt").exists()
+        ):
             self._download_tritonswmm_source(verbose=verbose)
 
         # Compile each backend sequentially
@@ -1050,26 +1171,12 @@ class TRITONSWMM_system:
             "",
         ]
 
-        # Optional: Load HPC modules
+        # Optional: Load HPC modules (shared with _compile_backend). This sibling
+        # previously lacked BOTH the no-op conda guard and the CONDA_LIB anchor; the
+        # shared helper fixes its latent Frontier module-purge abort AND supplies the
+        # CONDA_LIB the shared ABI-fix emitters now reference.
         if self.additional_modules:
-            modules = self.additional_modules
-            bash_script_lines.extend(
-                [
-                    "# Load HPC modules",
-                    "module purge",
-                    f"module load {modules}",
-                    # Pin the compiler to the just-loaded module toolchain. `conda activate`
-                    # exports CC/CXX = the conda gcc (x86_64-conda-linux-gnu-*), which shadows
-                    # the module gcc AND whose cc1 backend fails to execute in this
-                    # module-purged build env (`posix_spawnp: No such file or directory`).
-                    # Re-point CC/CXX at the module gcc so cmake's compiler detection uses it.
-                    # (GPU branches additionally pin -DCMAKE_CXX_COMPILER=$MPICXX, so this only
-                    # governs the CPU/HIP branches that otherwise inherit conda's CC.)
-                    'export CC="$(command -v gcc)"',
-                    'export CXX="$(command -v g++)"',
-                    "",
-                ]
-            )
+            bash_script_lines.extend(self._emit_module_load_lines(self.additional_modules))
 
         bash_script_lines.extend(self._emit_libstdcpp_ld_preamble_lines())
 
@@ -1301,7 +1408,11 @@ class TRITONSWMM_system:
 
         # Download SWMM source if needed
         # template: git clone --branch v5.2.4 --depth 1 https://github.com/USEPA/Stormwater-Management-Model.git
-        if redownload_swmm_if_exists or not swmm_source_dir.exists():
+        if (
+            redownload_swmm_if_exists
+            or not swmm_source_dir.exists()
+            or not (swmm_source_dir / "CMakeLists.txt").exists()
+        ):
             tag_line = ""
             if self.cfg_system.SWMM_tag_key:
                 tag_line = f"--branch {self.cfg_system.SWMM_tag_key} --depth 1 "

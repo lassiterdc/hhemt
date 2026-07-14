@@ -7,6 +7,7 @@ a bundle is the Phase 6 smoketest's scope.
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
@@ -33,6 +34,7 @@ REGEN_RULE_SET = {
     "plot_scenario_status_appendix",
     "plot_errors_and_warnings",
     "plot_disk_utilization",  # P1b: registry-driven bundle now emits it (drift-fix)
+    "plot_metadata",  # ADR-14 / C10: auto-carried into the bundle via _TMPL_METADATA
     "plot_sensitivity_benchmarking",
     "plot_per_sim_per_sa_peak_flood_depth",
     "plot_per_sim_per_sa_conduit_flow",
@@ -62,7 +64,13 @@ def multi_sim_bundle(tmp_path: Path) -> Path:
 @pytest.fixture
 def sensitivity_bundle(tmp_path: Path) -> Path:
     if not SENSITIVITY_FIXTURE.exists():
-        pytest.skip(f"sensitivity_master fixture missing at {SENSITIVITY_FIXTURE}")
+        msg = f"sensitivity_master bundle fixture missing at {SENSITIVITY_FIXTURE}"
+        if os.environ.get("TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE") == "1":
+            raise AssertionError(
+                f"{msg} (TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE=1) — the checked-in "
+                "bundle fixture must be present in CI."
+            )
+        pytest.skip(msg)
     dest = tmp_path / "sensitivity_master"
     shutil.copytree(SENSITIVITY_FIXTURE, dest)
     return dest

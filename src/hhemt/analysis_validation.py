@@ -373,14 +373,125 @@ def _read_persisted_eda_verdicts(analysis: TRITONSWMM_analysis) -> list[CheckRes
     return verdicts
 
 
+def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """ADR-17 load-time invalidating-fix registry match, surfaced in the report read-model.
+
+    Non-blocking by construction: a matched invalidating fix produces ``passed=False``
+    (only when at least one match is ``severity="error"``) + a summary naming the
+    count, but ``validate_analysis`` NEVER raises. ``warning``-only matches keep
+    ``passed=True``. An absent registry / unstamped tree → no matches → ``passed=True``
+    (graceful-absent; D6). ``level="aggregate"`` so the Errors-and-Warnings renderer
+    routes it with no renderer edit. Runs at consolidation-time
+    ``persist_validation_report``, NOT render time (Gotcha 53 audit-safety) — the
+    ADR-15 stamps it reads live in the consolidated datatree the renderer declares,
+    and the registry is package-data.
+    """
+    from hhemt.recompute import match_registry_against_stamps  # ADR-16/17 resolver
+
+    matches = match_registry_against_stamps(analysis)  # [] when registry absent / no hit
+    if not matches:
+        return CheckResult(
+            name="invalidating-fix registry",
+            level="aggregate",
+            passed=True,
+            summary="No registered calculation-invalidating fixes affect this analysis.",
+            details=[],
+        )
+    # match_registry_against_stamps returns only ACTIONABLE matches (non-None
+    # recommended_action); the guard narrows the RegistryMatch union for the type
+    # checker and stays safe if the contract ever changes.
+    rows = [
+        {
+            "commit_id": m.commit_id,
+            "severity": m.severity,
+            "recommended_action": m.recommended_action.value if m.recommended_action else None,
+            "scenario": m.affected_scope,
+            "detail": m.summary,
+        }
+        for m in matches
+    ]
+    has_error = any(m.severity == "error" for m in matches)
+    return CheckResult(
+        name="invalidating-fix registry",
+        level="aggregate",
+        passed=not has_error,  # warning-only matches keep passed=True
+        summary=f"{len(matches)} registered invalidating fix(es) affect this analysis.",
+        details=rows,
+    )
+
+
+# --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim report surface) ---
+def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Count coupled sims blocked by the interim hotstart-resume guard (run_simulation.py).
+
+    A coupled (``tritonswmm``) sim that got walltime-killed and re-dispatched hits the
+    guard, which increments ``n_resumes`` and raises ``SimulationError`` before launch, so
+    the sim never completes. Counting coupled ``df_status`` rows with ``n_resumes >= 1`` and
+    ``run_completed`` False surfaces the population in the report with a COUNT (no renderer
+    edit — the errors_and_warnings renderer prints each check's ``summary``). Reads
+    ``analysis.df_status`` (order-independent of the export_scenario_status rule).
+    """
+    import pandas as pd
+
+    try:
+        df = analysis.df_status
+    except Exception:
+        return CheckResult(
+            name="Coupled hotstart resume",
+            level="aggregate",
+            passed=True,
+            summary="No coupled hotstart-resume failures detected.",
+            details=[],
+        )
+    needed = {"model_type", "n_resumes", "run_completed"}
+    if not needed.issubset(df.columns):
+        return CheckResult(
+            name="Coupled hotstart resume",
+            level="aggregate",
+            passed=True,
+            summary="No coupled hotstart-resume failures detected.",
+            details=[],
+        )
+    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    completed = df["run_completed"].astype("boolean").fillna(False)
+    mask = (df["model_type"] == "tritonswmm") & (n_resumes >= 1) & (~completed)
+    blocked = df[mask]
+    details = [
+        {
+            "scenario": str(row.get("scenario_directory", "")),
+            "detail": (
+                "coupled hotstart resume unsupported — known TRITON-SWMM bug "
+                "(coupled SWMM re-inits from t=0 on resume; max-flow/depth summaries "
+                "systematically low). Sim halted before launch by the interim guard."
+            ),
+        }
+        for _, row in blocked.iterrows()
+    ]
+    n = len(details)
+    passed = n == 0
+    summary = (
+        "No coupled hotstart-resume failures detected."
+        if passed
+        else f"{n} sim(s) failed: coupled hotstart resume unsupported — known TRITON-SWMM bug"
+    )
+    return CheckResult(
+        name="Coupled hotstart resume",
+        level="aggregate",
+        passed=passed,
+        summary=summary,
+        details=details,
+    )
+
+
+# --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
-    """Run all 7 checks; return aggregated ValidationReport.
+    """Run all core checks; return aggregated ValidationReport.
 
     Order matches the existing `assert_analysis_workflow_completed_successfully`
     chain so the report's check ordering matches what pytest displays.
 
     Persisted EDA verdicts (``{analysis_dir}/eda/*.verdict.json``, ADR-9) are
-    appended after the 7 core checks so the renderer surfaces them by ``level``.
+    appended after the core checks so the renderer surfaces them by ``level``.
     """
     return ValidationReport(
         checks=[
@@ -391,6 +502,8 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_analysis_summaries_created(analysis),
             check_scenario_status_csv(analysis),
             check_resource_usage(analysis),
+            check_invalidating_fixes(analysis),  # ADR-17 registry surface
+            check_coupled_hotstart_resume(analysis),  # REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

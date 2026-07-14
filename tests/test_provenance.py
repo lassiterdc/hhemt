@@ -22,7 +22,7 @@ def _fake_analysis():
         workflow_submission_node=_Field("login1"),
     )
     return SimpleNamespace(
-        cfg_analysis=SimpleNamespace(analysis_id="a1"),
+        cfg_analysis=SimpleNamespace(analysis_id="a1", dataset_license="CC0-1.0"),
         # Real analysis exposes _get_enabled_model_types() (analysis.py:1431) encapsulating the
         # cfg_system.toggle_* fields; the emitter calls that method, so the fake exposes it too.
         # All-toggles-off → no enabled models (and df_sims.index=[] yields zero run-units anyway).

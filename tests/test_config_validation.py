@@ -15,8 +15,10 @@ def _touch(path: Path) -> Path:
 
 
 def _minimal_system_config_dict(tmp_path: Path) -> dict:
+    system_dir = tmp_path / "system"
+    system_dir.mkdir(parents=True, exist_ok=True)  # output root must exist for model_dump()->model_validate() round-trips
     return {
-        "system_directory": str(tmp_path / "system"),
+        "system_directory": str(system_dir),
         "watershed_gis_polygon": str(_touch(tmp_path / "inputs" / "watershed.shp")),
         "DEM_fullres": str(_touch(tmp_path / "inputs" / "dem.tif")),
         "SWMM_hydraulics": str(_touch(tmp_path / "inputs" / "hydraulics.inp")),
@@ -31,6 +33,7 @@ def _minimal_system_config_dict(tmp_path: Path) -> dict:
         "toggle_swmm_model": False,
         "target_dem_resolution": 5.0,
         "constant_mannings": 0.05,
+        "crs": {"horizontal_epsg": 4326},
     }
 
 
@@ -56,6 +59,18 @@ def _minimal_analysis_config_dict(tmp_path: Path) -> dict:
         "clear_raw": "none",
         "force_rerun": "none",
     }
+
+
+def test_analysis_config_dataset_license_default_and_frozen_vocab(tmp_path: Path):
+    # R5: dataset_license defaults to CC0-1.0 when omitted; both frozen values load; a third is rejected.
+    cfg = _minimal_analysis_config_dict(tmp_path)
+    assert "dataset_license" not in cfg  # optional field
+    assert analysis_config.model_validate(cfg).dataset_license == "CC0-1.0"
+    cfg["dataset_license"] = "CC-BY-NC-4.0"
+    assert analysis_config.model_validate(cfg).dataset_license == "CC-BY-NC-4.0"
+    cfg["dataset_license"] = "MIT"  # not in the frozen 2-entry SPDX vocab
+    with pytest.raises(ValidationError):
+        analysis_config.model_validate(cfg)
 
 
 def test_system_config_forbids_unknown_keys(tmp_path: Path):
@@ -208,7 +223,16 @@ def test_reporting_sets_registry_imports_cleanly():
         get_reporting_set,
     )
 
-    assert set(REPORTING_SETS) == {"default", "benchmarking"}
+    # Exact-set equality (NOT a subset check) so an accidental registry member
+    # still fails. `combined` (PIP-1 cross-experiment) and `compute-sensitivity`
+    # (PIP-2 / R11 in-report EDA) are shipped, exercised sets; the assertion
+    # simply trailed their landing.
+    assert set(REPORTING_SETS) == {
+        "default",
+        "benchmarking",
+        "combined",
+        "compute-sensitivity",
+    }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
 
@@ -611,3 +635,49 @@ def test_static_plot_configs_nonexistent_path_raises(tmp_path: Path):
     cfg["static_plot_configs"] = [str(existent), str(missing)]
     with pytest.raises(ValidationError, match="static_plot_configs path does not exist"):
         analysis_config.model_validate(cfg)
+
+
+# ---------------------------------------------------------------------------
+# compile-bearing-synth-ci-tier Phase 1 — toolkit-owned-output path exemption
+# ---------------------------------------------------------------------------
+
+
+def test_toolkit_owned_output_dirs_exempt_from_existence_check(tmp_path: Path):
+    """R1/R2: a toolkit-owned-output software-dir field validates even when its
+    value is a non-existent Path (the json_schema_extra sentinel exempts it
+    BEFORE the isinstance(v, Path) existence check — the overlay-revalidation
+    shape); a genuine INPUT path field still fails fast on a non-existent Path."""
+    cfg = _minimal_system_config_dict(tmp_path)
+    # Pass the software dir as a non-existent Path (not str) so the validator's
+    # isinstance(v, Path) branch is exercised. Pre-fix this raised; post-fix the
+    # toolkit_owned_output sentinel exempts it.
+    cfg["TRITONSWMM_software_directory"] = tmp_path / "_software" / "triton"  # absent
+    cfg["SWMM_software_directory"] = tmp_path / "_software" / "swmm"  # absent, Optional field SET to a non-existent Path
+    validated = system_config.model_validate(cfg)
+    assert not validated.TRITONSWMM_software_directory.exists()
+    assert not validated.SWMM_software_directory.exists()  # R2: Optional sentinel field is exempted when SET to an absent Path (not merely when None)
+
+    # R2: a genuine INPUT Path field pointing at an absent file still raises.
+    bad = _minimal_system_config_dict(tmp_path)
+    bad["DEM_fullres"] = tmp_path / "inputs" / "does_not_exist.tif"  # absent Path
+    with pytest.raises(ValidationError, match="does not exist"):
+        system_config.model_validate(bad)
+
+
+def test_toolkit_owned_output_exempt_under_overlay_revalidation(tmp_path: Path):
+    """R3: reproduce the sensitivity overlay-revalidation round-trip that
+    sensitivity_analysis.py:1971 performs — base.model_dump() (mode='python')
+    yields the software dirs as PosixPath, then model_validate({**dumped,
+    **overlay}) re-fires the wildcard validator against those Paths. Pre-fix this
+    raised on the absent software dirs; post-fix the toolkit_owned_output sentinel
+    exempts them. This is the fresh-worktree / per-row construction surface (R3),
+    covered here WITHOUT the compile toolchain."""
+    base = system_config.model_validate(_minimal_system_config_dict(tmp_path))
+    dumped = base.model_dump()  # mode='python' -> PosixPath preserved (A2)
+    dumped["TRITONSWMM_software_directory"] = tmp_path / "_software" / "triton"  # absent
+    dumped["SWMM_software_directory"] = tmp_path / "_software" / "swmm"  # absent
+    overlay = {"target_dem_resolution": 10.0}  # a representative overlaid cell
+    revalidated = system_config.model_validate({**dumped, **overlay})
+    assert revalidated.target_dem_resolution == 10.0
+    assert not revalidated.TRITONSWMM_software_directory.exists()
+    assert not revalidated.SWMM_software_directory.exists()

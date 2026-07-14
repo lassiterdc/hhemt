@@ -23,6 +23,19 @@
     },
     { "type": "required_linear_history" },
     { "type": "non_fast_forward" },
-    { "type": "deletion" }
+    { "type": "deletion" },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "build (ubuntu-latest, 3.12)" },
+          { "context": "anonymization-guard" },
+          { "context": "docs-build" },
+          { "context": "citation-validate" }
+        ]
+      }
+    }
   ]
 }

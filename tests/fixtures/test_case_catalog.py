@@ -43,9 +43,32 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
     """
     n = os.cpu_count() or 1
     if n < min_cores:
-        pytest.skip(
-            f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}"
-        )
+        pytest.skip(f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}")
+
+
+def _load_norfolk_example_or_skip(**kwargs) -> "NorfolkIreneExample":
+    """Acquire the Norfolk Irene example, or skip when the data is unavailable.
+
+    Every Norfolk-example consumer in the suite (the conftest ``norfolk_*``
+    fixtures, the ``retrieve_norfolk_*`` case methods, and the ``ex_Nrflk``
+    sensitivity path) funnels through this helper, so gating here converts an
+    absent-data ERROR into a SKIP for all of them at a single point.
+
+    Mirrors the canonical gate in ``tests/test_case_study_catalog.py`` (which
+    wraps the identical ``NorfolkIreneExample.load``): under
+    ``HHEMT_REQUIRE_EXAMPLE_DATA=1`` (CI runners that cache the example data) a
+    load failure is re-raised as a hard error instead of a silent skip, so a
+    data-required run cannot pass vacuously. Bare ``pytest`` (test.yml) does not
+    set the flag, so a runner without the Norfolk data SKIPs rather than ERRORs.
+    """
+    try:
+        return NorfolkIreneExample.load(**kwargs)
+    except Exception as exc:
+        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
+            raise AssertionError(
+                f"Norfolk Irene example data required (HHEMT_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
+            ) from exc
+        pytest.skip(f"Norfolk Irene example data not available locally: {exc!r}")
 
 
 @dataclass
@@ -54,7 +77,7 @@ class all_examples:
 
     @staticmethod
     def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_example:
-        return NorfolkIreneExample.load(download_if_exists=download_if_exists)
+        return _load_norfolk_example_or_skip(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -127,7 +150,7 @@ class GetTS_TestCases:
         final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
         final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
-        example = NorfolkIreneExample.load(
+        example = _load_norfolk_example_or_skip(
             download_if_exists=download_if_exists, example_data_dir=example_data_dir
         )
 
@@ -218,9 +241,7 @@ class Local_TestCases:
     ) -> retrieve_TRITON_SWMM_test_case:
         """Local CPU configuration sensitivity analysis test."""
         analysis_name = "cpu_config_sensitivity_swmm_only"
-        sensitivity = (
-            all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
-        )
+        sensitivity = all_examples.ex_Nrflk().test_case_directory / cls.cpu_sensitivity_swmm
         analysis_overrides = {
             "toggle_sensitivity_analysis": True,
             "sensitivity_analysis": sensitivity,
@@ -429,11 +450,8 @@ class Local_TestCases:
         R1 — required field). Pre-F2, this file was passed via the legacy
         `report_config_path` kwarg that Phase 3 deleted."""
         import yaml
-        peer_path = (
-            Path(__file__).parent
-            / "synthetic_model"
-            / "report_config_synth_sensitivity.yaml"
-        )
+
+        peer_path = Path(__file__).parent / "synthetic_model" / "report_config_synth_sensitivity.yaml"
         return yaml.safe_load(peer_path.read_text())
 
     @staticmethod
@@ -634,8 +652,10 @@ class Local_TestCases:
             model_subset="all",
             extra_columns={
                 "analysis.hpc_ensemble_partition": [
-                    "test_partition", "test_partition",
-                    "test_partition", "test_partition",
+                    "test_partition",
+                    "test_partition",
+                    "test_partition",
+                    "test_partition",
                 ],
             },
         )
@@ -645,9 +665,7 @@ class Local_TestCases:
             toggle_triton_model=False,
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
-            hpc_system_config_yaml=(
-                Path(__file__).parent / "hpc_system_config_test.yaml"
-            ),
+            hpc_system_config_yaml=(Path(__file__).parent / "hpc_system_config_test.yaml"),
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "test_partition",
@@ -672,8 +690,10 @@ class Local_TestCases:
             model_subset="all",
             extra_columns={
                 "hpc.partition": [
-                    "gpu-a6000", "gpu-a100",
-                    "gpu-a6000", "gpu-a100",
+                    "gpu-a6000",
+                    "gpu-a100",
+                    "gpu-a6000",
+                    "gpu-a100",
                 ],
             },
         )
@@ -683,9 +703,46 @@ class Local_TestCases:
             toggle_triton_model=False,
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
-            hpc_system_config_yaml=(
-                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
-            ),
+            hpc_system_config_yaml=(Path(__file__).parent / "hpc_system_config_multipartition.yaml"),
+            start_from_scratch=start_from_scratch,
+            additional_analysis_configs={
+                "hpc_ensemble_partition": "gpu-a6000",
+            },
+        )
+
+    @staticmethod
+    def retrieve_synth_cpu_config_sensitivity_case_mixed_cpu_gpu_fanout(
+        start_from_scratch: bool = False,
+    ):
+        """synth_cc friction regression (2026-07-08): a mixed CPU/GPU per-row-partition
+        fan-out — the `hpc.partition` overlay varies across rows between a CPU partition
+        (`standard`, resolves to (None, None)) and a GPU partition (`gpu-a6000`). The
+        dedup produces TWO distinct UniqueSystemTargets: a CPU/standard target (backend
+        None) and a gpu-a6000 target (a6000/CUDA). The MASTER `hpc_ensemble_partition`
+        is `gpu-a6000`, so the pre-fix sensitivity constructor overwrote the standard
+        target's system backend with the master a6000/CUDA in the setup_target runner
+        (is_main_orchestrator=False), crashing the CPU compile in the GPU branch.
+        `hpc_system_config_multipartition.yaml` declares `standard` + `gpu-a6000`."""
+        _require_cpu_cores_for_sensitivity()
+        csv_path = Local_TestCases._write_synth_sensitivity_csv(
+            analysis_name="synth_sensitivity_mixed_cpu_gpu_fanout",
+            model_subset="all",
+            extra_columns={
+                "hpc.partition": [
+                    "standard",
+                    "gpu-a6000",
+                    "standard",
+                    "gpu-a6000",
+                ],
+            },
+        )
+        return retrieve_synth_TRITON_SWMM_test_case(
+            analysis_name="synth_sensitivity_mixed_cpu_gpu_fanout",
+            toggle_tritonswmm_model=True,
+            toggle_triton_model=False,
+            toggle_swmm_model=False,
+            sensitivity_csv=csv_path,
+            hpc_system_config_yaml=(Path(__file__).parent / "hpc_system_config_multipartition.yaml"),
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "gpu-a6000",
@@ -713,9 +770,7 @@ class Local_TestCases:
             toggle_triton_model=False,
             toggle_swmm_model=False,
             sensitivity_csv=csv_path,
-            hpc_system_config_yaml=(
-                Path(__file__).parent / "hpc_system_config_multipartition.yaml"
-            ),
+            hpc_system_config_yaml=(Path(__file__).parent / "hpc_system_config_multipartition.yaml"),
             start_from_scratch=start_from_scratch,
             additional_analysis_configs={
                 "hpc_ensemble_partition": "gpu-a6000",
@@ -733,11 +788,11 @@ class Local_TestCases:
             model_subset="all",
             drop_columns=["run_mode", "n_mpi_procs", "n_omp_threads", "n_gpus", "n_nodes"],
             extra_columns={
-                "analysis.run_mode":      ["mpi", "openmp", "hybrid", "serial"],
-                "analysis.n_mpi_procs":   [2, 1, 2, 1],
+                "analysis.run_mode": ["mpi", "openmp", "hybrid", "serial"],
+                "analysis.n_mpi_procs": [2, 1, 2, 1],
                 "analysis.n_omp_threads": [1, 2, 2, 1],
-                "analysis.n_gpus":        [0, 0, 0, 0],
-                "analysis.n_nodes":       [1, 1, 1, 1],
+                "analysis.n_gpus": [0, 0, 0, 0],
+                "analysis.n_nodes": [1, 1, 1, 1],
             },
         )
         return retrieve_synth_TRITON_SWMM_test_case(
@@ -786,11 +841,7 @@ class Local_TestCases:
         # start_from_scratch wipe of the analysis dir does not delete the CSV.
         # Per-worktree rooting matches test_case_builder so concurrent runs in
         # sibling worktrees do not race on the sensitivity CSV.
-        runs_root = (
-            Path(platformdirs.user_cache_dir("hhemt"))
-            / "synthetic_test_runs"
-            / worktree_slug()
-        )
+        runs_root = Path(platformdirs.user_cache_dir("hhemt")) / "synthetic_test_runs" / worktree_slug()
         dest_dir = runs_root / "_sensitivity_configs"
         dest_dir.mkdir(parents=True, exist_ok=True)
         csv_path = dest_dir / f"{analysis_name}.csv"
@@ -802,46 +853,43 @@ class Local_TestCases:
         if model_subset in ("all", "triton"):
             df = pd.DataFrame(
                 {
-                    "sa_id":         [0,      1,        2,        3],
-                    "run_mode":      ["mpi",  "openmp", "hybrid", "serial"],
-                    "n_mpi_procs":   [2,      1,        2,        1],
-                    "n_omp_threads": [1,      2,        2,        1],
-                    "n_gpus":        [0,      0,        0,        0],
-                    "n_nodes":       [1,      1,        1,        1],
+                    "sa_id": [0, 1, 2, 3],
+                    "run_mode": ["mpi", "openmp", "hybrid", "serial"],
+                    "n_mpi_procs": [2, 1, 2, 1],
+                    "n_omp_threads": [1, 2, 2, 1],
+                    "n_gpus": [0, 0, 0, 0],
+                    "n_nodes": [1, 1, 1, 1],
                 }
             )
         elif model_subset == "swmm":
             df = pd.DataFrame(
                 {
-                    "sa_id":         [0,        1,        2],
-                    "run_mode":      ["openmp", "openmp", "serial"],
-                    "n_mpi_procs":   [1,        1,        1],
+                    "sa_id": [0, 1, 2],
+                    "run_mode": ["openmp", "openmp", "serial"],
+                    "n_mpi_procs": [1, 1, 1],
                     # SWMM 5.2 clamps NumThreads=1 when Nobjects[LINK] < 4*NumThreads
                     # (project.c:269). The synth full SWMM model has 12 conduits, so it
                     # honors at most 3 threads (12 >= 4*3); 4 would silently clamp to 1
                     # and fail the resource-match check. sa_0=3 gives a genuinely
                     # multithreaded run whose actual matches expected.
-                    "n_omp_threads": [3,        2,        1],
-                    "n_gpus":        [0,        0,        0],
-                    "n_nodes":       [1,        1,        1],
+                    "n_omp_threads": [3, 2, 1],
+                    "n_gpus": [0, 0, 0],
+                    "n_nodes": [1, 1, 1],
                 }
             )
         else:
-            raise ValueError(
-                f"model_subset must be 'all', 'triton', or 'swmm'; got {model_subset!r}"
-            )
+            raise ValueError(f"model_subset must be 'all', 'triton', or 'swmm'; got {model_subset!r}")
         if extra_columns:
             for col_name, col_values in extra_columns.items():
                 if len(col_values) != len(df):
                     raise ValueError(
-                        f"extra_columns[{col_name!r}] has {len(col_values)} values; "
-                        f"df has {len(df)} rows."
+                        f"extra_columns[{col_name!r}] has {len(col_values)} values; df has {len(df)} rows."
                     )
                 df[col_name] = col_values
         if drop_columns:
             df = df.drop(columns=[c for c in drop_columns if c in df.columns])
-        assert all(
-            re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]
-        ), "sa_id values must match ^[A-Za-z0-9_.]+$"
+        assert all(re.fullmatch(r"[A-Za-z0-9_.]+", str(s)) for s in df["sa_id"]), (
+            "sa_id values must match ^[A-Za-z0-9_.]+$"
+        )
         df.to_csv(csv_path, index=False)
         return csv_path

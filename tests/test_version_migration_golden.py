@@ -34,7 +34,16 @@ def _copy_fixture(name: str, dest: Path) -> Path:
 
 
 def _walk_relative(root: Path) -> set[str]:
-    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() or p.is_dir()}
+    # Exclude filelock sidecars (`*.lock`): they are transient artifacts of
+    # _version.json stamping, NOT part of the migrated tree's logical layout.
+    # filelock self-cleans on release in a healthy env, but the residue is
+    # environment-nondeterministic (bare-pip CI vs conda) — so a STRUCTURAL
+    # golden comparison must exclude it, same rationale as excluding _version.json.
+    return {
+        str(p.relative_to(root))
+        for p in root.rglob("*")
+        if (p.is_file() or p.is_dir()) and not p.name.endswith(".lock")
+    }
 
 
 def _cfg_paths_from_fixture(fixture_dir: Path) -> dict[str, Path]:
@@ -95,6 +104,45 @@ def test_v0_to_v1_idempotent(tmp_path: Path) -> None:
     runner.run_migration(work, target=1, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
     state_after_second = json.loads((work / "_version.json").read_text())
     assert state_after_first == state_after_second
+
+
+def test_v16_to_v17_round_trip(tmp_path: Path) -> None:
+    work = _copy_fixture("v16", tmp_path)
+    expected = FIXTURE_ROOT / "v17"
+    result = runner.run_migration(work, target=17, apply=True, cfg_paths=_cfg_paths_from_fixture(work))
+    assert result.applied
+    # The committed fixtures carry structural baseline signals only through v4
+    # (V0005+ are content/no-op migrations with no structural signal), so the v16
+    # fixture INFERS as 4 and run_migration(target=17) re-runs V0005..V0017 (all
+    # idempotent). V0017 is the terminal migration reaching layout 17.
+    assert result.migrations_applied[-1] == "V0017__version_provenance_stamp"
+    assert "V0017__version_provenance_stamp" in result.migrations_applied
+    expected_files = _walk_relative(expected) - {"_version.json"}
+    actual_files = _walk_relative(work) - {"_version.json"}
+    assert expected_files == actual_files
+
+
+def test_v16_to_v17_dry_run_no_mutation(tmp_path: Path) -> None:
+    work = _copy_fixture("v16", tmp_path)
+    before = _walk_relative(work)
+    runner.run_migration(work, target=17, apply=False, cfg_paths=_cfg_paths_from_fixture(work))
+    after = _walk_relative(work)
+    assert before == after
+
+
+def test_v16_to_v17_idempotent(tmp_path: Path) -> None:
+    """Re-running run_migration(target=17) after the first apply must plan zero
+    migrations, leave _version.json byte-unchanged, and append no second
+    migration_history entry (per-migration idempotence, master plan C5)."""
+    work = _copy_fixture("v16", tmp_path)
+    cfg = _cfg_paths_from_fixture(work)
+    runner.run_migration(work, target=17, apply=True, cfg_paths=cfg)
+    state_after_first = json.loads((work / "_version.json").read_text())
+    second = runner.run_migration(work, target=17, apply=True, cfg_paths=cfg)
+    state_after_second = json.loads((work / "_version.json").read_text())
+    assert second.migrations_applied == []
+    assert state_after_first == state_after_second
+    assert len(state_after_second["migration_history"]) == len(state_after_first["migration_history"])
 
 
 def test_v0_to_v1_collision_detection(tmp_path: Path) -> None:

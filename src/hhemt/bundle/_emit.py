@@ -30,7 +30,7 @@ import subprocess
 import tempfile
 import warnings
 import zipfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -98,6 +98,8 @@ def emit_bundle(
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
+        _emit_runnable_template_set(staging)
+        _upgrade_crate_to_workflow_run_crate(staging)
         _write_bundle_manifest(
             staging,
             sources_by_renderer=sources_by_renderer,
@@ -192,10 +194,43 @@ def _copy_configs_with_relative_paths(
         # `result.invariants` is consumed by the Phase 3 manifest extension
         # (bundle_root_invariants). Plan Phase 3 captures it per-cfg.
         aggregated[cfg_attr] = result.invariants
+        scrubbed = _scrub_user_bucket_fields(result.cfg_dict, cfg_model=type(cfg))
         (staging / filename).write_text(
-            yaml.safe_dump(result.cfg_dict, sort_keys=False)
+            yaml.safe_dump(scrubbed, sort_keys=False)
         )
     return aggregated
+
+
+def _scrub_user_bucket_fields(
+    cfg_dict: dict, *, cfg_model: type[cfgBaseModel]
+) -> dict:
+    """Null every non-Path config field whose reprex bucket is ``"user"`` (ADR-9
+    all-field scrub / C-ZERO-USER-INFO).
+
+    The Path fields are already scrubbed by their ``_PATH_FIELD_POLICY`` entry (the
+    two software-dir fields null via ``IS_NONE_ACCEPTABLE``). This SUPERSET pass walks
+    the remaining NON-Path fields and nulls any that bucket ``"user"`` — a
+    guard-and-verify pass today (no non-path field is ``"user"``) and a leak-catcher
+    for any future ``"user"`` field. A key that is not a bucketed config field (e.g. a
+    nested sub-model like ``crs``) raises ``KeyError`` from ``all_field_bucket`` and is
+    skipped; the reprex_taxonomy totality test guarantees every real field is bucketed.
+    """
+    from hhemt.config.reprex_taxonomy import (  # function-local: acyclicity (never module-top)
+        all_field_bucket,
+    )
+
+    path_fields = set(enumerate_path_fields(cfg_model))
+    out = dict(cfg_dict)
+    for name in list(out.keys()):
+        if name in path_fields:
+            continue  # already handled by the _PATH_FIELD_POLICY rewrite above
+        try:
+            bucket = all_field_bucket(name)
+        except KeyError:
+            continue  # not a bucketed scalar config field (defensive; nested sub-models)
+        if bucket == "user":
+            out[name] = None
+    return out
 
 
 def _rewrite_paths_to_relative(
@@ -367,6 +402,7 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         VERSION_FILE_NAME,
         "scenario_status.csv",
         "sensitivity_analysis_definition.csv",
+        "ro-crate-metadata.json",
     ):
         src = analysis_dir / fname
         if src.exists():
@@ -393,6 +429,119 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
 
 
+#: Bundle-root filenames for the minimal runnable set (reprex carriage, ADR-10).
+REPREX_CONFIG_FILENAME = "reprex_config.yaml"
+HPC_TEMPLATE_FILENAME = "hpc_system_config.template.yaml"
+#: The workflow file the WRC mainEntity points at (the bundled, generated Snakefile).
+_WORKFLOW_RELPATH = "Snakefile.source"
+
+
+def _emit_runnable_template_set(staging: Path) -> None:
+    """Carry the minimal runnable set into the bundle root: a ``reprex_config.yaml``
+    template (the target user's USER-bucket + HPC-selector fields) and a scrubbed
+    ``hpc_system_config`` template (the ``{your-allocation}``-placeholder form).
+
+    Both files carry ONLY placeholders — never the producer's real account / login-node
+    / SIF path (research-reproducibility finding 5: ship a template + report page, never
+    the populated original), so the zero-user-info gate passes trivially. The
+    reprex_config key set is sourced from ``reprex_config.model_fields`` so it stays in
+    lockstep with the model if a field is added.
+    """
+    import yaml
+
+    from hhemt.config.reprex_config import reprex_config
+
+    placeholders = {
+        "default_account": "{your-allocation}",
+        "login_node": "{your-login-node}",
+        "sif_path": "/scratch/{your-allocation}/tritonswmm.sif",
+        "scratch_dir": "/scratch/{your-allocation}",
+        "target_ensemble_partition": "{your-gpu-partition}",
+        "target_setup_and_analysis_processing_partition": "{your-cpu-partition}",
+    }
+    reprex_template = {
+        name: placeholders.get(name, "{fill-in}") for name in reprex_config.model_fields
+    }
+    (staging / REPREX_CONFIG_FILENAME).write_text(
+        "# reprex_config.yaml — fill in with YOUR system's values, then run reprex().\n"
+        "# USER-bucket (host-local) fields + the HPC-revisable partition selectors only.\n"
+        + yaml.safe_dump(reprex_template, sort_keys=False)
+    )
+    hpc_template = {
+        "default_account": "{your-allocation}",
+        "login_node": "{your-login-node}",
+        "sif_path": "/scratch/{your-allocation}/tritonswmm.sif",
+    }
+    (staging / HPC_TEMPLATE_FILENAME).write_text(
+        "# hpc_system_config template — the HPC-specific info you must revise to run\n"
+        "# this bundle on YOUR cluster. Placeholders only; contains zero producer info.\n"
+        + yaml.safe_dump(hpc_template, sort_keys=False)
+    )
+
+
+def _upgrade_crate_to_workflow_run_crate(staging: Path) -> None:
+    """Patch the bundle's copied ``ro-crate-metadata.json`` into a Workflow-Run-Crate
+    (``mainEntity`` = the bundled ``Snakefile.source``), in place.
+
+    Reuses the by-reference SIF + ``input_parts`` already in the copied sidecar (no
+    ``sif_spec`` reconstruction — sidesteps the ``_case_manifest`` gap) and reserializes
+    via the canonical byte-deterministic path. No-op when the crate sidecar or the
+    ``Snakefile.source`` is absent (a bundle without a workflow file is not a WRC).
+    """
+    from hhemt.metadata import (
+        canonical_jsonld_from_doc,
+        upgrade_doc_to_workflow_run_crate,
+    )
+
+    sidecar = staging / "ro-crate-metadata.json"
+    if not sidecar.exists() or not (staging / _WORKFLOW_RELPATH).exists():
+        return
+    doc = json.loads(sidecar.read_text())
+    upgrade_doc_to_workflow_run_crate(doc, workflow_relpath=_WORKFLOW_RELPATH)
+    sidecar.write_text(canonical_jsonld_from_doc(doc))
+
+
+def reconstitute_runnable_config(
+    bundle_root: Path, *, target_path: Path | None = None
+) -> Path:
+    """Synthesize a runnable ``system_config.yaml`` from a reprex bundle (ADR-10, R5).
+
+    Reads the bundle's scrubbed ``cfg_system.yaml`` and writes a ``system_config.yaml``
+    whose bundle-relative Path fields are resolved to absolute paths under
+    ``bundle_root`` (so the by-reference inputs the target user fetched into the bundle
+    resolve at load-time), the two software-dir fields stay ``null`` (toolkit-owned,
+    exempt from the load-time existence check via the Phase-1 D4 relaxation), and every
+    EXPERIMENT-bucket field is preserved verbatim. Returns the written path
+    (``bundle_root/system_config.yaml`` unless ``target_path`` overrides).
+    """
+    import yaml
+
+    from hhemt.config.system import system_config
+
+    bundle_root = Path(bundle_root).resolve()
+    cfg_dict = yaml.safe_load((bundle_root / "cfg_system.yaml").read_text())
+    path_fields = set(enumerate_path_fields(system_config))
+    out = dict(cfg_dict)
+    for name in path_fields:
+        value = out.get(name)
+        if value is None:
+            continue
+        if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (none on system_config today)
+            out[name] = [
+                str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v
+                for v in value
+            ]
+            continue
+        if isinstance(value, str) and not Path(value).is_absolute():
+            out[name] = str((bundle_root / value).resolve())
+    # Software dirs stay null: toolkit-owned, created at target-side setup, never bundled.
+    out["SWMM_software_directory"] = None
+    out["TRITONSWMM_software_directory"] = None
+    target = target_path if target_path is not None else bundle_root / "system_config.yaml"
+    Path(target).write_text(yaml.safe_dump(out, sort_keys=False))
+    return Path(target)
+
+
 def _write_bundle_manifest(
     staging: Path,
     sources_by_renderer: dict[str, list[Path]],
@@ -405,7 +554,7 @@ def _write_bundle_manifest(
         "layout_version": LAYOUT_VERSION,
         "toolkit_git_sha": git_sha,
         "analysis_id": analysis_id,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "source_paths_by_renderer": {
             name: [str(p) for p in paths]
             for name, paths in sources_by_renderer.items()

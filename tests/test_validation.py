@@ -348,3 +348,24 @@ def test_dq6_single_partition_allowed_under_1job(tmp_path):
     result = ValidationResult()
     _validate_per_row_partition_requires_batch_job(cfg, result)
     assert result.is_valid
+
+
+def test_null_software_dir_no_required_path_error(synth_multi_sim_analysis):
+    """F-B layer-3: _validate_system_paths exempts toolkit_owned_output fields.
+
+    A reconstituted reprex bundle's system_config carries a null
+    TRITONSWMM_software_directory (clone/build gate creates it at run/setup).
+    validate_system_config must NOT emit a `system.TRITONSWMM_software_directory`
+    error for it — closing the F-B layer-3 gap (Pydantic + base.py were already
+    relaxed; _validate_system_paths was the remaining required-path check).
+    """
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    null_cfg = cfg_sys.model_copy(update={"TRITONSWMM_software_directory": None})
+
+    result = validate_system_config(null_cfg)
+    offending = [
+        e for e in result.errors if e.field == "system.TRITONSWMM_software_directory"
+    ]
+    assert not offending, (
+        f"null TRITONSWMM_software_directory wrongly flagged: {offending}"
+    )

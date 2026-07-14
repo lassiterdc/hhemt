@@ -96,6 +96,7 @@ _STANDARD_CATEGORY_ORDER: tuple[str, ...] = (
     "System Information",
     "Simulation Health (placeholder)",
     "Per Simulation Results",
+    "Metadata",
 )
 
 # --- Bundle-side RuleSpecTemplates (P1b) -------------------------------------
@@ -177,6 +178,65 @@ _TMPL_DISK_UTILIZATION = RuleSpecTemplate(
     resources_yaml="mem_mb=1000, time_min=5",
     log_path_template="_logs/plots/disk_utilization.log",
 )
+# metadata (ADR-14 / C10): the Metadata page -- RO-Crate provenance summary +
+# reprex reproduction guide + SLURM efficiency. Unconditional table renderer
+# (emits .html under both static backends); shared by the default and
+# benchmarking sets. Facts mirror the source-side builder
+# (workflow.py _build_plot_rule_block_metadata); the `category` here is
+# cross-checked against that builder's report(category=) by
+# tests/test_reporting_set_cosourcing.py.
+_TMPL_METADATA = RuleSpecTemplate(
+    rule_name="plot_metadata",
+    renderer_module="metadata",
+    output_path_template="plots/metadata__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/metadata.rst",
+        "category": "Metadata",
+        "labels": '{"figure": "Metadata"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/metadata.log",
+)
+# Cross-experiment combined set (PIP-1 Phase 4). INERT on source/bundle
+# generators (no workflow.py builder, no bundle snakefile rule); consumed ONLY
+# by bundle/_combine.py's emit-time direct-render dispatch (F-B Flag 1(c)).
+_TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_compatibility",
+    renderer_module="cross_experiment_compatibility",
+    output_path_template="plots/cross_experiment/compatibility__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_compatibility.rst",
+        "category": "Cross-Experiment Compatibility",
+        "labels": '{"figure": "Compatibility report"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/cross_experiment_compatibility.log",
+)
+
+# eda_compute_sensitivity (R11): the in-report EDA adapter for the
+# compute-sensitivity family. Conditional (predicate has_eda_artifact — gated on
+# the master carrying an EDA artifact). Emits the config_diff_maps figure under
+# master-rooted plots/eda/; lands under "Key Results" (Decision 1, no new sidebar
+# category). Facts mirror the source-side builder
+# (workflow.py _build_plot_rule_block_eda_compute_sensitivity); the `category`
+# here is cross-checked against that builder's report(category=) by
+# tests/test_reporting_set_cosourcing.py.
+_TMPL_EDA_COMPUTE_SENSITIVITY = RuleSpecTemplate(
+    rule_name="plot_eda_compute_sensitivity",
+    renderer_module="eda_compute_sensitivity",
+    output_path_template="plots/eda/config_diff_maps__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/eda_compute_sensitivity.rst",
+        "category": "Key Results",
+        "subcategory": "Compute-config EDA",
+        "labels": '{"figure": "Config-diff maps"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/eda_compute_sensitivity.log",
+)
 
 # The standard multisim set: the six common renderers, in emission order
 # (matches workflow.py:1913-1918 today). per_sim expands to two bundle figures.
@@ -217,6 +277,7 @@ _STANDARD_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
+    RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
 )
 
 # The benchmarking (sensitivity-master) set: the five common renderers shared by
@@ -229,6 +290,7 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     RendererSelection("scenario_status_appendix", rule_spec_template=(_TMPL_SCENARIO_STATUS_APPENDIX,)),
     RendererSelection("errors_and_warnings", rule_spec_template=(_TMPL_ERRORS_AND_WARNINGS,)),
     RendererSelection("disk_utilization", rule_spec_template=(_TMPL_DISK_UTILIZATION,)),
+    RendererSelection("metadata", rule_spec_template=(_TMPL_METADATA,)),
     RendererSelection(
         "per_sim_per_sa",
         predicate_key="has_sa_event_pairs",
@@ -283,6 +345,19 @@ _BENCHMARKING_SELECTION: tuple[RendererSelection, ...] = (
     ),
 )
 
+# The compute-sensitivity set (R11): the benchmarking (sensitivity-master)
+# selection plus the in-report EDA adapter, gated on has_eda_artifact. Same
+# category_order as benchmarking (the EDA figures land under the existing "Key
+# Results" category — Decision 1, no new sidebar category). Selected via
+# report_config.reporting_set="compute-sensitivity".
+_COMPUTE_SENSITIVITY_SELECTION: tuple[RendererSelection, ...] = _BENCHMARKING_SELECTION + (
+    RendererSelection(
+        "eda_compute_sensitivity",
+        predicate_key="has_eda_artifact",
+        rule_spec_template=(_TMPL_EDA_COMPUTE_SENSITIVITY,),
+    ),
+)
+
 REPORTING_SETS: dict[str, ReportingSet] = {
     "default": ReportingSet(
         name="default",
@@ -294,6 +369,28 @@ REPORTING_SETS: dict[str, ReportingSet] = {
         name="benchmarking",
         category_order=_STANDARD_CATEGORY_ORDER,
         renderer_selection=_BENCHMARKING_SELECTION,
+        validator_key="benchmarking",
+    ),
+    "combined": ReportingSet(
+        name="combined",
+        category_order=(
+            "Cross-Experiment Compatibility",
+            "Cross-Experiment Results",
+            "Per Experiment Results",
+            "Errors and Warnings",
+        ),
+        renderer_selection=(
+            RendererSelection(
+                "cross_experiment_compatibility",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_COMPATIBILITY,),
+            ),
+        ),
+        validator_key="none",
+    ),
+    "compute-sensitivity": ReportingSet(
+        name="compute-sensitivity",
+        category_order=_STANDARD_CATEGORY_ORDER,
+        renderer_selection=_COMPUTE_SENSITIVITY_SELECTION,
         validator_key="benchmarking",
     ),
 }

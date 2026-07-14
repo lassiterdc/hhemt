@@ -1,0 +1,115 @@
+# Toolchain-bearing tier: provisions the hhemt conda env (cmake + mpic++ +
+# swmm-toolkit conda-forge pin) so the compile-bearing synth render tests
+# (test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead
+# of skipping. Wireable as a required main status check by the release-gate PIP
+# (ADR-7); no continue-on-error.
+name: Compile-bearing synth render-gate tier
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  push:
+    branches: [ "develop" ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compile-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compile-synth-render-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash -el {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Provision toolchain-bearing conda env
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: hhemt
+          # environment.yaml (NOT environment-lock.yaml). The lock is NOT a fix:
+          # its own `pip:` block still carried `swmmio==0.8.5` with no pip-side
+          # pyswmm pin, so `conda env create -f environment-lock.yaml` re-ran the
+          # identical downgrade (pyswmm 2.0.1 -> 1.5.1) — a conda-env-export lock
+          # records observed state, not a solvable spec, and cannot even reproduce
+          # its own conda pyswmm=2.0.1 line. The root-cause fix lives in
+          # environment.yaml: swmmio is out of the `pip:` block (installed
+          # --no-deps below) and numpy<2 / pandas<3 are pinned in the conda
+          # section, so a fresh solve deterministically lands on the validated
+          # pyswmm 2.0.1 / swmm-toolkit 0.15.2 / numpy 1.26.4 / pandas 2.3.3.
+          # Provisioning from environment.yaml also means CI tests the path a
+          # developer actually runs (docs/how-to/installation.md Option A).
+          environment-file: environment.yaml
+          auto-activate-base: false
+
+      - name: Install swmmio (--no-deps — preserve conda pyswmm 2.x / numpy 1.x)
+        # swmmio 0.8.5 metadata caps `pyswmm<2.0` and `numpy<2.0`. A dependency-
+        # resolving install would DOWNGRADE the conda pyswmm 2.0.1 -> 1.5.1 (breaking
+        # prepare_scenario's SWMM-runoff step upstream of every render) and clobber a
+        # dozen conda packages with PyPI wheels. hhemt only uses `swmmio.Model` (.inp
+        # parsing) — swmmio imports pyswmm solely in its CLI wrapper and own tests — so
+        # the cap is not load-bearing and --no-deps is safe. swmmio's real runtime deps
+        # (geojson / pyshp / networkx / numpy / pandas / pyproj / ...) come from conda.
+        run: pip install --no-deps "swmmio==0.8.5"
+
+      - name: Install project (editable, test extras)
+        # `--no-deps`: the conda env (environment.yaml) already provides the full
+        # pinned dependency graph, including the conda-forge swmm-toolkit 0.15 pin
+        # that carries pyswmm 2.0.1 and pytest/pytest-xdist. A bare
+        # `pip install -e ".[test]"` re-resolves the project deps and DOWNGRADES
+        # pyswmm 2.0.1 -> 1.5.1 (swmmio 0.8.5 caps pyswmm<2.0; pyproject leaves
+        # pyswmm unpinned), breaking prepare_scenario's SWMM-runoff step (Phase 2a)
+        # upstream of every render. `--no-deps` preserves the conda graph.
+        run: pip install -e . --no-deps
+
+      - name: Guard — pyswmm 2.x preserved (compile-tier prepare_scenario contract)
+        run: |
+          python - <<'PY'
+          import sys, pyswmm
+          v = pyswmm.__version__
+          if not v.startswith("2."):
+              sys.exit(
+                  f"ERROR: pyswmm {v} is not 2.x — the editable install downgraded it "
+                  f"(swmmio<2.0 cap). prepare_scenario's SWMM-runoff step will break. "
+                  f"Ensure `pip install -e . --no-deps` preserves the conda pyswmm 2.0.1."
+              )
+          print(f"OK: pyswmm {v}")
+          PY
+
+      - name: Toolchain sanity (cmake + mpic++ reachable)
+        run: |
+          command -v cmake
+          command -v mpic++
+
+      - name: Guard — environment-lock.yaml swmm-provenance consistency
+        run: python scripts/check_env_lock_consistency.py
+
+      - name: Compile-bearing synth render-gate tests (serial, toolchain-required)
+        env:
+          HHEMT_REQUIRE_COMPILE_TIER: "1"
+          TRITON_SWMM_REQUIRE_BUNDLE_FIXTURE: "1"
+          # NOTE (ADR-18): HHEMT_ENABLE_PROVENANCE_AUDIT is deliberately NOT set here.
+          # The renderer-IO provenance audit is opt-IN / default-OFF because its
+          # empirically-derived incidental-read allowlist is host-specific and cannot
+          # reliably pass on a GitHub runner (different cache/font/GDAL/PROJ layout) —
+          # a required audit job would re-introduce the exact false-positive this design
+          # removes. The declared-subset-of-actual invariant is enforced on the
+          # maintainer host / locally:
+          #   HHEMT_ENABLE_PROVENANCE_AUDIT=1 conda run -n hhemt pytest \
+          #     tests/test_synth_04_multisim_with_snakemake.py::test_renderer_provenance_audit_passes_for_all_multisim_renderers \
+          #     tests/test_synth_05_sensitivity_analysis_with_snakemake.py::test_renderer_provenance_audit_passes_for_all_sensitivity_renderers
+          # Re-enable in CI only after the C-open API-wrap (deferred) makes the read
+          # surface host-portable.
+        run: |
+          pytest -p no:xdist -v \
+            tests/test_synth_00_compile_models.py \
+            tests/test_synth_04_multisim_with_snakemake.py \
+            tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
+            tests/test_synth_eda_facade.py \
+            --deselect tests/test_synth_04_multisim_with_snakemake.py::test_snakemake_workflow_end_to_end

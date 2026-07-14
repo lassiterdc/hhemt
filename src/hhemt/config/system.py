@@ -115,11 +115,18 @@ class system_config(cfgBaseModel):
     )
     SWMM_software_directory: Optional[Path] = Field(
         None,
-        description="Folder containing the SWMM model software.",
+        json_schema_extra={"toolkit_owned_output": True},
+        description="Folder containing the SWMM model software (created by the clone/build gate at run/setup).",
     )
-    TRITONSWMM_software_directory: Path = Field(
-        ...,
-        description="Folder containing the TRITONSWMM model software.",
+    # Optional[Path] (not required) ONLY so a portability-scrubbed render bundle's
+    # cfg_system.yaml (which nulls this per bundle/_path_policy.py IS_NONE_ACCEPTABLE)
+    # loads for bundle-local EDA/render; requiredness is enforced at the
+    # TRITONSWMM_system constructor chokepoint, not at load time. Mirrors the
+    # SWMM_software_directory sibling above.
+    TRITONSWMM_software_directory: Optional[Path] = Field(
+        None,
+        json_schema_extra={"toolkit_owned_output": True},
+        description="Folder containing the TRITONSWMM model software (created by the clone/build gate at run/setup). May be null in a reconstituted reprex bundle's synthesized system_config.yaml -- the round-trip re-derives it from the by-reference software.",
     )
     TRITONSWMM_git_URL: str = Field(
         ...,

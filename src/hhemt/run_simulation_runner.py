@@ -378,8 +378,13 @@ def main():
         logger.info(f"[{event_iloc}] Simulation status: {status}")
         logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
 
-        # Update model log with completion status and runtime
-        model_log.simulation_completed.set(True)
+        # Update model log with the ACTUAL completion outcome of this run (NOT an
+        # unconditional True). model_run_completed re-derives completion from the
+        # log markers this subprocess just wrote plus, for coupled tritonswmm, the
+        # finalized-rpt gate — so a coupled sim that exited over a 0-byte/truncated
+        # hydraulics.rpt records False and the SLURM retry resumes instead of the
+        # completion gate falsely marking it done (poisoning the field it reads).
+        model_log.simulation_completed.set(scenario.run.model_run_completed(model_type))
         model_log.sim_run_time_minutes.set(elapsed / 60.0)
         model_log.write()
 

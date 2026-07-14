@@ -17,40 +17,123 @@ layout_relevant:
     - "src/hhemt/config/**/*.py"
     - "src/hhemt/version_migration/schema/*.json"
     - "src/hhemt/version_migration/versions/*.py"
-# cleanup-rerun-delete-redesign Phase 1: these paths are config-schema or
-# behavior-only changes — no on-disk layout changes. Justifications:
-#   - process_simulation.py: Phase 3 — replaces structurally broken
-#     `_clear_raw_TRITON_outputs` + `_clear_raw_SWMM_outputs` with a single
-#     corrected `_clear_raw_outputs(model_type)`. Behavior change; existing
-#     on-disk analyses continue to work post-upgrade.
-#   - scenario.py: Phase 3 — incidental method-signature touch to remove
-#     `clear_raw_outputs` references. No path or layout changes.
-#   - sensitivity_analysis.py: Phases 2 + 3 + 4 — adds `delete()` method,
-#     removes `clear_raw_outputs`, adds `override_force_rerun`. No on-disk
-#     layout changes; per-sa fingerprint schema (Gotcha 17) unchanged.
-#   - config/analysis.py: Phase 1 — adds Pydantic `clear_raw` and
-#     `force_rerun` fields. Config schema is NOT on-disk layout.
 non_breaking_allowlist:
-  - src/hhemt/process_simulation.py
-  - src/hhemt/scenario.py
-  # hpc-system-profile-config Phase 4 (4d): config/analysis.py + sensitivity_analysis.py
-  # REMOVED from the allowlist — the partition-axis field retirement changes the per-sa
-  # input fingerprint (a bounded one-time re-fingerprint), a breaking on-disk change now
-  # covered by the V0013 migration + LAYOUT_VERSION 12->13 bump. (The incoming origin/main
-  # log-write-race-fix changes to sensitivity_analysis.py are likewise covered by the
-  # already-shipped bump to 13; they do not need a separate allowlist entry.)
-  - src/hhemt/log.py  # reprocess-orchestrator-liveness-gate Phase 1: additive orchestrator_slurm_jobid LogField (optional, default-empty); non-breaking — older trees read it as empty, no on-disk migration. log-write-race-fix: removes the 7 persisted all_* rollup LogFields (now @property compute-on-read); non-breaking — TRITONSWMM_log uses pydantic default extra=ignore, so legacy log.json files carrying the removed keys load cleanly and drop them on next write; no Snakemake rule reads log.json (nil mtime-rerun/du-sentinel impact); on-disk layout unchanged. resume-retry-resilience P2: additive n_resumes LogField[int] (default unset, consumers coalesce None->0); non-breaking — legacy model logs omit the key and load via pydantic default_factory; no Snakemake rule reads log.json (nil mtime-rerun/du-sentinel impact); on-disk layout unchanged. resume-retry-resilience P3: additive multi_allocation_in_progress LogField[bool] on TRITONSWMM_analysis_log (default unset, _clear_raw_outputs guard coalesces None->not-in-progress); non-breaking — legacy analysis logs omit the key and load via pydantic default_factory; no Snakemake rule reads log.json (nil mtime-rerun/du-sentinel impact); on-disk layout unchanged.
-  - src/hhemt/processing_analysis.py  # reprocess-regeneration-toggle Phase 2 R4: behavior-only early-return re-key (.exists() to .exists() AND datatree_consolidation_complete); the log field already exists and is already set on success — no on-disk layout change.
-  - src/hhemt/config/viz_vocabulary.py  # reporting-system frozen-viz-vocabulary: new frozen plotting-vocabulary module (project token enums + Annotated registry-validator aliases). Pure in-memory config code — no on-disk layout, no zarr/log/path schema. Non-breaking.
-  - src/hhemt/config/brand_theme.py  # reporting-system config-layering-and-branding: new ADR-7 layer-2 brand-theme Pydantic model (6 colors + upper_left_text, MplColor-typed). Pure in-memory config schema — no on-disk layout. Non-breaking.
-  - src/hhemt/config/case_manifest.py  # case-study-hosting-conventions: new ADR-12 CaseManifest Pydantic model (case.yaml schema — case_name/res_identifier/resource_version/description/citation/sha256 manifest/host). Pure in-memory config schema — no on-disk layout, no zarr/log/path schema. Non-breaking.
-  # reporting-system_named-reporting-sets: retires SensitivityReportConfig.mode
-  # (dead Literal) + adds report_config.reporting_set selector + before-validator
-  # mode->reporting_set rewrite. Config-schema only — no figure-stem rename, no
-  # on-disk output-dir change. Non-breaking; no LAYOUT_VERSION bump / migration.
-  - src/hhemt/config/report.py  # reporting-system config-layering-and-branding D-5: _HtmlTableStyleBase brand defaults overridden from brand_theme at run(); additive/behavior-only — no on-disk layout change.
-  - src/hhemt/config/hpc_system.py  # hpc-system-profile-config Phase 1: new per-HPC-system config model (native-mirrored PartitionLimits vocab + extension fields). Config schema is NOT on-disk layout — additive, no _version.json/fingerprint/datatree change. The breaking partition-axis change is Phase 4 (V0013 migration). Additionally (containerization): adds the additive ContainerSpec model + container: field (ADR-1) — in-memory config schema only, no on-disk layout.
-  - src/hhemt/config/analysis.py  # containerization (ADR-1): additive execution_environment selector. In-memory config schema only — no on-disk layout / _version.json / fingerprint / datatree change. Non-breaking; no LAYOUT_VERSION bump.
-  - src/hhemt/config/static_plots.py  # reporting-system_publication-static-config-schema (ADR-4): new publication static-plot Pydantic config family. Pure in-memory config schema — no on-disk layout, no figure stem, no zarr/log/path change. Non-breaking (mirrors viz_vocabulary.py / brand_theme.py).
-  - src/hhemt/config/analysis.py  # resume-retry-resilience P1: retire hpc_restart_times for hpc_restart_times_simulate/_other (two per-rule retry knobs). Config-schema-only — the retry knobs are NOT sensitivity-overlay columns and do not reach the per-sa input fingerprint (which projects analysis_independent_vars); no on-disk layout change. Distinct justification from the V0013 partition-axis break that removed this path.
-  - src/hhemt/sensitivity_analysis.py  # Two non-breaking changes share this entry. (1) resume-retry-resilience P1 — override-knob facade thread adds override_hpc_restart_times_simulate/_other (None-defaulted) to TRITONSWMM_sensitivity_analysis.submit_workflow + the self._workflow_builder.submit_workflow delegation (signature-only; the runtime override knobs are NOT config fields nor sensitivity-overlay columns and never reach the per-sa input fingerprint or the analysis_datatree.zarr layout). (2) run-honesty-orphan-dryrun-reportconfig Phase 1 — adds find_orphan_input_fingerprints() + a 4th input_fingerprints cleanup class (read enumerator + delete loop) in cleanup_all_orphans; read/delete behavior over the EXISTING sa-{sa_id}_inputs.json fingerprint format (Gotcha 17), no on-disk fingerprint schema/path/_version.json/datatree change. Both non-breaking; no LAYOUT_VERSION bump.
+  - path: src/hhemt/process_simulation.py
+    justification: >-
+      cleanup-rerun-delete-redesign Phase 3 — replaces structurally broken
+      _clear_raw_TRITON_outputs + _clear_raw_SWMM_outputs with a single corrected
+      _clear_raw_outputs(model_type). Behavior change; existing on-disk analyses
+      continue to work post-upgrade.
+  - path: src/hhemt/scenario.py
+    justification: >-
+      cleanup-rerun-delete-redesign Phase 3 — incidental method-signature touch to
+      remove clear_raw_outputs references. No path or layout changes.
+  - path: src/hhemt/log.py
+    justification: >-
+      reprocess-orchestrator-liveness-gate Phase 1 + log-write-race-fix +
+      resume-retry-resilience P2/P3 — additive LogFields (orchestrator_slurm_jobid,
+      n_resumes, multi_allocation_in_progress) and removal of the 7 persisted all_*
+      rollup LogFields (now @property). Legacy log.json files load cleanly via
+      pydantic extra=ignore / default_factory; no Snakemake rule reads log.json;
+      on-disk layout unchanged.
+  - path: src/hhemt/processing_analysis.py
+    justification: >-
+      reprocess-regeneration-toggle Phase 2 R4 — behavior-only early-return re-key
+      (.exists() to .exists() AND datatree_consolidation_complete). The log field
+      already exists and is set on success; no on-disk layout change.
+  - path: src/hhemt/sensitivity_analysis.py
+    justification: >-
+      resume-retry-resilience P1 (override_hpc_restart_times_simulate/_other facade
+      thread) + run-honesty-orphan-dryrun-reportconfig Phase 1 (find_orphan_input_fingerprints
+      + 4th cleanup class). Signature/read-delete behavior over the existing
+      sa-{sa_id}_inputs.json fingerprint format; no on-disk fingerprint schema/path/
+      _version.json/datatree change.
+  - path: src/hhemt/config/viz_vocabulary.py
+    justification: >-
+      reporting-system frozen-viz-vocabulary — new frozen plotting-vocabulary module
+      (token enums + Annotated registry-validator aliases). Pure in-memory config
+      code; no on-disk layout.
+  - path: src/hhemt/config/brand_theme.py
+    justification: >-
+      reporting-system config-layering-and-branding — new ADR-7 brand-theme Pydantic
+      model. Pure in-memory config schema; no on-disk layout.
+  - path: src/hhemt/config/case_manifest.py
+    justification: >-
+      case-study-hosting-conventions — new ADR-12 CaseManifest Pydantic model
+      (case.yaml schema). Pure in-memory config schema; no on-disk layout.
+  - path: src/hhemt/config/report.py
+    justification: >-
+      reporting-system named-reporting-sets + config-layering-and-branding D-5 —
+      retires SensitivityReportConfig.mode, adds reporting_set selector +
+      before-validator; _HtmlTableStyleBase brand defaults overridden at run().
+      Config-schema/behavior-only; no figure-stem rename, no on-disk output-dir change.
+  - path: src/hhemt/config/hpc_system.py
+    justification: >-
+      hpc-system-profile-config Phase 1 + containerization ADR-1 — new per-HPC-system
+      config model (native-mirrored PartitionLimits vocab) + additive ContainerSpec.
+      Config schema is NOT on-disk layout; the breaking partition-axis change is the
+      separate V0013 migration.
+  - path: src/hhemt/config/static_plots.py
+    justification: >-
+      reporting-system_publication-static-config-schema ADR-4 — new publication
+      static-plot Pydantic config family. Pure in-memory config schema; no on-disk
+      layout / figure stem / zarr / log / path change.
+  - path: src/hhemt/config/reprex_taxonomy.py
+    justification: >-
+      reproducibility-system_reprex-foundations (C12) — new ADR-10 field->bucket
+      taxonomy classifier (pure static-table lookup over _PATH_FIELD_POLICY;
+      field_bucket -> user|hpc|experiment). Pure in-memory config schema; no on-disk
+      layout / figure stem / zarr / log / path change. Non-breaking (mirrors
+      viz_vocabulary.py / brand_theme.py / static_plots.py).
+  - path: src/hhemt/config/eda.py
+    justification: >-
+      EDA config-schema addition (eda_config submodel: enabled_plots, plotly_js_mode,
+      tabulator_js_mode). Pure in-memory config schema; no on-disk layout. Recorded in
+      the CLAUDE.md config-field table as allowlisted; this entry closes the missing
+      allowlist row the fnmatch glob bug had hidden.
+  - path: src/hhemt/config/analysis.py
+    justification: >-
+      Two collapsed non-breaking changes (former duplicate entries). containerization
+      ADR-1 — additive execution_environment selector. AND resume-retry-resilience P1 —
+      retire hpc_restart_times for hpc_restart_times_simulate/_other. Both config-schema
+      only; not sensitivity-overlay columns; do not reach the per-sa input fingerprint;
+      no on-disk layout change.
+  - path: src/hhemt/config/invalidating_fixes.py
+    justification: >-
+      reproducibility-system_version-provenance-and-recompute Phase 3 (ADR-17) — new
+      Pydantic loader for the invalidating-fix registry. Pure INPUT-schema module
+      (describes bug-fix commits, not on-disk analysis layout); no
+      zarr/log/path/_version.json/fingerprint/datatree change. Layout-relevant only via
+      the config/**/*.py glob; non-breaking, no LAYOUT_VERSION bump.
+  - path: src/hhemt/config/base.py
+    justification: >-
+      compile-bearing-synth-ci-tier Phase 1 — _check_paths_exist honors
+      json_schema_extra={"toolkit_owned_output": True} to skip the load-time
+      exists() check for clone-gate-created software dirs. Pure validation-logic
+      change; no on-disk layout / _version.json / fingerprint / datatree /
+      path-schema change. Non-breaking.
+  - path: src/hhemt/config/system.py
+    justification: >-
+      compile-bearing-synth-ci-tier Phase 1 — annotate TRITONSWMM_software_directory
+      + SWMM_software_directory json_schema_extra={"toolkit_owned_output": True}
+      (toolkit-owned build outputs, exempt from load-time exists()). Schema-annotation
+      only; no on-disk layout change. Non-breaking.
+      ; bundle-reprex-roundtrip Phase 1 — relax TRITONSWMM_software_directory
+      Path -> Optional[Path] (default None) so a reconstituted reprex bundle's
+      synthesized system_config.yaml can carry null and still pass
+      cfgBaseModel._check_paths_exist. Config-schema widening; no on-disk layout
+      / _version.json / datatree change. Non-breaking.
+  - path: src/hhemt/config/reprex_config.py
+    justification: "bundle-reprex-roundtrip Phase 1 — NEW reprex_config Pydantic model (minimal target-user field set for the round-trip). Pure config schema (config/**/*.py glob); no on-disk layout change. Non-breaking, no LAYOUT_VERSION bump (mirrors reprex_taxonomy.py)."
+  - path: src/hhemt/config/synthetic_experiment.py
+    justification: "synthetic-experiment-sensitivity-reporting Phase 1 — NEW synthetic_experiment_config Pydantic model (grid + forcing + rank_sweep + partition selectors + per-partition cap validators). Pure config schema; no on-disk analysis-tree/_version.json/datatree change. Non-breaking, no LAYOUT_VERSION bump (belt-and-suspenders — the config/**/*.py glob does not match direct-child config modules)."
+  - path: src/hhemt/report_plot_ids.py
+    justification: >-
+      synthetic-experiment-sensitivity-reporting Phase 4 (R11) — additive
+      _OUTPUT_EXT_BY_RENDERER key "eda_compute_sensitivity" (.html/.html) for the
+      in-report EDA adapter. A NEW renderer key changes NO existing analysis's
+      on-disk figure filenames (the C-LAYOUT invariant the mandate protects), so it
+      is non-breaking. CHANGE-SCOPED via layout_signature: this exemption covers
+      ONLY the current file content; any future grammar/stem edit yields a different
+      hash and re-fires Check B (preserving layout-relevance per _load_allowlist).
+    layout_signature: "849fd071bb7f9fb70cd935a3920c189cc42e5c5991463c8b7883865f49b0688c"

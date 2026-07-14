@@ -18,9 +18,7 @@ import pytest
 import tests.utils_for_testing as tst_ut
 
 pytestmark = [
-    pytest.mark.skipif(
-        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-    ),
+    pytest.mark.skipif(tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."),
     pytest.mark.slow,
 ]
 
@@ -31,8 +29,8 @@ def _assert_analysis_test_completes(analysis):
     result = analysis.test()
     assert (analysis.analysis_paths.analysis_dir / "_test").exists()
     assert result.subanalyses, "analysis.test() produced no _test sub-analyses"
-    for _analysis_id, sub in result.subanalyses:
-        tst_ut.assert_analysis_workflow_completed_successfully(sub)
+    for sub_result in result.subanalyses:
+        tst_ut.assert_analysis_workflow_completed_successfully(sub_result.analysis)
 
 
 def test_analysis_test_single_sim(norfolk_single_sim_analysis):

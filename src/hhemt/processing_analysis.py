@@ -155,11 +155,26 @@ class TRITONSWMM_analysis_post_processing:
         tree = xr.DataTree.from_dict(tree_dict)
         apply_global_attributes(tree, analysis_id=str(self._analysis.cfg_analysis.analysis_id))
 
-        from hhemt.cf_conventions import apply_provenance_core
+        from hhemt.cf_conventions import apply_producing_stamp, apply_provenance_core
         from hhemt.provenance import emit_provenance
 
         _core_json, _graph_json = emit_provenance(self._analysis)
         apply_provenance_core(tree, core_json_str=_core_json)
+
+        # ADR-15 Phase 1: re-derive the scalar producing-stamp fast-path on the
+        # root from the per-event coordinates that rode up on the assembled mode
+        # datasets. Set only when uniform across ALL events (else absent + a
+        # divergent breadcrumb); the per-event coordinate stays authoritative.
+        _sha_vals: list[str] = []
+        _semver_vals: list[str] = []
+        for _mode_path, _mode_ds in tree_dict.items():
+            if _mode_path == "/":
+                continue
+            if "hhemt_producing_sha" in _mode_ds.coords:
+                _sha_vals.extend(str(v) for v in _mode_ds["hhemt_producing_sha"].values.tolist())
+            if "hhemt_producing_version" in _mode_ds.coords:
+                _semver_vals.extend(str(v) for v in _mode_ds["hhemt_producing_version"].values.tolist())
+        apply_producing_stamp(tree, _sha_vals, _semver_vals)
 
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
@@ -271,6 +286,15 @@ class TRITONSWMM_analysis_post_processing:
             if open_kwargs["engine"] == "zarr":
                 open_kwargs["consolidated"] = False
             ds = xr.open_dataset(summary_file, **open_kwargs)
+            # ADR-15 Phase 1 (D6): normalize the producing-stamp coordinates before
+            # concat so mixed stamped (v17+) / unstamped (legacy) summaries concat
+            # cleanly. The "unknown" sentinel here exists ONLY in the in-memory
+            # concatenated tree — it is never written back to the legacy flat
+            # summary, so no historical provenance is fabricated.
+            if "hhemt_producing_sha" not in ds.coords:
+                ds = ds.assign_coords(hhemt_producing_sha=("event_iloc", ["unknown"]))
+            if "hhemt_producing_version" not in ds.coords:
+                ds = ds.assign_coords(hhemt_producing_version=("event_iloc", ["unknown"]))
             lst_ds.append(ds)
 
         ds_combined_outputs = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts")

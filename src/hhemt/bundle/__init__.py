@@ -31,6 +31,7 @@ from hhemt.bundle._emit import (
 
 if TYPE_CHECKING:
     from hhemt.eda import EdaReportResult
+from hhemt.bundle._combine import CombinedBundle, combine_bundle
 from hhemt.subprocess_utils import run_subprocess_with_tee
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -40,6 +41,8 @@ from hhemt.version_migration.constants import (
 __all__ = [
     "Bundle",
     "BundleSchemaError",
+    "CombinedBundle",
+    "combine_bundle",
     "emit_bundle",
     "_get_toolkit_git_sha",
     "BUNDLE_MANIFEST_FILENAME",
@@ -88,7 +91,7 @@ class Bundle:
         root = Path(path).resolve()
         manifest_path = root / BUNDLE_MANIFEST_FILENAME
         if not manifest_path.exists():
-            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} under {root}. " f"Is this a render bundle?")
+            raise FileNotFoundError(f"No {BUNDLE_MANIFEST_FILENAME} under {root}. Is this a render bundle?")
         manifest = json.loads(manifest_path.read_text())
         try:
             bundle_version = manifest["bundle_schema_version"]
@@ -122,7 +125,7 @@ class Bundle:
         invariants = manifest.get("bundle_root_invariants", {})
         if not isinstance(invariants, dict):
             raise ValueError(
-                f"bundle_root_invariants in {manifest_path} must be a " f"dict, got {type(invariants).__name__}."
+                f"bundle_root_invariants in {manifest_path} must be a dict, got {type(invariants).__name__}."
             )
         # Load and Pydantic-validate the bundle's cfg_analysis.yaml at
         # construction time so downstream attribute access
@@ -194,6 +197,32 @@ class Bundle:
             plot_paths=plot_paths,
             verdicts=[],
         )
+
+    def reprex(self, reprex_config, target_hpc_profile):
+        """Validate round-trip runnability against a target HPC profile (ADR-10).
+
+        Verifies the SIF (mandatory sha256 digest match when the crate references
+        one, fail-closed; best-effort ``apptainer verify`` PGP), re-aims
+        ``validation.py`` preflight at ``target_hpc_profile``, and emits per-``(sa_id,
+        column)`` problem pairs plus per-field graduated experiment amendments for
+        closest-possible cross-system reproduction. Mirrors ``Bundle.eda()`` —
+        delegates to the ``bundle._reprex`` free function with ``bundle.root``.
+
+        Parameters
+        ----------
+        reprex_config : hhemt.config.reprex_config.reprex_config
+            The target user's minimal runnable-field set (account / login node /
+            SIF path / scratch + target partition selectors).
+        target_hpc_profile : hhemt.config.hpc_system.hpc_system_config
+            The reproducer's own HPC profile (partition caps, container spec).
+
+        Returns
+        -------
+        hhemt.bundle._reprex.ReprexResult
+        """
+        from hhemt.bundle._reprex import reprex as _reprex
+
+        return _reprex(self._root, reprex_config, target_hpc_profile)
 
     def _read_static_backend(self) -> Literal["matplotlib", "plotly"]:
         # Resolution (post-F2 rev v2): cfg_analysis.report is required by

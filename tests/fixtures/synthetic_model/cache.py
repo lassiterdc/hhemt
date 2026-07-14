@@ -1,4 +1,12 @@
-"""Cache orchestrator for synthetic test models.
+"""Cache orchestrator for synthetic test models (test-tier wrapper over the
+lifted ``hhemt.synthetic_model`` builder).
+
+The deterministic ``(params) -> files`` generation surface now lives in
+``hhemt.synthetic_model`` (``SyntheticModelParams``, ``SyntheticCaseArtifacts``,
+``build_synthetic_case``). This module keeps the TEST-ONLY cache-reuse
+orchestration — the platformdirs cache root, the ``build.lock`` filelock, and the
+``build.complete`` sentinel — and delegates the actual build. Import direction is
+tests -> src.
 
 Cache layout:
     <user_cache_dir>/hhemt/synthetic_test_models/<key>/
@@ -28,146 +36,62 @@ from pathlib import Path
 import platformdirs
 
 from hhemt._filelock_compat import resolve_filelock
-from tests.fixtures.synthetic_model import (
-    geometry,
-    landuse,
-    swmm_template,
-    triton_cfg,
-    vectors,
-    weather,
+from hhemt.synthetic_model import (
+    SyntheticCaseArtifacts,
+    SyntheticModelParams,
+    build_synthetic_case,
 )
 
-
-@dataclasses.dataclass(frozen=True)
-class SyntheticModelParams:
-    n_cols: int = 16   # iter-8 peak_flood_depth: 20→16 (narrower DEM so the
-                       # figure has less surrounding wall area and the Y-shaped
-                       # channel reads as the dominant feature).
-    n_rows: int = 30
-    cell_size_m: float = 10.0
-    xllcorner: float = 0.0            # test-case local origin (no real-world geolocation)
-    yllcorner: float = 0.0
-    epsg: int = 3857                  # Web Mercator — accepts (0,0) at equator/prime meridian
-    slope_ns: float = 0.01            # 1% N->S
-    valley_depth_m: float = 0.5
-    impervious_mannings: float = 0.015
-    pervious_mannings: float = 0.035
-    sim_duration_min: int = 180  # iter-10 peak_flood_depth: 30→180 (3h)
-                                # constant 5m BC has time to equilibrate
-                                # upstream-junction water surfaces via SWMM
-                                # backwater. Shorter durations (10, 30 min) can
-                                # be swept post-baseline by overriding this
-                                # field; rainfall keeps its early-burst shape
-                                # so the long tail is post-storm/relaxation.
-    triton_timestep_s: float = 1.0
-    reporting_timestep_s: float = 10.0
-    rainfall_peak_mm_per_hr: float = 100.0  # iter-9 peak_flood_depth: switched
-                                # to a CONSTANT 100 mm/hr for the entire sim
-                                # duration (was 3000 mm/hr triangular). The
-                                # "peak" name is retained for backward compat
-                                # with the catalog; weather.py now treats it
-                                # as a constant value (no triangular shape).
-    rainfall_peak_min: int = 10  # minutes from start to PEAK rainfall (the triangle's
-                                 # time-to-peak when rainfall_duration_min is set; ignored under constant rain)
-    stormtide_mean_m: float = 2.0
-    stormtide_amplitude_m: float = 0.8
-    stormtide_period_h: float = 12.0
-    # Compound coastal-pluvial event shaping (2026-06-15). When set, the synth weather
-    # becomes a realistic storm: a triangular rain burst + a base tide sinusoid with a
-    # triangular surge co-peaking with the rain, then recession/drainage.
-    rainfall_duration_min: int | None = None  # None=constant rain; else triangular window, peak at rainfall_peak_min
-    stormsurge_peak_m: float = 0.0  # triangular surge added to base tide (0=none), peaks at rainfall_peak_min
-    compound_event: bool = False  # True: event 0 = rain + tide+surge; False: legacy (0 hydro/1 BC/2 both)
-    manhole_diameter_m: float = 1.2  # iter-18 (2026-04-29): reverted from
-                                     # iter-14's 2.0 m back to the toolkit
-                                     # default 1.2 m per user request.
-    manhole_loss_coefficient: float = 0.1
-    seed: int = 0
+# Re-export so existing ``from tests.fixtures.synthetic_model.cache import
+# SyntheticModelParams`` callsites keep resolving.
+__all__ = [
+    "DEFAULT_PARAMS",
+    "SyntheticCaseArtifacts",
+    "SyntheticModelParams",
+    "get_or_build_synthetic_case",
+]
 
 
 DEFAULT_PARAMS = SyntheticModelParams()
-
-
-@dataclasses.dataclass(frozen=True)
-class SyntheticCaseArtifacts:
-    cache_dir: Path
-    dem: Path
-    landuse: Path
-    landuse_lookup: Path
-    watershed: Path
-    boundary: Path
-    swmm_hydraulics: Path
-    swmm_hydrology: Path
-    swmm_full: Path
-    subcatchment_raingage_mapping: Path
-    weather: Path
-    tritonswmm_cfg: Path
 
 
 def _toolkit_version() -> str:
     try:
         return importlib.metadata.version("hhemt")
     except importlib.metadata.PackageNotFoundError:
-        try:
-            return importlib.metadata.version("hhemt")
-        except importlib.metadata.PackageNotFoundError:
-            return "0.0.0+unknown"
+        return "0.0.0+unknown"
 
 
-# Computed once at import time. The SHA-1 of swmm_template.py source bytes is
-# baked into the cache key so topology changes in swmm_template.py (which do
-# NOT change SyntheticModelParams) auto-invalidate every existing
-# synthetic-model cache directory. A params-only cache key would serve stale
-# artifacts after a topology edit; this constant closes that gap. Computing
-# at import time raises an observable ImportError if the source is unreadable
-# (far more diagnosable than an opaque cache-miss surfaced inside _cache_key).
-_SWMM_TEMPLATE_SOURCE_HASH: str = hashlib.sha1(
-    Path(swmm_template.__file__).read_bytes()
-).hexdigest()[:16]
+# Computed once at import time. The SHA-1 of ALL synthetic-model generator source
+# bytes (every ``*.py`` under ``src/hhemt/synthetic_model/``) is baked into the
+# cache key so ANY topology / DEM-geometry / weather / forcing edit — none of which
+# changes ``SyntheticModelParams`` — auto-invalidates every existing synthetic-model
+# cache directory. Hashing ONLY ``swmm_template.py`` (the prior behavior) left
+# geometry.py, weather.py, landuse.py, vectors.py, triton_cfg.py and _build.py
+# cache-blind, so a DEM/node-placement or rainfall/surge edit silently served stale
+# artifacts. Computing at import time raises an observable ImportError if any source
+# is unreadable (far more diagnosable than an opaque cache-miss inside _cache_key).
+def _generator_source_hash() -> str:
+    import hhemt.synthetic_model as _sm
+
+    pkg_dir = Path(_sm.__file__).parent
+    h = hashlib.sha1()
+    for src in sorted(pkg_dir.glob("*.py")):
+        h.update(src.name.encode("utf-8"))
+        h.update(src.read_bytes())
+    return h.hexdigest()[:16]
+
+
+_GENERATOR_SOURCE_HASH: str = _generator_source_hash()
 
 
 def _cache_key(params: SyntheticModelParams) -> str:
     payload = {
         "params": dataclasses.asdict(params),
         "toolkit_version": _toolkit_version(),
-        "swmm_template_source_hash": _SWMM_TEMPLATE_SOURCE_HASH,
+        "generator_source_hash": _GENERATOR_SOURCE_HASH,
     }
-    return hashlib.sha1(
-        json.dumps(payload, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:16]
-
-
-def _assert_rim_matches_dem(params, dem_path: Path, swmm_full_path: Path) -> None:
-    """Verify that each SWMM junction's rim elevation equals the DEM cell
-    elevation at its coordinate. Enforces the user-locked invariant in the
-    Phase 2 STOP-gate iteration-2 feedback: rim(node) == DEM(col, row)."""
-    import rioxarray as rxr  # local import — avoids GDAL-import-order crash
-    import swmmio
-
-    from . import swmm_template as _t
-
-    dem = rxr.open_rasterio(dem_path).squeeze()
-    m = swmmio.Model(str(swmm_full_path))
-    cs = params.cell_size_m
-    x0 = params.xllcorner
-    y0 = params.yllcorner
-    node_tables = [m.inp.junctions, m.inp.outfalls]
-    coords = m.inp.coordinates
-    for tbl in node_tables:
-        for name, row in tbl.iterrows():
-            x = float(coords.at[name, "X"])
-            y = float(coords.at[name, "Y"])
-            col = int(round((x - x0) / cs - 0.5))
-            grid_row = int(round((y - y0) / cs - 0.5))
-            matrix_row = params.n_rows - 1 - grid_row
-            dem_elev = float(dem.values[matrix_row, col])
-            depth = float(row.get("MaxDepth", 0.0)) if "MaxDepth" in row.index else _t._JUNCTION_DEPTH_M
-            rim = float(row["InvertElev"]) + depth
-            if abs(rim - dem_elev) > 1e-3:
-                raise AssertionError(
-                    f"node {name!r} rim {rim:.3f} != DEM {dem_elev:.3f} at "
-                    f"(col={col}, row_from_bottom={grid_row})"
-                )
+    return hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
 
 
 def _cache_root() -> Path:
@@ -184,20 +108,7 @@ def get_or_build_synthetic_case(
     sentinel = cache_dir / "build.complete"
     with lock:
         if not sentinel.exists():
-            dem = geometry.build_dem(params, cache_dir / "dem.tif")
-            landuse_tif = landuse.build_landuse(params, cache_dir / "landuse.tif")
-            lookup = landuse.build_lookup(params, cache_dir / "landuse_lookup.csv")
-            watershed = vectors.build_watershed(params, cache_dir / "watershed.geojson")
-            boundary = vectors.build_boundary(params, cache_dir / "boundary.geojson")
-            hydraulics, hydrology, full = swmm_template.build_templates(params, cache_dir)
-            mapping = swmm_template.build_subcatchment_raingage_mapping(
-                params, cache_dir / "subcatchment_raingage_mapping.csv"
-            )
-            weather_nc = weather.build_weather(params, cache_dir / "weather.nc")
-            cfg = triton_cfg.build_cfg(params, cache_dir / "tritonswmm.cfg")
-            _assert_rim_matches_dem(params, dem, full)
-            _ = (dem, landuse_tif, lookup, watershed, boundary, hydraulics,
-                 hydrology, full, mapping, weather_nc, cfg)
+            build_synthetic_case(params, cache_dir)
             sentinel.write_text("ok\n", encoding="utf-8")
     return SyntheticCaseArtifacts(
         cache_dir=cache_dir,

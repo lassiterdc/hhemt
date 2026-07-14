@@ -582,6 +582,32 @@ def _iter_rpt_lines(f_rpt: Path):
             yield line
 
 
+def rpt_is_complete(f_rpt: Path) -> bool:
+    """Return True iff an SWMM `.rpt` proves the engine ran `swmm_report()` to completion.
+
+    The coupled TRITON-SWMM `hydraulics.rpt` (and any SWMM `.rpt`) writes its
+    summary/continuity tables and the ``Analysis ended on`` trailer ONLY at the
+    terminal ``swmm_end()`` -> ``swmm_report()`` step. SWMM has no report-resume
+    or report-append mechanism, so an ``.rpt`` that exists but lacks the trailer
+    is from a run that was killed/short-circuited before finalization (e.g. a
+    walltime-killed hotstart attempt). The ``Analysis ended on`` trailer is the
+    definitive completeness signal: ``Flow Units`` and ``Element Count`` are
+    written near ``swmm_start`` and can survive in a truncated `.rpt`, whereas
+    the trailer is present only when ``swmm_report()`` finished.
+
+    Consumed by coupled-sim completion detection to reject a false-positive
+    "completed" marker on a resumed run whose embedded SWMM engine never emitted
+    its report. Do NOT loosen the summary parser to tolerate an incomplete `.rpt`
+    — a SWMM-less resume would invalidate any clean-vs-resume comparison.
+    """
+    f_rpt = Path(f_rpt)
+    if not f_rpt.exists() or f_rpt.stat().st_size == 0:
+        return False
+    # Match the trailer string the summary parser already keys on (analysis_end_line).
+    with open(f_rpt, "r", encoding="latin-1") as fh:
+        return any("Analysis ended on" in line for line in fh)
+
+
 def _build_system_results(
     line_flw_units,
     runoff_continuity_error_line,

@@ -30,6 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 _SELF_EXCLUDE = frozenset(
     {
         "scripts/anonymization_blocklist.txt",
+        "scripts/reprex_blocklist.txt",
         "scripts/check_anonymization.py",
         "tests/test_check_anonymization.py",
     }

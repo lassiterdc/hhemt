@@ -31,21 +31,33 @@ This directory contains versioned snapshots of the TRITON-SWMM_toolkit environme
 
 ## How to Use These Files
 
-### Option 1: Recreate Environment from Conda Lock File (RECOMMENDED)
+### Option 1: Recreate Environment from `environment.yaml` (RECOMMENDED)
 
-This is the most reliable method as it captures all dependencies exactly as they were installed.
+Provision from the spec and apply the two `--no-deps` post-create steps. Do NOT create from the lock — see the warning below.
+
+> [!WARNING]
+> **Do NOT create an environment from `environment-lock.yaml`.** A `conda env export`
+> lock records *observed state*, not a solvable spec, and conda still runs its `pip:`
+> block on create — which re-triggers the very downgrade the pins were meant to prevent
+> (pip satisfies `swmmio`'s `pyswmm<2.0` cap by uninstalling the conda `pyswmm 2.0.1`).
+> `environment.yaml` is the provisioning path; the lock is an *inspection* snapshot.
+> Enforced by `scripts/check_env_lock_consistency.py`.
 
 #### Fresh Installation:
 ```bash
 # Clean slate - remove old environment if it exists
 conda deactivate
-conda env remove -n triton_swmm_toolkit
+conda env remove -n hhemt
 
-# Create environment from lock file
-conda env create -f environment-lock.yaml
+# Create environment from the SPEC (not the lock)
+conda env create -f environment.yaml
 
 # Activate the environment
-conda activate triton_swmm_toolkit
+conda activate hhemt
+
+# Both post-create steps are REQUIRED (see docs/how-to/installation.md)
+pip install --no-deps "swmmio==0.8.5"
+pip install -e . --no-deps
 ```
 
 #### Using on HPC systems (with module system):
@@ -53,11 +65,14 @@ conda activate triton_swmm_toolkit
 # Load your conda/mamba module
 module load miniforge  # or conda/mamba module on your system
 
-# Create environment from lock file
-conda env create -f environment-lock.yaml
+# Create environment from the SPEC (not the lock)
+conda env create -f environment.yaml
 
 # Activate
-conda activate triton_swmm_toolkit
+conda activate hhemt
+
+pip install --no-deps "swmmio==0.8.5"
+pip install -e . --no-deps
 ```
 
 ### Option 2: Update Existing Environment
@@ -66,10 +81,14 @@ If you already have the environment and just want to update it:
 
 ```bash
 # Activate your existing environment
-conda activate triton_swmm_toolkit
+conda activate hhemt
 
-# Update to match the lock file
-conda env update -f environment-lock.yaml --prune
+# Update to match the SPEC (not the lock — see the warning above)
+conda env update -f environment.yaml --prune
+
+# Re-apply the two --no-deps post-create steps
+pip install --no-deps "swmmio==0.8.5"
+pip install -e . --no-deps
 ```
 
 ### Option 3: Pip-Only Installation
@@ -78,10 +97,10 @@ If you prefer or need to use pip only:
 
 ```bash
 # Create a Python 3.11 environment
-conda create -n triton_swmm_toolkit python=3.11
+conda create -n hhemt python=3.11
 
 # Activate it
-conda activate triton_swmm_toolkit
+conda activate hhemt
 
 # Install from requirements file
 pip install -r requirements-pinned.txt
@@ -107,7 +126,7 @@ pip install -r requirements-pinned.txt
 ### Issue: "CondaError: Could not solve for environment"
 This can occur if your system or channels have conflicts. Try:
 ```bash
-conda env create -f environment-lock.yaml --strict-channel-priority
+conda env create -f environment.yaml --strict-channel-priority
 ```
 
 ### Issue: "Packages not available on my platform"
@@ -131,17 +150,30 @@ When you install new packages or update existing ones in your environment, regen
 
 ```bash
 # With conda
-conda env export -n triton_swmm_toolkit > environment-lock.yaml
+conda env export -n hhemt > environment-lock.yaml
 
 # With pip
 pip freeze > requirements-pinned.txt
 ```
 
+> [!IMPORTANT]
+> A raw `conda env export` re-poisons the lock with three artifacts that
+> `scripts/check_env_lock_consistency.py` will reject (run it after every re-export):
+>
+> - `- hhemt==<version>` in the `pip:` block — the editable project install. It is
+>   un-findable on PyPI and aborts `conda env create`. **Delete it.**
+> - `- swmmio==0.8.5` in the `pip:` block — its `pyswmm<2.0` cap makes pip downgrade
+>   the conda `pyswmm 2.0.1`. **Delete it** (swmmio is installed post-create with
+>   `--no-deps`).
+> - `prefix: /home/...` — leaks a machine-local path. **Delete it.**
+>
+> Also drop the `defaults` channel if the export adds it; this project is conda-forge only.
+
 Then commit both files to version control to track environment changes over time.
 
 ## Best Practices
 
-1. **Use Lock Files in Production:** Always use `environment-lock.yaml` for reproducible deployments
+1. **Provision from the spec, not the lock:** use `environment.yaml` (plus the two `--no-deps` post-create steps) everywhere — local, HPC, CI, and Docker. `environment-lock.yaml` is an *inspection snapshot* of a known-good env, NOT a portable lockfile: it is single-platform, and creating from it still runs its `pip:` block. For genuine bit-level cross-machine reproducibility, generate a multi-platform `conda-lock.yml`.
 2. **Track Versions:** Commit lock files to git to track when dependencies changed
 3. **Test After Updates:** Test your code after updating the environment
 4. **Document Changes:** When updating, add a note about what changed and why
@@ -149,22 +181,29 @@ Then commit both files to version control to track environment changes over time
 
 ## For CI/CD Pipelines
 
-In your CI/CD configuration, use the lock file:
+In your CI/CD configuration, provision from `environment.yaml` (never the lock) and apply the two `--no-deps` steps:
 
 ```yaml
 # Example GitHub Actions
 - name: Create conda environment
-  uses: conda-incubator/setup-miniconda@v2
+  uses: conda-incubator/setup-miniconda@v3
   with:
-    environment-file: environment-lock.yaml
+    environment-file: environment.yaml
     auto-activate-base: false
+
+- name: Install swmmio + project (both --no-deps)
+  run: |
+    pip install --no-deps "swmmio==0.8.5"
+    pip install -e . --no-deps
 ```
 
 Or for Docker:
 
 ```dockerfile
-RUN conda env create -f environment-lock.yaml
-RUN echo "conda activate triton_swmm_toolkit" >> ~/.bashrc
+RUN conda env create -f environment.yaml
+RUN conda run -n hhemt pip install --no-deps "swmmio==0.8.5"
+RUN conda run -n hhemt pip install -e . --no-deps
+RUN echo "conda activate hhemt" >> ~/.bashrc
 ```
 
 ## Questions?

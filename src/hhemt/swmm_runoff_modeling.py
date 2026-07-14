@@ -19,6 +19,43 @@ if TYPE_CHECKING:
     from .scenario import TRITONSWMM_scenario
 
 
+def _assert_validated_swmm_stack() -> None:
+    """Fail closed before executing SWMM unless the installed pyswmm / swmm-toolkit
+    is the conda-forge-validated pairing (pyswmm 2.x + swmm-toolkit 0.15.x).
+
+    The validated SWMM engine is distributable only via conda-forge: swmmio 0.8.5
+    caps pyswmm<2.0 (unsatisfiable with the pyswmm 2.x prepare_scenario requires),
+    and pip metadata cannot express the ``--no-deps`` install environment.yaml uses,
+    so ``pip install hhemt`` resolves an UNVALIDATED SWMM stack whose C extension the
+    project cannot certify against the observed free()/SIGABRT teardown crash. Refuse
+    to run rather than risk silent heap corruption. Override at your own risk with
+    HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1.
+    """
+    import os
+    from importlib.metadata import PackageNotFoundError, version
+
+    if os.environ.get("HHEMT_ALLOW_UNVALIDATED_SWMM_STACK") == "1":
+        return
+    problems: list[str] = []
+    for pkg, want in (("pyswmm", "2."), ("swmm-toolkit", "0.15.")):
+        try:
+            got = version(pkg)
+        except PackageNotFoundError:
+            problems.append(f"{pkg} not installed (need {want}x)")
+            continue
+        if not got.startswith(want):
+            problems.append(f"{pkg}=={got} (need {want}x)")
+    if problems:
+        raise RuntimeError(
+            "Refusing to execute SWMM on an unvalidated Python stack ("
+            + "; ".join(problems)
+            + "). The validated engine ships only via conda-forge; install per "
+            "docs/how-to/installation.md Option A (`conda env create -f "
+            "environment.yaml` plus the two --no-deps post-create steps). Set "
+            "HHEMT_ALLOW_UNVALIDATED_SWMM_STACK=1 to bypass at your own risk."
+        )
+
+
 class SWMMRunoffModeler:
     """
     Handles SWMM hydrology modeling for generating runoff inputs to TRITON-SWMM.
@@ -200,6 +237,7 @@ class SWMMRunoffModeler:
         sim_complete = self.scenario.log.hydro_swmm_sim_completed.get() is True
         if (not sim_complete) or rerun_if_exists:
             self.scenario.log.hydro_swmm_sim_completed.set(False)
+            _assert_validated_swmm_stack()
             with Simulation(str(self.scenario.scen_paths.swmm_hydro_inp)) as sim:
                 sim.execute()
             self.scenario.log.hydro_swmm_sim_completed.set(True)

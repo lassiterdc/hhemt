@@ -7,7 +7,7 @@ This project uses a **gitflow-lite** model: a long-lived development branch (`de
 - **`develop`** — the GitHub **default branch** and the primary local checkout. All day-to-day work happens here. Feature/worktree branches are created *from* `develop` and merged *back* into it. Read-the-Docs "latest" builds `develop`.
 - **`main`** — **release-only**. `main` advances *only* via a `develop` → `main` release pull request that passes the release gate (all tests green, docs accurate and complete). Every release merge is tagged `vX.Y.Z`. Read-the-Docs "stable" builds the latest tag, so public visitors land on released docs.
 
-A GitHub **ruleset** on `main` enforces this: pull-request-required-before-merge, linear history, `squash`/`rebase` merges only, and blocked force-pushes/deletions. The required status checks that gate a release PR (full test suite, docs build, identifier-blocklist guard, layout-version check) are configured separately as part of the release gate.
+A GitHub **ruleset** on `main` enforces this: pull-request-required-before-merge, linear history, `squash`/`rebase` merges only, and blocked force-pushes/deletions. The required status checks that gate a release PR (full test suite, docs build, CITATION.cff validation, identifier-blocklist guard) are configured separately as part of the release gate. The LAYOUT_VERSION check is NOT a required status check: it runs only under pre-commit (against `HEAD~1`), so layout-version discipline is enforced at `develop`-commit time and inherited by the release (see "Two independent version axes").
 
 ## Worktree workflow (unchanged)
 

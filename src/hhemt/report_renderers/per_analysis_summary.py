@@ -83,8 +83,16 @@ def render(
         master_csv = Path(analysis.analysis_paths.analysis_dir) / "scenario_status.csv"
         use_csv = master_csv.exists()
         status_df = pd.read_csv(master_csv) if use_csv else None
-        master_simlogs = analysis.analysis_paths.simlog_directory
-        log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
+        # Declare the fallback-branch model_*.log reads ONLY when the CSV is
+        # absent (the fallback path). With the plot rule now depending on
+        # scenario_status.csv in the DAG the CSV is present at render time, so
+        # the CSV path is taken and no logs are read — declaring them then would
+        # trip the audit's benign declared-but-unread WARN. Keeping the
+        # declaration gated on the branch that actually reads them keeps the
+        # declared set tight.
+        if not use_csv:
+            master_simlogs = analysis.analysis_paths.simlog_directory
+            log_source_files.extend(sorted(master_simlogs.glob("model_*.log")))
         per_sa_rows = []
         for sa_id, sub in analysis.sensitivity.sub_analyses.items():
             n = len(sub.df_sims.index)

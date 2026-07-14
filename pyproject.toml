@@ -13,14 +13,28 @@ authors = [
 maintainers = [
   {name = "Daniel Lassiter", email = "daniel.lassiter@outlook.com"}
 ]
-classifiers = []
+# NOTE: do NOT add a `License :: ...` trove classifier. With PEP 639
+# `license = "PolyForm-Noncommercial-1.0.0"` + setuptools>=77, a legacy License
+# classifier raises setuptools InvalidConfigError at build time (verified). Every
+# string below is a valid live PyPI classifier — PyPI rejects unknown ones at
+# upload, which would fail the publish AFTER the irreversible tag push.
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Scientific/Engineering :: Hydrology",
+    "Topic :: Scientific/Engineering :: GIS",
+]
 
 license = "PolyForm-Noncommercial-1.0.0"
 license-files = ["LICENSE"]
 
 dependencies = [
     "filelock",
-    "pydantic",
+    "pydantic==2.7.*",
     "pyyaml",
     "zarr",
     "netcdf4",
@@ -39,8 +53,21 @@ dependencies = [
     "pyproj",
     "shapely",
     "hsclient",
-    "pyswmm",
-    "swmmio",
+    "requests>=2.25",
+    # SWMM Python stack — deliberately under-constrained for the immutable v0.1.0 wheel.
+    # The VALIDATED engine (swmm-toolkit 0.15.x + pyswmm 2.0.1) ships ONLY from
+    # conda-forge and cannot be expressed here: swmmio 0.8.5 (validated) caps
+    # pyswmm<2.0 — UNSATISFIABLE with the pyswmm 2.x prepare_scenario requires — and
+    # the conda env installs swmmio with `--no-deps`, which pip metadata has no way to
+    # express. A fresh `pip install hhemt` therefore resolves an UNVALIDATED SWMM stack
+    # (swmm-toolkit 0.16.2 on py3.12); the fail-closed guard in swmm_runoff_modeling.py
+    # refuses SWMM execution on it and points to the conda install
+    # (docs/how-to/installation.md Option A). Non-SWMM use (reporting, consolidation,
+    # publishing, .inp parsing) works regardless. See
+    # library/knowledge/environment-management/pip metadata cannot reproduce a --no-deps conda environment.md.
+    "pyswmm>=2,<3",              # prepare_scenario requires pyswmm 2.x; <3 guards a future API break
+    "swmm-toolkit>=0.15,<0.17",  # directly imported (swmm_runoff_modeling.py:15); <0.17 dodges 0.17.0's Output.node_series reader regression
+    "swmmio<0.8.3",             # .inp read/write via swmmio.Model; 0.8.2 is the last release without the pyswmm<2.0 cap — pinned explicitly so a permanent wheel does not rely on resolver-luck
     "tabulate",
     "notebook",
     "jupyter_server",
@@ -140,7 +167,8 @@ hhemt = [
     "examples/*.md",
     "examples/*.xlsx",
     "examples/*.csv",
-    "report_templates/**/*"
+    "report_templates/**/*",
+    "invalidating_fixes.yaml"
 ]
 
 [tool.pytest.ini_options]
@@ -155,6 +183,7 @@ tmp_path_retention_policy = "failed"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "globus_e2e: end-to-end Globus transfer tests; require activated endpoints and HHEMT_GLOBUS_E2E=1",
+    "publish_e2e: end-to-end publish (HydroShare/Zenodo) tests; require credentials and HHEMT_PUBLISH_E2E=1",
     "requires_snakemake_subprocess: test launches Snakemake subprocess; serialize under xdist",
 ]
 filterwarnings = [

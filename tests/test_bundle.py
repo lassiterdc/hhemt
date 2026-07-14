@@ -15,6 +15,7 @@ Validates:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import typing
@@ -175,6 +176,172 @@ def test_all_path_fields_have_policy() -> None:
         f"_PATH_FIELD_POLICY entries with no matching Pydantic Path "
         f"field: {extra}"
     )
+
+
+def test_null_software_dir_synthesized_config_loads(
+    synth_multi_sim_analysis, tmp_path: Path
+) -> None:
+    """D4 relaxation: a synthesized system_config.yaml carrying
+    ``TRITONSWMM_software_directory: null`` loads without raising.
+
+    Proves the Phase-1 ``Path -> Optional[Path]`` widening closes the
+    reconstituted-reprex round-trip config-load path (R5). Sources the other
+    required fields from a real synth fixture (existing paths) and nulls only
+    the toolkit-owned software dir.
+    """
+    from hhemt.config.loaders import load_system_config
+
+    cfg_sys = synth_multi_sim_analysis._system.cfg_system
+    cfg_dict = cfg_sys.model_dump(mode="json")
+    cfg_dict["TRITONSWMM_software_directory"] = None
+
+    out = tmp_path / "system_config_null_software.yaml"
+    out.write_text(yaml.safe_dump(cfg_dict))
+
+    loaded = load_system_config(out)  # must not raise
+    assert loaded.TRITONSWMM_software_directory is None
+
+
+def test_reprex_config_loads_minimal() -> None:
+    """R6: the reprex_config model loads a minimal target-user field set and
+    forbids unknown keys (extra="forbid")."""
+    from hhemt.config.reprex_config import reprex_config
+
+    cfg = reprex_config(
+        default_account="acct123",
+        sif_path="/scratch/user/tritonswmm.sif",
+        target_ensemble_partition="gpu",
+    )
+    assert cfg.default_account == "acct123"
+    assert cfg.sif_path == Path("/scratch/user/tritonswmm.sif")
+    assert cfg.login_node is None
+    assert cfg.scratch_dir is None
+    assert cfg.target_setup_and_analysis_processing_partition is None
+
+    with pytest.raises(Exception):  # extra=forbid rejects unknown keys
+        reprex_config(
+            default_account="acct123",
+            sif_path="/x.sif",
+            target_ensemble_partition="gpu",
+            unknown_field="nope",
+        )
+
+
+def test_reprex_bundle_carries_runnable_set(
+    rendered_synth_multi_sim, tmp_path: Path
+) -> None:
+    """R10/R11: an emitted reprex bundle carries the minimal runnable set at its root
+    (reprex_config.yaml + a scrubbed hpc_system_config template + the Snakefile source
+    + the Workflow-Run-Crate ro-crate-metadata.json), and the crate is typed as a WRC
+    with the generated Snakefile as its mainEntity ComputationalWorkflow."""
+    import json
+    import zipfile
+
+    from hhemt.bundle._emit import HPC_TEMPLATE_FILENAME, REPREX_CONFIG_FILENAME
+    from hhemt.metadata import _SNAKEMAKE_LANG_ID, _WFRUN_ROOT_PROFILES
+
+    zip_out = tmp_path / "reprex_bundle.zip"
+    rendered_synth_multi_sim.bundle_report_data(zip_out)
+    bundle_dir = tmp_path / "reprex_bundle"
+    with zipfile.ZipFile(zip_out) as zf:
+        zf.extractall(bundle_dir)
+
+    assert (bundle_dir / REPREX_CONFIG_FILENAME).exists()
+    assert (bundle_dir / HPC_TEMPLATE_FILENAME).exists()
+    assert (bundle_dir / "Snakefile.source").exists()
+    assert (bundle_dir / "ro-crate-metadata.json").exists()
+
+    doc = json.loads((bundle_dir / "ro-crate-metadata.json").read_text())
+    root = next(e for e in doc["@graph"] if e.get("@id") == "./")
+    assert root["mainEntity"] == {"@id": "Snakefile.source"}
+    wf = next(e for e in doc["@graph"] if e.get("@id") == "Snakefile.source")
+    assert wf["@type"] == ["File", "SoftwareSourceCode", "ComputationalWorkflow"]
+    assert wf["programmingLanguage"] == {"@id": _SNAKEMAKE_LANG_ID}
+    profile_ids = {c["@id"] for c in root["conformsTo"]}
+    assert set(_WFRUN_ROOT_PROFILES) <= profile_ids
+
+
+def test_zero_user_info_gate(tmp_path: Path) -> None:
+    """R12: the zero-user-info gate PASSES a clean tree (placeholders only) and FAILS a
+    seeded-leak tree (a YAML value carrying a blocklist token) with ProcessingError.
+
+    This tests the gate MECHANISM. The current emit pipeline is NOT yet zero-user-info
+    end-to-end — bundle_manifest.json, harvested SWMM .inp files, and validation_report.json
+    embed the producer's absolute paths, which the config-field scrub does not cover. That
+    emit-hardening is a routed follow-up; hard emit-time enforcement lands when reprex()
+    wires this gate in Phase 3 (the gate correctly detects those leaks today)."""
+    from hhemt.bundle._reprex_gate import _load_blocklist, assert_bundle_zero_user_info
+    from hhemt.exceptions import ProcessingError
+
+    clean_dir = tmp_path / "clean"
+    clean_dir.mkdir()
+    (clean_dir / "cfg_system.yaml").write_text(
+        "system_directory: .\ndefault_account: '{your-allocation}'\n"
+    )
+    (clean_dir / "reprex_config.yaml").write_text(
+        "target_ensemble_partition: '{your-gpu-partition}'\n"
+    )
+    assert_bundle_zero_user_info(clean_dir)  # clean tree: no raise
+
+    # Seed a leak with an actual blocklist token, resolved at runtime so no literal
+    # private identifier appears in this test's source (else check_anonymization flags it).
+    leak_token = _load_blocklist()[0]
+    leak_dir = tmp_path / "leak"
+    leak_dir.mkdir()
+    (leak_dir / "cfg_system.yaml").write_text(f"default_account: {leak_token}\n")
+    with pytest.raises(ProcessingError):
+        assert_bundle_zero_user_info(leak_dir)
+
+
+def test_reconstitute_runnable_config(
+    synth_multi_sim_analysis, tmp_path: Path
+) -> None:
+    """R5: reconstitute_runnable_config synthesizes a system_config.yaml that loads
+    clean with the software-dir fields null and EXPERIMENT-bucket fields preserved.
+
+    Simulates a target user who fetched the by-reference inputs into the bundle: the
+    scrubbed cfg_system.yaml names bundle-relative inputs that exist locally, the
+    software dirs are null, and reconstitution resolves the relatives to absolute paths
+    under the bundle root so the load-time existence check passes."""
+    from hhemt.bundle._emit import reconstitute_runnable_config
+    from hhemt.bundle._path_policy import enumerate_path_fields
+    from hhemt.config.loaders import load_system_config
+    from hhemt.config.system import system_config
+
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    cfg = synth_multi_sim_analysis._system.cfg_system
+    cfg_dict = cfg.model_dump(mode="json")
+    for name in enumerate_path_fields(system_config):
+        if name in ("SWMM_software_directory", "TRITONSWMM_software_directory"):
+            cfg_dict[name] = None
+            continue
+        if name == "system_directory":
+            cfg_dict[name] = "."
+            continue
+        val = cfg_dict.get(name)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            new_list = []
+            for v in val:
+                rel = f"external/{Path(v).name}"
+                (bundle_root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (bundle_root / rel).write_text("x")
+                new_list.append(rel)
+            cfg_dict[name] = new_list
+            continue
+        rel = f"external/{Path(val).name}"
+        (bundle_root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (bundle_root / rel).write_text("x")
+        cfg_dict[name] = rel
+    (bundle_root / "cfg_system.yaml").write_text(yaml.safe_dump(cfg_dict))
+
+    out = reconstitute_runnable_config(bundle_root)
+    loaded = load_system_config(out)  # must not raise
+    assert loaded.TRITONSWMM_software_directory is None
+    assert loaded.SWMM_software_directory is None
+    assert loaded.target_dem_resolution == cfg.target_dem_resolution  # EXPERIMENT preserved
 
 
 def test_static_plot_configs_list_rewritten_to_relative(tmp_path: Path) -> None:
@@ -477,11 +644,13 @@ def test_read_static_backend_one_step(tmp_path):
     `_read_static_backend` returns that value as the sole resolution path."""
     from hhemt.bundle import Bundle
 
+    from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
+
     _write_minimal_cfg_analysis(
         tmp_path / "cfg_analysis.yaml", static_backend="matplotlib"
     )
     (tmp_path / "bundle_manifest.json").write_text(
-        '{"bundle_schema_version": 2, "bundle_root_invariants": {}}'
+        json.dumps({"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "bundle_root_invariants": {}})
     )
     bundle = Bundle.from_directory(tmp_path)
     assert bundle._read_static_backend() == "matplotlib"
@@ -493,12 +662,13 @@ def test_read_static_backend_raises_when_report_absent_via_from_directory(tmp_pa
     is never reached. Pins the R1 load-time-required contract."""
     import pytest
     from hhemt.bundle import Bundle
+    from hhemt.version_migration.constants import BUNDLE_SCHEMA_VERSION
 
     _write_minimal_cfg_analysis(
         tmp_path / "cfg_analysis.yaml", with_report=False
     )
     (tmp_path / "bundle_manifest.json").write_text(
-        '{"bundle_schema_version": 2, "bundle_root_invariants": {}}'
+        json.dumps({"bundle_schema_version": BUNDLE_SCHEMA_VERSION, "bundle_root_invariants": {}})
     )
     with pytest.raises(Exception):  # pydantic.ValidationError via from_directory
         Bundle.from_directory(tmp_path)
@@ -519,3 +689,40 @@ def test_bundle_v1_rejected_by_post_f2_toolkit(tmp_path):
         Bundle.from_directory(tmp_path)
     assert "Pre-F2" in str(excinfo.value)
     assert "Re-emit" in str(excinfo.value)
+
+
+def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
+    """R5: the RO-Crate sidecar at analysis_dir root is carried into the bundle
+    staging root by _copy_supporting_files."""
+    import types
+
+    from hhemt.bundle._emit import _copy_supporting_files
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    (analysis_dir / "ro-crate-metadata.json").write_text('{"@graph": []}')
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+    )
+    _copy_supporting_files(analysis, staging)
+    assert (staging / "ro-crate-metadata.json").exists()
+
+def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> None:
+    """R5: emission is a no-op (no error) when the sidecar is absent."""
+    import types
+
+    from hhemt.bundle._emit import _copy_supporting_files
+
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir()
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    analysis = types.SimpleNamespace(
+        analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
+        cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+    )
+    _copy_supporting_files(analysis, staging)  # must not raise
+    assert not (staging / "ro-crate-metadata.json").exists()
