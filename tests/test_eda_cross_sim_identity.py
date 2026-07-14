@@ -196,3 +196,42 @@ def test_verdict_surfaces_in_validate_analysis(synthetic_sensitivity_completed):
     eda_checks = [c for c in report.checks if c.name == "Cross-sim byte-identity"]
     assert len(eda_checks) == 1
     assert eda_checks[0].level == "aggregate"
+
+
+@pytest.mark.requires_snakemake_subprocess
+@pytest.mark.slow
+def test_identity_group_partition_persisted(synthetic_sensitivity_completed):
+    """The additive byte-identity PARTITION (identity_group) is persisted into the artifact.
+
+    Contract (plan R1 producer): identity_group is int32, dims (sa_id,), computed from the
+    FLAT summaries via compare_variable_exact (NOT the consolidated tree), emitted over the
+    NON-reference sa_id coord (purely additive), with the reference's own label carried in the
+    reference_group attr. Two subs share a label iff byte-identical on the config-diff
+    variables at every event -- so on a bit-identical master (verdict passed) every sub +
+    the reference collapse to ONE group."""
+    analysis = synthetic_sensitivity_completed.master_analysis
+    result = check_cross_sim_identity(analysis)
+    ds = xr.open_zarr(result.artifact_path, consolidated=False)
+
+    # Structural contract.
+    assert "identity_group" in ds
+    assert ds["identity_group"].dtype == np.int32
+    assert ds["identity_group"].dims == ("sa_id",)
+    assert (ds["identity_group"].values >= 0).all()
+    # Purely additive: identity_group shares the existing artifact vars' (non-reference) sa_id
+    # coord; the reference is carried separately as an attr, not in the label array.
+    assert "reference_sa_id" in ds.attrs
+    ref_id = str(ds.attrs["reference_sa_id"])
+    assert ref_id not in {str(s) for s in ds["sa_id"].values}
+    assert "reference_group" in ds.attrs
+    assert int(ds.attrs["reference_group"]) >= 0
+
+    # Behavioral contract, gated on bit-reproducibility (same decision rule as the identical
+    # test): when the verdict is passed (all subs byte-identical to the reference), the whole
+    # partition -- including the reference's own label -- collapses to a single group.
+    if result.verdict.passed:
+        labels = set(int(v) for v in ds["identity_group"].values)
+        labels.add(int(ds.attrs["reference_group"]))
+        assert labels == {int(ds.attrs["reference_group"])}, (
+            f"bit-identical master must be one identity group, got labels {labels}"
+        )

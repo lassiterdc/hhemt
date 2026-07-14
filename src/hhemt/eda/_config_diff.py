@@ -50,6 +50,81 @@ _PANEL_H_PX = 350
 _TABLE_H_PX = 40
 
 
+def _identity_labels(root: Path) -> dict[str, int] | None:
+    """sa_id -> byte-identity group label, read from the flat-summary-derived
+    partition persisted by cross_sim_identity at eda/eda_cross_sim_identity.zarr.
+
+    This is the ONLY identity source (Gotcha 44 / the `eda bit identity check reads
+    flat summaries not consolidated tree` stipulation): the consolidated tree is
+    NEVER compared for identity. Returns None when the artifact is absent (a legacy
+    bundle) -- the caller then renders an explicit "unknown (identity artifact
+    absent)" state and MUST NOT fall back to a positional consolidated compare."""
+    store = root / "eda" / "eda_cross_sim_identity.zarr"
+    if not store.exists():
+        return None
+    ds = xr.open_zarr(store, consolidated=False)
+    if "identity_group" not in ds:
+        return None
+    labels = {str(sa): int(v) for sa, v in zip(ds["sa_id"].values, ds["identity_group"].values, strict=False)}
+    # The partition is persisted over the NON-reference sa_ids (matching the artifact's
+    # other vars' coord, so identity_group's addition is purely additive); the reference's
+    # own group rides in the `reference_group` attr. Fold it back in so the reference is
+    # grouped with its byte-identical peers rather than rendering "unknown".
+    ref = ds.attrs.get("reference_sa_id")
+    ref_group = ds.attrs.get("reference_group")
+    if ref is not None and ref_group is not None:
+        labels[str(ref)] = int(ref_group)
+    return labels
+
+
+def _align_to(ref: xr.DataArray, da: xr.DataArray) -> np.ndarray:
+    """Return da's values reindexed to ref's coords/dim-order (exact join), so a
+    downstream positional subtraction (ref - da) compares matched cells. Falls back
+    to da's own values when coords are incomparable (the identity column, sourced from
+    the flat-summary partition artifact, already reports that case as not-identical).
+
+    Identity fast-path: when the dim order and every index already match, the align is a
+    no-op -- return the array without a second full materialization. _load_subs opens the
+    tree with no chunks=, so each .values access materializes a full (y, x) numpy array
+    (~118 MB on a 0.35 m Norfolk DEM); paying that twice per group per variable would
+    roughly double the EDA render path's peak RSS for no numerical benefit."""
+    if ref.dims == da.dims and all(
+        ref.indexes[d].equals(da.indexes[d]) for d in ref.dims if d in ref.indexes and d in da.indexes
+    ):
+        return np.asarray(da.values)
+    try:
+        _, da_al = xr.align(ref, da, join="exact")
+        return np.asarray(da_al.transpose(*ref.dims).values)
+    except (ValueError, KeyError):
+        return np.asarray(da.values)
+
+
+def _within_family(g: dict, serial_grp: dict) -> bool:
+    """True when group g shares the serial baseline's HARDWARE family (CPU vs GPU).
+
+    A difference WITHIN the CPU family (serial vs an MPI/OpenMP/Hybrid decomposition) is
+    expected floating-point non-associativity; a CROSS-family (GPU-vs-CPU) difference is
+    disclosed with its bound instead. Keyed on run_mode: any 'gpu' member => GPU family."""
+
+    def _family(run_modes) -> str:
+        return "gpu" if any(str(rm) == "gpu" for rm in run_modes) else "cpu"
+
+    return _family(g["run_modes"]) == _family(serial_grp["run_modes"])
+
+
+def _identity_cell(identical, g: dict, serial_grp: dict, wad: float, fad: float) -> str:
+    """R2's three-state 'identical to serial?' value. A bare 'no' reads as a defect;
+    a real cross-decomposition divergence must be DISCLOSED with its bound, and an
+    absent identity artifact must read 'unknown', never 'no'."""
+    if identical is None:
+        return "unknown (identity artifact absent)"
+    if identical:
+        return "identical"
+    if _within_family(g, serial_grp):
+        return "differs (within-family expected)"
+    return f"differs (bounded, disclosed: max_abs={max(wad, fad):.3e})"
+
+
 def _to_int(attrs: dict, key: str) -> int:
     try:
         return int(float(attrs.get(key, 0)))
@@ -117,14 +192,27 @@ def _load_subs(root: Path) -> dict[str, dict]:
     return subs
 
 
-def _group_by_identity(subs: dict[str, dict]) -> list[dict]:
-    """Cluster subs whose (max_wlevel_m, max_flow_cms) arrays are byte-identical."""
+def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
+    """Cluster subs into byte-identity groups using the PERSISTED flat-summary partition.
+
+    Identity comes ONLY from ``eda/eda_cross_sim_identity.zarr``'s ``identity_group`` label
+    (Gotcha 44); the consolidated arrays are NEVER compared for identity here. When the
+    partition artifact is absent (``labels is None`` -- a legacy bundle) every sub becomes
+    its own singleton group and the summary column renders "unknown"."""
+    labels = _identity_labels(root)
     groups: list[dict] = []
     for sa_id, s in subs.items():
         w = np.asarray(s["wlevel"].values)
         f = np.asarray(s["flow"].values)
         for grp in groups:
-            if np.array_equal(grp["wlevel"], w, equal_nan=True) and np.array_equal(grp["flow"], f, equal_nan=True):
+            # Identity comes ONLY from the flat-summary-derived partition (Gotcha 44).
+            # labels is None -> the artifact is absent (legacy bundle): every sub becomes
+            # its own singleton group; we never fall back to a positional consolidated compare.
+            if (
+                labels is not None
+                and labels.get(sa_id) is not None
+                and labels.get(sa_id) == labels.get(grp["members"][0])
+            ):
                 grp["members"].append(sa_id)
                 grp["labels"].append(s["label"])
                 grp["run_modes"].append(s["run_mode"])
@@ -308,12 +396,24 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no coupled sub-analyses found)")
         return fig
 
-    groups = _group_by_identity(subs)
+    # Identity labels (flat-summary partition) — shared by the grouping and the summary
+    # column's three-state verdict; None on a legacy bundle with no identity artifact.
+    labels = _identity_labels(root)
+    groups = _group_by_identity(subs, root)
     serial_grp = next((g for g in groups if "serial" in g["run_modes"]), None)
     if serial_grp is None:
         fig = go.Figure()
         fig.update_layout(height=_PANEL_H_PX, title="Config diff maps (no serial-CPU baseline sub found)")
         return fig
+    # Align every group's arrays to the serial reference's coords/dim-order BEFORE any
+    # positional subtraction or identity flag (artifact-vector 1: a per-sub dim/coord
+    # reorder would otherwise make a positional compare/subtract mismatch cells). The
+    # consolidated read is value-preserving (attribute-only CF + lossless Blosc, no
+    # dtype narrowing), so this alignment is the only correctness gap vs the compliant
+    # cross_sim_identity comparison.
+    for _g in groups:
+        _g["wlevel"] = _align_to(serial_grp["wlevel_da"], _g["wlevel_da"])
+        _g["flow"] = _align_to(serial_grp["flow_da"], _g["flow_da"])
     base_w = serial_grp["wlevel"]
     base_f = serial_grp["flow"]
     # Deterministic panel order (B, C, …): sort the differing groups by their sorted config
@@ -346,13 +446,26 @@ def build_config_diff_figure(root: Path) -> go.Figure:
     for i, g in enumerate(ordered_groups):
         wad = float(np.nanmax(np.abs(g["wlevel"] - base_w)))
         fad = float(np.nanmax(np.abs(g["flow"] - base_f)))
-        identical = bool(
-            np.array_equal(g["wlevel"], base_w, equal_nan=True) and np.array_equal(g["flow"], base_f, equal_nan=True)
-        )
+        # Three-state, per R2. `identical` is None when the identity artifact is absent
+        # (legacy bundle) -- rendered "unknown", NEVER silently "no". Sourced ONLY from the
+        # flat-summary partition label (Gotcha 44), never a positional consolidated compare.
+        if labels is None:
+            identical = None
+        else:
+            identical = bool(
+                labels.get(g["members"][0]) is not None
+                and labels.get(g["members"][0]) == labels.get(serial_grp["members"][0])
+            )
         # Top table keyed by Panel letter (A/B/C); the full config list now lives in the
         # per-panel table beside each panel's maps, not in this summary row.
         table_rows.append(
-            [f"Panel {chr(ord('A') + i)}", len(_configs(g)), "yes" if identical else "no", f"{fad:.4g}", f"{wad:.4g}"]
+            [
+                f"Panel {chr(ord('A') + i)}",
+                len(_configs(g)),
+                _identity_cell(identical, g, serial_grp, wad, fad),
+                f"{fad:.4g}",
+                f"{wad:.4g}",
+            ]
         )
 
     # ---- grid: 2 cols (rasters | conduits); row1 table; row2 serial ref;
@@ -876,8 +989,18 @@ def build_config_diff_figure(root: Path) -> go.Figure:
 
 
 def config_diff_source_paths(root: Path) -> list[Path]:
-    """Declared source_paths for the harvest chain: the consolidated tree + one inp."""
-    srcs: list[Path] = [root / "sensitivity_datatree.zarr"]
+    """Declared source_paths for the harvest chain: the consolidated tree (diff maps) +
+    the flat-summary-derived identity artifact (the identity column) + one inp.
+
+    Without the identity artifact declaration, ``Bundle.eda(plots_only=True)`` would
+    re-render the identity column from an absent partition and the harvest would SKIP it
+    with a warning (Gotcha 50) -- a silently wrong column, the exact failure class this
+    plan closes. The bundle file set is EXACTLY the union of manifest-declared source_paths
+    (the `bundle file set is computed from manifest harvest` stipulation)."""
+    srcs: list[Path] = [
+        root / "sensitivity_datatree.zarr",
+        root / "eda" / "eda_cross_sim_identity.zarr",
+    ]
     inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
     if inps:
         srcs.append(inps[0])

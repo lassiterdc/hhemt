@@ -290,6 +290,83 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     artifact_ds = xr.Dataset(ds_vars)
     artifact_ds.attrs["reference_sa_id"] = ref_id
 
+    # ---- Byte-identity PARTITION (full equivalence classes) ----
+    # The per-reference verdict above is a one-reference relation: if sub A and sub B each
+    # differ from the reference it says nothing about whether A == B. _config_diff.py's group
+    # clustering, its "# configs in group" column, and its panel set need the FULL partition,
+    # so produce it here from the SAME flat summaries (Gotcha 44 / the `eda bit identity check
+    # reads flat summaries not consolidated tree` stipulation) via compare_variable_exact --
+    # NEVER the consolidated tree. Two subs share a label iff byte-identical on the config-diff
+    # variables (max_wlevel_m from the depth mode, max_flow_cms from the link mode) at every
+    # present event. The label array is emitted over the artifact's OWN (non-reference) sa_id
+    # coord so the addition is purely additive (existing vars unchanged, no bool-dtype realign);
+    # the reference's own label is carried in the `reference_group` attr for the reader to fold
+    # back in.
+    _PARTITION_VARS = ("max_wlevel_m", "max_flow_cms")
+
+    def _partition_signature(sub) -> dict | None:
+        """{(var, event_iloc): DataArray} for the config-diff variables, or None when the sub
+        has no present summaries. Reuses the `_eda_mode_cache` populated by `_enabled_modes`
+        so a mode is read once per sub (avoids the O(S*M) re-read + the Gotcha-37
+        scenario-construction side effect of re-probing every mode)."""
+        modes = _enabled_modes(sub)
+        cache = getattr(sub, "_eda_mode_cache", {})
+        sig: dict = {}
+        for mode in modes:
+            ds_m = cache.get(mode)
+            if ds_m is None:
+                continue
+            for var in _PARTITION_VARS:
+                if var in ds_m.data_vars:
+                    for e in ds_m["event_iloc"].values:
+                        sig[(var, int(e))] = ds_m[var].sel(event_iloc=e)
+        return sig or None
+
+    def _same_partition(sa: dict, sb: dict) -> bool:
+        # Byte-identical on EVERY shared (var, event) cell AND the same cell set.
+        return sa.keys() == sb.keys() and all(compare_variable_exact(sa[k], sb[k])["identical"] for k in sa)
+
+    if "sa_id" in artifact_ds.coords:
+        art_sa = [str(s) for s in np.atleast_1d(artifact_ds["sa_id"].values)]
+        part_sigs = {sa: _partition_signature(subs[sa]) for sa in art_sa if sa in subs}
+        reps: list[str] = []  # representative sa_id per group, in discovery order
+        part_labels: dict[str, int] = {}
+        for sa in art_sa:
+            sig = part_sigs.get(sa)
+            if sig is None:
+                # Unpartitionable (summaries absent): its own singleton group.
+                part_labels[sa] = len(reps)
+                reps.append(sa)
+                continue
+            match = next(
+                (part_labels[r] for r in reps if part_sigs.get(r) is not None and _same_partition(sig, part_sigs[r])),
+                None,
+            )
+            if match is None:
+                match = len(reps)
+                reps.append(sa)
+            part_labels[sa] = match
+        artifact_ds["identity_group"] = xr.DataArray(
+            np.asarray([part_labels[sa] for sa in art_sa], dtype="int32"),
+            dims=("sa_id",),
+            coords={"sa_id": artifact_ds["sa_id"]},
+        )
+        # The reference is not in art_sa; record its group (match against a representative, or
+        # a fresh singleton label) so the reader can label it too.
+        ref_sig = _partition_signature(ref_sub)
+        if ref_sig is not None:
+            ref_group = next(
+                (
+                    part_labels[r]
+                    for r in reps
+                    if part_sigs.get(r) is not None and _same_partition(ref_sig, part_sigs[r])
+                ),
+                None,
+            )
+            artifact_ds.attrs["reference_group"] = (
+                int(ref_group) if ref_group is not None else int(len(set(part_labels.values())))
+            )
+
     if within_family:
         summary = (
             f"All tracked variables bit-identical across {len(subs) - 1} "
