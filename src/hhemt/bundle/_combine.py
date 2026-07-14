@@ -66,31 +66,46 @@ def combine_bundle(
     bundle_paths: list[Path],
     output_path: Path | None = None,
 ) -> CombinedBundle:
-    """Combine two or more render bundles into one standalone combined bundle.
+    """Combine N completed render bundles into one standalone combined bundle.
 
-    The inputs are checked for combine-compatibility first; a blocking divergence
-    aborts before anything is written. Compatible bundles have their experiment
-    trees merged and re-emitted as a new self-contained bundle directory.
+    Ingests two or more **completed, unpacked** render bundles from different
+    experiments and emits a single standalone bundle carrying one cross-experiment
+    report. The pipeline is: (1) check metadata compatibility across the bundles
+    and ABORT on any blocking divergence (an EXPERIMENT-identity field mismatch);
+    (2) merge each bundle's root consolidated tree into one DataTree-of-experiments,
+    keyed on a scalar ``experiment`` coordinate; (3) render the ``combined``
+    reporting set directly at emit time; (4) write a flat, ``hasPart``-by-reference
+    Provenance-Run-Crate over the N intact child crates.
+
+    Both single-analysis bundles (which ship ``analysis_datatree.zarr`` at their
+    root) and sensitivity-master bundles (``sensitivity_datatree.zarr``) are
+    accepted; the root tree is resolved by existence.
 
     Parameters
     ----------
     bundle_paths : list of Path
-        Paths to at least two bundle roots. Order does not matter — the roots are
-        resolved and sorted, so the combined output is deterministic.
+        Paths to at least two unpacked bundle DIRECTORIES (not ``.zip`` archives).
     output_path : Path, optional
-        Destination directory for the combined bundle. When omitted, it is created
-        alongside the first bundle as ``combined_{n}bundles_{toolkit_sha}``.
+        Destination directory for the combined bundle. When omitted, a sibling of
+        the first bundle named ``combined_{N}bundles_{toolkit_git_sha}`` is used.
 
     Returns
     -------
     CombinedBundle
-        A consume-side handle to the newly emitted combined bundle.
+        Consume-side handle for the emitted combined bundle. Call
+        ``regenerate_report()`` on it to re-render locally.
 
     Raises
     ------
     ConfigurationError
-        If fewer than two bundles are supplied, or if the bundles carry blocking
-        divergences that make them incompatible for combination.
+        If fewer than two bundles are supplied, or if the bundles carry a blocking
+        compatibility divergence (they do not describe the same experiment family).
+
+    Examples
+    --------
+    >>> from hhemt.bundle import combine_bundle
+    >>> combined = combine_bundle([Path("bundle_a"), Path("bundle_b")])  # doctest: +SKIP
+    >>> combined.regenerate_report()  # doctest: +SKIP
     """
     roots = sorted(Path(p).resolve() for p in bundle_paths)
     if len(roots) < 2:

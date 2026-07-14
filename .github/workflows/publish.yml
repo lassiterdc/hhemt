@@ -46,6 +46,12 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # Idempotent re-run: publish-to-pypi `needs` this job, so without
+          # skip-existing a re-run of the whole workflow (after a PyPI-side
+          # failure) dies here on the already-uploaded 0.1.0 file and PyPI is
+          # never reached — leaving the release permanently stuck without a
+          # version bump. A published version is immutable; the workflow must not be.
+          skip-existing: true
 
   publish-to-pypi:
     name: Publish to PyPI
@@ -64,3 +70,11 @@ jobs:
           path: dist/
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotent re-run: `python -m build` emits TWO files (sdist + wheel) and
+          # gh-action-pypi-publish uploads both via twine. A transient failure BETWEEN
+          # the two uploads leaves one file on PyPI (immutable). Re-running this job
+          # (even `gh run rerun --failed`) then 400s on the already-present file and the
+          # release strands half-published at 0.1.0 — unfixable without a 0.1.1 bump.
+          # skip-existing skips the landed file and uploads the missing one.
+          skip-existing: true

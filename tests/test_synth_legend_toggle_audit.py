@@ -162,9 +162,15 @@ def test_conduit_flow_legend_togglable(_ran_multisim, monkeypatch, tmp_path):
 
 # ─── Sensitivity fixture: benchmarking renderer ────────────────────────────────
 @pytest.fixture
-def _ran_sensitivity(synth_sensitivity_analysis_cached):
+def _ran_sensitivity(tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached):
     """Fully-run sensitivity master analysis with report cfg wired (mirrors
-    test_synth_05::test_run_and_render_report)."""
+    test_synth_05::test_run_and_render_report).
+
+    Compile-tier gated (``tritonswmm_cpu_compiled``) exactly like the three
+    multisim legend tests in this module, which already carry the gate via
+    ``@pytest.mark.usefixtures``: this fixture calls ``analysis.run()``, which
+    needs the compiled binaries. Skips without cmake+mpic++; HARD-FAILS under
+    HHEMT_REQUIRE_COMPILE_TIER=1."""
     analysis = synth_sensitivity_analysis_cached
     analysis.run(
         from_scratch=False,

@@ -3,6 +3,13 @@
 
 name: Test Python application
 
+# NOTE (first-public-release): this job installs via `pip install -e ".[test]"`,
+# which resolves an UNVALIDATED SWMM stack, so every SWMM-executing test SKIPS
+# (tests/utils_for_testing.py::swmm_stack_version_mismatch fires). This check
+# therefore certifies lint + non-SWMM unit behavior ONLY. "The software compiles
+# and runs SWMM" is certified by compile-tests.yml, which provisions the validated
+# conda env — that job must be a REQUIRED status check before the release PR.
+
 on:
   push:
     branches: [ "main", "develop" ]

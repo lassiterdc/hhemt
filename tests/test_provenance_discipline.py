@@ -4,22 +4,9 @@ Walks every renderer module under `src/hhemt/report_renderers/`
 (excluding files whose stem starts with `_`) and asserts that every artist-
 creating matplotlib call inside the module is enclosed in a
 `with <name>.artist(...)` context block. Additionally asserts that each
-FIGURE-EMITTING renderer module contains at least one such block — guard
-against alias-rebinds (e.g., `plot = ax.plot; plot(...)`) that would trivially
-satisfy a per-call check.
-
-Delegating-adapter exemption: the module-level existence check applies only to
-renderers that OWN a terminal `emit_plot_with_sources(...)` call. A
-`ProvenanceLog`'s only sink is `manifest_payload["artists"] = prov.serialize()`
-inside that call (`_figure_emission.py`), so a renderer that owns no emit call
-owns no manifest and has nowhere to thread a log — binding one would be a dead
-object that satisfies the AST matcher and nothing else. Pure DELEGATING
-adapters (e.g. `eda_compute_sensitivity.py`, which forwards to
-`eda/_plotting.render_eda_plots`) are therefore exempt from this one check.
-They remain fully subject to `test_artist_calls_enclosed_in_provenance_block`:
-if such a module ever grows an artist call, the per-call check still fires.
-Note this exemption is behavioral, NOT a filename list — a renderer cannot opt
-out by being named, only by provably emitting no figure.
+non-skipped renderer module contains at least one such block — guard against
+alias-rebinds (e.g., `plot = ax.plot; plot(...)`) that would trivially satisfy
+a per-call check.
 
 The test surfaces a clear file:line error message on violation.
 
@@ -238,57 +225,66 @@ def test_artist_calls_enclosed_in_provenance_block(path: Path) -> None:
         )
 
 
-def _owns_figure_emission(tree: ast.AST) -> bool:
-    """True if the module owns a terminal `emit_plot_with_sources(...)` call.
-
-    This is the exemption predicate for the module-level existence check. A
-    `ProvenanceLog` reaches a figure's manifest ONLY via the `provenance=`
-    argument of `emit_plot_with_sources` (`_figure_emission.py`, which writes
-    `manifest_payload["artists"] = provenance.serialize()`). A renderer that
-    owns no emit call owns no manifest, so it has no sink for a log and no
-    artists to describe — it is a pure DELEGATING adapter whose figure emission
-    happens downstream (e.g. `eda_compute_sensitivity.py` -> `eda/_plotting`).
-
-    NOTE the criterion is emit-ownership, NOT "creates zero artists": the
-    pure-HTML table renderers create zero matplotlib artists yet correctly bind
-    a log, because they own their emit call and therefore own a manifest.
-    """
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "emit_plot_with_sources"
-        ):
-            return True
-    return False
+# Pure DELEGATING adapters: renderers that expose the uniform render(...) signature
+# but create ZERO artists, delegating all figure emission (and its provenance) to a
+# module that itself carries the discipline. `eda_compute_sensitivity` (Gotcha 67d /
+# R11) delegates to `hhemt.eda._plotting.render_eda_plots`, which emits via
+# `emit_plot_with_sources` and owns the provenance block.
+#
+# The exemption is SELF-POLICING, not a bare allowlist: an exempt module must
+# additionally be proven to contain ZERO artist-producing calls (asserted below).
+# The instant someone adds an `ax.plot(...)` or a `go.Scatter(...)` to a listed
+# module, the exemption STOPS APPLYING and this test fails -- so the alias-rebind
+# guard this test exists to provide is fully preserved.
+_DELEGATING_RENDERERS: frozenset[str] = frozenset({"eda_compute_sensitivity.py"})
 
 
 @pytest.mark.parametrize("path", _renderer_files(), ids=lambda p: p.name)
 def test_renderer_module_has_provenance_block(path: Path) -> None:
     """Guard against alias-rebinds.
 
-    Every FIGURE-EMITTING renderer must contain at least one
-    `with <name>.artist(...)` block, even if no direct artist methods are
-    detected (e.g., when artists are produced by external helpers like
-    `plot_continuous_raster`).
+    Every renderer must contain at least one `with <name>.artist(...)` block,
+    even if no direct artist methods are detected (e.g., when artists are
+    produced by external helpers like `plot_continuous_raster`).
 
-    Pure delegating adapters — renderers that own no `emit_plot_with_sources`
-    call — are exempt: they own no manifest, so a `ProvenanceLog` bound in them
-    would never be serialized. See `_owns_figure_emission` and the module
-    docstring. They stay subject to the per-call check above.
+    Exception: a pure delegating adapter (``_DELEGATING_RENDERERS``) creates no
+    artists at all and therefore cannot alias-rebind one. It must instead prove it
+    produces ZERO artist-creating calls -- a strictly stronger property than being
+    wrapped in a provenance block.
     """
     source = path.read_text()
-    tree = ast.parse(source, filename=str(path))
 
-    if not _owns_figure_emission(tree):
-        pytest.skip(
-            f"{path.name}: delegating adapter (owns no `emit_plot_with_sources` "
-            f"call, therefore no manifest to thread a ProvenanceLog into); "
-            f"exempt from the module-level provenance-block check. Artist calls, "
-            f"if any are ever added, are still enforced by "
-            f"test_artist_calls_enclosed_in_provenance_block."
+    if path.name in _DELEGATING_RENDERERS:
+        # Positive counter-assertion: the exemption is only valid while the module
+        # genuinely creates no artists.
+        tree = ast.parse(source, filename=str(path))
+        # Same two predicates `_lint_source` uses: the inlined matplotlib branch
+        # (`<expr>.<method>(...)` with method in _ARTIST_METHODS) and the plotly
+        # branch (`go.<TraceClass>(...)`). Kept in lockstep with _lint_source: any
+        # method added to _ARTIST_METHODS automatically tightens this too.
+        artist_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and (
+                (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr in _ARTIST_METHODS
+                )
+                or _is_plotly_trace_call(node)
+            )
+        ]
+        assert not artist_calls, (
+            f"{path.name} is listed in _DELEGATING_RENDERERS (exempt from the "
+            f"provenance-block requirement) but creates "
+            f"{len(artist_calls)} artist(s) at line(s) "
+            f"{[n.lineno for n in artist_calls]}. A module that creates artists "
+            f"MUST bind a ProvenanceLog and wrap them in `with prov.artist(...)`; "
+            f"remove it from _DELEGATING_RENDERERS."
         )
+        return
 
+    tree = ast.parse(source, filename=str(path))
     found = False
     for node in ast.walk(tree):
         if isinstance(node, ast.With):
@@ -302,8 +298,8 @@ def test_renderer_module_has_provenance_block(path: Path) -> None:
 
     assert found, (
         f"{path.name}: no `with <name>.artist(...)` block found. Every "
-        f"figure-emitting renderer module must bind a `ProvenanceLog` and wrap "
-        f"every artist creation in a `with prov.artist(...)` block."
+        f"renderer module must bind a `ProvenanceLog` and wrap every artist "
+        f"creation in a `with prov.artist(...)` block."
     )
 
 

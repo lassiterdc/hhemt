@@ -34,7 +34,16 @@ def _copy_fixture(name: str, dest: Path) -> Path:
 
 
 def _walk_relative(root: Path) -> set[str]:
-    return {str(p.relative_to(root)) for p in root.rglob("*") if p.is_file() or p.is_dir()}
+    # Exclude filelock sidecars (`*.lock`): they are transient artifacts of
+    # _version.json stamping, NOT part of the migrated tree's logical layout.
+    # filelock self-cleans on release in a healthy env, but the residue is
+    # environment-nondeterministic (bare-pip CI vs conda) — so a STRUCTURAL
+    # golden comparison must exclude it, same rationale as excluding _version.json.
+    return {
+        str(p.relative_to(root))
+        for p in root.rglob("*")
+        if (p.is_file() or p.is_dir()) and not p.name.endswith(".lock")
+    }
 
 
 def _cfg_paths_from_fixture(fixture_dir: Path) -> dict[str, Path]:

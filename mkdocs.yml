@@ -63,6 +63,7 @@ nav:
       - In-flight operations: how-to/in-flight-operations.md
       - Forcing re-runs: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md
+      - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md
       - Publishing and fetching: how-to/publishing.md
       - Reprex round-trip: how-to/reprex-roundtrip.md
       - Synthetic compute-sensitivity experiment: how-to/synthetic-compute-sensitivity-experiment.md

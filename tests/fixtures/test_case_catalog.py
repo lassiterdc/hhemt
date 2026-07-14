@@ -46,13 +46,38 @@ def _require_cpu_cores_for_sensitivity(min_cores: int = 4) -> None:
         pytest.skip(f"synth sensitivity suite requires >={min_cores} CPU cores; found {n}")
 
 
+def _load_norfolk_example_or_skip(**kwargs) -> "NorfolkIreneExperiment":
+    """Acquire the Norfolk Irene example, or skip when the data is unavailable.
+
+    Every Norfolk-example consumer in the suite (the conftest ``norfolk_*``
+    fixtures, the ``retrieve_norfolk_*`` case methods, and the ``ex_Nrflk``
+    sensitivity path) funnels through this helper, so gating here converts an
+    absent-data ERROR into a SKIP for all of them at a single point.
+
+    Mirrors the canonical gate in ``tests/test_case_study_catalog.py`` (which
+    wraps the identical ``NorfolkIreneExperiment.load``): under
+    ``HHEMT_REQUIRE_EXAMPLE_DATA=1`` (CI runners that cache the example data) a
+    load failure is re-raised as a hard error instead of a silent skip, so a
+    data-required run cannot pass vacuously. Bare ``pytest`` (test.yml) does not
+    set the flag, so a runner without the Norfolk data SKIPs rather than ERRORs.
+    """
+    try:
+        return NorfolkIreneExperiment.load(**kwargs)
+    except Exception as exc:
+        if os.environ.get("HHEMT_REQUIRE_EXAMPLE_DATA") == "1":
+            raise AssertionError(
+                f"Norfolk Irene example data required (HHEMT_REQUIRE_EXAMPLE_DATA=1) but load failed: {exc!r}"
+            ) from exc
+        pytest.skip(f"Norfolk Irene example data not available locally: {exc!r}")
+
+
 @dataclass
 class all_experiments:
     from hhemt.experiments import TRITON_SWMM_experiment
 
     @staticmethod
     def ex_Nrflk(download_if_exists: bool = False) -> TRITON_SWMM_experiment:
-        return NorfolkIreneExperiment.load(download_if_exists=download_if_exists)
+        return _load_norfolk_example_or_skip(download_if_exists=download_if_exists)
 
 
 class GetTS_TestCases:
@@ -125,7 +150,9 @@ class GetTS_TestCases:
         final_analysis_configs = (analysis_overlay or {}) | (analysis_overrides or {})
         final_system_configs = (system_overlay or {}) | (system_overrides or {})
 
-        example = NorfolkIreneExperiment.load(download_if_exists=download_if_exists, example_data_dir=example_data_dir)
+        example = _load_norfolk_example_or_skip(
+            download_if_exists=download_if_exists, example_data_dir=example_data_dir
+        )
 
         nrflk_test = retrieve_TRITON_SWMM_test_case(
             example=example,

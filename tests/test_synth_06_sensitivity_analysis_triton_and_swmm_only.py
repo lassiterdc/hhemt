@@ -16,6 +16,9 @@ pytestmark = [
     pytest.mark.skipif(
         tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
     ),
+    # Both tests execute real triton-only / swmm-only sensitivity workflows.
+    # Skips without cmake+mpic++; HARD-FAILS under HHEMT_REQUIRE_COMPILE_TIER=1.
+    pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
 ]
 
 _SYNTH_SENSITIVITY_REPORT_CONFIG = (

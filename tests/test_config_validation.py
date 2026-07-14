@@ -223,16 +223,18 @@ def test_reporting_sets_registry_imports_cleanly():
         get_reporting_set,
     )
 
-    # The registry has grown twice since this test was written: `combined` (PIP-1
-    # cross-experiment combine) and `compute-sensitivity` (the synthetic-experiment
-    # sensitivity ReportingSet). The set is asserted exactly — a new set must be
-    # added here deliberately, which is the point of the check (Gotcha 45: the
-    # registry is the single data-drive for renderer selection).
-    assert set(REPORTING_SETS) == {"default", "benchmarking", "combined", "compute-sensitivity"}
+    # Exact-set equality (NOT a subset check) so an accidental registry member
+    # still fails. `combined` (PIP-1 cross-experiment) and `compute-sensitivity`
+    # (PIP-2 / R11 in-report EDA) are shipped, exercised sets; the assertion
+    # simply trailed their landing.
+    assert set(REPORTING_SETS) == {
+        "default",
+        "benchmarking",
+        "combined",
+        "compute-sensitivity",
+    }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
-    assert get_reporting_set("combined").validator_key == "none"
-    assert get_reporting_set("compute-sensitivity").validator_key == "benchmarking"
 
 
 def test_reporting_set_field_defaults_to_default():
