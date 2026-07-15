@@ -13,6 +13,7 @@ Exercised with lightweight ``SimpleNamespace`` stubs + a monkeypatched
 
 from __future__ import annotations
 
+import logging
 import subprocess
 from types import SimpleNamespace
 
@@ -227,3 +228,90 @@ def test_provenance_stamp_graceful_absent_when_unstamped(tmp_path):
     # Unset provenance -> attrs omitted (graceful-absent -> INDETERMINATE downstream).
     assert "triton_producing_sha" not in tree.attrs
     assert "triton_has_coupled_resume_fix" not in tree.attrs
+
+
+# --- _read_triton_provenance: the reader must not be inert -----------------------
+#
+# REGRESSION (Rivanna synth_cc_resume, 2026-07-15): the reader opened the tree with
+# chunks="auto", which raises NotImplementedError ("Can not use auto rechunking with
+# object dtype") on any tree carrying an object-dtype variable. The bare
+# `except Exception: return None, None` turned that into a silent INDETERMINATE, so
+# check_coupled_resume_validity's pre-fix warning was PERMANENTLY DISABLED on every
+# experiment and passed vacuously. The stamped tree was correct on disk
+# (triton_producing_sha=3a832f7d..., triton_has_coupled_resume_fix=True).
+
+
+def _fake_analysis_with_zarr(zarr_path):
+    return SimpleNamespace(
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=True),
+        analysis_paths=SimpleNamespace(sensitivity_datatree_zarr=zarr_path),
+    )
+
+
+def test_provenance_reader_does_not_use_auto_rechunking(tmp_path, monkeypatch):
+    """The reader consumes ONLY root attrs, so it must open WITHOUT auto-rechunking.
+    Re-introducing chunks="auto" makes an object-dtype tree unreadable and silently
+    renders the whole coupled-resume check inert -> this test fails."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    class _FakeTree:
+        attrs = {
+            "triton_producing_sha": "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4",
+            "triton_has_coupled_resume_fix": True,
+        }
+
+    def _fake_open_datatree(path, **kwargs):
+        if kwargs.get("chunks") == "auto":
+            raise NotImplementedError("Can not use auto rechunking with object dtype")
+        return _FakeTree()
+
+    monkeypatch.setattr(xr, "open_datatree", _fake_open_datatree)
+
+    sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+    assert sha == "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
+    assert has_fix is True
+
+
+def test_provenance_reader_warns_but_never_raises_on_unexpected_failure(tmp_path, monkeypatch, caplog):
+    """An UNEXPECTED reader exception must not abort validation (the never-raises
+    contract) but must NOT be swallowed silently either — a silently-inert check is
+    exactly how the chunks="auto" defect stayed hidden."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    def _boom(path, **kwargs):
+        raise RuntimeError("unexpected zarr failure")
+
+    monkeypatch.setattr(xr, "open_datatree", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
+        sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+
+    assert (sha, has_fix) == (None, None)  # graceful-absent, never raises
+    assert "INDETERMINATE" in caplog.text
+    assert "RuntimeError" in caplog.text
+
+
+def test_provenance_reader_is_quiet_on_genuinely_absent_tree(tmp_path, monkeypatch, caplog):
+    """A genuinely absent/unreadable tree (pre-provenance or off-checkout) stays on
+    the documented quiet graceful-absent path — no warning noise."""
+    import xarray as xr
+
+    zarr_path = tmp_path / "sensitivity_datatree.zarr"
+    zarr_path.mkdir()
+
+    def _absent(path, **kwargs):
+        raise FileNotFoundError("no such tree")
+
+    monkeypatch.setattr(xr, "open_datatree", _absent)
+
+    with caplog.at_level(logging.WARNING, logger="hhemt.analysis_validation"):
+        sha, has_fix = av._read_triton_provenance(_fake_analysis_with_zarr(zarr_path))
+
+    assert (sha, has_fix) == (None, None)
+    assert caplog.text == ""

@@ -15,12 +15,15 @@ row with the sub-analysis id.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
+
+logger = logging.getLogger(__name__)
 
 
 CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
@@ -456,9 +459,28 @@ def _read_triton_provenance(
         zarr_path = getattr(paths, "analysis_datatree_zarr", None)
     if zarr_path is None or not zarr_path.exists():
         return None, None
+    # NO chunking: this reader consumes ONLY root attrs, and `chunks="auto"` raises
+    # NotImplementedError ("Can not use auto rechunking with object dtype") on any
+    # tree carrying an object-dtype variable — which the bare except below then
+    # converted into a silent INDETERMINATE, permanently disabling this check's
+    # pre-fix warning on every experiment. Empirically confirmed on the
+    # synth_cc_resume sensitivity master (2026-07-15): chunks="auto" ->
+    # NotImplementedError; no-chunks -> reads triton_producing_sha=3a832f7d...,
+    # triton_has_coupled_resume_fix=True.
     try:
-        tree = xr.open_datatree(zarr_path, engine="zarr", chunks="auto", consolidated=False)
-    except Exception:
+        tree = xr.open_datatree(zarr_path, engine="zarr", consolidated=False)
+    except (FileNotFoundError, OSError, KeyError, ValueError):
+        # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
+        # the documented graceful-absent path. Quiet by design.
+        return None, None
+    except Exception as e:
+        # NEVER raise (validation must not abort a run over a diagnostic), but do
+        # NOT swallow silently: an unexpected exception here means this check is
+        # INERT, which is exactly how the chunks="auto" defect stayed hidden.
+        logger.warning(
+            f"TRITON provenance read failed unexpectedly for {zarr_path} "
+            f"({type(e).__name__}: {e}); coupled-resume validity is INDETERMINATE."
+        )
         return None, None
     sha = tree.attrs.get("triton_producing_sha")
     has_fix = tree.attrs.get("triton_has_coupled_resume_fix")
