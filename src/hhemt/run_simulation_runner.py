@@ -415,6 +415,18 @@ def main():
         logger.info(f"[{event_iloc}] Simulation status: {status}")
         logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
 
+        # Re-read the model log before the terminal write (LOST-UPDATE FIX).
+        # scenario.get_log() returns a FRESH TRITONSWMM_model_log.from_json(...)
+        # object on every call, and LogField.set() auto-writes the WHOLE log. The
+        # `model_log` bound above was loaded BEFORE prepare_simulation_command's
+        # hotstart branch did `_ml.n_resumes.set(...)` on its own (also fresh)
+        # instance — so writing the stale object here CLOBBERED n_resumes straight
+        # back to None. Empirically: all 28 sims of the synth_cc_resume arm carried
+        # n_resumes=None despite ~19 resumes each, which would have handed the
+        # resume-sensitivity EDA member (which MUST read n_resumes from df_status)
+        # a silently-empty panel.
+        model_log = scenario.get_log(model_type)
+
         # Update model log with the ACTUAL completion outcome of this run (NOT an
         # unconditional True). model_run_completed re-derives completion from the
         # log markers this subprocess just wrote plus, for coupled tritonswmm, the

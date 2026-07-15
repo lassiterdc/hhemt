@@ -137,12 +137,36 @@ class TRITONSWMM_run:
         first-run correctness for paths where the simulation has just emitted
         its log but the log-field has not yet been written.
         """
-        # Primary: read post-processing-aware log field
+        # Primary: read post-processing-aware log field.
+        #
+        # ONLY a POSITIVE (True) record is authoritative. A False/None record means
+        # "not known to be complete" and MUST fall through to the raw-marker scan.
+        #
+        # Why (the sticky-False latch): run_simulation_runner.py WRITES this field
+        # with the value this method RETURNS. The prior `if completed is not None`
+        # form therefore latched: once any attempt recorded False, `bool(False) and
+        # ...` short-circuited (never even evaluating the rpt gate) and this method
+        # returned False FOREVER — so a later hotstart-resume that genuinely ran to
+        # t=end and finalized its coupled rpt was still reported incomplete, its
+        # retry re-resumed from the t=end checkpoint, replayed to `dt: -nan`, and the
+        # rule burned every retry. Empirically confirmed on Rivanna (synth_cc_resume,
+        # job 17021807 step .1: COMPLETED 0:0, 144/144 cfgs written, hydraulics.rpt
+        # carrying "Analysis ended on" — recorded simulation_completed=False).
+        #
+        # The latch only bites when the runner SURVIVES a failed sim (a SLURM
+        # walltime kill reaps the runner before it can write False, which is why
+        # production hotstart-resume masked this). It equally broke `retries:` for
+        # any genuinely crashed (e.g. segfaulting) sim.
+        #
+        # Behavior delta is confined to the buggy branch:
+        #   True -> `bool(True) and rpt` === `rpt`   (unchanged)
+        #   None -> falls through to the raw scan     (unchanged)
+        #   False -> was: permanently False; now: re-derived from this run's markers
         try:
             model_log = self._scenario.get_log(model_type)
             completed = model_log.simulation_completed.get()
-            if completed is not None:
-                return bool(completed) and self._coupled_swmm_report_finalized(model_type)
+            if completed:
+                return self._coupled_swmm_report_finalized(model_type)
         except (AttributeError, FileNotFoundError):
             pass  # log not yet written — fall through to raw-file check
 
