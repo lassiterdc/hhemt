@@ -163,6 +163,21 @@ class analysis_config(cfgBaseModel):
             "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
         ),
     )
+    deterministic_kill_after_n_checkpoints: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Synthetic resume-test harness ONLY (Option-D deterministic single "
+            "kill). When set to N >= 1, the run-simulation runner hard-kills "
+            "(SIGKILL) a FRESH first-attempt TRITON/TRITON-SWMM sim once N "
+            "complete config_NNNN.cfg hotstart checkpoints exist, forcing exactly "
+            "one mid-sim kill so the Snakemake retry resumes-to-completion under a "
+            "generous walltime. Gated on sim_start_reporting_tstep == 0, so a "
+            "resume attempt is never killed. Default None DISABLES the harness — "
+            "production and clean-arm runs MUST leave it unset (the runner path is "
+            "byte-identical to a plain proc.wait() when None)."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,

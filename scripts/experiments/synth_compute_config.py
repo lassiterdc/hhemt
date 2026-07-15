@@ -144,10 +144,18 @@ def _build_case(
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
-            # Snakemake retries: high for resume so a walltime-killed sim auto-resumes to
-            # completion within ONE analysis.run(); 2 for clean (never killed).
-            "hpc_restart_times_simulate": 20 if resume else 2,
-            "hpc_restart_times_other": 20 if resume else 2,
+            # Snakemake retries: under the Option-D deterministic single kill the
+            # resume arm's attempt-1 is SIGKILLed after N checkpoints and attempt-2
+            # resumes-to-completion under the generous walltime, so a LOW cap (3)
+            # both completes the sweep and fails a genuinely non-converging config
+            # FAST. 2 for clean (never killed).
+            "hpc_restart_times_simulate": 3 if resume else 2,
+            "hpc_restart_times_other": 3 if resume else 2,
+            # Option-D deterministic single-kill resume-test harness: on the RESUME
+            # arm the runner SIGKILLs a fresh first-attempt sim after 3 hotstart
+            # checkpoints (forcing exactly one mid-sim kill); the retry resumes and
+            # completes under the generous walltime. None (clean arm) disables it.
+            "deterministic_kill_after_n_checkpoints": 3 if resume else None,
             # base partition selectors (the CSV overrides ensemble per-row). The master ensemble
             # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
             # setup/prepare/process/consolidate run on standard.
@@ -213,29 +221,33 @@ def resume_case(
     hpc_system_config_yaml: Path | None = None,
     tritonswmm_branch_key: str | None = None,
 ) -> _Case:
-    """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
+    """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
+    fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
+    resumes-to-completion under a GENEROUS walltime.
 
     ``cell_size_m`` MUST match the value passed to ``clean_case`` (same grid → the
-    byte-identity clean-vs-resume comparison is valid). A finer resolution makes
-    sims run long enough that the 1-min SLURM walltime actually kills them, so the
-    hotstart-resume path is genuinely exercised (DoD #3).
+    byte-identity clean-vs-resume comparison is valid). Under Option D the kill is
+    DETERMINISTIC (checkpoint-count SIGKILL), NOT a walltime expiry, so no finer
+    resolution / longer runtime is needed to make the kill fire — it works even
+    for a ~1.6-min GPU sim (DoD #3 is satisfied by the deterministic kill).
 
-    ``runtime_min_by_sa``: per-``sa_id`` full-completion wallclock (minutes) measured
-    from the CLEAN sweep; sizes each backend's resume walltime to ~T/3 so the kill
-    fires and completion lands within ``hpc_restart_times_simulate`` from a single ``.run()``.
+    ``runtime_min_by_sa`` is IGNORED under Option D (the resume walltime is the
+    generous clean walltime, not a T/3 short window); it is retained only for
+    signature stability with ``build_resume_from_clean_runtimes`` and is a
+    candidate for removal in a follow-up cleanup.
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_resume"``.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
-    write_resume_matrix_csv(csv, runtime_min_by_sa=runtime_min_by_sa)
-    # NOTE: resume completion is driven by REPEATED DRIVER RE-INVOCATION in Phase 3
-    # (analysis.run(from_scratch=False, ...) re-plans the v2 wait-rules and re-dispatches the
-    # walltime-killed simulation_sa_* rules from the latest config_NNNN.cfg checkpoint — Gotcha 30,
-    # master A5), NOT a config knob. hpc_max_wait_for_inflight_min already defaults to its 10080
-    # max (config/analysis.py:147) and is the v2 wait-rule poll backstop, NOT the Snakemake
-    # restart-times cap; setting it here was a no-op against the wrong knob and is removed.
+    write_resume_matrix_csv(csv)
+    # Option-D mechanism: resume completion lands within ONE analysis.run() via
+    # Snakemake retries — attempt-1 is deterministically SIGKILLed after N
+    # checkpoints (deterministic_kill_after_n_checkpoints on the resume analysis
+    # config), and attempt-2 resumes from the latest config_NNNN.cfg checkpoint and
+    # completes under the generous per-sim walltime. This supersedes the prior
+    # short-walltime + repeated-driver-re-invocation scheme (both retired).
     return _build_case(
         analysis_name="synth_cc_resume",
         sensitivity_csv=csv,

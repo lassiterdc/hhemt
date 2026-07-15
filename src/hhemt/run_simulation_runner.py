@@ -355,6 +355,19 @@ def main():
         import subprocess
         import time
 
+        # Option-D deterministic single-kill resume-test harness (synthetic resume
+        # arm ONLY). Armed iff the analysis config opts in via
+        # deterministic_kill_after_n_checkpoints AND this is a FRESH first attempt
+        # (sim_start_reporting_tstep == 0). A resume attempt (tstep > 0 -> a
+        # checkpoint already exists) runs to completion untouched, so exactly ONE
+        # mid-sim kill fires per sim. Production / clean-arm / non-synthetic configs
+        # never set the field (default None), so this path is byte-identical to a
+        # plain proc.wait() there (no Snakemake-emitter or CLI-flag change).
+        _kill_after_n = getattr(analysis.cfg_analysis, "deterministic_kill_after_n_checkpoints", None)
+        _arm_deterministic_kill = (
+            _kill_after_n is not None and _kill_after_n >= 1 and model_type != "swmm" and sim_start_reporting_tstep == 0
+        )
+
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)
         with open(model_logfile, "w") as lf:
@@ -364,7 +377,16 @@ def main():
                 stdout=lf,
                 stderr=subprocess.STDOUT,
             )
-            _rc = proc.wait()  # Return code checked via status below
+            if _arm_deterministic_kill:
+                logger.info(
+                    f"[{event_iloc}] Deterministic resume-test kill ARMED: "
+                    f"SIGKILL after {_kill_after_n} hotstart checkpoint(s)."
+                )
+                _rc = run.wait_with_deterministic_checkpoint_kill(
+                    proc, model_type=model_type, n_checkpoints=_kill_after_n
+                )
+            else:
+                _rc = proc.wait()  # Return code checked via status below
 
         # Update simulation log with results
         end_time = time.time()

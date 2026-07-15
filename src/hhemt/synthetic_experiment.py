@@ -137,26 +137,22 @@ def write_clean_matrix_csv(path: Path, *, rank_sweep: tuple[int, ...] = _DEFAULT
 def write_resume_matrix_csv(
     path: Path,
     *,
-    runtime_min_by_sa: dict[str, float] | None = None,
     rank_sweep: tuple[int, ...] = _DEFAULT_RANK_SWEEP,
-    kill_divisor: int = 3,
-    min_walltime_min: int = 1,
 ) -> None:
-    """Resume sweep CSV: per-row walltime sized to force a mid-sim kill AND
-    complete within ``restart-times`` from ONE ``analysis.run()``.
+    """Resume sweep CSV for the Option-D deterministic single-kill harness.
 
-    For each row, ``hpc_time_min_per_sim = max(min_walltime_min, round(T_sa /
-    kill_divisor))`` where ``T_sa`` is that sa's measured full-completion wallclock
-    (minutes) from the CLEAN sweep, keyed by ``sa_id`` in ``runtime_min_by_sa``.
-    When ``runtime_min_by_sa`` is None (off-cluster dry-run only), fall back to a
-    conservative GPU=4 min / CPU=18 min estimate by row type — REPLACE with real
-    clean-sweep numbers (via ``size_resume_walltimes``) before the production run.
+    Under Option D the mid-sim kill is DETERMINISTIC (a SIGKILL after N hotstart
+    checkpoints, wired in ``run_simulation_runner`` and armed via the analysis
+    config field ``deterministic_kill_after_n_checkpoints``), NOT a walltime
+    expiry. So every row gets the SAME generous ``_CLEAN_WALLTIME_MIN`` walltime
+    as the clean sweep — the resume attempt always has budget to finish. The
+    resume arm is distinguished from the clean arm ONLY by the analysis-config
+    kill field (set in ``resume_case``), never by a short walltime. This retires
+    the old ``round(T_sa / kill_divisor)`` short-walltime sizing (and its
+    ``runtime_min_by_sa`` two-pass dependency), removing the thin-window
+    fragility that stalled the R9 resume sweep.
     """
-    runtimes = runtime_min_by_sa or {}
-    rows = _rows(_configs(tuple(rank_sweep)), walltime_min=None)
-    for r in rows:
-        t_full = runtimes.get(r["sa_id"], 4.0 if r["n_gpus"] else 18.0)
-        r["hpc_time_min_per_sim"] = max(min_walltime_min, round(t_full / kill_divisor))
+    rows = _rows(_configs(tuple(rank_sweep)), walltime_min=_CLEAN_WALLTIME_MIN)
     pd.DataFrame(rows, columns=_COLS).to_csv(path, index=False)
 
 

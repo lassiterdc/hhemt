@@ -438,3 +438,68 @@ class TestSubmitWorkflowIntegration:
             mock_submit_single.assert_called_once()
             call_kwargs = mock_submit_single.call_args[1]
             assert call_kwargs["wait_for_completion"] is False
+
+
+# ---------------------------------------------------------------------------
+# DEFECT #2 — tmux wait-loop progress watchdog + crash/success disambiguation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _builder_with_status_dir(mock_analysis, tmp_path, monkeypatch):
+    """A builder whose analysis_dir/_status exists (empty) so the wait watchdog's
+    _status_progress_fingerprint has a real subtree to poll. The module-load
+    prefix is stubbed to "" so these watchdog-logic tests do not depend on the
+    unrelated hpc_system_config module-resolution machinery."""
+    (tmp_path / "_status").mkdir()
+    mock_analysis.analysis_paths.analysis_dir = tmp_path
+    mock_analysis.cfg_analysis.hpc_time_min_per_sim = 30
+    b = SnakemakeWorkflowBuilder(mock_analysis)
+    monkeypatch.setattr(type(b), "_get_module_load_prefix", lambda self: "")
+    return b
+
+
+def test_wait_watchdog_fails_fast_on_stall(monkeypatch, _builder_with_status_dir):
+    """Session stays alive, _status/ fingerprint never advances -> the watchdog
+    kills the session and returns completed=False in bounded time (no 17.6 h hang)."""
+    b = _builder_with_status_dir
+    # tmux has-session ALWAYS 'alive' (rc 0); kill-session is a no-op capture.
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=0, stdout="", stderr=""),
+    )
+    # frozen fingerprint -> no progress ever
+    monkeypatch.setattr(type(b), "_status_progress_fingerprint", lambda self: (0, 0.0))
+    # collapse the stall window + poll so the test is instant
+    res = b._wait_for_tmux_session_completion(
+        "sess", verbose=False, poll_interval_s=0, no_progress_timeout_min=1e-6
+    )
+    assert res["completed"] is False
+    assert "stall" in res["message"].lower()
+
+
+def test_wait_reports_crash_not_success(monkeypatch, _builder_with_status_dir):
+    """Session gone + a non-zero snakemake exit in the tmux log -> completed=False
+    (session-absence must NOT be blanket-reported as success)."""
+    b = _builder_with_status_dir
+    # session GONE (rc 1); exit code read from the tmux log helper -> 1 (crash)
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=1, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 1)
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is False
+    assert "fail" in res["message"].lower()
+
+
+def test_wait_reports_clean_exit_as_success(monkeypatch, _builder_with_status_dir):
+    """Session gone + snakemake exit 0 -> completed=True."""
+    b = _builder_with_status_dir
+    monkeypatch.setattr(
+        "hhemt.workflow.subprocess.run",
+        lambda *a, **k: Mock(returncode=1, stdout="", stderr=""),
+    )
+    monkeypatch.setattr(type(b), "_tmux_snakemake_exit_status", lambda self, s: 0)
+    res = b._wait_for_tmux_session_completion("sess", verbose=False, poll_interval_s=0)
+    assert res["completed"] is True

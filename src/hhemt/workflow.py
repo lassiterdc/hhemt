@@ -5000,13 +5000,74 @@ exit $snakemake_status
         except Exception:
             return None
 
+    def _status_progress_fingerprint(self) -> tuple[int, float]:
+        """Forward-progress signal for the workflow wait watchdog.
+
+        Returns ``(n_flags, max_mtime)`` over the analysis ``_status/`` subtree:
+        the count of ``_status/*.flag`` completion markers plus the newest mtime
+        of any file under ``_status/`` (which advances on every ``_submitted/`` /
+        ``_queued/`` / ``_completed/`` / ``_failed/`` sentinel write). A change in
+        either component between polls means the workflow made progress; a flat
+        fingerprint across the stall window means it is stuck.
+        """
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return (0, 0.0)
+        n_flags = 0
+        max_mtime = 0.0
+        for p in status_dir.rglob("*"):
+            try:
+                if p.is_file():
+                    if p.name.endswith(".flag"):
+                        n_flags += 1
+                    m = p.stat().st_mtime
+                    if m > max_mtime:
+                        max_mtime = m
+            except OSError:
+                continue
+        return (n_flags, max_mtime)
+
+    def _tmux_snakemake_exit_status(self, session_name: str) -> int | None:
+        """Best-effort read of the Snakemake exit code from the tmux workflow log.
+
+        ``_submit_tmux_workflow`` writes ``=== Snakemake completed at ... (exit: N) ===``
+        to ``tmux_session_*.log`` before killing the session. Returns ``N`` when the
+        line is present (the authoritative success/crash signal), else ``None``
+        (session died before Snakemake wrote its exit line -> treat as crash).
+        """
+        import re
+
+        log_dir = self.analysis_paths.analysis_log_directory
+        try:
+            candidates = sorted(log_dir.glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        try:
+            text = candidates[-1].read_text(errors="replace")
+        except OSError:
+            return None
+        matches = re.findall(r"Snakemake completed at .*?\(exit:\s*(\d+)\)", text)
+        return int(matches[-1]) if matches else None
+
     def _wait_for_tmux_session_completion(
         self,
         session_name: str,
         verbose: bool = True,
+        poll_interval_s: int = 5,
+        no_progress_timeout_min: float | None = None,
     ) -> dict:
         """
-        Wait for tmux session to exit.
+        Wait for the tmux workflow session, with a no-progress watchdog.
+
+        Polls tmux session liveness AND the analysis ``_status/`` forward-progress
+        fingerprint. If the session is alive but the fingerprint has not advanced
+        for ``no_progress_timeout_min``, the workflow is declared STALLED, the tmux
+        session is killed (Snakemake's SIGINT handler cancels its worker jobs), and
+        ``completed=False`` is returned. When the session exits, the Snakemake exit
+        code from the tmux log is consulted so an ABNORMAL death is reported as
+        FAILED rather than success.
 
         Parameters
         ----------
@@ -5014,6 +5075,12 @@ exit $snakemake_status
             Name of the tmux session
         verbose : bool
             Print status messages
+        poll_interval_s : int
+            Seconds between polls.
+        no_progress_timeout_min : float | None
+            Stall threshold. When None, defaults to ``max(30, 6 * per_sim_walltime)``
+            minutes, where ``per_sim_walltime`` is ``hpc_time_min_per_sim`` — generous
+            enough that a healthy but queue-backed sweep never trips it.
 
         Returns
         -------
@@ -5022,9 +5089,14 @@ exit $snakemake_status
             - message: str
         """
         module_load_prefix = self._get_module_load_prefix()
+        if no_progress_timeout_min is None:
+            per_sim = getattr(self.cfg_analysis, "hpc_time_min_per_sim", None) or 5
+            no_progress_timeout_min = max(30.0, 6.0 * float(per_sim))
+        stall_seconds = no_progress_timeout_min * 60.0
+        last_fp = self._status_progress_fingerprint()
+        last_progress_t = time.monotonic()
         try:
             while True:
-                # Check if session still exists (with module load on HPC)
                 has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
                 check_result = subprocess.run(
                     ["bash", "-c", has_session_cmd],
@@ -5033,32 +5105,59 @@ exit $snakemake_status
                 )
 
                 if check_result.returncode != 0:
-                    # Session no longer exists - workflow completed
+                    # Session gone -> consult the Snakemake exit code (session-absence
+                    # is NOT proof of success; an abnormal death must read as FAILED).
+                    exit_code = self._tmux_snakemake_exit_status(session_name)
+                    if exit_code == 0:
+                        if verbose:
+                            print("[Snakemake] Tmux session exited cleanly (exit 0) - workflow complete", flush=True)
+                        return {"completed": True, "message": "Workflow completed successfully"}
                     if verbose:
                         print(
-                            "[Snakemake] Tmux session exited - workflow complete",
+                            f"[Snakemake] Tmux session ended abnormally "
+                            f"(snakemake exit: {exit_code}) - workflow FAILED",
                             flush=True,
                         )
                     return {
-                        "completed": True,
-                        "message": "Workflow completed successfully",
+                        "completed": False,
+                        "message": f"Workflow failed: tmux session ended with snakemake exit {exit_code}",
                     }
 
-                # Session still exists, wait and check again
-                time.sleep(5)
+                # Session alive: check forward progress against the stall window.
+                fp = self._status_progress_fingerprint()
+                now = time.monotonic()
+                if fp != last_fp:
+                    last_fp = fp
+                    last_progress_t = now
+                elif now - last_progress_t > stall_seconds:
+                    if verbose:
+                        print(
+                            f"[Snakemake] STALL: no _status/ progress for "
+                            f"{no_progress_timeout_min:.0f} min while the tmux session is alive; "
+                            f"killing the session and failing fast.",
+                            flush=True,
+                        )
+                    subprocess.run(
+                        ["bash", "-c", f"{module_load_prefix}tmux kill-session -t {session_name}"],
+                        capture_output=True,
+                    )
+                    return {
+                        "completed": False,
+                        "message": (
+                            f"Workflow stalled: no forward progress in _status/ for "
+                            f"{no_progress_timeout_min:.0f} min (tmux session alive but not advancing); "
+                            f"session killed."
+                        ),
+                    }
+
+                time.sleep(poll_interval_s)
 
         except KeyboardInterrupt:
             if verbose:
                 print("\n[Snakemake] Wait interrupted by user", flush=True)
-            return {
-                "completed": False,
-                "message": "Wait interrupted by user",
-            }
+            return {"completed": False, "message": "Wait interrupted by user"}
         except Exception as e:
-            return {
-                "completed": False,
-                "message": f"Error while waiting: {str(e)}",
-            }
+            return {"completed": False, "message": f"Error while waiting: {str(e)}"}
 
     def submit_workflow(
         self,

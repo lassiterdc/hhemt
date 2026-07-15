@@ -307,6 +307,55 @@ class TRITONSWMM_run:
 
         return Path(latest_complete.iloc[-1]["f_cfg"])
 
+    def _hotstart_cfg_dir(self, model_type: Literal["triton", "tritonswmm"]) -> Path | None:
+        """Directory of the ``config_NNNN.cfg`` hotstart checkpoints TRITON writes
+        at the ``print_interval`` (reporting) cadence, or None when the model has
+        no output dir. Mirrors the dir logic of
+        ``_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation``.
+        """
+        if model_type == "triton":
+            output_dir = self._scenario.scen_paths.out_triton
+        else:
+            output_dir = self._scenario.scen_paths.out_tritonswmm
+        if output_dir is None:
+            return None
+        return output_dir / "cfg"
+
+    def wait_with_deterministic_checkpoint_kill(
+        self,
+        proc,
+        *,
+        model_type: Literal["triton", "tritonswmm"],
+        n_checkpoints: int,
+        poll_interval_s: float = 2.0,
+    ) -> int:
+        """Wait for the sim subprocess, forcing exactly ONE mid-sim hard-kill for
+        the Option-D deterministic resume test.
+
+        Polls the hotstart cfg dir; once ``>= n_checkpoints + 1`` ``config_NNNN.cfg``
+        files exist (the newest may be mid-write, so N+1 present guarantees N are
+        complete), issues ``proc.kill()`` (SIGKILL, uncatchable) so the sim exits
+        INCOMPLETE and the Snakemake ``retries:`` re-dispatch resumes from the
+        latest complete checkpoint. If the sim COMPLETES before the threshold, no
+        kill fires (graceful degradation — the sim just finishes). Returns the
+        subprocess return code.
+
+        SIGKILL (not SIGTERM) is deliberate: an uncatchable signal guarantees
+        TRITON cannot finalize-and-exit-0 (which would defeat the kill), so the
+        harness does not depend on TRITON's signal-handler behavior.
+        """
+        import time
+
+        cfg_dir = self._hotstart_cfg_dir(model_type)
+        killed = False
+        while proc.poll() is None:
+            if not killed and cfg_dir is not None and cfg_dir.exists():
+                if len(list(cfg_dir.glob("*.cfg"))) >= n_checkpoints + 1:
+                    proc.kill()
+                    killed = True
+            time.sleep(poll_interval_s)
+        return proc.returncode
+
     def _write_repro_script(
         self,
         script_path,
