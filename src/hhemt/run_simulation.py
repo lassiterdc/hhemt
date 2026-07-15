@@ -334,16 +334,26 @@ class TRITONSWMM_run:
 
         Polls the hotstart cfg dir; once ``>= n_checkpoints + 1`` ``config_NNNN.cfg``
         files exist (the newest may be mid-write, so N+1 present guarantees N are
-        complete), issues ``proc.kill()`` (SIGKILL, uncatchable) so the sim exits
+        complete), issues a process-group SIGTERM (``os.killpg`` on the
+        ``bash -lc "... srun ... triton.exe"`` wrapper's session) so the sim exits
         INCOMPLETE and the Snakemake ``retries:`` re-dispatch resumes from the
         latest complete checkpoint. If the sim COMPLETES before the threshold, no
         kill fires (graceful degradation — the sim just finishes). Returns the
         subprocess return code.
 
-        SIGKILL (not SIGTERM) is deliberate: an uncatchable signal guarantees
-        TRITON cannot finalize-and-exit-0 (which would defeat the kill), so the
-        harness does not depend on TRITON's signal-handler behavior.
+        The kill is a process-group SIGTERM, NOT ``proc.kill()``/SIGKILL: ``proc``
+        is the bash WRAPPER, and the sim itself is a remote ``srun`` STEP under a
+        step ``slurmstepd``. A group SIGKILL reaps bash + the srun client too fast
+        for srun to tear the step down, so ``triton.exe`` ORPHANS and runs to t=end
+        (empirically confirmed on Rivanna, ``proctrack/cgroup``, job 17018902). A
+        group SIGTERM is CAUGHT by the srun client, which force-terminates the step
+        and delivers an UNCATCHABLE SIGKILL to the task (``srun: ... task 0:
+        Killed``) — so TRITON still cannot finalize-and-exit-0, but the kill is
+        routed through srun's signal handler (which SIGKILL bypasses). Requires the
+        launcher's ``Popen(..., start_new_session=True)`` so the wrapper leads its
+        own group.
         """
+        import signal
         import time
 
         cfg_dir = self._hotstart_cfg_dir(model_type)
@@ -351,7 +361,26 @@ class TRITONSWMM_run:
         while proc.poll() is None:
             if not killed and cfg_dir is not None and cfg_dir.exists():
                 if len(list(cfg_dir.glob("*.cfg"))) >= n_checkpoints + 1:
-                    proc.kill()
+                    # Rivanna srun-step teardown (SchedMD SLURM, proctrack/cgroup):
+                    # process-group SIGTERM, NOT proc.kill()/SIGKILL. `proc` is the
+                    # `bash -lc "... srun ... triton.exe"` wrapper (launched with
+                    # start_new_session=True, so it leads its own group). A group
+                    # SIGKILL reaps bash + the srun client too fast for srun to tear
+                    # the step down -> triton.exe ORPHANS and runs to t=end
+                    # (empirically confirmed on Rivanna, job 17018902). A group
+                    # SIGTERM is CAUGHT by the srun client, which force-terminates the
+                    # step and delivers an UNCATCHABLE SIGKILL to the task ("srun:
+                    # ... task 0: Killed", job 17018943) -- so TRITON still cannot
+                    # finalize-and-exit-0, but the kill is routed through srun's
+                    # handler, which a group SIGKILL fatally bypasses. New session
+                    # isolates the group: no sibling step / batch job / orchestrator
+                    # is signalled.
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError):
+                        # Group already gone (sim raced to completion) or perms -
+                        # fall back to a direct terminate so the watcher progresses.
+                        proc.terminate()
                     killed = True
             time.sleep(poll_interval_s)
         return proc.returncode

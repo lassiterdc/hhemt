@@ -376,6 +376,21 @@ def main():
                 env={**os.environ, **env},
                 stdout=lf,
                 stderr=subprocess.STDOUT,
+                # start_new_session: give the `bash -lc "... srun ... triton.exe"`
+                # wrapper its OWN process group so the Option-D deterministic-kill
+                # watcher can signal the WHOLE group (bash + the srun client) via
+                # os.killpg. A plain proc.kill() SIGKILLs only bash; the srun client
+                # dies too fast to tell slurmstepd to tear the step down, so the
+                # triton.exe STEP task ORPHANS and runs to t=end (empirically
+                # confirmed on Rivanna, proctrack/cgroup, job 17018902). Signalling
+                # the group with SIGTERM instead lets srun's handler force-terminate
+                # the step (see wait_with_deterministic_checkpoint_kill). Harmless on
+                # the non-armed production path: batch jobs have no controlling
+                # terminal, and SLURM walltime cleanup is cgroup-based (not
+                # process-group-based), so detaching the session does not leak the
+                # sim on a real walltime kill. Mirrors the start_new_session=True
+                # already used at the workflow.py Popen sites.
+                start_new_session=True,
             )
             if _arm_deterministic_kill:
                 logger.info(
