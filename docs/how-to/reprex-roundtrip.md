@@ -38,6 +38,33 @@ The emitted bundle root carries the minimal runnable set:
 - `ro-crate-metadata.json` — the Workflow-Run-Crate metadata; heavy inputs and (for a
   container run) the SIF are recorded **by reference** with their `sha256`.
 
+## Distribute by DOI (publish → ingest → run)
+
+Instead of handing someone the bundle directory, you can mint a **runnable-DOI**: publish the
+reprex bundle to a DOI-minting repository, and a reproducer fetches, reconstitutes, and runs
+it from the DOI alone.
+
+```python
+# Producer: deposit the bundle and mint the DOI (Zenodo shown; see publishing.md for credentials)
+result = analysis.publish_reprex_bundle(target="zenodo")
+print(result["data_doi"])          # the runnable-DOI
+```
+
+```bash
+# Reproducer: fetch + reconstitute by DOI, then run the round-trip check below
+hhemt ingest --doi {minted-doi} --host zenodo --sha256 {digest}
+```
+
+`hhemt ingest` fetches the bundle, schema-guards it (an exact `BUNDLE_SCHEMA_VERSION` match),
+reads the crate `mainEntity`, and reconstitutes the runnable config pair — the round-trip
+check below then applies on the reproducer's cluster. For the full operator walkthrough
+(credentials, the sandbox, excluded inputs, the HydroShare manual-DOI caveat) see
+[the DOI round-trip runbook](doi-roundtrip-e2e.md).
+
+> A sandbox-minted DOI requires `HHEMT_ZENODO_BASE_URL=https://sandbox.zenodo.org` on the
+> reproducer side too — the fetch resolves the Zenodo host from the same env var as the deposit,
+> so a sandbox record resolves against the sandbox rather than 404ing on production.
+
 ## What the reproducer supplies
 
 The reproducer fills two things with *their own* system's values:

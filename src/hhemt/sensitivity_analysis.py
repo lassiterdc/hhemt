@@ -1098,6 +1098,30 @@ class TRITONSWMM_sensitivity_analysis:
             consolidated_zarr_relpath="sensitivity_datatree.zarr",
         )
 
+    def publish_reprex_bundle(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        exclude_config: "Path | None" = None,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit the RUNNABLE reprex bundle for the sensitivity master (D6, R5).
+
+        Sensitivity parallel of ``TRITONSWMM_analysis.publish_reprex_bundle`` — the emit
+        half of the DOI round-trip. Opt-in only; NEVER invoked from ``run()``.
+
+        Args:
+            exclude_config: The ADR-20 governed opt-out (see the analysis-tier facade).
+                Omit it and the deposited bundle is SELF-CONTAINED.
+        """
+        return self.master_analysis.publish_reprex_bundle(
+            target,
+            exclude_config=exclude_config,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+        )
+
     def run_all_sims(
         self,
         pickup_where_leftoff,

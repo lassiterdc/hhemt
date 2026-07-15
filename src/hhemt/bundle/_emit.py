@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from hhemt.bundle._path_policy import (
     _PATH_FIELD_POLICY,
+    _SELF_CONTAINED_POLICIES,
     PathPolicy,
     RewriteResult,
     enumerate_path_fields,
@@ -57,11 +58,13 @@ from hhemt.version_migration.constants import (
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
     from hhemt.config.base import cfgBaseModel
+    from hhemt.config.bundle_exclude import BundleExcludeConfig
 
 
 def emit_bundle(
     analysis: TRITONSWMM_analysis,
     output_path: Path | None = None,
+    exclude_config: Path | BundleExcludeConfig | None = None,
 ) -> Path:
     """Emit a portable render bundle from a completed HPC analysis.
 
@@ -71,6 +74,14 @@ def emit_bundle(
     under {analysis_dir}/plots/. Configs are rewritten to relative paths.
     The HPC-baseline analysis_report.{html,zip} are preserved under
     bundle_baseline/.
+
+    Args:
+        exclude_config: The ADR-20 governed opt-out — a path to an operator-authored
+            exclude-config YAML (or an already-validated ``BundleExcludeConfig``). When
+            given, the named inputs are NOT carried; each emits an ``input_deposit``
+            by-reference block into ``bundle_manifest.json`` and a URL-bearing ``File``
+            part into the crate instead. Omit it (the default) and the bundle is
+            SELF-CONTAINED: every cfg-declared input is carried (ADR-9).
     """
     analysis_dir = analysis.analysis_paths.analysis_dir
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
@@ -92,21 +103,36 @@ def emit_bundle(
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Function-local import: config/bundle_exclude.py imports hhemt.bundle._path_policy
+    # (a leaf), and reprex_taxonomy.py documents the invariant that no module reachable
+    # from hhemt.bundle.__init__ may import hhemt.config.* at module scope. Same discipline
+    # as the function-local `all_field_bucket` import in _scrub_user_bucket_fields.
+    from hhemt.config.bundle_exclude import BundleExcludeConfig
+
+    if isinstance(exclude_config, Path | str):
+        import yaml
+
+        exclude_config = BundleExcludeConfig.model_validate(
+            yaml.safe_load(Path(exclude_config).read_text()) or {}
+        )
+
     with _staging_dir(output_path.parent) as staging:
         _harvest_and_copy_sources(sources_by_renderer, analysis_dir, staging)
         _copy_bundle_baseline(analysis_dir, staging)
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
-        _copy_declared_inputs(analysis, staging)
+        input_deposits = _copy_declared_inputs(analysis, staging, exclude_config)
         _emit_runnable_template_set(staging)
         _upgrade_crate_to_workflow_run_crate(staging)
+        _annotate_crate_excluded_inputs(staging, input_deposits)
         _write_bundle_manifest(
             staging,
             sources_by_renderer=sources_by_renderer,
             analysis_id=analysis_id,
             git_sha=git_sha,
             bundle_root_invariants=aggregated_invariants,
+            input_deposits=input_deposits,
         )
         _emit_bundle_zip(staging, output_path)
 
@@ -424,36 +450,66 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
 
 
-#: Path policies whose fields name a bundle-carried input file (self-contained emit).
-#: FORCED_DOT (analysis_dir / system_directory) are directory markers, IS_NONE_ACCEPTABLE
-#: (software dirs) are nulled and never bundled, HELPER_RESOLVED is runtime-derived — none
-#: names a file to carry.
-_SELF_CONTAINED_POLICIES = frozenset(
-    {
-        PathPolicy.BUNDLE_RELATIVE,
-        PathPolicy.BUNDLE_RELATIVE_OR_NONE,
-        PathPolicy.BUNDLE_RELATIVE_LIST,
-    }
-)
+def _sha256_file(path: Path) -> str:
+    """Streaming 1 MiB-chunk sha256 of a file.
+
+    The chunk size is load-bearing: the ``case manifest sha256 uses streaming chunked
+    read byte identical to whole file`` stipulation binds every sha256 the toolkit emits
+    or verifies, so the emit-side digest and the ingest-side
+    ``_fetch_file_by_url(expected_sha256=...)`` verification agree by construction.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def _copy_declared_inputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
+def _copy_declared_inputs(
+    analysis: TRITONSWMM_analysis,
+    staging: Path,
+    exclude_config: BundleExcludeConfig | None = None,
+) -> list[dict]:
     """Self-contained emit (ADR-9): copy EVERY cfg-declared input file into the bundle
     at exactly the location ``_rewrite_paths_to_relative`` writes into the cfg, so a
     reconstituted config resolves every declared input on disk.
 
     Driven by the same ``_PATH_FIELD_POLICY`` table the rewrite consumes (one
     policy-driven copy path — never a second source list, so
-    ``test_all_path_fields_have_policy``'s bidirectional guard already covers it). The
-    harvest is UNCONDITIONAL (ADR-9 makes self-containment the primary contract; the
-    governed ``bundle_exclude_config`` opt-out is a Phase-3 addition). Overlaps with
-    ``_harvest_and_copy_sources`` (a renderer-declared input that is also a cfg field) are
-    idempotent overwrites. A declared-but-absent input is SKIPPED here; ``from_doi``'s
-    fail-closed materialize gate raises on it at ingest.
+    ``test_all_path_fields_have_policy``'s bidirectional guard already covers it).
+    Overlaps with ``_harvest_and_copy_sources`` (a renderer-declared input that is also a
+    cfg field) are idempotent overwrites. A declared-but-absent input is SKIPPED here;
+    ``from_doi``'s fail-closed materialize gate raises on it at ingest.
+
+    ADR-20 (as amended 2026-07-14) — the governed opt-out. When ``exclude_config`` names a
+    field, its input(s) are NOT carried; instead an ``input_deposit`` block is returned for
+    each, and ``_write_bundle_manifest`` records it. The block is FILE-level:
+    ``{relpath, sha256, accessed, citation, contentUrl?, url?, identifier?}``. The toolkit
+    computes ``relpath`` (via the SAME ``_rewrite_absolute_to_relative`` the cfg rewrite
+    uses, so the block's path is byte-identical to where the reconstituted cfg looks),
+    ``sha256``, and ``accessed``; the operator supplies the rest. Self-contained remains the
+    default: no exclude-config => every input carried.
+
+    Returns:
+        The ``input_deposit`` blocks for the excluded inputs (empty when nothing is excluded).
+
+    Raises:
+        ConfigurationError: if an excluded input has no coordinate block, or resolves to a
+            DIRECTORY (sha256 is undefined over a tree, so the by-reference record could not
+            be integrity-pinned). Both are fail-closed: the toolkit MUST NOT emit a bundle
+            that neither carries nor properly references a declared input — that defect
+            would surface only after a DOI had been minted.
     """
+    from hhemt.exceptions import ConfigurationError
+
     analysis_dir = analysis.analysis_paths.analysis_dir
     analysis_root = analysis_dir.resolve()
     system_root = analysis._system.cfg_system.system_directory.resolve()
+    accessed = datetime.now(UTC).date().isoformat()
+    deposits: list[dict] = []
+
     for cfg in (analysis._system.cfg_system, analysis.cfg_analysis):
         for name in enumerate_path_fields(type(cfg)):
             if _PATH_FIELD_POLICY.get(name) not in _SELF_CONTAINED_POLICIES:
@@ -461,6 +517,7 @@ def _copy_declared_inputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
             value = getattr(cfg, name, None)
             if value is None:
                 continue
+            excluded = exclude_config is not None and exclude_config.excludes(name)
             for elem in value if isinstance(value, list) else [value]:
                 if elem is None:
                     continue
@@ -475,12 +532,56 @@ def _copy_declared_inputs(analysis: TRITONSWMM_analysis, staging: Path) -> None:
                 )
                 if not isinstance(rel, str) or Path(rel).is_absolute():
                     continue  # unresolvable dest; leave for the ingest fail-closed gate
+
+                if excluded:
+                    ref = exclude_config.refs_for(name, src.name)
+                    if ref is None:
+                        raise ConfigurationError(
+                            parameter=f"bundle_exclude_config.exclusions.{name}",
+                            value=src.name,
+                            reason=(
+                                f"'{name}' is excluded but carries no coordinates for "
+                                f"'{src.name}'. Every excluded input needs at least a "
+                                f"'citation'; add a 'contentUrl' too if a consumer can "
+                                f"download it directly. Without a block the bundle would "
+                                f"neither carry nor reference this input."
+                            ),
+                        )
+                    if src.is_dir():
+                        raise ConfigurationError(
+                            parameter=f"bundle_exclude_config.exclusions.{name}",
+                            value=str(src),
+                            reason=(
+                                "excluded input resolves to a DIRECTORY; sha256 is undefined "
+                                "over a tree, so the by-reference record cannot be "
+                                "integrity-pinned. Deposit the directory as a single archive "
+                                "and point the cfg field at that file, or carry it in-bundle."
+                            ),
+                        )
+                    block = {
+                        "relpath": rel,
+                        "sha256": _sha256_file(src),
+                        "accessed": accessed,
+                        "citation": ref.citation,
+                    }
+                    # contentUrl present/absent IS the fetchable bit — omit the key entirely
+                    # when absent rather than writing a null, so the manifest reads as a
+                    # deliberate reference-only record.
+                    for key in ("contentUrl", "url", "identifier"):
+                        val = getattr(ref, key)
+                        if val is not None:
+                            block[key] = val
+                    deposits.append(block)
+                    continue
+
                 dest = staging / rel
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 if src.is_dir():
                     shutil.copytree(src, dest, dirs_exist_ok=True)
                 else:
                     shutil.copy2(src, dest)
+
+    return deposits
 
 
 #: Bundle-root filenames for the minimal runnable set (reprex carriage, ADR-10).
@@ -664,12 +765,64 @@ def reconstitute_runnable_analysis_config(
     return Path(target)
 
 
+def _annotate_crate_excluded_inputs(staging: Path, input_deposits: list[dict]) -> None:
+    """Give each EXCLUDED input a by-reference ``File`` entity in the sidecar crate.
+
+    ADR-20 originally ratified "a DESCRIPTIVE (no-``downloadUrl``) File part per excluded
+    input". That clause was a NO-OP and was REVERSED (user-re-ratified 2026-07-14):
+    ``build_analysis_crate``'s ``input_parts`` loop ALREADY emits a URL-less ``File`` with a
+    bundle-relative ``@id`` for every CARRIED input, so a URL-less part distinguishes
+    nothing — the published crate would have asserted a ``File`` at a bundle-relative path
+    that is absent from the payload, with nothing marking it external and no way to obtain
+    it. That is an immutable public FAIR defect inside a minted DOI.
+
+    The corrected entity is the RO-Crate-native pattern for a file omitted for "licensing
+    concerns, large data sizes, privacy" (the BagIt ``fetch.txt`` analogue): the ``@id``
+    stays BUNDLE-RELATIVE (the file is conceptually payload — the reconstituted config
+    resolves it there — merely not transferred), and the access/citation vocabulary is
+    attached. ``contentUrl`` is omitted iff the input is unfetchable-by-design.
+
+    Embedded-core safety: ``partition_core_vs_sidecar`` is an ALLOW-LIST filter and none of
+    the added keys are in ``_EMBEDDED_PROV_KEYS``, so they are dropped from the
+    deterministic embedded core automatically and live only in the sidecar crate — the
+    FAIR-facing artifact. The D3-deferred embedded-core flip is still avoided at zero cost.
+    """
+    if not input_deposits:
+        return
+    crate_path = staging / "ro-crate-metadata.json"
+    if not crate_path.exists():
+        return  # no crate emitted for this analysis; nothing to annotate
+
+    crate = json.loads(crate_path.read_text())
+    graph = crate.get("@graph", [])
+    by_id = {e.get("@id"): e for e in graph if isinstance(e, dict)}
+
+    for block in input_deposits:
+        entity = by_id.get(block["relpath"])
+        if entity is None:
+            entity = {"@id": block["relpath"], "@type": "File"}
+            graph.append(entity)
+        entity.setdefault("@type", "File")
+        entity["sha256"] = block["sha256"]
+        entity["sdDatePublished"] = block["accessed"]
+        entity["citation"] = block["citation"]
+        for key in ("contentUrl", "url", "identifier"):
+            if key in block:
+                entity[key] = block[key]
+            else:
+                entity.pop(key, None)
+
+    crate["@graph"] = graph
+    crate_path.write_text(json.dumps(crate, indent=2))
+
+
 def _write_bundle_manifest(
     staging: Path,
     sources_by_renderer: dict[str, list[Path]],
     analysis_id: str,
     git_sha: str,
     bundle_root_invariants: dict | None = None,
+    input_deposits: list[dict] | None = None,
 ) -> None:
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
@@ -684,6 +837,11 @@ def _write_bundle_manifest(
     }
     if bundle_root_invariants is not None:
         manifest["bundle_root_invariants"] = bundle_root_invariants
+    if input_deposits:
+        # ADR-20: the by-reference record for each EXCLUDED input. Absent (not empty) when
+        # the bundle is self-contained, so a self-contained manifest is byte-identical to
+        # what it was before this feature existed.
+        manifest["input_deposit"] = input_deposits
     (staging / BUNDLE_MANIFEST_FILENAME).write_text(
         json.dumps(manifest, indent=2)
     )

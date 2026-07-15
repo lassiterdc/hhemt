@@ -5,6 +5,20 @@ analysis to a DOI-minting repository (Zenodo or HydroShare), and **fetching** a 
 study's heavy inputs back by DOI/PID. Both are opt-in — publishing is never triggered by
 `analysis.run()` or `submit_workflow()`.
 
+## Which deposit unit? data-DOI vs runnable-DOI
+
+The toolkit can publish two different units, minting two different kinds of DOI. Pick by what
+you want the DOI to *do*:
+
+| Deposit unit | Command | The DOI mints a… | Use when |
+|---|---|---|---|
+| **analysis-directory set** — consolidated zarr + `ro-crate-metadata.json` + the two configs | `analysis.publish(target=…)` | **data-DOI** — the archived, citable analysis outputs + provenance (reproducible from the configs and crate) | you're archiving results for citation / a data-availability statement |
+| **reprex bundle** — the round-trippable bundle that runs an experiment from scratch | `analysis.publish_reprex_bundle(target=…)` | **runnable-DOI** — `hhemt ingest --doi {DOI}` fetches, reconstitutes, and runs it | you want a one-command reproducible experiment (see [the DOI round-trip runbook](doi-roundtrip-e2e.md)) |
+
+Both go through the same `target` seam and the same credentials below; they differ only in
+what bytes are deposited. The rest of this guide uses `analysis.publish()` (the data-DOI); the
+runnable-DOI path is identical with `publish_reprex_bundle()` in place of `publish()`.
+
 ## Before you publish
 
 `analysis.publish()` deposits the *analysis-directory set* — the consolidated
@@ -33,7 +47,9 @@ export HHEMT_HYDROSHARE_PASSWORD=<your-hydroshare-password>
 
 ## Publish to Zenodo
 
-Zenodo mints the DOI programmatically (reserve-DOI → deposit → publish):
+Zenodo mints the DOI on publish — the toolkit creates a draft, embeds the record metadata,
+uploads the deposit, publishes, and reads the minted, DataCite-registered DOI back from the
+published record (no DOI is reserved up front):
 
 ```python
 result = analysis.publish(

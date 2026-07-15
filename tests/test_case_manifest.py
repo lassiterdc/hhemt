@@ -99,7 +99,11 @@ def test_connect_anonymous_first(monkeypatch):
 
 
 def test_connect_falls_back_to_sign_in(monkeypatch):
-    # R3: anonymous read raises -> sign_in called.
+    # R3 tier 3: anonymous read raises AND no env credentials -> interactive sign_in.
+    # delenv makes this deterministic regardless of the ambient shell (a developer who
+    # sourced e2e.env would otherwise take the new tier-2 credentialed path).
+    monkeypatch.delenv("HHEMT_HYDROSHARE_USERNAME", raising=False)
+    monkeypatch.delenv("HHEMT_HYDROSHARE_PASSWORD", raising=False)
     calls = {"sign_in": 0}
 
     class FakeHS:
@@ -112,6 +116,39 @@ def test_connect_falls_back_to_sign_in(monkeypatch):
     monkeypatch.setattr(ex, "HydroShare", lambda: FakeHS())
     ex.TRITON_SWMM_experiment._connect_to_hydroshare("res123")
     assert calls["sign_in"] == 1
+
+
+def test_connect_uses_env_credentials_for_private_resource(monkeypatch):
+    """Tier 2: anonymous read fails on a PRIVATE resource, but HHEMT_HYDROSHARE_* are set
+    -> authenticate non-interactively and DO NOT prompt. This is what makes private-resource
+    retrieval work headlessly (batch job / HPC node / automated test)."""
+    monkeypatch.setenv("HHEMT_HYDROSHARE_USERNAME", "someuser")
+    monkeypatch.setenv("HHEMT_HYDROSHARE_PASSWORD", "somepass")
+    seen = {"anon_ctor": 0, "auth_ctor_creds": None, "sign_in": 0}
+
+    class AnonHS:
+        def resource(self, rid, validate=True):
+            raise RuntimeError("403 not anonymously accessible")
+
+        def sign_in(self):
+            seen["sign_in"] += 1  # must never be called on the credentialed path
+
+    class AuthHS:
+        def resource(self, rid, validate=True):
+            return object()  # authenticated read succeeds
+
+    def fake_hydroshare(*args, **kwargs):
+        if kwargs.get("username"):
+            seen["auth_ctor_creds"] = (kwargs["username"], kwargs["password"])
+            return AuthHS()
+        seen["anon_ctor"] += 1
+        return AnonHS()
+
+    monkeypatch.setattr(ex, "HydroShare", fake_hydroshare)
+    ex.TRITON_SWMM_experiment._connect_to_hydroshare("res123")
+
+    assert seen["auth_ctor_creds"] == ("someuser", "somepass")  # env creds were used
+    assert seen["sign_in"] == 0  # interactive prompt was NOT reached
 
 
 def test_verify_manifest_raises_on_mismatch(tmp_path):
@@ -234,6 +271,44 @@ def test_download_data_from_zenodo_writes_and_verifies(tmp_path, monkeypatch):
         cm, target, download_if_exists=False, expected_manifest=cm.manifest
     )
     assert (target / "data" / "contents" / "a.txt").read_bytes() == content
+
+
+def test_download_data_from_zenodo_honors_base_url_env(tmp_path, monkeypatch):
+    # R5/R8 round-trip symmetry: the fetch-back host must be resolved from
+    # HHEMT_ZENODO_BASE_URL (mirroring publishing._ZenodoTarget.publish), so a
+    # sandbox-minted record resolves against the sandbox instead of 404ing on
+    # production. Locks against a future refactor re-hardcoding the host.
+    import requests
+
+    monkeypatch.setenv("HHEMT_ZENODO_BASE_URL", "https://sandbox.zenodo.org")
+
+    captured = []
+
+    class FakeMetaResp:
+        status_code = 200
+
+        def json(self):
+            return {"files": []}
+
+    def fake_get(url, *args, **kwargs):
+        captured.append(url)
+        return FakeMetaResp()
+
+    monkeypatch.setattr(requests, "get", fake_get)
+
+    cm = CaseManifest.model_validate(
+        {
+            "case_name": "z",
+            "res_identifier": "unused",
+            "host": "zenodo",
+            "doi": "10.5072/zenodo.565605",
+            "manifest": {},
+        }
+    )
+    ex.TRITON_SWMM_experiment._download_data_from_zenodo(
+        cm, tmp_path / "bag", download_if_exists=False, expected_manifest={}
+    )
+    assert captured == ["https://sandbox.zenodo.org/api/records/565605"]
 
 
 def test_download_data_from_zenodo_unresolvable_recid_raises(tmp_path):

@@ -1801,6 +1801,49 @@ def _print_dry_run_summary(args: dict) -> None:
     console.print("\n[yellow]Note: Dry-run mode - no execution performed.[/yellow]\n")
 
 
+def _list_excludable_callback(value: bool) -> bool:
+    """Print the ADR-20 excludable-input catalog and EXIT — before option validation.
+
+    ``is_eager=True`` + ``typer.Exit`` is load-bearing, not stylistic. The ``bundle``
+    command's ``--system-config`` and ``--analysis-config`` are REQUIRED options, so a
+    non-eager flag would demand two configs from an operator whose entire purpose in
+    running this is to DISCOVER the field names before authoring anything. That is
+    structurally the same defect as the retired ``--profile`` option, which was required
+    and therefore reached every invocation. An eager callback is processed before required
+    options are enforced (the same mechanism ``--help`` uses).
+    """
+    if not value:
+        return value
+
+    from hhemt.bundle._path_policy import _EXCLUDABLE_CATALOG
+
+    console.print(
+        "\n[bold]Inputs that MAY be excluded from a reprex bundle[/bold] (ADR-20 opt-out).\n"
+        "A bundle with no exclude-config is SELF-CONTAINED: every input below is carried.\n"
+        "Excluding an input carries it BY REFERENCE instead — supply a [cyan]citation[/cyan] "
+        "(required) and, if a consumer can download it directly, a [cyan]contentUrl[/cyan].\n"
+        "Omit [cyan]contentUrl[/cyan] for licensed/restricted data: ingest then fails closed "
+        "with your citation, which is the correct outcome — not a degraded one.\n"
+    )
+    for name, entry in sorted(_EXCLUDABLE_CATALOG.items()):
+        if entry.excludable:
+            console.print(
+                f"  [green]{name}[/green]\n      {entry.description}\n"
+                f"      cost: {entry.reproducibility_cost}"
+            )
+        else:
+            console.print(
+                f"  [red]{name}[/red] (NOT excludable)\n      {entry.description}\n"
+                f"      {entry.reproducibility_cost}"
+            )
+    console.print(
+        "\nOrdering: the excluded input must ALREADY have a durable record — the toolkit has "
+        "no per-file deposit helper. Deposit it (or locate the third-party source) FIRST, "
+        "then author the exclude-config.\n"
+    )
+    raise typer.Exit(0)
+
+
 @app.command(name="bundle")
 def bundle_command(
     system_config: Path = typer.Option(
@@ -1829,6 +1872,26 @@ def bundle_command(
             "{analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip."
         ),
     ),
+    exclude_config: Path = typer.Option(
+        None,
+        "--exclude-config",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "ADR-20 governed opt-out: an operator-authored YAML naming inputs to carry BY "
+            "REFERENCE instead of in-bundle. Omit for a SELF-CONTAINED bundle (the default). "
+            "Run --list-excludable to see what may be opted out."
+        ),
+    ),
+    list_excludable: bool = typer.Option(
+        False,
+        "--list-excludable",
+        callback=_list_excludable_callback,
+        is_eager=True,
+        help="Print the excludable-input catalog and exit (no configs required).",
+    ),
 ) -> None:
     """Emit a portable render bundle for local renderer iteration.
 
@@ -1846,11 +1909,17 @@ def bundle_command(
 
     system = TRITONSWMM_system(system_config)
     analysis = TRITONSWMM_analysis(analysis_config, system)
+    from hhemt.bundle import emit_bundle
+
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
-        bundle_path = analysis.sensitivity.bundle_report_data(output)
+        target = analysis.sensitivity.master_analysis
     else:
-        bundle_path = analysis.bundle_report_data(output)
-    console.print(f"[green]Bundle emitted:[/green] {bundle_path}")
+        target = analysis
+    bundle_path = emit_bundle(target, output, exclude_config=exclude_config)
+    if exclude_config is None:
+        console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
+    else:
+        console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
 
 
 @app.command(name="ingest")

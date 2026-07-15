@@ -857,6 +857,50 @@ class TRITONSWMM_analysis:
             software_doi=software_doi,
         )
 
+    def publish_reprex_bundle(
+        self,
+        target: "Literal['hydroshare', 'zenodo']",
+        *,
+        exclude_config: "Path | None" = None,
+        override_dataset_license: "Literal['CC0-1.0', 'CC-BY-NC-4.0'] | None" = None,
+        software_doi: "str | None" = None,
+    ) -> dict:
+        """Deposit the RUNNABLE reprex bundle to a DOI-minting repository (D6, R5).
+
+        The publish<->ingest symmetry: this is the emit half of the DOI round-trip whose
+        consume half is ``TRITON_SWMM_experiment.from_doi``. Where ``publish()`` deposits the
+        ADR-11 analysis_dir DATA set (a citation/reuse DOI with no reconstitution path), this
+        deposits the reprex bundle — the only artifact whose crate carries a ``mainEntity``
+        ComputationalWorkflow and for which ``reconstitute_runnable_config`` exists.
+
+        Opt-in only — NEVER invoked from ``run()``/``submit_workflow()`` (per the
+        ``publish is a standalone opt-in facade`` stipulation).
+
+        The bundle is deposited as the ZIP ``emit_bundle`` wrote — NOT via
+        ``reprex_bundle()``, which returns the EXTRACTED DIRECTORY (a re-zip would produce a
+        nested root that the ingest side's ``Bundle.from_directory`` rejects).
+
+        Args:
+            exclude_config: The ADR-20 governed opt-out — a path to an operator-authored
+                exclude-config YAML. Omit it and the deposited bundle is SELF-CONTAINED:
+                every cfg-declared input is carried, so a consumer can run it from scratch.
+                Supply it and the named inputs are carried BY REFERENCE instead (an
+                ``input_deposit`` block + a URL-bearing crate ``File`` part). See
+                ``hhemt bundle --list-excludable`` for the menu, and note the ordering
+                constraint: the excluded input must ALREADY have a durable record.
+        """
+        from hhemt.bundle import emit_bundle
+        from hhemt.publishing import publish_analysis
+
+        bundle_zip = emit_bundle(self, exclude_config=exclude_config)
+        return publish_analysis(
+            self,
+            target=target,
+            deposit_source=bundle_zip,
+            override_dataset_license=override_dataset_license,
+            software_doi=software_doi,
+        )
+
     def eda(
         self,
         *,

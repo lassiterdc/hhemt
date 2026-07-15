@@ -403,9 +403,77 @@ class TRITON_SWMM_experiment:
                 ),
             )
 
-    @staticmethod
+    @classmethod
+    def _materialize_input_deposits(
+        cls, bundle_root: Path, missing: list[tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        """Fetch the excluded inputs a bundle carries BY REFERENCE (ADR-20, as amended).
+
+        This is outcome 2 of the three-outcome materialize gate. For each declared-but-absent
+        input, look up its ``input_deposit`` block in ``bundle_manifest.json``:
+
+        - block present WITH a ``contentUrl`` -> fetch to ``bundle_root/{relpath}`` and
+          sha256-verify. A fetch error or a digest mismatch is a HARD failure — never a
+          silent skip, because a silently-wrong input would produce plausible-looking
+          garbage results hours later.
+        - block present WITHOUT a ``contentUrl`` -> **referenced-but-unfetchable-by-design**
+          (outcome 3). Left in the returned still-missing list, to be reported with its
+          citation. This is the CORRECT terminal state for licensed/IP data, not a bug.
+        - no block at all -> still missing (a genuinely broken bundle).
+
+        The fetch routes through ``_fetch_file_by_url`` — the per-file URL seam — and NOT
+        through ``_fetch_deposit_files``, which is a WHOLE-RECORD fetcher (its Zenodo arm
+        loops every entry in ``files[]``; its HydroShare arm downloads the entire bag and
+        returns a directory). Routing a per-input fetch through it would force a consumer to
+        download the ENTIRE deposit to obtain ONE excluded input — defeating the purpose of
+        an opt-out that exists precisely because the data is too large to ship.
+
+        Returns:
+            The inputs still missing after fetching, as ``(field, path)`` pairs.
+        """
+        manifest_path = bundle_root / "bundle_manifest.json"
+        if not manifest_path.exists():
+            return missing
+        deposits = json.loads(manifest_path.read_text()).get("input_deposit") or []
+        if not deposits:
+            return missing
+
+        # Key by the ABSOLUTE on-disk path the reconstituted cfg points at, so the lookup
+        # matches what the gate found missing. `relpath` is emitted via the same
+        # _rewrite_absolute_to_relative the cfg rewrite uses, so this join is exact.
+        by_abspath = {str((bundle_root / d["relpath"]).resolve()): d for d in deposits}
+
+        still_missing: list[tuple[str, str]] = []
+        for field_name, path_str in missing:
+            block = by_abspath.get(str(Path(path_str).resolve()))
+            if block is None:
+                still_missing.append((field_name, path_str))
+                continue
+            url = block.get("contentUrl")
+            if not url:
+                still_missing.append((field_name, path_str))  # outcome 3 — by design
+                continue
+            dest = bundle_root / block["relpath"]
+            try:
+                cls._fetch_file_by_url(url, dest, expected_sha256=block.get("sha256"))
+            except Exception as exc:  # noqa: BLE001 — any fetch/digest failure is terminal
+                raise ProcessingError(
+                    operation="doi_ingest_input_deposit",
+                    filepath=dest,
+                    reason=(
+                        f"the bundle carries '{field_name}' BY REFERENCE, but fetching it "
+                        f"failed: {exc}\n"
+                        f"  contentUrl: {url}\n"
+                        f"  citation:   {block.get('citation', '(none)')}\n"
+                        "The reference may have rotted. Obtain the file from the citation "
+                        f"above and place it at {dest}, then re-run."
+                    ),
+                ) from exc
+        return still_missing
+
+    @classmethod
     def _assert_declared_inputs_exist(
-        system_config_path: Path, analysis_config_path: Path
+        cls, system_config_path: Path, analysis_config_path: Path
     ) -> None:
         """Fail-closed materialize gate: raise ``ProcessingError`` naming EVERY
         reconstituted input Path that does not exist on disk.
@@ -434,7 +502,7 @@ class TRITON_SWMM_experiment:
             PathPolicy.BUNDLE_RELATIVE_OR_NONE,
             PathPolicy.BUNDLE_RELATIVE_LIST,
         }
-        missing: list[str] = []
+        missing: list[tuple[str, str]] = []
         for cfg_path, cfg_model in (
             (system_config_path, system_config),
             (analysis_config_path, analysis_config),
@@ -450,18 +518,53 @@ class TRITON_SWMM_experiment:
                     if v is None:
                         continue
                     if not Path(v).exists():
-                        missing.append(f"{name}: {v}")
+                        missing.append((name, str(v)))
+
+        # Outcome 2 (fetchable): an absent input with an input_deposit block carrying a
+        # contentUrl is fetched + sha256-verified here, BEFORE the fail-closed enumeration.
+        # bundle_root is the configs' parent (both reconstituted configs sit at the root).
         if missing:
+            bundle_root = Path(system_config_path).parent
+            missing = cls._materialize_input_deposits(bundle_root, missing)
+
+        if missing:
+            # Outcome 3 (referenced-but-unfetchable-by-design) + genuinely-broken bundles.
+            # Report each with its citation so the operator can actually obtain the file —
+            # a bare "missing input" message is useless for licensed data, which is exactly
+            # the case the exclude-config exists to serve.
+            blocks: dict[str, dict] = {}
+            manifest_path = Path(system_config_path).parent / "bundle_manifest.json"
+            if manifest_path.exists():
+                root = Path(system_config_path).parent
+                for d in json.loads(manifest_path.read_text()).get("input_deposit") or []:
+                    blocks[str((root / d["relpath"]).resolve())] = d
+
+            lines: list[str] = []
+            for name, path_str in sorted(missing):
+                block = blocks.get(str(Path(path_str).resolve()))
+                if block is None:
+                    lines.append(f"{name}: {path_str}\n      (not carried, and no input_deposit record)")
+                    continue
+                lines.append(
+                    f"{name}: {path_str}\n"
+                    f"      REFERENCED, not carried (no direct download is available for it).\n"
+                    f"      how to obtain: {block.get('citation', '(no citation supplied)')}\n"
+                    + (f"      landing page:  {block['url']}\n" if block.get("url") else "")
+                    + (f"      identifier:    {block['identifier']}\n" if block.get("identifier") else "")
+                    + f"      sha256:        {block.get('sha256', '(none)')}\n"
+                    f"      place it at:   {path_str}"
+                )
+
             raise ProcessingError(
                 operation="doi_ingest_inputs",
                 filepath=None,
                 reason=(
                     "the reconstituted experiment declares inputs that do not exist on "
-                    "disk — the bundle is not self-contained (or was emitted with an "
-                    "exclude-config whose input_deposit fetch is unavailable). Place "
-                    "these under {bundle_root}/external/ and re-run, or re-emit the "
-                    "bundle self-contained. Missing inputs:\n  "
-                    + "\n  ".join(sorted(missing))
+                    "disk. Inputs marked REFERENCED were deliberately excluded from the bundle "
+                    "(licensed, restricted, or oversized data the depositor could not "
+                    "redistribute) — obtain each from its citation below and place it at "
+                    "the stated path, then re-run. This is a fail-closed stop, not a "
+                    "corrupt bundle.\n  " + "\n  ".join(lines)
                 ),
             )
 
@@ -702,10 +805,13 @@ class TRITON_SWMM_experiment:
             if dest.exists() and not download_if_exists:
                 return dest
             dest.mkdir(parents=True, exist_ok=True)
+            import os  # host resolution mirrors publishing._ZenodoTarget.publish
+
             import requests  # explicit dep declared in pyproject
 
+            base = os.environ.get("HHEMT_ZENODO_BASE_URL", "https://zenodo.org").rstrip("/")
             resp = requests.get(
-                f"https://zenodo.org/api/records/{recid}", timeout=60
+                f"{base}/api/records/{recid}", timeout=60
             )
             if resp.status_code != 200:
                 raise ProcessingError(
@@ -864,11 +970,23 @@ class TRITON_SWMM_experiment:
     def _connect_to_hydroshare(cls, res_identifier: str):
         """Return a HydroShare client able to read ``res_identifier``.
 
-        Anonymous-first: a public resource is downloadable with NO credentials
-        (verified: GET /hsapi/resource/{id}/ returns 200 binary/octet-stream for a
-        public resource). Only fall back to the interactive OAuth sign-in when the
-        anonymous resource read fails (private/unshared resource).
+        Three tiers, cheapest and least-privileged first:
+
+        1. **Anonymous** — a PUBLIC resource is downloadable with NO credentials
+           (verified: GET /hsapi/resource/{id}/ returns 200 for a public resource).
+        2. **Env-credentialed (non-interactive)** — when the anonymous read fails
+           (a private/unshared resource) AND ``HHEMT_HYDROSHARE_USERNAME`` +
+           ``HHEMT_HYDROSHARE_PASSWORD`` are set, authenticate with them. This is the
+           symmetric read-side counterpart to ``publishing._HydroShareTarget.publish``
+           (which already constructs ``HydroShare(username=…, password=…)`` from the same
+           env vars), and it is what makes PRIVATE-resource retrieval work HEADLESSLY — in
+           a batch job, on an HPC node, or in an automated test — none of which can answer
+           an interactive prompt.
+        3. **Interactive sign-in** — the last resort, for a human at a terminal with no env
+           credentials configured.
         """
+        import os
+
         if HydroShare is None:
             raise ProcessingError(
                 operation="hydroshare_connect",
@@ -886,11 +1004,33 @@ class TRITON_SWMM_experiment:
         except Exception as exc:  # noqa: BLE001 - hsclient raises bare Exception on non-200
             # Broad catch is deliberate: hsclient does not raise a typed auth error.
             # Preserve the original cause so a network failure or a misspelled
-            # res_identifier is diagnosable rather than silently masked by the
-            # interactive sign-in prompt.
+            # res_identifier is diagnosable rather than silently masked below.
+            username = os.environ.get("HHEMT_HYDROSHARE_USERNAME")
+            password = os.environ.get("HHEMT_HYDROSHARE_PASSWORD")
+            if username and password:
+                # Tier 2: non-interactive credentialed auth (private + headless).
+                print(
+                    f"Anonymous read of {res_identifier} failed ({exc!r}); "
+                    "authenticating with HHEMT_HYDROSHARE_* credentials.",
+                    flush=True,
+                )
+                try:
+                    hs_auth = HydroShare(username=username, password=password)
+                    hs_auth.resource(res_identifier, validate=True)
+                except Exception as auth_exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"HydroShare credentialed read of {res_identifier} failed "
+                        f"({auth_exc!r}) after the anonymous read failed ({exc!r}). Check "
+                        "HHEMT_HYDROSHARE_USERNAME / HHEMT_HYDROSHARE_PASSWORD and that the "
+                        "account has access to the resource. (The username may be your bare "
+                        "id or your full institutional email — try the other if one fails.)"
+                    ) from auth_exc
+                print("Authenticated to HydroShare with env credentials.", flush=True)
+                return hs_auth
+            # Tier 3: interactive sign-in — a human at a terminal, no env creds set.
             print(
-                f"Anonymous read of {res_identifier} failed ({exc!r}); "
-                "signing in to HydroShare.",
+                f"Anonymous read of {res_identifier} failed ({exc!r}); no "
+                "HHEMT_HYDROSHARE_* credentials set — falling back to interactive sign-in.",
                 flush=True,
             )
             try:
@@ -898,7 +1038,9 @@ class TRITON_SWMM_experiment:
             except Exception as sign_in_exc:  # noqa: BLE001
                 raise RuntimeError(
                     f"HydroShare sign-in failed after anonymous read of "
-                    f"{res_identifier} failed ({exc!r})."
+                    f"{res_identifier} failed ({exc!r}). For a headless/automated context, "
+                    "set HHEMT_HYDROSHARE_USERNAME / HHEMT_HYDROSHARE_PASSWORD to avoid the "
+                    "interactive prompt entirely."
                 ) from sign_in_exc
             print("Signed into HydroShare successfully.", flush=True)
             return hs
