@@ -8,7 +8,7 @@ share the same validation logic.
 
 Each per-check function returns one `CheckResult` describing pass/fail plus
 optional per-scenario detail rows. The aggregator `validate_analysis()` runs
-all 7 checks and returns a `ValidationReport`. For sensitivity analyses, the
+all 9 checks and returns a `ValidationReport`. For sensitivity analyses, the
 aggregate per-scenario checks iterate sub-analyses and prefix each detail
 row with the sub-analysis id.
 """
