@@ -213,9 +213,10 @@ class TestAllModelsIntegration:
         assert scenario.scen_paths.logs_dir.exists()
 
         # Verify model-specific log paths are set
-        assert scenario.scen_paths.log_run_triton is not None
-        assert scenario.scen_paths.log_run_tritonswmm is not None
-        assert scenario.scen_paths.log_run_swmm is not None
+        # log_run_triton / log_run_tritonswmm / log_run_swmm retired: they declared paths
+        # nothing writes (see paths.py::ScenarioPaths). Asserting a dead field is not None
+        # is what made the convention look real. The live per-sim log path is asserted by
+        # tests/test_coupled_resume_validity.py::test_model_logfile_method_delegates_to_free_function.
 
     def test_df_status_has_model_types(self, all_models_case):
         """Test that df_status includes model_types_enabled column."""

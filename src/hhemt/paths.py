@@ -107,10 +107,16 @@ class ScenarioPaths(MainDataClass):
     out_triton: Optional[Path] = None  # TRITON-only outputs
     out_tritonswmm: Optional[Path] = None  # Coupled model outputs
 
-    # Model-specific log files
-    log_run_triton: Optional[Path] = None
-    log_run_tritonswmm: Optional[Path] = None
-    log_run_swmm: Optional[Path] = None
+    # Model-specific log files: RETIRED. `log_run_triton` / `log_run_tritonswmm` /
+    # `log_run_swmm` declared `{sim_folder}/logs/run_{model}.log` — a path NOTHING has
+    # ever written. The real per-sim runtime log is analysis-level and is resolved by
+    # `run_simulation.model_logfile_for` (the single source of truth). The dead fields
+    # were removed because they were not merely unused: they were a TRAP.
+    # `analysis_validation.check_coupled_resume_validity` hand-inlined
+    # `Path(scenario_directory)/"logs"/"run_tritonswmm.log"` — byte-identical to the
+    # retired `log_run_tritonswmm` — so every read raised, every row was skipped, and the
+    # check passed VACUOUSLY on every experiment. A declared-but-never-written path field
+    # reads as ground truth to authors and reviewers alike; do not reintroduce one.
 
     # Executables
     sim_tritonswmm_executable: Optional[Path] = None  # Coupled model executable

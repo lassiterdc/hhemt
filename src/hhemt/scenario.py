@@ -117,18 +117,9 @@ class TRITONSWMM_scenario:
             # Model-specific output directories
             out_triton=out_triton,
             out_tritonswmm=out_tritonswmm,
-            # Model-specific log files
-            log_run_triton=(
-                logs_dir / "run_triton.log" if cfg_sys.toggle_triton_model else None
-            ),
-            log_run_tritonswmm=(
-                logs_dir / "run_tritonswmm.log"
-                if cfg_sys.toggle_tritonswmm_model
-                else None
-            ),
-            log_run_swmm=(
-                logs_dir / "run_swmm.log" if cfg_sys.toggle_swmm_model else None
-            ),
+            # Model-specific log files: RETIRED — nothing ever wrote these paths. See the
+            # retirement note in paths.py::ScenarioPaths. The real per-sim runtime log is
+            # analysis-level; resolve it via `run_simulation.model_logfile_for`.
             # Executables
             sim_tritonswmm_executable=sim_folder / "build" / "triton.exe",
             sim_triton_executable=(

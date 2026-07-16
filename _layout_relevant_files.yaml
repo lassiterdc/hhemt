@@ -26,8 +26,25 @@ non_breaking_allowlist:
       continue to work post-upgrade.
   - path: src/hhemt/scenario.py
     justification: >-
-      cleanup-rerun-delete-redesign Phase 3 — incidental method-signature touch to
-      remove clear_raw_outputs references. No path or layout changes.
+      Two collapsed non-breaking changes. cleanup-rerun-delete-redesign Phase 3 —
+      incidental method-signature touch to remove clear_raw_outputs references. AND
+      resume-validity-and-cross-experiment-intercomparison Phase 3 — retire the
+      vestigial log_run_triton / log_run_tritonswmm / log_run_swmm ScenarioPaths
+      constructions. Provably non-breaking: nothing has ever WRITTEN those paths (full
+      use-set was paths.py decl + scenario.py construction + 3 test assert-not-None +
+      2 workflow.py comments), ScenarioPaths is a runtime dataclass that is never
+      serialized, and no Snakemake rule, log JSON, zarr, fingerprint, or _version.json
+      references them. No path or layout changes.
+  - path: src/hhemt/paths.py
+    justification: >-
+      resume-validity-and-cross-experiment-intercomparison Phase 3 — retire the
+      vestigial log_run_triton / log_run_tritonswmm / log_run_swmm ScenarioPaths field
+      DECLARATIONS. Provably non-breaking: the fields are Optional[Path] = None on a
+      runtime-only dataclass that is never serialized to disk, and nothing has ever
+      written the paths they declared. Retired (rather than left unused) because they
+      were load-bearing in the wrong direction: check_coupled_resume_validity
+      hand-inlined the identical path and passed vacuously on every experiment for it.
+      No on-disk artifact, filename, zarr group, log field, or _version.json changes.
   - path: src/hhemt/log.py
     justification: >-
       reprocess-orchestrator-liveness-gate Phase 1 + log-write-race-fix +
