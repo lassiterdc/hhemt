@@ -108,6 +108,7 @@ jobs:
           # surface host-portable.
         run: |
           pytest -p no:xdist -v \
+            tests/test_synth_00_compile_models.py \
             tests/test_synth_04_multisim_with_snakemake.py \
             tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
             tests/test_synth_eda_facade.py \

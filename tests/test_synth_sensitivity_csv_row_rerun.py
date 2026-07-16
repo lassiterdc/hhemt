@@ -126,8 +126,14 @@ def test_empty_independent_vars_degenerate_case(tmp_path):
 
 
 @pytest.mark.slow
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
 def test_one_row_edit_triggers_only_that_chain(synth_sa_two_row):
-    """R4: editing one row reruns only that sa_id's chain (full execution; slow)."""
+    """R4: editing one row reruns only that sa_id's chain (full execution; slow).
+
+    The only test in this module that runs a FULL (non-dry-run) workflow, so it
+    is the only one needing the compiled binaries; the dry-run fingerprint tests
+    stay ungated. Skips without cmake+mpic++; HARD-FAILS under
+    HHEMT_REQUIRE_COMPILE_TIER=1."""
     case = synth_sa_two_row
     # Initial run (full execution, not dry-run) so flag files exist for sa_0 and sa_1
     case.analysis.submit_workflow(mode="local")

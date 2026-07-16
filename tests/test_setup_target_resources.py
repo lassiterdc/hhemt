@@ -5,27 +5,63 @@ Maps to atomic plan "setup-target-mem-and-a100-compile-fix" — Parts A and B.
 """
 
 import re
+from types import SimpleNamespace
 
 from hhemt.system import TRITONSWMM_system
 
 # ----------------------------------------------------------------------------
 # Compile-script helper-method content tests (no fixtures needed)
 # ----------------------------------------------------------------------------
+#
+# These two helpers were @staticmethods; the decorator was DELIBERATELY removed
+# and `self` added (system.py:642, :667 -- "FI5") so they can read
+# `self._execution_container_mode` and suppress the host-conda ABI patch inside a
+# SIF (ADR-1 / M-7). Converting them back to @staticmethod to satisfy an unbound
+# call site would BREAK container-mode compiles -- so the tests bind a duck-typed
+# `self` instead, and now cover BOTH modes.
+
+
+def _native_self():
+    """Duck-typed `self` for the native (non-container) compile path."""
+    return SimpleNamespace(_execution_container_mode=False)
+
+
+def _container_self():
+    """Duck-typed `self` for the container (SIF) compile path."""
+    return SimpleNamespace(_execution_container_mode=True)
 
 
 def test_libstdcpp_ld_preamble_lines_content():
-    lines = TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines()
+    lines = TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines(_native_self())
     text = "\n".join(lines)
-    assert 'export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH:-}"' in text
+    # Gotcha 64: CONDA_LIB is captured BEFORE `module purge` clears CONDA_PREFIX
+    # (Frontier's miniforge Lmod modulefile unsets it), with ${CONDA_PREFIX}/lib as
+    # the local-dev fallback. The conda lib dir must come FIRST on LD_LIBRARY_PATH.
+    assert (
+        'export LD_LIBRARY_PATH="${CONDA_LIB:-${CONDA_PREFIX}/lib}:${LD_LIBRARY_PATH:-}"'
+        in text
+    )
     assert "libstdc++ ABI fix" in text or "libstdc++ABI fix" in text or "libgdal" in text
 
 
+def test_libstdcpp_ld_preamble_lines_empty_in_container_mode():
+    """M-7: the SIF owns a self-consistent toolchain -- no host-conda runtime preamble."""
+    assert TRITONSWMM_system._emit_libstdcpp_ld_preamble_lines(_container_self()) == []
+
+
 def test_libstdcpp_linker_flag_fragment_content():
-    frag = TRITONSWMM_system._libstdcpp_linker_flag_fragment()
+    frag = TRITONSWMM_system._libstdcpp_linker_flag_fragment(_native_self())
     # Gotcha 31: the CMake -l:libstdc++.so.6 flag mechanism (replaced the sed link patch).
     assert "-l:libstdc++.so.6" in frag
-    assert "-L${CONDA_PREFIX}/lib" in frag
+    # Gotcha 64: -L is anchored on the purge-immune CONDA_LIB (fallback CONDA_PREFIX).
+    assert "-L${CONDA_LIB:-${CONDA_PREFIX}/lib}" in frag
     assert "--no-as-needed" in frag
+
+
+def test_libstdcpp_linker_flag_fragment_empty_in_container_mode():
+    """M-7: the SIF base ships a current libstdc++; the exact-soname patch is
+    unnecessary AND would reference a ${CONDA_PREFIX} that does not exist in-container."""
+    assert TRITONSWMM_system._libstdcpp_linker_flag_fragment(_container_self()) == ""
 
 
 # ----------------------------------------------------------------------------

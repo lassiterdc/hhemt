@@ -4,9 +4,14 @@ import pytest
 
 import tests.utils_for_testing as tst_ut
 
-pytestmark = pytest.mark.skipif(
-    tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
-)
+pytestmark = [
+    pytest.mark.skipif(
+        tst_ut.is_scheduler_context(), reason="Only runs on non-HPC systems."
+    ),
+    # Both tests run real concurrent sims against the compiled binaries; see
+    # test_synth_00 for the gate's skip-vs-hard-fail contract.
+    pytest.mark.usefixtures("tritonswmm_cpu_compiled"),
+]
 
 
 def test_run_multisim_concurrently(synth_multi_sim_analysis):

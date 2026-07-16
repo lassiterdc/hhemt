@@ -223,7 +223,16 @@ def test_reporting_sets_registry_imports_cleanly():
         get_reporting_set,
     )
 
-    assert set(REPORTING_SETS) == {"default", "benchmarking", "compute-sensitivity", "combined"}
+    # Exact-set equality (NOT a subset check) so an accidental registry member
+    # still fails. `combined` (PIP-1 cross-experiment) and `compute-sensitivity`
+    # (PIP-2 / R11 in-report EDA) are shipped, exercised sets; the assertion
+    # simply trailed their landing.
+    assert set(REPORTING_SETS) == {
+        "default",
+        "benchmarking",
+        "combined",
+        "compute-sensitivity",
+    }
     assert get_reporting_set("benchmarking").validator_key == "benchmarking"
     assert get_reporting_set("default").validator_key == "none"
 

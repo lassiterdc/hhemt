@@ -714,8 +714,13 @@ def _assert_no_sha_drift(
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_multi_sim():
+def rendered_synth_multi_sim(tritonswmm_cpu_compiled):
     """Session-scope: build, run, and render the synth multisim analysis once.
+
+    Depends on ``tritonswmm_cpu_compiled`` for its compile-tier GATE: that
+    fixture skips when the cmake+mpic++ toolchain is absent (bare CI runner)
+    and HARD-FAILS under ``HHEMT_REQUIRE_COMPILE_TIER=1`` (compile-tests.yml),
+    so a real compile regression can never hide behind the skip.
 
     Promoted from function-scope per Phase 3a (R7,
     synth-test-isolation-and-runtime). Builds its own case from
@@ -737,9 +742,10 @@ def rendered_synth_multi_sim():
 
 
 @pytest.fixture(scope="session")
-def rendered_synth_sensitivity():
+def rendered_synth_sensitivity(tritonswmm_cpu_compiled):
     """Session-scope: build, run, and render the synth sensitivity analysis
-    once. See ``rendered_synth_multi_sim`` for contract details. Uses
+    once. See ``rendered_synth_multi_sim`` for contract details (including the
+    ``tritonswmm_cpu_compiled`` compile-tier gate). Uses
     ``_SYNTH_SENSITIVITY_REPORT_CONFIG`` (relocated from
     ``test_synth_08_bundle_round_trip.py`` in Phase 3a)."""
     case = cases.Local_TestCases.retrieve_synth_cpu_config_sensitivity_case(

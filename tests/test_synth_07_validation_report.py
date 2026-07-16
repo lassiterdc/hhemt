@@ -209,16 +209,26 @@ def test_renders_full_html_doc(tmp_path):
 
 
 @pytest.fixture
-def failing_synth_multi_sim_analysis(synth_multi_sim_analysis_cached, tmp_path):
-    """Clone synth_multi_sim cached fixture, inject failures BEFORE construction."""
+def failing_synth_multi_sim_analysis(
+    tritonswmm_cpu_compiled, synth_multi_sim_analysis_cached, tmp_path
+):
+    """Clone synth_multi_sim cached fixture, inject failures BEFORE construction.
+
+    Gated on ``tritonswmm_cpu_compiled``: the cached analysis must have been RUN
+    (compiled binaries + real summaries on disk) for the injected-failure clone to
+    be meaningful. Skips without cmake+mpic++; HARD-FAILS under
+    HHEMT_REQUIRE_COMPILE_TIER=1. The module's pure-unit tests are unaffected."""
     paths = prepare_clone_dir(synth_multi_sim_analysis_cached, tmp_path)
     inject_multi_sim_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
 
 
 @pytest.fixture
-def failing_synth_sensitivity_analysis(synth_sensitivity_analysis_cached, tmp_path):
-    """Clone synth_sensitivity cached fixture, inject failures BEFORE construction."""
+def failing_synth_sensitivity_analysis(
+    tritonswmm_cpu_compiled, synth_sensitivity_analysis_cached, tmp_path
+):
+    """Clone synth_sensitivity cached fixture, inject failures BEFORE construction.
+    Compile-tier gated; see ``failing_synth_multi_sim_analysis``."""
     paths = prepare_clone_dir(synth_sensitivity_analysis_cached, tmp_path)
     inject_sensitivity_failures_at_paths(paths)
     return construct_analysis_from_paths(paths)
