@@ -788,7 +788,7 @@ class TRITONSWMM_analysis:
         """Emit a portable render bundle for local renderer iteration.
 
         Opt-in only — NEVER invoked from analysis.run() or
-        submit_workflow(). The bundle is a self-contained tar including
+        submit_workflow(). The bundle is a self-contained zip including
         every source path declared via prov.artist().add_channel(...)
         during the most recent render_report() execution, plus configs
         with relative paths, the Snakefile, and the HPC-baseline
@@ -797,10 +797,10 @@ class TRITONSWMM_analysis:
         Args:
             output_path: Optional target path for the bundle tar.
                 Defaults to
-                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.tar.
+                {analysis_dir}/render_bundle/{analysis_id}_{git_sha}_v{schema}.zip.
 
         Returns:
-            Path to the emitted bundle tar.
+            Path to the emitted bundle zip.
 
         Raises:
             FileNotFoundError: If render_report() has not been invoked

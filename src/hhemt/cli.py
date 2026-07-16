@@ -452,8 +452,7 @@ def run_command(
 
         # Execute workflow via high-level orchestration API
         result = analysis.run(
-            mode=run_mode,
-            phases=None,  # Run all phases
+            from_scratch=run_mode == "fresh",
             events=None,  # Process all events
             execution_mode=execution_mode,
             dry_run=dry_run,
@@ -1074,22 +1073,41 @@ def check_invalidating_fixes_command(
 @app.command(name="eda")
 def eda_command(
     system_config: Path = typer.Option(
-        ...,
+        None,
         "--system-config",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Path to system configuration YAML file",
+        help="Path to system configuration YAML file (mutually exclusive with --analysis-dir)",
     ),
     analysis_config: Path = typer.Option(
-        ...,
+        None,
         "--analysis-config",
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
-        help="Path to analysis configuration YAML file",
+        help="Path to analysis configuration YAML file (mutually exclusive with --analysis-dir)",
+    ),
+    analysis_dir: Path = typer.Option(
+        None,
+        "--analysis-dir",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to a completed analysis directory; re-derives configs from its "
+        "cfg_analysis.yaml + cfg_system.yaml (mutually exclusive with --system-config/--analysis-config).",
+    ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
     ),
     override_eda_config: Path = typer.Option(
         None,
@@ -1097,13 +1115,43 @@ def eda_command(
         help="Runtime override for cfg_analysis.eda (a YAML path).",
     ),
 ):
-    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html."""
+    """Run the in-process EDA loop (calc -> plots -> doc), producing eda_report/eda_report.html.
+
+    Provide EITHER --analysis-dir (re-derives configs from the directory's persisted
+    cfg_analysis.yaml + cfg_system.yaml) OR the explicit --system-config + --analysis-config pair.
+    """
     try:
         from .analysis import TRITONSWMM_analysis
         from .system import TRITONSWMM_system
 
-        system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        if analysis_dir is not None:
+            if system_config is not None or analysis_config is not None:
+                raise ConfigurationError(
+                    field="analysis_dir",
+                    message="--analysis-dir is mutually exclusive with --system-config/--analysis-config.",
+                )
+            resolved_system_config = analysis_dir / "cfg_system.yaml"
+            resolved_analysis_config = analysis_dir / "cfg_analysis.yaml"
+            if not resolved_system_config.exists() or not resolved_analysis_config.exists():
+                raise ConfigurationError(
+                    field="analysis_dir",
+                    message=(
+                        f"{analysis_dir} is not a valid analysis directory: "
+                        f"cfg_system.yaml and cfg_analysis.yaml must both be present "
+                        f"(they are written by a prior analysis.run()/eda())."
+                    ),
+                )
+        else:
+            if system_config is None or analysis_config is None:
+                raise ConfigurationError(
+                    field="system_config",
+                    message="Provide either --analysis-dir or both --system-config and --analysis-config.",
+                )
+            resolved_system_config = system_config
+            resolved_analysis_config = analysis_config
+
+        system = TRITONSWMM_system(resolved_system_config)
+        analysis = TRITONSWMM_analysis(resolved_analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
         result = analysis.eda(override_eda_config=override_eda_config)
         console.print(f"[green]EDA notebook written:[/green] {result.notebook_path}")
@@ -1214,6 +1262,15 @@ def static_plots_command(
         readable=True,
         help="Path to analysis configuration YAML file",
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="snakemake --dry-run only"),
 ):
     """Generate publication static figures (static_plots/) — one Snakemake rule per static-plot ID."""
@@ -1222,7 +1279,7 @@ def static_plots_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
         result = analysis.static_plots(dry_run=dry_run)
         console.print(f"[green]Static plots:[/green] {result.get('message', 'submitted')}")
@@ -1476,6 +1533,15 @@ def cleanup_orphan_delete_sentinels_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
@@ -1516,7 +1582,7 @@ def cleanup_orphan_delete_sentinels_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1587,6 +1653,15 @@ def cleanup_stale_metadata_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
@@ -1627,7 +1702,7 @@ def cleanup_stale_metadata_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1682,6 +1757,15 @@ def cleanup_settled_markers_command(
         dir_okay=False,
         readable=True,
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     dry_run: bool = typer.Option(
         True,
         "--dry-run/--apply",
@@ -1724,7 +1808,7 @@ def cleanup_settled_markers_command(
         from .system import TRITONSWMM_system
 
         system = TRITONSWMM_system(system_config)
-        analysis = TRITONSWMM_analysis(analysis_config, system)
+        analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
         system._analysis = analysis
 
         if not dry_run and not force:
@@ -1978,6 +2062,15 @@ def bundle_command(
         readable=True,
         help="Path to analysis configuration YAML file",
     ),
+    hpc_system_config: Path | None = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Optional path to the per-HPC-system configuration YAML file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
     output: Path = typer.Option(
         None,
         "--output",
@@ -2002,7 +2095,7 @@ def bundle_command(
     from hhemt.system import TRITONSWMM_system
 
     system = TRITONSWMM_system(system_config)
-    analysis = TRITONSWMM_analysis(analysis_config, system)
+    analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
         bundle_path = analysis.sensitivity.bundle_report_data(output)
     else:
