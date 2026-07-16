@@ -311,16 +311,42 @@ def return_swmm_outputs(
 
 
 def return_swmm_system_outputs(rpt_lines):
-    line_num = -1
+    """Scan a full `.rpt` line list for the system-level metadata lines and
+    delegate construction to the guarded `_build_system_results`.
+
+    Every line this scan looks for is CONDITIONAL in the SWMM engine, so a
+    legitimate `.rpt` may omit any of them:
+
+    - "Flow Routing Continuity" — gated on `Nobjects[NODE] > 0 && !IgnoreRouting`
+      (massbal.c:299), so a link-free or `IGNORE_ROUTING YES` model omits it.
+    - "Analysis ended on" — written only at clean termination, so a coupled run
+      whose embedded SWMM never reached `swmm_report()` omits it.
+    - "Flow Units" / "Flooding Loss" — present on any complete `.rpt`
+      (report.c:267 is unconditional inside `report_writeOptions()`), but absent
+      from a zero-byte or header-truncated file, which `Path.exists()` does not
+      screen out.
+    - "Continuity Error (%)" VALUE — printed with a fixed `%14.3f` format
+      (report.c:570/730), so SWMM's near-zero-balance sentinel
+      (`FlowTotals.pctError = TINY` when `|totalInflow - totalOutflow| < 1.0`,
+      massbal.c:888) renders as `0.000` and `float(...)` parses it without
+      special handling. This single-value read does not aggregate across
+      scenarios, so no TINY-sentinel stripping is required.
+
+    Guarding is therefore NOT optional. Do not re-inline the construction here:
+    `_build_system_results` is the single guarded builder shared with
+    `parse_rpt_single_pass`, and duplicating its body is what left four
+    dereferences unguarded (three raising `UnboundLocalError`, one
+    `AttributeError`) until 2026-07-15.
+    """
     encountered_flow_routing_continuity = False
+    line_flw_units = None
     runoff_continuity_error_line = None
     flow_continuity_error_line = None
+    system_flood_loss_line = None
+    analysis_end_line = None
     for line in rpt_lines:
-        line_num += 1
-        # if "Runoff Quantity Continuity" in line:
-        #     encountered_runoff_quantity_continuity = True
         if "Flow Units" in line:
-            line_flw_untits = line
+            line_flw_units = line
         if "Flow Routing Continuity" in line:
             encountered_flow_routing_continuity = True
         if "Continuity Error (%)" in line:
@@ -329,31 +355,17 @@ def return_swmm_system_outputs(rpt_lines):
                 runoff_continuity_error_line = line
             else:
                 flow_continuity_error_line = line
-        # return system flood statistic
         if "Flooding Loss" in line:
             system_flood_loss_line = line
-    flow_units = line_flw_untits.split(".")[-1].split("\n")[0].split(" ")[-1].lower()
-
-    if runoff_continuity_error_line is not None:
-        runoff_continuity_error_perc = float(
-            runoff_continuity_error_line.split(" ")[-1].split("\n")[0]
-        )
-    else:
-        runoff_continuity_error_perc = np.nan
-    flow_continuity_error_perc = float(
-        flow_continuity_error_line.split(" ")[-1].split("\n")[0]  # type: ignore
+        if "Analysis ended on" in line:
+            analysis_end_line = line
+    return _build_system_results(
+        line_flw_units,
+        runoff_continuity_error_line,
+        flow_continuity_error_line,
+        system_flood_loss_line,
+        analysis_end_line,
     )
-    # return system flood losses
-    system_flooding = float(system_flood_loss_line.split(" ")[-1].split("\n")[0])
-    analysis_end_datetime = return_analysis_end_date(rpt_lines)
-    dict_system_results = dict(
-        analysis_end_datetime=str(analysis_end_datetime),
-        flow_units=flow_units,
-        runoff_continuity_error_perc=runoff_continuity_error_perc,
-        flow_continuity_error_perc=flow_continuity_error_perc,
-        system_flooding_10e6_ltr=system_flooding,
-    )
-    return dict_system_results
 
 
 @profile
@@ -753,13 +765,6 @@ def format_rpt_section_into_dataframe(lst_section_lines, lst_col_headers):
             idx_val += 1
         records.append(row)
     return pd.DataFrame.from_records(records, columns=lst_col_headers)
-
-
-def return_analysis_end_date(rpt_lines):
-    for line in rpt_lines:
-        if "Analysis ended on" in line:
-            end_line = line
-    return _parse_analysis_end_line(end_line)
 
 
 def return_node_time_series_results_from_rpt(
