@@ -1,8 +1,11 @@
 # Toolchain-bearing tier: provisions the hhemt conda env (cmake + mpic++ +
-# swmm-toolkit conda-forge pin) so the compile-bearing synth render tests
-# (test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead
-# of skipping. Wireable as a required main status check by the release-gate PIP
-# (ADR-7); no continue-on-error.
+# swmm-toolkit conda-forge pin) so the compile-bearing synth tests
+# (test_synth_00 compile / test_synth_01 single-sim + hydrology-continuity guard /
+# test_synth_04 / test_synth_05 / test_synth_eda_facade) actually RUN instead of
+# skipping. The module list in the run: block below is an explicit allowlist —
+# not a marker or glob — so a test in a module not listed there never runs here.
+# Wireable as a required main status check by the release-gate PIP (ADR-7); no
+# continue-on-error.
 name: Compile-bearing synth render-gate tier
 
 on:
@@ -109,6 +112,7 @@ jobs:
         run: |
           pytest -p no:xdist -v \
             tests/test_synth_00_compile_models.py \
+            tests/test_synth_01_singlesim.py \
             tests/test_synth_04_multisim_with_snakemake.py \
             tests/test_synth_05_sensitivity_analysis_with_snakemake.py \
             tests/test_synth_eda_facade.py \
