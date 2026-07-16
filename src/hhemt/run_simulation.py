@@ -29,6 +29,53 @@ _DEFAULT_EXE_NAME = {
 }
 
 
+def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
+    """The analysis-level model runtime-log path for one (analysis, event, model).
+
+    SINGLE SOURCE OF TRUTH for this naming convention. The PRODUCER
+    (``run_simulation_runner.py``, which opens this exact path in ``"w"`` mode on every
+    exec) and EVERY consumer (``TRITONSWMM_run.model_run_completed``,
+    ``_classify_model_log_failure``, ``report_renderers/per_analysis_summary.py``,
+    ``analysis_validation.check_coupled_resume_validity``) MUST resolve through this
+    function. NEVER hand-build the path.
+
+    Why this is a free function and not just a method: a hand-built duplicate is exactly
+    how ``check_coupled_resume_validity``'s replay-marker arm came to read
+    ``{sim_folder}/logs/run_tritonswmm.log`` -- the vestigial ``ScenarioPaths.log_run_*``
+    convention that NOTHING writes -- so its ``except Exception: continue`` fired on every
+    row and the check passed VACUOUSLY on every experiment (28/28 rows skipped on
+    synth_cc_resume, 2026-07-15). One expression of the convention, shared by producer and
+    detector, is what makes that class of drift impossible rather than merely unlikely.
+
+    PATH-ONLY, mirroring ``summary_paths.py``: derives from ``analysis`` + ``event_iloc``
+    only and MUST NOT instantiate ``TRITONSWMM_scenario`` (whose constructor mkdir's
+    ``processed/`` / ``swmm/`` / ``out_swmm/``). This is what lets a read-only validator
+    resolve the path without mutating the tree.
+
+    CAUTION -- the file this resolves to is opened ``"w"`` on EVERY runner exec
+    (``run_simulation_runner.py``), so it retains ONLY the LAST exec of up to
+    ``hpc_restart_times_simulate`` + 1 attempts. It is NOT a per-exec history. Callers
+    needing per-attempt history must read ``.snakemake/slurm_logs/{rule}/{jobid}.log``.
+    No toolkit-written line reaches this file either -- the runner's ``Command:`` line and
+    the ``Resuming ... from hotstart`` notice go to the RUNNER's stderr, not here; the
+    file carries only the model subprocess's own stdout/stderr.
+
+    Naming convention (empirically ``model_tritonswmm_sa_gpu_0_r1_evt0.log`` on
+    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``sa{N}``):
+    - Sensitivity sub-analysis:
+      ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt{event_iloc}.log``
+    - Regular analysis:
+      ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
+    """
+    log_dir = analysis.analysis_paths.simlog_directory
+    subanalysis_id = ""
+    if getattr(analysis.cfg_analysis, "is_subanalysis", False):
+        subanalysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
+        master_analysis_yaml = analysis.cfg_analysis.master_analysis_cfg_yaml
+        log_dir = master_analysis_yaml.parent / "logs" / "sims"
+    return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
@@ -53,22 +100,16 @@ class TRITONSWMM_run:
         return out_dir if out_dir is not None else fallback
 
     def _analysis_level_model_logfile(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
-        """Return analysis-level model runtime log path for this scenario.
+        """Return the analysis-level model runtime-log path for this scenario.
 
-        Naming convention:
-        - Sensitivity sub-analysis: model_{model_type}_sa{N}_evt{event_iloc}.log
-        - Regular analysis: model_{model_type}_evt{event_iloc}.log
+        Thin delegate to the module-level ``model_logfile_for`` free function, which is
+        the SINGLE SOURCE OF TRUTH for this convention (read its docstring before
+        touching either). Retained as a method because ``TRITONSWMM_run`` is the
+        producer-side call surface (``prepare_simulation_command`` writes through it,
+        ``model_run_completed`` / ``_classify_model_log_failure`` read through it) and
+        several tests patch it by name.
         """
-        log_dir = self._analysis.analysis_paths.simlog_directory
-        subanalysis_id = ""
-        if getattr(self._analysis.cfg_analysis, "is_subanalysis", False):
-            subanalysis_id = str(self._analysis.cfg_analysis.analysis_id) + "_"
-            master_analysis_yaml = self._analysis.cfg_analysis.master_analysis_cfg_yaml
-            log_dir = master_analysis_yaml.parent / "logs" / "sims"
-
-        fname = f"model_{model_type}_{subanalysis_id}evt{self._scenario.event_iloc}.log"
-
-        return log_dir / fname
+        return model_logfile_for(self._analysis, self._scenario.event_iloc, model_type)
 
     def raw_triton_output_dir(self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"):
         """Directory containing raw TRITON binary output files (H, QX, QY, MH).

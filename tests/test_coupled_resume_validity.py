@@ -90,23 +90,93 @@ def test_verify_pin_raises_when_pin_unresolvable(tmp_path):
 # ---------------------------------------------------------------------------
 # (b) check_coupled_resume_validity — four arms
 # ---------------------------------------------------------------------------
-def _analysis_stub(*, coupled=True, sensitivity=False, df=None):
+#: --------------------------------------------------------------------------
+#: Arm-B fixtures. READ THIS BEFORE EDITING.
+#:
+#: These tests originally CREATED `{scenario_directory}/logs/run_tritonswmm.log` and then
+#: asserted on it — the exact path production never writes (the vestigial
+#: ScenarioPaths.log_run_* convention). They were green because the fixture manufactured
+#: the file the check looked for, so the suite structurally could not detect that the
+#: check read NOTHING in production and passed vacuously on all 28 rows of
+#: synth_cc_resume. Two properties fix that, and BOTH must be preserved:
+#:
+#:   1. PRODUCER-BOUND: the fixture places its log by calling the REAL
+#:      `run_simulation.model_logfile_for` — the same function the check resolves through
+#:      and the runner writes through. If the convention changes, fixture and check move
+#:      together; if anyone hand-builds a path again, these tests fail. Stubbing the
+#:      resolver instead would re-commit the original defect one level up.
+#:   2. DECOY: every Arm-B test also writes a file at the OLD dead path whose marker
+#:      content is the INVERSE of the real log's. A check that reads the decoy returns the
+#:      inverted verdict, so each test FAILS against pre-fix code. Do NOT delete the decoys
+#:      as "unused fixtures" — they are the anti-regression, and without them three of
+#:      these tests pass vacuously against a check that reads nothing.
+#: --------------------------------------------------------------------------
+#:
+#: THIRD PREDICATE (per-exec resume discriminator). Every "this exec resumed" log must
+#: carry _CKPT, because the check's SCOPE gate keys on it: n_resumes is cumulative and
+#: never reset, so only the in-log [OK] marker proves the LAST exec resumed. A fixture
+#: that omits _CKPT is asserting a FRESH exec — which is a real, tested case
+#: (test_postfix_fresh_last_exec_is_out_of_scope), not an oversight. Literal shapes are
+#: taken verbatim from live logs (synth_cc_resume at the pin, 2026-07-16):
+#:     [..] Reading checkpoint files
+#:     [OK] Checkpoint files read
+#:     [..] SWMM exchange history replayed to t=3000 s (11435 steps); resuming live segment
+
+_CKPT_ATTEMPT = "[..] Reading checkpoint files\n"
+_CKPT = _CKPT_ATTEMPT + "[OK] Checkpoint files read\n"
+_REPLAY = "[..] SWMM exchange history replayed to t=3600 s (12 steps); resuming live segment\n"
+_ENDS = "Simulation ends\n"
+
+
+def _analysis_stub(*, coupled=True, sensitivity=False, df=None, simlog_dir=None):
     return SimpleNamespace(
         _system=SimpleNamespace(
             cfg_system=SimpleNamespace(toggle_tritonswmm_model=coupled),
         ),
-        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity),
+        cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=sensitivity, is_subanalysis=False),
         analysis_paths=SimpleNamespace(
-            analysis_datatree_zarr=None, sensitivity_datatree_zarr=None
+            analysis_datatree_zarr=None,
+            sensitivity_datatree_zarr=None,
+            simlog_directory=simlog_dir,
         ),
         df_status=df,
     )
 
 
-def _resumed_df(scenario_directory=""):
-    return pd.DataFrame(
-        [{"model_type": "tritonswmm", "n_resumes": 2, "scenario_directory": scenario_directory}]
-    )
+def _resumed_df(scenario_directory="", event_iloc=0, sa_id=None):
+    row = {
+        "model_type": "tritonswmm",
+        "n_resumes": 2,
+        "scenario_directory": scenario_directory,
+        "event_iloc": event_iloc,
+    }
+    if sa_id is not None:
+        row["sa_id"] = sa_id
+    return pd.DataFrame([row])
+
+
+def _write_real_log(analysis, event_iloc, text):
+    """Place the log at the path the PRODUCER writes — resolved by the real convention."""
+    from hhemt.run_simulation import model_logfile_for
+
+    p = model_logfile_for(analysis, event_iloc, "tritonswmm")
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
+
+
+def _write_dead_path_decoy(scen_dir, text):
+    """Write the OLD hand-built path — the check MUST NOT read this.
+
+    `{scenario_directory}/logs/run_tritonswmm.log` IS `ScenarioPaths.log_run_tritonswmm`
+    (scenario_directory == sim_folder; logs_dir == sim_folder/"logs"), the field nothing
+    writes. Content here is always the INVERSE of the real log's, so a regression back to
+    the hand-built path flips the verdict and fails the test.
+    """
+    p = scen_dir / "logs" / "run_tritonswmm.log"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+    return p
 
 
 def test_coupled_off_is_na(monkeypatch):
@@ -134,41 +204,187 @@ def test_prefix_with_resume_warns(monkeypatch):
 
 def test_prefix_without_resume_passes(monkeypatch):
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("deadbeef", False))
-    empty = pd.DataFrame(
-        [{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}]
-    )
+    empty = pd.DataFrame([{"model_type": "tritonswmm", "n_resumes": 0, "scenario_directory": ""}])
     res = check_coupled_resume_validity(_analysis_stub(df=empty))
     assert res.passed is True
 
 
 def test_postfix_missing_replay_marker_warns(monkeypatch, tmp_path):
+    """Resumed + complete last exec, no replay marker -> WARN. The only WARN case.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> 0 details ->
+    passed=True, so `assert res.passed is False` fails.
+    """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
     scen = tmp_path / "sim_0"
-    (scen / "logs").mkdir(parents=True)
-    (scen / "logs" / "run_tritonswmm.log").write_text("some log without the marker\n")
-    res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df(str(scen))))
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + _ENDS)
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
     assert res.passed is False
     assert len(res.details) == 1
-    assert "replay never engaged" in res.details[0]["detail"]
+    assert "exchange-replay marker is ABSENT" in res.details[0]["detail"]
+    assert "1 resumed coupled sim(s) examined" in res.summary
 
 
 def test_postfix_with_replay_marker_passes(monkeypatch, tmp_path):
+    """Resumed + complete + replayed -> PASS, and the denominator proves the check actually
+    examined the sim rather than skipping it.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker ABSENT) -> 1 detail ->
+    passed=False, so `assert res.passed is True` fails. The denominator assertion is the
+    second lock: a vacuous pass reports "0 ... examined".
+    """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
     scen = tmp_path / "sim_0"
-    (scen / "logs").mkdir(parents=True)
-    (scen / "logs" / "run_tritonswmm.log").write_text(
-        "start\nSWMM exchange history replayed to t=3600 s (12 steps); resuming live segment\ndone\n"
-    )
-    res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df(str(scen))))
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _CKPT + _REPLAY + _ENDS)
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
     assert res.passed is True
+    assert res.details == []
+    assert "1 resumed coupled sim(s) examined" in res.summary
 
 
 def test_postfix_unreadable_log_is_indeterminate(monkeypatch, tmp_path):
+    """No log at the producer path -> INDETERMINATE, counted, never a warn.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker ABSENT) -> 1 detail ->
+    passed=False, so `assert res.passed is True` fails.
+    """
     monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
-    # scenario_directory points nowhere -> log unreadable -> INDETERMINATE, no warn.
-    res = check_coupled_resume_validity(_analysis_stub(df=_resumed_df(str(tmp_path / "missing"))))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    # No _write_real_log — the producer path is absent.
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(a)
     assert res.passed is True
     assert res.details == []
+    assert "0 resumed coupled sim(s) examined" in res.summary
+    assert "1 INDETERMINATE" in res.summary
+
+
+def test_postfix_incomplete_last_exec_is_indeterminate(monkeypatch, tmp_path):
+    """The COMPLETION GATE. A resumed last exec walltime-killed BEFORE its replay carries
+    the checkpoint marker but neither the replay nor the completion marker; warning on it
+    would conflate a benign kill with the rank-0 silent-skip.
+
+    FAILS PRE-FIX: today the check reads the decoy (complete, no replay marker) -> 1 detail
+    -> passed=False, so `assert res.passed is True` fails. Pre-fix there is no gate at all.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT + "running\n")  # resumed, then killed: no replay, no ends
+    _write_dead_path_decoy(scen, _CKPT + _ENDS)  # inverse verdict: would warn
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 INDETERMINATE" in res.summary
+
+
+def test_postfix_fresh_last_exec_is_out_of_scope(monkeypatch, tmp_path):
+    """The SCOPE GATE, and the reason it exists. n_resumes is CUMULATIVE and never reset,
+    so a sim that resumed, lost its checkpoints (clear_raw / delete / force-rerun), and then
+    ran FRESH to completion still has n_resumes>=1 and legitimately carries NO replay
+    marker. Its data is VALID. Warning on it would be a false positive on good data.
+
+    A fresh exec is OUT OF SCOPE — not indeterminate (the replay question never applied) and
+    not examined (we tested nothing). The denominator must say so in its own words.
+
+    FAILS PRE-FIX: today there is no scope gate at all, so this row is complete-with-no-
+    replay-marker -> 1 detail -> passed=False, and `assert res.passed is True` fails. It
+    fails against the PRE-ADDENDUM spec too, which had no scope gate either — this test is
+    what the live checkpoint-marker evidence bought.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, "start\n" + _ENDS)  # NO _CKPT: this exec ran fresh
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "0 resumed coupled sim(s) examined" in res.summary
+    assert "1 out of scope" in res.summary
+    assert "INDETERMINATE" not in res.summary  # out-of-scope is NOT indeterminate
+
+
+def test_postfix_partial_checkpoint_read_is_indeterminate(monkeypatch, tmp_path):
+    """The ANCHOR CHOICE. A checkpoint read that STARTS and does not complete, after which
+    the run reaches t=end, must NOT warn: the replay reads the exchange history FROM the
+    checkpoint set, so "the replay should have engaged" is unwarranted when the read never
+    took. Anchoring scope on the [..] attempt form instead of the [OK] completion form would
+    make this a FALSE WARN on fresh-and-complete data.
+
+    It is INDETERMINATE rather than out-of-scope: a half-read checkpoint set is a real
+    anomaly, just not the rank-0 silent-skip this arm names.
+
+    FAILS PRE-FIX: no scope gate -> complete + no replay marker -> 1 detail -> passed=False.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    _write_real_log(a, 0, _CKPT_ATTEMPT + _ENDS)  # attempt WITHOUT the [OK] completion
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 INDETERMINATE" in res.summary
+    assert "out of scope" not in res.summary
+
+
+def test_postfix_sensitivity_master_resolves_per_sub(monkeypatch, tmp_path):
+    """The SENSITIVITY BRANCH. A master's df_status carries sa_id and its sub-analyses'
+    logs live under {master}/logs/sims via the is_subanalysis branch of the convention.
+
+    FAILS PRE-FIX: today the check reads the decoy (marker PRESENT) -> passed=True, so
+    `assert res.passed is False` fails.
+    """
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    master_dir = tmp_path / "master"
+    sub = SimpleNamespace(
+        cfg_analysis=SimpleNamespace(
+            is_subanalysis=True,
+            analysis_id="sa_0",
+            master_analysis_cfg_yaml=master_dir / "cfg_analysis.yaml",
+        ),
+        analysis_paths=SimpleNamespace(simlog_directory=tmp_path / "unused"),
+    )
+    master = _analysis_stub(
+        sensitivity=True,
+        df=_resumed_df(str(scen), sa_id="sa_0"),
+        simlog_dir=tmp_path / "unused",
+    )
+    master.sensitivity = SimpleNamespace(sub_analyses={"sa_0": sub})
+    master.cfg_analysis.toggle_sensitivity_analysis = True
+    _write_real_log(sub, 0, _CKPT + _ENDS)  # resumed, complete, no replay marker -> WARN
+    assert (master_dir / "logs" / "sims" / "model_tritonswmm_sa_0_evt0.log").exists()
+    _write_dead_path_decoy(scen, _CKPT + _REPLAY + _ENDS)  # inverse verdict
+    res = check_coupled_resume_validity(master)
+    assert res.passed is False
+    assert len(res.details) == 1
+
+
+def test_model_logfile_method_delegates_to_free_function():
+    """THE CONVENTION LOCK. The producer-side method and the detector must resolve ONE
+    function. Two independent expressions of this convention is exactly what made the
+    replay arm inert.
+
+    FAILS PRE-FIX: `model_logfile_for` does not exist -> ImportError.
+    """
+    from pathlib import Path as _P
+
+    from hhemt.run_simulation import TRITONSWMM_run, model_logfile_for
+
+    a = SimpleNamespace(
+        analysis_paths=SimpleNamespace(simlog_directory=_P("/x/logs/sims")),
+        cfg_analysis=SimpleNamespace(is_subanalysis=False),
+    )
+    run = SimpleNamespace(_analysis=a, _scenario=SimpleNamespace(event_iloc=7))
+    assert TRITONSWMM_run._analysis_level_model_logfile(run, "tritonswmm") == model_logfile_for(a, 7, "tritonswmm")
+    assert model_logfile_for(a, 7, "tritonswmm").name == "model_tritonswmm_evt7.log"
 
 
 # ---------------------------------------------------------------------------
@@ -198,9 +414,7 @@ def test_provenance_stamp_read_roundtrip(tmp_path):
     analysis = SimpleNamespace(
         _system=SimpleNamespace(log=sys_log),
         cfg_analysis=SimpleNamespace(toggle_sensitivity_analysis=False),
-        analysis_paths=SimpleNamespace(
-            analysis_datatree_zarr=zarr_path, sensitivity_datatree_zarr=None
-        ),
+        analysis_paths=SimpleNamespace(analysis_datatree_zarr=zarr_path, sensitivity_datatree_zarr=None),
     )
 
     tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"analysis_id": "demo"})})
