@@ -67,6 +67,7 @@ from hhemt.utils import fast_rmtree
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+    from .orchestration import RunOverrides
     from .sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 
 
@@ -5072,15 +5073,12 @@ exit $snakemake_status
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,
         dry_run: bool = False,
         verbose: bool = True,
-        override_hpc_total_nodes: int | None = None,
-        override_hpc_restart_times_simulate: int | None = None,
-        override_hpc_restart_times_other: int | None = None,
+        overrides: "RunOverrides | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -5114,9 +5112,12 @@ exit $snakemake_status
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw`` threaded through to
-            the emitted Snakefile rule shells.
+        overrides : RunOverrides | None
+            Runtime override carrier. ``None`` means an all-None carrier (read
+            every value from the config). The builder reads ``clear_raw``
+            (threaded to the emitted Snakefile rule shells), ``hpc_total_nodes``,
+            and the two ``hpc_restart_times`` knobs; ``force_rerun`` is handled one
+            layer up and ignored here.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -5127,10 +5128,6 @@ exit $snakemake_status
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
-        override_hpc_total_nodes : int | None
-            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
-            without mutating the config object. Only valid when multi_sim_run_method is
-            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -5149,8 +5146,17 @@ exit $snakemake_status
         # global-baseline (_other) and per-rule simulate (_simulate) emission sites read
         # them. None means "use the config knob". Stored here rather than threaded
         # through generate_snakemake_config's ~5 call sites.
-        self._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
-        self._override_hpc_restart_times_other = override_hpc_restart_times_other
+        if overrides is None:
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides()
+        # Unpack the carrier into the same local/instance names the rest of this
+        # method (and its consume sites) already read — keeps every downstream use
+        # byte-identical while collapsing the five individual kwargs to one carrier.
+        override_clear_raw = overrides.clear_raw
+        override_hpc_total_nodes = overrides.hpc_total_nodes
+        self._override_hpc_restart_times_simulate = overrides.hpc_restart_times_simulate
+        self._override_hpc_restart_times_other = overrides.hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
@@ -8341,15 +8347,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
-        override_hpc_total_nodes: int | None = None,
-        override_hpc_restart_times_simulate: int | None = None,
-        override_hpc_restart_times_other: int | None = None,
+        overrides: "RunOverrides | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -8384,8 +8387,10 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
+        overrides : RunOverrides | None
+            Runtime override carrier (``clear_raw``, ``hpc_total_nodes``,
+            ``hpc_restart_times_simulate/other``); ``None`` reads every value from
+            the config. Threaded to the composed base builder.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -8394,10 +8399,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
-        override_hpc_total_nodes : int | None
-            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
-            without mutating the config object. Only valid when multi_sim_run_method is
-            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -8417,8 +8418,16 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # rules via _base_builder (generate_snakemake_config global baseline +
         # _resolved_simulate_retries on the simulation_sa rules), so stash the
         # override knobs there, mirroring the diagnostics stash above.
-        self._base_builder._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
-        self._base_builder._override_hpc_restart_times_other = override_hpc_restart_times_other
+        if overrides is None:
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides()
+        # Unpack the carrier into the same local/instance names the rest of this
+        # method (and _base_builder's consume sites) already read — byte-identical downstream.
+        override_clear_raw = overrides.clear_raw
+        override_hpc_total_nodes = overrides.hpc_total_nodes
+        self._base_builder._override_hpc_restart_times_simulate = overrides.hpc_restart_times_simulate
+        self._base_builder._override_hpc_restart_times_other = overrides.hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method

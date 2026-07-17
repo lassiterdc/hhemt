@@ -3211,6 +3211,18 @@ class TRITONSWMM_analysis:
             # so MTIME-input triggers cascade re-fire automatically.
             self._apply_force_rerun(override_force_rerun)
 
+            # Fold the five kept override_* kwargs into one carrier at this facade
+            # boundary; the builder and sensitivity layers are overrides-only (D4).
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides(
+                clear_raw=override_clear_raw,
+                force_rerun=override_force_rerun,
+                hpc_total_nodes=override_hpc_total_nodes,
+                hpc_restart_times_simulate=override_hpc_restart_times_simulate,
+                hpc_restart_times_other=override_hpc_restart_times_other,
+            )
+
             if self.cfg_analysis.toggle_sensitivity_analysis:
                 result = self.sensitivity.submit_workflow(
                     mode=mode,
@@ -3223,16 +3235,12 @@ class TRITONSWMM_analysis:
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     process_timeseries=process_timeseries,
                     which=which,
-                    override_clear_raw=override_clear_raw,
-                    override_force_rerun=override_force_rerun,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
-                    override_hpc_total_nodes=override_hpc_total_nodes,
-                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
-                    override_hpc_restart_times_other=override_hpc_restart_times_other,
+                    overrides=overrides,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
@@ -3266,15 +3274,12 @@ class TRITONSWMM_analysis:
                     rerun_swmm_hydro_if_outputs_exist=rerun_swmm_hydro_if_outputs_exist,
                     process_timeseries=process_timeseries,
                     which=which,
-                    override_clear_raw=override_clear_raw,
                     compression_level=compression_level,
                     pickup_where_leftoff=pickup_where_leftoff,
                     wait_for_completion=wait_for_completion,
                     dry_run=dry_run,
                     verbose=verbose,
-                    override_hpc_total_nodes=override_hpc_total_nodes,
-                    override_hpc_restart_times_simulate=override_hpc_restart_times_simulate,
-                    override_hpc_restart_times_other=override_hpc_restart_times_other,
+                    overrides=overrides,
                     report_formats=report_formats,
                     extra_sbatch_args=extra_sbatch_args,
                     snakemake_diagnostics=snakemake_diagnostics,
