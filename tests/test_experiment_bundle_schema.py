@@ -52,7 +52,7 @@ def test_unknown_key_is_rejected():
 
 def test_literal_operator_local_path_is_rejected():
     with pytest.raises(ValidationError, match="literal operator path"):
-        DatasetRef.model_validate({"name": "forcing", "local_path": "/home/dcl3nd/x.nc", "deposit": True})
+        DatasetRef.model_validate({"name": "forcing", "local_path": "/home/alice/x.nc", "deposit": True})
 
 
 def test_unresolvable_datasetref_is_rejected():

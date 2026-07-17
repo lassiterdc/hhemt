@@ -8,6 +8,8 @@
 
 ::: hhemt.bundle
 
+::: hhemt.experiment_bundle
+
 ::: hhemt.eda
 
 ::: hhemt.synthetic_experiment

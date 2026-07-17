@@ -151,7 +151,7 @@ def test_system_directory_bind_helper() -> None:
     # Uncovered → append a "sd:sd" mount.
     assert system_directory_bind("/home/x/proj/sys", ["/scratch", "/sfs"]) == ["/home/x/proj/sys:/home/x/proj/sys"]
     # Covered by a bare-path bind (the estate's /scratch case) → no-op.
-    assert system_directory_bind("/scratch/dcl3nd/norfolk", ["/scratch", "/sfs"]) == []
+    assert system_directory_bind("/scratch/alice/norfolk", ["/scratch", "/sfs"]) == []
     # Covered by the host side of a "host:container" bind → no-op.
     assert system_directory_bind("/data/sys", ["/data:/data"]) == []
     # Exact-match with an existing host side → no-op (is_relative_to is reflexive).

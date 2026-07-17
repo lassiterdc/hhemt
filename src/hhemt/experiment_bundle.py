@@ -13,6 +13,7 @@ synthetic-experiment matrix builder out of ``scripts/experiments/_matrix_builder
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -125,6 +126,49 @@ def load_bundle(bundle_dir: str | Path) -> ExperimentBundle:
         return ExperimentBundle.model_validate(raw)
     except Exception as e:
         raise ConfigurationError(field="experiment.yaml", message=f"schema violation: {e}", config_path=manifest) from e
+
+
+def expand_config_vars(cfg_path: str | Path, *, dest_dir: str | Path | None = None) -> Path:
+    """Expand ``${VAR}`` env references in a config file, materialize a resolved copy, return its path.
+
+    The toolkit config loader applies ``expanduser`` but NEVER ``expandvars`` — a
+    ``${DATA_DIR}``-style placeholder reaches the preflight path-existence check
+    (``validation.py::_validate_system_paths``) verbatim and fails
+    ``"Path does not exist for DEM_fullres: ${DATA_DIR}/dem.tif"``. So expand the
+    placeholders against ``os.environ`` here, before ``Toolkit.from_configs``.
+
+    Materialization: the resolved copy is written to ``$SCRATCH_DIR/resolved_configs/``
+    (a SHARED filesystem, so ``batch_job`` Snakemake rules dispatched to OTHER compute
+    nodes can read it — node-local ``/tmp`` is invisible cross-node), falling back to
+    the platform tempdir when ``$SCRATCH_DIR`` is unset (a purely-local dry-run). This
+    is an ephemeral INPUT, not an analysis OUTPUT, so it is compatible with a
+    ``dry_run`` that writes nothing to the analysis output tree.
+
+    Lifts the estate driver's ``run_analysis_test.py::_resolve_config`` into the wheel
+    (the same drift-free move Phase 5 made for ``resolve_hpc_system_config``), but
+    raises ``ConfigurationError`` (CLI exit 2) instead of ``SystemExit``.
+    """
+    cfg_path = Path(cfg_path)
+    resolved_text = os.path.expandvars(cfg_path.read_text(encoding="utf-8"))
+    if "${" in resolved_text:
+        unresolved = sorted({tok.split("}")[0] + "}" for tok in resolved_text.split("${")[1:]})
+        raise ConfigurationError(
+            field=cfg_path.name,
+            message=(
+                f"{cfg_path.name}: unresolved config placeholder(s) {unresolved}. "
+                "Export the referenced environment variable(s) before running "
+                "(e.g. DATA_DIR / PACKAGE_DIR / SCRATCH_DIR)."
+            ),
+            config_path=cfg_path,
+        )
+    if dest_dir is not None:
+        root = Path(dest_dir)
+    else:
+        root = Path(os.environ.get("SCRATCH_DIR") or tempfile.gettempdir()) / "resolved_configs"
+    root.mkdir(parents=True, exist_ok=True)
+    resolved = root / f"resolved_{cfg_path.name}"
+    resolved.write_text(resolved_text, encoding="utf-8")
+    return resolved
 
 
 def resolve_overrides(bundle: ExperimentBundle, cli_args: dict[str, object]) -> list[OverrideReport]:
@@ -261,9 +305,14 @@ def build_case_from_bundle(
                 config_path=cfg_path,
             )
 
+    # Expand ${VAR} placeholders (${DATA_DIR}/${SCRATCH_DIR}/${PACKAGE_DIR}/${HHEMT_*})
+    # in the two bundle-relative configs before from_configs — the loader does expanduser
+    # but not expandvars, so an unexpanded placeholder fails preflight path-existence.
+    # The hpc config path is already an absolute, env-resolved path (resolve_hpc_system_config),
+    # and its contents are operator-filled real values, so it is passed through unmodified.
     return Toolkit.from_configs(
-        system_config=bundle_dir / bundle.system_config,
-        analysis_config=bundle_dir / bundle.analysis_config,
+        system_config=expand_config_vars(bundle_dir / bundle.system_config),
+        analysis_config=expand_config_vars(bundle_dir / bundle.analysis_config),
         hpc_system_config=cfg_path,
     )
 

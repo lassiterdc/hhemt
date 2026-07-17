@@ -207,3 +207,56 @@ def test_resolve_hpc_system_config_unresolvable_raises(tmp_path, monkeypatch):
     monkeypatch.delenv("HHEMT_HPC_SYSTEM_CONFIG", raising=False)
     with pytest.raises(ConfigurationError, match="hpc_system_config"):
         eb.resolve_hpc_system_config("uva", bundle=None)
+
+
+# ---- ${VAR} expansion in bundle configs (Phase-7 friction: runner never loaded a real ${VAR} config) ----
+
+
+def test_expand_config_vars_resolves_and_materializes(tmp_path, monkeypatch):
+    real = tmp_path / "dem.tif"
+    real.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("HHEMT_TEST_VAR", str(tmp_path))
+    cfg = tmp_path / "system.yaml"
+    cfg.write_text("DEM_fullres: ${HHEMT_TEST_VAR}/dem.tif\n", encoding="utf-8")
+    out = eb.expand_config_vars(cfg, dest_dir=tmp_path)
+    assert out.is_file()
+    text = out.read_text(encoding="utf-8")
+    assert str(tmp_path) in text
+    assert "${" not in text
+
+
+def test_expand_config_vars_unset_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("HHEMT_UNSET_VAR", raising=False)
+    cfg = tmp_path / "system.yaml"
+    cfg.write_text("DEM_fullres: ${HHEMT_UNSET_VAR}/dem.tif\n", encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="HHEMT_UNSET_VAR"):
+        eb.expand_config_vars(cfg, dest_dir=tmp_path)
+
+
+def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
+    # Real files the ${VAR} must resolve to.
+    (tmp_path / "system.yaml").write_text("k: ${HHEMT_TEST_VAR}/s\n", encoding="utf-8")
+    (tmp_path / "analysis.yaml").write_text("k: ${HHEMT_TEST_VAR}/a\n", encoding="utf-8")
+    (tmp_path / "s").write_text("x", encoding="utf-8")
+    (tmp_path / "a").write_text("x", encoding="utf-8")
+    monkeypatch.setenv("HHEMT_TEST_VAR", str(tmp_path))
+    monkeypatch.setenv("SCRATCH_DIR", str(tmp_path))  # materialize resolved copies here
+    hpc_path = _write_hpc_config(tmp_path, default_account="real-account")
+    bundle = _make_bundle(hpc={"uva": str(hpc_path)})
+
+    captured: dict = {}
+
+    def _fake_from_configs(**kw):
+        captured["system_config"] = Path(kw["system_config"])
+        captured["analysis_config"] = Path(kw["analysis_config"])
+        return object()
+
+    import hhemt.toolkit as tk_mod
+
+    # from_configs is a @classmethod; patch with a classmethod so the cls arg is absorbed.
+    monkeypatch.setattr(tk_mod.Toolkit, "from_configs", classmethod(lambda cls, **kw: _fake_from_configs(**kw)))
+    eb.build_case_from_bundle(bundle, tmp_path, "uva", hpc_system_config_yaml=hpc_path)
+    for key in ("system_config", "analysis_config"):
+        p = captured[key]
+        assert p.is_file(), p
+        assert "${" not in p.read_text(encoding="utf-8")
