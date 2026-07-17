@@ -414,7 +414,19 @@ def check_cross_sim_identity(analysis: TRITONSWMM_analysis, *, within_family: bo
     eda_dir.mkdir(parents=True, exist_ok=True)
     plot_id = canonical_plot_id("eda_cross_sim_identity")
     artifact_path = eda_dir / f"{plot_id}.zarr"
-    artifact_ds.to_zarr(artifact_path, mode="w", consolidated=False)
+    # DTYPE CONTRACT (Phases 4-5 read-model): pin dtypes explicitly. identical__* is a
+    # boolean identity flag; max_abs_diff__* is a float64 magnitude; identity_group is an
+    # int32 partition label. An inferred bool->int8 / implicit _FillValue round-trip would
+    # be a real divergence-vs-NaN ambiguity in the identity column read across a bundle.
+    _encoding: dict[str, dict] = {}
+    for _v in artifact_ds.data_vars:
+        if _v.startswith("identical__"):
+            _encoding[_v] = {"dtype": "bool"}
+        elif _v.startswith("max_abs_diff__"):
+            _encoding[_v] = {"dtype": "float64"}
+        elif _v == "identity_group":
+            _encoding[_v] = {"dtype": "int32"}
+    artifact_ds.to_zarr(artifact_path, mode="w", consolidated=False, encoding=_encoding)
 
     # Source paths = every per-sub summary file the comparison consumed. Declared so
     # the artifact is a first-class harvest_source_paths provenance source (ADR-6).

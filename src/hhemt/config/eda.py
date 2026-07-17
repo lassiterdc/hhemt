@@ -53,7 +53,12 @@ class eda_config(cfgBaseModel):
         return data
 
     enabled_plots: list[str] = Field(
-        default_factory=lambda: ["config_diff_maps"],
+        default_factory=lambda: [
+            "config_diff_maps",
+            "eda_rank_sensitivity",
+            "eda_resume_sensitivity",
+            "eda_cross_hardware_magnitude",
+        ],
         description=(
             "Renderer-kind keys of the EDA plots to render into eda_report.html, "
             "in order. Default is the single shipped first member (config_diff_maps, "

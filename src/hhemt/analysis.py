@@ -877,7 +877,10 @@ class TRITONSWMM_analysis:
         from hhemt.config.loaders import yaml_to_model
         from hhemt.eda import (
             EdaReportResult,
+            check_cross_hardware_magnitude,
             check_cross_sim_identity,
+            check_rank_sensitivity,
+            check_resume_sensitivity,
             render_eda_plots,
         )
         from hhemt.eda._html_export import export_eda_html
@@ -888,8 +891,24 @@ class TRITONSWMM_analysis:
             yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
         )
         root = Path(self.analysis_paths.analysis_dir)
-        verdict_result = check_cross_sim_identity(self)
-        verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
+        # Run all EDA calc members, accumulating verdicts + produced plot-kinds. Each
+        # member writes eda/{plot_id}.zarr on a non-skipped run; a skipped member writes
+        # nothing (artifact_path None). cross-sim's produced-signal maps to the
+        # config_diff_maps renderer key (the one non-1:1 member->kind pairing).
+        _eda_results = [
+            ("config_diff_maps", check_cross_sim_identity(self)),
+            ("eda_rank_sensitivity", check_rank_sensitivity(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)),
+            (
+                "eda_resume_sensitivity",
+                check_resume_sensitivity(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
+            ),
+            (
+                "eda_cross_hardware_magnitude",
+                check_cross_hardware_magnitude(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
+            ),
+        ]
+        verdicts = [r.verdict for _kind, r in _eda_results if r.verdict is not None]
+        _produced_kinds = {kind for kind, r in _eda_results if (not r.skipped and r.artifact_path is not None)}
         # F-B Flag 2 (hhemt-specialist review): load_eda_context reads the fixed-name
         # cfg_analysis.yaml / cfg_system.yaml at `root`; the LIVE analysis_dir does NOT
         # carry them by construction (only the bundle staging dir does, via
@@ -902,12 +921,16 @@ class TRITONSWMM_analysis:
         (root / "cfg_system.yaml").write_text(_yaml.safe_dump(self._system.cfg_system.model_dump(mode="json")))
         # ADR-12: emit the source-independent eda_local/ package skeleton at root.
         emit_eda_local_surface(root)
-        # Non-sensitivity analyses produce no eda/<plot_id>.zarr (the cross-sim check
-        # skips), so render_eda_plots would open a non-existent zarr — skip rendering
-        # on the figureless branch. The NOTEBOOK is still emitted (ADR-14: primary
-        # artifact); its zarr-dependent seed cell is gated at execution.
-        figureless = verdict_result.skipped or verdict_result.artifact_path is None
-        plot_paths = [] if figureless else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        # Render ONLY the enabled plots whose calc member produced an artifact, so a
+        # renderer never opens a non-existent eda zarr for a skipped member, and a
+        # produced figure is never suppressed because a SIBLING member skipped.
+        plot_paths = (
+            []
+            if not _produced_kinds
+            else render_eda_plots(
+                root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, only_kinds=_produced_kinds
+            )
+        )
         notebook_path = emit_eda_notebook(
             root,
             cfg_analysis=self.cfg_analysis,
