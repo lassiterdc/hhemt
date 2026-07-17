@@ -137,3 +137,9 @@ non_breaking_allowlist:
       ONLY the current file content; any future grammar/stem edit yields a different
       hash and re-fires Check B (preserving layout-relevance per _load_allowlist).
     layout_signature: "849fd071bb7f9fb70cd935a3920c189cc42e5c5991463c8b7883865f49b0688c"
+  - path: src/hhemt/config/experiment_bundle.py
+    justification: >
+      Input-schema module only (the estate's experiment.yaml descriptor). Adds no
+      on-disk analysis-tree layout and no consolidated-output field; nothing under
+      analysis_dir/ changes shape. Same class as case_manifest.py / reprex_config.py /
+      reprex_taxonomy.py.
