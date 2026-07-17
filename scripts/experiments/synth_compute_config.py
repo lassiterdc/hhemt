@@ -19,6 +19,7 @@ from pathlib import Path
 # first makes the later swmmio import safe. Must precede the tests.fixtures imports.
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
+from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
 from hhemt.synthetic_experiment import write_clean_matrix_csv, write_resume_matrix_csv
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
@@ -181,6 +182,22 @@ def _build_case(
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
 
 
+def resume_depends_on(tritonswmm_sha: str = "3a832f7d") -> ExperimentDependency:
+    """The RESUME experiment's first-class dependency on the CLEAN experiment (P2+V3).
+
+    This is the unmistakeable, version-controlled declaration the reproducible ``intercomparison``
+    driver reads to verify + resolve the clean bundle. ``tritonswmm_sha`` is the pinned solver
+    (default ``3a832f7d``); ``case_name`` binds once the bundle carries ``case.yaml`` (Phase-5
+    ``_emit`` copy) — until then ``read_bundle_identity`` returns ``case_name=None`` and
+    ``ExperimentIdentity.matches`` skips it, so the sha+role check still holds. ``compute_config_identity``
+    is v1-None (both arms share the SAME 28-config matrix, so it is not a clean/resume discriminator)."""
+    return ExperimentDependency(
+        dependency_experiment_id="synth_cc_clean",
+        role="clean",
+        expected_identity=ExperimentIdentity(tritonswmm_sha=tritonswmm_sha),
+    )
+
+
 def clean_case(
     start_from_scratch: bool = False,
     system_directory: str | None = None,
@@ -293,3 +310,101 @@ def build_resume_from_clean_runtimes(
         hpc_system_config_yaml=hpc_system_config_yaml,
         tritonswmm_branch_key=tritonswmm_branch_key,
     )
+
+
+def _emit_bundle(case: _Case) -> Path:
+    """Committed emit step (supersedes the prior inline-heredoc runbook): eda + bundle a materialized
+    case, returning the bundle path. Requires df_status all-complete (batch_job runs out-of-band)."""
+    a = case.analysis
+    a.eda()  # writes eda/{plot_id}.zarr + .verdict.json + plots/eda/*.html
+    return Path(a.sensitivity.bundle_report_data())  # harvests plots/eda/*.manifest.json -> carries eda zarr+verdict
+
+
+def _cli() -> None:
+    """First-class committed CLI (FQ3, supersedes the operator inline-heredoc runbook).
+
+    ``clean`` / ``resume --eda --bundle`` emit a per-arm bundle; ``intercomparison`` is the SINGLE
+    reproducible entry that resolves+verifies the clean dependency (P2+V3), ensures the resume bundle,
+    and combines them (lineage-stamped). ``hhemt combine`` remains the one explicit compare verb; this
+    entry drives it from the resume ``depends_on`` so reproduction needs no hand-authored code."""
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="synth_compute_config",
+        description="Synth compute-config experiment driver (emit / combine).",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("clean", "resume"):
+        sp = sub.add_parser(name)
+        sp.add_argument("--system-directory", required=True)
+        sp.add_argument("--hpc-system-config", type=Path, default=None)
+        sp.add_argument("--cell-size-m", type=float, default=3.5)
+        sp.add_argument("--tritonswmm-sha", default="3a832f7d")
+        sp.add_argument("--eda", action="store_true")
+        sp.add_argument("--bundle", action="store_true")
+    ip = sub.add_parser("intercomparison")
+    ip.add_argument("--clean-system-directory", required=True)
+    ip.add_argument("--resume-system-directory", required=True)
+    ip.add_argument(
+        "--clean-bundle-search-root",
+        type=Path,
+        action="append",
+        required=True,
+        help="Dir(s) to search for the clean bundle (repeatable).",
+    )
+    ip.add_argument("--hpc-system-config", type=Path, default=None)
+    ip.add_argument("--cell-size-m", type=float, default=3.5)
+    ip.add_argument("--tritonswmm-sha", default="3a832f7d")
+    ip.add_argument("--output", type=Path, default=None)
+    args = p.parse_args()
+
+    if args.cmd in ("clean", "resume"):
+        factory = clean_case if args.cmd == "clean" else resume_case
+        case = factory(
+            system_directory=args.system_directory,
+            cell_size_m=args.cell_size_m,
+            hpc_system_config_yaml=args.hpc_system_config,
+            tritonswmm_branch_key=args.tritonswmm_sha,
+        )
+        if args.eda or args.bundle:
+            print("BUNDLE:", _emit_bundle(case))  # eda+bundle folded in (first-class emit)
+        else:
+            print("MATERIALIZED:", case.system_directory, "-> run analysis.run() then re-invoke with --eda --bundle")
+        return
+
+    # intercomparison: the SINGLE reproducible entry (resolve+verify+combine+lineage-stamp).
+    from hhemt.bundle._combine import combine_bundle
+    from hhemt.bundle._dependency import resolve_dependency
+
+    # AR2 (FQ2): batch_job submission is async (a submission RECEIPT, not completion), so auto-running
+    # the 28-config GPU clean sweep here could not be awaited-then-combined in one process anyway; and a
+    # large shared-cluster allocation should be operator-authorized. So HALT with the exact committed
+    # command (no improvised code -- the command IS the factory entry). auto_satisfy is the opt-in seam a
+    # future synchronous local-mode driver could wire.
+    # Include --hpc-system-config in the emitted reproduction command ONLY when supplied, so the
+    # halt message is always a copy-paste-valid command (no literal "None" path).
+    hpc_flag = f"--hpc-system-config {args.hpc_system_config} " if args.hpc_system_config is not None else ""
+    clean_root = resolve_dependency(
+        resume_depends_on(tritonswmm_sha=args.tritonswmm_sha),
+        search_roots=list(args.clean_bundle_search_root),
+        auto_satisfy=None,
+        emitted_command=(
+            f"python -m scripts.experiments.synth_compute_config clean "
+            f"--system-directory {args.clean_system_directory} "
+            f"{hpc_flag}"
+            f"--tritonswmm-sha {args.tritonswmm_sha} --eda --bundle"
+        ),
+    )
+    resume_case_obj = resume_case(
+        system_directory=args.resume_system_directory,
+        cell_size_m=args.cell_size_m,
+        hpc_system_config_yaml=args.hpc_system_config,
+        tritonswmm_branch_key=args.tritonswmm_sha,
+    )
+    resume_root = _emit_bundle(resume_case_obj)  # ensure the resume bundle (df_status must be complete)
+    combined = combine_bundle([clean_root, Path(resume_root)], output_path=args.output)
+    print("COMBINED:", combined.root)  # lineage stamp lives in combined_of (FILE 3)
+
+
+if __name__ == "__main__":
+    _cli()

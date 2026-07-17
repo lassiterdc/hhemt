@@ -66,6 +66,8 @@ _CFG_SYSTEM_COMPARISON_FIELDS: tuple[str, ...] = (
     "toggle_tritonswmm_model",
     "toggle_swmm_model",
     "target_dem_resolution",
+    # pinned solver: a different sha = a different experiment (BLOCKING via _EXPERIMENT_IDENTITY_FIELDS)
+    "TRITONSWMM_branch_key",
 )
 _CFG_ANALYSIS_COMPARISON_FIELDS: tuple[str, ...] = (
     "weather_events_to_simulate",
@@ -124,6 +126,11 @@ _EXPERIMENT_IDENTITY_FIELDS: frozenset[str] = frozenset(
         "toggle_tritonswmm_model",
         "toggle_triton_model",
         "toggle_swmm_model",
+        # A different pinned TRITON sha is a different solver = a different experiment: combining a
+        # fixed-TRITON clean against a stale-TRITON resume would be a silently-wrong North-Star figure,
+        # so a cross-sha combine is BLOCKING. The two arms of THIS experiment share 3a832f7d, so this
+        # never fires on the intended pair — it guards against an accidental cross-sha combine.
+        "TRITONSWMM_branch_key",
     }
 )
 

@@ -216,6 +216,7 @@ def _emit_combined_bundle(
         experiment_ids=experiment_ids,
         child_crates=child_crates,
         git_sha=_get_toolkit_git_sha(strict=False),
+        roots=roots,
     )
 
     # 3. Cross-experiment render (Phase-4 seam).
@@ -477,6 +478,7 @@ def _write_combined_bundle_manifest(
     experiment_ids: list[str],
     child_crates: list[str],
     git_sha: str,
+    roots: list[Path],
 ) -> None:
     """Write the combined bundle_manifest.json (CR5 content model, CR4 determinism).
 
@@ -489,13 +491,25 @@ def _write_combined_bundle_manifest(
     deterministic ``combined_of`` list IS the provenance surface; child crates
     retain their own timestamps.
     """
+    from hhemt.bundle import _dependency  # function-local: avoids a top-level bundle import cycle
+
     manifest = {
         "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
         "combined": True,
         "toolkit_git_sha": git_sha,
         "experiment_ids": list(experiment_ids),
         "child_crates": list(child_crates),
-        "combined_of": list(experiment_ids),  # deterministic provenance surface (CR4)
+        # Lineage stamp (CR4-deterministic; no wall-clock): per-child {experiment_id, role, identity}
+        # so the combined bundle self-documents WHICH clean + WHICH resume experiment (case/sha/role)
+        # it was built from — the reproducibility-from-one-entry provenance surface.
+        "combined_of": [
+            {
+                "experiment_id": eid,
+                "role": _dependency.classify_bundle_role(root),
+                "identity": _dependency.read_bundle_identity(root).model_dump(exclude_none=True),
+            }
+            for eid, root in zip(experiment_ids, roots, strict=True)
+        ],
     }
     (output_path / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
