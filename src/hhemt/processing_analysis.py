@@ -177,6 +177,7 @@ class TRITONSWMM_analysis_post_processing:
         apply_producing_stamp(tree, _sha_vals, _semver_vals)
 
         _stamp_triton_provenance(tree, self._analysis)
+        _stamp_coupled_resume_evidence(tree, self._analysis)
 
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
@@ -458,6 +459,60 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
         tree.attrs["triton_producing_sha"] = str(_sha)
     if _has_fix is not None:
         tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
+
+
+def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
+    """Stamp per-sub coupled-resume replay evidence onto the consolidated ROOT.
+
+    Captured at CONSOLIDATION time (logs still live, pre-R7-purge) as a PLAIN root attr
+    ``coupled_resume_replay_evidence`` = JSON ``{sub_id: {resumed, completed, replayed}}`` over
+    each tritonswmm resume-candidate sim. Makes R9's acceptance evidence DURABLE (survives the
+    ``"w"``-mode last-exec log being cleared/purged) and bundle-portable, so a downstream combine
+    / reprex consumer can assert genuine replay without the raw logs. Mirrors
+    ``_stamp_triton_provenance``: a plain root attr (NOT an ``_EMBEDDED_PROV_KEYS`` member) so no
+    LAYOUT_VERSION bump / no golden churn. Best-effort; never raises.
+    """
+    import json
+
+    from hhemt.analysis_validation import (
+        _TRITON_CHECKPOINT_READ_MARKER,
+        _TRITON_COMPLETION_MARKER,
+        _TRITON_REPLAY_MARKER,
+        _iter_subanalyses_or_self,
+    )
+    from hhemt.run_simulation import model_logfile_for
+
+    try:
+        import pandas as pd
+
+        df = getattr(analysis, "df_status", None)
+        if df is None or not {"model_type", "n_resumes", "event_iloc"}.issubset(getattr(df, "columns", [])):
+            return
+        n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+        cands = df[(df["model_type"] == "tritonswmm") & (n_res >= 1)]
+        if len(cands) == 0:
+            return
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        evidence: dict[str, dict[str, bool]] = {}
+        for _, row in cands.iterrows():
+            _sa = row.get("sa_id")
+            sub = subs.get(str(_sa) if _sa is not None else None)
+            if sub is None:
+                continue
+            try:
+                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+            except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
+                continue
+            key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
+            evidence[key] = {
+                "resumed": _TRITON_CHECKPOINT_READ_MARKER in text,
+                "completed": _TRITON_COMPLETION_MARKER in text,
+                "replayed": _TRITON_REPLAY_MARKER in text,
+            }
+        if evidence:
+            tree.attrs["coupled_resume_replay_evidence"] = json.dumps(evidence, sort_keys=True)
+    except Exception:  # noqa: BLE001 — durable-evidence stamp is best-effort; never block consolidation
+        return
 
 
 def prev_power_of_two(n: int | float) -> int:

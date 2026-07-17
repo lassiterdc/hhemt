@@ -622,8 +622,7 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             level="aggregate",
             passed=True,
             summary=(
-                "Coupled-resume-fix status known but no resume record available — "
-                "no coupled-resume invalidity found."
+                "Coupled-resume-fix status known but no resume record available — no coupled-resume invalidity found."
             ),
             details=[],
         )
@@ -716,6 +715,29 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
         # None key. str-normalized per the sa_id-cast-to-string stipulation, mirroring
         # per_analysis_summary.py's `astype(str) == str(sa_id)` precedent.
         subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        # DURABLE FALLBACK (Q4): the model log is opened "w" per exec and can be purged/cleared,
+        # so when read_text() below raises we consult the per-sub replay evidence stamped onto the
+        # consolidated tree ROOT at consolidation time (_stamp_coupled_resume_evidence). Read once,
+        # best-effort; keyed identically to the log-path branch (str(sa_id) else scenario_directory).
+        import json
+
+        _tree_ev: dict = {}
+        try:
+            _p = (
+                analysis.analysis_paths.sensitivity_datatree_zarr
+                if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+                else analysis.analysis_paths.analysis_datatree_zarr
+            )
+            if _p is not None and _p.exists():
+                import xarray as xr
+
+                _tree_ev = json.loads(
+                    xr.open_datatree(_p, engine="zarr", consolidated=False).attrs.get(
+                        "coupled_resume_replay_evidence", "{}"
+                    )
+                )
+        except Exception:  # noqa: BLE001 — durable-evidence fallback is best-effort; absence -> log-only Arm B
+            _tree_ev = {}
         for _, row in resume_candidates.iterrows():
             scen_dir = str(row.get("scenario_directory", ""))
             _sa = row.get("sa_id")
@@ -726,8 +748,27 @@ def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
             try:
                 text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
             except Exception:
+                # Log gone (purged / cache-cleared): fall back to the durable consolidation-time
+                # stamp before conceding INDETERMINATE. A stamped resumed+completed sub is EXAMINED
+                # (positive if replayed, a real warn if not); only a sub with no log AND no stamp
+                # stays INDETERMINATE.
+                _ev = _tree_ev.get(str(_sa) if _sa is not None else scen_dir)
+                if _ev and _ev.get("resumed") and _ev.get("completed"):
+                    examined += 1
+                    if not _ev.get("replayed"):
+                        details.append(
+                            {
+                                "scenario": scen_dir,
+                                "detail": (
+                                    "resumed coupled sim; durable replay-evidence stamp shows the "
+                                    "replay did NOT engage (log purged; tree-stamped at "
+                                    "consolidation). Summaries likely truncated."
+                                ),
+                            }
+                        )
+                    continue
                 indeterminate += 1
-                continue  # INDETERMINATE — cannot read the log
+                continue  # INDETERMINATE — log gone and no durable stamp
             # (1) SCOPE GATE — did THIS exec resume, and did the resume TAKE?
             # The [OK] completion form is the anchor, not the [..] attempt form: the replay
             # reads the exchange history FROM the checkpoint set, so "the replay should have

@@ -1423,9 +1423,10 @@ class TRITONSWMM_sensitivity_analysis:
         # reader resolves sensitivity_datatree.zarr for a sensitivity master, so omitting
         # this site would leave the reader permanently INDETERMINATE on the primary
         # experiment shape (the c2c3 dual-wiring seam).
-        from hhemt.processing_analysis import _stamp_triton_provenance
+        from hhemt.processing_analysis import _stamp_coupled_resume_evidence, _stamp_triton_provenance
 
         _stamp_triton_provenance(tree, self.master_analysis)
+        _stamp_coupled_resume_evidence(tree, self.master_analysis)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.master_analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 

@@ -529,3 +529,60 @@ def test_provenance_reader_is_quiet_on_genuinely_absent_tree(tmp_path, monkeypat
 
     assert (sha, has_fix) == (None, None)
     assert caplog.text == ""
+
+
+# --- Q4: durable per-sub replay-evidence stamp fallback (Arm B, log purged) -------
+#
+# When the "w"-mode last-exec log is gone (R7 purge / cache clear), Arm B falls back to the
+# `coupled_resume_replay_evidence` root attr stamped at consolidation time
+# (_stamp_coupled_resume_evidence). A stamped resumed+completed sub is EXAMINED (positive if
+# replayed, a real WARN if not) instead of the vacuous INDETERMINATE the purged log would force.
+
+
+def test_postfix_unreadable_log_durable_stamp_replayed_passes(monkeypatch, tmp_path):
+    """Q4: log purged but the durable stamp shows resumed+completed+replayed -> EXAMINED + PASS
+    (not a vacuous INDETERMINATE). This is exactly the synth_cc_resume situation the R7 purge
+    created, made durable so a future run never depends on a cache-resident last-exec log."""
+    import json
+
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    # No _write_real_log — the producer log path is ABSENT (purged).
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    a.analysis_paths.analysis_datatree_zarr = zarr_path
+    evidence = {str(scen): {"resumed": True, "completed": True, "replayed": True}}
+    tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"coupled_resume_replay_evidence": json.dumps(evidence)})})
+    write_datatree_zarr(tree, zarr_path)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is True
+    assert res.details == []
+    assert "1 resumed coupled sim(s) examined" in res.summary
+
+
+def test_postfix_unreadable_log_durable_stamp_not_replayed_warns(monkeypatch, tmp_path):
+    """Q4: log purged but the durable stamp shows resumed+completed but NOT replayed -> WARN.
+    The durable evidence catches a silently-skipped replay the purged log could no longer prove."""
+    import json
+
+    import xarray as xr
+
+    from hhemt.utils import write_datatree_zarr
+
+    monkeypatch.setattr(av, "_read_triton_provenance", lambda a: ("cafebabe", True))
+    scen = tmp_path / "sim_0"
+    a = _analysis_stub(df=_resumed_df(str(scen)), simlog_dir=tmp_path / "logs" / "sims")
+    zarr_path = tmp_path / "analysis_datatree.zarr"
+    a.analysis_paths.analysis_datatree_zarr = zarr_path
+    evidence = {str(scen): {"resumed": True, "completed": True, "replayed": False}}
+    tree = xr.DataTree.from_dict({"/": xr.Dataset(attrs={"coupled_resume_replay_evidence": json.dumps(evidence)})})
+    write_datatree_zarr(tree, zarr_path)
+    res = check_coupled_resume_validity(a)
+    assert res.passed is False
+    assert len(res.details) == 1
+    assert "durable replay-evidence stamp shows the replay did NOT engage" in res.details[0]["detail"]
+    assert "1 resumed coupled sim(s) examined" in res.summary
