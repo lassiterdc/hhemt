@@ -1242,6 +1242,65 @@ def synth_experiment_command(
         raise typer.Exit(10) from e
 
 
+@app.command(name="run-experiment")
+def run_experiment_command(
+    bundle: Path = typer.Option(
+        ...,
+        "--bundle",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        readable=True,
+        help="Path to a schema-conformant experiment bundle directory.",
+    ),
+    cluster: str = typer.Option(..., "--cluster", help="Target cluster key, e.g. 'uva'."),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help="Override the bundle's declared hpc_system_config for this cluster.",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Plan only; write nothing."),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        help="Accept the override gate non-interactively. Required for any CLI override in a non-TTY context.",
+    ),
+):
+    """Run a schema-conformant experiment bundle.
+
+    The bundle's experiment.yaml is the single config. Any CLI argument that overrides
+    a descriptor-declared value prints both values and requires confirmation.
+    """
+    try:
+        from .experiment_bundle import run_experiment
+
+        result = run_experiment(
+            bundle,
+            cluster,
+            dry_run=dry_run,
+            hpc_system_config_yaml=hpc_system_config,
+            assume_yes=yes,
+        )
+        message = getattr(result, "message", "") or ""
+        if dry_run:
+            console.print(f"[green]--dry-run OK[/green] — plan only, nothing written. {message}")
+        else:
+            success = getattr(result, "success", None)
+            console.print(f"[green]run-experiment complete[/green] (success={success}). {message}")
+        raise typer.Exit(0)
+    except typer.Exit:
+        raise
+    except ConfigurationError as e:
+        console_err.print(f"[bold red]Configuration Error:[/bold red] {e}")
+        raise typer.Exit(2) from e
+    except (WorkflowError, ProcessingError, SimulationError) as e:
+        console_err.print(f"[bold red]Error:[/bold red] {e}")
+        raise typer.Exit(5) from e
+    except Exception as e:
+        console_err.print(f"[bold red]Unexpected Error:[/bold red] {e}")
+        raise typer.Exit(10) from e
+
+
 @app.command(name="static-plots")
 def static_plots_command(
     system_config: Path = typer.Option(
