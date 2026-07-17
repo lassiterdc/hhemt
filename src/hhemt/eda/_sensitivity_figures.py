@@ -9,12 +9,17 @@ THE FIGURE BODIES ARE STUBS. A subsequent interactive ``/eda-spinup`` pass desig
 real panels (reading ``{root}/eda/{plot_id}.zarr``, guaranteed present by
 ``render_eda_plots``' callee-side absence gate); until then each returns a titled empty
 figure so the emit/source-declaration path is exercised end-to-end WITHOUT authoring
-figure content. ``sensitivity_source_paths`` declares BOTH the ``{plot_id}.zarr`` artifact
-AND the ``{plot_id}.verdict.json`` so the render bundle carries the verdict Phase 5 reads
-(SOURCE-DECLARATION contract: the bundle file set is EXACTLY the union of manifest-declared
-source_paths -- the ``bundle file set is computed from manifest harvest`` stipulation;
-declaring only the zarr leaves the verdict out of every bundle and Phase 5's
-``_write_combined_intercomparison`` renders empty while every live-analysis_dir test passes).
+figure content. ``sensitivity_source_paths`` declares BOTH the ``{plot_id}.zarr`` artifact AND the
+``{plot_id}.verdict.json`` (SOURCE-DECLARATION contract: the bundle file set is EXACTLY the
+union of manifest-declared source_paths -- the ``bundle file set is computed from manifest
+harvest`` stipulation), so a render bundle carries the verdict as a general robustness backstop.
+Combine-first note: the per-arm ``eda_resume_sensitivity`` figure is a general OPT-IN per-master
+capability (removed from the default ``enabled_plots``) that renders only for a single master
+carrying BOTH a clean and a resume arm; on a single-arm master it SKIPS and writes no
+verdict/zarr. The combine-level clean-vs-resume comparison (``cross_experiment_intercomparison``)
+does NOT read this member's verdict -- it derives its data CROSS-BUNDLE from the two bundles'
+paired per-config key-result summaries via ``compare_variable_exact`` (see
+``bundle/_combine._write_combined_intercomparison``).
 """
 
 from __future__ import annotations

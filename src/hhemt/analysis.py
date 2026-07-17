@@ -198,6 +198,7 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         is_main_orchestrator: bool = True,
         hpc_system_config_yaml: Path | None = None,
+        case_manifest_yaml: Path | None = None,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -224,18 +225,37 @@ class TRITONSWMM_analysis:
             ``self.cfg_hpc_system`` (None when the path is absent). Consumers
             (the SLURM emitters / preflight) wire in later phases; with the
             argument absent, behavior is byte-identical to today (default: None).
+        case_manifest_yaml : Path, optional
+            Path to the case study's ``case.yaml`` (ADR-12 CaseManifest). When
+            provided and loadable, populates ``self.case_manifest_yaml`` (copied
+            into the render bundle by ``_emit._copy_supporting_files`` so ``case_name``
+            becomes a BLOCKING combine-compatibility field) AND ``self._case_manifest``
+            (so the RO-Crate root ``name`` resolves from the real manifest instead of
+            the analysis_id stand-in). A load/parse failure degrades gracefully to
+            None (default: None).
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
-        # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
-        # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
-        # no-op today. Populate wiring (examples.py::from_case_study) is deferred to
-        # a follow-up — it flips the embedded core and needs a golden regen.
-        # Quotes are required (no `from __future__ import annotations` in this module —
-        # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        # Settable CaseManifest accessor (C6/ADR-11 + Phase-5 D6). Populated from the
+        # case_manifest_yaml constructor arg (case.yaml) when provided-and-loadable, so the
+        # RO-Crate root `name` resolves from the real manifest (provenance._resolve_case_manifest)
+        # instead of degrading to the analysis_id stand-in; None keeps the graceful-absent
+        # stand-in. A load/validation failure degrades to None (never raises). Quotes are required
+        # (no `from __future__ import annotations` in this module — the instance-attr annotation is
+        # runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        self.case_manifest_yaml = case_manifest_yaml
         self._case_manifest: "CaseManifest | None" = None  # noqa: UP037
+        if case_manifest_yaml is not None and Path(case_manifest_yaml).exists():
+            try:
+                import yaml as _yaml
+
+                from .config.case_manifest import CaseManifest as _CaseManifest
+
+                self._case_manifest = _CaseManifest(**_yaml.safe_load(Path(case_manifest_yaml).read_text()))
+            except Exception:  # noqa: BLE001 -- graceful-absent: any load/validation failure degrades to the stand-in
+                self._case_manifest = None
         # Load the per-HPC-system config ONCE (R2). Store BEFORE any
         # _get_config_args read so the direct attribute read is always safe.
         self.hpc_system_config_yaml = hpc_system_config_yaml
@@ -927,9 +947,7 @@ class TRITONSWMM_analysis:
         plot_paths = (
             []
             if not _produced_kinds
-            else render_eda_plots(
-                root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, only_kinds=_produced_kinds
-            )
+            else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, only_kinds=_produced_kinds)
         )
         notebook_path = emit_eda_notebook(
             root,
@@ -2216,8 +2234,7 @@ class TRITONSWMM_analysis:
                 for _m in _fix_matches:
                     _action = _m.recommended_action.value if _m.recommended_action else "-"
                     print(
-                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: "
-                        f"{_action} [scope {_m.affected_scope}]",
+                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: {_action} [scope {_m.affected_scope}]",
                         flush=True,
                     )
                 print(

@@ -86,10 +86,7 @@ def emit_bundle(
     analysis_id = analysis.cfg_analysis.analysis_id
 
     if output_path is None:
-        output_path = (
-            analysis_dir / BUNDLE_OUTPUT_SUBDIR
-            / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
-        )
+        output_path = analysis_dir / BUNDLE_OUTPUT_SUBDIR / f"{analysis_id}_{git_sha}_v{BUNDLE_SCHEMA_VERSION}.zip"
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _staging_dir(output_path.parent) as staging:
@@ -98,6 +95,7 @@ def emit_bundle(
         aggregated_invariants = _copy_configs_with_relative_paths(analysis, staging)
         _emit_resolved_brand_theme(analysis, staging)
         _copy_supporting_files(analysis, staging)
+        _emit_hpc_identity(analysis, staging)
         _emit_runnable_template_set(staging)
         _upgrade_crate_to_workflow_run_crate(staging)
         _write_bundle_manifest(
@@ -163,9 +161,7 @@ def _copy_bundle_baseline(analysis_dir: Path, staging: Path) -> None:
             shutil.copy2(src, baseline / src.name)
 
 
-def _copy_configs_with_relative_paths(
-    analysis: TRITONSWMM_analysis, staging: Path
-) -> dict[str, dict]:
+def _copy_configs_with_relative_paths(analysis: TRITONSWMM_analysis, staging: Path) -> dict[str, dict]:
     """Copy cfg_system.yaml and cfg_analysis.yaml with all Pydantic
     ``Path``-typed fields rewritten per the per-field policy table in
     ``_path_policy._PATH_FIELD_POLICY``. Returns a dict keyed by cfg
@@ -179,11 +175,7 @@ def _copy_configs_with_relative_paths(
         ("cfg_system", "cfg_system.yaml"),
         ("cfg_analysis", "cfg_analysis.yaml"),
     ):
-        cfg = (
-            analysis._system.cfg_system
-            if cfg_attr == "cfg_system"
-            else analysis.cfg_analysis
-        )
+        cfg = analysis._system.cfg_system if cfg_attr == "cfg_system" else analysis.cfg_analysis
         cfg_dict = cfg.model_dump(mode="json")
         result = _rewrite_paths_to_relative(
             cfg_dict,
@@ -195,15 +187,11 @@ def _copy_configs_with_relative_paths(
         # (bundle_root_invariants). Plan Phase 3 captures it per-cfg.
         aggregated[cfg_attr] = result.invariants
         scrubbed = _scrub_user_bucket_fields(result.cfg_dict, cfg_model=type(cfg))
-        (staging / filename).write_text(
-            yaml.safe_dump(scrubbed, sort_keys=False)
-        )
+        (staging / filename).write_text(yaml.safe_dump(scrubbed, sort_keys=False))
     return aggregated
 
 
-def _scrub_user_bucket_fields(
-    cfg_dict: dict, *, cfg_model: type[cfgBaseModel]
-) -> dict:
+def _scrub_user_bucket_fields(cfg_dict: dict, *, cfg_model: type[cfgBaseModel]) -> dict:
     """Null every non-Path config field whose reprex bucket is ``"user"`` (ADR-9
     all-field scrub / C-ZERO-USER-INFO).
 
@@ -407,6 +395,12 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
         src = analysis_dir / fname
         if src.exists():
             shutil.copy2(src, staging / fname)
+    # case.yaml — the case manifest carries case_name (BLOCKING experiment-identity
+    # field, already in _compatibility._EXPERIMENT_IDENTITY_FIELDS). Resolved from the
+    # case_manifest_yaml constructor arg (D6); None on paths that do not set it.
+    case_yaml = getattr(analysis, "case_manifest_yaml", None)
+    if case_yaml is not None and Path(case_yaml).exists():
+        shutil.copy2(Path(case_yaml), staging / "case.yaml")
     # Copy the weather-events CSV referenced by cfg_analysis.weather_events_to_simulate.
     # The cfg rewrite preserves its relative position (typically directly under
     # analysis_dir for synth fixtures); the file itself must travel with the bundle
@@ -427,6 +421,31 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     plots_dir = analysis_dir / BUNDLE_PLOTS_SUBDIR
     if plots_dir.exists():
         shutil.copytree(plots_dir, staging / BUNDLE_PLOTS_SUBDIR, dirs_exist_ok=True)
+
+
+#: Bundle-root filename for the scrubbed compute-config identity surface (combine-side).
+HPC_IDENTITY_FILENAME = "hpc_system_config.identity.yaml"
+
+
+def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
+    """Emit the SCRUBBED compute-config identity surface for the combine-side checker.
+
+    Allow-list-BY-CONSTRUCTION (D7): reach ONLY for the named compute-config-identity
+    fields (``partitions`` map + ``gpu_allocation_flavor``) — the fields two experiments
+    must agree on for an intercomparison to be meaningful — and NEVER emit any
+    USER-bucket scalar (default_account / login_node / container.sif_path). No
+    enumerate-and-null (that is fail-open against future schema drift). No-op when the
+    analysis carries no hpc_system_config (local/native runs). Passes the zero-user-info
+    gate trivially (it never writes a producer value). NOT the reprex template.
+    """
+    import yaml
+
+    cfg_hpc = getattr(analysis, "cfg_hpc_system", None)
+    if cfg_hpc is None:
+        return
+    dumped = cfg_hpc.model_dump(mode="json")
+    out = {k: dumped[k] for k in ("partitions", "gpu_allocation_flavor") if k in dumped}
+    (staging / HPC_IDENTITY_FILENAME).write_text(yaml.safe_dump(out, sort_keys=False))
 
 
 #: Bundle-root filenames for the minimal runnable set (reprex carriage, ADR-10).
@@ -459,9 +478,7 @@ def _emit_runnable_template_set(staging: Path) -> None:
         "target_ensemble_partition": "{your-gpu-partition}",
         "target_setup_and_analysis_processing_partition": "{your-cpu-partition}",
     }
-    reprex_template = {
-        name: placeholders.get(name, "{fill-in}") for name in reprex_config.model_fields
-    }
+    reprex_template = {name: placeholders.get(name, "{fill-in}") for name in reprex_config.model_fields}
     (staging / REPREX_CONFIG_FILENAME).write_text(
         "# reprex_config.yaml — fill in with YOUR system's values, then run reprex().\n"
         "# USER-bucket (host-local) fields + the HPC-revisable partition selectors only.\n"
@@ -501,9 +518,7 @@ def _upgrade_crate_to_workflow_run_crate(staging: Path) -> None:
     sidecar.write_text(canonical_jsonld_from_doc(doc))
 
 
-def reconstitute_runnable_config(
-    bundle_root: Path, *, target_path: Path | None = None
-) -> Path:
+def reconstitute_runnable_config(bundle_root: Path, *, target_path: Path | None = None) -> Path:
     """Synthesize a runnable ``system_config.yaml`` from a reprex bundle (ADR-10, R5).
 
     Reads the bundle's scrubbed ``cfg_system.yaml`` and writes a ``system_config.yaml``
@@ -527,10 +542,7 @@ def reconstitute_runnable_config(
         if value is None:
             continue
         if isinstance(value, list):  # BUNDLE_RELATIVE_LIST (none on system_config today)
-            out[name] = [
-                str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v
-                for v in value
-            ]
+            out[name] = [str((bundle_root / v).resolve()) if not Path(v).is_absolute() else v for v in value]
             continue
         if isinstance(value, str) and not Path(value).is_absolute():
             out[name] = str((bundle_root / value).resolve())
@@ -555,16 +567,11 @@ def _write_bundle_manifest(
         "toolkit_git_sha": git_sha,
         "analysis_id": analysis_id,
         "created_at_utc": datetime.now(UTC).isoformat(),
-        "source_paths_by_renderer": {
-            name: [str(p) for p in paths]
-            for name, paths in sources_by_renderer.items()
-        },
+        "source_paths_by_renderer": {name: [str(p) for p in paths] for name, paths in sources_by_renderer.items()},
     }
     if bundle_root_invariants is not None:
         manifest["bundle_root_invariants"] = bundle_root_invariants
-    (staging / BUNDLE_MANIFEST_FILENAME).write_text(
-        json.dumps(manifest, indent=2)
-    )
+    (staging / BUNDLE_MANIFEST_FILENAME).write_text(json.dumps(manifest, indent=2))
 
 
 def _emit_bundle_zip(staging: Path, output_path: Path) -> None:
@@ -583,18 +590,14 @@ def _emit_bundle_zip(staging: Path, output_path: Path) -> None:
     # bundle size and is internally chunked-compressed; external zip
     # compression adds CPU cost without size win.
     fixed_date_time = (1980, 1, 1, 0, 0, 0)
-    with zipfile.ZipFile(
-        output_path, "w", compression=zipfile.ZIP_STORED
-    ) as zf:
+    with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_STORED) as zf:
         for entry in sorted(staging.rglob("*")):
             if entry.is_dir():
                 # Skip directory entries; zipfile reconstructs directory
                 # structure from file paths at extraction time.
                 continue
             arcname = entry.relative_to(staging)
-            info = zipfile.ZipInfo(
-                filename=str(arcname), date_time=fixed_date_time
-            )
+            info = zipfile.ZipInfo(filename=str(arcname), date_time=fixed_date_time)
             info.compress_type = zipfile.ZIP_STORED
             info.external_attr = 0o644 << 16  # rw-r--r-- file mode
             zf.writestr(info, entry.read_bytes())
@@ -621,10 +624,7 @@ def _get_toolkit_git_sha(strict: bool = True) -> str:
                 return "unknown"
             raise ConfigurationError(
                 field="toolkit_git_sha",
-                message=(
-                    "git rev-parse returned empty SHA — "
-                    "toolkit may be in a detached state"
-                ),
+                message=("git rev-parse returned empty SHA — toolkit may be in a detached state"),
                 config_path=None,
             )
         return sha
@@ -645,7 +645,5 @@ def _get_toolkit_git_sha(strict: bool = True) -> str:
 @contextlib.contextmanager
 def _staging_dir(parent: Path):
     """Sibling staging directory; cleaned up on exit."""
-    with tempfile.TemporaryDirectory(
-        prefix="bundle_staging_", dir=parent
-    ) as tmp:
+    with tempfile.TemporaryDirectory(prefix="bundle_staging_", dir=parent) as tmp:
         yield Path(tmp)

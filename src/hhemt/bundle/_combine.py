@@ -210,6 +210,7 @@ def _emit_combined_bundle(
     # 2. Combined crate + read-model + manifest (all byte-deterministic — CR4).
     _write_combined_rocrate(output_path, child_crates)
     _write_combined_compatibility(output_path, report)
+    _write_combined_intercomparison(output_path, roots)
     _write_combined_bundle_manifest(
         output_path,
         experiment_ids=experiment_ids,
@@ -306,6 +307,166 @@ def _write_combined_compatibility(output_path: Path, report: CompatibilityReport
         ],
     }
     (output_path / _COMBINED_COMPAT_FILENAME).write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
+    )
+
+
+#: Read-model filename the cross_experiment_intercomparison renderer projects.
+_COMBINED_INTERCOMPARISON_FILENAME = "combined_intercomparison.json"
+
+#: Key-result variables compared clean-vs-resume cross-bundle (mirrors
+#: eda.cross_sim_identity.TRACKED_VARS): peak flood depth + peak conduit flow, read from
+#: the consolidated-tree child node under each /sa_{id} group.
+_INTERCOMPARISON_VARS: tuple[tuple[str, str], ...] = (
+    ("tritonswmm/triton", "max_wlevel_m"),
+    ("tritonswmm/swmm_link", "max_flow_cms"),
+)
+
+
+def _bundle_role_from_status(root: Path) -> str:
+    """clean iff every bundled scenario_status.csv ``n_resumes`` == 0; resume iff any > 0.
+
+    Combine-first: each experiment bundle is a single-arm master (one all-clean sweep, one
+    all-resume sweep). scenario_status.csv is bundled by ``_emit._copy_supporting_files``.
+    Mirrors ``eda.compute_sensitivity``'s ``n_resumes`` clean/resume classifier convention.
+    """
+    import csv
+
+    p = root / "scenario_status.csv"
+    if not p.exists():
+        return "clean"  # no resume evidence -> treat as clean
+    max_r = 0
+    try:
+        with p.open() as fh:
+            for row in csv.DictReader(fh):
+                try:
+                    max_r = max(max_r, int(float(row.get("n_resumes") or 0)))
+                except (TypeError, ValueError):
+                    continue
+    except OSError:
+        return "clean"
+    return "resume" if max_r > 0 else "clean"
+
+
+def _config_identity_from_node_attrs(attrs: dict) -> str:
+    """Serializable compute-config identity read from a consolidated-tree ``/sa_{id}`` node's
+    attrs. Mirrors ``eda.compute_sensitivity._config_identity`` fields (run_mode, n_mpi, n_omp,
+    n_gpus, n_nodes, partition) so a clean sub and a resume sub of the SAME compute-config
+    produce the SAME key. Replicate suffixes are NOT part of the identity (replicates share a
+    config)."""
+
+    def _i(key: str) -> int:
+        try:
+            return int(float(attrs.get(key, 0) or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    return "|".join(
+        [
+            f"run_mode={attrs.get('run_mode', '')}",
+            f"n_mpi={_i('n_mpi_procs')}",
+            f"n_omp={_i('n_omp_threads')}",
+            f"n_gpus={_i('n_gpus')}",
+            f"n_nodes={_i('n_nodes')}",
+            f"partition={attrs.get('hpc.partition', '') or ''}",
+        ]
+    )
+
+
+def _load_intercomparison_subs(root: Path) -> dict:
+    """``{config_identity_str: {var_name: DataArray}}`` for one bundle's
+    ``sensitivity_datatree.zarr``.
+
+    Walks the same tree convention as ``eda._config_diff._load_subs`` (top-level groups
+    ``/sa_{id}``; the key-result arrays live under ``/sa_{id}/tritonswmm/{triton,swmm_link}``).
+    One representative sub per compute-config (sorted-first, deterministic) — replicates of one
+    config are byte-identical, so a representative suffices for the clean-vs-resume pairing.
+    Returns ``{}`` when the bundle carries no consolidated tree.
+    """
+    import xarray as xr
+
+    store = root / "sensitivity_datatree.zarr"
+    out: dict = {}
+    if not store.exists():
+        return out
+    dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
+    for g in sorted(dt.groups):
+        if g.count("/") != 1 or not g.startswith("/sa_"):
+            continue
+        cfg_key = _config_identity_from_node_attrs(dict(dt[g].attrs))
+        if cfg_key in out:
+            continue  # first (sorted) representative per config wins
+        vars_by_name: dict = {}
+        for child, var in _INTERCOMPARISON_VARS:
+            try:
+                child_node = dt[f"{g}/{child}"]
+            except KeyError:
+                continue
+            if var in child_node.data_vars:
+                vars_by_name[var] = child_node[var]
+        if vars_by_name:
+            out[cfg_key] = vars_by_name
+    return out
+
+
+def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> None:
+    """Derive clean-vs-resume per-compute-config identity CROSS-BUNDLE into
+    ``combined_intercomparison.json`` (the read-model the ``cross_experiment_intercomparison``
+    renderer projects).
+
+    Combine-first (the SOLE clean-vs-resume vehicle): the two bundles are single-arm masters —
+    one all-clean (``n_resumes==0``), one all-resume (``n_resumes>0``). Classify each bundle
+    from its bundled ``scenario_status.csv``, pair each compute-config present in BOTH (keyed on
+    the run_mode/n_mpi/n_omp/n_gpus/n_nodes/partition identity), and compare each key-result
+    summary (``max_wlevel_m`` + ``max_flow_cms``) per event via ``compare_variable_exact`` (the
+    Phase-1 compliant kernel: ``xr.align`` exact + transpose + dtype gate + ``equal_nan``; the
+    master Assumption establishes consolidation is value-preserving, so reading the consolidated
+    tree here is stipulation-compliant). Records ``{config, variable, event_iloc, identical,
+    max_abs_diff}``. Read-only over the child bundles; deterministic ordering. Does NOT read any
+    ``eda_resume_sensitivity.verdict.json`` (a single-arm master skips that member and writes no
+    verdict). Writes an EMPTY-but-honest ``pairs`` list when the two bundles share no
+    compute-config, a bundle carries no consolidated tree, or the pair is not clean+resume.
+    """
+    from hhemt.eda.cross_sim_identity import compare_variable_exact
+
+    experiment_ids = _combined_experiment_ids(roots)
+    roles = [_bundle_role_from_status(root) for root in roots]
+    experiments = [{"experiment": eid, "role": role} for eid, role in zip(experiment_ids, roles, strict=True)]
+    clean = [root for root, role in zip(roots, roles, strict=True) if role == "clean"]
+    resume = [root for root, role in zip(roots, roles, strict=True) if role == "resume"]
+
+    pairs: list[dict] = []
+    if clean and resume:
+        clean_subs = _load_intercomparison_subs(clean[0])
+        resume_subs = _load_intercomparison_subs(resume[0])
+        for cfg_key in sorted(set(clean_subs) & set(resume_subs)):
+            c_vars, r_vars = clean_subs[cfg_key], resume_subs[cfg_key]
+            for _child, var in _INTERCOMPARISON_VARS:
+                c_da, r_da = c_vars.get(var), r_vars.get(var)
+                if c_da is None or r_da is None or "event_iloc" not in c_da.dims:
+                    continue
+                for e in [int(v) for v in c_da["event_iloc"].values]:
+                    try:
+                        cmp = compare_variable_exact(c_da.sel(event_iloc=e), r_da.sel(event_iloc=e))
+                    except (ValueError, KeyError):
+                        continue
+                    mad = cmp["max_abs_diff"]
+                    pairs.append(
+                        {
+                            "config": cfg_key,
+                            "variable": var,
+                            "event_iloc": int(e),
+                            "identical": bool(cmp["identical"]),
+                            # NaN (incomparable coords) -> None so the JSON is valid + honest.
+                            "max_abs_diff": (None if mad != mad else float(mad)),
+                        }
+                    )
+
+    payload = {
+        "experiments": sorted(experiments, key=lambda x: x["experiment"]),
+        "pairs": sorted(pairs, key=lambda p: (p["config"], p["variable"], p["event_iloc"])),
+    }
+    (output_path / _COMBINED_INTERCOMPARISON_FILENAME).write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
     )
 

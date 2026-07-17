@@ -28,8 +28,9 @@ report that presents them side by side.
   bundles** (each ships `sensitivity_datatree.zarr` at the bundle root). The
   combine step resolves whichever consolidated tree a bundle ships. The
   cross-experiment report presents the compatibility table across the combined
-  set; a cross-experiment byte-identity data panel over the deeper
-  sensitivity-master tree shape is a future addition.
+  set plus, for a clean-vs-resume sensitivity-master pair, a
+  `cross_experiment_intercomparison` panel derived cross-bundle from the two
+  consolidated trees (see *Compatibility gates* below).
 
 ## Combine the bundles
 
@@ -62,10 +63,18 @@ severity:
 bug-registry `severity` (output-invalidation) — they answer different questions.
 See the decision doc *"CompatibilitySeverity is orthogonal to ADR-17 severity"*.
 
-> **Note:** compute-config / HPC identity is not currently serialized into a
-> bundle, so a pure compute-config difference produces **no** divergence row (the
-> bundles read as identical to the checker). Making HPC divergence a visible
-> `informational` row is a planned enhancement.
+### Compatibility gates
+
+`hhemt combine` refuses to combine bundles from two different case studies: a
+`case_name` divergence (sourced from each bundle's `case.yaml`) is classified
+BLOCKING and aborts the combine. A compute-config divergence — a difference in the
+`partitions` map or `gpu_allocation_flavor`, sourced from each bundle's scrubbed
+`hpc_system_config.identity.yaml` — is classified INFORMATIONAL: it is surfaced as a
+divergence row and does NOT abort, because comparing the same experiment across UVA
+and Frontier is a supported use. The combined report additionally carries a
+clean-vs-resume `cross_experiment_intercomparison` figure under the "Cross-Experiment
+Results" category, projected from the `combined_intercomparison.json` read-model, so
+`CombinedBundle.regenerate_report()` re-renders it locally with no re-merge.
 
 ## Regenerate or inspect the combined report
 

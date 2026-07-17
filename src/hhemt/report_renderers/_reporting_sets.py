@@ -215,6 +215,25 @@ _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_compatibility.log",
 )
 
+# Cross-experiment INTERCOMPARISON set (Phase 5). Same INERT-on-source posture as
+# the compatibility template above: consumed ONLY by bundle/_combine.py's emit-time
+# direct-render dispatch. Projects the combined_intercomparison.json read-model
+# (clean-vs-resume per-compute-config identity, derived CROSS-BUNDLE by
+# _combine._write_combined_intercomparison).
+_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_intercomparison",
+    renderer_module="cross_experiment_intercomparison",
+    output_path_template="plots/cross_experiment/intercomparison__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_intercomparison.rst",
+        "category": "Cross-Experiment Results",
+        "labels": '{"figure": "Clean vs resume intercomparison"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/cross_experiment_intercomparison.log",
+)
+
 # eda_compute_sensitivity (R11): the in-report EDA adapter for the
 # compute-sensitivity family. Conditional (predicate has_eda_artifact — gated on
 # the master carrying an EDA artifact). Emits the config_diff_maps figure under
@@ -383,6 +402,10 @@ REPORTING_SETS: dict[str, ReportingSet] = {
             RendererSelection(
                 "cross_experiment_compatibility",
                 rule_spec_template=(_TMPL_CROSS_EXPERIMENT_COMPATIBILITY,),
+            ),
+            RendererSelection(
+                "cross_experiment_intercomparison",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON,),
             ),
         ),
         validator_key="none",
