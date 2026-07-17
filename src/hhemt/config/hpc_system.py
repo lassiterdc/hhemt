@@ -20,6 +20,7 @@ hand-mirror, not an import of the plugin class.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -172,10 +173,7 @@ class hpc_system_config(BaseModel):
         if spec is None:
             raise ConfigurationError(
                 field="partitions",
-                message=(
-                    f"Unknown partition '{partition}'. "
-                    f"Declared partitions: {sorted(self.partitions)}"
-                ),
+                message=(f"Unknown partition '{partition}'. Declared partitions: {sorted(self.partitions)}"),
                 config_path=None,
             )
         if spec.max_runtime is not None and requested_runtime_min > spec.max_runtime:
@@ -329,3 +327,30 @@ def resolve_container_spec(
     if cfg_hpc_system is None:
         return None
     return cfg_hpc_system.container
+
+
+def system_directory_bind(system_directory: Path | str, binds: list[str]) -> list[str]:
+    """Return the APPTAINER_BIND entry mounting ``system_directory`` into the
+    container at the same path, or ``[]`` when an existing ``binds`` entry
+    already covers it (R14 / D11).
+
+    The container bind seam otherwise mounts only ``analysis_dir``; the sim
+    reads the DEM (and Manning's, the compiled ``build/`` executables, and the
+    ``_software/`` tree) from ``system_directory`` — the PARENT of
+    ``analysis_dir`` — by absolute path, so under
+    ``execution_environment == "container"`` those reads fall outside the mount
+    unless the parent is bound.
+
+    Dedup: the host side of a ``"host:container"`` bind is the part before the
+    first ``':'`` (a bare path is its own host side). The append is skipped when
+    ``system_directory`` is at or under any existing host side — e.g. the
+    estate's ``binds: ["/scratch", "/sfs"]`` already mounts a
+    ``/scratch``-resident system directory, so this correctly no-ops there and
+    only adds a bind when the tree is genuinely unmounted.
+    """
+    sd = Path(system_directory)
+    for bind in binds:
+        host = bind.split(":", 1)[0]
+        if sd.is_relative_to(host):
+            return []
+    return [f"{sd}:{sd}"]

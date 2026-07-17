@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fixtures.test_case_catalog import Local_TestCases  # noqa: E402
 from test_srun_command_construction import _get_launch_cmd, _make_run  # noqa: E402
 
-from hhemt.config.hpc_system import ContainerSpec  # noqa: E402
+from hhemt.config.hpc_system import ContainerSpec, system_directory_bind  # noqa: E402
 from hhemt.workflow import SnakemakeWorkflowBuilder  # noqa: E402
 
 # The Norfolk LOCAL test cases are byte-identity-neutral with this config (all
@@ -141,3 +141,48 @@ def test_container_mode_sim_runner_wraps_exe() -> None:
         "`apptainer exec --rocm -B {host_out}:/opt/hhemt/out_tritonswmm /opt/test.sif "
         "/opt/hhemt/bin/triton.exe`"
     )
+
+
+def test_system_directory_bind_helper() -> None:
+    """R14/D11 dedup unit: ``system_directory_bind`` appends a same-path
+    ``sd:sd`` mount ONLY when no existing bind already covers the tree; the host
+    side of a ``"host:container"`` bind is the part before the first ``':'`` (a
+    bare path is its own host side)."""
+    # Uncovered → append a "sd:sd" mount.
+    assert system_directory_bind("/home/x/proj/sys", ["/scratch", "/sfs"]) == ["/home/x/proj/sys:/home/x/proj/sys"]
+    # Covered by a bare-path bind (the estate's /scratch case) → no-op.
+    assert system_directory_bind("/scratch/dcl3nd/norfolk", ["/scratch", "/sfs"]) == []
+    # Covered by the host side of a "host:container" bind → no-op.
+    assert system_directory_bind("/data/sys", ["/data:/data"]) == []
+    # Exact-match with an existing host side → no-op (is_relative_to is reflexive).
+    assert system_directory_bind("/scratch", ["/scratch"]) == []
+    # Empty binds → nothing covers it, so append.
+    assert system_directory_bind("/x/sys", []) == ["/x/sys:/x/sys"]
+
+
+def test_container_mode_process_prefix_binds_system_directory() -> None:
+    """R14/D11: the container process-prefix mounts the shared
+    ``system_directory`` (the PARENT of ``analysis_dir``, whence the sim reads
+    the DEM by absolute path), not just ``analysis_dir``. This is the LOCAL proof
+    that D11 lands before a Phase-7 cluster run would otherwise discover the DEM
+    outside the mount (Evidence 9)."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    tc.analysis.cfg_analysis.execution_environment = "container"
+    # binds=[] (default): nothing pre-covers system_directory, so the append fires.
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+
+    sd = builder.system.cfg_system.system_directory
+    prefix = builder._container_process_prefix
+    assert f"{sd}:{sd}" in prefix, (
+        "container process-prefix does not bind the shared system_directory "
+        f"({sd}); the DEM read by absolute path would fall outside the mount"
+    )
+    # analysis_dir is under system_directory, so BOTH binds are present — the
+    # system_directory append is not deduped away by the analysis_dir bind.
+    adir = builder.analysis_paths.analysis_dir
+    assert f"{adir}:{adir}" in prefix

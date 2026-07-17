@@ -12,6 +12,7 @@ Key Components:
 
 import datetime
 import json
+import logging
 import math
 import re
 import shlex
@@ -32,6 +33,7 @@ from hhemt.config.hpc_system import (
     resolve_container_spec,
     resolve_gpu_target,
     resolve_gpus_per_node,
+    system_directory_bind,
 )
 from hhemt.exceptions import ConfigurationError, WorkflowError
 from hhemt.report_plot_ids import (
@@ -81,6 +83,8 @@ from dataclasses import dataclass
 # default path. Centralized as a constant so the fixture, the helper, and the
 # unit test all agree without a hand-synced string literal.
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -830,7 +834,13 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # default $HOME/CWD binds. This mirrors the sim rung's bind (R7); without it
             # container-mode processing fails at config-load or write on every real cluster.
             _adir = self.analysis_paths.analysis_dir
-            _proc_binds = ",".join([*_cspec.binds, f"{_adir}:{_adir}"])
+            _proc_binds = ",".join(
+                [
+                    *_cspec.binds,
+                    *system_directory_bind(self.system.cfg_system.system_directory, _cspec.binds),
+                    f"{_adir}:{_adir}",
+                ]
+            )
             self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
         else:
             self._container_process_prefix = ""
@@ -6780,6 +6790,54 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             override_multi_sim_run_method=override_multi_sim_run_method,
         )
 
+    def _enumerate_sa_event_pairs(
+        self,
+        *,
+        context_label: str,
+        include_sub=None,
+    ) -> tuple[list[str], list[str]]:
+        """Best-effort enumeration of the ``(sa_id, event_id_slug)`` pairs that
+        feed the master generators' per-sim plot-rule wildcards
+        (``SA_EVENT_PAIRS_SA`` / ``SA_EVENT_PAIRS_EVT``).
+
+        Shared by ``generate_master_snakefile_content`` and
+        ``generate_reprocess_master_snakefile_content`` (R13/D10 hardening: one
+        tested ``except`` instead of two byte-identical copies). On ANY failure
+        it logs a WARNING naming the exception type and returns two EMPTY lists,
+        so ``rule all`` does not demand the per-sim panels and the master report
+        skips them — the silent-zero becomes a DETECTED-zero. ``include_sub(sa_id,
+        sub) -> bool`` optionally filters sub-analyses (the reprocess generator
+        gates on completion state); ``None`` includes every sub-analysis.
+        """
+        from hhemt.scenario import compute_event_id_slug
+
+        sa_event_pairs_sa: list[str] = []
+        sa_event_pairs_evt: list[str] = []
+        try:
+            for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():
+                if include_sub is not None and not include_sub(sa_id, sub):
+                    continue
+                for event_iloc in sub.df_sims.index:
+                    ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+                    sa_event_pairs_sa.append(str(sa_id))
+                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
+        except Exception as exc:
+            logger.warning(
+                "Per-sim panel enumeration failed for the %s (%s: %s). Per-sa "
+                "per-event plot rules will emit NO wildcarded outputs and the %s "
+                "report will skip Per-Simulation panels. This is a silent-zero "
+                "unless you are reading this line.",
+                context_label,
+                type(exc).__name__,
+                exc,
+                context_label,
+            )
+            # Best-effort: if any sub-analysis can't materialize event ids, leave
+            # the paired lists empty — per-sa per-event plot rules simply emit no
+            # wildcarded outputs and the master report skips Per-Simulation panels.
+            return [], []
+        return sa_event_pairs_sa, sa_event_pairs_evt
+
     def generate_master_snakefile_content(
         self,
         which: Literal["TRITON", "SWMM", "both"] = "both",
@@ -6901,27 +6959,23 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Total scenarios across all sub-analyses (best-effort; matches per-sub-analysis n_sims sum)
         try:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Total-sim-count enumeration failed for the sensitivity master "
+                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "The reported sim count will be approximate. This is a silent "
+                "degradation unless you are reading this line.",
+                type(exc).__name__,
+                exc,
+                n_sub_analyses,
+            )
             total_n_sims = n_sub_analyses
 
         # Compute paired (sa_id, event_id) lists for per-sa per-event plot rules.
         # Used by `_build_plot_rule_block_per_sim_per_sa` and the master `rule all`
         # via `expand(..., zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)`.
         # Event IDs derived via the canonical slug helper used elsewhere in workflow.py.
-        sa_event_pairs_sa: list[str] = []
-        sa_event_pairs_evt: list[str] = []
-        try:
-            for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
-                for event_iloc in sub_pair.df_sims.index:
-                    ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
-                    sa_event_pairs_sa.append(str(sa_id_pair))
-                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
-        except Exception:
-            # Best-effort: if any sub-analysis can't materialize event ids, leave the
-            # paired lists empty — per-sa per-event plot rules will simply not emit
-            # any wildcarded outputs and the master report will skip Per-Simulation panels.
-            sa_event_pairs_sa = []
-            sa_event_pairs_evt = []
+        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(context_label="sensitivity master")
 
         # Auto-render — modeled as an explicit Snakemake rule (not an `onsuccess:`
         # hook). `onsuccess:` only fires when rules execute; on a fully up-to-date
@@ -7623,7 +7677,16 @@ rule render_report:
         n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
         try:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Total-sim-count enumeration failed for the reprocess master "
+                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "The reported sim count will be approximate. This is a silent "
+                "degradation unless you are reading this line.",
+                type(exc).__name__,
+                exc,
+                n_sub_analyses,
+            )
             total_n_sims = n_sub_analyses
 
         # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
@@ -7635,8 +7698,6 @@ rule render_report:
         # target on c_run produces an unsatisfiable target the renderer fails on.
         from hhemt.constants import sim_run_flag_per_sa
 
-        sa_event_pairs_sa: list[str] = []
-        sa_event_pairs_evt: list[str] = []
         analysis_dir_for_pairs = self.master_analysis.analysis_paths.analysis_dir
 
         def _sub_included_for_reprocess(sa_id, sub) -> bool:
@@ -7667,18 +7728,10 @@ rule render_report:
                         return True
             return False
 
-        try:
-            for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
-                if not _sub_included_for_reprocess(sa_id_pair, sub_pair):
-                    continue
-                for event_iloc in sub_pair.df_sims.index:
-                    ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
-                    event_id_pair = compute_event_id_slug(ev)
-                    sa_event_pairs_sa.append(str(sa_id_pair))
-                    sa_event_pairs_evt.append(event_id_pair)
-        except Exception:
-            sa_event_pairs_sa = []
-            sa_event_pairs_evt = []
+        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(
+            context_label="reprocess master",
+            include_sub=_sub_included_for_reprocess,
+        )
 
         _formats = report_formats if report_formats is not None else ["zip"]
 
