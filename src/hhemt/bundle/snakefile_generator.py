@@ -159,12 +159,35 @@ def _harvest_rule_specs(
     config.report.resolve_active_reporting_set_name for reporting_set="default"
     (default -> benchmarking when sensitivity, else the standard set).
     """
-    from hhemt.report_renderers._reporting_sets import get_reporting_set
+    from hhemt.report_renderers._reporting_sets import (
+        get_reporting_set,
+        renderer_active,
+    )
 
-    active_set = get_reporting_set("benchmarking" if is_sensitivity else "default")
+    # Read the active reporting-set selection from config rather than hardcoding
+    # the default→benchmarking/default resolution: a bundle whose source run
+    # selected a non-default set (e.g. "compute-sensitivity") must regenerate the
+    # SAME renderer set the source side emitted, or the bundle Snakefile diverges
+    # from the source Snakefile. Mirror config.report.resolve_active_reporting_set_name's
+    # sentinel handling: the "default" sentinel (and an absent field) resolves to
+    # "benchmarking" when sensitivity else the standard set; any other name is taken
+    # verbatim.
+    _report = (cfg_analysis or {}).get("report") or {}
+    _set_name = _report.get("reporting_set") or "default"
+    if _set_name == "default":
+        _set_name = "benchmarking" if is_sensitivity else "default"
+    active_set = get_reporting_set(_set_name)
+    # Phase 3: per-plot disable. Filtering the harvest's renderer_selection drops
+    # the renderer's RuleSpec(s), which in turn drops its plot_output_paths from
+    # BOTH rule all and render_report (both derive from rule_specs in
+    # generate_regeneration_snakefile), so the bundle stays in emission/enumeration
+    # lockstep in one place.
+    _disabled = _report.get("disabled_renderers") or []
 
     specs: list[RuleSpec] = []
     for sel in active_set.renderer_selection:
+        if not renderer_active(sel.builder_key, _disabled):
+            continue
         for tmpl in sel.rule_spec_template:
             if tmpl.wildcards:
                 source_paths: tuple[str, ...] = ()

@@ -657,6 +657,22 @@ class _ReportingSetDispatchMixin:
         )
         return get_reporting_set(name)
 
+    def _resolve_disabled_renderers(self, analysis) -> list[str]:
+        """Resolve ``analysis``'s report_config.disabled_renderers (Phase 3).
+
+        Mirrors _resolve_active_reporting_set's cfg-report lookup: prefer the
+        run-entry snapshot (`_cfg_report`, set at analysis.run() entry), falling
+        back to `cfg_analysis.report` for the generate-without-run() paths (the
+        byte-identity test, render_report_runner on a fresh instance). Returns the
+        builder_key values the active reporting set must drop at every emission AND
+        enumeration site — threaded to _emit_active_set_plot_rules (emission) and
+        consumed alongside it at each rule all / render_report site (enumeration).
+        """
+        cfg_report = getattr(analysis, "_cfg_report", None)
+        if cfg_report is None:
+            cfg_report = analysis.cfg_analysis.report
+        return list(cfg_report.disabled_renderers)
+
     def _builder_call_kwargs(self, builder_key, input_flag, ctx, inputs):
         """Resolve the exact kwargs for one builder_key (Option A — the 8
         `_build_plot_rule_block_*` builders are LEFT UNCHANGED, so their
@@ -689,6 +705,7 @@ class _ReportingSetDispatchMixin:
         ctx: "RuleEmissionContext | None" = None,
         predicate_inputs: dict | None = None,
         interleave_after_unconditional=None,
+        disabled: "list[str] | None" = None,
     ) -> str:
         """Emit every plot rule for the active reporting set, in set order (TO-8).
 
@@ -703,7 +720,14 @@ class _ReportingSetDispatchMixin:
         rule lands BETWEEN the unconditional and conditional renderers at
         master/reprocess, byte-matching the pre-refactor emission order. Multisim
         (no conditional entries) passes None and keeps a trailing export sibling.
+
+        `disabled` (Phase 3, report_config.disabled_renderers) is the builder_key
+        list dropped from emission — checked AFTER the interleave flush so disabling
+        a conditional renderer still lands the export rule in its historical slot,
+        and in lockstep with the rule all / render_report enumeration filter.
         """
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
         base = getattr(self, "_base_builder", self)
         builders = {
             "system_overview": base._build_plot_rule_block_system_overview,
@@ -732,6 +756,10 @@ class _ReportingSetDispatchMixin:
                     interleaved = True
                 if not self._RENDERER_PREDICATES[sel.predicate_key](inputs):
                     continue
+            # Phase 3: per-plot disable — skip a renderer the config turned off, so
+            # emission matches the rule all / render_report enumeration filter.
+            if not renderer_active(sel.builder_key, disabled):
+                continue
             builder = builders[sel.builder_key]
             if builder is None:  # conditional builder absent on the base builder
                 continue
@@ -2327,6 +2355,40 @@ rule consolidate_scenario:
 
         _formats = report_formats if report_formats is not None else ["zip"]
         render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
+        # Phase 3: per-plot disable. The multisim rule all + render_report inputs are
+        # literal lists (not renderer_selection loops), so build the active plot-input
+        # items here — in the standard set's renderer order, filtered by
+        # disabled_renderers — and interpolate them into BOTH so emission (the
+        # dispatcher below) and enumeration stay in lockstep. Byte-identical to the
+        # prior hardcoded lists when disabled_renderers == [].
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.analysis)
+        _plot_items: list[str] = []
+        if renderer_active("system_overview", _disabled):
+            _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_sim", _disabled):
+            _plot_items.append(f'expand("{_pfd_per_sim}", event_id=SIM_IDS)')
+            _plot_items.append(f'expand("{_cf_per_sim}", event_id=SIM_IDS)')
+        if renderer_active("per_analysis_summary", _disabled):
+            _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            _plot_items.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            _plot_items.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+        _rule_all_input_block = ",\n        ".join(
+            [
+                '"_status/e_consolidate_complete.flag"',
+                '"scenario_status.csv"',
+                '"workflow_summary.md"',
+                *_plot_items,
+            ]
+        )
+        _render_report_input_block = ",\n        ".join([*_plot_items, '"scenario_status.csv"'])
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
 
 import os
@@ -2355,17 +2417,7 @@ ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 
 rule all:
     input:
-        "_status/e_consolidate_complete.flag",
-        "scenario_status.csv",
-        "workflow_summary.md",
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "plots/metadata{_ext["metadata"]}"{render_targets_in_rule_all},
+        {_rule_all_input_block}{render_targets_in_rule_all},
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -2602,6 +2654,7 @@ rule run_{model_type}:
         snakefile_content += self._emit_active_set_plot_rules(
             self._resolve_active_reporting_set(self.analysis),
             input_flag="_status/e_consolidate_complete.flag",
+            disabled=_disabled,
         )
         # export_scenario_status: set-invariant, non-figure workflow rule
         # (scenario_status.csv + a top-level localrules:); intentionally NOT a
@@ -2620,15 +2673,7 @@ rule run_{model_type}:
         snakefile_content += f'''
 rule render_report:
     input:
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "plots/metadata{_ext["metadata"]}",
-        "scenario_status.csv",
+        {_render_report_input_block},
     output:
         "analysis_report.{{format}}"
     wildcard_constraints:
@@ -6977,16 +7022,29 @@ onerror:
         # pairs (Iteration 7 Change 3b — "show all" panel parity per the user's
         # scope expansion: identical-looking panels across sub-analyses are a QC
         # signal; expected variation is also visible).
-        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
-        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
-        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
-        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
-        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
-        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        # Phase 3: per-plot disable — each common-renderer append is gated by
+        # renderer_active so a disabled key drops from rule all AND the derived
+        # render_report subset (render_rule_input_items below); _disabled resolves
+        # to [] for an unconfigured run, preserving byte-identity.
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        if renderer_active("system_overview", _disabled):
+            rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_analysis_summary", _disabled):
+            rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
-        if sa_event_pairs_sa:
+        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
             # ADR-2 OE-1: per-sa input stems derive from the single-source helper
@@ -7009,7 +7067,7 @@ onerror:
             rule_all_inputs.append(
                 f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
-        if _independent_vars:
+        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -7028,7 +7086,7 @@ onerror:
             sel.builder_key == "eda_compute_sensitivity"
             for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
         )
-        if _eda_in_set and _has_eda_artifact:
+        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
             rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
@@ -7413,6 +7471,7 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
             },
+            disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
             ),
@@ -7697,15 +7756,28 @@ onerror:
         consolidation_flags = [consolidate_subanalysis_flag(sa_id) for sa_id in completed_sa_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
-        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
-        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
-        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
-        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
-        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
-        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        # Phase 3: per-plot disable — mirrors the production-master rule_all_inputs
+        # site: each common-renderer append gated by renderer_active so a disabled
+        # key drops from rule all AND the derived render_report subset; _disabled
+        # resolves to [] for an unconfigured run, preserving byte-identity.
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        if renderer_active("system_overview", _disabled):
+            rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_analysis_summary", _disabled):
+            rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
-        if sa_event_pairs_sa:
+        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
             # ADR-2 OE-1: per-sa input stems derive from the single-source helper
@@ -7728,7 +7800,7 @@ onerror:
             rule_all_inputs.append(
                 f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
-        if _independent_vars:
+        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -7747,7 +7819,7 @@ onerror:
             sel.builder_key == "eda_compute_sensitivity"
             for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
         )
-        if _eda_in_set and _has_eda_artifact:
+        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
             rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
@@ -8012,6 +8084,7 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
             },
+            disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
             ),
