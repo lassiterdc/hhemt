@@ -406,17 +406,28 @@ def _subcatchment_polygon_cell_bounds(params) -> dict[str, tuple[int, int, int, 
 # ---------------------------------------------------------------------------
 # DataFrame builders
 # ---------------------------------------------------------------------------
-def _options_df() -> pd.DataFrame:
+def _options_df(flow_routing: str = "DYNWAVE") -> pd.DataFrame:
     """OPTIONS DataFrame. Timing keys use ``${NAME}`` placeholders that the
     toolkit's ``swmm_utils.create_swmm_inp_from_template`` fills at scenario
     prep via ``string.Template.safe_substitute``. Non-timing keys are literal.
+
+    ``flow_routing`` is variant-scoped. The conduit-free hydrology variant uses
+    KINWAVE, not DYNWAVE: with zero links every runoff node has ``degree == 0``,
+    and SWMM's ``node_getSystemOutflow`` (node.c) passes a terminal node's inflow
+    out as tracked External Outflow ONLY under ``RouteModel != DW``. Under DYNWAVE
+    that branch is skipped and 100% of wet-weather inflow strands on the routing
+    ledger (Flow Routing Continuity Error = 100.000%). KINWAVE closes it to 0.000%
+    with per-node TOTAL_INFLOW byte-identical to DYNWAVE (measured: max per-step
+    diff 0.0, mass ratio 1.000000000), so the coupling handoff is unchanged and
+    External Outflow then equals exactly the mass delivered to TRITON. The
+    hydraulics/full variants keep DYNWAVE — they have conduits and need backwater.
     """
     return pd.DataFrame(
         {
             "Value": [
                 "CMS",
                 "HORTON",
-                "DYNWAVE",
+                flow_routing,
                 "DEPTH",
                 "0",
                 "NO",
@@ -779,9 +790,36 @@ def _write_variant(
     dest.write_text(_STARTER_INP, encoding="utf-8")
     m = swmmio.Model(str(dest))
     # OPTIONS / REPORT — always written so synthesised run params take effect.
-    m.inp.options = _options_df()
-    # JUNCTIONS / OUTFALLS / COORDINATES — always present. Even hydrology-only
-    # .inp needs junctions so SUBCATCHMENTS can reference outlet nodes.
+    # Hydrology-only (conduit-free) variant routes with KINWAVE so its terminal
+    # nodes book External Outflow instead of stranding 100% on the routing
+    # ledger; see _options_df. Coupling output (TOTAL_INFLOW) is unaffected.
+    m.inp.options = _options_df(
+        flow_routing="KINWAVE" if (include_hydrology and not include_hydraulics) else "DYNWAVE"
+    )
+    # JUNCTIONS / OUTFALLS / COORDINATES — always present.
+    #
+    # The runoff nodes MUST stay JUNCTIONS and MUST NOT be promoted to
+    # [OUTFALLS]. This is a COUPLING constraint, not a SWMM one: a
+    # [SUBCATCHMENTS] Outlet may legally reference an outfall and SWMM runs
+    # fine. The binding reason is downstream —
+    # scenario.py::return_df_of_nodes_grouped_by_DEM_gridcell derives
+    # lst_outfalls as EVERY node in [OUTFALLS], and
+    # swmm_runoff_modeling.py::write_hydrograph_files skips exactly those
+    # (`if key not in lst_outfalls`). Promoting the runoff nodes to outfalls
+    # therefore yields ZERO TRITON inflow hydrographs (measured 2026-07-15:
+    # 0/11, for both a JB-only and an all-nodes promotion).
+    #
+    # The conduit-free topology is load-bearing for the same reason: it is what
+    # makes each node's TOTAL_INFLOW equal its OWN subcatchment's local runoff,
+    # which write_hydrograph_files injects at that node's own DEM cell. Adding
+    # conduits folds upstream runoff into downstream nodes and double-counts
+    # (measured 2026-07-15: 8.85x total mass inflation, 1.00x-10.73x per-node).
+    #
+    # Do NOT "fix" the hydrology variant's Flow Routing Continuity Error by
+    # changing node types or adding conduits — both are refuted above. It is a
+    # DYNWAVE artifact on a link-free network and is addressed via FLOW_ROUTING
+    # in _options_df. See the stipulation:
+    # `library/docs/stipulations/hhemt/synthetic hydrology variant is conduit-free with junction runoff nodes and kinwave routing.md`
     m.inp.junctions = _junctions_df(params)
     m.inp.outfalls = _outfalls_df(params)
     m.inp.coordinates = _coordinates_df(params)
