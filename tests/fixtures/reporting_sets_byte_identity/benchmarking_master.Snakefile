@@ -597,8 +597,8 @@ rule plot_system_overview:
             labels={"figure": "System map"},
         )
     params:
-        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson', 'variables': []}],
-        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/dad6587d2e6fd56e/boundary.geojson``\n',
+        source_paths = [{'path': '../elevation_10.00m.dem', 'variables': []}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp', 'variables': ['[SUBCATCHMENTS]', '[JUNCTIONS]', '[OUTFALLS]']}, {'path': 'subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp', 'variables': ['[CONDUITS]', '[JUNCTIONS]', '[POLYGONS]']}, {'path': '../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/boundary.geojson', 'variables': []}],
+        source_paths_rst = '- ``../elevation_10.00m.dem``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydro.inp``\n\n  - ``[SUBCATCHMENTS]``\n  - ``[JUNCTIONS]``\n  - ``[OUTFALLS]``\n\n- ``subanalyses/sa_0/sims/event_index.0/swmm/hydraulics.inp``\n\n  - ``[CONDUITS]``\n  - ``[JUNCTIONS]``\n  - ``[POLYGONS]``\n\n- ``../../../../../../..{SYNTH_MODELS}/cba1103fcbb013fa/boundary.geojson``\n',
     log: "logs/plots/system_overview.log"
     conda: "{REPO_ROOT}/workflow/envs/hhemt.yaml"
     resources: mem_mb=2000, time_min=10
