@@ -186,3 +186,55 @@ def test_container_mode_process_prefix_binds_system_directory() -> None:
     # system_directory append is not deduped away by the analysis_dir bind.
     adir = builder.analysis_paths.analysis_dir
     assert f"{adir}:{adir}" in prefix
+
+
+def test_container_mode_prepare_skips_native_build_guards() -> None:
+    """Container mode: prepare_scenario's native-build guards are no-ops.
+
+    In container mode the on-cluster compile is skipped (compilation_*_successful
+    False) and the sim runs the in-SIF binary, so neither the backend-availability
+    guard nor the build-folder copy may raise / run. Regression for the norfolk
+    design-storm prepare_scenario CompilationError (scenario.py:811)."""
+    from unittest.mock import MagicMock, patch
+
+    from hhemt.scenario import TRITONSWMM_scenario
+
+    scen = object.__new__(TRITONSWMM_scenario)
+    scen.backend = "gpu"
+    scen._analysis = MagicMock()
+    scen._analysis.cfg_analysis.execution_environment = "container"
+    scen._system = MagicMock()
+    scen._system.compilation_gpu_successful = False
+    scen._system.compilation_triton_only_gpu_successful = False
+    scen._system.cfg_system.toggle_tritonswmm_model = True
+    scen._system.cfg_system.toggle_triton_model = False
+    scen._system.cfg_system.toggle_swmm_model = False
+
+    # Backend-availability guard: container early-return, no raise.
+    scen._verify_native_build_or_skip_in_container()
+
+    # Build-folder link: container early-return, no raise AND no copy performed.
+    with patch.object(TRITONSWMM_scenario, "_copy_tritonswmm_build_folder_to_sim") as cp:
+        scen._link_native_builds_into_sim()
+        cp.assert_not_called()
+
+
+def test_native_mode_prepare_still_raises_when_backend_uncompiled() -> None:
+    """Native mode: an uncompiled backend still fails fast (byte-behavior preserved)."""
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from hhemt.exceptions import CompilationError
+    from hhemt.scenario import TRITONSWMM_scenario
+
+    scen = object.__new__(TRITONSWMM_scenario)
+    scen.backend = "gpu"
+    scen._analysis = MagicMock()
+    scen._analysis.cfg_analysis.execution_environment = "native"
+    scen._system = MagicMock()
+    scen._system.compilation_gpu_successful = False
+    scen._system.cfg_system.toggle_tritonswmm_model = True
+
+    with pytest.raises(CompilationError):
+        scen._verify_native_build_or_skip_in_container()
