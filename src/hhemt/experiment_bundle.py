@@ -324,6 +324,7 @@ def run_experiment(
     dry_run: bool = False,
     hpc_system_config_yaml: str | Path | None = None,
     assume_yes: bool = False,
+    wait: bool | None = None,
     **cli_overrides: object,
 ):
     """Load -> validate -> gate overrides -> build -> run.
@@ -347,4 +348,12 @@ def run_experiment(
         _confirm_override_gate(reports, assume_yes=assume_yes)
 
     tk = build_case_from_bundle(bundle, bundle_dir, cluster, hpc_system_config_yaml=hpc_system_config_yaml)
-    return tk.run(mode="fresh", dry_run=dry_run)
+    # Resolve the batch_job wait contract. A batch_job run launches a DETACHED tmux
+    # orchestrator whose tmux-server lifetime is bounded by the node it runs on.
+    # Inside an sbatch allocation ($SLURM_JOB_ID set) the tmux dies when the allocation
+    # ends, so run-experiment MUST block to keep the allocation alive (mirrors
+    # .test(wait_for_job_completion=True)). On a login node the tmux server persists
+    # independently, so fire-and-forget is correct. --wait/--no-wait overrides.
+    if wait is None:
+        wait = (not dry_run) and ("SLURM_JOB_ID" in os.environ)
+    return tk.run(mode="fresh", dry_run=dry_run, wait_for_completion=wait)

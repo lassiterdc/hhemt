@@ -260,3 +260,41 @@ def test_build_case_from_bundle_expands_config_vars(tmp_path, monkeypatch):
         p = captured[key]
         assert p.is_file(), p
         assert "${" not in p.read_text(encoding="utf-8")
+
+
+# ---- (g) batch_job wait auto-detect from $SLURM_JOB_ID (V4-fix) ----
+
+
+@pytest.mark.parametrize(
+    "wait_arg, dry_run, slurm_job_id, expected_wait",
+    [
+        (None, False, "12345", True),   # inside sbatch -> block so the outer alloc hosts the tmux
+        (None, False, None, False),     # login node -> fire-and-forget (tmux persists independently)
+        (None, True, "12345", False),   # dry-run never blocks even inside an allocation
+        (True, False, None, True),      # explicit --wait overrides the auto-detect
+        (False, False, "12345", False),  # explicit --no-wait overrides the auto-detect
+    ],
+)
+def test_run_experiment_wait_autodetect(tmp_path, monkeypatch, wait_arg, dry_run, slurm_job_id, expected_wait):
+    bundle_dir = _write_bundle_dir(tmp_path, hpc={"uva": "hpc/uva.yaml"})
+    captured: dict = {}
+
+    class _FakeTk:
+        def run(self, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+    monkeypatch.setattr(eb, "build_case_from_bundle", lambda *a, **k: _FakeTk())
+    if slurm_job_id is None:
+        monkeypatch.delenv("SLURM_JOB_ID", raising=False)
+    else:
+        monkeypatch.setenv("SLURM_JOB_ID", slurm_job_id)
+    eb.run_experiment(
+        bundle_dir,
+        "uva",
+        hpc_system_config_yaml="/other/path.yaml",
+        assume_yes=True,
+        dry_run=dry_run,
+        wait=wait_arg,
+    )
+    assert captured["wait_for_completion"] is expected_wait

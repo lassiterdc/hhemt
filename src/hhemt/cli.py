@@ -1265,6 +1265,16 @@ def run_experiment_command(
         "--yes",
         help="Accept the override gate non-interactively. Required for any CLI override in a non-TTY context.",
     ),
+    wait: bool | None = typer.Option(
+        None,
+        "--wait/--no-wait",
+        help=(
+            "Block until the workflow completes (batch_job). Default: auto — waits when "
+            "running inside an sbatch allocation ($SLURM_JOB_ID set, so the tmux "
+            "orchestrator would otherwise be orphaned when the allocation ends), "
+            "detaches on a login node."
+        ),
+    ),
 ):
     """Run a schema-conformant experiment bundle.
 
@@ -1280,6 +1290,7 @@ def run_experiment_command(
             dry_run=dry_run,
             hpc_system_config_yaml=hpc_system_config,
             assume_yes=yes,
+            wait=wait,
         )
         message = getattr(result, "message", "") or ""
         if dry_run:
