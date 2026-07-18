@@ -72,18 +72,13 @@ def _normalize_volatile(text: str) -> str:
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
     text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
-    # Mask the 16-hex cache-key dir after {SYNTH_MODELS}/. It is the synthetic-model
-    # cache key -- sha1 of the hhemt.synthetic_model/*.py generator source (+ params +
-    # toolkit version), from tests/fixtures/synthetic_model/cache.py::_cache_key. It is a
-    # content-address of the FIXTURE-GENERATOR source, orthogonal to the Snakefile
-    # dispatcher this test guards: a dispatcher change cannot move it, and a fixture-
-    # generator edit moves it without touching the dispatcher. Masking stops every
-    # synthetic_model/*.py edit from reddening this byte-identity gate for a reason
-    # unrelated to dispatch structure. The filename after the hash is preserved, so a
-    # genuine source-path reattribution between synth files still fails the assertion;
-    # there is exactly one cache key per Snakefile (one analysis -> one cache dir), so
-    # collapsing it to one placeholder introduces no key-collision blind spot.
-    text = re.sub(r"\{SYNTH_MODELS\}/[0-9a-f]{16}", "{SYNTH_MODELS}/{HASH}", text)
+    # The synth-model cache-dir NAME is a 16-hex `_cache_key` over
+    # SyntheticModelParams + toolkit version + SHA-1 of every
+    # src/hhemt/synthetic_model/*.py (cache.py). Any generator-source edit or
+    # version bump rotates it, so it is volatile w.r.t. this suite (which pins
+    # generation logic, not the synth-model identity). Mask it exactly like the
+    # {SYNTH_MODELS} root so a cache-key rotation cannot stale the goldens.
+    text = re.sub(r"(\{SYNTH_MODELS\})/[0-9a-f]{16}/", r"\1/{MODEL_KEY}/", text)
     return text
 
 
