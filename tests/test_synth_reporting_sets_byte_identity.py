@@ -69,6 +69,13 @@ def _normalize_volatile(text: str) -> str:
     text = re.sub(r"\{SYNTH_RUNS\}/[^/\"' ]+", "{SYNTH_RUNS}/{WT}", text)  # mask worktree slug
     text = text.replace(str(_SYNTH_MODELS_ROOT), "{SYNTH_MODELS}")  # absolute form (if any)
     text = _SYNTH_MODELS_REL_RE.sub("{SYNTH_MODELS}", text)  # variable-depth ../-relative form
+    # The synth-model cache-dir NAME is a 16-hex `_cache_key` over
+    # SyntheticModelParams + toolkit version + SHA-1 of every
+    # src/hhemt/synthetic_model/*.py (cache.py). Any generator-source edit or
+    # version bump rotates it, so it is volatile w.r.t. this suite (which pins
+    # generation logic, not the synth-model identity). Mask it exactly like the
+    # {SYNTH_MODELS} root so a cache-key rotation cannot stale the goldens.
+    text = re.sub(r"(\{SYNTH_MODELS\})/[0-9a-f]{16}/", r"\1/{MODEL_KEY}/", text)
     return text
 
 
