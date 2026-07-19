@@ -105,6 +105,27 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     make -j"$(nproc)"
     test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
 
+    # --- SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
+    # The `triton` model type is a DISTINCT BINARY, not a runtime mode: the SWMM
+    # init sits behind a compile-time `#ifdef TRITON_SWMM` (triton/src/triton.h:426)
+    # and calls read_inp_file(inp_filename) UNCONDITIONALLY, with no empty-string
+    # guard (triton/src/swmm_triton.h:139,146-153). A SWMM=ON binary therefore
+    # ALWAYS opens inp_filename, while the standalone cfg legitimately omits it, so
+    # the coupled exe dies for model_type=triton with `[ERROR] Error reading file: `.
+    # Natively this is ALREADY a separate build (build_triton_cpu/, no swmm5 target).
+    # Flags identical to the coupled build except the SWMM pair and the build dir.
+    mkdir -p /opt/triton/build_triton_only && cd /opt/triton/build_triton_only
+    cmake -DTRITON_ENABLE_SWMM=OFF \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DTRITON_BACKEND=HIP \
+          -DKokkos_ENABLE_HIP=ON -DKokkos_ARCH_AMD_GFX90A=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CXX_COMPILER=/opt/mpich/bin/mpicxx -DCMAKE_C_COMPILER=/opt/mpich/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3 -DTRITON_HIP_LAUNCHER' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
+
     # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.
     #     Built like system.py: cmake the SWMM source, make -> runswmm.
     git clone --branch v5.2.4 --depth 1 \
@@ -117,6 +138,8 @@ From: rocm/dev-ubuntu-24.04:6.4.3-complete
     #     the toolkit (the in-container process runner).
     mkdir -p /opt/hhemt/bin
     cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    # The `triton` (TRITON-only) model type needs the SWMM-DISABLED build.
+    cp /opt/triton/build_triton_only/triton.exe /opt/hhemt/bin/triton_only.exe
     cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
         /opt/hhemt/bin/runswmm
     chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm

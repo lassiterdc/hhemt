@@ -422,3 +422,54 @@ def test_cpu_only_swmm_rule_routes_to_cpu_partition() -> None:
     tc.analysis.cfg_analysis.hpc_cpu_sim_partition = "largemem"
     blocks2 = _rule_blocks(SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content())
     assert 'slurm_partition="largemem"' in blocks2["run_swmm"]
+
+
+_REPO_ROOT = Path(__file__).parent.parent
+
+
+def test_every_container_def_builds_a_triton_only_exe() -> None:
+    """Class guard: an image that ships the coupled exe must ALSO ship the TRITON-only exe.
+
+    The `triton` model type is a DISTINCT BINARY, not a runtime mode — SWMM init is
+    behind a compile-time ``#ifdef TRITON_SWMM`` (triton/src/triton.h:426) that calls
+    ``read_inp_file(inp_filename)`` with no empty-string guard (swmm_triton.h:139),
+    so a ``TRITON_ENABLE_SWMM=ON`` binary always opens inp_filename while the
+    standalone cfg legitimately omits it. Shipping only the coupled build made
+    ``run_triton`` unrunnable in EVERY container image (Rivanna 17090704/17091179).
+    Instance-level runtime tests cannot catch this; this recipe-level invariant can."""
+    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    assert defs, "no container definition files found"
+    for d in defs:
+        text = d.read_text()
+        if "/opt/hhemt/bin/triton.exe" not in text:
+            continue  # recipe does not ship the coupled exe; nothing to mirror
+        assert "TRITON_ENABLE_SWMM=OFF" in text, (
+            f"{d.name} builds the coupled exe but has no TRITON_ENABLE_SWMM=OFF build; "
+            "the `triton` model type would run the coupled binary and die on an empty inp_filename"
+        )
+        assert "/opt/hhemt/bin/triton_only.exe" in text, (
+            f"{d.name} never installs triton_only.exe, so exe_in_sif.triton cannot resolve"
+        )
+
+
+def test_example_hpc_configs_map_triton_to_the_swmm_disabled_exe() -> None:
+    """Class guard: `triton` and `tritonswmm` must NOT share one in-SIF binary.
+
+    Pointing both model types at the coupled exe is the config half of the same
+    defect the recipe guard above covers."""
+    import yaml
+
+    cfgs = sorted((_REPO_ROOT / "test_data").rglob("hpc_system_config_*.yaml"))
+    assert cfgs, "no example hpc_system_config files found"
+    checked = 0
+    for c in cfgs:
+        data = yaml.safe_load(c.read_text()) or {}
+        exe = (data.get("container") or {}).get("exe_in_sif") or {}
+        if not {"triton", "tritonswmm"} <= set(exe):
+            continue
+        checked += 1
+        assert exe["triton"] != exe["tritonswmm"], (
+            f"{c.name} maps `triton` and `tritonswmm` to the same in-SIF binary "
+            f"({exe['triton']}); `triton` must be the SWMM-DISABLED build"
+        )
+    assert checked, "no example config declared both triton and tritonswmm exe_in_sif entries"
