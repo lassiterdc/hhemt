@@ -238,3 +238,88 @@ def test_native_mode_prepare_still_raises_when_backend_uncompiled() -> None:
 
     with pytest.raises(CompilationError):
         scen._verify_native_build_or_skip_in_container()
+
+
+def test_container_mode_run_simulation_runner_skips_compile_check() -> None:
+    """Site A: run_simulation_runner's compile-verify is a no-op in container mode.
+
+    In container mode compilation_*_successful is legitimately False (SIF carries the
+    binary); the runner must NOT fail the sim on that. Native mode with an uncompiled
+    backend still returns an error message. Regression for the norfolk design-storm
+    container batch_job run (run_simulation_runner.py:299-322)."""
+    from unittest.mock import MagicMock
+
+    from hhemt.run_simulation_runner import _native_compile_error_or_skip_in_container
+
+    analysis = MagicMock()
+    system = MagicMock()
+    system.compilation_successful = False
+
+    # Container mode: no error even though nothing is compiled.
+    analysis.cfg_analysis.execution_environment = "container"
+    assert _native_compile_error_or_skip_in_container(analysis, system, "tritonswmm") is None
+
+    # Native mode: uncompiled backend still reports an error (byte-behavior preserved).
+    analysis.cfg_analysis.execution_environment = "native"
+    assert _native_compile_error_or_skip_in_container(analysis, system, "tritonswmm") == (
+        "TRITON-SWMM has not been compiled"
+    )
+
+
+def test_container_mode_run_sim_skips_compile_check() -> None:
+    """Site B: analysis._run_sim's compile guard is a no-op in container mode.
+
+    _run_sim is the LOCAL in-process launcher (not the batch_job Snakefile path); this
+    is a correctness gate for container-mode multi_sim_run_method='local' / .test()."""
+    from unittest.mock import MagicMock
+
+    import pytest
+
+    from hhemt.analysis import TRITONSWMM_analysis
+
+    ana = object.__new__(TRITONSWMM_analysis)
+    ana.cfg_analysis = MagicMock()
+    ana._system = MagicMock()
+    ana._system.compilation_successful = False
+    scen = MagicMock()
+
+    # Container mode: no raise.
+    ana.cfg_analysis.execution_environment = "container"
+    ana._verify_model_compiled_or_skip_in_container("tritonswmm", scen)
+
+    # Native mode: uncompiled backend still raises (byte-behavior preserved).
+    ana.cfg_analysis.execution_environment = "native"
+    with pytest.raises(ValueError, match="TRITONSWMM has not been compiled"):
+        ana._verify_model_compiled_or_skip_in_container("tritonswmm", scen)
+
+
+def test_container_mode_check_system_setup_skips_compile_issues() -> None:
+    """Site C: check_system_setup appends NO compilation issue in container mode, but
+    still validates DEM/Mannings. Regression for the SILENT V4 failure — a green run
+    that emits validation_report.json overall_passed:false (analysis_validation.py:86-91)."""
+    from unittest.mock import MagicMock
+
+    from hhemt.analysis_validation import check_system_setup
+
+    analysis = MagicMock()
+    analysis._system.cfg_system.toggle_tritonswmm_model = True
+    analysis._system.cfg_system.toggle_triton_model = False
+    analysis._system.cfg_system.toggle_swmm_model = False
+    analysis._system.compilation_successful = False  # legitimately False in container mode
+    # DEM/Mannings present and shape-valid so only the compile check could fail.
+    dem = MagicMock()
+    dem.shape = (1, 4, 4)
+    manning = MagicMock()
+    manning.shape = (1, 4, 4)
+    analysis._system.processed_dem_rds = dem
+    analysis._system.mannings_rds = manning
+
+    # Container mode: compile issue is skipped -> check passes.
+    analysis.cfg_analysis.execution_environment = "container"
+    assert check_system_setup(analysis).passed is True
+
+    # Native mode: uncompiled backend still fails the check (byte-behavior preserved).
+    analysis.cfg_analysis.execution_environment = "native"
+    result = check_system_setup(analysis)
+    assert result.passed is False
+    assert any("TRITON-SWMM compilation failed" in d["detail"] for d in result.details)

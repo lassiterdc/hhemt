@@ -1668,21 +1668,7 @@ class TRITONSWMM_analysis:
         if model_type not in valid_types:
             raise ValueError(f"model_type must be one of {valid_types}, got {model_type}")
 
-        if model_type == "triton":
-            if not self._system.compilation_triton_only_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("TRITON-only has not been compiled")
-        elif model_type == "tritonswmm":
-            if not self._system.compilation_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("TRITONSWMM has not been compiled")
-        elif model_type == "swmm":
-            if not self._system.compilation_swmm_successful:
-                print("Log file:", flush=True)
-                print(scen.log.print())
-                raise ValueError("SWMM has not been compiled")
+        self._verify_model_compiled_or_skip_in_container(model_type, scen)
         run = self._retrieve_sim_runs(event_iloc)
         if verbose:
             print("run instance instantiated", flush=True)
@@ -1715,6 +1701,38 @@ class TRITONSWMM_analysis:
                 compression_level=compression_level,
             )
         return
+
+    def _verify_model_compiled_or_skip_in_container(self, model_type, scen) -> None:
+        """Native mode: raise ValueError if `model_type`'s backend is not compiled.
+        Container mode: no-op.
+
+        Mirrors setup_workflow.py's container compile-skip and scenario.py's
+        `_verify_native_build_or_skip_in_container`. In container mode the sim runs
+        `apptainer exec {sif} {exe_in_sif}` (run_simulation.py), so no native build
+        is required and demanding one here would wrongly fail a valid container run.
+
+        Note: `_run_sim` is the LOCAL in-process launcher (run_sims_in_sequence /
+        run_all_sims), NOT the `batch_job` Snakefile path — that path dispatches
+        run_simulation_runner.py. This gate is a correctness gate for container-mode
+        `multi_sim_run_method="local"` / `.test()`, not the design-storm blocker.
+        """
+        if self.cfg_analysis.execution_environment == "container":
+            return
+        if model_type == "triton":
+            if not self._system.compilation_triton_only_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("TRITON-only has not been compiled")
+        elif model_type == "tritonswmm":
+            if not self._system.compilation_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("TRITONSWMM has not been compiled")
+        elif model_type == "swmm":
+            if not self._system.compilation_swmm_successful:
+                print("Log file:", flush=True)
+                print(scen.log.print())
+                raise ValueError("SWMM has not been compiled")
 
     def process_sim_timeseries(
         self,
