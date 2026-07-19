@@ -541,3 +541,53 @@ def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
             "PATH, so ContainerSpec.python_in_sif's bare-name default would resolve "
             "to the system interpreter, which has no hhemt"
         )
+
+
+def test_container_process_prefix_loads_the_apptainer_module_when_declared() -> None:
+    """The process rung must be self-sufficient for `apptainer` resolution.
+
+    `apptainer` is module-only on some clusters (Rivanna): it is NOT on PATH on a
+    compute node. A process rule that does not `module load` it dies
+    `apptainer: command not found` (exit 127) before the shell's `> {log} 2>&1`
+    emits anything — a 0-byte rule log with no diagnostic, which is what Rivanna
+    runs 17095105 and 17096574 produced. The sim rung already prepends the module
+    load (run_simulation.py:590-592); the process rung did not, so the two
+    container entry points disagreed and the process one silently depended on
+    inheriting the driver's module environment.
+
+    Invariant: whenever the ContainerSpec declares an apptainer_module, every
+    container-prefixed process command loads it before invoking `apptainer`."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    tc.analysis.cfg_analysis.execution_environment = "container"
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(
+        sif_path="/opt/test.sif", apptainer_module="apptainer/1.5.0"
+    )
+    got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
+
+    for line in got.splitlines():
+        if "apptainer exec" in line and "process_timeseries_runner" in line:
+            assert "module load apptainer/1.5.0" in line, (
+                "container-prefixed process command invokes `apptainer` without "
+                "loading the declared apptainer_module; on a module-only cluster "
+                "this dies `command not found` with a 0-byte rule log:\n" + line
+            )
+
+
+def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
+    """Byte-identity guard for clusters with no apptainer_module (Frontier).
+
+    The module-load prepend is guarded on the field, so a spec that declares no
+    module must emit exactly as it did before the fix."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    tc.analysis.cfg_analysis.execution_environment = "container"
+    tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
+    got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
+    assert "module load" not in got.split("process_timeseries_runner")[0].splitlines()[-1]

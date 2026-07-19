@@ -841,7 +841,22 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                     f"{_adir}:{_adir}",
                 ]
             )
-            self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            # `apptainer` is module-only on some clusters (Rivanna): it is NOT on
+            # PATH on a compute node, so a process rule that does not load the
+            # module dies `apptainer: command not found` (exit 127) BEFORE the
+            # shell's `> {log} 2>&1` produces anything — the 0-byte-rule-log
+            # signature seen on Rivanna runs 17095105 and 17096574. The sim rung
+            # already prepends this (run_simulation.py:590-592); the process rung
+            # did not, so the two container entry points disagreed and only the
+            # sim one was self-sufficient. Empirically confirmed: `srun … bash -c
+            # 'command -v apptainer'` on a standard-partition compute node with no
+            # module load returns nothing. Guarded on the field, so a cluster that
+            # declares no apptainer_module (Frontier's Cray path) emits byte-
+            # identically to before; native mode is untouched (prefix stays "").
+            _mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
+            self._container_process_prefix = (
+                f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            )
             # The interpreter must resolve INSIDE the image. self.python_executable
             # is the DRIVER's host interpreter (sys.executable at :813) and dies
             # `FATAL: stat …: no such file or directory` under apptainer exec.
