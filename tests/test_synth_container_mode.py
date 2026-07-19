@@ -323,3 +323,102 @@ def test_container_mode_check_system_setup_skips_compile_issues() -> None:
     result = check_system_setup(analysis)
     assert result.passed is False
     assert any("TRITON-SWMM compilation failed" in d["detail"] for d in result.details)
+
+
+def _launch_cmd_for_model(run, model_type: str) -> str:
+    """``_get_launch_cmd``, but for a caller-chosen model_type.
+
+    The shared helper in test_srun_command_construction takes
+    ``prepare_simulation_command``'s default (``tritonswmm``); the standalone
+    rungs need the same mock harness with an explicit model_type.
+    """
+    from unittest.mock import patch
+
+    with patch.object(run, "_analysis_level_model_logfile", return_value=Path("/fake/run.log")):
+        with patch.object(
+            run,
+            "_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation",
+            return_value=None,
+        ):
+            result = run.prepare_simulation_command(pickup_where_leftoff=False, verbose=False, model_type=model_type)
+    assert result is not None
+    return result[0][2]
+
+
+def _container_run_for(model_type: str):
+    """Minimal container-mode TRITONSWMM_run with both model exes/cfgs concrete."""
+    run = _make_run("gpu", n_gpus=1, in_slurm=True)
+    run._analysis.cfg_analysis.execution_environment = "container"
+    run._analysis.cfg_hpc_system.container = ContainerSpec(
+        sif_path="/opt/test.sif",
+        gpu_flag="--rocm",
+        exe_in_sif={
+            "triton": "/opt/hhemt/bin/triton.exe",
+            "tritonswmm": "/opt/hhemt/bin/triton.exe",
+        },
+    )
+    run._analysis.analysis_paths.analysis_dir = "/fake/analysis"
+    run._scenario.scen_paths.out_triton = Path("/fake/sim/out_triton")
+    run._scenario.scen_paths.out_tritonswmm = Path("/fake/sim/out_tritonswmm")
+    run._scenario.scen_paths.sim_triton_executable = Path("/fake/TRITON")
+    run._scenario.scen_paths.triton_cfg = Path("/fake/TRITON.cfg")
+    return run
+
+
+def test_container_mode_standalone_triton_binds_out_triton() -> None:
+    """The container output-redirect bind is MODEL-KEYED.
+
+    _generate_TRITON_cfg writes ``output_folder="out_triton"``, so the standalone
+    rung must bind the host out_triton onto the in-SIF ``/opt/hhemt/out_triton``.
+    Hardcoding out_tritonswmm left that path unbound inside the read-only SIF and
+    the rung died with ``[ERROR] Error reading file: `` + a Kokkos::Cuda finalize
+    failure (Rivanna jobs 17090721/22/28/30/31/70)."""
+    full_cmd = _launch_cmd_for_model(_container_run_for("triton"), "triton")
+    assert "-B /fake/sim/out_triton:/opt/hhemt/out_triton " in full_cmd, (
+        "standalone TRITON did not bind its own out_triton dir; the in-SIF "
+        f"/opt/hhemt/out_triton is unbound. Got: {full_cmd}"
+    )
+    assert "out_tritonswmm" not in full_cmd, "standalone TRITON leaked the COUPLED model's out_tritonswmm into its bind"
+
+
+def test_container_mode_coupled_still_binds_out_tritonswmm() -> None:
+    """Parity guard: the coupled rung's bind is unchanged by the model-keying.
+
+    The coupled path is the one empirically confirmed end-to-end on-cluster
+    (837 timesteps, all 3 events); this locks it against regression."""
+    full_cmd = _launch_cmd_for_model(_container_run_for("tritonswmm"), "tritonswmm")
+    assert "-B /fake/sim/out_tritonswmm:/opt/hhemt/out_tritonswmm " in full_cmd, (
+        f"coupled bind regressed. Got: {full_cmd}"
+    )
+
+
+def test_cpu_only_swmm_rule_routes_to_cpu_partition() -> None:
+    """A CPU-only sim rule must not be submitted to the GPU ensemble partition.
+
+    run_swmm's resource block already declares gpus_total=0, so its sbatch carries
+    no ``--gres``; a GRES-minimum QOS then rejects it at submit time (Rivanna
+    ``-p gpu`` -> ``sbatch: error: QOSMinGRES``, 0-byte log). Every other CPU-only
+    rule already routes to the processing partition — run_swmm was the anomaly.
+    Container-INDEPENDENT: this asserts on the native generator too."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    tc.analysis.cfg_analysis.hpc_ensemble_partition = "gpu"
+    tc.analysis.cfg_analysis.hpc_setup_and_analysis_processing_partition = "standard"
+    tc.analysis.cfg_analysis.hpc_cpu_sim_partition = None  # exercise the fallback
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    blocks = _rule_blocks(builder.generate_snakefile_content())
+
+    assert 'slurm_partition="standard"' in blocks["run_swmm"], (
+        "run_swmm (CPU-only, no --gres) is still routed to the GPU ensemble "
+        "partition; SLURM will reject it with QOSMinGRES before it runs"
+    )
+    for gpu_rule in ("run_triton", "run_tritonswmm"):
+        assert 'slurm_partition="gpu"' in blocks[gpu_rule], f"{gpu_rule} must stay on the GPU ensemble partition"
+
+    # The explicit selector wins over the fallback when set.
+    tc.analysis.cfg_analysis.hpc_cpu_sim_partition = "largemem"
+    blocks2 = _rule_blocks(SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content())
+    assert 'slurm_partition="largemem"' in blocks2["run_swmm"]

@@ -1561,6 +1561,34 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # EXEMPT-DU: status-flag
             sidecar.unlink(missing_ok=True)
 
+    def _cpu_sim_partition(self) -> str | None:
+        """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).
+
+        A CPU-only sim emits no ``--gres``, so submitting it to a GPU partition whose
+        QOS enforces a GRES minimum is rejected BEFORE it runs: on UVA Rivanna the
+        emitted ``-A quinnlab -p gpu -t 90 --mem 2000 --nodes=1 --ntasks=1
+        --cpus-per-task=1`` returned ``sbatch: error: QOSMinGRES`` / ``Job violates
+        accounting/QOS policy`` and left a 0-byte ``swmm_evt-*.log``.
+
+        Every OTHER CPU-only rule (setup / prepare / process / consolidate) already
+        routes to ``hpc_setup_and_analysis_processing_partition``; the CPU-only SIM
+        rung was the sole rule inheriting the GPU ensemble partition. Resolution order:
+        the explicit selector, then the CPU processing partition, then the ensemble
+        partition as a last resort (which preserves the historical value when a config
+        sets neither, and is a provable no-op on clusters where both selectors name the
+        same partition, e.g. Frontier ``batch``).
+
+        A token ``--gres=gpu:1`` on the GPU partition is deliberately NOT used: it holds
+        a GPU idle for a serial run and trips the RC 0%-GPU-utilization auto-cancel
+        (architecture-doc Gotcha 32), trading a fail-fast submit rejection for a
+        mid-run kill.
+        """
+        return (
+            self.cfg_analysis.hpc_cpu_sim_partition
+            or self.cfg_analysis.hpc_setup_and_analysis_processing_partition
+            or self.cfg_analysis.hpc_ensemble_partition
+        )
+
     def _build_resource_block(
         self,
         partition: str | None,
@@ -2502,11 +2530,16 @@ rule prepare_scenario:
 
         # Generate separate simulation rule for each enabled model type
         for model_type in enabled_models:
-            # For SWMM, use fixed CPU-only resources (no GPU, limited threads)
+            # For SWMM, use fixed CPU-only resources (no GPU, limited threads).
+            # The PARTITION must come from _cpu_sim_partition(), not the GPU ensemble
+            # partition: this block already declares gpus_total=0, so the emitted sbatch
+            # carries no --gres and a GRES-minimum QOS rejects it at submit time
+            # (Rivanna -p gpu -> `sbatch: error: QOSMinGRES`, 0-byte log). See the
+            # helper docstring for why a token --gres is not the answer.
             if model_type == "swmm":
                 swmm_cpus = self.cfg_analysis.n_omp_threads or 1
                 swmm_resources = self._build_resource_block(
-                    partition=self.cfg_analysis.hpc_ensemble_partition,
+                    partition=self._cpu_sim_partition(),
                     runtime_min=hpc_time_min,
                     mem_mb=self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000,
                     nodes=1,
