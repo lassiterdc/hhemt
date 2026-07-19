@@ -2157,9 +2157,27 @@ rule consolidate:
         for a given event_id and runs ``consolidate_workflow --event-id {event_id}`` which writes
         the per-scenario DU sentinel at ``{scenario_dir}/_status/_du.json`` via
         ``du_sentinels.compute_and_write_scope_sentinel`` (compare-and-write semantics; mtime
-        preserved when payload bytes are unchanged). The rule joins the existing
-        ``process_evt_{event_id}`` Snakemake group (see ``_build_process_rule_block:1116``) so it
-        co-schedules into the per-event SLURM allocation rather than submitting a separate sbatch.
+        preserved when payload bytes are unchanged).
+
+        This rule is deliberately NOT a member of the ``process_evt_{event_id}`` Snakemake group
+        (removed 2026-07-19; the three ``process_{model_type}`` rules RETAIN their grouping, so
+        Gotcha 29's per-event scheduling-cost optimization is preserved for them). Snakemake's
+        ``GroupJob.is_local`` returns ``any(...)``, not ``all(...)`` (``jobs.py:1709-1710``), and the
+        scheduler routes any group flagged local to ``_local_executor``, which is always
+        instantiated under remote execution (``job_scheduler.py:141-148,338-339,358``). That
+        executor never calls ``sbatch``, so a single local member silently prevents the WHOLE group
+        from being dispatched: no submission line, no ``.snakemake/slurm_logs/`` directory, no
+        ``sacct`` row, and every member's ``log:`` file created at 0 bytes because no member shell
+        ever runs. That signature is easy to misread as a failure INSIDE the rule shell; it is not.
+
+        Empirically isolated to THIS rule's membership (do not re-add it without re-testing on a
+        real cluster): Rivanna runs 17095105 / 17096574 / 17097334 each failed with the 4-member
+        group, producing zero processed outputs; with this directive removed the three process rules
+        dispatched as SLURM jobs 17102101/17102102/17102103 and succeeded, and this rule then ran as
+        ``rule_consolidate_scenario`` (17102136) and wrote its flag + DU sentinel — 4 of 4 steps.
+        The precise reason this rule (and not a process rule) carries ``is_local`` is NOT pinned:
+        it is absent from ``localrules:``, the executor profile sets no ``shared-fs-usage``, and
+        every emitted rule declares ``conda:``. The empirical result above is what is established.
 
         The output declaration ``_status/f_consolidate_scenario_evt-{event_id}_complete.flag``
         matches the existing letter-prefixed flag convention (``c_run_*``, ``d_process_*``,
@@ -2176,7 +2194,6 @@ rule consolidate_scenario:
         flag="_status/f_consolidate_scenario_evt-{{event_id}}_complete.flag",
         du_sentinel="sims/{{event_id}}/_status/_du.json",
     log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
-    group: "process_evt_{{event_id}}"
     conda: "{conda_env_path}"
     resources:
 {consolidate_scenario_resources}
