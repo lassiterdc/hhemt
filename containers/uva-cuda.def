@@ -40,8 +40,13 @@ Bootstrap: docker
 # container libcudart executes -- a contract, not a heuristic), so the binding
 # constraint is CUDA toolkit-minor <= host-driver CUDA major (the Rivanna host
 # driver runs cuda/12.8.0, so a 12.8 toolkit is exact). Digest captured 2026-06-27
-# via the Docker Hub v2 manifest API (skopeo absent on Rivanna).
-From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
+# via the Docker Hub v2 manifest API (skopeo absent on Rivanna). Digest-ONLY form
+# (repo@sha256) -- apptainer's docker conveyor REJECTS a combined tag@digest ref
+# ("Docker references with both a tag and digest are currently not supported");
+# the tag nvidia/cuda:12.8.0-devel-ubuntu24.04 is retained here in prose for
+# legibility. Empirically: the tag@digest form killed build 17091601 at 2s (exit
+# 127) with exactly that message.
+From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
 
 %files
     # hhemt source tree (uv sync --frozen for the in-container process runner, FB2).
@@ -49,11 +54,28 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
     # lockfile) -- NOT a conda explicit lockfile. The original .def's conda-lock step
     # was unsatisfiable: hhemt has no environment.yml / conda-lock; it is
     # uv/pyproject-packaged. Build CWD must be containers/ so `../` = the repo root.
+    #
+    # `../` (NOT a curated `hhemt_src` staging dir) is DELIBERATE for this recipe --
+    # it keeps a plain `cd containers && apptainer build --fakeroot out.sif uva-cuda.def`
+    # working from any clean clone, with no out-of-band context-prep step. Measured on
+    # the Rivanna build checkout 2026-07-19: no bundled TRITON clone, test_data 12 MB,
+    # .git 16 MB -- so the usual "`../` drags in the world" objection does not bind here.
+    # The one large item is a host-built .venv (1.6 GB when the estate provisioned one
+    # in-place); it is COPIED but never survives, because (2) below does `rm -rf .venv`
+    # before `uv sync`. Net cost is build-time scratch I/O only, not image size.
     ../  /opt/hhemt-src
 
 %post
     set -eu
     export DEBIAN_FRONTEND=noninteractive
+    # Rootless --fakeroot on Rivanna has NO /etc/subuid range for this user, so the build runs
+    # in a SINGLE-UID root-mapped namespace (the build log says so verbatim: "User not listed
+    # in /etc/subuid, trying root-mapped namespace"). apt's Acquire sandbox drops privilege to
+    # the `_apt` user (uid 42) via setgroups/seteuid, and uid 42 is not in the single-UID map
+    # -> `E: Failed to setgroups (Operation not permitted)`, apt exits 100. Running apt as the
+    # mapped root avoids the drop; harmless when subuid IS provisioned (apt-as-root is fine).
+    # See knowledge/container/apptainer_rivanna_rootless_build_blocked_by_missing_subuid.md.
+    printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
     apt-get update
     # gcc-14 matches the proven gcc 14.2.0. libhwloc-dev + libevent-dev are used as
     # OpenMPI's EXTERNAL hwloc/libevent (configure finds them). PMIx is OpenMPI's
@@ -156,13 +178,17 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
           -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CUDA_ARCHITECTURES=80 \
           -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
           -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
           -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
           /opt/triton
-    make -j"$(nproc)"
+    # -j8 (not $(nproc)=16): 16 concurrent nvcc device compiles of the Kokkos/TRITON CUDA TUs
+    # can breach the 64 GB build cgroup -> nondeterministic OOM-kill. -j8 gives ~8 GB/nvcc
+    # headroom; the single main.cpp compile (the long pole) is unaffected by -j. (triton-specialist q8b)
+    make -j8
     test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
 
     # --- (3b) SECOND build: TRITON-ONLY (SWMM coupling COMPILED OUT).
@@ -182,13 +208,15 @@ From: nvidia/cuda:12.8.0-devel-ubuntu24.04@sha256:9a8fffc32a955361aa66d754e7a0cd
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
           -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CUDA_ARCHITECTURES=80 \
           -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
           -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
           -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
           /opt/triton
-    make -j"$(nproc)"
+    # -j8 for the same cgroup reason as (3) -- this build is the SAME CUDA TU set.
+    make -j8
     test -x /opt/triton/build_triton_only/triton.exe   # fail if the TRITON-only exe is absent
 
     # --- (4) Standalone SWMM v5.2.4 (runswmm) for the `swmm` model type.

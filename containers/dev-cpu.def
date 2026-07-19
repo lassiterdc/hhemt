@@ -26,6 +26,14 @@ From: ubuntu:24.04
 %post
     set -eu
     export DEBIAN_FRONTEND=noninteractive
+    # Rootless `--fakeroot` on a host with NO /etc/subuid range for the building user runs in a
+    # SINGLE-UID root-mapped namespace; apt's Acquire sandbox then drops privilege to `_apt`
+    # (uid 42), which is not in that map -> `E: Failed to setgroups (Operation not permitted)`
+    # and apt exits 100. Running apt as the mapped root avoids the drop, and is HARMLESS when
+    # subuid IS provisioned (the common case for this dev image on a workstation).
+    # Empirically confirmed on Rivanna; see
+    # knowledge/container/apptainer_rivanna_rootless_build_blocked_by_missing_subuid.md.
+    printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
     apt-get update
     apt-get install -y --no-install-recommends \
         git cmake build-essential gfortran wget ca-certificates libnuma-dev python3 \
