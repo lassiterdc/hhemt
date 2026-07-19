@@ -842,8 +842,17 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
                 ]
             )
             self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            # The interpreter must resolve INSIDE the image. self.python_executable
+            # is the DRIVER's host interpreter (sys.executable at :813) and dies
+            # `FATAL: stat …: no such file or directory` under apptainer exec.
+            self._container_process_python = _cspec.python_in_sif
         else:
             self._container_process_prefix = ""
+            self._container_process_python = ""
+        # Native: fall back to this class's own token (sys.executable here,
+        # the literal "python" on the sensitivity builder) so native-mode
+        # emission stays byte-identical for BOTH classes (R2/TO-1).
+        self._process_python_executable = self._container_process_python or self.python_executable
 
     def _resolved_simulate_retries(self) -> int:
         """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
@@ -2050,7 +2059,7 @@ rule process_{model_type}:
 {process_resources}
     shell:
         """
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
@@ -6798,6 +6807,14 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # resolved token so all three process-rung sites carry the identical prefix
         # (empty in native mode → generated Snakefiles byte-identical, R2/TO-1).
         self._container_process_prefix = self._base_builder._container_process_prefix
+        # Same delegation for the in-SIF interpreter token. The `or` fallback is
+        # load-bearing: this class's native token is the literal "python"
+        # (:6787), NOT the base builder's sys.executable, so falling back to the
+        # base builder's resolved attribute would change native emission and
+        # break the byte-identity goldens.
+        self._process_python_executable = (
+            self._base_builder._container_process_python or self.python_executable
+        )
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -7449,7 +7466,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -8024,7 +8041,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\

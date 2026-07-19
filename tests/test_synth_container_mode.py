@@ -473,3 +473,71 @@ def test_example_hpc_configs_map_triton_to_the_swmm_disabled_exe() -> None:
             f"({exe['triton']}); `triton` must be the SWMM-DISABLED build"
         )
     assert checked, "no example config declared both triton and tritonswmm exe_in_sif entries"
+
+
+def test_container_prefixed_shells_never_invoke_a_host_interpreter() -> None:
+    """Class guard: every container-prefixed command's executable must resolve IN-SIF.
+
+    The process rungs emitted `apptainer exec {sif} {sys.executable} -m ...`, where
+    sys.executable is the DRIVER's host venv interpreter. Inside the image that
+    path does not exist (the host venv's python3 is a symlink chain to
+    /usr/bin/python3.11; the image is 3.12.3), so apptainer died
+    `FATAL: stat .../.venv/bin/python3: no such file or directory` with a 0-byte
+    rule log. Rivanna run 17095105, all 3 events, retried to exhaustion.
+
+    Invariant: the token immediately following `apptainer exec [flags] {sif}` is
+    either a bare NAME (PATH-resolved inside the image) or one of the paths the
+    ContainerSpec explicitly declares as in-SIF. A host absolute path is never
+    admissible. This is expressible against the GENERATED Snakefile with no
+    cluster, no image, and no apptainer binary."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    tc.analysis.cfg_analysis.execution_environment = "container"
+    cspec = ContainerSpec(sif_path="/opt/test.sif")
+    tc.analysis.cfg_hpc_system.container = cspec
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    got = builder.generate_snakefile_content()
+
+    declared_in_sif = {cspec.python_in_sif, *cspec.exe_in_sif.values()}
+    found = re.findall(
+        r"apptainer exec\s+(?:-\S+\s+|\S+:\S+\s+)*" + re.escape(cspec.sif_path) + r"\s+(\S+)", got
+    )
+    assert found, "container mode emitted no `apptainer exec {sif} <exe>` command to check"
+    for exe in found:
+        assert exe in declared_in_sif or "/" not in exe, (
+            f"container-prefixed command invokes `{exe}`, which is neither a bare "
+            f"PATH-resolved name nor a ContainerSpec-declared in-SIF path "
+            f"({sorted(declared_in_sif)}). A host path here dies `FATAL: stat` "
+            f"inside apptainer with a 0-byte rule log."
+        )
+
+
+def test_container_python_default_is_a_name_not_a_path() -> None:
+    """Code Style item 8: the shipped default must be PATH-resolved, not a path.
+
+    Every in-repo recipe's %environment prepends /opt/hhemt-src/.venv/bin to
+    PATH, so a bare name resolves to the in-SIF hhemt venv. Baking that absolute
+    path into the model default would hardcode an image layout into src/."""
+    assert "/" not in ContainerSpec(sif_path="/opt/test.sif").python_in_sif
+
+
+def test_every_container_def_fronts_an_hhemt_interpreter_on_path() -> None:
+    """Recipe-side half of the interpreter contract.
+
+    `python_in_sif` defaults to a bare name, which is only correct because each
+    recipe's %environment prepends its uv-built venv bin dir to PATH. If a recipe
+    stops doing that, the default silently degrades to the system interpreter and
+    the process rung dies ModuleNotFoundError on the cluster."""
+    defs = sorted((_REPO_ROOT / "containers").glob("*.def"))
+    assert defs, "no container definition files found"
+    for d in defs:
+        env_block = d.read_text().split("%environment", 1)
+        assert len(env_block) == 2, f"{d.name} has no %environment block"
+        assert "/opt/hhemt-src/.venv/bin:" in env_block[1], (
+            f"{d.name}'s %environment does not prepend /opt/hhemt-src/.venv/bin to "
+            "PATH, so ContainerSpec.python_in_sif's bare-name default would resolve "
+            "to the system interpreter, which has no hhemt"
+        )

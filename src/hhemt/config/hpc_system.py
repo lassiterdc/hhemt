@@ -286,6 +286,16 @@ class ContainerSpec(BaseModel):
     exe_in_sif: dict[str, str] = Field(default_factory=dict)  # OD-A: per-model
     #   in-SIF absolute exe path, keyed by model_type ("triton"/"tritonswmm"/
     #   "swmm"). Empty => fall back to the convention /opt/hhemt/bin/{name}.
+    python_in_sif: str = "python"  # the interpreter token the CONTAINER-PREFIXED
+    #   process rungs invoke (`apptainer exec {sif} {python_in_sif} -m
+    #   hhemt.process_timeseries_runner`). MUST resolve INSIDE the image: the
+    #   driver's own sys.executable is a HOST path and dies `FATAL: stat …: no
+    #   such file or directory` (Rivanna run 17095105). The default is a bare
+    #   NAME, not a path — every in-repo recipe's %environment prepends
+    #   /opt/hhemt-src/.venv/bin to PATH, so `python` resolves to the in-SIF
+    #   hhemt venv. Override with an absolute in-SIF path for an image whose
+    #   PATH does not front an hhemt-bearing interpreter. NEVER hardcode an
+    #   in-SIF path in src/ (Code Style item 8) — that is what this field is for.
     extra_exec_args: list[str] = Field(default_factory=list)  # shared escape
     #   hatch for an unforeseen per-cluster `apptainer exec` flag; applied to
     #   EVERY class. NEVER put `--cleanenv` here for an MPI cluster (NQ-11).
