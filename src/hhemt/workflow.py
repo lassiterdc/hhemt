@@ -2161,23 +2161,43 @@ rule consolidate:
 
         This rule is deliberately NOT a member of the ``process_evt_{event_id}`` Snakemake group
         (removed 2026-07-19; the three ``process_{model_type}`` rules RETAIN their grouping, so
-        Gotcha 29's per-event scheduling-cost optimization is preserved for them). Snakemake's
-        ``GroupJob.is_local`` returns ``any(...)``, not ``all(...)`` (``jobs.py:1709-1710``), and the
-        scheduler routes any group flagged local to ``_local_executor``, which is always
-        instantiated under remote execution (``job_scheduler.py:141-148,338-339,358``). That
-        executor never calls ``sbatch``, so a single local member silently prevents the WHOLE group
-        from being dispatched: no submission line, no ``.snakemake/slurm_logs/`` directory, no
-        ``sacct`` row, and every member's ``log:`` file created at 0 bytes because no member shell
-        ever runs. That signature is easy to misread as a failure INSIDE the rule shell; it is not.
+        Gotcha 29's per-event scheduling-cost optimization is preserved for them).
+
+        ESTABLISHED (empirical, four cluster runs — see below): adding this rule to the group
+        prevents the WHOLE group from being dispatched. No submission line, no
+        ``.snakemake/slurm_logs/`` directory, no ``sacct`` row, and every member's ``log:`` file
+        left at 0 bytes. That signature is easy to misread as a failure INSIDE the rule shell;
+        it is not — a 0-byte ``log:`` means the member's shell never ran at all.
+
+        DISPROVEN (do not reinstate this explanation): an earlier version of this docstring, and
+        the message of commit 351818f, attributed the failure to ``GroupJob.is_local`` returning
+        ``any(...)`` (``jobs.py:1708-1710``) routing the group to the local executor. That
+        mechanism CANNOT fire for a grouped rule. ``workflow.py:737-741`` gates the localrules
+        path behind ``rule.group is None``, so ``workflow.is_local`` is False for every grouped
+        rule regardless of ``localrules:`` / ``norun`` / ``is_template_engine``; the only other
+        disjunct (``jobs.py:1039-1044``) requires ``SharedFSUsage.INPUT_OUTPUT not in
+        shared_fs_usage``, which is False under the default ``SharedFSUsage.all()``
+        (``settings/types.py:232``) that this profile inherits. Verified by direct probe under
+        forced non-local exec: ``GroupJob.is_local=False`` with every member ``job.is_local=False``.
+        The ROOT CAUSE remains UNKNOWN. Group-resource-constraint rejection was also ruled out
+        (``resources.py:150-167`` raises a loud ``WorkflowError``, inconsistent with the observed
+        silence). Diagnosing further needs the driver-side snakemake stdout / ``.snakemake/log/``
+        from the failing runs, which was NOT retained and would now require deliberately
+        re-inducing the failure to recapture.
 
         Empirically isolated to THIS rule's membership (do not re-add it without re-testing on a
         real cluster): Rivanna runs 17095105 / 17096574 / 17097334 each failed with the 4-member
         group, producing zero processed outputs; with this directive removed the three process rules
         dispatched as SLURM jobs 17102101/17102102/17102103 and succeeded, and this rule then ran as
         ``rule_consolidate_scenario`` (17102136) and wrote its flag + DU sentinel — 4 of 4 steps.
-        The precise reason this rule (and not a process rule) carries ``is_local`` is NOT pinned:
-        it is absent from ``localrules:``, the executor profile sets no ``shared-fs-usage``, and
-        every emitted rule declares ``conda:``. The empirical result above is what is established.
+        The empirical result above is what is established; the mechanism is not. Note this rule is
+        absent from ``localrules:``, the executor profile sets no ``shared-fs-usage``, and every
+        emitted rule declares ``conda:`` — so none of those is the discriminator either.
+
+        Guarded by ``tests/test_synth_container_mode.py::test_only_allowlisted_rules_declare_a_snakemake_group``,
+        a MEMBERSHIP allowlist. A "grouped AND locally-dispatched" guard was considered and
+        REJECTED: per the DISPROVEN paragraph above, ``Job.is_local`` is structurally False for
+        every grouped rule, so such a guard could never fire and would manufacture false assurance.
 
         The output declaration ``_status/f_consolidate_scenario_evt-{event_id}_complete.flag``
         matches the existing letter-prefixed flag convention (``c_run_*``, ``d_process_*``,

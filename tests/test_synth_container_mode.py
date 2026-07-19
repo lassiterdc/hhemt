@@ -591,3 +591,58 @@ def test_container_process_prefix_omits_module_load_when_undeclared() -> None:
     tc.analysis.cfg_hpc_system.container = ContainerSpec(sif_path="/opt/test.sif")
     got = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
     assert "module load" not in got.split("process_timeseries_runner")[0].splitlines()[-1]
+
+
+_RULES_ALLOWED_TO_DECLARE_GROUP = {"process_triton", "process_tritonswmm", "process_swmm"}
+"""Rules permitted to carry a Snakemake ``group:`` directive.
+
+Adding a rule here is a DELIBERATE act that REQUIRES re-validation on a real
+cluster. On 2026-07-19, adding ``consolidate_scenario`` to the
+``process_evt_{event_id}`` group caused the ENTIRE group to never dispatch:
+Rivanna runs 17095105 / 17096574 / 17097334 produced zero processed outputs,
+zero sacct rows, no ``.snakemake/slurm_logs/`` directory, and 0-byte logs for
+every member. Removing it restored dispatch (SLURM 17102101/2/3 + 17102136,
+4 of 4 steps).
+
+The MECHANISM IS NOT UNDERSTOOD. See ``_build_consolidate_scenario_rule_block``'s
+docstring for the DISPROVEN ``is_local`` explanation and why a
+"grouped AND locally-dispatched" guard cannot be written. Until the real
+mechanism is known, this allowlist is the only available protection: it cannot
+detect a BAD grouping, but it guarantees no rule joins a group silently.
+"""
+
+
+def test_only_allowlisted_rules_declare_a_snakemake_group() -> None:
+    """No rule may join a Snakemake group without an explicit allowlist entry.
+
+    Guards the failure class that cost nine cluster submissions to isolate. This
+    is a MEMBERSHIP guard, not a mechanism guard: a "grouped AND locally
+    dispatched" assertion was considered and REJECTED because ``Job.is_local`` is
+    structurally False for every grouped rule (``snakemake/workflow.py:737-741``
+    gates the localrules path behind ``rule.group is None``), so such a guard
+    could never fire and would manufacture false assurance.
+    """
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    content = SnakemakeWorkflowBuilder(tc.analysis).generate_snakefile_content()
+
+    current_rule: str | None = None
+    grouped: set[str] = set()
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("rule ") and stripped.endswith(":"):
+            current_rule = stripped[len("rule ") : -1].strip()
+        elif stripped.startswith("group:") and current_rule is not None:
+            grouped.add(current_rule)
+
+    unexpected = grouped - _RULES_ALLOWED_TO_DECLARE_GROUP
+    assert not unexpected, (
+        f"rule(s) {sorted(unexpected)} declare a Snakemake `group:` but are not in "
+        f"_RULES_ALLOWED_TO_DECLARE_GROUP ({sorted(_RULES_ALLOWED_TO_DECLARE_GROUP)}). "
+        "Adding a rule to a group has silently prevented the ENTIRE group from being "
+        "dispatched on a real cluster (see the allowlist docstring). If this is "
+        "intentional, add it to the allowlist AND re-validate on a real cluster."
+    )
