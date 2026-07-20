@@ -6203,19 +6203,94 @@ exit $snakemake_status
                 still_alive.append((rule_token, jid))
         return still_alive, cleared
 
+    def _tmux_session_is_live(self, session_name: str) -> bool | None:
+        """Tri-state tmux-session liveness AS SEEN FROM THIS HOST.
+
+        ``True``  — ``tmux has-session`` returned 0: the session exists here.
+        ``False`` — tmux RAN and reported no such session / no server running.
+        ``None``  — tmux could not be made to run at all ⇒ UNKNOWN, NOT dead.
+
+        Routed through ``bash -c`` with ``_get_module_load_prefix()`` — the form
+        every OTHER tmux call site in this file already uses
+        (``_launch_tmux_workflow``, ``_get_snakemake_pid_from_tmux``, the
+        cancel/status paths). The liveness gate previously invoked the bare
+        ``["tmux", ...]`` argv — the only such site in this file — which is why a
+        merely-UNLOADED Lmod tmux module surfaced as a raw ``FileNotFoundError``
+        from inside a liveness gate on UVA Rivanna (tmux there is module-gated,
+        not absent: ``module load tmux`` yields
+        ``/apps/software/standard/core/tmux/3.6a/bin/tmux``).
+
+        Two attempts, prefixed then plain, so BOTH cluster shapes are covered:
+        module-gated (the prefixed form answers) and plain-PATH-with-no-tmux-
+        modulefile (the prefixed ``module load tmux &&`` short-circuits, the
+        plain fallback answers). Only when NO form can run tmux is the answer
+        UNKNOWN. Returning ``False`` there instead would convert a loud crash
+        into a SILENT false-proceed — strictly worse than the bug being fixed.
+        """
+        prefix = self._get_module_load_prefix()
+        quoted = shlex.quote(session_name)
+        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [
+            f"tmux has-session -t {quoted}"
+        ]
+        for cmd in attempts:
+            try:
+                r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if r.returncode == 0:
+                return True
+            # rc 127 / "command not found" means tmux (or `module`) is
+            # unavailable in THIS form — that is not evidence about the session.
+            if r.returncode == 127 or "command not found" in f"{r.stderr}".lower():
+                continue
+            return False
+        return None
+
     def _orchestrator_liveness_gate(
         self,
         analysis_dir: Path | None = None,
         *,
         exclude_driver_id: str | None = None,
     ) -> "WorkflowError | None":
-        """Return a WorkflowError if a LIVE orchestration driver exists for this
-        analysis, else None. Reclaims dead/stale sentinels in passing.
+        """Return a WorkflowError if a LIVE-or-INDETERMINATE orchestration driver
+        exists for this analysis, else None. Reclaims dead/stale sentinels in
+        passing.
 
         Default-safe: no ``_orchestrator/`` sentinels ⇒ returns None (proceed).
         ``exclude_driver_id`` skips the caller's own self-sentinel (reprocess).
-        Reuses ``_classify_stale_via_sacct`` (jobid arm) and the cancel_workflow
-        ps/tmux probes — no new liveness probe is authored (R10).
+
+        TRI-STATE classification (the load-bearing contract). Each sentinel is
+        classified ALIVE / DEAD / UNKNOWN, never just alive-or-dead:
+
+        * ALIVE   ⇒ block.
+        * DEAD    ⇒ reclaim the sentinel and proceed.
+        * UNKNOWN ⇒ hold-alive (block), BOUNDED by an mtime-age fail-safe at
+          ``_max_plausible_job_lifetime_min`` so an unanswerable sentinel can
+          never block forever.
+
+        UNKNOWN is produced by (a) a foreign origin ``hostname`` — ``ps -p`` and
+        ``tmux has-session`` are host-local (the tmux socket
+        ``/tmp/tmux-{uid}/default`` is node-local), so cross-host liveness is
+        STRUCTURALLY unknowable, not merely unreliable; (b) a legacy sentinel
+        with no recorded ``hostname``, where a negative local probe means "not
+        alive HERE", which is not "not alive"; (c) an identity field that has not
+        been enriched yet (``tmux_session_name``/``slurm_jobid`` still null
+        between ``write_orchestrator_sentinel`` and
+        ``enrich_orchestrator_sentinel`` — a SAME-HOST window spanning the whole
+        of ``submit_workflow()``); (d) tmux unavailable; (e) an unrecognized
+        mode.
+
+        The historical two-valued form collapsed EVERY one of those into DEAD,
+        reclaiming a live driver's sentinel and proceeding — the exact
+        unarbitrated concurrent consolidate-zarr write this gate exists to
+        prevent. This mirrors ``_classify_stale_via_sacct`` (same file, directly
+        above): refuse to classify from an unanswerable probe, fall through to
+        the mtime-age fail-safe.
+
+        Reuses ``_slurm_job_is_live`` (jobid arm, host-agnostic) and the
+        cancel_workflow ps/tmux probe family — no new liveness PRIMITIVE is
+        authored (R10); ``_tmux_session_is_live`` only wraps the existing tmux
+        probe in this file's own ``bash -c`` + module-load-prefix idiom.
         """
         import subprocess
 
@@ -6228,54 +6303,113 @@ exit $snakemake_status
         if not sentinels:
             return None  # default-safe: no sentinel ⇒ proceed (R6)
 
+        this_host = socket.gethostname()
+        # Same single-source-of-truth bound the wait-rule poll cap and the
+        # R-STALE UNKNOWN bucket use. NOT a new tunable.
+        max_plausible_s = _max_plausible_job_lifetime_min(self.cfg_analysis) * 60
+
         live: list[str] = []
         for s in sentinels:
             mode = s.get("workflow_submission_mode")
             path = Path(s["_path"])
-            alive = False
-            if mode == "local":
+            origin_host = s.get("hostname")  # None on a pre-hostname legacy sentinel
+            same_host = origin_host is not None and origin_host == this_host
+            # True = evidence-ALIVE, False = evidence-DEAD, None = UNKNOWN.
+            alive: bool | None
+            if mode == "1_job_many_srun_tasks":
+                jobid = s.get("slurm_jobid") or ""
+                # HOST-AGNOSTIC arm — SLURM is cluster-wide, so this arm is
+                # deliberately checked FIRST and is exempt from the same-host
+                # precondition below. Use the direct liveness primitive — NOT
+                # _classify_stale_via_sacct, which resolves its sentinel path under
+                # _status/_submitted/{token}.json and, on an UNKNOWN (sacct-lagging)
+                # jobid, mtime-tiebreaks against that NON-EXISTENT _orchestrator path
+                # -> OSError -> always-DEAD, a false-proceed against a live single-job
+                # driver. _slurm_job_is_live has no _submitted/-path coupling.
+                # A null (not-yet-enriched) jobid is UNKNOWN, never DEAD.
+                alive = _slurm_job_is_live(jobid) if jobid else None
+            elif origin_host is not None and not same_host:
+                # FOREIGN ORIGIN HOST: the host-local probes cannot answer at all.
+                # Do not run them; answer UNKNOWN and let the age fail-safe bound it.
+                alive = None
+            elif mode == "local":
                 pid = s.get("pid")
-                alive = bool(pid) and subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+                if not pid:
+                    alive = None
+                else:
+                    probe = subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+                    # A NEGATIVE host-local probe is DEAD *evidence* only when the
+                    # sentinel is KNOWN-same-host. On a legacy sentinel with no
+                    # recorded hostname it only means "not alive HERE". A POSITIVE
+                    # probe is honored regardless (erring ALIVE is the safe
+                    # direction; PID-reuse false-ALIVE is bounded by the age cap).
+                    alive = True if probe else (False if same_host else None)
             elif mode in ("tmux", "batch_job"):
                 session = s.get("tmux_session_name")
-                alive = bool(session) and (
-                    subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0
-                )
-            elif mode == "1_job_many_srun_tasks":
-                jobid = s.get("slurm_jobid") or ""
-                # Use the direct liveness primitive — NOT _classify_stale_via_sacct,
-                # which resolves its sentinel path under _status/_submitted/{token}.json
-                # and, on an UNKNOWN (sacct-lagging) jobid, mtime-tiebreaks against that
-                # NON-EXISTENT _orchestrator path -> OSError -> always-DEAD, a
-                # false-proceed against a live single-job driver (the E3 hazard the gate
-                # exists to prevent). _slurm_job_is_live has no _submitted/-path coupling.
-                alive = bool(jobid) and _slurm_job_is_live(jobid)
+                if not session:
+                    # Written but not yet enriched: a LIVE batch_job driver looks
+                    # exactly like this for the whole of submit_workflow().
+                    alive = None
+                else:
+                    probe = self._tmux_session_is_live(session)
+                    alive = None if probe is None else (True if probe else (False if same_host else None))
             else:
-                # Unknown mode: classify alive conservatively (do not silently
-                # proceed against an unrecognized driver record).
-                alive = True
+                # Unrecognized driver record: do not silently proceed against it.
+                alive = None
 
             if alive:
-                live.append(f"{s.get('driver_id')} (mode={mode})")
-            else:
-                # EXEMPT-DU: status-flag
-                path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
-                print(
-                    f"[orchestrator-gate] reclaimed stale sentinel {s.get('driver_id')} (mode={mode}) at {path}",
-                    file=sys.stderr,
-                    flush=True,
+                live.append(
+                    f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)"
                 )
+                continue
+
+            if alive is None:
+                # UNKNOWN -> hold-alive, BOUNDED by the mtime-age fail-safe so an
+                # unanswerable sentinel cannot block forever (R4 still holds).
+                try:
+                    age_s = time.time() - path.stat().st_mtime
+                except OSError:
+                    age_s = max_plausible_s + 1
+                if age_s < max_plausible_s:
+                    live.append(
+                        f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, "
+                        f"liveness=UNKNOWN/held {int(age_s // 60)}min < {int(max_plausible_s // 60)}min cap, "
+                        f"sentinel={path})"
+                    )
+                    continue
+                reason = "UNKNOWN/age-exceeded"
+            else:
+                reason = "dead-on-evidence"
+
+            # EXEMPT-DU: status-flag
+            path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
+            print(
+                f"[orchestrator-gate] reclaimed sentinel {s.get('driver_id')} "
+                f"(mode={mode}, host={origin_host or 'unrecorded'}, {reason}) at {path}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         if live:
             return WorkflowError(
                 phase="reprocess pre-submission orchestrator-liveness gate",
                 return_code=1,
                 stderr=(
-                    "Refusing reprocess: a live orchestration driver for this analysis "
-                    f"exists ({'; '.join(live)}). reprocess coexists with queued/running "
-                    "SLURM sim workers but must not run concurrently with a live run()/"
-                    "reprocess DRIVER (unarbitrated concurrent consolidate-zarr write). "
-                    "Cancel the live driver (or wait for it to finish) and retry."
+                    "Refusing reprocess: a live-or-indeterminate orchestration driver for "
+                    f"this analysis exists ({'; '.join(live)}). reprocess coexists with "
+                    "queued/running SLURM sim workers but must not run concurrently with a "
+                    "live run()/reprocess DRIVER (unarbitrated concurrent consolidate-zarr "
+                    "write). Entries marked liveness=UNKNOWN/held could NOT be probed from "
+                    "this host — the sentinel's origin host differs from this one, its "
+                    "origin host was never recorded (a sentinel predating the hostname "
+                    "field), an identity field has not been enriched yet, or tmux could not "
+                    "be run here (on an Lmod cluster try `module load tmux`). Such entries "
+                    "are held conservatively rather than assumed dead, and are reclaimed "
+                    "automatically once the sentinel exceeds the max plausible driver "
+                    "lifetime shown above. Resolve by: (a) waiting for the driver to finish "
+                    "or for the cap to elapse; (b) re-running from the sentinel's origin "
+                    "host so the probe can answer; or (c) if you have independently "
+                    "confirmed the driver is gone, deleting the named sentinel file."
                 ),
             )
         return None
