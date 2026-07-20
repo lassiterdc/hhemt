@@ -405,3 +405,17 @@ def get_reporting_set(name: str) -> ReportingSet:
     which receive an already-validated name.
     """
     return REPORTING_SETS[name]
+
+
+def renderer_active(builder_key: str, disabled: list[str] | None) -> bool:
+    """Return False when ``builder_key`` is disabled for this invocation.
+
+    The single source of truth for per-plot disable (report_config.disabled_renderers,
+    Phase 3). Every emission site (the workflow.py dispatcher, the bundle harvest)
+    AND every rule all / render_report input-list site calls this — a site that
+    filters emission without filtering enumeration yields MissingInputException;
+    the inverse yields an orphan rule. An unknown ``builder_key`` (a typo) never
+    matches a selection entry, so it silently drops nothing here; the run-entry
+    ``validate_active_reporting_set`` is where such a key raises ConfigurationError.
+    """
+    return builder_key not in (disabled or ())

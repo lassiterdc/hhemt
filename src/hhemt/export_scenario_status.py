@@ -439,6 +439,32 @@ def main():
 
         write_workflow_summary_md(analysis)
 
+        # Re-persist validation_report.json now that scenario_status.csv EXISTS.
+        # consolidate_workflow.py also persists it, but that call runs at
+        # consolidation and this rule takes `_status/e_consolidate_complete.flag`
+        # as input — so the consolidation-time report is written STRICTLY BEFORE
+        # the CSV and its `scenario_status.csv created` check reports "missing"
+        # on every fresh run by construction, while the file demonstrably exists
+        # (Rivanna run 17102207: report 17:52, CSV 17:53). That is a false
+        # negative in a machine-readable artifact whose whole purpose is to be
+        # trusted without re-inspecting the tree.
+        #
+        # This re-persist is ordering-correct rather than merely later: the plot
+        # rules declare scenario_status.csv as input, so they run after THIS rule,
+        # which keeps the refreshed report ahead of every renderer that consumes
+        # it (Gotcha 53 / Option D: errors_and_warnings reads the persisted
+        # read-model, never re-inspecting the tree at render time).
+        #
+        # Non-fatal, matching the consolidate-side call: a persist failure must
+        # never block an otherwise-successful status export.
+        try:
+            from hhemt.analysis_validation import persist_validation_report
+
+            persist_validation_report(analysis)
+            logger.info("Re-persisted validation_report.json (post-CSV, ordering-correct)")
+        except Exception as e:
+            logger.warning(f"validation_report.json re-persist failed (non-fatal): {e}")
+
         logger.info("Status export completed successfully")
         if args.verbose:
             print("Status export completed successfully", flush=True)

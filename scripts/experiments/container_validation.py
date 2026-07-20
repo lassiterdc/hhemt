@@ -15,8 +15,9 @@ with ``check_cross_sim_identity(within_family=True)``.
 
 Run from the repo root (so ``tests/`` is on ``sys.path``). The real per-cluster deployment
 config (SIF path + account + partitions) is resolved from the operator's PRIVATE deployment estate
-via ``_resolve_hpc_system_config`` ($HHEMT_DEPLOYMENT_CONFIG / $HHEMT_HPC_SYSTEM_CONFIG / argv[2]) —
-NO git-tracked file is edited per run; the in-tree ``test_data/.../hpc_system_config_*.yaml``
+via ``hhemt.experiment_bundle.resolve_hpc_system_config`` ($HHEMT_DEPLOYMENT_CONFIG /
+$HHEMT_HPC_SYSTEM_CONFIG / argv[2]) — the resolver now ships in the wheel, so the map is not
+duplicated here. NO git-tracked file is edited per run; the in-tree ``test_data/.../hpc_system_config_*.yaml``
 are copy-me templates the operator reconstructs into the estate once per cluster.
 """
 
@@ -57,13 +58,6 @@ _SUITE = _SUITE_DIR / (os.environ.get("HHEMT_CV_SUITE") or "container_validation
 # resolver reads it). The public repo bakes in no default checkout path — it does
 # not hard-code the operator's private checkout name.
 
-# In-tree anonymized examples — COPY-ME templates (+ byte-identity-test fixtures), never
-# the live config. The operator reconstructs the real config in the estate from these.
-_TEMPLATE = {
-    "uva": _REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml",
-    "frontier": _REPO_ROOT / "test_data/norfolk_coastal_flooding/hpc_system_config_frontier.yaml",
-}
-
 # Per-cluster knobs (NOT secrets — the deployment account/SIF come from the resolved
 # estate config; the GPU partition derives the hardware).
 _CLUSTER = {
@@ -83,42 +77,6 @@ _CLUSTER = {
 }
 
 
-def _resolve_hpc_system_config(cluster: str, override: str | None = None) -> Path:
-    """Resolve the operator's REAL hpc_system_config for ``cluster`` from the operator's
-    PRIVATE deployment-config estate (the versioned, git-pulled deployment-config home).
-
-    Precedence: explicit ``override`` (argv[2]) > ``$HHEMT_HPC_SYSTEM_CONFIG`` env var >
-    ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml`` (set
-    ``$HHEMT_DEPLOYMENT_CONFIG`` per-cluster to the compute-visible estate clone; the public
-    repo bakes in no default). The in-tree ``_TEMPLATE`` is the copy-me source, never the
-    live config, so a run edits ZERO git-tracked files in the public repo.
-    """
-    if override:
-        path = Path(override).expanduser()
-    elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
-        path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
-    else:
-        estate = os.environ.get("HHEMT_DEPLOYMENT_CONFIG")
-        if not estate:
-            raise FileNotFoundError(
-                f"No hpc_system_config source for cluster {cluster!r}: set "
-                f"$HHEMT_DEPLOYMENT_CONFIG to your compute-visible private deployment-config "
-                f"checkout (or set $HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[2])."
-            )
-        path = Path(estate).expanduser() / "hpc" / f"hpc_system_config_{cluster}.yaml"
-    if not path.is_file():
-        raise FileNotFoundError(
-            f"No hpc_system_config for cluster {cluster!r} at {path}.\n"
-            f"  1. On the cluster, set $HHEMT_DEPLOYMENT_CONFIG to your compute-visible "
-            f"deployment-config checkout and `git pull` it on the login node.\n"
-            f"  2. Reconstruct the config once from the in-tree template:\n"
-            f"       cp {_TEMPLATE[cluster]} {path}\n"
-            f"     then fill default_account (from hpc/profiles.yaml) and container.sif_path.\n"
-            f"  (Or set $HHEMT_HPC_SYSTEM_CONFIG, or pass the path as argv[2].)"
-        )
-    return path.resolve()
-
-
 def build_case(
     cluster: str,
     *,
@@ -131,7 +89,8 @@ def build_case(
 
     The real deployment ``hpc_system_config`` (ContainerSpec SIF path + partition→hardware
     + account) is resolved from the operator's PRIVATE deployment estate (see
-    ``_resolve_hpc_system_config``) — NO git-tracked file is edited per run. ``hpc_account``
+    ``hhemt.experiment_bundle.resolve_hpc_system_config``) — NO git-tracked file is edited per
+    run. ``hpc_account``
     is sourced from the resolved config's ``default_account``; a fail-fast rejects an
     unfilled template. ``execution_environment`` is supplied PER ROW by the CSV.
     """
@@ -139,8 +98,9 @@ def build_case(
         raise ValueError(f"cluster must be one of {sorted(_CLUSTER)}; got {cluster!r}")
     c = _CLUSTER[cluster]
     from hhemt.config.loaders import load_hpc_system_config
+    from hhemt.experiment_bundle import resolve_hpc_system_config
 
-    cfg_path = _resolve_hpc_system_config(cluster, hpc_system_config_yaml)
+    cfg_path = resolve_hpc_system_config(cluster, override=hpc_system_config_yaml)
     cfg_hpc = load_hpc_system_config(cfg_path)
     account = cfg_hpc.default_account or ""
     if (not account) or ("{your-" in account):

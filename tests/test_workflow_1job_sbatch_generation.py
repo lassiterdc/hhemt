@@ -336,6 +336,7 @@ def test_override_hpc_total_nodes(norfolk_1job_cpu_only):
 def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
     """override_hpc_total_nodes raises ConfigurationError when multi_sim_run_method != 1_job_many_srun_tasks."""
     from hhemt.exceptions import ConfigurationError
+    from hhemt.orchestration import RunOverrides
     from hhemt.workflow import SnakemakeWorkflowBuilder
 
     analysis = norfolk_1job_cpu_only
@@ -344,7 +345,7 @@ def test_override_hpc_total_nodes_wrong_mode(norfolk_1job_cpu_only):
     workflow_builder = SnakemakeWorkflowBuilder(analysis)
 
     with pytest.raises(ConfigurationError, match="override_hpc_total_nodes"):
-        workflow_builder.submit_workflow(override_hpc_total_nodes=3)
+        workflow_builder.submit_workflow(overrides=RunOverrides(hpc_total_nodes=3))
 
 
 def test_extra_sbatch_args_runtime_only(norfolk_1job_cpu_only):
