@@ -57,6 +57,18 @@ def write_orchestrator_sentinel(
     payload = {
         "driver_id": driver_id,
         "pid": pid if pid is not None else os.getpid(),
+        # Origin host as a FIRST-CLASS field. It is also embedded in driver_id
+        # ({pid}-{hostname}-{uuid8}), but hostnames themselves contain dashes
+        # (e.g. "udc-aw33-4c0"), so back-parsing that string is fragile and its
+        # failure mode is SILENTLY-WRONG (a wrong host -> a wrong liveness
+        # verdict). The writer always runs on the origin host by definition, so
+        # this value cannot be wrong. Additive + OPTIONAL: a legacy sentinel
+        # written before this field existed reads back as None, which the
+        # liveness gate treats as UNKNOWN-host -- never as same-host. That is
+        # why no schema-version field and no migration are needed: the absence
+        # of the key IS the version signal, and it carries strictly more
+        # information than a version int would.
+        "hostname": socket.gethostname(),
         "slurm_jobid": slurm_jobid,
         "tmux_session_name": tmux_session_name,
         "workflow_submission_mode": workflow_submission_mode,
