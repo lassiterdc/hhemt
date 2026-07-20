@@ -1590,7 +1590,7 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
 
         A CPU-only sim emits no ``--gres``, so submitting it to a GPU partition whose
         QOS enforces a GRES minimum is rejected BEFORE it runs: on UVA Rivanna the
-        emitted ``-A quinnlab -p gpu -t 90 --mem 2000 --nodes=1 --ntasks=1
+        emitted ``-A {your-allocation} -p gpu -t 90 --mem 2000 --nodes=1 --ntasks=1
         --cpus-per-task=1`` returned ``sbatch: error: QOSMinGRES`` / ``Job violates
         accounting/QOS policy`` and left a 0-byte ``swmm_evt-*.log``.
 
