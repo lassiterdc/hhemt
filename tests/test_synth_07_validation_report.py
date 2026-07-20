@@ -243,6 +243,7 @@ def test_validation_report_multi_sim_failing_disk_mutations(failing_synth_multi_
     assert "Analysis summaries created" in failed_check_names
 
 
+@pytest.mark.slow
 def test_validation_report_sensitivity_failing_disk_mutations(failing_synth_sensitivity_analysis):
     """Sensitivity equivalent: deleted sensitivity_datatree.zarr should fail summaries check."""
     report = validate_analysis(failing_synth_sensitivity_analysis)
@@ -261,6 +262,7 @@ def test_errors_and_warnings_renders_html_multi_sim_real(failing_synth_multi_sim
     assert "Analysis summaries created" in html
 
 
+@pytest.mark.slow
 def test_errors_and_warnings_renders_html_sensitivity_real(failing_synth_sensitivity_analysis, tmp_path):
     """End-to-end render against a real (cloned + mutated) sensitivity analysis."""
     out_path = tmp_path / "ew_sensitivity.html"
