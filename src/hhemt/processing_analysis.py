@@ -1,20 +1,20 @@
+import re
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import xarray as xr
-from hhemt.utils import (
-    write_zarr,
-    write_netcdf,
-    write_datatree_zarr,
-    current_datetime_string,
-    get_file_size_MiB,
-)
+
 from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
 )
-from typing import Literal, List
-from typing import TYPE_CHECKING
-from pathlib import Path
-import time
 from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.utils import (
+    current_datetime_string,
+    get_file_size_MiB,
+    write_datatree_zarr,
+)
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -74,6 +74,21 @@ class TRITONSWMM_analysis_post_processing:
         "triton_only_performance": "triton_only/performance",
         "swmm_only_node": "swmm_only/swmm_node",
         "swmm_only_link": "swmm_only/swmm_link",
+    }
+
+    # Per-scenario TIMESERIES modes (opt-in via analysis_config.toggle_consolidate_timeseries).
+    # Maps mode -> the scenario-path attr for the per-scenario timeseries zarr. SWMM node
+    # (wlevel(t)) + SWMM link (flow(t)) only: the TRITON gridded timeseries is ~24x larger
+    # per scenario and is NOT needed for the clean-vs-resume over-time figure, so it is
+    # deliberately excluded here (adding it would be GB-scale on a fine grid).
+    _TIMESERIES_MODE_CONFIG = {
+        "tritonswmm_swmm_node_ts": "output_tritonswmm_node_time_series",
+        "tritonswmm_swmm_link_ts": "output_tritonswmm_link_time_series",
+    }
+
+    _TIMESERIES_MODE_TO_TREE_PATH = {
+        "tritonswmm_swmm_node_ts": "tritonswmm/swmm_node_timeseries",
+        "tritonswmm_swmm_link_ts": "tritonswmm/swmm_link_timeseries",
     }
 
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
@@ -144,6 +159,20 @@ class TRITONSWMM_analysis_post_processing:
             ds = self._retrieve_combined_output(mode)
             apply_cf_attributes(ds, mode)
             tree_dict[tree_path] = ds
+
+        # Per-scenario timeseries nodes (opt-in). Default OFF. When enabled, each SWMM
+        # node/link timeseries is concatenated along event_iloc exactly as the summaries
+        # are, and grafts up to the sensitivity master for free via
+        # build_sensitivity_datatree's subtree_with_keys copy. A missing timeseries file
+        # raises FileNotFoundError here, which the master consolidate loop already tolerates
+        # under allow_incomplete=True (whole-sub skip), mirroring the summary path.
+        if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
+            for ts_mode, ts_tree_path in self._TIMESERIES_MODE_TO_TREE_PATH.items():
+                ts_scen_attr = self._TIMESERIES_MODE_CONFIG[ts_mode]
+                first_scen = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
+                if getattr(first_scen.scen_paths, ts_scen_attr) is None:
+                    continue
+                tree_dict[ts_tree_path] = self._retrieve_combined_timeseries(ts_mode)
 
         tree_dict["/"] = xr.Dataset(
             attrs={
@@ -240,6 +269,43 @@ class TRITONSWMM_analysis_post_processing:
             )
         return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
 
+    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:  # type: ignore
+        """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
+
+        Mirrors _retrieve_combined_output but reads the timeseries scenario-path attr
+        (_TIMESERIES_MODE_CONFIG) rather than the summary attr, and keeps each scenario's
+        `time` dimension. Concat is outer-join on time (scenarios of different weather
+        events have different time axes; within a clean-vs-resume PAIR the axes match, so
+        the over-time diff has no NaN in the overlap). Raises FileNotFoundError on a missing
+        file so the master consolidate loop's allow_incomplete=True skip applies uniformly.
+        """
+        scen_attr = self._TIMESERIES_MODE_CONFIG[ts_mode]
+        lst_ds = []
+        for event_iloc in self._analysis.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            ts_file = getattr(scen.scen_paths, scen_attr)
+            if ts_file is None:
+                raise ValueError(
+                    f"Timeseries path is None for ts_mode '{ts_mode}' and event_iloc={event_iloc}."
+                )
+            if not ts_file.exists():
+                raise FileNotFoundError(
+                    f"Timeseries file not found: {ts_file}. Run timeseries processing before consolidating."
+                )
+            open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
+            if open_kwargs["engine"] == "zarr":
+                open_kwargs["consolidated"] = False
+            lst_ds.append(xr.open_dataset(ts_file, **open_kwargs))
+        ds_ts = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts", join="outer")
+
+        from hhemt.scenario import compute_event_id_slug
+
+        event_ids = [
+            compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
+            for ei in self._analysis.df_sims.index
+        ]
+        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))  # type: ignore
+
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
         Load pre-created summary files for each scenario and concatenate them.
@@ -314,7 +380,7 @@ class TRITONSWMM_analysis_post_processing:
     def _chunk_for_writing(
         self,
         ds_combined_outputs: xr.Dataset,
-        spatial_coords: List[str] | str | None,
+        spatial_coords: list[str] | str | None,
         spatial_coord_size: int = 65536,  # 256x256 for x,y coords
         verbose: bool = True,
         max_mem_usage_MiB: int | None = None,
@@ -461,6 +527,24 @@ def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
         tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
 
 
+def _parse_replay_t(text: str, marker: str) -> "float | None":
+    """Parse the numeric ``t=`` value from the LAST replay marker in a model log.
+
+    The model log is ``"w"``-truncated per exec (Gotcha 71b), so this is the LAST
+    resume's replay boundary — the vertical-line marker the over-time figure needs.
+    Best-effort: returns None when the marker is absent or unparseable.
+    """
+    _m = None
+    for _m in re.finditer(rf"{re.escape(marker)}\s*([-+0-9.eE]+)", text):
+        pass  # keep the last match (last exec's replay)
+    if _m is None:
+        return None
+    try:
+        return float(_m.group(1))
+    except (ValueError, IndexError):
+        return None
+
+
 def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
     """Stamp per-sub coupled-resume replay evidence onto the consolidated ROOT.
 
@@ -508,6 +592,7 @@ def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
                 "resumed": _TRITON_CHECKPOINT_READ_MARKER in text,
                 "completed": _TRITON_COMPLETION_MARKER in text,
                 "replayed": _TRITON_REPLAY_MARKER in text,
+                "replay_t": _parse_replay_t(text, _TRITON_REPLAY_MARKER),
             }
         if evidence:
             tree.attrs["coupled_resume_replay_evidence"] = json.dumps(evidence, sort_keys=True)

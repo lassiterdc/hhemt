@@ -108,11 +108,21 @@ def compare_variable_exact(da_ref: xr.DataArray, da_cmp: xr.DataArray) -> dict:
     a = da_ref_a.values
     b = da_cmp_a.values
     dtype_match = a.dtype == b.dtype
-    identical = bool(np.array_equal(a, b, equal_nan=True)) and dtype_match and coord_match
-    with np.errstate(invalid="ignore"):
-        diff_map = np.abs(a.astype("float64") - b.astype("float64"))
-    finite = diff_map[np.isfinite(diff_map)]
-    max_abs_diff = float(finite.max()) if finite.size else 0.0
+    both_float = np.issubdtype(a.dtype, np.floating) and np.issubdtype(b.dtype, np.floating)
+    if both_float:
+        values_equal = bool(np.array_equal(a, b, equal_nan=True))
+        with np.errstate(invalid="ignore"):
+            diff_map = np.abs(a.astype("float64") - b.astype("float64"))
+        finite = diff_map[np.isfinite(diff_map)]
+        max_abs_diff = float(finite.max()) if finite.size else 0.0
+    else:
+        # Non-float (object/str/int) — e.g. a parsed-SWMM node/link ``type`` var. ``equal_nan``
+        # (isnan) and the ``.astype("float64")`` diff are undefined on these dtypes and raise
+        # ``TypeError``. Exact element equality only; no NaN semantics, no numeric diff.
+        values_equal = bool(np.array_equal(a, b))
+        diff_map = None
+        max_abs_diff = float("nan")
+    identical = values_equal and dtype_match and coord_match
     return {
         "identical": identical,
         "dtype_match": dtype_match,

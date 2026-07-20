@@ -284,6 +284,20 @@ class analysis_config(cfgBaseModel):
         "zarr",
         description="TRITON processed output type, zarr or nc.",
     )
+    toggle_consolidate_timeseries: bool = Field(
+        default=False,
+        description=(
+            "When True, the per-scenario SWMM node (wlevel(t)) and SWMM link (flow(t)) "
+            "TIMESERIES are consolidated into the analysis/sensitivity DataTree under "
+            "tritonswmm/swmm_node_timeseries and tritonswmm/swmm_link_timeseries "
+            "(concatenated along event_iloc). Default False (summaries only) — enable to "
+            "unblock over-time clean-vs-resume difference figures. The TRITON gridded "
+            "timeseries is NOT consolidated (it is ~24x larger per scenario and unneeded "
+            "for node/link over-time comparisons). Additive, config-schema-only change: no "
+            "LAYOUT_VERSION bump (config/analysis.py is allowlisted; the tree-node add is "
+            "additive-read-compatible)."
+        ),
+    )
     process_output_target_chunksize_mb: int = Field(
         200,
         description="Target memory budget (MiB) PER LOAD CHUNK for streaming-chunked operations on per-scenario timeseries output. This is the in-memory RSS guard ONLY; it does NOT govern zarr-append granularity (see process_append_batch_timesteps). Consumed by both write_timeseries_outputs (raw-to-zarr chunked LOAD at process_simulation.py L544/L736) AND summarize_triton_simulation_results' _streaming_argmax_with_companions helper (per-cell argmax+companion reduction). On fine grids a single float64 timestep can meet/exceed this budget, flooring the load chunk to 1 timestep — that is a correct memory guard, NOT a performance bug, because append granularity is decoupled via process_append_batch_timesteps. See Gotcha #23/#24.",
