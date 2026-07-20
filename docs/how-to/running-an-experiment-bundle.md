@@ -8,8 +8,8 @@ CLI flag that would override a descriptor-declared value must be confirmed first
 
 ## The bundle layout
 
-A conformant bundle (validated by `scripts/check_experiment_structure.py`) is a directory
-containing at least:
+A conformant bundle (validated against the `ExperimentBundle` descriptor model — see
+[Verifying a bundle conforms](#verifying-a-bundle-conforms)) is a directory containing at least:
 
 ```
 experiments/my_experiment/
@@ -95,9 +95,23 @@ already say, no confirmation is needed — that is the common one-config path.
 
 ## Verifying a bundle conforms
 
+The descriptor model ships in the wheel, so an installed copy can validate a bundle directly:
+
+```bash
+python -c "
+import sys, yaml
+from hhemt.config.experiment_bundle import ExperimentBundle
+ExperimentBundle.model_validate(yaml.safe_load(open(sys.argv[1] + '/experiment.yaml')))
+print('OK')" experiments/my_experiment
+```
+
+Working from a repo checkout, the fuller checker additionally verifies that `experiment_id`
+matches the directory name, that the declared `system_config`/`analysis_config` paths exist,
+and that `README.md` + `rerun.sh` are present:
+
 ```bash
 python scripts/check_experiment_structure.py experiments/my_experiment
 ```
 
-Exit 0 = the descriptor validates, `experiment_id` matches the directory name, the declared
-`system_config`/`analysis_config` paths exist, and `README.md` + `rerun.sh` are present.
+Exit 0 = conformant. Note that `scripts/` is not distributed in the wheel, so this second form
+requires a clone rather than a `pip install`.
