@@ -137,6 +137,16 @@ def _build_case(
         hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
             "multi_sim_run_method": "batch_job",
+            # Opt-in per-scenario SWMM node/link timeseries consolidation. ON for this
+            # experiment because the clean-vs-resume over-time MAX-ABSOLUTE-difference
+            # figure reads tritonswmm/swmm_{node,link}_timeseries from the consolidated
+            # master tree, and the per-config resume vlines read the durable replay_t
+            # stamped alongside it. The toolkit-wide default stays False
+            # (config/analysis.py) — this is the EXPERIMENT's value for an
+            # experiment-policy knob, expressed here beside the other policy literals
+            # rather than injected from the estate (the estate carries environment and
+            # secrets — the real account — not experiment policy).
+            "toggle_consolidate_timeseries": True,
             # batch_job REQUIRED fields (default None -> raise at load if omitted). The retired
             # hpc_account / hpc_login_node / hpc_max_simultaneous_sims / hpc_gpus_per_node keys
             # moved to hpc_system_config_synth_uva.yaml (default_account / login_node /
