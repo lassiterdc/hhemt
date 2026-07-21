@@ -160,7 +160,15 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
             builder.submit_reprocess_workflow(
                 start_with="consolidate", execution_mode="local", dry_run=False, verbose=False
             )
-        assert "live orchestration driver" in excinfo.value.stderr
+        # Assert the LIVENESS CLASSIFICATION, not the prose. The tri-state gate
+        # (Gotcha 72) emits "live-or-indeterminate orchestration driver" as a
+        # generic prefix for BOTH liveness=ALIVE and liveness=UNKNOWN/held, so
+        # asserting that prefix would pass even if a definitively-live driver were
+        # misclassified as indeterminate — deleting the discrimination this test
+        # exists to provide. `liveness=ALIVE` is the semantic tag and is what R3
+        # actually requires here (verified 2026-07-21: the emitted entry is
+        # `live-driver (mode=local, host=laptop, liveness=ALIVE)`).
+        assert "liveness=ALIVE" in excinfo.value.stderr
     finally:
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 
