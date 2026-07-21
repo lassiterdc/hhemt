@@ -12,10 +12,17 @@ identical:false) and RE-READS each intact child_crates/{eid}/sensitivity_datatre
 place, so this is pure rendering over already-shipped data (Q11) with no re-run.
 
 MANDATORY caveat (master §Risks :218): the coupled runs use TRITON's variable dt, so
-SWMM drops the final reporting period (Nperiods=N-1). This is common-mode across the
-clean AND resume arms, so the clean-vs-resume DIFFERENCE (this figure's headline) is
-sound; but any ABSOLUTE-magnitude reference panel carries the truncation. The caveat is
-annotated on the figure AND carried in the caption.
+SWMM drops the final reporting period (Nperiods=N-1). The truncation is ONE-SIDED, NOT
+common-mode: the clean arm drops it on all 28 sub-analyses, while the resume arm
+recovers it on 14 — a hotstart restarts the coupling-clock FP accumulation at an
+exactly-representable checkpoint time, so emission of the final period is a
+deterministic function of the restart time replay_t (predicts 28/28; compute config
+has zero explanatory power). SWMM series are therefore compared over the shared
+leading periods, which are timestamp-identical across both arms (0 exceptions on 28
+configs), so the clean-vs-resume DIFFERENCE (this figure's headline) is sound over
+that prefix; any ABSOLUTE-magnitude reference panel carries the truncation. TRITON-side
+fields are full-length on both arms and are unaffected. The caveat is annotated on the
+figure AND carried in the caption.
 
 FIGURE LAYOUT NOTE: the multi-panel plotly layout is owned by the /eda-spinup design
 step (as the sibling cross_experiment_intercomparison renderer's docstring already
@@ -33,8 +40,14 @@ from hhemt.report_renderers._provenance import ProvenanceLog, ProvenanceRef
 
 _TRUNCATION_CAVEAT = (
     "Absolute magnitudes inherit the variable-dt SWMM final-period truncation "
-    "(Nperiods=N-1); this is common-mode across the clean and resume arms, so the "
-    "clean-vs-resume DIFFERENCE shown here is sound."
+    "(Nperiods=N-1). The truncation is ONE-SIDED, not common-mode: the clean arm "
+    "drops the final period on every config, while a resumed run recovers it "
+    "whenever the restart time falls on the emitting side of SWMM's report-gate "
+    "tolerance (measured: 14 of 28 sub-analyses). SWMM series are therefore "
+    "compared over the shared leading periods, which are timestamp-identical "
+    "across both arms; the clean-vs-resume DIFFERENCE shown here is taken over "
+    "that shared prefix. TRITON-side fields are unaffected (full length on both "
+    "arms)."
 )
 
 

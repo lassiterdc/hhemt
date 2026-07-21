@@ -380,23 +380,43 @@ def _load_intercomparison_subs(root: Path) -> dict:
 
     Walks the same tree convention as ``eda._config_diff._load_subs`` (top-level groups
     ``/sa_{id}``; the key-result arrays live under ``/sa_{id}/tritonswmm/{triton,swmm_link}``).
-    One representative sub per compute-config (sorted-first, deterministic) — replicates of one
-    config are byte-identical, so a representative suffices for the clean-vs-resume pairing.
-    Returns ``{}`` when the bundle carries no consolidated tree.
+    One representative sub per compute-config (sorted-first, deterministic).
+
+    CORRECTED 2026-07-21 — the collapse is NO LONGER silent. This docstring previously
+    asserted "replicates of one config are byte-identical, so a representative suffices."
+    That premise is FALSE on a resume arm: measured, it holds 14/14 on the clean sweep but
+    FAILS on 6 of 14 resume configs (gpu_1, gpu_3, gpu_4, hybrid_12, hybrid_13, mpi_10;
+    max |delta| 5.9e-7 .. 1.2e-6 m). Because sorting puts ``_r1`` before ``_r2``, every
+    ``_r2`` was discarded — so 10 of the 14 truncation-asymmetric sub-analyses never
+    reached the read-model, and nothing recorded that they had been dropped.
+
+    The representative collapse is RETAINED (the pairing is per-config by construction),
+    but the discarded ``sa_id``s are now returned alongside the payload so a consumer can
+    DISCLOSE the collapse rather than silently under-report. Keying on ``sa_id`` and
+    reporting replicate spread as a first-class column is the fuller fix and is tracked
+    separately — it changes the read-model schema and every consumer of it.
+
+    Returns ``(subs, collapsed)`` where ``collapsed`` maps ``{config_identity_str:
+    [discarded sa_id, ...]}``, empty when no replicate was dropped.
     """
     import xarray as xr
 
     store = root / "sensitivity_datatree.zarr"
     out: dict = {}
+    collapsed: dict = {}
     if not store.exists():
-        return out
+        return out, collapsed
     dt = xr.open_datatree(str(store), engine="zarr", consolidated=False)
     for g in sorted(dt.groups):
         if g.count("/") != 1 or not g.startswith("/sa_"):
             continue
         cfg_key = _config_identity_from_node_attrs(dict(dt[g].attrs))
         if cfg_key in out:
-            continue  # first (sorted) representative per config wins
+            # First (sorted) representative per config wins. RECORD the discard — a
+            # replicate dropped without a trace is how the resume-arm spread went
+            # unreported (see docstring).
+            collapsed.setdefault(cfg_key, []).append(g.lstrip("/"))
+            continue
         vars_by_name: dict = {}
         for child, var in _INTERCOMPARISON_VARS:
             try:
@@ -438,8 +458,8 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
 
     pairs: list[dict] = []
     if clean and resume:
-        clean_subs = _load_intercomparison_subs(clean[0])
-        resume_subs = _load_intercomparison_subs(resume[0])
+        clean_subs, clean_collapsed = _load_intercomparison_subs(clean[0])
+        resume_subs, resume_collapsed = _load_intercomparison_subs(resume[0])
         for cfg_key in sorted(set(clean_subs) & set(resume_subs)):
             c_vars, r_vars = clean_subs[cfg_key], resume_subs[cfg_key]
             for _child, var in _INTERCOMPARISON_VARS:
@@ -466,6 +486,18 @@ def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> Non
     payload = {
         "experiments": sorted(experiments, key=lambda x: x["experiment"]),
         "pairs": sorted(pairs, key=lambda p: (p["config"], p["variable"], p["event_iloc"])),
+        # Replicate collapse is DISCLOSED, not silent. `pairs` above carries one
+        # representative sub per compute-config; any replicate dropped to get there is
+        # listed here so a renderer can state the collapse. The premise that replicates
+        # are byte-identical is FALSE on a resume arm (measured 6 of 14 configs differ),
+        # so an undisclosed collapse under-reports the very spread a resume-validity
+        # experiment exists to measure. See _load_intercomparison_subs.
+        "replicates_collapsed": {
+            "clean": {k: sorted(v) for k, v in sorted(clean_collapsed.items())},
+            "resume": {k: sorted(v) for k, v in sorted(resume_collapsed.items())},
+        }
+        if (clean and resume)
+        else {},
     }
     (output_path / _COMBINED_INTERCOMPARISON_FILENAME).write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
