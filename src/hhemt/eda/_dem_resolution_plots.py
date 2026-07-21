@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import plotly.graph_objects as go
+import plotly.io as pio
 
 from hhemt.report_plot_ids import canonical_plot_id
 from hhemt.report_renderers._figure_emission import (
@@ -271,7 +272,7 @@ def dem_resolution_coupling_source_paths(root: Path) -> list[Path]:
     return srcs
 
 
-def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def build_dem_resolution_cost_error_figure(root: Path) -> go.Figure:
     """Figure 1 (HEADLINE): cost vs error. plot_id `dem_resolution_cost_error`.
 
     x = compute-hours (`wallclock_hr x n_devices`), y = the signed depth-magnitude
@@ -319,7 +320,6 @@ def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_conf
     any coarser resolution at or below this band is indistinguishable from the
     reference's own convergence uncertainty.
     """
-    import plotly.io as pio
     import xarray as xr
     from plotly.subplots import make_subplots
 
@@ -327,8 +327,6 @@ def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_conf
     from hhemt.config.system import system_config
     from hhemt.eda._dem_resolution import compare_resolution_pair
     from hhemt.report_renderers.sensitivity_benchmarking import _adaptive_time_unit
-
-    plot_id = canonical_plot_id("dem_resolution_cost_error")
 
     # horizontal_epsg for the kernel's Guard-1 CRS fill. Canonical source is
     # cfg_system.crs.horizontal_epsg; at a sensitivity-MASTER root the system config
@@ -529,19 +527,10 @@ def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_conf
     # establishing D3 intent ("open marker + legend entry + the caption"); two remain and the intent
     # holds, but that clause needs amending at closeout.
 
-    include_plotlyjs: bool | str = True if eda_cfg.plotly_js_mode == "inline" else "cdn"
-    html = pio.to_html(fig, include_plotlyjs=include_plotlyjs, full_html=True)
-    output_path = root / "plots" / "eda" / f"{plot_id}.html"
-    return emit_plot_with_sources(
-        html,
-        output_path,
-        source_paths=dem_resolution_source_paths(root),
-        analysis_dir=root,
-        output_format="html",
-    )
+    return fig
 
 
-def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def build_dem_resolution_diff_maps_figure(root: Path) -> go.Figure:
     """Figure 3: signed per-cell diff map vs the finest reference.
     plot_id `dem_resolution_diff_maps`.
 
@@ -566,7 +555,6 @@ def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_confi
     centroid rule makes a per-rung rasterization an inconsistent physical footprint.
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates the geometry) ───────────────
-    import plotly.io as pio
     import xarray as xr
     from plotly.subplots import make_subplots
 
@@ -587,9 +575,7 @@ def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_confi
     )
     from hhemt.eda._dem_resolution import regrid_to_fine
 
-    plot_id = canonical_plot_id("dem_resolution_diff_maps")
     threshold_cells = report_config().per_sim.interactive.datashader_threshold_cells
-    src = dem_resolution_diff_source_paths(root)
 
     # horizontal_epsg for the kernel's Guard-1 CRS fill (same source as fig-1;
     # [DRAFT: EPSG-source is a /design-figure confirm point]).
@@ -620,9 +606,7 @@ def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_confi
     if len(order) < 2:
         fig = go.Figure()
         fig.update_layout(height=_PANEL_H_PX, title="DEM resolution diff maps (need >= 2 resolutions)")
-        out = root / "plots" / "eda" / f"{plot_id}.html"
-        html = pio.to_html(fig, include_plotlyjs="cdn", full_html=True)
-        return emit_plot_with_sources(html, out, source_paths=src, analysis_dir=root, output_format="html")
+        return fig
 
     finest = recs[order[0]]
     coarser = [recs[r] for r in order[1:]]
@@ -1067,14 +1051,23 @@ def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_confi
         content_w_px=(_OUTLINE_X1 - _OUTLINE_X0) * (_FIG_W - 60),
         y=-0.012,
     )
-    out = root / "plots" / "eda" / f"{plot_id}.html"
-    include_plotlyjs: bool | str = True if eda_cfg.plotly_js_mode == "inline" else "cdn"
-    html = pio.to_html(fig, include_plotlyjs=include_plotlyjs, full_html=True)
-    return emit_plot_with_sources(html, out, source_paths=src, analysis_dir=root, output_format="html")
+    return fig
 
 
-def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def build_dem_resolution_error_ecdf_figure(root: Path, *, eda_cfg: eda_config | None = None) -> go.Figure:
     """Figure 2: depth-error ECDF per resolution. plot_id `dem_resolution_error_ecdf`.
+
+    ASYMMETRY (deliberate): this is the ONLY one of the four DEM builders that
+    takes eda_cfg -- it reads the user-declared depth-error tolerance for the
+    tolerance line. The other three read nothing off the config, so they take
+    `root` alone and match config_diff_maps_figure_from_root's shape exactly.
+    `eda_cfg=None` means "no declared tolerance" and yields the DRAFT placeholder
+    line, which is today's behavior on every path: `dem_resolution_tolerance_m`
+    is not a field on eda_config, so the getattr below always takes its default.
+    When that field is added, thread it through
+    dem_resolution_error_ecdf_figure_from_root as well or the notebook figure
+    will show a draft tolerance while the standalone artifact shows the declared
+    one.
 
     One curve per coarser rung; x = ABSOLUTE depth error |coarse - fine| (m); y =
     cumulative fraction of UNION-wet cells (EITHER run at/above tau). A curve that rises
@@ -1106,15 +1099,12 @@ def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_conf
     no asymptotic-range verification is arithmetic, not estimation.
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
-    import plotly.io as pio
     import xarray as xr
     from plotly.subplots import make_subplots
 
     from hhemt.config.loaders import yaml_to_model
     from hhemt.config.system import system_config
     from hhemt.eda._dem_resolution import regrid_to_fine
-
-    plot_id = canonical_plot_id("dem_resolution_error_ecdf")
 
     # horizontal_epsg for the regrid kernel's Guard-1 CRS fill. Canonical source is
     # cfg_system.crs.horizontal_epsg; at a sensitivity-MASTER root the system config sits
@@ -1325,19 +1315,10 @@ def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_conf
         y=-0.05,
     )
 
-    include_plotlyjs: bool | str = True if eda_cfg.plotly_js_mode == "inline" else "cdn"
-    html = pio.to_html(fig, include_plotlyjs=include_plotlyjs, full_html=True)
-    output_path = root / "plots" / "eda" / f"{plot_id}.html"
-    return emit_plot_with_sources(
-        html,
-        output_path,
-        source_paths=dem_resolution_source_paths(root),
-        analysis_dir=root,
-        output_format="html",
-    )
+    return fig
 
 
-def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+def build_dem_resolution_coupling_table_figure(root: Path) -> go.Figure:
     """Artifact 4 (a TABLE, not a panel): DEM resolution x coupling / peak / over-under.
     plot_id `dem_resolution_coupling_table`.
 
@@ -1358,7 +1339,6 @@ def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_
     count is in the caption.
     """
     # ── FIRST DRAFT (Phase 3 /design-figure iterates) ───────────────────────────
-    import plotly.io as pio
     import swmmio
     import xarray as xr
 
@@ -1367,7 +1347,6 @@ def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_
     from hhemt.eda._config_diff import _apply_mask, _watershed_mask, _watershed_polygon
     from hhemt.eda._dem_resolution import regrid_to_fine
 
-    plot_id = canonical_plot_id("dem_resolution_coupling_table")
     cfg_system = yaml_to_model(root.parent / "system_config.yaml", system_config)
     epsg = cfg_system.crs.horizontal_epsg
 
@@ -1524,9 +1503,97 @@ def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_
         "than the fine reference (over-estimation)." + _scope_txt
     )
     _add_caption(fig, _caption_text, content_w_px=1000 - 20 - 20, y=-0.04)
-    out = root / "plots" / "eda" / f"{plot_id}.html"
+    return fig
+
+
+# ---------------------------------------------------------------------------
+# Renderer wrappers (build -> write)
+#
+# Each renderer is a thin write-tail over its `build_*_figure(root)` builder
+# above. The split exists so the EDA notebook's seed cell can rebuild each DEM
+# figure IN MEMORY (via eda._report.dem_resolution_*_figure_from_root) without
+# re-reading the standalone plots/eda/*.html artifacts, which are full_html=True
+# documents that cannot be concatenated -- the same reason
+# config_diff_maps_figure_from_root delegates to build_config_diff_figure.
+#
+# The builders take ONLY `root`: figure construction reads neither cfg_analysis
+# (which was signature-only on all four renderers, never dereferenced) nor
+# eda_cfg (whose sole live use is plotly_js_mode, a WRITE-time concern). The
+# renderers keep the full (root, *, cfg_analysis, eda_cfg) signature because
+# _EDA_RENDERERS dispatches every renderer uniformly.
+# ---------------------------------------------------------------------------
+
+
+def _render_dem_resolution_cost_error(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Write figure 1 (cost vs error). See build_dem_resolution_cost_error_figure."""
+    return _emit_dem_resolution_figure(
+        build_dem_resolution_cost_error_figure(root),
+        root,
+        plot_key="dem_resolution_cost_error",
+        source_paths=dem_resolution_source_paths(root),
+        eda_cfg=eda_cfg,
+    )
+
+
+def _render_dem_resolution_diff_maps(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Write figure 3 (signed diff maps). See build_dem_resolution_diff_maps_figure."""
+    return _emit_dem_resolution_figure(
+        build_dem_resolution_diff_maps_figure(root),
+        root,
+        plot_key="dem_resolution_diff_maps",
+        source_paths=dem_resolution_diff_source_paths(root),
+        eda_cfg=eda_cfg,
+    )
+
+
+def _render_dem_resolution_error_ecdf(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Write figure 2 (depth-error ECDF). See build_dem_resolution_error_ecdf_figure."""
+    return _emit_dem_resolution_figure(
+        build_dem_resolution_error_ecdf_figure(root),
+        root,
+        plot_key="dem_resolution_error_ecdf",
+        source_paths=dem_resolution_source_paths(root),
+        eda_cfg=eda_cfg,
+    )
+
+
+def _render_dem_resolution_coupling_table(root: Path, *, cfg_analysis: analysis_config, eda_cfg: eda_config) -> Path:
+    """Write artifact 4 (coupling table). See build_dem_resolution_coupling_table_figure."""
+    return _emit_dem_resolution_figure(
+        build_dem_resolution_coupling_table_figure(root),
+        root,
+        plot_key="dem_resolution_coupling_table",
+        source_paths=dem_resolution_coupling_source_paths(root),
+        eda_cfg=eda_cfg,
+    )
+
+
+def _emit_dem_resolution_figure(
+    fig: go.Figure,
+    root: Path,
+    *,
+    plot_key: str,
+    source_paths: list[Path],
+    eda_cfg: eda_config,
+) -> Path:
+    """Write one DEM-resolution figure to plots/eda/{plot_id}.html with its manifest.
+
+    The single write tail shared by all four renderers, factored out of the four
+    byte-identical copies that preceded the build/write split.
+
+    One deliberate behavioral unification: the diff-maps degenerate branch (fewer
+    than two resolutions, which emits a placeholder figure) previously hardcoded
+    include_plotlyjs="cdn" while every other path honored eda_cfg.plotly_js_mode.
+    It now honors plotly_js_mode like the rest. This affects only the
+    fewer-than-two-resolutions placeholder, never a real figure.
+    """
     include_plotlyjs: bool | str = True if eda_cfg.plotly_js_mode == "inline" else "cdn"
     html = pio.to_html(fig, include_plotlyjs=include_plotlyjs, full_html=True)
+    output_path = root / "plots" / "eda" / f"{canonical_plot_id(plot_key)}.html"
     return emit_plot_with_sources(
-        html, out, source_paths=dem_resolution_coupling_source_paths(root), analysis_dir=root, output_format="html"
+        html,
+        output_path,
+        source_paths=source_paths,
+        analysis_dir=root,
+        output_format="html",
     )

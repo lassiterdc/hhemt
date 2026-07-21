@@ -5,8 +5,13 @@ scrollable-HTML composer.
 assembler over a Jinja2 template — so the parked scrollable-singlepage-report idea
 can reuse it. The Plotly bundle is inlined EXACTLY ONCE via `_figure_divs`
 (first-figure-inline + rest include_plotlyjs=False; full_html=False).
-`cross_sim_identity_figure_from_root` rebuilds the EDA figure from its carried
-eda/<plot_id>.zarr (reused by the notebook seed cell, ADR-14). The former
+The `*_figure_from_root` helpers rebuild an EDA figure from its carried
+eda/<plot_id>.zarr (reused by the notebook seed cell, ADR-14):
+`config_diff_maps_figure_from_root` for the compute-sensitivity family and
+`dem_resolution_*_figure_from_root` for the four DEM-resolution figures. (This
+docstring previously named `cross_sim_identity_figure_from_root`, a symbol that
+has never existed in this module — a stale reference left by the same rename D7
+traces.) The former
 `assemble_eda_report` wrapper was trimmed at Phase 5 — the notebook + best-effort
 nbconvert HTML export supersedes the standalone-HTML doc path (ADR-14).
 """
@@ -124,3 +129,40 @@ def config_diff_maps_figure_from_root(root: Path) -> go.Figure:
     from hhemt.eda._config_diff import build_config_diff_figure
 
     return build_config_diff_figure(root)
+
+
+def dem_resolution_cost_error_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM figure 1 (cost vs error) from the carried sensitivity_datatree.zarr.
+
+    Same contract as config_diff_maps_figure_from_root: delegates to the builder
+    the standalone renderer uses, so the notebook figure matches the artifact.
+    """
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_cost_error_figure
+
+    return build_dem_resolution_cost_error_figure(root)
+
+
+def dem_resolution_error_ecdf_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM figure 2 (depth-error ECDF) from the carried sensitivity_datatree.zarr.
+
+    Passes no eda_cfg, so the tolerance line renders as the DRAFT placeholder.
+    That matches the standalone artifact today because `dem_resolution_tolerance_m`
+    is not yet a field on eda_config; if it is added, thread it through here too.
+    """
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_error_ecdf_figure
+
+    return build_dem_resolution_error_ecdf_figure(root)
+
+
+def dem_resolution_diff_maps_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM figure 3 (signed diff maps) from the carried sensitivity_datatree.zarr."""
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_diff_maps_figure
+
+    return build_dem_resolution_diff_maps_figure(root)
+
+
+def dem_resolution_coupling_table_figure_from_root(root: Path) -> go.Figure:
+    """Re-build DEM artifact 4 (the coupling table) from the carried sensitivity_datatree.zarr."""
+    from hhemt.eda._dem_resolution_plots import build_dem_resolution_coupling_table_figure
+
+    return build_dem_resolution_coupling_table_figure(root)
