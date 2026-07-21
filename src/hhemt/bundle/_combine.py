@@ -427,7 +427,7 @@ def _load_intercomparison_subs(root: Path) -> dict:
                 vars_by_name[var] = child_node[var]
         if vars_by_name:
             out[cfg_key] = vars_by_name
-    return out
+    return out, collapsed
 
 
 def _write_combined_intercomparison(output_path: Path, roots: list[Path]) -> None:
