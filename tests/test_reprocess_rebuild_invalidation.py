@@ -283,10 +283,12 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_mult
     analysis.cfg_analysis.multi_sim_run_method = "batch_job"
 
     # Patch BOTH submission methods so the route fires no real workflow.
+    # Must return the real dict shape — reprocess now checks `success` and raises
+    # on failure (analysis.py, parity with sensitivity_analysis.py:743-770).
     monkeypatch.setattr(
         analysis._workflow_builder,
         "submit_reprocess_delete_workflow",
-        lambda *a, **k: None,
+        lambda *a, **k: {"success": True, "returncode": 0},
     )
     monkeypatch.setattr(
         analysis._workflow_builder,
@@ -303,11 +305,13 @@ def test_reprocess_regenerate_slurm_route_clears_log_nonsensitivity(norfolk_mult
 
     assert seeded, "fixture must construct at least one scenario"
 
+    # "auto", NOT "local" — this test's whole point is the SLURM-offload route.
+    # execution_mode="local" now blocks routing, which would silently gut the test.
     analysis.reprocess(
         start_with="process",
         regenerate_existing=True,
         delete_via_slurm=True,
-        execution_mode="local",
+        execution_mode="auto",
         dry_run=False,
         verbose=False,
     )

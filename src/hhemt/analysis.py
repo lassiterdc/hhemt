@@ -3592,7 +3592,15 @@ class TRITONSWMM_analysis:
         # auto-resolves to slurm-offload on HPC modes (user D6 refinement 1).
         _hpc = self.cfg_analysis.multi_sim_run_method in ("batch_job", "1_job_many_srun_tasks")
         _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-        route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
+        # An explicit execution_mode="local" from the caller must not be silently
+        # overridden by the config's multi_sim_run_method — parity with the
+        # sensitivity twin (sensitivity_analysis.py:727-733, landed 2026-07-20).
+        # Both paths are reached by the SAME `hhemt reprocess` CLI invocation via
+        # the toggle_sensitivity_analysis dispatch at :3473/:3508, so a divergence
+        # here is user-visible. execution_mode="auto" preserves the prior routing.
+        route_delete_via_slurm = (
+            regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc and execution_mode != "local"
+        )
         # Divergence self-heal (FIX 2) — fires on the process path REGARDLESS of
         # regenerate_existing (D2). Reconciles d_process flag + per-model
         # processing_log against on-disk summary presence: where a flag survives
@@ -3606,10 +3614,38 @@ class TRITONSWMM_analysis:
         if route_delete_via_slurm:
             # ONE scoped reprocess-delete workflow handles BOTH the consolidated
             # zarr(s) AND (start_with=='process') the per-scenario processed/ dirs.
-            self._workflow_builder.submit_reprocess_delete_workflow(
+            # The result was previously DISCARDED, so a delete workflow that failed
+            # (or ran zero rules) was indistinguishable from success. That is not
+            # merely unreported: consolidate_to_datatree early-returns when the zarr
+            # .exists() AND log.datatree_consolidation_complete is True AND the
+            # inputs fingerprint matches (processing_analysis.py:183), and the delete
+            # runner never clears that log field — so a surviving zarr is silently
+            # re-published as if rebuilt. regenerate_existing invalidates by DELETION;
+            # if the deletion did not happen the flag is a lie. Parity with the
+            # sensitivity twin (sensitivity_analysis.py:743-770, landed 2026-07-20).
+            _del_result = self._workflow_builder.submit_reprocess_delete_workflow(
                 start_with=start_with,
                 override_in_flight=False,
             )
+            if not _del_result.get("success", False):
+                from hhemt.exceptions import WorkflowError
+
+                raise WorkflowError(
+                    phase="reprocess-delete",
+                    return_code=_del_result.get("returncode", -1),
+                    stderr=(
+                        "regenerate_existing=True requested a scoped reprocess-delete "
+                        "workflow, but it did not complete successfully. The consolidated "
+                        "tree was NOT invalidated, so continuing would silently "
+                        "re-consolidate stale artifacts. See "
+                        f"{_del_result.get('snakemake_logfile')} for the workflow-level log. "
+                        "Per-rule stderr for each failed delete job is written to "
+                        "{analysis_dir}/logs/delete_reprocess/<rule>.log — this capture is "
+                        "executor-independent and is present whether the rules ran locally "
+                        "or on SLURM. Re-run with delete_via_slurm=False to delete "
+                        "in-process instead."
+                    ),
+                )
         self._invalidate_downstream_flags(
             start_with,
             regenerate_existing=regenerate_existing,

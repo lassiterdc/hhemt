@@ -34,6 +34,8 @@ from unittest.mock import patch
 
 import pytest
 
+from hhemt.exceptions import WorkflowError
+
 
 @pytest.fixture
 def slurm_env(monkeypatch):
@@ -416,3 +418,78 @@ def test_delete_rules_declare_the_processing_partition_on_hpc(norfolk_multi_sim_
         "delete rules must NOT target the GPU ensemble partition — that is the "
         "inherited default this fix exists to override"
     )
+
+
+# ---------------------------------------------------------------------------
+# Non-sensitivity delete-ROUTING parity with sensitivity_analysis.py:727-770.
+# Both behaviors are reached by the SAME `hhemt reprocess` CLI invocation via
+# the toggle_sensitivity_analysis dispatch (analysis.py:3473/:3508), so a
+# divergence here is user-visible. Red-green verified against HEAD 5db45c0.
+# ---------------------------------------------------------------------------
+
+
+def _stub_reprocess_submissions(analysis, calls, *, success):
+    """Record scoped-delete submissions and neutralize the reprocess workflow."""
+
+    def _fake(*args, **kwargs):
+        calls.append(kwargs)
+        return {
+            "success": success,
+            "returncode": 0 if success else 1,
+            "snakemake_logfile": "/tmp/fake_reprocess_delete.log",
+        }
+
+    analysis._workflow_builder.submit_reprocess_delete_workflow = _fake
+    analysis._workflow_builder.submit_reprocess_workflow = lambda *a, **k: {"success": True}
+
+
+def test_nonsensitivity_explicit_local_execution_mode_is_not_overridden(norfolk_multi_sim_analysis):
+    """execution_mode='local' must keep the scoped delete off the SLURM route.
+
+    The config says batch_job; the caller says local. The caller wins. Mirrors
+    test_synth_08's sensitivity twin. Before the fix the config won silently.
+    """
+    analysis = norfolk_multi_sim_analysis
+    analysis.cfg_analysis.multi_sim_run_method = "batch_job"
+    calls: list = []
+    # success=False so that IF the SLURM route were taken, the raise would fire
+    # and fail this test loudly rather than passing for the wrong reason.
+    _stub_reprocess_submissions(analysis, calls, success=False)
+
+    analysis.reprocess(
+        start_with="consolidate",
+        execution_mode="local",
+        regenerate_existing=True,
+        verbose=False,
+    )
+
+    assert not calls, (
+        "execution_mode='local' must NOT route the scoped delete through the "
+        f"SLURM workflow; it was invoked {len(calls)} time(s)."
+    )
+
+
+def test_nonsensitivity_failed_scoped_delete_raises_instead_of_consolidating_stale(
+    norfolk_multi_sim_analysis,
+):
+    """A scoped reprocess-delete that reports failure must RAISE, not fall through.
+
+    The result was previously discarded, so reprocess proceeded to consolidate
+    against a tree it believed was gone — and consolidate_to_datatree early-returns
+    on a surviving zarr whose datatree_consolidation_complete log flag the delete
+    runner never clears (processing_analysis.py:183), silently re-publishing stale.
+    """
+    analysis = norfolk_multi_sim_analysis
+    analysis.cfg_analysis.multi_sim_run_method = "batch_job"
+    calls: list = []
+    _stub_reprocess_submissions(analysis, calls, success=False)
+
+    with pytest.raises(WorkflowError):
+        analysis.reprocess(
+            start_with="consolidate",
+            execution_mode="auto",
+            regenerate_existing=True,
+            verbose=False,
+        )
+
+    assert calls, "the scoped delete must have been routed before the failure check"
