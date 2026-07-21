@@ -12,6 +12,12 @@ exercised end to end with the network fetch mocked and the toolchain reused:
           recompile fire -- ``compilation_cpu_successful`` reads the on-disk
           ``build_tritonswmm_cpu/compilation.log`` markers through the symlink.
 
+SCOPE LIMIT (defect-10): this proof runs a NATIVE bundle and supplies a
+pre-compiled host tree, so it is structurally incapable of exercising the
+CONTAINER prep path -- where no host build exists at all. Container-mode
+``prepare_scenario`` coverage lives in ``test_synth_container_mode.py``
+(fast tier, no compile). Do not read a green here as container-mode coverage.
+
 The run happens entirely under a tmp ``bundle_root/_test/`` -- never the session
 fixture's snapshotted analysis tree -- so the ``_assert_no_sha_drift`` finalizer
 is not implicated. File-scoped ``requires_snakemake_subprocess`` + ``slow``: this

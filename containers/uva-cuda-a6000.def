@@ -13,7 +13,7 @@
 #   TRITON cmake (build_tritonswmm_gpu_a100/CMakeCache.txt):
 #     -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON
 #     -DTRITON_IGNORE_MACHINE_FILES=ON -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80
-#     -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF
+#     -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE86=ON -DKokkos_ENABLE_OPENMP=OFF
 #     -DCMAKE_CUDA_COMPILER=nvcc -DCMAKE_CXX_COMPILER=mpic++ -DCMAKE_CXX_FLAGS=-O3
 #   srun --mpi=list -> pmix (pmix_v5), pmi2, cray_shasta, none   (MpiDefault=pmi2;
 #     the container speaks pmix to host slurm's pmix_v5 via the PMIx cross-version
@@ -57,12 +57,9 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
 %post
     set -eu
     export DEBIAN_FRONTEND=noninteractive
-    # Rootless --fakeroot on Rivanna has NO /etc/subuid range for this user, so the build runs
-    # in a SINGLE-UID root-mapped namespace. apt's Acquire sandbox drops privilege to the `_apt`
-    # user (uid 42) via setgroups/seteuid, and uid 42 is not in the single-UID map ->
-    # `E: Failed to setgroups (Operation not permitted)`, apt exits 100. Running apt as the
-    # mapped root avoids the drop; harmless when subuid IS provisioned (apt-as-root is fine).
-    # See knowledge/container/apptainer_rivanna_rootless_build_blocked_by_missing_subuid.md.
+    # See uva-cuda.def: rootless --fakeroot with no /etc/subuid runs a single-UID root-mapped
+    # namespace; apt's Acquire sandbox drops to uid 42 (_apt), unmapped -> setgroups EPERM, exit
+    # 100. Disable the sandbox so apt runs as the mapped root. Harmless when subuid IS present.
     printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
     apt-get update
     # gcc-14 matches the proven gcc 14.2.0. libhwloc-dev + libevent-dev are used as
@@ -165,17 +162,17 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
           -DTRITON_IGNORE_MACHINE_FILES=ON \
           -DTRITON_BACKEND=CUDA -DTRITON_ARCH=AMPERE80 \
-          -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE80=ON -DKokkos_ENABLE_OPENMP=OFF \
-          -DCMAKE_CUDA_ARCHITECTURES=80 \
+          -DKokkos_ENABLE_CUDA=ON -DKokkos_ARCH_AMPERE86=ON -DKokkos_ENABLE_OPENMP=OFF \
+          -DCMAKE_CUDA_ARCHITECTURES=86 \
           -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" \
           -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
           -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
           -DCMAKE_CXX_FLAGS='-O3' \
           -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
           /opt/triton
-    # -j8 (not $(nproc)=16): 16 concurrent nvcc device compiles of the Kokkos/TRITON CUDA TUs
-    # can breach the 64 GB build cgroup -> nondeterministic OOM-kill. -j8 gives ~8 GB/nvcc
-    # headroom; the single main.cpp compile (the long pole) is unaffected by -j. (triton-specialist q8b)
+    # -j8 (not $(nproc)=16): 16 concurrent nvcc device compiles can breach the 64 GB cgroup ->
+    # nondeterministic OOM. -j8 gives ~8 GB/nvcc headroom; the main.cpp long pole is -j-independent.
+    # (triton-specialist q8b)
     make -j8
     test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
 
@@ -206,7 +203,7 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     export UCX_TLS=rc,sm,cuda_copy,cuda_ipc,self
 
 %labels
-    org.hhemt.role        uva-cuda-production
+    org.hhemt.role        uva-cuda-a6000-production
     org.hhemt.status      pending-phase5-validation
     org.hhemt.base_digest sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80578d1c6a9
     org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
@@ -214,8 +211,8 @@ From: nvidia/cuda@sha256:9a8fffc32a955361aa66d754e7a0cda2513052eaf5aaf8f3ba69b80
     org.hhemt.cuda        12.8.0
     org.hhemt.openmpi     5.0.7-pmix5
     org.hhemt.gcc         14.2.0
-    org.hhemt.gpu_arch    AMPERE80
-    org.hhemt.gpu_hardware a100
+    org.hhemt.gpu_arch    AMPERE86
+    org.hhemt.gpu_hardware a6000
 
 %runscript
     exec "$@"

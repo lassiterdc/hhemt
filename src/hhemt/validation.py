@@ -1572,15 +1572,47 @@ def _validate_container_config(cfg_analysis, cfg_hpc_system, result: "Validation
             fix_hint="Declare hpc_system_config.container or set execution_environment='native'.",
         )
         return
-    if not cspec.sif_path:
+    if not cspec.sif_path and not cspec.sif_paths_by_arch:
         result.add_error(
             field="container.sif_path",
             message=(
-                "container mode requires hpc_system_config.container.sif_path (the "
-                "on-cluster absolute path to the transferred, signed SIF)."
+                "container mode requires either hpc_system_config.container.sif_path "
+                "(single/default SIF) or container.sif_paths_by_arch (per-arch map for "
+                "a cross-hardware experiment). On ingest, from_doi repoints both."
             ),
-            fix_hint="Set hpc_system_config.container.sif_path to the transferred signed SIF path.",
+            fix_hint="Set container.sif_path and/or container.sif_paths_by_arch.",
         )
+        return
+
+    # defect-10 companion: a DECLARED-but-absent SIF must fail at login-node
+    # preflight, not inside a SLURM allocation as an opaque `apptainer exec` error.
+    # The from_doi path already proves existence upstream (container_build.py raises
+    # ProcessingError when the build job returns 0 but produces no SIF), so this is
+    # inert there; it closes the HAND-AUTHORED-config gap, where sif_path was
+    # previously only checked for being SET. Scenario-level re-validation is
+    # deliberately NOT added: the invariant is analysis-constant, and a second copy
+    # of the per-arch resolution rule is a silent-wrong-SIF drift surface.
+    from pathlib import Path as _Path
+
+    _declared = [("container.sif_path", cspec.sif_path)] + [
+        (f"container.sif_paths_by_arch[{_a}]", _p)
+        for _a, _p in (cspec.sif_paths_by_arch or {}).items()
+    ]
+    for _field, _p in _declared:
+        if _p and not _Path(_p).is_file():
+            result.add_error(
+                field=_field,
+                message=(
+                    f"container mode declares a SIF at '{_p}' but no file exists "
+                    "there. The simulation would fail inside a SLURM allocation with "
+                    "an opaque `apptainer exec` error."
+                ),
+                fix_hint=(
+                    "Build the SIF (`hhemt build-sif --def <your.def> --sif-out <path>`) "
+                    "or correct the path. On the from_doi path this is repointed "
+                    "automatically at ingest."
+                ),
+            )
 
 
 # ============================================================================

@@ -228,6 +228,55 @@ def test_override_license_match_is_accepted(tmp_path, monkeypatch):
     assert result["data_doi"] == _RecordingSession.MINTED_DOI
 
 
+def test_publish_analysis_reprex_bundle_threads_container_defs(tmp_path, monkeypatch):
+    """The deposit path threads ``container_defs`` into ``emit_bundle`` (ADR-19 multi-SIF).
+
+    Regression for the deposit-facade gap: ``publish_analysis(deposit_source="reprex_bundle")``
+    (and the ``publish_reprex_bundle`` facades that route through it) dropped ``container_defs``,
+    so ``emit_bundle``'s container branch fail-closed on any container-mode analysis. The spy
+    on ``emit_bundle`` captures the kwarg; the mocked session runs the rest of the deposit.
+    """
+    _write_sidecar(tmp_path, "CC0-1.0")
+    real_zip = tmp_path / "bundle.zip"
+    real_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)  # minimal empty-zip EOCD record
+    analysis = _FakeAnalysis(tmp_path)
+    captured: dict = {}
+
+    def _spy_emit(a, *, container_defs=None, **kw):
+        captured["container_defs"] = container_defs
+        return real_zip
+
+    monkeypatch.setattr("hhemt.bundle.emit_bundle", _spy_emit)
+    _patch_zenodo_session(monkeypatch)
+
+    defs = [tmp_path / "uva-cuda.def", tmp_path / "uva-cuda-a6000.def", tmp_path / "uva-cpu.def"]
+    result = publishing.publish_analysis(
+        analysis, target="zenodo", deposit_source="reprex_bundle", container_defs=defs
+    )
+    assert captured["container_defs"] == defs
+    assert result["data_doi"] == _RecordingSession.MINTED_DOI
+
+
+def test_publish_analysis_reprex_bundle_defaults_container_defs_none(tmp_path, monkeypatch):
+    """Native-mode regression: omitting ``container_defs`` passes ``None`` (byte-identical
+    to the pre-fix behavior — the deposit path is default-preserving)."""
+    _write_sidecar(tmp_path, "CC0-1.0")
+    real_zip = tmp_path / "bundle.zip"
+    real_zip.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    analysis = _FakeAnalysis(tmp_path)
+    captured: dict = {}
+
+    def _spy_emit(a, *, container_defs=None, **kw):
+        captured["container_defs"] = container_defs
+        return real_zip
+
+    monkeypatch.setattr("hhemt.bundle.emit_bundle", _spy_emit)
+    _patch_zenodo_session(monkeypatch)
+
+    publishing.publish_analysis(analysis, target="zenodo", deposit_source="reprex_bundle")
+    assert captured["container_defs"] is None
+
+
 # --------------------------------------------------------------------------------------
 # Zenodo two-phase control-flow + payload-shape test (master FQ3)
 # --------------------------------------------------------------------------------------

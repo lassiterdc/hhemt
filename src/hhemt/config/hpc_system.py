@@ -263,7 +263,17 @@ class ContainerSpec(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF
+    sif_path: str  # absolute on-cluster path to the TRANSFERRED, signed SIF.
+    #   ARCH-AGNOSTIC process/default SIF: the PROCESS rung (workflow.py:805) runs
+    #   pure-Python xarray/zarr work with no GPU device code, so ANY carried SIF
+    #   serves it. Kept as a scalar so workflow.py stays byte-identical (ADR-19).
+    sif_paths_by_arch: dict[str, str] = Field(default_factory=dict)  # per-arch SIM
+    #   SIF map, keyed by gpu_hardware ("a6000"/"a100"/...). Consumed ONLY at the SIM
+    #   rung (run_simulation.py:421): each per-rule sim resolves ITS row's arch via
+    #   resolve_gpu_target(cfg_hpc_system, hpc_ensemble_partition)[0] and looks the SIF
+    #   up here. Empty => single-SIF/CPU: the SIM rung falls back to sif_path (byte-
+    #   identical to the pre-multi-SIF behavior). A fat multi-arch SIF (Option B) maps
+    #   every arch to one path here (all values equal). from_doi's repoint writes this.
     gpu_flag: Literal["--rocm", "--nv"] | None = None  # None => CPU-only cluster
     binds: list[str] = Field(default_factory=list)  # APPTAINER_BIND entries
     #   (e.g. "/opt/cray", "/var/spool/slurmd"); analysis_dir same:same is

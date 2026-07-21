@@ -224,3 +224,106 @@ def test_process_rule_group_resources_do_not_overallocate() -> None:
         f"ceiling {_MAX_GROUP_CPUS_PER_TASK}; risk of over-subscribing CI "
         f"runners under default --group-components scheduling."
     )
+
+
+# ===== [Q8] Defect 2: report-tail plot-partition execution-locus predicate =====
+#
+# The report-tail plot rules (system_overview, disk_utilization,
+# per_analysis_summary, errors_and_warnings, metadata, scenario_status_appendix,
+# and the sensitivity per_sim / benchmarking / eda rules) are CPU-only. Under
+# `--executor slurm` they MUST submit to the CPU processing partition; without it
+# they inherit default-resources' GPU ensemble partition and are QOS-rejected
+# (QOSMinGRES). The partition is keyed on the resolved execution LOCUS
+# (`_resolved_execution_locus`), not the dispatch-family label — so a `local`
+# dispatch-family run under execution_mode="slurm" (the doi_emitter emit path)
+# still gets the CPU partition, while a genuine local `--cores` run gets none.
+
+_Q8_CPU_PARTITION = "cpu-parallel-q8"
+
+
+def _report_tail_partition(builder: SnakemakeWorkflowBuilder) -> str:
+    """The CPU partition the report-tail plot rules would emit, read straight off
+    the RuleEmissionContext (no full Snakefile generation needed)."""
+    return builder._make_rule_emission_context(
+        static_backend="plotly"
+    ).report_tail_slurm_partition
+
+
+def test_report_tail_partition_local_dispatch_slurm_locus_emits_cpu_partition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(a) local dispatch-family + resolved slurm locus => CPU partition emitted.
+
+    The [Q8] Defect-2 fix: multi_sim_run_method='local' but the emitted Snakefile
+    runs under `--executor slurm` (execution_mode='slurm')."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    monkeypatch.setattr(builder.cfg_analysis, "multi_sim_run_method", "local")
+    monkeypatch.setattr(
+        builder.cfg_analysis,
+        "hpc_setup_and_analysis_processing_partition",
+        _Q8_CPU_PARTITION,
+    )
+    builder._resolved_execution_locus = "slurm"  # the emit-path locus
+    assert _report_tail_partition(builder) == _Q8_CPU_PARTITION
+
+
+def test_report_tail_partition_genuine_local_cores_emits_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(b) local dispatch-family + local/unset locus => NO partition (byte-identity
+    guard). A genuine `--cores` run must emit "" so the generated Snakefile stays
+    byte-identical to the pre-fix form. This is why the committed multi_sim /
+    master goldens need no regeneration: those tests call generate_* directly on a
+    fresh builder, so _resolved_execution_locus stays None."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    monkeypatch.setattr(builder.cfg_analysis, "multi_sim_run_method", "local")
+    monkeypatch.setattr(
+        builder.cfg_analysis,
+        "hpc_setup_and_analysis_processing_partition",
+        _Q8_CPU_PARTITION,
+    )
+    # Default (None) — as on any directly-constructed builder.
+    assert builder._resolved_execution_locus is None
+    assert _report_tail_partition(builder) == ""
+    # An explicit local locus is likewise partition-free.
+    builder._resolved_execution_locus = "local"
+    assert _report_tail_partition(builder) == ""
+
+
+def test_report_tail_partition_native_dispatch_invariant_to_locus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """(c) NATIVE dispatch-family (multi_sim_run_method != "local") emits the CPU
+    partition regardless of the locus field — a byte-diff regression guard proving
+    the new OR-clause does not perturb the ADR-19 native path (1_job / batch_job),
+    whose partition is driven entirely by the pre-fix `!= "local"` clause."""
+    tc = Local_TestCases.retrieve_norfolk_multi_sim_test_case(
+        start_from_scratch=False,
+        download_if_exists=False,
+        hpc_system_config_yaml=EXAMPLE_HPC_CONFIG,
+    )
+    builder = SnakemakeWorkflowBuilder(tc.analysis)
+    monkeypatch.setattr(
+        builder.cfg_analysis, "multi_sim_run_method", "1_job_many_srun_tasks"
+    )
+    monkeypatch.setattr(
+        builder.cfg_analysis,
+        "hpc_setup_and_analysis_processing_partition",
+        _Q8_CPU_PARTITION,
+    )
+    for locus in (None, "local", "slurm"):
+        builder._resolved_execution_locus = locus  # type: ignore[assignment]
+        assert _report_tail_partition(builder) == _Q8_CPU_PARTITION, (
+            f"native dispatch emitted a different partition for locus={locus!r}; "
+            f"the OR-clause must leave the native path byte-identical (ADR-19)."
+        )

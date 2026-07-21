@@ -1,0 +1,117 @@
+# =============================================================================
+# hhemt UVA CPU HPC SIF (ADR-19 multi-SIF: the CPU/no-arch bundle carrier).
+#
+# PURPOSE: the CPU-backend carrier for a cross-hardware container bundle (ADR-19,
+# Option A). Kokkos-CPU (OPENMP+SERIAL, no CUDA/ROCm), built WITH host slurm
+# (--with-slurm) so CPU sim rows dispatch via `srun --mpi=pmix` on compute nodes,
+# exactly like the GPU SIFs. Forked from dev-cpu.def (which omits host slurm because
+# it is a dev/local seam-test SIF). Carries NO org.hhemt.gpu_arch / gpu_hardware
+# label => its container_build block gets no target_arch => the ingest guard treats
+# it as the CPU/no-arch slot and the SIM rung resolves CPU rows to it via sif_path.
+#
+# Backend flags transcribed from the PROVEN native CPU build
+# (_software/triton/build_tritonswmm_cpu/CMakeCache.txt): Kokkos_ENABLE_OPENMP=ON,
+# Kokkos_ENABLE_SERIAL=ON, no CUDA. TRITON pin matches uva-cuda.def (15eb18a5).
+# =============================================================================
+
+Bootstrap: docker
+# ubuntu:24.04 pinned by digest. Digest-ONLY form (repo@sha256) -- apptainer's docker
+# conveyor REJECTS a combined tag@digest ref ("references with both a tag and digest
+# are currently not supported"). The tag ubuntu:24.04 is retained here in prose.
+From: ubuntu@sha256:4fbb8e6a8395de5a7550b33509421a2bafbc0aab6c06ba2cef9ebffbc7092d90
+
+%files
+    # hhemt source tree -> uv sync --frozen for the in-container process runner.
+    # Build CWD must be containers/ so `../` resolves to the hhemt repo root.
+    ../  /opt/hhemt-src
+
+%post
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    # See uva-cuda.def: rootless --fakeroot with no /etc/subuid runs a single-UID root-mapped
+    # namespace; apt's Acquire sandbox drops to uid 42 (_apt), unmapped -> setgroups EPERM, exit
+    # 100. Disable the sandbox so apt runs as the mapped root. Harmless when subuid IS present.
+    printf 'APT::Sandbox::User "root";\n' > /etc/apt/apt.conf.d/00rootless-nosandbox
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        git cmake build-essential gfortran wget ca-certificates libnuma-dev python3 \
+        gcc-14 g++-14 libhwloc-dev libevent-dev
+    update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+    update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+
+    # --- (1) OpenMPI 5.0.7 (CPU HPC): same as uva-cuda.def MINUS --with-cuda, but WITH
+    #     --with-slurm so CPU rows dispatch via `srun --mpi=pmix` on compute nodes (the
+    #     HPC variant of dev-cpu.def, which omits host slurm because it is a dev/local
+    #     seam-test SIF). Bundled PMIx 5.0.x; no UCX/OFI (single-node sm/self topology --
+    #     add --with-ucx for a multi-node fabric).
+    cd /tmp
+    OMPI_VER=5.0.7
+    wget -q https://download.open-mpi.org/release/open-mpi/v5.0/openmpi-${OMPI_VER}.tar.gz
+    echo "67435fdb2560f897882e69fead171d38e7f44a6dfe1d3c90506f549a943050b8  openmpi-${OMPI_VER}.tar.gz" | sha256sum -c -
+    tar xf openmpi-${OMPI_VER}.tar.gz && cd openmpi-${OMPI_VER}
+    ./configure --prefix=/opt/openmpi \
+        --without-ucx --without-ofi --without-hcoll \
+        --enable-shared --with-prrte=internal --with-slurm
+    make -j"$(nproc)" && make install
+    cd /tmp && rm -rf openmpi-* *.tar.gz
+    export PATH=/opt/openmpi/bin:${PATH}
+
+    # --- (2) hhemt Python runtime via uv from the committed uv.lock (same as uva).
+    wget -qO /tmp/uv-installer.sh https://astral.sh/uv/0.11.7/install.sh
+    sh /tmp/uv-installer.sh && rm /tmp/uv-installer.sh
+    export PATH=/root/.local/bin:${PATH}
+    # Prune any host .venv copied in (parity with uva-cuda.def) so uv builds a clean
+    # container-native venv. Belt-and-suspenders: a git-archive build context carries none.
+    cd /opt/hhemt-src && rm -rf .venv && uv sync --frozen --no-dev
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/openmpi/bin:${PATH}
+
+    # --- (3) TRITON-SWMM at the SAME pinned commit as uva-cuda.def (15eb18a5), but
+    #     Kokkos-CPU: ENABLE_OPENMP + ENABLE_SERIAL, NO CUDA backend / arch. The
+    #     dev-test exercises run_mode serial (SERIAL), openmp/hybrid (OPENMP), and
+    #     mpi (OpenMPI x SERIAL/OPENMP). Absolute mpic++/mpicc per the uva fix.
+    git clone https://code.ornl.gov/hydro/triton.git /opt/triton
+    cd /opt/triton && git checkout 15eb18a5d25afe5da295cb4b559a62669dbe5bc3 \
+        && git submodule update --init --recursive
+    mkdir -p build && cd build
+    test -x /opt/openmpi/bin/mpic++ && test -x /opt/openmpi/bin/mpicc || { \
+        echo "FATAL: OpenMPI wrappers missing under /opt/openmpi/bin"; ls -la /opt/openmpi/bin; exit 1; }
+    cmake -DTRITON_ENABLE_SWMM=ON -DTRITON_SWMM_FLOODING_DEBUG=ON \
+          -DTRITON_IGNORE_MACHINE_FILES=ON \
+          -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON \
+          -DCMAKE_CXX_COMPILER=/opt/openmpi/bin/mpic++ \
+          -DCMAKE_C_COMPILER=/opt/openmpi/bin/mpicc \
+          -DCMAKE_CXX_FLAGS='-O3' \
+          -DCMAKE_SKIP_INSTALL_RPATH=ON -DCMAKE_INSTALL_RPATH= \
+          /opt/triton
+    make -j"$(nproc)"
+    test -x /opt/triton/build/triton.exe   # fail the build if the coupled exe is absent
+
+    # --- (4) Standalone SWMM v5.2.4 (runswmm).
+    git clone --branch v5.2.4 --depth 1 \
+        https://github.com/USEPA/Stormwater-Management-Model.git /opt/swmm-src
+    mkdir -p /opt/swmm-src/build && cd /opt/swmm-src/build
+    cmake .. -DCMAKE_BUILD_TYPE=Release && make -j"$(nproc)"
+
+    # --- (5) Install to the convention path the example profile's exe_in_sif uses.
+    mkdir -p /opt/hhemt/bin
+    cp /opt/triton/build/triton.exe /opt/hhemt/bin/triton.exe
+    cp "$(find /opt/swmm-src/build -maxdepth 3 -type f -name runswmm -o -name swmm5 | head -1)" \
+        /opt/hhemt/bin/runswmm
+    chmod +x /opt/hhemt/bin/triton.exe /opt/hhemt/bin/runswmm
+
+%environment
+    export PATH=/opt/hhemt-src/.venv/bin:/opt/hhemt/bin:/opt/openmpi/bin:${PATH}
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:${LD_LIBRARY_PATH:-}
+
+%labels
+    org.hhemt.role        uva-cpu-production
+    org.hhemt.backend     kokkos-openmp-serial
+    # NOTE: intentionally NO org.hhemt.gpu_arch / org.hhemt.gpu_hardware label — this is
+    # the CPU/no-arch carrier; its container_build block gets no target_arch so the ingest
+    # guard skips it and the SIM rung routes CPU rows here via the sif_path fallback.
+    org.hhemt.triton_sha  15eb18a5d25afe5da295cb4b559a62669dbe5bc3
+    org.hhemt.openmpi     5.0.7-pmix5
+    org.hhemt.gcc         14.2.0
+
+%runscript
+    exec "$@"

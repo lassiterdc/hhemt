@@ -1885,6 +1885,20 @@ def bundle_command(
             "Run --list-excludable to see what may be opted out."
         ),
     ),
+    container_defs: list[Path] = typer.Option(
+        None,
+        "--container-defs",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        help=(
+            "ADR-19 (multi-SIF): one Apptainer .def per distinct arch in the matrix so "
+            "`hhemt ingest` builds one SIF per arch (e.g. --container-defs "
+            "containers/uva-cuda-a100.def --container-defs containers/uva-cuda-a6000.def). "
+            "REQUIRED for a container-mode analysis; repeatable; ignored for a native one."
+        ),
+    ),
     list_excludable: bool = typer.Option(
         False,
         "--list-excludable",
@@ -1915,11 +1929,105 @@ def bundle_command(
         target = analysis.sensitivity.master_analysis
     else:
         target = analysis
-    bundle_path = emit_bundle(target, output, exclude_config=exclude_config)
+    bundle_path = emit_bundle(
+        target, output, exclude_config=exclude_config, container_defs=container_defs
+    )
     if exclude_config is None:
         console.print(f"[green]Bundle emitted (self-contained):[/green] {bundle_path}")
     else:
         console.print(f"[green]Bundle emitted (with by-reference inputs):[/green] {bundle_path}")
+
+
+@app.command(name="build-sif")
+def build_sif_command(
+    def_path: Path = typer.Option(
+        ...,
+        "--def",
+        help="Path to the Apptainer definition file (.def) to build.",
+    ),
+    sif_out: Path = typer.Option(
+        None,
+        "--sif-out",
+        help=(
+            "Output SIF path. Default: the content-addressed cache "
+            "($HHEMT_SIF_CACHE_DIR, else <user_cache_dir>/hhemt/sif_cache/). The default "
+            "is deliberately OUTSIDE any bundle: `from_doi` rmtree's bundle_root on every "
+            "ingest, so an under-bundle SIF could never be reused."
+        ),
+    ),
+    sif_build_mode: str = typer.Option(
+        "auto",
+        "--sif-build-mode",
+        help=(
+            "auto: submit an sbatch build when SLURM is present, else refuse a compiling "
+            ".def; batch: force sbatch; local: force an in-process build (for a pull-only, "
+            "non-compiling .def). A compiling .def is refused on a login node — `make "
+            "-j$(nproc)` sees no cgroup cap there and forks 40-way on a shared frontend."
+        ),
+    ),
+    account: str = typer.Option(
+        None,
+        "--account",
+        help=(
+            "SLURM account for the build job. Required in batch mode; normally read from "
+            "your hpc_system_config's `default_account`. Never defaulted — a default would "
+            "submit against someone else's allocation."
+        ),
+    ),
+    force_rebuild: bool = typer.Option(
+        False,
+        "--force-rebuild",
+        help="Rebuild even when a cached SIF for this recipe already exists.",
+    ),
+    apptainer_module: str = typer.Option(
+        None,
+        "--apptainer-module",
+        help=(
+            "Lmod module to load for apptainer (e.g. 'apptainer/1.5.0'). Default: "
+            "$HHEMT_APPTAINER_MODULE, else none (apptainer assumed on PATH). The build "
+            "script exports APPTAINER_IGNORE_PROOT=1 regardless (version-agnostic build)."
+        ),
+    ),
+) -> None:
+    """Build an Apptainer SIF from a definition file (ADR-19).
+
+    A standalone step, NOT a Snakemake rule: `apptainer build` is not byte-reproducible, so
+    a SIF wired into the DAG as a rule output would acquire mtime rerun-triggers and cascade
+    a full-ensemble re-run on any rebuild.
+
+    The build runs as a GPU-free CPU-batch job (`standard`, -c 16, --mem=64G, -t 04:00:00,
+    no --tmp) — a trim of the estate's own known-good build. `--wait` blocks until it
+    finishes, so the SIF path is available on return.
+    """
+    from hhemt.cli_utils import map_exception_to_exit_code
+    from hhemt.container_build import SifBuildUnavailable, build_sif, sif_cache_root
+
+    try:
+        out = Path(sif_out) if sif_out else sif_cache_root() / f"{Path(def_path).stem}.sif"
+        built = build_sif(
+            def_path=Path(def_path),
+            sif_out=out,
+            account=account,
+            apptainer_module=apptainer_module,
+            mode=sif_build_mode,
+            force_rebuild=force_rebuild,
+        )
+    except SifBuildUnavailable as exc:
+        # Preflight FAIL is a structured, actionable outcome — not a crash. Surface the
+        # remediation verbatim rather than a traceback.
+        console.print(f"[yellow]SIF build unavailable on this host:[/yellow] {exc.reason}")
+        console.print(f"[cyan]Remediation:[/cyan] {exc.remediation}")
+        raise typer.Exit(map_exception_to_exit_code(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
+        code = map_exception_to_exit_code(exc)
+        console.print(f"[red]build-sif failed:[/red] {exc}")
+        raise typer.Exit(code) from exc
+
+    console.print(f"[green]SIF ready:[/green] {built}")
+    console.print(
+        "Point your hpc_system_config's `container.sif_path` at it, or let "
+        "`hhemt ingest` repoint a derived copy for you."
+    )
 
 
 @app.command(name="ingest")
@@ -1958,6 +2066,28 @@ def ingest_command(
             "not bundled inputs."
         ),
     ),
+    hpc_system_config: Path = typer.Option(
+        None,
+        "--hpc-system-config",
+        help=(
+            "Path to YOUR cluster's hpc_system_config.yaml (ADR-6). Falls back to "
+            "$HHEMT_HPC_SYSTEM_CONFIG. The bundle never carries one (ADR-9), and it is "
+            "REQUIRED for a container-mode bundle: the ContainerSpec that renders "
+            "`apptainer exec {sif}` lives on it. Start from a worked example at "
+            "test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml, "
+            "or from the shape sketched in the bundle's hpc_system_config.template.yaml."
+        ),
+    ),
+    allow_cross_family_sif: bool = typer.Option(
+        False,
+        "--allow-cross-family-sif",
+        help=(
+            "Override the cross-family SIF guard (default: fail closed). When the "
+            "bundle's baked GPU arch does not match your target partition's hardware, "
+            "build + run anyway with only a warning. Use ONLY when you have confirmed "
+            "the baked arch is run-compatible with your GPU."
+        ),
+    ),
 ) -> None:
     """Fetch a published reprex bundle by DOI/PID, reconstitute it, and print the
     runnable configs (ADR-13 C9).
@@ -1982,6 +2112,8 @@ def ingest_command(
             expected_sha256=sha256,
             target_dir=target_dir,
             software_dir=software_dir,
+            hpc_system_config_yaml=hpc_system_config,
+            allow_cross_family_sif=allow_cross_family_sif,
         )
     except Exception as exc:  # noqa: BLE001 — mapped to the CLI exit-code contract
         code = map_exception_to_exit_code(exc)

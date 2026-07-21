@@ -108,6 +108,7 @@ class TRITON_SWMM_experiment:
         cfg_system_yaml: Path,
         cfg_analysis_yaml: Path,
         case_name: str | None = None,
+        hpc_system_config_yaml: Path | None = None,
     ):
         """
         Initialize an experiment from system and analysis configuration files.
@@ -121,11 +122,26 @@ class TRITON_SWMM_experiment:
                 ``retrieve_test_data_directory`` lookup is skipped and
                 ``test_case_directory`` is ``None``; ``from_doi`` sets
                 ``bundle_root`` instead.
+            hpc_system_config_yaml: Path to the per-cluster ``hpc_system_config.yaml``
+                (ADR-6). The bundle NEVER carries this — ADR-9 makes the reproducer's
+                HPC-specific config an external input by design — so ``from_doi``
+                acquires it and passes it here. REQUIRED for a container-mode
+                experiment (``execution_environment: container``): the ContainerSpec
+                that renders ``apptainer exec {sif_path}`` lives on it
+                (``config/hpc_system.py::ContainerSpec``). ``None`` (default) keeps
+                today's native behavior byte-identical.
         """
         self.system = TRITONSWMM_system(cfg_system_yaml)
         self.analysis = TRITONSWMM_analysis(
-            analysis_config_yaml=cfg_analysis_yaml, system=self.system
+            analysis_config_yaml=cfg_analysis_yaml,
+            system=self.system,
+            hpc_system_config_yaml=hpc_system_config_yaml,
         )
+        # Link back, mirroring toolkit.py:152 and tests/fixtures/test_case_builder.py:189.
+        # Without it `system.analysis` raises RuntimeError (system.py:218-221) and
+        # `Toolkit(exp.system)` is impossible (toolkit.py:96 reads system.analysis).
+        # This constructor was the sole system+analysis pair-builder omitting it.
+        self.system._analysis = self.analysis
         self.test_case_directory = (
             self.retrieve_test_data_directory(case_name)
             if case_name is not None
@@ -206,6 +222,9 @@ class TRITON_SWMM_experiment:
         expected_sha256: str | None = None,
         target_dir: Path | None = None,
         software_dir: Path | None = None,
+        hpc_system_config_yaml: Path | None = None,
+        validate: bool = True,
+        allow_cross_family_sif: bool = False,
     ) -> "TRITON_SWMM_experiment":
         """Fetch a published reprex bundle by DOI/PID, reconstitute it, and return a
         runnable experiment (ADR-13 C9; R1-R4).
@@ -235,6 +254,39 @@ class TRITON_SWMM_experiment:
                 dirs (default: ``{bundle_root}/software``). These are build OUTPUTS the
                 toolkit creates at setup, not bundled inputs; they must be non-null for
                 ``TRITONSWMM_system`` to construct.
+            hpc_system_config_yaml: Path to YOUR cluster's ``hpc_system_config.yaml``
+                (ADR-6). Resolution precedence: this argument > ``$HHEMT_HPC_SYSTEM_CONFIG``
+                > None. The bundle never carries it (ADR-9: a DOI-downloaded bundle runs
+                "with no external dependency aside from the reproducer's USER-specific and
+                HPC-specific configs"), and it is REQUIRED for a container-mode bundle —
+                the ContainerSpec that renders ``apptainer exec {sif}`` lives on it.
+                Start from a worked in-tree example
+                (``test_data/norfolk_coastal_flooding/hpc_system_config_{uva,frontier}.yaml``)
+                or from the shape sketched in the bundle's
+                ``hpc_system_config.template.yaml``.
+                ADR-19 repoint: on the container path ``from_doi`` writes a DERIVED copy at
+                ``{software_dir}/hpc_system_config.resolved.yaml`` whose
+                ``container.sif_path`` names the built (or transferred) SIF, and hands the
+                analysis THAT path. A derived FILE — not an in-memory edit — is required:
+                every downstream consumer re-loads the YAML from the path
+                (``analysis.test()`` at analysis.py:2728; the sim runner at
+                run_simulation_runner.py:219), so an in-memory repoint would never reach
+                ``run_simulation.py:421``'s ``apptainer exec {cspec.sif_path}``. Your
+                original config is never modified.
+            validate: Run preflight validation on the reconstituted experiment before
+                returning (default True), mirroring ``Toolkit.from_configs``
+                (toolkit.py:154-157). This is what makes a container-mode bundle FAIL
+                CLOSED rather than silently degrade to a native run: ``preflight_validate``
+                → ``_validate_container_config`` (validation.py:1552) errors when
+                ``execution_environment == "container"`` and no ContainerSpec resolves.
+                Without it, ``workflow.py:807`` sets an empty container prefix and the
+                experiment runs NATIVELY while reporting success. Pass False only to
+                inspect a bundle you do not intend to run.
+            allow_cross_family_sif: Override the ADR-19(vii) cross-family SIF guard
+                (default False = fail closed). When True, a bundle whose baked GPU arch
+                (``container_build.target_arch``) does not match your target partition's
+                ``gpu_hardware`` is built + run anyway with only a warning. Set True ONLY
+                when you have confirmed the baked arch is run-compatible with your GPU.
         """
         from hhemt.bundle import Bundle
         from hhemt.bundle._emit import (
@@ -297,9 +349,403 @@ class TRITON_SWMM_experiment:
         # the reconstituted YAML string values.
         cls._assert_declared_inputs_exist(system_config_path, analysis_config_path)
 
-        exp = cls(system_config_path, analysis_config_path, case_name=None)
+        # ADR-6/ADR-9: the HPC config is the reproducer's, never bundle-carried.
+        hpc_cfg_path = cls._resolve_hpc_system_config(hpc_system_config_yaml)
+
+        # ADR-19: build (or fall back to transfer) the SIF, then repoint container.sif_path
+        # at it via a DERIVED config copy. Container-mode only — a native bundle skips this
+        # entirely and its behavior is byte-identical to today (R9).
+        cfg_analysis_dict = read_yaml(analysis_config_path)
+        if cfg_analysis_dict.get("execution_environment") == "container":
+            if hpc_cfg_path is None:
+                raise ConfigurationError(
+                    field="hpc_system_config_yaml",
+                    message=(
+                        "This bundle is container-mode (execution_environment='container') "
+                        "but no hpc_system_config was supplied. The bundle deliberately does "
+                        "not carry one (ADR-9: the reproducer's HPC-specific config is an "
+                        "external input). Pass hpc_system_config_yaml=... (or `hhemt ingest "
+                        "--hpc-system-config ...`), or set $HHEMT_HPC_SYSTEM_CONFIG. Start "
+                        "from a worked example: "
+                        "test_data/norfolk_coastal_flooding/hpc_system_config_uva.yaml, or "
+                        f"the shape sketched at {bundle_root}/hpc_system_config.template.yaml."
+                    ),
+                    config_path=None,
+                )
+            resolved_software_dir = software_dir or (bundle_root / "software")
+            # defect-8 guard (ADR-19 dogfood): a container-mode ingest on a SLURM host submits
+            # a `sbatch --wait` SIF build that `cd`s into bundle_root (container_build.py:156)
+            # from a COMPUTE node. If bundle_root sits under the system temp dir (the node-local
+            # mkdtemp default), that compute node cannot see it and the build dies instantly with
+            # a cryptic `cd: No such file or directory`. Refuse loud, BEFORE the ~1.6 h build.
+            # Inert on the fixed path: a shared target_dir is not under gettempdir(); a non-SLURM
+            # host does a same-node local build and is unaffected.
+            import tempfile as _tempfile
+
+            from hhemt.container_build import _slurm_available
+
+            _sys_tmp = Path(_tempfile.gettempdir()).resolve()
+            if _slurm_available() and bundle_root.resolve().is_relative_to(_sys_tmp):
+                raise ConfigurationError(
+                    field="target_dir",
+                    message=(
+                        f"The reprex bundle was extracted under the system temp dir "
+                        f"({bundle_root}), which is node-local on an HPC cluster. This "
+                        f"container-mode ingest will submit a SLURM SIF build that `cd`s into "
+                        f"the bundle from a COMPUTE node, which cannot see a login/orchestrator "
+                        f"temp dir. Pass target_dir=... on a SHARED filesystem "
+                        f"(e.g. /scratch/$USER/...) — or set $TMPDIR to shared scratch — so the "
+                        f"build context is visible cluster-wide."
+                    ),
+                    config_path=None,
+                )
+            # The build account is the REPRODUCER's, read from their own config — never
+            # defaulted (a default would submit against the producer's allocation). The
+            # apptainer BUILD module is sourced from the same config's ContainerSpec (no
+            # src/ site literal); None => the build script emits no `module load` and the
+            # in-script `command -v apptainer` guard governs.
+            _hpc_dict = read_yaml(hpc_cfg_path) or {}
+            account = _hpc_dict.get("default_account")
+            apptainer_module = (_hpc_dict.get("container") or {}).get("apptainer_module")
+            # ADR-19(vii): fail closed BEFORE the ~1.6 h build if the bundle's baked GPU
+            # arch does not match the reproducer's target partition (silent wrong-physics).
+            from hhemt.config.hpc_system import hpc_system_config as _hpc_model
+            from hhemt.config.loaders import yaml_to_model
+
+            _mf = bundle_root / "bundle_manifest.json"
+            _cb_raw = (
+                (json.loads(_mf.read_text()) or {}).get("container_build")
+                if _mf.is_file()
+                else None
+            )
+            # Back-compat: a pre-multi-SIF bundle carries a single dict; normalize to a list.
+            _blocks = (
+                _cb_raw if isinstance(_cb_raw, list) else ([_cb_raw] if _cb_raw else [])
+            )
+            _cfg_hpc_model = yaml_to_model(hpc_cfg_path, _hpc_model)
+            # ADR-19(vii) D-E guard, generalized to SET-CONTAINMENT (multi-SIF, Option A):
+            # every distinct GPU arch the matrix requires (gpu_hardware namespace) must be
+            # covered by a carried .def BEFORE any ~1.6 h build.
+            cls._assert_container_arch_set_covers_matrix(
+                carried_blocks=_blocks,
+                cfg_hpc_system=_cfg_hpc_model,
+                analysis_config_path=analysis_config_path,
+                bundle_root=bundle_root,
+                allow_cross_family=allow_cross_family_sif,
+            )
+            # Build every carried .def into its arch-keyed cache slot; construct the
+            # {gpu_hardware: sif} map for the SIM rung.
+            sif_paths_by_arch: dict[str, str] = {}
+            _cpu_slot_sif = None  # the CPU/no-arch def's SIF (block with no target_arch)
+            _first_sif = None  # any built SIF (GPU-only-bundle fallback)
+            for _blk in _blocks:
+                _sif = cls._build_or_fetch_sif(
+                    bundle_root,
+                    account=account,
+                    apptainer_module=apptainer_module,
+                    container_block=_blk,
+                )
+                _first_sif = _first_sif or _sif
+                _arch = _blk.get("target_arch")
+                if _arch:
+                    sif_paths_by_arch[_arch] = str(_sif)  # gpu_hardware-keyed (a100/a6000)
+                else:
+                    _cpu_slot_sif = _sif  # the CPU/no-arch def
+            # DELTA-4: sif_path serves BOTH the arch-agnostic PROCESS rung AND the CPU-SIM
+            # fallback (run_simulation.py: _row_hw is None -> _sif = sif_path). A GPU SIF
+            # cannot run a CPU row (Kokkos DefaultExecutionSpace=Cuda, OpenMP OFF), so prefer
+            # the CPU-slot SIF as the representative when the bundle carries one; a GPU-only
+            # bundle has no CPU rows, so any SIF serves the (arch-agnostic) process rung.
+            _representative_sif = _cpu_slot_sif or _first_sif
+            hpc_cfg_path = cls._repoint_sif_paths(
+                hpc_cfg_path,
+                sif_path=_representative_sif,
+                sif_paths_by_arch=sif_paths_by_arch,
+                target_path=resolved_software_dir / "hpc_system_config.resolved.yaml",
+            )
+
+        exp = cls(
+            system_config_path,
+            analysis_config_path,
+            case_name=None,
+            hpc_system_config_yaml=hpc_cfg_path,
+        )
         exp.bundle_root = bundle_root
+        # Fail closed on an unrunnable reconstitution — notably a container-mode bundle
+        # whose ContainerSpec does not resolve, which would otherwise run NATIVELY and
+        # report success (workflow.py:795-807). Mirrors toolkit.py:154-157; sanctioned by
+        # analysis.py:622-624 ("CLI/API entry points can call it automatically").
+        if validate:
+            exp.analysis.validate().raise_if_invalid()
         return exp
+
+    @classmethod
+    def _resolve_hpc_system_config(cls, override: Path | None = None) -> Path | None:
+        """Resolve the reproducer's hpc_system_config (ADR-6/ADR-9 external input).
+
+        Precedence: explicit ``override`` > ``$HHEMT_HPC_SYSTEM_CONFIG`` > None. Mirrors
+        the proven-green operator chain in
+        ``scripts/experiments/container_validation.py::_resolve_hpc_system_config`` (:86-119),
+        MINUS its ``$HHEMT_DEPLOYMENT_CONFIG/hpc/hpc_system_config_{cluster}.yaml`` tier —
+        that tier needs a ``cluster`` name ``from_doi`` does not have, and the private-estate
+        layout must not leak into library code.
+
+        Returns None when neither source is set (the native path — unchanged behavior).
+        Raises FileNotFoundError when a source names a path that does not exist, so a typo
+        fails loudly rather than silently degrading to native.
+        """
+        import os
+
+        if override is not None:
+            path = Path(override).expanduser()
+            source = "hpc_system_config_yaml argument"
+        elif os.environ.get("HHEMT_HPC_SYSTEM_CONFIG"):
+            path = Path(os.environ["HHEMT_HPC_SYSTEM_CONFIG"]).expanduser()
+            source = "$HHEMT_HPC_SYSTEM_CONFIG"
+        else:
+            return None
+        if not path.is_file():
+            raise FileNotFoundError(
+                f"hpc_system_config not found at {path} (from {source})."
+            )
+        print(f"[Ingest] hpc_system_config: {path} (from {source})", flush=True)
+        return path.resolve()
+
+    @classmethod
+    def _repoint_sif_paths(
+        cls,
+        hpc_cfg_path: Path,
+        *,
+        sif_path: Path,
+        sif_paths_by_arch: dict[str, str],
+        target_path: Path,
+    ) -> Path:
+        """ADR-19 repoint (multi-SIF, Option A): write a DERIVED hpc_system_config whose
+        ``container.sif_path`` names a representative on-ingest-built SIF (the arch-agnostic
+        PROCESS/default SIF, read by the process rung workflow.py:805) AND whose
+        ``container.sif_paths_by_arch`` maps each gpu_hardware ("a100"/"a6000") to its built
+        SIF (consumed at the SIM rung run_simulation.py:421). Return the derived path.
+
+        A derived FILE is required, not an in-memory edit: every downstream consumer
+        re-loads the YAML from the path it was handed — ``analysis.test()`` passes
+        ``self.hpc_system_config_yaml`` to each ``_test/`` sub (analysis.py:2728), and the
+        sim runner rebuilds the analysis from ``--hpc-system-config`` in a fresh subprocess
+        (run_simulation_runner.py:214-219) before ``run_simulation.py:421`` renders
+        ``apptainer exec {sif}``. An in-memory mutation is invisible to all of it.
+
+        Mirrors ``bundle/_emit.py::reconstitute_runnable_config`` (:659-721): read → repoint
+        the fields knowable only at target-side ingest → ``yaml.safe_dump`` → return the path.
+        The write is UNCONDITIONAL, so a resolved config from a prior ingest cannot go stale.
+        The user's original config is never modified. With a single-arch bundle the map has
+        one entry and sif_path IS that SIF — byte-identical to the pre-multi-SIF repoint.
+        """
+        cfg = read_yaml(hpc_cfg_path)
+        container = dict(cfg.get("container") or {})
+        container["sif_path"] = str(Path(sif_path).resolve())  # process/default (arch-agnostic)
+        container["sif_paths_by_arch"] = {
+            a: str(Path(p).resolve()) for a, p in sif_paths_by_arch.items()
+        }
+        cfg["container"] = container
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        write_yaml(cfg, target_path)
+        print(
+            f"[Ingest] repointed container.sif_path -> {sif_path}\n"
+            f"[Ingest]   per-arch SIM SIFs -> {sorted(sif_paths_by_arch)}\n"
+            f"[Ingest]   derived config: {target_path} (your original is unmodified)",
+            flush=True,
+        )
+        return target_path
+
+    @classmethod
+    def _build_or_fetch_sif(
+        cls,
+        bundle_root: Path,
+        *,
+        account: str | None = None,
+        apptainer_module: str | None = None,
+        container_block: dict | None = None,
+    ) -> Path:
+        """ADR-19: build the SIF from the bundle's carried ``.def``.
+
+        Reads the bundle manifest's ``container_build`` block for the digest-pinned recipe
+        and delegates to ``container_build.get_or_build_sif`` (content-addressed cache
+        OUTSIDE ``bundle_root`` — that tree is rmtree'd on every ingest, ``_reprex.py:156-159``).
+
+        Raises ``ConfigurationError`` when the SIF cannot be built here (no rootless-fakeroot
+        capability), naming the exact ``hhemt build-sif`` command and the manual ADR-2
+        recourse (build off-site, point ``container.sif_path`` at the result).
+        """
+        from hhemt.container_build import SifBuildUnavailable, get_or_build_sif
+
+        manifest_path = bundle_root / "bundle_manifest.json"
+        # Multi-SIF (Option A): callers pass the specific per-arch block via container_block.
+        # container_block=None is the legacy single-block path (read the manifest's one block;
+        # normalize a list-carrying manifest to its first block for back-compat).
+        block: dict = container_block if container_block is not None else {}
+        if container_block is None and manifest_path.is_file():
+            import json
+
+            _cb = (json.loads(manifest_path.read_text()) or {}).get("container_build")
+            block = (
+                _cb
+                if isinstance(_cb, dict)
+                else (_cb[0] if isinstance(_cb, list) and _cb else {})
+            )
+        def_relpath = block.get("def_relpath")
+        if not def_relpath:
+            raise ConfigurationError(
+                field="container_build.def_relpath",
+                message=(
+                    "This bundle is container-mode but its manifest carries no "
+                    "`container_build` block, so there is no .def recipe to build from and "
+                    "no ADR-2 transfer reference to fall back to. It was emitted before the "
+                    "ADR-19 carriage landed. Build a SIF yourself and point "
+                    "hpc_system_config.container.sif_path at it:\n"
+                    "  hhemt build-sif --def <your.def> --sif-out <path>"
+                ),
+                config_path=str(manifest_path),
+            )
+        def_path = bundle_root / def_relpath
+        lock_rel = block.get("source_tree_relpath")
+        lock_path = (
+            bundle_root / lock_rel / (block.get("source_tree_lock") or "uv.lock")
+            if lock_rel
+            else bundle_root / "uv.lock"
+        )
+        try:
+            return get_or_build_sif(
+                def_path=def_path,
+                base_image_digest=block.get("base_image_digest", ""),
+                lock_path=lock_path,
+                target_arch=block.get("target_arch", "unknown"),
+                account=account,
+                apptainer_module=apptainer_module,
+            )
+        except SifBuildUnavailable as exc:
+            # ADR-19 D-A: there is NO automatic transfer fallback. The producer-side keys
+            # it would have read (transfer_url / sif_download_url / recorded_sif_sha256) are
+            # never emitted by any code path (_emit.py:844-849), and the branch's sha256
+            # gate was fail-OPEN (skipped whenever the never-written key was absent). The
+            # reproducer's real recourse is the manual ADR-2 path: build the SIF off-site
+            # and point container.sif_path at it. (SifBuildUnavailable is now dormant — the
+            # preflight that raised it is deleted; a real build failure raises ProcessingError
+            # and propagates LOUD, the correct fail-closed for a reproducibility tool.)
+            raise ConfigurationError(
+                field="container_build",
+                message=(
+                    f"Cannot build a container for this bundle here.\n\n{exc}\n\n"
+                    "Build the SIF on a host with rootless-fakeroot capability and point "
+                    "hpc_system_config.container.sif_path at the result:\n"
+                    f"  hhemt build-sif --def {def_path} --sif-out <path>"
+                ),
+                config_path=None,
+            ) from exc
+
+    @classmethod
+    def _assert_container_arch_set_covers_matrix(
+        cls,
+        *,
+        carried_blocks: list[dict],
+        cfg_hpc_system,
+        analysis_config_path: Path,
+        bundle_root: Path,
+        allow_cross_family: bool = False,
+    ) -> None:
+        """ADR-19(vii) D-E guard, generalized to SET-CONTAINMENT (multi-SIF, Option A):
+        every distinct GPU arch the reproducer's matrix requires (gpu_hardware namespace,
+        e.g. "a100"/"a6000") must be covered by a carried .def BEFORE any ~1.6 h build.
+
+        The bundle carries one ``container_build`` block per .def, each with a
+        ``target_arch`` in the gpu_hardware namespace (DELTA-1: sourced from the .def's
+        ``org.hhemt.gpu_hardware`` label). The ``.def`` cross-compiles the Kokkos/CUDA
+        binary FOR that arch (``nvcc`` needs no device), so running a SIF on a different-arch
+        GPU is a silent wrong-physics path. This guard recomputes the SAME
+        ``resolve_gpu_target`` over the reproducer's matrix partitions and asserts the
+        required arch set is a subset of the carried arch set BEFORE any build.
+
+        REQUIRED = {resolve_gpu_target(reproducer_cfg, p)[0]} over every matrix partition p —
+        the master ``hpc_ensemble_partition`` plus, for a sensitivity analysis, each distinct
+        per-row ``hpc.partition`` / ``analysis.hpc_ensemble_partition`` value in the carried
+        setup CSV. CARRIED = {block.target_arch} over the carried blocks. None/CPU arches
+        (partitions with no GPU) are skipped — a CPU row runs the CPU/no-arch SIF via the SIM
+        rung's ``sif_path`` fallback, not the per-arch map. ``allow_cross_family=True``
+        downgrades a gap to a warning. Zero-user-info: the message names only arch strings +
+        the reproducer's own partition names, never a producer path.
+
+        The single-arch case (a100->a100, the [Q8] gating chain) is required={"a100"} ⊆
+        carried={"a100"} — passes, exactly as the prior equality guard did. The per-row
+        enumeration is best-effort: if the carried setup CSV cannot be read, the guard
+        degrades to the master-partition check (never a false-close), and the [Q8] per-arch
+        PASS gate remains the ultimate routing check.
+        """
+        from hhemt.config.hpc_system import resolve_gpu_target
+
+        carried = {
+            b["target_arch"]
+            for b in carried_blocks
+            if b.get("target_arch") and b["target_arch"] != "unknown"
+        }
+        # Enumerate the matrix's partitions (master + best-effort sensitivity sub-rows).
+        cfg = read_yaml(analysis_config_path) or {}
+        partitions: set[str] = set()
+        _master = cfg.get("hpc_ensemble_partition")
+        if _master:
+            partitions.add(str(_master))
+        if cfg.get("toggle_sensitivity_analysis"):
+            try:
+                _ref = cfg.get("sensitivity_analysis")
+                if _ref:
+                    _setup = Path(_ref)
+                    if not _setup.is_absolute():
+                        _setup = bundle_root / _ref
+                    if _setup.is_file():
+                        import pandas as pd
+
+                        _df = pd.read_csv(_setup)
+                        for _col in ("hpc.partition", "analysis.hpc_ensemble_partition"):
+                            if _col in _df.columns:
+                                partitions |= {
+                                    str(v)
+                                    for v in _df[_col].dropna().tolist()
+                                    if str(v).strip()
+                                }
+            except Exception:
+                pass  # degrade to master-only — never false-close on a setup-read failure
+        required = {
+            hw
+            for hw in (resolve_gpu_target(cfg_hpc_system, p)[0] for p in partitions)
+            if hw
+        }
+        missing = required - carried
+        if not missing:
+            return  # every required arch is covered (incl. the a100->a100 [Q8] chain)
+
+        _missing = ", ".join(sorted(missing))
+        _carried = ", ".join(sorted(carried)) or "(none)"
+        detail = (
+            f"This cross-hardware bundle carries container .defs for GPU arch(es) "
+            f"[{_carried}], but your matrix's partitions require [{_missing}] that no "
+            f"carried .def provides. On-ingest SIF building is per-arch; a row whose arch "
+            f"has no matching SIF cannot run its own binary."
+        )
+        if allow_cross_family:
+            warnings.warn(
+                detail + " Proceeding anyway (allow_cross_family_sif=True).",
+                stacklevel=2,
+            )
+            return
+        raise ConfigurationError(
+            field="container_build.target_arch",
+            message=(
+                detail
+                + "\n\nSupply one .def per required arch at emit time "
+                "(hhemt bundle ... --container-defs <a.def> --container-defs <b.def>), "
+                "point your partitions at hardware the carried .defs cover, or — if you "
+                "have confirmed run-compatibility — re-ingest with allow_cross_family_sif="
+                "True (Python) / --allow-cross-family-sif (CLI)."
+            ),
+            config_path=None,
+        )
 
     @classmethod
     def _fetch_bundle_zip(

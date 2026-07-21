@@ -119,3 +119,49 @@ def test_sidecar_compare_and_write_idempotent(tmp_path):
     mtime1 = (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns
     assert metadata.write_rocrate_sidecar(tmp_path, graph_json=g) is False
     assert (tmp_path / "ro-crate-metadata.json").stat().st_mtime_ns == mtime1
+
+
+def _advertised_var_names(crate) -> set[str]:
+    """Names of the `#var-*` PropertyValue entities in a built crate."""
+    doc = json.loads(metadata.canonical_jsonld(crate))
+    return {
+        n["name"]
+        for n in doc["@graph"]
+        if isinstance(n, dict) and str(n.get("@id", "")).startswith("#var-") and "name" in n
+    }
+
+
+def test_variable_measured_advertises_only_emitted_variables():
+    """`variableMeasured` is a claim about the DEPOSITED store, not about the CF map.
+
+    Regression guard for the 2026-07-21 over-claim defect: `build_analysis_crate`
+    iterated `_CF_VARIABLE_MAP` unconditionally, so every map key was published as a
+    PropertyValue asserting the deposited zarr contains that variable. Measured on a
+    real sensitivity crate at the time: 18 advertised, 11 absent from the zarr.
+
+    THIS TEST IS THE ONLY COVERAGE OF THE GATED PATH. Every other test in this file
+    calls `_build()` without `emitted_vars`, so they exercise only the legacy `None`
+    branch, where bytes are unchanged BY CONSTRUCTION — a green suite there is not
+    evidence the gate works. That gap is exactly how the original defect survived.
+    """
+    from hhemt.cf_conventions import _CF_VARIABLE_MAP
+
+    # Legacy branch: emitted_vars=None preserves the whole-map advertisement.
+    legacy = _advertised_var_names(_build())
+    assert legacy == set(_CF_VARIABLE_MAP), (
+        f"emitted_vars=None must preserve legacy whole-map behavior; got {sorted(legacy)}"
+    )
+
+    # Gated branch: advertise the intersection with the store's real variables ONLY.
+    real = {"max_wlevel_m", "max_flow_cms"}
+    gated = _advertised_var_names(_build(emitted_vars=real))
+    assert gated == real & set(_CF_VARIABLE_MAP), f"gated advertisement wrong: {sorted(gated)}"
+    assert gated < legacy, "the gated advertisement must SHRINK relative to the whole map"
+
+    # The defect itself: a MAPPED variable absent from the store must NOT be advertised.
+    absent = sorted(set(_CF_VARIABLE_MAP) - real)
+    assert absent, "fixture precondition: the map must carry a variable outside `real`"
+    for var in absent:
+        assert var not in gated, (
+            f"{var!r} is absent from the deposited store but is advertised as present"
+        )

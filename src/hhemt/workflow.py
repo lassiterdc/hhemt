@@ -81,6 +81,16 @@ from dataclasses import dataclass
 # unit test all agree without a hand-synced string literal.
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR"
 
+# [Q8] defect-7 fix: the in-SIF interpreter for the container-mode PROCESS rungs.
+# The process rung runs INSIDE the producer SIF (apptainer exec <sif> <python> -m
+# hhemt.process_timeseries_runner), so the interpreter token must be an IN-SIF path,
+# NOT the host self.python_executable (a host venv symlink absent in the SIF namespace
+# -> `FATAL: stat .../.venv/bin/python3: no such file or directory`). Every producer
+# .def (containers/*.def) builds the runtime venv at this identical path via
+# `cd /opt/hhemt-src && uv sync --frozen --no-dev` and installs hhemt editable there.
+# Mirrors the sim rung's in-SIF exe convention (run_simulation.py, /opt/hhemt/bin/{name}).
+_CONTAINER_PROCESS_PYTHON = "/opt/hhemt-src/.venv/bin/python3"
+
 
 @dataclass(frozen=True)
 class ResolvedForceRerunSpec:
@@ -789,6 +799,19 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         self._override_hpc_restart_times_simulate: int | None = None
         self._override_hpc_restart_times_other: int | None = None
 
+        # [Q8] Defect 2: the resolved execution LOCUS (local vs slurm) of the
+        # emitted Snakefile. Set by submit_workflow's standard branch (and the
+        # sensitivity submit_workflow, on this base builder) AFTER mode
+        # resolution and BEFORE generate_snakefile_content /
+        # generate_master_snakefile_content runs. None => not resolved (a direct
+        # generate_* call, e.g. the byte-identity tests) — the report-tail
+        # partition predicate then keys on the multi_sim_run_method label alone,
+        # keeping direct-generate output byte-identical. Mirrors the
+        # _override_hpc_restart_times_* pattern above: a submit-time-resolved
+        # value stored on the builder instead of threaded through the ~10
+        # _make_rule_emission_context callers.
+        self._resolved_execution_locus: Literal["local", "slurm"] | None = None
+
         # ADR-1: the container prefix for the PROCESS rungs only (sim rungs wrap
         # inside run_simulation.py; plot/consolidate/render stay native). Empty in
         # native mode (keeps generated Snakefiles byte-identical, R2/TO-1).
@@ -802,9 +825,23 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # container-mode processing fails at config-load or write on every real cluster.
             _adir = self.analysis_paths.analysis_dir
             _proc_binds = ",".join([*_cspec.binds, f"{_adir}:{_adir}"])
-            self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            # Mode B ([Q8], 2026-07-18): apptainer is module-only on some clusters
+            # (UVA Rivanna); the process rung must `module load {apptainer_module}`
+            # before `apptainer exec` or it dies `apptainer: command not found`.
+            # Mirrors the sim rung's guarded preamble (run_simulation.py:584-589).
+            # "" when apptainer_module is None (Frontier, apptainer on PATH) ->
+            # byte-identical to the prior container prefix.
+            _apptainer_mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
+            self._container_process_prefix = (
+                f'{_apptainer_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            )
+            # [Q8] defect-7: the process rung runs INSIDE the SIF, so its interpreter
+            # must be the in-SIF venv python, NOT the host self.python_executable.
+            self._container_process_python = _CONTAINER_PROCESS_PYTHON
         else:
             self._container_process_prefix = ""
+            # Native mode: host interpreter, keeping the emitted line byte-identical.
+            self._container_process_python = self.python_executable
 
     def _resolved_simulate_retries(self) -> int:
         """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
@@ -1778,9 +1815,25 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
         # `--executor slurm` (matching render_report/setup/process/consolidate).
         # Empty in `local` mode so the emitted Snakefile is byte-identical there
         # and no literal "None" partition leaks.
+        # [Q8] Defect 2: emit the CPU processing partition when the report-tail
+        # plot rules will run under `--executor slurm`. That is true for the
+        # NATIVE dispatch families (multi_sim_run_method != "local", e.g.
+        # 1_job_many_srun_tasks / batch_job — the pre-fix clause, unchanged) AND
+        # for a `local` dispatch-family run whose RESOLVED execution locus is
+        # slurm (the doi_emitter emit path: multi_sim_run_method="local" +
+        # execution_mode="slurm"). Without the partition, the CPU plot rungs
+        # inherit default-resources' GPU ensemble partition and are QOS-rejected
+        # (QOSMinGRES, master-log-confirmed). A genuine local `--cores` run
+        # (locus None/"local") still emits "" — byte-identical to the pre-fix
+        # form (this is why the committed byte-identity goldens, captured from a
+        # DIRECT generate_* call where the field stays None, need no regen).
+        _runs_under_slurm = (
+            self.cfg_analysis.multi_sim_run_method != "local"
+            or self._resolved_execution_locus == "slurm"
+        )
         _report_tail_partition = (
             str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
-            if self.cfg_analysis.multi_sim_run_method != "local"
+            if _runs_under_slurm
             else ""
         )
         return RuleEmissionContext(
@@ -1983,7 +2036,7 @@ rule process_{model_type}:
 {process_resources}
     shell:
         """
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._container_process_python} -m hhemt.process_timeseries_runner \\
             --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
@@ -5319,6 +5372,15 @@ exit $snakemake_status
         if mode == "auto":
             mode = "slurm" if self.analysis.in_slurm else "local"
 
+        # [Q8] Defect 2: publish the resolved execution LOCUS to the report-tail
+        # partition predicate in _make_rule_emission_context, which runs inside
+        # the generate_snakefile_content call below. Set here (post-resolution,
+        # pre-generate) so a `local` dispatch-family run under `--executor slurm`
+        # gives its CPU plot rungs the CPU processing partition. The 1_job /
+        # batch_job branches above do not set it — they are `!= "local"`, so the
+        # predicate's first clause already emits the partition (byte-identical).
+        self._resolved_execution_locus = mode
+
         if verbose:
             print(f"[Snakemake] Submitting workflow in {mode} mode", flush=True)
 
@@ -6704,6 +6766,16 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # resolved token so all three process-rung sites carry the identical prefix
         # (empty in native mode → generated Snakefiles byte-identical, R2/TO-1).
         self._container_process_prefix = self._base_builder._container_process_prefix
+        # [Q8] defect-7: locus-aware in-SIF interpreter for the master + reprocess-master
+        # process rungs. Container mode -> in-SIF venv python; native mode -> THIS builder's
+        # own self.python_executable. It is derived from the (delegated) prefix rather than
+        # delegated from the base builder because the master's self.python_executable is the
+        # RAW config value (master_analysis._python_executable) while the base builder RESOLVES
+        # it to sys.executable — delegating the base value would break the native-mode
+        # byte-identity goldens, which encode the master's raw interpreter token.
+        self._container_process_python = (
+            _CONTAINER_PROCESS_PYTHON if self._container_process_prefix else self.python_executable
+        )
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -7298,7 +7370,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._container_process_python} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -7860,7 +7932,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._container_process_python} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -8605,6 +8677,16 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # Detect execution mode
         if mode == "auto":
             mode = "slurm" if self.master_analysis.in_slurm else "local"
+
+        # [Q8] Defect 2: the sensitivity plot-rule builders call
+        # self._base_builder._make_rule_emission_context, so the resolved locus
+        # must land on the BASE builder (not on this
+        # SensitivityAnalysisWorkflowBuilder). Set post-resolution /
+        # pre-generate_master so a `local` dispatch-family sensitivity run under
+        # `--executor slurm` gives its CPU report-tail plot rungs the CPU
+        # partition. The 1_job / batch_job branches above are `!= "local"` and
+        # already emit the partition (byte-identical).
+        self._base_builder._resolved_execution_locus = mode
 
         if verbose:
             print(

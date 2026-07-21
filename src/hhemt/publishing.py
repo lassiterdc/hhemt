@@ -606,6 +606,7 @@ def publish_analysis(
     creators: list[dict] | None = None,
     consolidated_zarr_relpath: str = "analysis_datatree.zarr",
     deposit_source: Literal["analysis_dir", "reprex_bundle"] | Path = "analysis_dir",
+    container_defs: list[Path] | None = None,
 ) -> dict:
     """Deposit an analysis to a DOI-minting repository (C6, ADR-11).
 
@@ -652,7 +653,7 @@ def publish_analysis(
     elif deposit_source == "reprex_bundle":
         from hhemt.bundle import emit_bundle
 
-        deposit = [emit_bundle(analysis)]
+        deposit = [emit_bundle(analysis, container_defs=container_defs)]
     else:
         deposit = _deposit_set(analysis, consolidated_zarr_relpath)
 

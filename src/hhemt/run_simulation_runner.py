@@ -296,8 +296,26 @@ def main():
         # Get model-specific log for this simulation
         model_log = scenario.get_log(model_type)
 
+        # ADR-1/M-7 (defect-11): in container mode the SIF carries the pre-compiled
+        # binary, so there is no HOST build to verify -- exactly as setup_workflow.py
+        # skips the on-cluster compile AND its enabled-but-not-compiled verification
+        # guard, and as scenario.py skips the prep-rung build validation (defect-10).
+        # `analysis` is the full TRITONSWMM_analysis constructed above (line ~214);
+        # `system.analysis` is NOT usable here -- system._analysis is never assigned in
+        # this runner, so the property raises RuntimeError. Same local name as the
+        # scenario.py / setup_workflow.py gates so `grep -rn '_native_build\|_native_compile'
+        # src/hhemt/` enumerates the whole class. Collapses to the original
+        # unconditional form in native mode (byte-identical) and to a no-op in
+        # container mode.
+        _native_build = analysis.cfg_analysis.execution_environment != "container"
+        if not _native_build:
+            logger.info(
+                f"[{event_iloc}] Container mode — skipping host-compilation check "
+                "(the SIF carries the binary)"
+            )
+
         # Verify model-specific compilation
-        if model_type == "triton":
+        if _native_build and model_type == "triton":
             if not hasattr(system, "compilation_triton_only_successful"):
                 logger.error(f"[{event_iloc}] TRITON-only compilation check not implemented")
                 _write_failed_marker(_marker_ctx)
@@ -306,12 +324,12 @@ def main():
                 logger.error(f"[{event_iloc}] TRITON-only has not been compiled")
                 _write_failed_marker(_marker_ctx)
                 return 1
-        elif model_type == "tritonswmm":
+        elif _native_build and model_type == "tritonswmm":
             if not system.compilation_successful:
                 logger.error(f"[{event_iloc}] TRITON-SWMM has not been compiled")
                 _write_failed_marker(_marker_ctx)
                 return 1
-        elif model_type == "swmm":
+        elif _native_build and model_type == "swmm":
             if not hasattr(system, "compilation_swmm_successful"):
                 logger.error(f"[{event_iloc}] SWMM compilation check not implemented")
                 _write_failed_marker(_marker_ctx)

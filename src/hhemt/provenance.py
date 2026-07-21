@@ -112,6 +112,7 @@ def emit_provenance(
     consolidated_zarr_relpath: str = "analysis_datatree.zarr",
     sub_dataset_relpaths=None,
     with_run_units: bool = True,
+    emitted_vars: set[str] | None = None,
 ) -> tuple[str, str]:
     """Build the analysis crate + render the per-run CreateAction graph from log.py.
 
@@ -138,6 +139,7 @@ def emit_provenance(
         consolidated_zarr_relpath=consolidated_zarr_relpath,
         input_parts=input_parts,
         sub_dataset_relpaths=sub_dataset_relpaths,
+        emitted_vars=emitted_vars,
     )
 
     for sa_id, event_id, model_type in _iter_run_units(analysis) if with_run_units else ():
