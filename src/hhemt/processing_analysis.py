@@ -78,9 +78,41 @@ class TRITONSWMM_analysis_post_processing:
 
     # Per-scenario TIMESERIES modes (opt-in via analysis_config.toggle_consolidate_timeseries).
     # Maps mode -> the scenario-path attr for the per-scenario timeseries zarr. SWMM node
-    # (wlevel(t)) + SWMM link (flow(t)) only: the TRITON gridded timeseries is ~24x larger
-    # per scenario and is NOT needed for the clean-vs-resume over-time figure, so it is
-    # deliberately excluded here (adding it would be GB-scale on a fine grid).
+    # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep_min, y, x) series
+    # is deliberately excluded, and the exclusion is load-bearing rather than incidental:
+    # measured on synth_cc_clean (2026-07-21), the gridded store is 6.610 MB/scenario of
+    # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (A "24x" figure
+    # appears in older notes; that is the DISK-BLOCK ratio, inflated toward parity because
+    # the SWMM stores are 62 tiny chunk files padded to 4 KiB blocks. Payload is the metric
+    # that governs consolidated-tree size, render-bundle size, and transfer time.)
+    # Consequence: adding the gridded series takes the 28-scenario master tree from 27 MB
+    # to ~212 MB (7.9x) on the SMALLEST grid the toolkit runs, and is single-GB-scale per
+    # scenario on a Norfolk fine grid (cf. Gotcha 24: a 1.1 m DEM's full TRITON timeseries
+    # measured ~12 GB resident).
+    #
+    # CORRECTION (2026-07-21) — an earlier version of this comment said the gridded series
+    # "is NOT needed for the clean-vs-resume over-time figure." That was WRONG and is the
+    # kind of error that survives by being repeated: the figure's wlevel panel reads
+    # wlevel_m from THIS store. SWMM node head is NOT a substitute — different quantity,
+    # different solver — and the residuals under investigation are TRITON-side (14 of 15
+    # pairs on max_wlevel_m). The exclusion stands on COST alone, not on absence of a
+    # consumer. Today the figure is fed by a documented estate reproduction script reading
+    # the per-scenario stores directly; that is a BUNDLE-FIDELITY limitation, not evidence
+    # the data is unnecessary.
+    #
+    # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep, 144
+    # float32/scenario -- not the field (6.6 MB/scenario). That is a ~11,500x amplification
+    # between what is stored and what is used, and it is why consolidating the FIELD is
+    # still the wrong answer even though a consumer exists. The reduction is also
+    # grid-INDEPENDENT (it collapses y and x, so a Norfolk scenario costs the same 144
+    # values as a synth one) whereas the field scales with ncells -- the exact property
+    # that makes the field untenable does not apply to the reduction. If a
+    # bundle-reproducible over-time figure is wanted, consolidate the REDUCTION: see
+    # _streaming_argmax_with_companions, whose per-chunk loop already holds each
+    # (chunk_timesteps, ny, nx) block in memory, so a per-timestep spatial max is a
+    # same-loop addition with ZERO additional I/O. Note the existing tritonswmm/triton
+    # summary node is the ORTHOGONAL reduction (max over TIME per cell, dims (y, x)); the
+    # two are not derivable from each other.
     _TIMESERIES_MODE_CONFIG = {
         "tritonswmm_swmm_node_ts": "output_tritonswmm_node_time_series",
         "tritonswmm_swmm_link_ts": "output_tritonswmm_link_time_series",
