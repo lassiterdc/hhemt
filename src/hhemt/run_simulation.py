@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 import pandas as pd
 
-from hhemt.config.hpc_system import resolve_container_spec
+from hhemt.config.hpc_system import resolve_container_spec, system_directory_bind
 from hhemt.resource_management import _parse_slurm_allocated_gpus
 from hhemt.scenario import TRITONSWMM_scenario
 from hhemt.utils import read_text_file_as_list_of_strings
@@ -166,7 +166,8 @@ class TRITONSWMM_run:
                     "model_run_completed: %s log says completed but performance.txt "
                     "is absent at %s — possible raw-output-clearing race; not a "
                     "user-visible error.",
-                    model_type, perf_file,
+                    model_type,
+                    perf_file,
                 )
         return success and self._coupled_swmm_report_finalized(model_type)
 
@@ -413,9 +414,24 @@ class TRITONSWMM_run:
             # host scenario out_tritonswmm dir onto the in-SIF {project_dir}/out_tritonswmm
             # so output lands on the writable host fs. triton/tritonswmm only (SWMM writes
             # via its own inp/rpt/out args). The host out_tritonswmm is created by prepare.
+            #
+            # The dir is MODEL-KEYED and must stay so: _generate_TRITON_cfg writes
+            # output_folder="out_triton" while _generate_TRITON_SWMM_cfg writes
+            # output_folder="out_tritonswmm" (scenario.py). Hardcoding out_tritonswmm
+            # here left the standalone rung's /opt/hhemt/out_triton unbound inside the
+            # read-only SIF -> `[ERROR] Error reading file: ` + Kokkos::Cuda finalize
+            # failure + exit 1 (Rivanna jobs 17090721/22/28/30/31/70). output_folder is
+            # the ONLY relative path in either generated cfg — DEM/MANNINGS/HYDROGRAPH/
+            # HYDO_SRC_LOC/EXTBC are absolute and already inside the APPTAINER_BIND
+            # closure (cspec.binds + system_directory_bind + {analysis_dir}:{analysis_dir}),
+            # so this one keyed entry is the complete bind map.
             _out_bind = ""
             if model_type != "swmm":
-                _host_out = self._scenario.scen_paths.out_tritonswmm
+                _host_out = (
+                    self._scenario.scen_paths.out_triton
+                    if model_type == "triton"
+                    else self._scenario.scen_paths.out_tritonswmm
+                )
                 _proj_dir = "/".join(exe_in_sif.split("/")[:-2])  # two-up from in-SIF exe = TRITON project_dir
                 _out_bind = f"-B {_host_out}:{_proj_dir}/{_host_out.name} "
             exe = f"apptainer exec {_gpu}{_extra}{_out_bind}{cspec.sif_path} {exe_in_sif}"
@@ -606,7 +622,11 @@ class TRITONSWMM_run:
             container_host_env_str = ""
             if self._analysis.cfg_analysis.execution_environment == "container" and cspec is not None:
                 _adir = self._analysis.analysis_paths.analysis_dir
-                _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+                _binds = [
+                    *cspec.binds,
+                    *system_directory_bind(self._analysis._system.cfg_system.system_directory, cspec.binds),
+                    f"{_adir}:{_adir}",
+                ]
                 container_host_env_str = (
                     f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"; '
                 )
@@ -622,7 +642,7 @@ class TRITONSWMM_run:
             # heuristic when -showme is unsupported; the final guard only prepends when
             # libmpi.so.40 is actually present there (the falsifiable miss-detector).
             _mpi_derive = (
-                '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+                "__MPI_LD=\"$(mpicc -showme:libdirs 2>/dev/null | awk '{print $1}')\"; "
                 '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && '
                 'dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
                 '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
@@ -630,11 +650,15 @@ class TRITONSWMM_run:
             )
             if module_load_cmd:
                 # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
-                post_module_ld = "" if _container_mode else (
-                    f"{_mpi_derive}"
-                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
-                    'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
-                    'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+                post_module_ld = (
+                    ""
+                    if _container_mode
+                    else (
+                        f"{_mpi_derive}"
+                        'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                        'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
+                        'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+                    )
                 )
             else:
                 # Local / no-module path: a triton.exe built with the system mpic++
@@ -646,10 +670,14 @@ class TRITONSWMM_run:
                 # ${CONDA_PREFIX}/lib whenever a system mpicc resolves AND its real
                 # libmpi.so.40 dir is found; conda lib stays second so libstdc++ still
                 # wins. No-op when no mpicc / no real MPI dir (falls back to conda-first).
-                post_module_ld = "" if _container_mode else (
-                    f"{_mpi_derive}"
-                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
-                    'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+                post_module_ld = (
+                    ""
+                    if _container_mode
+                    else (
+                        f"{_mpi_derive}"
+                        'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                        'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+                    )
                 )
             full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
             cmd = [
@@ -914,7 +942,11 @@ class TRITONSWMM_run:
             if cspec.containlibs:
                 parts.append(f'export APPTAINER_CONTAINLIBS="{",".join(cspec.containlibs)}"')
             _adir = self._analysis.analysis_paths.analysis_dir
-            _binds = [*cspec.binds, f"{_adir}:{_adir}"]
+            _binds = [
+                *cspec.binds,
+                *system_directory_bind(self._analysis._system.cfg_system.system_directory, cspec.binds),
+                f"{_adir}:{_adir}",
+            ]
             parts.append(f'export APPTAINER_BIND="{",".join(_binds)}${{APPTAINER_BIND:+,$APPTAINER_BIND}}"')
             container_host_env_str = "; ".join(parts) + "; "
 
@@ -922,28 +954,36 @@ class TRITONSWMM_run:
         # See the SWMM-path comment above: NEEDED-soname-accurate MPI lib-dir
         # derivation (multiarch-correct), reused for the module and local branches.
         _mpi_derive = (
-            '__MPI_LD="$(mpicc -showme:libdirs 2>/dev/null | awk \'{print $1}\')"; '
+            "__MPI_LD=\"$(mpicc -showme:libdirs 2>/dev/null | awk '{print $1}')\"; "
             '__MPI_LIB="$(cd "$__MPI_LD" 2>/dev/null && dirname "$(readlink -f libmpi.so 2>/dev/null)" 2>/dev/null)"; '
             '[ -e "$__MPI_LIB/libmpi.so.40" ] || '
             '__MPI_LIB="$(dirname "$(dirname "$(command -v mpicc 2>/dev/null)")" 2>/dev/null)/lib"; '
         )
         if module_load_cmd:
             # mode-guard (M-7): the in-container loader ignores host LD_LIBRARY_PATH
-            post_module_ld = "" if _container_mode else (
-                f"{_mpi_derive}"
-                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
-                'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
-                'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+            post_module_ld = (
+                ""
+                if _container_mode
+                else (
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                    'export LD_LIBRARY_PATH="$__MPI_LIB:${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; '
+                    'else export LD_LIBRARY_PATH="${CONDA_PREFIX}/lib:${LD_LIBRARY_PATH}"; fi; '
+                )
             )
         else:
             # Local / no-module path — mirror the module branch's MPI-lib-first
             # ordering for a system-mpic++-built triton.exe. Conda lib stays second
             # (already first in the static ld_segments) so libstdc++ GLIBCXX_3.4.31
             # still wins; system MPI wins for libmpi/libmpi_cxx. No-op when no mpicc.
-            post_module_ld = "" if _container_mode else (
-                f"{_mpi_derive}"
-                'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
-                'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+            post_module_ld = (
+                ""
+                if _container_mode
+                else (
+                    f"{_mpi_derive}"
+                    'if [ -n "$(command -v mpicc 2>/dev/null)" ] && [ -e "$__MPI_LIB/libmpi.so.40" ]; then '
+                    'export LD_LIBRARY_PATH="$__MPI_LIB:${LD_LIBRARY_PATH}"; fi; '
+                )
             )
         full_cmd = f"{env_export_str}; {module_load_cmd}{container_host_env_str}{post_module_ld}{launch_cmd_str}"
         cmd = [

@@ -60,6 +60,7 @@ nav:
       - Installation: how-to/installation.md
       - HPC-profile setup: how-to/hpc-profile-setup.md
       - Config filling: how-to/config-filling.md
+      - Running an experiment bundle: how-to/running-an-experiment-bundle.md
       - In-flight operations: how-to/in-flight-operations.md
       - Forcing re-runs: how-to/forcing-reruns.md
       - Combining experiments: how-to/combining-experiments.md

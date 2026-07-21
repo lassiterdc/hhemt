@@ -12,6 +12,7 @@ Key Components:
 
 import datetime
 import json
+import logging
 import math
 import re
 import shlex
@@ -32,6 +33,7 @@ from hhemt.config.hpc_system import (
     resolve_container_spec,
     resolve_gpu_target,
     resolve_gpus_per_node,
+    system_directory_bind,
 )
 from hhemt.exceptions import ConfigurationError, WorkflowError
 from hhemt.report_plot_ids import (
@@ -67,6 +69,7 @@ from hhemt.utils import fast_rmtree
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
+    from .orchestration import RunOverrides
     from .sensitivity_analysis import TRITONSWMM_sensitivity_analysis
 
 
@@ -80,6 +83,8 @@ from dataclasses import dataclass
 # default path. Centralized as a constant so the fixture, the helper, and the
 # unit test all agree without a hand-synced string literal.
 _NON_INTERACTIVE_LOCK_CLEAR_ENV = "HHEMT_TEST_NON_INTERACTIVE_LOCK_CLEAR"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -656,6 +661,22 @@ class _ReportingSetDispatchMixin:
         )
         return get_reporting_set(name)
 
+    def _resolve_disabled_renderers(self, analysis) -> list[str]:
+        """Resolve ``analysis``'s report_config.disabled_renderers (Phase 3).
+
+        Mirrors _resolve_active_reporting_set's cfg-report lookup: prefer the
+        run-entry snapshot (`_cfg_report`, set at analysis.run() entry), falling
+        back to `cfg_analysis.report` for the generate-without-run() paths (the
+        byte-identity test, render_report_runner on a fresh instance). Returns the
+        builder_key values the active reporting set must drop at every emission AND
+        enumeration site — threaded to _emit_active_set_plot_rules (emission) and
+        consumed alongside it at each rule all / render_report site (enumeration).
+        """
+        cfg_report = getattr(analysis, "_cfg_report", None)
+        if cfg_report is None:
+            cfg_report = analysis.cfg_analysis.report
+        return list(cfg_report.disabled_renderers)
+
     def _builder_call_kwargs(self, builder_key, input_flag, ctx, inputs):
         """Resolve the exact kwargs for one builder_key (Option A — the 8
         `_build_plot_rule_block_*` builders are LEFT UNCHANGED, so their
@@ -688,6 +709,7 @@ class _ReportingSetDispatchMixin:
         ctx: "RuleEmissionContext | None" = None,
         predicate_inputs: dict | None = None,
         interleave_after_unconditional=None,
+        disabled: "list[str] | None" = None,
     ) -> str:
         """Emit every plot rule for the active reporting set, in set order (TO-8).
 
@@ -702,7 +724,14 @@ class _ReportingSetDispatchMixin:
         rule lands BETWEEN the unconditional and conditional renderers at
         master/reprocess, byte-matching the pre-refactor emission order. Multisim
         (no conditional entries) passes None and keeps a trailing export sibling.
+
+        `disabled` (Phase 3, report_config.disabled_renderers) is the builder_key
+        list dropped from emission — checked AFTER the interleave flush so disabling
+        a conditional renderer still lands the export rule in its historical slot,
+        and in lockstep with the rule all / render_report enumeration filter.
         """
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
         base = getattr(self, "_base_builder", self)
         builders = {
             "system_overview": base._build_plot_rule_block_system_overview,
@@ -731,6 +760,10 @@ class _ReportingSetDispatchMixin:
                     interleaved = True
                 if not self._RENDERER_PREDICATES[sel.predicate_key](inputs):
                     continue
+            # Phase 3: per-plot disable — skip a renderer the config turned off, so
+            # emission matches the rule all / render_report enumeration filter.
+            if not renderer_active(sel.builder_key, disabled):
+                continue
             builder = builders[sel.builder_key]
             if builder is None:  # conditional builder absent on the base builder
                 continue
@@ -801,10 +834,40 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # default $HOME/CWD binds. This mirrors the sim rung's bind (R7); without it
             # container-mode processing fails at config-load or write on every real cluster.
             _adir = self.analysis_paths.analysis_dir
-            _proc_binds = ",".join([*_cspec.binds, f"{_adir}:{_adir}"])
-            self._container_process_prefix = f'export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            _proc_binds = ",".join(
+                [
+                    *_cspec.binds,
+                    *system_directory_bind(self.system.cfg_system.system_directory, _cspec.binds),
+                    f"{_adir}:{_adir}",
+                ]
+            )
+            # `apptainer` is module-only on some clusters (Rivanna): it is NOT on
+            # PATH on a compute node, so a process rule that does not load the
+            # module dies `apptainer: command not found` (exit 127) BEFORE the
+            # shell's `> {log} 2>&1` produces anything — the 0-byte-rule-log
+            # signature seen on Rivanna runs 17095105 and 17096574. The sim rung
+            # already prepends this (run_simulation.py:590-592); the process rung
+            # did not, so the two container entry points disagreed and only the
+            # sim one was self-sufficient. Empirically confirmed: `srun … bash -c
+            # 'command -v apptainer'` on a standard-partition compute node with no
+            # module load returns nothing. Guarded on the field, so a cluster that
+            # declares no apptainer_module (Frontier's Cray path) emits byte-
+            # identically to before; native mode is untouched (prefix stays "").
+            _mod = f"module load {_cspec.apptainer_module}; " if _cspec.apptainer_module else ""
+            self._container_process_prefix = (
+                f'{_mod}export APPTAINER_BIND="{_proc_binds}"; apptainer exec {_cspec.sif_path} '
+            )
+            # The interpreter must resolve INSIDE the image. self.python_executable
+            # is the DRIVER's host interpreter (sys.executable at :813) and dies
+            # `FATAL: stat …: no such file or directory` under apptainer exec.
+            self._container_process_python = _cspec.python_in_sif
         else:
             self._container_process_prefix = ""
+            self._container_process_python = ""
+        # Native: fall back to this class's own token (sys.executable here,
+        # the literal "python" on the sensitivity builder) so native-mode
+        # emission stays byte-identical for BOTH classes (R2/TO-1).
+        self._process_python_executable = self._container_process_python or self.python_executable
 
     def _resolved_simulate_retries(self) -> int:
         """Per-rule ``retries:`` for the simulate rules: override-or-config (P1 Decision 4).
@@ -1522,6 +1585,34 @@ class SnakemakeWorkflowBuilder(_ReportingSetDispatchMixin):
             # EXEMPT-DU: status-flag
             sidecar.unlink(missing_ok=True)
 
+    def _cpu_sim_partition(self) -> str | None:
+        """Resolve the SLURM partition for CPU-ONLY simulation rules (``run_swmm``).
+
+        A CPU-only sim emits no ``--gres``, so submitting it to a GPU partition whose
+        QOS enforces a GRES minimum is rejected BEFORE it runs: on UVA Rivanna the
+        emitted ``-A {your-allocation} -p gpu -t 90 --mem 2000 --nodes=1 --ntasks=1
+        --cpus-per-task=1`` returned ``sbatch: error: QOSMinGRES`` / ``Job violates
+        accounting/QOS policy`` and left a 0-byte ``swmm_evt-*.log``.
+
+        Every OTHER CPU-only rule (setup / prepare / process / consolidate) already
+        routes to ``hpc_setup_and_analysis_processing_partition``; the CPU-only SIM
+        rung was the sole rule inheriting the GPU ensemble partition. Resolution order:
+        the explicit selector, then the CPU processing partition, then the ensemble
+        partition as a last resort (which preserves the historical value when a config
+        sets neither, and is a provable no-op on clusters where both selectors name the
+        same partition, e.g. Frontier ``batch``).
+
+        A token ``--gres=gpu:1`` on the GPU partition is deliberately NOT used: it holds
+        a GPU idle for a serial run and trips the RC 0%-GPU-utilization auto-cancel
+        (architecture-doc Gotcha 32), trading a fail-fast submit rejection for a
+        mid-run kill.
+        """
+        return (
+            self.cfg_analysis.hpc_cpu_sim_partition
+            or self.cfg_analysis.hpc_setup_and_analysis_processing_partition
+            or self.cfg_analysis.hpc_ensemble_partition
+        )
+
     def _build_resource_block(
         self,
         partition: str | None,
@@ -1983,7 +2074,7 @@ rule process_{model_type}:
 {process_resources}
     shell:
         """
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {{params.event_iloc}} \\
             {config_args} \\
             --model-type {model_type} \\
@@ -2066,9 +2157,47 @@ rule consolidate:
         for a given event_id and runs ``consolidate_workflow --event-id {event_id}`` which writes
         the per-scenario DU sentinel at ``{scenario_dir}/_status/_du.json`` via
         ``du_sentinels.compute_and_write_scope_sentinel`` (compare-and-write semantics; mtime
-        preserved when payload bytes are unchanged). The rule joins the existing
-        ``process_evt_{event_id}`` Snakemake group (see ``_build_process_rule_block:1116``) so it
-        co-schedules into the per-event SLURM allocation rather than submitting a separate sbatch.
+        preserved when payload bytes are unchanged).
+
+        This rule is deliberately NOT a member of the ``process_evt_{event_id}`` Snakemake group
+        (removed 2026-07-19; the three ``process_{model_type}`` rules RETAIN their grouping, so
+        Gotcha 29's per-event scheduling-cost optimization is preserved for them).
+
+        ESTABLISHED (empirical, four cluster runs — see below): adding this rule to the group
+        prevents the WHOLE group from being dispatched. No submission line, no
+        ``.snakemake/slurm_logs/`` directory, no ``sacct`` row, and every member's ``log:`` file
+        left at 0 bytes. That signature is easy to misread as a failure INSIDE the rule shell;
+        it is not — a 0-byte ``log:`` means the member's shell never ran at all.
+
+        DISPROVEN (do not reinstate this explanation): an earlier version of this docstring, and
+        the message of commit 351818f, attributed the failure to ``GroupJob.is_local`` returning
+        ``any(...)`` (``jobs.py:1708-1710``) routing the group to the local executor. That
+        mechanism CANNOT fire for a grouped rule. ``workflow.py:737-741`` gates the localrules
+        path behind ``rule.group is None``, so ``workflow.is_local`` is False for every grouped
+        rule regardless of ``localrules:`` / ``norun`` / ``is_template_engine``; the only other
+        disjunct (``jobs.py:1039-1044``) requires ``SharedFSUsage.INPUT_OUTPUT not in
+        shared_fs_usage``, which is False under the default ``SharedFSUsage.all()``
+        (``settings/types.py:232``) that this profile inherits. Verified by direct probe under
+        forced non-local exec: ``GroupJob.is_local=False`` with every member ``job.is_local=False``.
+        The ROOT CAUSE remains UNKNOWN. Group-resource-constraint rejection was also ruled out
+        (``resources.py:150-167`` raises a loud ``WorkflowError``, inconsistent with the observed
+        silence). Diagnosing further needs the driver-side snakemake stdout / ``.snakemake/log/``
+        from the failing runs, which was NOT retained and would now require deliberately
+        re-inducing the failure to recapture.
+
+        Empirically isolated to THIS rule's membership (do not re-add it without re-testing on a
+        real cluster): Rivanna runs 17095105 / 17096574 / 17097334 each failed with the 4-member
+        group, producing zero processed outputs; with this directive removed the three process rules
+        dispatched as SLURM jobs 17102101/17102102/17102103 and succeeded, and this rule then ran as
+        ``rule_consolidate_scenario`` (17102136) and wrote its flag + DU sentinel — 4 of 4 steps.
+        The empirical result above is what is established; the mechanism is not. Note this rule is
+        absent from ``localrules:``, the executor profile sets no ``shared-fs-usage``, and every
+        emitted rule declares ``conda:`` — so none of those is the discriminator either.
+
+        Guarded by ``tests/test_synth_container_mode.py::test_only_allowlisted_rules_declare_a_snakemake_group``,
+        a MEMBERSHIP allowlist. A "grouped AND locally-dispatched" guard was considered and
+        REJECTED: per the DISPROVEN paragraph above, ``Job.is_local`` is structurally False for
+        every grouped rule, so such a guard could never fire and would manufacture false assurance.
 
         The output declaration ``_status/f_consolidate_scenario_evt-{event_id}_complete.flag``
         matches the existing letter-prefixed flag convention (``c_run_*``, ``d_process_*``,
@@ -2085,7 +2214,6 @@ rule consolidate_scenario:
         flag="_status/f_consolidate_scenario_evt-{{event_id}}_complete.flag",
         du_sentinel="sims/{{event_id}}/_status/_du.json",
     log: "{log_dir_str}/sims/consolidate_scenario_evt-{{event_id}}.log"
-    group: "process_evt_{{event_id}}"
     conda: "{conda_env_path}"
     resources:
 {consolidate_scenario_resources}
@@ -2326,6 +2454,40 @@ rule consolidate_scenario:
 
         _formats = report_formats if report_formats is not None else ["zip"]
         render_targets_in_rule_all = "".join(f',\n        "analysis_report.{fmt}"' for fmt in _formats)
+        # Phase 3: per-plot disable. The multisim rule all + render_report inputs are
+        # literal lists (not renderer_selection loops), so build the active plot-input
+        # items here — in the standard set's renderer order, filtered by
+        # disabled_renderers — and interpolate them into BOTH so emission (the
+        # dispatcher below) and enumeration stay in lockstep. Byte-identical to the
+        # prior hardcoded lists when disabled_renderers == [].
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.analysis)
+        _plot_items: list[str] = []
+        if renderer_active("system_overview", _disabled):
+            _plot_items.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_sim", _disabled):
+            _plot_items.append(f'expand("{_pfd_per_sim}", event_id=SIM_IDS)')
+            _plot_items.append(f'expand("{_cf_per_sim}", event_id=SIM_IDS)')
+        if renderer_active("per_analysis_summary", _disabled):
+            _plot_items.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            _plot_items.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            _plot_items.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            _plot_items.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            _plot_items.append(f'"plots/metadata{_ext["metadata"]}"')
+        _rule_all_input_block = ",\n        ".join(
+            [
+                '"_status/e_consolidate_complete.flag"',
+                '"scenario_status.csv"',
+                '"workflow_summary.md"',
+                *_plot_items,
+            ]
+        )
+        _render_report_input_block = ",\n        ".join([*_plot_items, '"scenario_status.csv"'])
         snakefile_content = f'''# Auto-generated by TRITONSWMM_analysis
 
 import os
@@ -2354,17 +2516,7 @@ ILOC_BY_EVENT_ID = {iloc_by_event_id!r}
 
 rule all:
     input:
-        "_status/e_consolidate_complete.flag",
-        "scenario_status.csv",
-        "workflow_summary.md",
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "plots/metadata{_ext["metadata"]}"{render_targets_in_rule_all},
+        {_rule_all_input_block}{render_targets_in_rule_all},
 
 # onsuccess: removed — `rule export_scenario_status` (added below) now produces
 # scenario_status.csv and workflow_summary.md on the success path via the
@@ -2439,11 +2591,16 @@ rule prepare_scenario:
 
         # Generate separate simulation rule for each enabled model type
         for model_type in enabled_models:
-            # For SWMM, use fixed CPU-only resources (no GPU, limited threads)
+            # For SWMM, use fixed CPU-only resources (no GPU, limited threads).
+            # The PARTITION must come from _cpu_sim_partition(), not the GPU ensemble
+            # partition: this block already declares gpus_total=0, so the emitted sbatch
+            # carries no --gres and a GRES-minimum QOS rejects it at submit time
+            # (Rivanna -p gpu -> `sbatch: error: QOSMinGRES`, 0-byte log). See the
+            # helper docstring for why a token --gres is not the answer.
             if model_type == "swmm":
                 swmm_cpus = self.cfg_analysis.n_omp_threads or 1
                 swmm_resources = self._build_resource_block(
-                    partition=self.cfg_analysis.hpc_ensemble_partition,
+                    partition=self._cpu_sim_partition(),
                     runtime_min=hpc_time_min,
                     mem_mb=self.cfg_analysis.mem_gb_per_cpu * swmm_cpus * 1000,
                     nodes=1,
@@ -2601,6 +2758,7 @@ rule run_{model_type}:
         snakefile_content += self._emit_active_set_plot_rules(
             self._resolve_active_reporting_set(self.analysis),
             input_flag="_status/e_consolidate_complete.flag",
+            disabled=_disabled,
         )
         # export_scenario_status: set-invariant, non-figure workflow rule
         # (scenario_status.csv + a top-level localrules:); intentionally NOT a
@@ -2619,15 +2777,7 @@ rule run_{model_type}:
         snakefile_content += f'''
 rule render_report:
     input:
-        "plots/system_overview{_ext["system_overview"]}",
-        expand("{_pfd_per_sim}", event_id=SIM_IDS),
-        expand("{_cf_per_sim}", event_id=SIM_IDS),
-        "plots/per_analysis/summary_table{_ext["per_analysis_summary"]}",
-        "plots/appendix/scenario_status{_ext["scenario_status_appendix"]}",
-        "plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}",
-        "plots/disk_utilization{_ext["disk_utilization"]}",
-        "plots/metadata{_ext["metadata"]}",
-        "scenario_status.csv",
+        {_render_report_input_block},
     output:
         "analysis_report.{{format}}"
     wildcard_constraints:
@@ -5072,15 +5222,12 @@ exit $snakemake_status
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = False,
         wait_for_completion: bool = False,
         dry_run: bool = False,
         verbose: bool = True,
-        override_hpc_total_nodes: int | None = None,
-        override_hpc_restart_times_simulate: int | None = None,
-        override_hpc_restart_times_other: int | None = None,
+        overrides: "RunOverrides | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -5114,9 +5261,12 @@ exit $snakemake_status
             If True, process timeseries outputs after each simulation
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process (only used if process_timeseries=True)
-        override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw`` threaded through to
-            the emitted Snakefile rule shells.
+        overrides : RunOverrides | None
+            Runtime override carrier. ``None`` means an all-None carrier (read
+            every value from the config). The builder reads ``clear_raw``
+            (threaded to the emitted Snakefile rule shells), ``hpc_total_nodes``,
+            and the two ``hpc_restart_times`` knobs; ``force_rerun`` is handled one
+            layer up and ignored here.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -5127,10 +5277,6 @@ exit $snakemake_status
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
-        override_hpc_total_nodes : int | None
-            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
-            without mutating the config object. Only valid when multi_sim_run_method is
-            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -5149,8 +5295,17 @@ exit $snakemake_status
         # global-baseline (_other) and per-rule simulate (_simulate) emission sites read
         # them. None means "use the config knob". Stored here rather than threaded
         # through generate_snakemake_config's ~5 call sites.
-        self._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
-        self._override_hpc_restart_times_other = override_hpc_restart_times_other
+        if overrides is None:
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides()
+        # Unpack the carrier into the same local/instance names the rest of this
+        # method (and its consume sites) already read — keeps every downstream use
+        # byte-identical while collapsing the five individual kwargs to one carrier.
+        override_clear_raw = overrides.clear_raw
+        override_hpc_total_nodes = overrides.hpc_total_nodes
+        self._override_hpc_restart_times_simulate = overrides.hpc_restart_times_simulate
+        self._override_hpc_restart_times_other = overrides.hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.cfg_analysis.multi_sim_run_method
@@ -6048,19 +6203,94 @@ exit $snakemake_status
                 still_alive.append((rule_token, jid))
         return still_alive, cleared
 
+    def _tmux_session_is_live(self, session_name: str) -> bool | None:
+        """Tri-state tmux-session liveness AS SEEN FROM THIS HOST.
+
+        ``True``  — ``tmux has-session`` returned 0: the session exists here.
+        ``False`` — tmux RAN and reported no such session / no server running.
+        ``None``  — tmux could not be made to run at all ⇒ UNKNOWN, NOT dead.
+
+        Routed through ``bash -c`` with ``_get_module_load_prefix()`` — the form
+        every OTHER tmux call site in this file already uses
+        (``_launch_tmux_workflow``, ``_get_snakemake_pid_from_tmux``, the
+        cancel/status paths). The liveness gate previously invoked the bare
+        ``["tmux", ...]`` argv — the only such site in this file — which is why a
+        merely-UNLOADED Lmod tmux module surfaced as a raw ``FileNotFoundError``
+        from inside a liveness gate on UVA Rivanna (tmux there is module-gated,
+        not absent: ``module load tmux`` yields
+        ``/apps/software/standard/core/tmux/3.6a/bin/tmux``).
+
+        Two attempts, prefixed then plain, so BOTH cluster shapes are covered:
+        module-gated (the prefixed form answers) and plain-PATH-with-no-tmux-
+        modulefile (the prefixed ``module load tmux &&`` short-circuits, the
+        plain fallback answers). Only when NO form can run tmux is the answer
+        UNKNOWN. Returning ``False`` there instead would convert a loud crash
+        into a SILENT false-proceed — strictly worse than the bug being fixed.
+        """
+        prefix = self._get_module_load_prefix()
+        quoted = shlex.quote(session_name)
+        attempts = ([f"{prefix}tmux has-session -t {quoted}"] if prefix else []) + [
+            f"tmux has-session -t {quoted}"
+        ]
+        for cmd in attempts:
+            try:
+                r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+            except (OSError, subprocess.TimeoutExpired):
+                continue
+            if r.returncode == 0:
+                return True
+            # rc 127 / "command not found" means tmux (or `module`) is
+            # unavailable in THIS form — that is not evidence about the session.
+            if r.returncode == 127 or "command not found" in f"{r.stderr}".lower():
+                continue
+            return False
+        return None
+
     def _orchestrator_liveness_gate(
         self,
         analysis_dir: Path | None = None,
         *,
         exclude_driver_id: str | None = None,
     ) -> "WorkflowError | None":
-        """Return a WorkflowError if a LIVE orchestration driver exists for this
-        analysis, else None. Reclaims dead/stale sentinels in passing.
+        """Return a WorkflowError if a LIVE-or-INDETERMINATE orchestration driver
+        exists for this analysis, else None. Reclaims dead/stale sentinels in
+        passing.
 
         Default-safe: no ``_orchestrator/`` sentinels ⇒ returns None (proceed).
         ``exclude_driver_id`` skips the caller's own self-sentinel (reprocess).
-        Reuses ``_classify_stale_via_sacct`` (jobid arm) and the cancel_workflow
-        ps/tmux probes — no new liveness probe is authored (R10).
+
+        TRI-STATE classification (the load-bearing contract). Each sentinel is
+        classified ALIVE / DEAD / UNKNOWN, never just alive-or-dead:
+
+        * ALIVE   ⇒ block.
+        * DEAD    ⇒ reclaim the sentinel and proceed.
+        * UNKNOWN ⇒ hold-alive (block), BOUNDED by an mtime-age fail-safe at
+          ``_max_plausible_job_lifetime_min`` so an unanswerable sentinel can
+          never block forever.
+
+        UNKNOWN is produced by (a) a foreign origin ``hostname`` — ``ps -p`` and
+        ``tmux has-session`` are host-local (the tmux socket
+        ``/tmp/tmux-{uid}/default`` is node-local), so cross-host liveness is
+        STRUCTURALLY unknowable, not merely unreliable; (b) a legacy sentinel
+        with no recorded ``hostname``, where a negative local probe means "not
+        alive HERE", which is not "not alive"; (c) an identity field that has not
+        been enriched yet (``tmux_session_name``/``slurm_jobid`` still null
+        between ``write_orchestrator_sentinel`` and
+        ``enrich_orchestrator_sentinel`` — a SAME-HOST window spanning the whole
+        of ``submit_workflow()``); (d) tmux unavailable; (e) an unrecognized
+        mode.
+
+        The historical two-valued form collapsed EVERY one of those into DEAD,
+        reclaiming a live driver's sentinel and proceeding — the exact
+        unarbitrated concurrent consolidate-zarr write this gate exists to
+        prevent. This mirrors ``_classify_stale_via_sacct`` (same file, directly
+        above): refuse to classify from an unanswerable probe, fall through to
+        the mtime-age fail-safe.
+
+        Reuses ``_slurm_job_is_live`` (jobid arm, host-agnostic) and the
+        cancel_workflow ps/tmux probe family — no new liveness PRIMITIVE is
+        authored (R10); ``_tmux_session_is_live`` only wraps the existing tmux
+        probe in this file's own ``bash -c`` + module-load-prefix idiom.
         """
         import subprocess
 
@@ -6073,54 +6303,113 @@ exit $snakemake_status
         if not sentinels:
             return None  # default-safe: no sentinel ⇒ proceed (R6)
 
+        this_host = socket.gethostname()
+        # Same single-source-of-truth bound the wait-rule poll cap and the
+        # R-STALE UNKNOWN bucket use. NOT a new tunable.
+        max_plausible_s = _max_plausible_job_lifetime_min(self.cfg_analysis) * 60
+
         live: list[str] = []
         for s in sentinels:
             mode = s.get("workflow_submission_mode")
             path = Path(s["_path"])
-            alive = False
-            if mode == "local":
+            origin_host = s.get("hostname")  # None on a pre-hostname legacy sentinel
+            same_host = origin_host is not None and origin_host == this_host
+            # True = evidence-ALIVE, False = evidence-DEAD, None = UNKNOWN.
+            alive: bool | None
+            if mode == "1_job_many_srun_tasks":
+                jobid = s.get("slurm_jobid") or ""
+                # HOST-AGNOSTIC arm — SLURM is cluster-wide, so this arm is
+                # deliberately checked FIRST and is exempt from the same-host
+                # precondition below. Use the direct liveness primitive — NOT
+                # _classify_stale_via_sacct, which resolves its sentinel path under
+                # _status/_submitted/{token}.json and, on an UNKNOWN (sacct-lagging)
+                # jobid, mtime-tiebreaks against that NON-EXISTENT _orchestrator path
+                # -> OSError -> always-DEAD, a false-proceed against a live single-job
+                # driver. _slurm_job_is_live has no _submitted/-path coupling.
+                # A null (not-yet-enriched) jobid is UNKNOWN, never DEAD.
+                alive = _slurm_job_is_live(jobid) if jobid else None
+            elif origin_host is not None and not same_host:
+                # FOREIGN ORIGIN HOST: the host-local probes cannot answer at all.
+                # Do not run them; answer UNKNOWN and let the age fail-safe bound it.
+                alive = None
+            elif mode == "local":
                 pid = s.get("pid")
-                alive = bool(pid) and subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+                if not pid:
+                    alive = None
+                else:
+                    probe = subprocess.run(["ps", "-p", str(pid)], capture_output=True).returncode == 0
+                    # A NEGATIVE host-local probe is DEAD *evidence* only when the
+                    # sentinel is KNOWN-same-host. On a legacy sentinel with no
+                    # recorded hostname it only means "not alive HERE". A POSITIVE
+                    # probe is honored regardless (erring ALIVE is the safe
+                    # direction; PID-reuse false-ALIVE is bounded by the age cap).
+                    alive = True if probe else (False if same_host else None)
             elif mode in ("tmux", "batch_job"):
                 session = s.get("tmux_session_name")
-                alive = bool(session) and (
-                    subprocess.run(["tmux", "has-session", "-t", session], capture_output=True).returncode == 0
-                )
-            elif mode == "1_job_many_srun_tasks":
-                jobid = s.get("slurm_jobid") or ""
-                # Use the direct liveness primitive — NOT _classify_stale_via_sacct,
-                # which resolves its sentinel path under _status/_submitted/{token}.json
-                # and, on an UNKNOWN (sacct-lagging) jobid, mtime-tiebreaks against that
-                # NON-EXISTENT _orchestrator path -> OSError -> always-DEAD, a
-                # false-proceed against a live single-job driver (the E3 hazard the gate
-                # exists to prevent). _slurm_job_is_live has no _submitted/-path coupling.
-                alive = bool(jobid) and _slurm_job_is_live(jobid)
+                if not session:
+                    # Written but not yet enriched: a LIVE batch_job driver looks
+                    # exactly like this for the whole of submit_workflow().
+                    alive = None
+                else:
+                    probe = self._tmux_session_is_live(session)
+                    alive = None if probe is None else (True if probe else (False if same_host else None))
             else:
-                # Unknown mode: classify alive conservatively (do not silently
-                # proceed against an unrecognized driver record).
-                alive = True
+                # Unrecognized driver record: do not silently proceed against it.
+                alive = None
 
             if alive:
-                live.append(f"{s.get('driver_id')} (mode={mode})")
-            else:
-                # EXEMPT-DU: status-flag
-                path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
-                print(
-                    f"[orchestrator-gate] reclaimed stale sentinel {s.get('driver_id')} (mode={mode}) at {path}",
-                    file=sys.stderr,
-                    flush=True,
+                live.append(
+                    f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, liveness=ALIVE)"
                 )
+                continue
+
+            if alive is None:
+                # UNKNOWN -> hold-alive, BOUNDED by the mtime-age fail-safe so an
+                # unanswerable sentinel cannot block forever (R4 still holds).
+                try:
+                    age_s = time.time() - path.stat().st_mtime
+                except OSError:
+                    age_s = max_plausible_s + 1
+                if age_s < max_plausible_s:
+                    live.append(
+                        f"{s.get('driver_id')} (mode={mode}, host={origin_host or 'unrecorded'}, "
+                        f"liveness=UNKNOWN/held {int(age_s // 60)}min < {int(max_plausible_s // 60)}min cap, "
+                        f"sentinel={path})"
+                    )
+                    continue
+                reason = "UNKNOWN/age-exceeded"
+            else:
+                reason = "dead-on-evidence"
+
+            # EXEMPT-DU: status-flag
+            path.unlink(missing_ok=True)  # reclaim dead/stale (R4)
+            print(
+                f"[orchestrator-gate] reclaimed sentinel {s.get('driver_id')} "
+                f"(mode={mode}, host={origin_host or 'unrecorded'}, {reason}) at {path}",
+                file=sys.stderr,
+                flush=True,
+            )
 
         if live:
             return WorkflowError(
                 phase="reprocess pre-submission orchestrator-liveness gate",
                 return_code=1,
                 stderr=(
-                    "Refusing reprocess: a live orchestration driver for this analysis "
-                    f"exists ({'; '.join(live)}). reprocess coexists with queued/running "
-                    "SLURM sim workers but must not run concurrently with a live run()/"
-                    "reprocess DRIVER (unarbitrated concurrent consolidate-zarr write). "
-                    "Cancel the live driver (or wait for it to finish) and retry."
+                    "Refusing reprocess: a live-or-indeterminate orchestration driver for "
+                    f"this analysis exists ({'; '.join(live)}). reprocess coexists with "
+                    "queued/running SLURM sim workers but must not run concurrently with a "
+                    "live run()/reprocess DRIVER (unarbitrated concurrent consolidate-zarr "
+                    "write). Entries marked liveness=UNKNOWN/held could NOT be probed from "
+                    "this host — the sentinel's origin host differs from this one, its "
+                    "origin host was never recorded (a sentinel predating the hostname "
+                    "field), an identity field has not been enriched yet, or tmux could not "
+                    "be run here (on an Lmod cluster try `module load tmux`). Such entries "
+                    "are held conservatively rather than assumed dead, and are reclaimed "
+                    "automatically once the sentinel exceeds the max plausible driver "
+                    "lifetime shown above. Resolve by: (a) waiting for the driver to finish "
+                    "or for the cap to elapse; (b) re-running from the sentinel's origin "
+                    "host so the probe can answer; or (c) if you have independently "
+                    "confirmed the driver is gone, deleting the named sentinel file."
                 ),
             )
         return None
@@ -6704,6 +6993,14 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # resolved token so all three process-rung sites carry the identical prefix
         # (empty in native mode → generated Snakefiles byte-identical, R2/TO-1).
         self._container_process_prefix = self._base_builder._container_process_prefix
+        # Same delegation for the in-SIF interpreter token. The `or` fallback is
+        # load-bearing: this class's native token is the literal "python"
+        # (:6787), NOT the base builder's sys.executable, so falling back to the
+        # base builder's resolved attribute would change native emission and
+        # break the byte-identity goldens.
+        self._process_python_executable = (
+            self._base_builder._container_process_python or self.python_executable
+        )
 
     def submit_delete_workflow_sensitivity(
         self,
@@ -6728,6 +7025,54 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
             override_in_flight=override_in_flight,
             override_multi_sim_run_method=override_multi_sim_run_method,
         )
+
+    def _enumerate_sa_event_pairs(
+        self,
+        *,
+        context_label: str,
+        include_sub=None,
+    ) -> tuple[list[str], list[str]]:
+        """Best-effort enumeration of the ``(sa_id, event_id_slug)`` pairs that
+        feed the master generators' per-sim plot-rule wildcards
+        (``SA_EVENT_PAIRS_SA`` / ``SA_EVENT_PAIRS_EVT``).
+
+        Shared by ``generate_master_snakefile_content`` and
+        ``generate_reprocess_master_snakefile_content`` (R13/D10 hardening: one
+        tested ``except`` instead of two byte-identical copies). On ANY failure
+        it logs a WARNING naming the exception type and returns two EMPTY lists,
+        so ``rule all`` does not demand the per-sim panels and the master report
+        skips them — the silent-zero becomes a DETECTED-zero. ``include_sub(sa_id,
+        sub) -> bool`` optionally filters sub-analyses (the reprocess generator
+        gates on completion state); ``None`` includes every sub-analysis.
+        """
+        from hhemt.scenario import compute_event_id_slug
+
+        sa_event_pairs_sa: list[str] = []
+        sa_event_pairs_evt: list[str] = []
+        try:
+            for sa_id, sub in self.sensitivity_analysis.sub_analyses.items():
+                if include_sub is not None and not include_sub(sa_id, sub):
+                    continue
+                for event_iloc in sub.df_sims.index:
+                    ev = sub._retrieve_weather_indexer_using_integer_index(event_iloc)
+                    sa_event_pairs_sa.append(str(sa_id))
+                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
+        except Exception as exc:
+            logger.warning(
+                "Per-sim panel enumeration failed for the %s (%s: %s). Per-sa "
+                "per-event plot rules will emit NO wildcarded outputs and the %s "
+                "report will skip Per-Simulation panels. This is a silent-zero "
+                "unless you are reading this line.",
+                context_label,
+                type(exc).__name__,
+                exc,
+                context_label,
+            )
+            # Best-effort: if any sub-analysis can't materialize event ids, leave
+            # the paired lists empty — per-sa per-event plot rules simply emit no
+            # wildcarded outputs and the master report skips Per-Simulation panels.
+            return [], []
+        return sa_event_pairs_sa, sa_event_pairs_evt
 
     def generate_master_snakefile_content(
         self,
@@ -6850,27 +7195,23 @@ class SensitivityAnalysisWorkflowBuilder(_ReportingSetDispatchMixin):
         # Total scenarios across all sub-analyses (best-effort; matches per-sub-analysis n_sims sum)
         try:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Total-sim-count enumeration failed for the sensitivity master "
+                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "The reported sim count will be approximate. This is a silent "
+                "degradation unless you are reading this line.",
+                type(exc).__name__,
+                exc,
+                n_sub_analyses,
+            )
             total_n_sims = n_sub_analyses
 
         # Compute paired (sa_id, event_id) lists for per-sa per-event plot rules.
         # Used by `_build_plot_rule_block_per_sim_per_sa` and the master `rule all`
         # via `expand(..., zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)`.
         # Event IDs derived via the canonical slug helper used elsewhere in workflow.py.
-        sa_event_pairs_sa: list[str] = []
-        sa_event_pairs_evt: list[str] = []
-        try:
-            for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
-                for event_iloc in sub_pair.df_sims.index:
-                    ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
-                    sa_event_pairs_sa.append(str(sa_id_pair))
-                    sa_event_pairs_evt.append(compute_event_id_slug(ev))
-        except Exception:
-            # Best-effort: if any sub-analysis can't materialize event ids, leave the
-            # paired lists empty — per-sa per-event plot rules will simply not emit
-            # any wildcarded outputs and the master report will skip Per-Simulation panels.
-            sa_event_pairs_sa = []
-            sa_event_pairs_evt = []
+        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(context_label="sensitivity master")
 
         # Auto-render — modeled as an explicit Snakemake rule (not an `onsuccess:`
         # hook). `onsuccess:` only fires when rules execute; on a fully up-to-date
@@ -6971,16 +7312,29 @@ onerror:
         # pairs (Iteration 7 Change 3b — "show all" panel parity per the user's
         # scope expansion: identical-looking panels across sub-analyses are a QC
         # signal; expected variation is also visible).
-        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
-        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
-        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
-        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
-        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
-        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        # Phase 3: per-plot disable — each common-renderer append is gated by
+        # renderer_active so a disabled key drops from rule all AND the derived
+        # render_report subset (render_rule_input_items below); _disabled resolves
+        # to [] for an unconfigured run, preserving byte-identity.
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        if renderer_active("system_overview", _disabled):
+            rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_analysis_summary", _disabled):
+            rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
 
-        if sa_event_pairs_sa:
+        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
             # ADR-2 OE-1: per-sa input stems derive from the single-source helper
@@ -7003,7 +7357,7 @@ onerror:
             rule_all_inputs.append(
                 f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
-        if _independent_vars:
+        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -7022,7 +7376,7 @@ onerror:
             sel.builder_key == "eda_compute_sensitivity"
             for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
         )
-        if _eda_in_set and _has_eda_artifact:
+        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
             rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         # Snapshot the plot-input list before appending the report targets — the
         # render rule uses this same set as its `input:` so Snakemake's DAG
@@ -7298,7 +7652,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -7407,6 +7761,7 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
             },
+            disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
             ),
@@ -7558,7 +7913,16 @@ rule render_report:
         n_sub_analyses = len(self.sensitivity_analysis.sub_analyses)
         try:
             total_n_sims = sum(len(sub.df_sims) for sub in self.sensitivity_analysis.sub_analyses.values())
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "Total-sim-count enumeration failed for the reprocess master "
+                "(%s: %s); falling back to n_sub_analyses=%d for config['n_sims']. "
+                "The reported sim count will be approximate. This is a silent "
+                "degradation unless you are reading this line.",
+                type(exc).__name__,
+                exc,
+                n_sub_analyses,
+            )
             total_n_sims = n_sub_analyses
 
         # Paired (sa_id, event_id) lists for per-sa per-event plot rules.
@@ -7570,8 +7934,6 @@ rule render_report:
         # target on c_run produces an unsatisfiable target the renderer fails on.
         from hhemt.constants import sim_run_flag_per_sa
 
-        sa_event_pairs_sa: list[str] = []
-        sa_event_pairs_evt: list[str] = []
         analysis_dir_for_pairs = self.master_analysis.analysis_paths.analysis_dir
 
         def _sub_included_for_reprocess(sa_id, sub) -> bool:
@@ -7602,18 +7964,10 @@ rule render_report:
                         return True
             return False
 
-        try:
-            for sa_id_pair, sub_pair in self.sensitivity_analysis.sub_analyses.items():
-                if not _sub_included_for_reprocess(sa_id_pair, sub_pair):
-                    continue
-                for event_iloc in sub_pair.df_sims.index:
-                    ev = sub_pair._retrieve_weather_indexer_using_integer_index(event_iloc)
-                    event_id_pair = compute_event_id_slug(ev)
-                    sa_event_pairs_sa.append(str(sa_id_pair))
-                    sa_event_pairs_evt.append(event_id_pair)
-        except Exception:
-            sa_event_pairs_sa = []
-            sa_event_pairs_evt = []
+        sa_event_pairs_sa, sa_event_pairs_evt = self._enumerate_sa_event_pairs(
+            context_label="reprocess master",
+            include_sub=_sub_included_for_reprocess,
+        )
 
         _formats = report_formats if report_formats is not None else ["zip"]
 
@@ -7691,15 +8045,28 @@ onerror:
         consolidation_flags = [consolidate_subanalysis_flag(sa_id) for sa_id in completed_sa_ids]
         rule_all_inputs = [f'"{flag}"' for flag in consolidation_flags]
         rule_all_inputs.append('"_status/f_consolidate_master_complete.flag"')
-        rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
-        rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
-        rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
-        rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
-        rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
-        rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
+        # Phase 3: per-plot disable — mirrors the production-master rule_all_inputs
+        # site: each common-renderer append gated by renderer_active so a disabled
+        # key drops from rule all AND the derived render_report subset; _disabled
+        # resolves to [] for an unconfigured run, preserving byte-identity.
+        from hhemt.report_renderers._reporting_sets import renderer_active
+
+        _disabled = self._resolve_disabled_renderers(self.master_analysis)
+        if renderer_active("system_overview", _disabled):
+            rule_all_inputs.append(f'"plots/system_overview{_ext["system_overview"]}"')
+        if renderer_active("per_analysis_summary", _disabled):
+            rule_all_inputs.append(f'"plots/per_analysis/summary_table{_ext["per_analysis_summary"]}"')
+        if renderer_active("scenario_status_appendix", _disabled):
+            rule_all_inputs.append(f'"plots/appendix/scenario_status{_ext["scenario_status_appendix"]}"')
+        if renderer_active("errors_and_warnings", _disabled):
+            rule_all_inputs.append(f'"plots/errors_and_warnings/validation_report{_ext["errors_and_warnings"]}"')
+        if renderer_active("disk_utilization", _disabled):
+            rule_all_inputs.append(f'"plots/disk_utilization{_ext["disk_utilization"]}"')
+        if renderer_active("metadata", _disabled):
+            rule_all_inputs.append(f'"plots/metadata{_ext["metadata"]}"')
         rule_all_inputs.append('"scenario_status.csv"')
         rule_all_inputs.append('"workflow_summary.md"')
-        if sa_event_pairs_sa:
+        if sa_event_pairs_sa and renderer_active("per_sim_per_sa", _disabled):
             _e_pfd = _ext["per_sim_per_sa_peak_flood_depth"]
             _e_cf = _ext["per_sim_per_sa_conduit_flow"]
             # ADR-2 OE-1: per-sa input stems derive from the single-source helper
@@ -7722,7 +8089,7 @@ onerror:
             rule_all_inputs.append(
                 f'expand("{_cf_sa}", zip=True, sa_id=SA_EVENT_PAIRS_SA, event_id=SA_EVENT_PAIRS_EVT)'
             )
-        if _independent_vars:
+        if _independent_vars and renderer_active("sensitivity_benchmarking", _disabled):
             _e_bench = _ext["sensitivity_benchmarking"]
             # ADR-2 OE-1 + D3: benchmarking input stem derives from the helper
             # (renderer_kind=benchmarking, descriptor={independent_var}.vs.total).
@@ -7741,7 +8108,7 @@ onerror:
             sel.builder_key == "eda_compute_sensitivity"
             for sel in self._resolve_active_reporting_set(self.master_analysis).renderer_selection
         )
-        if _eda_in_set and _has_eda_artifact:
+        if _eda_in_set and _has_eda_artifact and renderer_active("eda_compute_sensitivity", _disabled):
             rule_all_inputs.append(f'"plots/eda/config_diff_maps{_ext["eda_compute_sensitivity"]}"')
         render_rule_input_items = [item for item in rule_all_inputs if not item.startswith('"_status/')]
         for _fmt in _formats:
@@ -7860,7 +8227,7 @@ onerror:
     shell:
         """
         mkdir -p {log_dir_str}/sims {log_dir_str} _status
-        {self._container_process_prefix}{self.python_executable} -m hhemt.process_timeseries_runner \\
+        {self._container_process_prefix}{self._process_python_executable} -m hhemt.process_timeseries_runner \\
             --event-iloc {event_iloc} \\
             {sub_config_args} \\
             --model-type {model_type} \\
@@ -8006,6 +8373,7 @@ onerror:
                 "sa_event_pairs_sa": sa_event_pairs_sa,
                 "has_eda_artifact": _has_eda_artifact,
             },
+            disabled=_disabled,
             interleave_after_unconditional=lambda: self._base_builder._build_export_scenario_status_rule(
                 input_flag="_status/f_consolidate_master_complete.flag",
             ),
@@ -8341,15 +8709,12 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         rerun_swmm_hydro_if_outputs_exist: bool = False,
         process_timeseries: bool = True,
         which: Literal["TRITON", "SWMM", "both"] = "both",
-        override_clear_raw: ClearRawValue | None = None,
         compression_level: int = 5,
         pickup_where_leftoff: bool = True,
         wait_for_completion: bool = False,  # relevant for slurm jobs only
         dry_run: bool = False,
         verbose: bool = True,
-        override_hpc_total_nodes: int | None = None,
-        override_hpc_restart_times_simulate: int | None = None,
-        override_hpc_restart_times_other: int | None = None,
+        overrides: "RunOverrides | None" = None,
         report_formats: list[str] | None = None,
         extra_sbatch_args: list[str] | None = None,
         snakemake_diagnostics: SnakemakeDiagnostics | None = None,
@@ -8384,8 +8749,10 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, process timeseries outputs after simulations
         which : Literal["TRITON", "SWMM", "both"]
             Which outputs to process
-        override_clear_raw : ClearRawValue | None
-            Runtime override for ``cfg_analysis.clear_raw`` (None reads YAML).
+        overrides : RunOverrides | None
+            Runtime override carrier (``clear_raw``, ``hpc_total_nodes``,
+            ``hpc_restart_times_simulate/other``); ``None`` reads every value from
+            the config. Threaded to the composed base builder.
         compression_level : int
             Compression level for output files (0-9)
         pickup_where_leftoff : bool
@@ -8394,10 +8761,6 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
             If True, only perform a dry run and return that result
         verbose : bool
             If True, print progress messages
-        override_hpc_total_nodes : int | None
-            If provided, overrides cfg_analysis.hpc_total_nodes for SLURM script generation
-            without mutating the config object. Only valid when multi_sim_run_method is
-            "1_job_many_srun_tasks"; raises ConfigurationError otherwise.
 
         Returns
         -------
@@ -8417,8 +8780,16 @@ def _per_sim_per_sa_conduit_flow_sources(wildcards):
         # rules via _base_builder (generate_snakemake_config global baseline +
         # _resolved_simulate_retries on the simulation_sa rules), so stash the
         # override knobs there, mirroring the diagnostics stash above.
-        self._base_builder._override_hpc_restart_times_simulate = override_hpc_restart_times_simulate
-        self._base_builder._override_hpc_restart_times_other = override_hpc_restart_times_other
+        if overrides is None:
+            from .orchestration import RunOverrides
+
+            overrides = RunOverrides()
+        # Unpack the carrier into the same local/instance names the rest of this
+        # method (and _base_builder's consume sites) already read — byte-identical downstream.
+        override_clear_raw = overrides.clear_raw
+        override_hpc_total_nodes = overrides.hpc_total_nodes
+        self._base_builder._override_hpc_restart_times_simulate = overrides.hpc_restart_times_simulate
+        self._base_builder._override_hpc_restart_times_other = overrides.hpc_restart_times_other
 
         # Check if we should use 1-job mode based on config
         multi_sim_method = self.master_analysis.cfg_analysis.multi_sim_run_method

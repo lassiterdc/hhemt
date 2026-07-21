@@ -14,7 +14,10 @@ Key components:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import TYPE_CHECKING, Dict, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from hhemt.config.analysis import ClearRawValue, ForceRerunValue
 
 
 @dataclass
@@ -271,6 +274,24 @@ class WorkflowResult:
             parts.append(f"Partial failures ({len(self.partial_failures)}): {tokens}")
 
         return "\n".join(parts)
+
+
+@dataclass(frozen=True)
+class RunOverrides:
+    """Runtime override knobs for a single workflow invocation.
+
+    Each field follows the override-prefix convention: None means
+    read-config-when-None (the resolved value comes from cfg_analysis /
+    cfg_system); a concrete value overrides the config for this invocation
+    only. Carried as one argument through the submit_workflow facade chain
+    instead of five individual keyword params.
+    """
+
+    clear_raw: "ClearRawValue | None" = None
+    force_rerun: "ForceRerunValue | None" = None
+    hpc_total_nodes: int | None = None
+    hpc_restart_times_simulate: int | None = None
+    hpc_restart_times_other: int | None = None
 
 
 def translate_mode(mode: Literal["fresh", "resume"]) -> dict:

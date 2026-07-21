@@ -49,7 +49,9 @@ _PYTEST_TMP_RE = re.compile(re.escape(tempfile.gettempdir()) + r"/pytest-of-[^/]
 # (``os.path.relpath`` from the deep analysis dir climbs to ``/`` then descends through
 # the absolute home dir into the out-of-repo model cache). The ``../`` depth varies with
 # tree nesting and the descended segment bakes the machine home — mask both, mirroring
-# suite-1's ``{HOME_REL}`` pattern, while preserving the content-hash dir + filename.
+# suite-1's ``{HOME_REL}`` pattern, while preserving the FILENAME. The content-hash dir
+# is masked separately below (it is a fixture-generator content-address, not dispatch
+# signal — see the ``{HASH}`` mask in ``_normalize_volatile``).
 _SYNTH_MODELS_REL_RE = re.compile(r"(?:\.\./)+" + re.escape(str(_SYNTH_MODELS_ROOT).lstrip("/")))
 
 
@@ -60,7 +62,8 @@ def _normalize_volatile(text: str) -> str:
     were captured against. The synth caches live under ``platformdirs`` user-cache
     (outside ``_REPO_ROOT``), so each needs its own mask beyond suite-1's ``{REPO_ROOT}``.
     Genuine generation-logic tokens (rule names, resources, command shape, source-path
-    attributions) are left intact so real drift still fails the assertion.
+    FILE IDENTITY and path STRUCTURE) are left intact so real drift still fails the
+    assertion; only the environment-derived cache-key hash WITHIN a source path is masked.
     """
     text = text.replace(sys.executable, "{PYTHON}")
     text = text.replace(str(_REPO_ROOT), "{REPO_ROOT}")

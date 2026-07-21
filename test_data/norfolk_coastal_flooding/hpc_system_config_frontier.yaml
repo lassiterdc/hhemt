@@ -50,5 +50,5 @@ container:                                    # ADR-1/2/3: per-cluster Apptainer
   #   apptainerenv_ld_library_path: "/opt/mpich/lib"   # MANDATORY (.def Change-B stripped /opt/mpich/lib; triton.exe empty RPATH)
   #   containlibs: []
   #   binds: []
-  exe_in_sif: {triton: "/opt/hhemt/bin/triton.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type
+  exe_in_sif: {triton: "/opt/hhemt/bin/triton_only.exe", tritonswmm: "/opt/hhemt/bin/triton.exe", swmm: "/opt/hhemt/bin/runswmm"}   # in-SIF exe per model type; `triton` MUST be the SWMM-DISABLED build (compile-time #ifdef TRITON_SWMM — not a runtime mode), else it dies on an empty inp_filename
 executor_profile_extras: {}                   # EXTENSION (advanced escape hatch; empty by default)

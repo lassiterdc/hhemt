@@ -887,6 +887,15 @@ class report_config(cfgBaseModel):
             "here, with no code edit (TO-8)."
         ),
     )
+    disabled_renderers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "builder_key values to drop from the active reporting set's renderer_selection. "
+            "Filtered by _renderer_active() at the dispatcher AND at every rule all / "
+            "render_report input-list site, so emission and enumeration never disagree. "
+            "An unknown key is a ConfigurationError at run() entry, not a silent no-op."
+        ),
+    )
     interactive: InteractiveBackendConfig = Field(default_factory=InteractiveBackendConfig)
 
 
@@ -1027,7 +1036,25 @@ def validate_active_reporting_set(
     )
 
     name = resolve_active_reporting_set_name(cfg, is_sensitivity=is_sensitivity)
-    if REPORTING_SETS[name].validator_key == "benchmarking":
+    active = REPORTING_SETS[name]
+    # Phase 3: an unknown disabled_renderers key is a ConfigurationError at run()
+    # entry, not a silent no-op. renderer_active() never matches a typo'd key to a
+    # selection entry, so it would drop nothing; this run-entry check (the sanctioned
+    # ReportingSet run-entry validation home, alongside the sensitivity cross-check
+    # below) is what closes the silent-typo gap the field description promises.
+    known_builder_keys = {sel.builder_key for sel in active.renderer_selection}
+    unknown = [k for k in cfg.disabled_renderers if k not in known_builder_keys]
+    if unknown:
+        raise ConfigurationError(
+            field="disabled_renderers",
+            message=(
+                f"report_config.disabled_renderers contains keys not present in the "
+                f"active reporting set '{name}': {unknown}. Valid builder_key values "
+                f"for this set: {sorted(known_builder_keys)}."
+            ),
+            config_path=None,
+        )
+    if active.validator_key == "benchmarking":
         validate_sensitivity_independent_vars(cfg, sensitivity_csv_path)
     return name
 
