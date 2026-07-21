@@ -262,6 +262,42 @@ def test_build_reprocess_delete_snakefile_non_sensitivity(norfolk_multi_sim_anal
     assert "delete_subanalysis_reprocess_" not in content
 
 
+def test_delete_rules_declare_a_log_and_redirect_into_it(norfolk_multi_sim_analysis):
+    """Every scoped-delete rule carries BOTH halves of log capture.
+
+    `log:` alone does not capture stdout/stderr — Snakemake only declares the path
+    and exempts it from delete-on-failure; the shell must redirect into it. A
+    directive without a redirect yields an empty file and a false sense of coverage,
+    which is why both halves are asserted here rather than just the directive.
+
+    Without this, a failing delete rule is undiagnosable: on 2026-07-20 the scoped
+    delete failed 112 times and the ONLY surviving evidence was the outer snakemake
+    log's "command exited with non-zero exit code" — no runner stderr anywhere. The
+    SLURM executor's per-job log is not a fallback: `sacct` showed zero delete jobs
+    for that run, so no per-job log was ever created, and under local `--cores`
+    execution none exists by construction either.
+
+    The `{log}` must reach the generated Snakefile LITERALLY (the emitter is an
+    f-string, so it is written `{{log}}`); a single brace would interpolate the
+    Python path instead and produce a redirect Snakemake does not manage.
+    """
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    builder = SnakemakeWorkflowBuilder(norfolk_multi_sim_analysis)
+    content = builder._build_reprocess_delete_snakefile_content(start_with="process")
+
+    # Both emitters reachable on the non-sensitivity path declare a log...
+    assert content.count("    log:\n") >= 2, "delete rules must declare `log:`"
+    assert "logs/delete_reprocess/" in content, "log path must be toolkit-owned, not executor-owned"
+    # ...and every rule must redirect into the Snakemake-managed {log}, literally.
+    assert "> {log} 2>&1" in content, (
+        "shell must redirect into {log}; a `log:` directive alone captures nothing"
+    )
+    assert content.count("> {log} 2>&1") == content.count("    log:\n"), (
+        "every rule declaring a log must also redirect into it"
+    )
+
+
 def test_build_reprocess_delete_snakefile_sensitivity_option_c(norfolk_sensitivity_analysis):
     """D-scope Option C: sensitivity emits ONE delete_subanalysis_reprocess_{sa}
     rule per sub (NOT per-(sa,event)) + a master consolidation rule."""
@@ -329,3 +365,54 @@ def test_reprocess_phase3_self_methods_are_defined_on_class():
         called = set(re.findall(r"self\.(_[a-z][a-zA-Z0-9_]*)\(", src))
         missing = sorted(m for m in called if not hasattr(cls, m))
         assert not missing, f"{cls.__name__}.{meth} references undefined methods: {missing}"
+
+
+def test_delete_rules_declare_the_processing_partition_on_hpc(norfolk_multi_sim_analysis):
+    """Every scoped-delete rule must name the CPU processing partition on HPC.
+
+    Without an explicit slurm_partition these rules inherit `default-resources`'
+    slurm_partition={hpc_ensemble_partition} (workflow.py:3177) — the GPU
+    partition — and are submitted with zero GRES, which a GPU-only partition
+    rejects at sbatch. Observed 2026-07-20: 112 uniform failures on gpu-a6000.
+    The rules must target hpc_setup_and_analysis_processing_partition, matching
+    the report-tail plot-rule precedent at workflow.py:359-366.
+
+    Local mode must stay byte-identical (no slurm_partition key at all), so both
+    directions are asserted.
+    """
+    from hhemt.workflow import SnakemakeWorkflowBuilder
+
+    analysis = norfolk_multi_sim_analysis
+    builder = SnakemakeWorkflowBuilder(analysis)
+    cfg = builder.cfg_analysis
+
+    # --- local mode: no partition key, byte-identical to the pre-fix literal ---
+    for field, value in (("multi_sim_run_method", "local"),):
+        try:
+            setattr(cfg, field, value)
+        except (AttributeError, TypeError, ValueError):
+            object.__setattr__(cfg, field, value)
+    local_content = builder._build_reprocess_delete_snakefile_content(start_with="process")
+    assert "slurm_partition" not in local_content, "local-mode delete Snakefile must emit no slurm_partition"
+    assert "resources: cpus_per_task=1, mem_mb=4096, runtime=120" in local_content
+
+    # --- batch_job: every rule names the PROCESSING partition, never the ensemble one ---
+    for field, value in (
+        ("multi_sim_run_method", "batch_job"),
+        ("hpc_ensemble_partition", "gpu-a6000"),
+        ("hpc_setup_and_analysis_processing_partition", "standard"),
+    ):
+        try:
+            setattr(cfg, field, value)
+        except (AttributeError, TypeError, ValueError):
+            object.__setattr__(cfg, field, value)
+    hpc_content = builder._build_reprocess_delete_snakefile_content(start_with="process")
+
+    n_rules = hpc_content.count("    resources: ")
+    assert n_rules >= 2, "expected at least the per-event + consolidation delete rules"
+    n_part = hpc_content.count('slurm_partition="standard"')
+    assert n_part == n_rules, f"EVERY delete rule must carry the processing partition; got {n_part} of {n_rules}"
+    assert "gpu-a6000" not in hpc_content, (
+        "delete rules must NOT target the GPU ensemble partition — that is the "
+        "inherited default this fix exists to override"
+    )

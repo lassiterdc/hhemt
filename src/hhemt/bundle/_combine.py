@@ -12,14 +12,20 @@ The emission is a standalone bundle (NOT a report-only object); CombinedBundle
 mirrors Bundle's consume surface so the combined report is regenerable and the
 bundle is iterable.
 
-Phase-3 scope (as-built): steps 1-2 and the step-4 EMIT (child-crate copy,
-flat-hasPart combined ``ro-crate-metadata.json``, ``combined_compatibility.json``
-read-model, ``bundle_manifest.json`` via the dedicated
-``_write_combined_bundle_manifest``) are complete and byte-deterministic (CR4).
-The step-3 cross-experiment RENDER (``_render_combined_report``) and the two
-``CombinedBundle`` regen seams are the Phase-4 wiring point: they raise
-``NotImplementedError`` until the ``combined`` ReportingSet lands. Phase-3 tests
-monkeypatch these seams to isolate the orchestration + emit from the render.
+Phase-3/4/5 scope (as-built): steps 1-2 and the step-4 EMIT are byte-deterministic
+(CR4). The step-3 cross-experiment RENDER (``_render_combined_report``) direct-renders
+the three ``combined`` ReportingSet figures (compatibility, intercomparison, aggregate
+errors-and-warnings) in-process (they are NEW and do not pre-exist), then emits a
+FIRST-CLASS Snakemake ``--report`` via ``bundle.combined_snakefile_generator`` (reusing
+the single-bundle report machinery: ``_emit_report_artifacts`` + ``write_combined_snakefile``
++ ``snakemake --touch`` + ``snakemake --report`` + ``_react_surgery``). That generator ALSO
+HARVESTS each ``child_crates/{eid}/``'s already-rendered ``plots/`` figures into the SAME
+combined Snakefile as native ``report()`` items under per-experiment sidebar categories
+(``category={eid}`` / ``subcategory={child category}``), so the ONE combined report carries
+every experiment's content natively — NO ``index.html`` front door, NO per-child report
+regen (Option B, superseding the earlier Option-A out-link scaffold). CR4 is unaffected:
+the deterministic-emit test monkeypatches ``_render_combined_report`` to a no-op before the
+byte-identity check, and child figures are referenced in place (no new files under the root).
 
 Determinism (CR4): ro-crate-py stamps a per-run ``datePublished`` wall-clock on
 the root Dataset at ``crate.metadata.generate()`` time, and ``_emit._write_bundle_manifest``
@@ -35,7 +41,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,7 +48,7 @@ from typing import Literal
 
 from hhemt.bundle._combine_merge import _experiment_id, merge_experiment_trees
 from hhemt.bundle._compatibility import CompatibilityReport, check_bundle_compatibility
-from hhemt.bundle._emit import _emit_bundle_zip, _get_toolkit_git_sha
+from hhemt.bundle._emit import _get_toolkit_git_sha
 from hhemt.exceptions import ConfigurationError
 from hhemt.version_migration.constants import (
     BUNDLE_MANIFEST_FILENAME,
@@ -172,23 +177,18 @@ def _emit_combined_bundle(
     volatile created_at_utc per CR4), and renders the combined report.
     Reuses _emit_bundle_zip's determinism contract when a zip container is requested.
 
-    RENDER DISPATCH (design note, F-I #4): the combined figures are NEW (do not
-    pre-exist), so the cross-experiment renderer must EXECUTE here — unlike
-    Bundle.regenerate_report, which runs ``snakemake --report`` over already-touched
-    pre-rendered figures. The renderer reads ``analysis.analysis_paths.analysis_dir``;
-    a CombinedBundle is not a TRITONSWMM_analysis and exposes only ``.root``. Drive
-    the render with a minimal render-context object (a small dataclass or a narrow
-    ``CombinedRenderContext`` Protocol exposing ONLY ``analysis_paths.analysis_dir ==
-    output_path`` — NOT ``BundleableAnalysis``, which also requires ``_system`` /
-    ``cfg_analysis`` the combined render has no single value for), passing an explicit
-    ``report_cfg`` (``DEFAULT_REPORT_CONFIG`` for the first cut) as the renderer's
-    required second argument, and invoking the ``combined`` set's renderer(s) directly
-    at emit time, writing the figures + assembled combined HTML under
-    ``output_path/plots/cross_experiment/`` and ``output_path/analysis_report.{html,zip}``.
-    ``CombinedBundle.regenerate_report()`` re-invokes this same emit-time render path
-    (there is no combined Snakefile in the first cut, so it does NOT use ``snakemake
-    --report``). (Chosen over a combined-scoped Snakefile generator for the first cut;
-    the generator sibling is a documented later option.)
+    RENDER DISPATCH (F-I #4, Phase 5; Option B): the combined figures are NEW (do not
+    pre-exist), so ``_render_combined_report`` direct-renders them in-process with a
+    minimal ``_CombinedRenderContext`` (exposing only ``analysis_paths.analysis_dir ==
+    output_path``), then emits a first-class Snakemake ``--report`` reusing the
+    single-bundle machinery via ``combined_snakefile_generator``. The cross-experiment
+    figures land under ``plots/cross_experiment/``; the generator ADDITIONALLY harvests each
+    ``child_crates/{eid}/``'s already-rendered ``plots/`` figures in place as per-experiment
+    ``report()`` sidebar sections, and the assembled report lands under
+    ``analysis_report.{html,zip}`` (NO ``index.html``, NO per-child report regen).
+    ``CombinedBundle.regenerate_report()`` re-invokes the same render path against the bundle
+    root (the renderers read the on-disk read-models; the harvest re-globs ``child_crates/``,
+    so there is no re-merge).
 
     Phase-3 completes the copy + crate + read-model + manifest; the render is the
     ``_render_combined_report`` seam wired in Phase 4.
@@ -530,26 +530,107 @@ class _CombinedRenderContext:
         return SimpleNamespace(analysis_dir=self.analysis_dir)
 
 
-def _render_combined_report(merged, report, output_path: Path) -> None:
-    """Execute the cross-experiment ``combined`` ReportingSet render at emit time.
+# Pure-data child report renderers: read ONLY bundle-local files (no TRITONSWMM_system),
+# so they can be re-rendered at combine time to refresh a child's harvested-in-place figure
+# with the CURRENT toolkit's renderer code (e.g. b4's n_resumes column) even on a SCRUBBED
+# child whose cfg_system carries null software dirs. (renderer_module, output_relpath).
+_PURE_DATA_CHILD_RENDERERS: tuple[tuple[str, str], ...] = (
+    ("scenario_status_appendix", "plots/appendix/scenario_status.html"),
+    ("errors_and_warnings", "plots/errors_and_warnings/validation_report.html"),
+)
 
-    Reads ``get_reporting_set("combined").renderer_selection`` and invokes each
-    renderer module directly (Option A — no snakemake; the combined figures are
-    NEW). Each renderer reads the on-disk ``combined_compatibility.json`` read-model
-    (written before this call), so ``merged`` / ``report`` are unused here (reserved
-    for future cross-experiment-DATA renderers) — which lets
-    ``CombinedBundle.regenerate_report`` re-invoke this with ``None, None`` against
-    the bundle root. Writes figures under ``output_path/plots/cross_experiment/`` and
-    the assembled ``output_path/analysis_report.{html,zip}``.
+
+@dataclass(frozen=True)
+class _ChildReportRenderContext:
+    """System-free render context for a child bundle's pure-data report figures.
+
+    Mirrors load_eda_context's config-only load (yaml_to_model, NO TRITONSWMM_system):
+    a scrubbed cfg_system (null software dirs) is never constructed, so the pure-data
+    renderers run bundle-locally. Exposes exactly the attributes scenario_status_appendix
+    and errors_and_warnings read: analysis_paths.analysis_dir, analysis_id, cfg_analysis.
+    """
+
+    analysis_dir: Path
+    cfg_analysis: object
+
+    @property
+    def analysis_paths(self) -> SimpleNamespace:
+        return SimpleNamespace(analysis_dir=self.analysis_dir)
+
+    @property
+    def analysis_id(self) -> str:
+        return str(getattr(self.cfg_analysis, "analysis_id", "") or "")
+
+
+def _rerender_child_report_figures(bundle_root: Path) -> None:
+    """Re-render each child bundle's pure-data report figures IN PLACE at combine time.
+
+    Refreshes the harvested-in-place child figures (scenario_status appendix +
+    errors_and_warnings) with the current toolkit's renderer code, so the ONE combined
+    --report reflects e.g. b4's n_resumes column regardless of when the child bundle was
+    produced. Reads ONLY bundle-local files (no TRITONSWMM_system) via a config-only
+    context, so a scrubbed child (null software dirs) re-renders cleanly. Best-effort per
+    (child, renderer): a re-render failure leaves the child's already-rendered figure in
+    place (never worse than the harvest-in-place baseline). CR4-safe: reached only through
+    _render_combined_report, which the byte-identity test monkeypatches to a no-op.
     """
     import importlib
 
+    from hhemt.config.analysis import analysis_config
+    from hhemt.config.loaders import yaml_to_model
+
+    crates = bundle_root / _CHILD_CRATES_SUBDIR
+    if not crates.exists():
+        return
+    for child in sorted(p for p in crates.iterdir() if p.is_dir()):
+        cfg_path = child / "cfg_analysis.yaml"
+        if not cfg_path.exists():
+            continue
+        try:
+            cfg_analysis = yaml_to_model(cfg_path, analysis_config)
+        except Exception:
+            continue
+        ctx = _ChildReportRenderContext(analysis_dir=child, cfg_analysis=cfg_analysis)
+        for renderer_module, out_rel in _PURE_DATA_CHILD_RENDERERS:
+            out_path = child / out_rel
+            if not out_path.exists():
+                continue  # child's active set did not emit this figure
+            try:
+                module = importlib.import_module(f"hhemt.report_renderers.{renderer_module}")
+                module.render(ctx, cfg_analysis.report, out_path)
+            except Exception:
+                continue  # leave the already-rendered figure in place
+
+
+def _render_combined_report(merged, report, output_path: Path, *, formats: tuple[str, ...] = ("html", "zip")) -> None:
+    """Render the combined cross-experiment figures, then emit a REAL Snakemake
+    ``--report`` (first-class chrome/nav/CSS), reusing the single-bundle machinery.
+
+    Step 1 direct-renders the two ``combined`` ReportingSet figures — they are NEW
+    (do not pre-exist), unlike ``Bundle.regenerate_report`` whose figures are bundled
+    — writing ``plots/cross_experiment/{compatibility,intercomparison}.html`` plus
+    their manifest sidecars. Step 2 hands off to
+    ``render_combined_report_via_snakemake``: stage report.css + captions + the
+    combined workflow-description, write the combined regeneration Snakefile,
+    ``snakemake --touch`` the pre-rendered figures, then ``snakemake --report`` +
+    React surgery per requested format. ``merged`` / ``report`` stay unused (the
+    renderers read the on-disk read-models), so ``CombinedBundle.regenerate_report``
+    re-invokes with ``None, None`` and no re-merge.
+    """
+    import importlib
+
+    from hhemt.bundle.combined_snakefile_generator import (
+        render_combined_report_via_snakemake,
+    )
     from hhemt.config.report import DEFAULT_REPORT_CONFIG
     from hhemt.report_renderers._reporting_sets import get_reporting_set
 
+    # Option B: NO child-report regen and NO index.html front door. The per-experiment
+    # sidebar sections harvest each child's ALREADY-rendered plots/ figures in place
+    # (combined_snakefile_generator._harvest_per_experiment_rule_specs), so the ONE
+    # combined --report carries every experiment's content natively.
     ctx = _CombinedRenderContext(analysis_dir=output_path)
     rset = get_reporting_set("combined")
-    figures: list[Path] = []
     for sel in rset.renderer_selection:
         for tmpl in sel.rule_spec_template:
             module = importlib.import_module(f"hhemt.report_renderers.{tmpl.renderer_module}")
@@ -557,43 +638,13 @@ def _render_combined_report(merged, report, output_path: Path) -> None:
             fig_path = output_path / rel
             fig_path.parent.mkdir(parents=True, exist_ok=True)
             module.render(ctx, DEFAULT_REPORT_CONFIG, fig_path)
-            figures.append(fig_path)
-    _assemble_combined_html(output_path, figures)
-    _combined_report_container(output_path, "zip")  # also materialize the zip container
-
-
-def _assemble_combined_html(output_path: Path, figures: list[Path]) -> Path:
-    """Inline each figure's HTML into a self-contained combined analysis_report.html.
-
-    Deterministic: no timestamps are written into the wrapper (CR4-compatible).
-    """
-    body = "\n".join(fig.read_text() for fig in sorted(figures))
-    html = (
-        "<!doctype html><html><head><meta charset='utf-8'>"
-        "<title>Combined cross-experiment report</title></head><body>"
-        "<h1>Combined cross-experiment report</h1>" + body + "</body></html>"
-    )
-    report_path = output_path / "analysis_report.html"
-    report_path.write_text(html)
-    return report_path
-
-
-def _combined_report_container(output_path: Path, fmt: Literal["html", "zip"]) -> Path:
-    """Return the requested report container, materializing the zip on demand.
-
-    ``html`` -> the self-contained analysis_report.html. ``zip`` -> a deterministic
-    analysis_report.zip (reuses ``_emit_bundle_zip``'s sorted-entry + fixed-date_time
-    + ZIP_STORED contract) wrapping report.html.
-    """
-    html_path = output_path / "analysis_report.html"
-    if fmt == "html":
-        return html_path
-    zip_path = output_path / "analysis_report.zip"
-    with tempfile.TemporaryDirectory() as tmp:
-        staging = Path(tmp)
-        (staging / "report.html").write_text(html_path.read_text())
-        _emit_bundle_zip(staging, zip_path)
-    return zip_path
+    # F1: refresh each child's pure-data report figures (scenario_status appendix +
+    # errors_and_warnings) with the current toolkit's renderers BEFORE the harvest
+    # --touch indexes them, so b4's n_resumes column (and any current renderer change)
+    # reaches the combined report even on a scrubbed child. System-free; CR4-safe (this
+    # whole function is monkeypatched out in the byte-identity test).
+    _rerender_child_report_figures(output_path)
+    render_combined_report_via_snakemake(output_path, formats=formats)
 
 
 class CombinedBundle:
@@ -627,11 +678,12 @@ class CombinedBundle:
     def regenerate_report(self, *, format: Literal["html", "zip"] = "zip") -> Path:
         """Regenerate the combined report from the bundled data (mirrors Bundle.regenerate_report).
 
-        Re-invokes the SAME emit-time render path against the bundle root (no
-        combined Snakefile -> no ``snakemake --report``). The renderer reads the
-        bundled ``combined_compatibility.json`` read-model, so no re-merge is needed.
+        Re-invokes the SAME render path against the bundle root — a REAL
+        ``snakemake --report`` over the combined Snakefile (first-class chrome/nav/CSS).
+        The renderers read the bundled ``combined_{compatibility,intercomparison}.json``
+        read-models, so no re-merge is needed.
         """
-        _render_combined_report(None, None, self._root)
+        _render_combined_report(None, None, self._root, formats=(format,))
         report = self._root / f"analysis_report.{format}"
         if not report.exists():
             raise FileNotFoundError(f"Combined report {report} was not produced.")

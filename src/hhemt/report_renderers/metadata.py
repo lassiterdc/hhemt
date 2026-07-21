@@ -712,9 +712,21 @@ def render(
     # specific FILE. Declaring the directory would raise in _validate_source_path
     # once the dir exists (directory-as-source is rejected unless zarr).
     eff_dir = analysis_dir.joinpath(*_SLURM_EFF_RELDIR)
-    csvs = sorted(eff_dir.glob(_SLURM_EFF_GLOB)) if eff_dir.is_dir() else []
+    # snakemake-executor-plugin-slurm treats --slurm-efficiency-report-path as a
+    # DIRECTORY and writes `efficiency_report_{run_uuid}.csv` INSIDE it
+    # (efficiency_report.py::create_efficiency_report). The toolkit passes a
+    # file-shaped `slurm_efficiency_report_{ts}.csv` path, so on every SLURM run the
+    # plugin mkdir's a DIRECTORY with that .csv name and the real report lands one
+    # level deeper. A flat, non-recursive, unfiltered glob therefore matched the
+    # DIRECTORY and `read_text()` raised IsADirectoryError (2026-07-20), and on the
+    # non-crashing paths it never matched a real report at all. Glob recursively,
+    # keep files only, and order by mtime rather than by a filename convention
+    # (the plugin's run_uuid filename is not chronological). `stat()` is not `open`,
+    # so this stays invisible to the renderer-IO provenance audit (Gotcha 53).
+    _eff_candidates = [p for p in eff_dir.rglob("*.csv") if p.is_file()] if eff_dir.is_dir() else []
+    csvs = sorted(_eff_candidates, key=lambda p: (p.stat().st_mtime, p.name))
     if csvs:
-        latest = csvs[-1]  # timestamped filenames sort chronologically
+        latest = csvs[-1]  # most recently written efficiency report
         source_paths.append(latest)
         with prov.artist(
             axes_id="html_section",

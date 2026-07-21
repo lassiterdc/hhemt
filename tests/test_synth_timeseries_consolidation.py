@@ -138,3 +138,74 @@ def test_toggle_on_consolidates_node_and_link_timeseries(tmp_path, monkeypatch):
     # False followed by a re-consolidate would NOT reach the consolidating
     # subprocess (same persisted-config mechanism documented at the top of this
     # test), so it would have passed while proving nothing about the gate.
+
+
+@pytest.mark.usefixtures("tritonswmm_cpu_compiled")
+def test_toggle_change_invalidates_an_already_consolidated_tree(tmp_path, monkeypatch):
+    """The consolidation-inputs fingerprint rebuilds a STALE tree.
+
+    This is the state transition the fingerprint exists to produce, and nothing
+    else in this file exercises it: both tests above construct the case with the
+    toggle already at its final value at materialization time, so neither ever
+    meets a tree that is present, complete, AND built from different inputs.
+
+    The 2026-07-20 production failure was exactly that state — the toggle was
+    flipped ON in all 28 persisted per-sub configs, consolidation re-ran, and the
+    output was silently unchanged, because the guard keyed only on
+    ``fname_out.exists() and _log_complete``. `regenerate_existing` does not help:
+    it is a driver-side DELETION flag that never reaches this guard (verified: it
+    is passed to `consolidate_to_datatree` nowhere in `src/hhemt/`), and on an HPC
+    method its deletion is routed to a SLURM-offloaded workflow whose failure the
+    call site discards.
+
+    Shape: consolidate with the toggle OFF, rebuild the analysis object from a
+    config with the toggle ON WITHOUT wiping, consolidate again, assert the
+    timeseries nodes appear. The second consolidation is invoked directly rather
+    than through a second full workflow — the guard under test lives in
+    ``consolidate_to_datatree``, so driving it directly is both sufficient and
+    ~5 minutes cheaper.
+    """
+    from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case
+
+    monkeypatch.setenv("HHEMT_TEST_RUNS_ROOT_OVERRIDE", str(tmp_path))
+
+    # --- Pass 1: toggle OFF (the default). Full pipeline, so the per-scenario
+    # timeseries zarrs land on disk and are AVAILABLE to consolidate -- the point
+    # is that they are available and still not consolidated, not that they are absent.
+    case_off = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_multi_sim", n_events=3, start_from_scratch=True
+    )
+    a_off = case_off.analysis
+    assert a_off.cfg_analysis.toggle_consolidate_timeseries is False
+    result = a_off.submit_workflow(**_WORKFLOW_KWARGS)
+    assert result["success"], f"Workflow failed: {result.get('message', '')}"
+
+    tree_path = a_off.analysis_paths.analysis_datatree_zarr
+    assert tree_path is not None and tree_path.exists()
+    tsg_off = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
+    assert "swmm_node_timeseries" not in tsg_off, "toggle OFF should not consolidate timeseries"
+    mtime_after_pass1 = tree_path.stat().st_mtime
+
+    # --- Pass 2: same on-disk analysis, toggle ON in the PERSISTED config.
+    # start_from_scratch=False so the pass-1 tree SURVIVES -- that surviving,
+    # complete-but-stale tree is the whole fixture.
+    case_on = retrieve_synth_TRITON_SWMM_test_case(
+        analysis_name="synth_multi_sim",
+        n_events=3,
+        start_from_scratch=False,
+        additional_analysis_configs={"toggle_consolidate_timeseries": True},
+    )
+    a_on = case_on.analysis
+    assert a_on.cfg_analysis.toggle_consolidate_timeseries is True
+    assert tree_path.exists(), "pass-1 tree must survive; otherwise this tests a fresh build, not staleness"
+
+    a_on.process.consolidate_to_datatree(compression_level=5, verbose=True)
+
+    # The guard must have detected the fingerprint mismatch and rebuilt.
+    tsg_on = xr.open_datatree(tree_path, engine="zarr", consolidated=False)["tritonswmm"]
+    for node_name in ("swmm_node_timeseries", "swmm_link_timeseries"):
+        assert node_name in tsg_on, (
+            f"{node_name} absent after a toggle change on an already-consolidated tree — "
+            "the consolidation-inputs fingerprint did not invalidate it"
+        )
+    assert tree_path.stat().st_mtime > mtime_after_pass1, "tree was not rewritten"

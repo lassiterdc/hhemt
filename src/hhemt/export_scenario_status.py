@@ -432,6 +432,20 @@ def main():
         csv_path = export_scenario_status_to_csv(analysis, args.output_path)
         logger.info(f"Scenario status exported to: {csv_path}")
 
+        # F3: re-persist validation_report.json now that scenario_status.csv exists, so the
+        # `scenario_status.csv created` check (which runs at consolidation, BEFORE this rule
+        # writes the CSV) no longer bakes a false "missing" failure into the read-model the
+        # errors_and_warnings figure reads. The E&W plot rule declares scenario_status.csv as
+        # an input, so it runs after this rule -> it reads the corrected (passing) report.
+        # Non-fatal: a persist failure must never fail the CSV export.
+        try:
+            from hhemt.analysis_validation import persist_validation_report
+
+            persist_validation_report(analysis)
+            logger.info("Re-persisted validation_report.json (post-CSV) so the CSV-created check passes")
+        except Exception as e:
+            logger.warning(f"post-export validation_report.json re-persist failed (non-fatal): {e}")
+
         # Write workflow summary markdown
         logger.info("Writing workflow summary markdown...")
         if args.verbose:

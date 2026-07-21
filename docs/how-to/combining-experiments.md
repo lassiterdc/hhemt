@@ -90,3 +90,19 @@ report = cb.regenerate_report(format="zip")  # or format="html"
 Each input experiment is preserved intact under `combined/child_crates/{experiment_id}/`;
 run `Bundle.from_directory(...).eda()` on a child directory for a per-experiment
 EDA surface (a combined bundle has no aggregate EDA surface).
+
+The combined report is ONE cohesive Snakemake `--report`. Its sidebar has
+**Cross-Experiment Compatibility**, **Cross-Experiment Results** (the clean-vs-resume
+intercomparison), then one native section **per experiment** (each experiment id is a
+top-level sidebar category whose figures are that experiment's own report content,
+harvested in place from `child_crates/{experiment_id}/plots/` — no click-through to a
+separate document), and a bottom **Errors and Warnings** aggregate rolling up every
+child's validation status. There is no `index.html` front door: everything is
+navigable inside the single `analysis_report.html` (or the size-friendly
+`analysis_report.zip`). Each input experiment is still preserved intact under
+`combined/child_crates/{experiment_id}/`; run `Bundle.from_directory(...).eda()` there
+for a per-experiment EDA surface.
+
+The combined report is a first-class Snakemake `--report` (shared chrome, nav, and CSS
+with the single-experiment reports); `CombinedBundle.from_directory(dir).regenerate_report()`
+re-renders it locally from the bundled read-models with no re-merge.

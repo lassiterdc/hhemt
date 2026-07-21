@@ -168,9 +168,37 @@ def _derive_config_label(attrs: dict) -> str:
     return label
 
 
+def _n_resumes_by_sa_id(root: Path) -> dict[str, int]:
+    """sa_id -> max n_resumes from the bundled scenario_status.csv (Q11: shipped data,
+    no re-run). Mirrors _combine._bundle_role_from_status's CSV read; keys normalized to
+    the bare sa_id (strips a leading 'sa_') to match _load_subs' sa_id convention."""
+    import csv
+
+    out: dict[str, int] = {}
+    p = root / "scenario_status.csv"
+    if not p.exists():
+        return out
+    try:
+        with p.open() as fh:
+            for row in csv.DictReader(fh):
+                sa = str(row.get("sa_id") or "")
+                sa = sa[3:] if sa.startswith("sa_") else sa
+                if not sa:
+                    continue
+                try:
+                    n = int(float(row.get("n_resumes") or 0))
+                except (TypeError, ValueError):
+                    n = 0
+                out[sa] = max(out.get(sa, 0), n)
+    except OSError:
+        return {}
+    return out
+
+
 def _load_subs(root: Path) -> dict[str, dict]:
     """Load per-sub compute-config + spatial arrays from sensitivity_datatree.zarr."""
     dt = xr.open_datatree(str(root / "sensitivity_datatree.zarr"), engine="zarr", consolidated=False)
+    n_res = _n_resumes_by_sa_id(root)  # b5: sa_id -> max n_resumes from scenario_status.csv
     subs: dict[str, dict] = {}
     for g in dt.groups:
         if g.count("/") != 1 or not g.startswith("/sa_"):
@@ -186,6 +214,7 @@ def _load_subs(root: Path) -> dict[str, dict]:
             "attrs": dict(node.attrs),
             "label": _derive_config_label(node.attrs),
             "run_mode": str(node.attrs.get("run_mode", "")),
+            "n_resumes": int(n_res.get(sa_id, 0)),  # b5
             "wlevel": tri["max_wlevel_m"].isel(event_iloc=0),  # (y, x) with x/y coords
             "flow": lnk["max_flow_cms"].isel(event_iloc=0),  # (link_id,)
         }
@@ -216,6 +245,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                 grp["members"].append(sa_id)
                 grp["labels"].append(s["label"])
                 grp["run_modes"].append(s["run_mode"])
+                grp["n_resumes"].append(s["n_resumes"])  # b5
                 break
         else:
             groups.append(
@@ -223,6 +253,7 @@ def _group_by_identity(subs: dict[str, dict], root: Path) -> list[dict]:
                     "members": [sa_id],
                     "labels": [s["label"]],
                     "run_modes": [s["run_mode"]],
+                    "n_resumes": [s["n_resumes"]],  # b5
                     "wlevel": w,
                     "flow": f,
                     "wlevel_da": s["wlevel"],
@@ -671,16 +702,23 @@ def build_config_diff_figure(root: Path) -> go.Figure:
         # domain spanning the panel's y-range.
         y_top = _ydom(first_row)[1]
         y_bot = _ydom(last_row)[0]
+        # b5: parallel n_resumes column so the reader can test whether byte-identical
+        # grouping tracks resume count (a byte-identical group with MIXED n_resumes is
+        # positive evidence that hotstart resume does not perturb the result bytes).
+        _nr_by_label: dict[str, set[int]] = {}
+        for _lbl, _nr in zip(g["labels"], g["n_resumes"], strict=False):
+            _nr_by_label.setdefault(_lbl, set()).add(int(_nr))
+        _nr_col = [", ".join(str(v) for v in sorted(_nr_by_label.get(lbl, set()))) for lbl in _configs(g)]
         fig.add_trace(
             go.Table(
                 header=dict(
-                    values=["byte-identical configs"],
+                    values=["byte-identical configs", "n_resumes"],
                     align="left",
                     fill_color="#eef2f7",
                     font=dict(size=9),
                     height=20,
                 ),
-                cells=dict(values=[_configs(g)], align="left", font=dict(size=9), height=18),
+                cells=dict(values=[_configs(g), _nr_col], align="left", font=dict(size=9), height=18),
                 domain=dict(x=tbl_x, y=[max(0.0, y_bot), min(1.0, y_top)]),
             )
         )
@@ -1000,6 +1038,7 @@ def config_diff_source_paths(root: Path) -> list[Path]:
     srcs: list[Path] = [
         root / "sensitivity_datatree.zarr",
         root / "eda" / "eda_cross_sim_identity.zarr",
+        root / "scenario_status.csv",  # b5: n_resumes column in the per-panel config table
     ]
     inps = sorted(root.glob("subanalyses/*/sims/*/swmm/hydraulics.inp"))
     if inps:

@@ -54,6 +54,21 @@ _OUTPUT_EXT_BY_RENDERER: dict[str, dict[str, str]] = {
     # EDA figure family. The EDA free-functions emit interactive Plotly HTML
     # unconditionally (no matplotlib branch), so both backends resolve to .html.
     "eda_compute_sensitivity": {"matplotlib": ".html", "plotly": ".html"},
+    # Cross-experiment combined-report figures (PIP-1 Phase 5). HTML tables emitted
+    # unconditionally by the two combined renderers (emit_plot_with_sources HTML
+    # branch), so both backends resolve to .html — this lets the combined generator's
+    # _emit_plot_rule reuse resolve an ext instead of raising KeyError. A NEW renderer
+    # key changes NO existing analysis's figure filenames (C-LAYOUT preserved).
+    "cross_experiment_compatibility": {"matplotlib": ".html", "plotly": ".html"},
+    "cross_experiment_intercomparison": {"matplotlib": ".html", "plotly": ".html"},
+    # Cross-experiment spatial diff-maps renderer (b3, Phase 5): emits HTML unconditionally,
+    # same as the two cross_experiment renderers above — a key here lets the combined
+    # generator's _emit_plot_rule reuse resolve an ext instead of raising KeyError.
+    "cross_experiment_intercomparison_maps": {"matplotlib": ".html", "plotly": ".html"},
+    # Cross-experiment errors-and-warnings roll-up (F2, v9): emits HTML unconditionally,
+    # same as the cross_experiment renderers above — a key here lets the combined
+    # generator's _emit_plot_rule reuse resolve an ext instead of raising KeyError.
+    "cross_experiment_errors_and_warnings": {"matplotlib": ".html", "plotly": ".html"},
 }
 
 

@@ -107,6 +107,35 @@ class TRITONSWMM_analysis_post_processing:
 
     CONSOLIDATION_VERSION = 1
 
+    def _consolidation_inputs_fingerprint(self) -> str:
+        """Hash of every input that determines the SHAPE of the consolidated tree.
+
+        The consolidate guard rebuilds when this differs from the stamped value, so a
+        consolidation-affecting config change invalidates an otherwise-complete tree
+        with no operator action and no artifact deletion.
+
+        Evaluated against ``self._analysis.cfg_analysis`` — which, per Gotcha 73, is
+        the config the CONSOLIDATING SUBPROCESS loaded from disk, i.e. the same object
+        the toggle-gated loops below read. That is why this predicate works where a
+        driver-side kwarg cannot: the driver's in-memory config never reaches here.
+
+        MAINTENANCE CONTRACT: add a field here whenever a config value starts gating
+        WHAT LANDS in the tree. Do NOT add values that affect only bytes
+        (``compression_level``) or provenance (git sha, timestamps) — those change on
+        every run and would force a spurious rebuild every time.
+        """
+        import hashlib
+        import json
+
+        payload = {
+            "consolidation_version": self.CONSOLIDATION_VERSION,
+            "toggle_consolidate_timeseries": bool(
+                getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False)
+            ),
+            "enabled_model_types": sorted(self._analysis._get_enabled_model_types()),
+        }
+        return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
     def consolidate_to_datatree(
         self,
         compression_level: int = 5,
@@ -138,10 +167,32 @@ class TRITONSWMM_analysis_post_processing:
             hasattr(self._analysis.log, "datatree_consolidation_complete")
             and self._analysis.log.datatree_consolidation_complete.get() is True
         )
-        if fname_out.exists() and _log_complete:
+        # Staleness, distinct from the D5 corruption signal above. A tree can be
+        # intact AND complete and still have been built from different inputs than
+        # the ones now on disk (the 2026-07-20 case: toggle_consolidate_timeseries
+        # flipped ON in every persisted per-sub config, consolidation re-ran, output
+        # silently unchanged). An ABSENT stamp is treated as stale, not as a match —
+        # every tree consolidated before this stamp existed rebuilds exactly once.
+        _inputs_fingerprint = self._consolidation_inputs_fingerprint()
+        _stamped_fingerprint = (
+            self._analysis.log.consolidation_inputs_fingerprint.get()
+            if hasattr(self._analysis.log, "consolidation_inputs_fingerprint")
+            else None
+        )
+        _inputs_match = _stamped_fingerprint == _inputs_fingerprint
+        if fname_out.exists() and _log_complete and _inputs_match:
             if verbose:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
+        if fname_out.exists() and _log_complete and not _inputs_match:
+            from hhemt.utils import fast_rmtree
+
+            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            if verbose:
+                print(
+                    f"DataTree zarr present at {fname_out} but consolidation inputs changed "
+                    f"(stamped={_stamped_fingerprint!r}, current={_inputs_fingerprint!r}) — rebuilding."
+                )
         if fname_out.exists() and not _log_complete:
             from hhemt.utils import fast_rmtree
 
@@ -179,6 +230,7 @@ class TRITONSWMM_analysis_post_processing:
                 "analysis_id": str(self._analysis.cfg_analysis.analysis_id),
                 "output_creation_date": current_datetime_string(),
                 "consolidation_version": self.CONSOLIDATION_VERSION,
+                "consolidation_inputs_fingerprint": _inputs_fingerprint,
             }
         )
         tree = xr.DataTree.from_dict(tree_dict)
@@ -219,6 +271,8 @@ class TRITONSWMM_analysis_post_processing:
             self._analysis.log.datatree_consolidation_complete.set(True)
         if hasattr(self._analysis.log, "consolidation_version"):
             self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
+        if hasattr(self._analysis.log, "consolidation_inputs_fingerprint"):
+            self._analysis.log.consolidation_inputs_fingerprint.set(_inputs_fingerprint)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 

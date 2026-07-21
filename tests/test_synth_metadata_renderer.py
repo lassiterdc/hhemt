@@ -318,6 +318,49 @@ def test_slurm_section_renders_table_and_declares_the_csv_file(tmp_path):
     assert "logs/slurm_efficiency_report" not in declared
 
 
+def test_slurm_report_nested_inside_a_csv_named_directory(tmp_path):
+    """The REAL production shape: the `.csv` path is a DIRECTORY, report nested inside.
+
+    snakemake-executor-plugin-slurm treats `--slurm-efficiency-report-path` as a
+    DIRECTORY and writes `efficiency_report_{run_uuid}.csv` into it, while the toolkit
+    passes a file-shaped `slurm_efficiency_report_{ts}.csv` path. So on every SLURM run
+    the plugin mkdir's a directory with that `.csv` name and the real report lands one
+    level deeper. The pre-2026-07-20 flat glob matched the DIRECTORY and `read_text()`
+    raised `IsADirectoryError`, killing the whole `plot_metadata` rule; on the paths
+    that did not crash it silently matched no real report at all, which is why this
+    panel had never rendered data on any SLURM run.
+
+    Nothing else in this file constructs this shape — every other SLURM test writes a
+    plain file — so without this test the fix is unexercised against the case that
+    motivated it.
+    """
+    analysis_dir = tmp_path / "analysis"
+    analysis_dir.mkdir(exist_ok=True)
+    (analysis_dir / "ro-crate-metadata.json").write_text(json.dumps(_full_crate()))
+
+    # The plugin's actual layout: a DIRECTORY whose name ends in .csv, report inside.
+    eff_dir = analysis_dir / "logs" / "slurm_efficiency_report"
+    csv_named_dir = eff_dir / "slurm_efficiency_report_20260101T000000.csv"
+    csv_named_dir.mkdir(parents=True, exist_ok=True)
+    (csv_named_dir / "efficiency_report_abc123.csv").write_text(
+        "rule,job_id,cpu_efficiency\nplot_metadata,12345,91.2%\n"
+    )
+
+    output_path = analysis_dir / "plots" / "metadata.html"
+    # Must not raise IsADirectoryError.
+    metadata.render(_fake_analysis(analysis_dir), report_config(), output_path)
+
+    html = output_path.read_text()
+    assert "cpu_efficiency" in html, "nested report was not found by the recursive glob"
+    assert "91.2%" in html
+
+    manifest = json.loads((analysis_dir / "plots" / "metadata.manifest.json").read_text())
+    declared = manifest["source_paths_relative"]
+    # The NESTED file must be declared -- never the .csv-named directory, which
+    # _validate_source_path rejects as a directory-as-source (Gotcha 66d).
+    assert any(p.endswith("efficiency_report_abc123.csv") for p in declared), declared
+
+
 def test_slurm_csv_with_header_only_degrades(tmp_path):
     """R5: a header-only CSV yields the heading + an info banner, not an empty table."""
     html, _, _ = _render(tmp_path, doc=_full_crate(), slurm_csv="rule,cpu_efficiency\n")

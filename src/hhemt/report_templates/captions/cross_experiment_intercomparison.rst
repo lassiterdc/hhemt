@@ -1,0 +1,5 @@
+**Purpose:** this is the headline clean-vs-resume comparison — did resuming a coupled simulation under the fixed TRITON (``3a832f7d``) change the peak field? For every compute-config present in BOTH the clean sweep and the resume sweep, each row pairs one key-result variable (``max_flow_cms`` peak conduit flow, ``max_wlevel_m`` peak water level) for one event. *Clean vs resume* reports whether the two are byte-for-byte identical or differ, and *max_abs_diff* is the magnitude of the largest difference. Read it as: *how much did resuming perturb the answer?* — the honest finding is NEGLIGIBLY (most configs byte-identical; the rest differ only at floating-point noise, far from the pre-fix truncation). Filter/sort the columns to inspect any config; the six compute-config fields (run mode, MPI ranks, OpenMP threads, GPUs, nodes, partition) are split into their own columns. Absolute magnitudes inherit the variable-dt SWMM final-period truncation (common-mode across both arms, so the *difference* is sound). Projected from the ``combined_intercomparison.json`` read-model.
+
+**Sources:**
+
+{{ snakemake.params.source_paths_rst }}

@@ -47,6 +47,7 @@ def render(
         from hhemt.report_renderers._static_backend_warning import (
             warn_no_plotly_branch,
         )
+
         warn_no_plotly_branch("scenario_status_appendix")
 
     from hhemt.report_renderers._figure_emission import (
@@ -84,9 +85,7 @@ def render(
     weather_event_indices: list[str] = list(
         getattr(getattr(analysis, "cfg_analysis", None), "weather_event_indices", []) or []
     )
-    html_text = _build_tabulator_html(
-        df, report_cfg, csv_present, analysis_id, weather_event_indices
-    )
+    html_text = _build_tabulator_html(df, report_cfg, csv_present, analysis_id, weather_event_indices)
 
     # Declare the expected source unconditionally (ADR-6 D3): scenario_status.csv
     # is the canonical source even when absent — _validate_source_path accepts
@@ -141,12 +140,15 @@ def _build_tabulator_html(
 
     # Drop constant columns (single unique value, including all-NaN) to cut
     # clutter in single-model / single-event analyses. nunique(dropna=False) <= 1
-    # catches both all-equal and all-NaN columns. Co-design (P2): an all-zero
-    # n_resumes column (no hotstart resumes occurred) is auto-hidden here —
-    # deliberate and correct (the CSV/df_status still carries it).
+    # catches both all-equal and all-NaN columns. (v8/b4: the resume-health fields
+    # n_resumes + run_completed are EXEMPT from this hiding — an all-zero n_resumes
+    # column stays visible so the reader always sees the resume posture; this reverses
+    # the earlier P2 auto-hide co-design.)
     if report_cfg.scenario_status_appendix.hide_constant_columns:
         nunique = df.apply(lambda s: s.nunique(dropna=False))
-        df = df[[c for c in df.columns if nunique[c] > 1]]
+        # b4: exempt the resume-health fields so a single-arm (all-clean or uniform-resume)
+        # sweep still surfaces n_resumes + run_completed. All OTHER constant columns stay hidden.
+        df = df[[c for c in df.columns if nunique[c] > 1 or c in _RESUME_HEALTH_FIELDS]]
 
     # iter 9.4 — Compute column_groups FIRST, then reorder df columns to
     # match the group order so the table's left-to-right column display
@@ -203,7 +205,9 @@ def _build_tabulator_html(
     )
 
     js_mode = getattr(
-        getattr(report_cfg, "interactive", None), "tabulator_js_mode", "cdn",
+        getattr(report_cfg, "interactive", None),
+        "tabulator_js_mode",
+        "cdn",
     )
 
     # Deterministic prefix-dispatch column grouping per /design-recommendation
@@ -242,18 +246,27 @@ def _build_tabulator_html(
 # Reserved Scenario ID base (row-identifier subset of analysis.py:2409-2417
 # fixed_identity, with the two workflow-status columns lifted out into the
 # Status set below).
-_SCENARIO_ID_BASE_FIELDS = frozenset({
-    "event_iloc",
-    "model_type",
-    "scenario_directory",
-    "sa_id",
-    "subanalysis_id",
-    "sub_analysis_iloc",
-})
+_SCENARIO_ID_BASE_FIELDS = frozenset(
+    {
+        "event_iloc",
+        "model_type",
+        "scenario_directory",
+        "sa_id",
+        "subanalysis_id",
+        "sub_analysis_iloc",
+    }
+)
 
 # Reserved Status set (workflow-execution-state subset of analysis.py
 # fixed_identity).
 _STATUS_FIELDS = frozenset({"scenario_setup", "run_completed"})
+
+# b4: resume-health fields surfaced at the HEAD of Performance Breakdown. n_resumes
+# (how many hotstart resumes) + run_completed (did the sim finish) are the interpretation
+# context for the perf_* fields, whose group footnote warns they are invalid for resumed
+# runs. Kept visible even when constant (a single-arm sweep has a constant n_resumes) so
+# the reader always sees the resume posture. Order: n_resumes first, then run_completed.
+_RESUME_HEALTH_FIELDS: tuple[str, ...] = ("n_resumes", "run_completed")
 
 
 def _build_column_groups(
@@ -287,8 +300,13 @@ def _build_column_groups(
     status_cols: list[str] = []
     other_cols: list[str] = []
 
+    # b4: lift the resume-health fields OUT of their natural groups (n_resumes ->
+    # Configuration, run_completed -> Status) and PREPEND them to Performance Breakdown below.
+    resume_health_cols = [c for c in _RESUME_HEALTH_FIELDS if c in df.columns]
     for col in df.columns:
         col_str = str(col)
+        if col_str in _RESUME_HEALTH_FIELDS:
+            continue  # placed at the head of Performance Breakdown below
         if col_str.startswith("perf_"):
             perf_cols.append(col_str)
         elif col_str.startswith("actual_"):
@@ -301,46 +319,60 @@ def _build_column_groups(
             status_cols.append(col_str)
         else:
             other_cols.append(col_str)
+    perf_cols = resume_health_cols + perf_cols
 
     groups: list[tuple[str, list[str], str | None]] = []
 
     if scenario_id_cols:
-        groups.append((
-            "ID",
-            scenario_id_cols,
-            "Scenario identifiers from analysis yaml and sensitivity analysis .xlsx.",
-        ))
+        groups.append(
+            (
+                "ID",
+                scenario_id_cols,
+                "Scenario identifiers from analysis yaml and sensitivity analysis .xlsx.",
+            )
+        )
     if status_cols:
-        groups.append((
-            "Status",
-            status_cols,
-            "Workflow execution state per scenario.",
-        ))
+        groups.append(
+            (
+                "Status",
+                status_cols,
+                "Workflow execution state per scenario.",
+            )
+        )
     if other_cols:
-        groups.append((
-            "Configuration",
-            other_cols,
-            "User input fields (analysis config fields, sensitivity analysis .xlsx fields) "
-            "or fields derived directly from user input.",
-        ))
+        groups.append(
+            (
+                "Configuration",
+                other_cols,
+                "User input fields (analysis config fields, sensitivity analysis .xlsx fields) "
+                "or fields derived directly from user input.",
+            )
+        )
     if perf_cols:
-        groups.append((
-            "Performance Breakdown",
-            perf_cols,
-            "From the simulation's performance.txt. Invalid for hotstart-resumed runs — "
-            "reflects only the resumed timestep range.",
-        ))
+        groups.append(
+            (
+                "Performance Breakdown",
+                perf_cols,
+                "n_resumes + run_completed (resume health) head this group. The perf_* fields "
+                "come from the simulation's performance.txt and are invalid for hotstart-resumed "
+                "runs (n_resumes > 0) — they reflect only the resumed timestep range.",
+            )
+        )
     if actual_cols:
-        groups.append((
-            "Actual Resource Utilization",
-            actual_cols,
-            "Parsed from TRITON-SWMM-generated log file.",
-        ))
+        groups.append(
+            (
+                "Actual Resource Utilization",
+                actual_cols,
+                "Parsed from TRITON-SWMM-generated log file.",
+            )
+        )
     if snakemake_cols:
-        groups.append((
-            "Snakemake Assigned Resources",
-            snakemake_cols,
-            "Parsed from the Snakemake job's SLURM env at runtime.",
-        ))
+        groups.append(
+            (
+                "Snakemake Assigned Resources",
+                snakemake_cols,
+                "Parsed from the Snakemake job's SLURM env at runtime.",
+            )
+        )
 
     return groups
