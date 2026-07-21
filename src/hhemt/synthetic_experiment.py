@@ -167,6 +167,11 @@ def assert_coupling_nodes_distinct(
 ) -> dict[float, int]:
     """R14 geometric pre-check: no two IN-LINE coupling nodes share a DEM cell.
 
+    The retained in-line count MUST stay >= the largest MPI rank in the experiment:
+    a rung that drops it below the rank count is R14-unrunnable (see the
+    _N_COUPLING_NODES def in swmm_template.py, which explains WHY node_count caps
+    rank_count). This precheck is the ladder-time enforcement of that cap.
+
     Returns ``{cell_size_m -> retained_coupling_node_count}`` for every rung in
     ``cfg.dem_resolution_ladder`` -- the same quantity the resolution x coupling-node
     table renders, so the safety check and the disclosure artifact are one
