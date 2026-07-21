@@ -189,8 +189,8 @@ def test_reprocess_proceeds_with_submitted_workers_no_orchestrator(synthetic_mul
     present but no live ``_orchestrator/`` DRIVER sentinel exists.
 
     The liveness gate must distinguish queued/running sim workers (which a
-    reprocess legitimately coexists with) from a live orchestration driver
-    (which it must refuse). A ``_submitted/`` sentinel alone must not gate.
+    reprocess legitimately coexists with) from a live-or-indeterminate orchestration
+    driver (which it must refuse). A ``_submitted/`` sentinel alone must not gate.
     """
     a = synthetic_multisim_completed_isolated
     analysis_dir = a.analysis_paths.analysis_dir
@@ -226,7 +226,7 @@ def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_comple
     try:
         with pytest.raises(WorkflowError) as excinfo:
             builder.submit_reprocess_workflow(start_with="render", execution_mode="local", dry_run=False, verbose=False)
-        assert "live orchestration driver" in excinfo.value.stderr
+        assert "live-or-indeterminate orchestration driver" in excinfo.value.stderr
     finally:
         osent.remove_orchestrator_sentinel(analysis_dir, "live-driver")
 
