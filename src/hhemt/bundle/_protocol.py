@@ -24,3 +24,6 @@ class BundleableAnalysis(Protocol):
     _system: Any  # exposes ``cfg_system`` (with ``system_directory``)
     analysis_paths: Any  # exposes ``analysis_dir``
     cfg_analysis: Any  # exposes ``analysis_id``, ``weather_events_to_simulate``
+    cfg_hpc_system: Any  # None on local/native runs; drives hpc_system_config.identity.yaml (combine INFORMATIONAL)
+    case_manifest_yaml: Any  # None when no case manifest; drives case.yaml (combine BLOCKING case_name)
+    _case_manifest: Any  # None when no case manifest; RO-Crate root-name resolution

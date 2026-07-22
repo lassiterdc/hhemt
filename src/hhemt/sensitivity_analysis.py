@@ -231,6 +231,13 @@ class TRITONSWMM_sensitivity_analysis:
         self._skip_log_update = skip_log_update
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
+        # BundleableAnalysis delegation (_protocol.py): emit_bundle reads these off its input, so a
+        # sensitivity master (the real experiment topology) must expose them too — else the combine
+        # identity surfaces silently drop: case.yaml (BLOCKING case_name) + hpc_system_config.identity.yaml
+        # (INFORMATIONAL compute-config). Mirrors the cfg_analysis/analysis_paths delegation above.
+        self.cfg_hpc_system = analysis.cfg_hpc_system
+        self.case_manifest_yaml = analysis.case_manifest_yaml
+        self._case_manifest = analysis._case_manifest
         self.sub_analyses_prefix = "sa_"
         self.subanalysis_dir = self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         df_setup_full = self._retrieve_df_setup()

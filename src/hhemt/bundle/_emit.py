@@ -398,7 +398,8 @@ def _copy_supporting_files(analysis: TRITONSWMM_analysis, staging: Path) -> None
     # case.yaml — the case manifest carries case_name (BLOCKING experiment-identity
     # field, already in _compatibility._EXPERIMENT_IDENTITY_FIELDS). Resolved from the
     # case_manifest_yaml constructor arg (D6); None on paths that do not set it.
-    case_yaml = getattr(analysis, "case_manifest_yaml", None)
+    # BundleableAnalysis contract attr — direct access (not getattr-None) fails loud on a non-conforming input.
+    case_yaml = analysis.case_manifest_yaml
     if case_yaml is not None and Path(case_yaml).exists():
         shutil.copy2(Path(case_yaml), staging / "case.yaml")
     # Copy the weather-events CSV referenced by cfg_analysis.weather_events_to_simulate.
@@ -440,7 +441,8 @@ def _emit_hpc_identity(analysis: TRITONSWMM_analysis, staging: Path) -> None:
     """
     import yaml
 
-    cfg_hpc = getattr(analysis, "cfg_hpc_system", None)
+    # BundleableAnalysis contract attr — direct access (not getattr-None) fails loud on a non-conforming input.
+    cfg_hpc = analysis.cfg_hpc_system
     if cfg_hpc is None:
         return
     dumped = cfg_hpc.model_dump(mode="json")
