@@ -1,20 +1,20 @@
+import re
+import time
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 import xarray as xr
-from hhemt.utils import (
-    write_zarr,
-    write_netcdf,
-    write_datatree_zarr,
-    current_datetime_string,
-    get_file_size_MiB,
-)
+
 from hhemt.cf_conventions import (
     apply_cf_attributes,
     apply_global_attributes,
 )
-from typing import Literal, List
-from typing import TYPE_CHECKING
-from pathlib import Path
-import time
 from hhemt.scenario import TRITONSWMM_scenario
+from hhemt.utils import (
+    current_datetime_string,
+    get_file_size_MiB,
+    write_datatree_zarr,
+)
 
 if TYPE_CHECKING:
     from .analysis import TRITONSWMM_analysis
@@ -76,6 +76,53 @@ class TRITONSWMM_analysis_post_processing:
         "swmm_only_link": "swmm_only/swmm_link",
     }
 
+    # Per-scenario TIMESERIES modes (opt-in via analysis_config.toggle_consolidate_timeseries).
+    # Maps mode -> the scenario-path attr for the per-scenario timeseries zarr. SWMM node
+    # (wlevel(t)) + SWMM link (flow(t)) ONLY. The TRITON gridded (timestep_min, y, x) series
+    # is deliberately excluded, and the exclusion is load-bearing rather than incidental:
+    # measured on synth_cc_clean (2026-07-21), the gridded store is 6.610 MB/scenario of
+    # PAYLOAD against 0.079 MB for the SWMM node+link pair — an 83x ratio. (A "24x" figure
+    # appears in older notes; that is the DISK-BLOCK ratio, inflated toward parity because
+    # the SWMM stores are 62 tiny chunk files padded to 4 KiB blocks. Payload is the metric
+    # that governs consolidated-tree size, render-bundle size, and transfer time.)
+    # Consequence: adding the gridded series takes the 28-scenario master tree from 27 MB
+    # to ~212 MB (7.9x) on the SMALLEST grid the toolkit runs, and is single-GB-scale per
+    # scenario on a Norfolk fine grid (cf. Gotcha 24: a 1.1 m DEM's full TRITON timeseries
+    # measured ~12 GB resident).
+    #
+    # CORRECTION (2026-07-21) — an earlier version of this comment said the gridded series
+    # "is NOT needed for the clean-vs-resume over-time figure." That was WRONG and is the
+    # kind of error that survives by being repeated: the figure's wlevel panel reads
+    # wlevel_m from THIS store. SWMM node head is NOT a substitute — different quantity,
+    # different solver — and the residuals under investigation are TRITON-side (14 of 15
+    # pairs on max_wlevel_m). The exclusion stands on COST alone, not on absence of a
+    # consumer. Today the figure is fed by a documented estate reproduction script reading
+    # the per-scenario stores directly; that is a BUNDLE-FIDELITY limitation, not evidence
+    # the data is unnecessary.
+    #
+    # What the consumer actually needs is a REDUCTION -- max over (y, x) per timestep, 144
+    # float32/scenario -- not the field (6.6 MB/scenario). That is a ~11,500x amplification
+    # between what is stored and what is used, and it is why consolidating the FIELD is
+    # still the wrong answer even though a consumer exists. The reduction is also
+    # grid-INDEPENDENT (it collapses y and x, so a Norfolk scenario costs the same 144
+    # values as a synth one) whereas the field scales with ncells -- the exact property
+    # that makes the field untenable does not apply to the reduction. If a
+    # bundle-reproducible over-time figure is wanted, consolidate the REDUCTION: see
+    # _streaming_argmax_with_companions, whose per-chunk loop already holds each
+    # (chunk_timesteps, ny, nx) block in memory, so a per-timestep spatial max is a
+    # same-loop addition with ZERO additional I/O. Note the existing tritonswmm/triton
+    # summary node is the ORTHOGONAL reduction (max over TIME per cell, dims (y, x)); the
+    # two are not derivable from each other.
+    _TIMESERIES_MODE_CONFIG = {
+        "tritonswmm_swmm_node_ts": "output_tritonswmm_node_time_series",
+        "tritonswmm_swmm_link_ts": "output_tritonswmm_link_time_series",
+    }
+
+    _TIMESERIES_MODE_TO_TREE_PATH = {
+        "tritonswmm_swmm_node_ts": "tritonswmm/swmm_node_timeseries",
+        "tritonswmm_swmm_link_ts": "tritonswmm/swmm_link_timeseries",
+    }
+
     def __init__(self, analysis: "TRITONSWMM_analysis") -> None:
         self._analysis = analysis
 
@@ -91,6 +138,35 @@ class TRITONSWMM_analysis_post_processing:
         return xr.DataTree.from_dict(tree_dict)
 
     CONSOLIDATION_VERSION = 1
+
+    def _consolidation_inputs_fingerprint(self) -> str:
+        """Hash of every input that determines the SHAPE of the consolidated tree.
+
+        The consolidate guard rebuilds when this differs from the stamped value, so a
+        consolidation-affecting config change invalidates an otherwise-complete tree
+        with no operator action and no artifact deletion.
+
+        Evaluated against ``self._analysis.cfg_analysis`` — which, per Gotcha 73, is
+        the config the CONSOLIDATING SUBPROCESS loaded from disk, i.e. the same object
+        the toggle-gated loops below read. That is why this predicate works where a
+        driver-side kwarg cannot: the driver's in-memory config never reaches here.
+
+        MAINTENANCE CONTRACT: add a field here whenever a config value starts gating
+        WHAT LANDS in the tree. Do NOT add values that affect only bytes
+        (``compression_level``) or provenance (git sha, timestamps) — those change on
+        every run and would force a spurious rebuild every time.
+        """
+        import hashlib
+        import json
+
+        payload = {
+            "consolidation_version": self.CONSOLIDATION_VERSION,
+            "toggle_consolidate_timeseries": bool(
+                getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False)
+            ),
+            "enabled_model_types": sorted(self._analysis._get_enabled_model_types()),
+        }
+        return hashlib.sha1(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
     def consolidate_to_datatree(
         self,
@@ -123,10 +199,32 @@ class TRITONSWMM_analysis_post_processing:
             hasattr(self._analysis.log, "datatree_consolidation_complete")
             and self._analysis.log.datatree_consolidation_complete.get() is True
         )
-        if fname_out.exists() and _log_complete:
+        # Staleness, distinct from the D5 corruption signal above. A tree can be
+        # intact AND complete and still have been built from different inputs than
+        # the ones now on disk (the 2026-07-20 case: toggle_consolidate_timeseries
+        # flipped ON in every persisted per-sub config, consolidation re-ran, output
+        # silently unchanged). An ABSENT stamp is treated as stale, not as a match —
+        # every tree consolidated before this stamp existed rebuilds exactly once.
+        _inputs_fingerprint = self._consolidation_inputs_fingerprint()
+        _stamped_fingerprint = (
+            self._analysis.log.consolidation_inputs_fingerprint.get()
+            if hasattr(self._analysis.log, "consolidation_inputs_fingerprint")
+            else None
+        )
+        _inputs_match = _stamped_fingerprint == _inputs_fingerprint
+        if fname_out.exists() and _log_complete and _inputs_match:
             if verbose:
                 print(f"DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             return fname_out
+        if fname_out.exists() and _log_complete and not _inputs_match:
+            from hhemt.utils import fast_rmtree
+
+            fast_rmtree(fname_out, analysis_dir=self._analysis.analysis_paths.analysis_dir)
+            if verbose:
+                print(
+                    f"DataTree zarr present at {fname_out} but consolidation inputs changed "
+                    f"(stamped={_stamped_fingerprint!r}, current={_inputs_fingerprint!r}) — rebuilding."
+                )
         if fname_out.exists() and not _log_complete:
             from hhemt.utils import fast_rmtree
 
@@ -145,11 +243,26 @@ class TRITONSWMM_analysis_post_processing:
             apply_cf_attributes(ds, mode)
             tree_dict[tree_path] = ds
 
+        # Per-scenario timeseries nodes (opt-in). Default OFF. When enabled, each SWMM
+        # node/link timeseries is concatenated along event_iloc exactly as the summaries
+        # are, and grafts up to the sensitivity master for free via
+        # build_sensitivity_datatree's subtree_with_keys copy. A missing timeseries file
+        # raises FileNotFoundError here, which the master consolidate loop already tolerates
+        # under allow_incomplete=True (whole-sub skip), mirroring the summary path.
+        if getattr(self._analysis.cfg_analysis, "toggle_consolidate_timeseries", False):
+            for ts_mode, ts_tree_path in self._TIMESERIES_MODE_TO_TREE_PATH.items():
+                ts_scen_attr = self._TIMESERIES_MODE_CONFIG[ts_mode]
+                first_scen = TRITONSWMM_scenario(self._analysis.df_sims.index[0], self._analysis)
+                if getattr(first_scen.scen_paths, ts_scen_attr) is None:
+                    continue
+                tree_dict[ts_tree_path] = self._retrieve_combined_timeseries(ts_mode)
+
         tree_dict["/"] = xr.Dataset(
             attrs={
                 "analysis_id": str(self._analysis.cfg_analysis.analysis_id),
                 "output_creation_date": current_datetime_string(),
                 "consolidation_version": self.CONSOLIDATION_VERSION,
+                "consolidation_inputs_fingerprint": _inputs_fingerprint,
             }
         )
         tree = xr.DataTree.from_dict(tree_dict)
@@ -177,6 +290,9 @@ class TRITONSWMM_analysis_post_processing:
                 _semver_vals.extend(str(v) for v in _mode_ds["hhemt_producing_version"].values.tolist())
         apply_producing_stamp(tree, _sha_vals, _semver_vals)
 
+        _stamp_triton_provenance(tree, self._analysis)
+        _stamp_coupled_resume_evidence(tree, self._analysis)
+
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
 
         from hhemt.metadata import write_rocrate_sidecar
@@ -188,6 +304,8 @@ class TRITONSWMM_analysis_post_processing:
             self._analysis.log.datatree_consolidation_complete.set(True)
         if hasattr(self._analysis.log, "consolidation_version"):
             self._analysis.log.consolidation_version.set(self.CONSOLIDATION_VERSION)
+        if hasattr(self._analysis.log, "consolidation_inputs_fingerprint"):
+            self._analysis.log.consolidation_inputs_fingerprint.set(_inputs_fingerprint)
         elapsed_s = time.time() - start_time
         self._analysis.log.add_sim_processing_entry(fname_out, get_file_size_MiB(fname_out), elapsed_s, True)
 
@@ -237,6 +355,43 @@ class TRITONSWMM_analysis_post_processing:
                 "False or unset). Run consolidate_to_datatree() first."
             )
         return xr.open_datatree(path, engine="zarr", chunks="auto", consolidated=False)
+
+    def _retrieve_combined_timeseries(self, ts_mode: str) -> xr.Dataset:  # type: ignore
+        """Load per-scenario TIMESERIES zarrs and concatenate them along event_iloc.
+
+        Mirrors _retrieve_combined_output but reads the timeseries scenario-path attr
+        (_TIMESERIES_MODE_CONFIG) rather than the summary attr, and keeps each scenario's
+        `time` dimension. Concat is outer-join on time (scenarios of different weather
+        events have different time axes; within a clean-vs-resume PAIR the axes match, so
+        the over-time diff has no NaN in the overlap). Raises FileNotFoundError on a missing
+        file so the master consolidate loop's allow_incomplete=True skip applies uniformly.
+        """
+        scen_attr = self._TIMESERIES_MODE_CONFIG[ts_mode]
+        lst_ds = []
+        for event_iloc in self._analysis.df_sims.index:
+            scen = TRITONSWMM_scenario(event_iloc, self._analysis)
+            ts_file = getattr(scen.scen_paths, scen_attr)
+            if ts_file is None:
+                raise ValueError(
+                    f"Timeseries path is None for ts_mode '{ts_mode}' and event_iloc={event_iloc}."
+                )
+            if not ts_file.exists():
+                raise FileNotFoundError(
+                    f"Timeseries file not found: {ts_file}. Run timeseries processing before consolidating."
+                )
+            open_kwargs = {"chunks": "auto", "engine": self._open_engine(), "decode_timedelta": False}
+            if open_kwargs["engine"] == "zarr":
+                open_kwargs["consolidated"] = False
+            lst_ds.append(xr.open_dataset(ts_file, **open_kwargs))
+        ds_ts = xr.concat(lst_ds, dim="event_iloc", combine_attrs="drop_conflicts", join="outer")
+
+        from hhemt.scenario import compute_event_id_slug
+
+        event_ids = [
+            compute_event_id_slug(self._analysis._retrieve_weather_indexer_using_integer_index(ei))
+            for ei in self._analysis.df_sims.index
+        ]
+        return ds_ts.assign_coords(event_id=("event_iloc", event_ids))  # type: ignore
 
     def _retrieve_combined_output(self, mode: str) -> xr.Dataset:  # type: ignore
         """
@@ -312,7 +467,7 @@ class TRITONSWMM_analysis_post_processing:
     def _chunk_for_writing(
         self,
         ds_combined_outputs: xr.Dataset,
-        spatial_coords: List[str] | str | None,
+        spatial_coords: list[str] | str | None,
         spatial_coord_size: int = 65536,  # 256x256 for x,y coords
         verbose: bool = True,
         max_mem_usage_MiB: int | None = None,
@@ -423,6 +578,113 @@ class TRITONSWMM_analysis_post_processing:
             if proc_log[f_out.name].success is True:
                 already_written = True
         return already_written
+
+
+def _stamp_triton_provenance(tree: "xr.DataTree", analysis) -> None:
+    """Stamp the producing-TRITON provenance onto a consolidated-tree ROOT as plain attrs.
+
+    Carries ``triton_producing_sha`` + ``triton_has_coupled_resume_fix`` — captured at
+    COMPILE time onto the system log (a DIFFERENT process on HPC; see
+    ``system.py::_capture_tritonswmm_provenance``) — onto the consolidated tree root. Kept
+    as PLAIN root attrs (NOT ``metadata._EMBEDDED_PROV_KEYS``) so an additive provenance
+    stamp does not churn the Gotcha-63 byte-identity golden fixtures and needs no
+    LAYOUT_VERSION bump. Shared by both consolidation sites
+    (``consolidate_to_datatree`` here + ``consolidate_sensitivity_datatree`` in
+    ``sensitivity_analysis.py``). Graceful-absent: when the system log is missing or
+    unstamped (a pre-provenance build, or a reconstituted reprex bundle), the attrs are
+    simply omitted and ``check_coupled_resume_validity`` treats their absence as
+    INDETERMINATE — never a false pre-fix warn. Never raises.
+    """
+    _sys = getattr(analysis, "_system", None)
+    _sys_log = getattr(_sys, "log", None)
+    if _sys_log is None:
+        return
+    try:
+        _sys_log.refresh()  # pick up the compile-process write in the cross-process case
+    except Exception:
+        pass
+    try:
+        _sha = _sys_log.triton_head_sha.get()
+        _has_fix = _sys_log.triton_has_coupled_resume_fix.get()
+    except Exception:
+        return
+    if _sha is not None:
+        tree.attrs["triton_producing_sha"] = str(_sha)
+    if _has_fix is not None:
+        tree.attrs["triton_has_coupled_resume_fix"] = bool(_has_fix)
+
+
+def _parse_replay_t(text: str, marker: str) -> "float | None":
+    """Parse the numeric ``t=`` value from the LAST replay marker in a model log.
+
+    The model log is ``"w"``-truncated per exec (Gotcha 71b), so this is the LAST
+    resume's replay boundary — the vertical-line marker the over-time figure needs.
+    Best-effort: returns None when the marker is absent or unparseable.
+    """
+    _m = None
+    for _m in re.finditer(rf"{re.escape(marker)}\s*([-+0-9.eE]+)", text):
+        pass  # keep the last match (last exec's replay)
+    if _m is None:
+        return None
+    try:
+        return float(_m.group(1))
+    except (ValueError, IndexError):
+        return None
+
+
+def _stamp_coupled_resume_evidence(tree: "xr.DataTree", analysis) -> None:
+    """Stamp per-sub coupled-resume replay evidence onto the consolidated ROOT.
+
+    Captured at CONSOLIDATION time (logs still live, pre-R7-purge) as a PLAIN root attr
+    ``coupled_resume_replay_evidence`` = JSON ``{sub_id: {resumed, completed, replayed}}`` over
+    each tritonswmm resume-candidate sim. Makes R9's acceptance evidence DURABLE (survives the
+    ``"w"``-mode last-exec log being cleared/purged) and bundle-portable, so a downstream combine
+    / reprex consumer can assert genuine replay without the raw logs. Mirrors
+    ``_stamp_triton_provenance``: a plain root attr (NOT an ``_EMBEDDED_PROV_KEYS`` member) so no
+    LAYOUT_VERSION bump / no golden churn. Best-effort; never raises.
+    """
+    import json
+
+    from hhemt.analysis_validation import (
+        _TRITON_CHECKPOINT_READ_MARKER,
+        _TRITON_COMPLETION_MARKER,
+        _TRITON_REPLAY_MARKER,
+        _iter_subanalyses_or_self,
+    )
+    from hhemt.run_simulation import model_logfile_for
+
+    try:
+        import pandas as pd
+
+        df = getattr(analysis, "df_status", None)
+        if df is None or not {"model_type", "n_resumes", "event_iloc"}.issubset(getattr(df, "columns", [])):
+            return
+        n_res = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+        cands = df[(df["model_type"] == "tritonswmm") & (n_res >= 1)]
+        if len(cands) == 0:
+            return
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        evidence: dict[str, dict[str, bool]] = {}
+        for _, row in cands.iterrows():
+            _sa = row.get("sa_id")
+            sub = subs.get(str(_sa) if _sa is not None else None)
+            if sub is None:
+                continue
+            try:
+                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+            except Exception:  # noqa: BLE001 — log unreadable at consolidation: skip this sub, best-effort
+                continue
+            key = str(_sa) if _sa is not None else str(row.get("scenario_directory", ""))
+            evidence[key] = {
+                "resumed": _TRITON_CHECKPOINT_READ_MARKER in text,
+                "completed": _TRITON_COMPLETION_MARKER in text,
+                "replayed": _TRITON_REPLAY_MARKER in text,
+                "replay_t": _parse_replay_t(text, _TRITON_REPLAY_MARKER),
+            }
+        if evidence:
+            tree.attrs["coupled_resume_replay_evidence"] = json.dumps(evidence, sort_keys=True)
+    except Exception:  # noqa: BLE001 — durable-evidence stamp is best-effort; never block consolidation
+        return
 
 
 def prev_power_of_two(n: int | float) -> int:

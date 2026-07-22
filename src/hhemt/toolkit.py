@@ -93,6 +93,7 @@ class Toolkit:
         system_config: str | Path,
         analysis_config: str | Path,
         hpc_system_config: str | Path | None = None,
+        case_manifest_yaml: str | Path | None = None,
         validate: bool = True,
     ) -> "Toolkit":
         """Create Toolkit instance from configuration files.
@@ -109,6 +110,11 @@ class Toolkit:
                 YAML file (``hpc_system_config.yaml``). When None (default),
                 behavior is byte-identical to today — the HPC config consumers
                 wire in later phases.
+            case_manifest_yaml: Optional path to the case study's ``case.yaml``
+                (ADR-12 CaseManifest). Forwarded to the analysis constructor so
+                ``case_name`` is bundled (a BLOCKING combine-compatibility field)
+                and the RO-Crate root name resolves from the real manifest. When
+                None (default), behavior is byte-identical to today.
             validate: Whether to run preflight validation (default: True).
                 Raises ConfigurationError if validation fails.
 
@@ -140,6 +146,7 @@ class Toolkit:
             Path(analysis_config),
             system,
             hpc_system_config_yaml=(Path(hpc_system_config) if hpc_system_config is not None else None),
+            case_manifest_yaml=(Path(case_manifest_yaml) if case_manifest_yaml is not None else None),
         )
         system._analysis = analysis  # Link back
 

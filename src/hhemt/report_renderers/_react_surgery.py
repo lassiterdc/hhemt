@@ -40,7 +40,7 @@ def _order_js(category_order: tuple[str, ...] | list[str]) -> str:
 
 _PLACEHOLDER_INJECT = ', "Simulation Health (placeholder)": {"Reserved": []}'
 
-_SHOW_CATEGORY_OLD = "this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n" "    }"
+_SHOW_CATEGORY_OLD = "this.setView({ navbarMode: mode, category: category, subcategory: subcategory })\n    }"
 
 _SHOW_CATEGORY_NEW = (
     "this.setView({ navbarMode: mode, category: category, subcategory: subcategory });\n"
@@ -155,8 +155,13 @@ def apply_post_process_surgery(
     )
     html_text = html_text.replace("(a, b) => a.localeCompare(b)", _comparator)
 
-    # 5. Placeholder category injection (idempotent: check before injecting)
-    if _PLACEHOLDER_INJECT[2:] not in html_text:
+    # 5. Placeholder category injection (idempotent: check before injecting).
+    # F2 (v9): suppress the empty "Simulation Health (placeholder)" reserved slot in
+    # bundle_mode (combined + single-bundle regenerated reports) — it is meaningless chrome
+    # there, and in a cross-experiment report it is actively confusing. This mirrors the
+    # bundle_mode chrome-strip of Workflow/Statistics/General below (step 9). Source-side
+    # reports (bundle_mode=False) keep the reserved slot unchanged.
+    if not bundle_mode and _PLACEHOLDER_INJECT[2:] not in html_text:
         html_text = html_text.replace(
             "var categories = {",
             "var categories = {" + _PLACEHOLDER_INJECT[2:] + ",",

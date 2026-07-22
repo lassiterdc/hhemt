@@ -563,6 +563,18 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
     # SWMM compilation
     compilation_swmm_successful: LogField[bool] = Field(default_factory=LogField)
 
+    # TRITON provenance capture (D2). Captured at compile time in system.py against
+    # the ACTUAL cloned TRITON tree, immediately after _verify_tritonswmm_pin. These
+    # are the named persistence carrier between the compile process (setup_workflow)
+    # and the consolidation process (consolidate_workflow) — different SLURM jobs on
+    # HPC — that the two consolidation stamp sites read via
+    # analysis._system.log.triton_head_sha.get() / .triton_has_coupled_resume_fix.get().
+    # triton_head_sha is the full `git rev-parse HEAD`; triton_has_coupled_resume_fix
+    # is `git merge-base --is-ancestor 3a832f7d… HEAD` (ancestry, NOT sha-equality — a
+    # descendant of the fix commit is still post-fix).
+    triton_head_sha: LogField[str] = Field(default_factory=LogField)
+    triton_has_coupled_resume_fix: LogField[bool] = Field(default_factory=LogField)
+
     # System-level DataTree consolidation
     system_datatree_consolidation_complete: LogField[bool] = Field(
         default_factory=LogField
@@ -582,6 +594,7 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
+        "triton_has_coupled_resume_fix",
         mode="before",
     )(_create_logfield_validator(bool))
 
@@ -590,6 +603,11 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "mannings_shape",
         mode="before",
     )(_create_logfield_validator(tuple))
+
+    _validate_string_fields = field_validator(
+        "triton_head_sha",
+        mode="before",
+    )(_create_logfield_validator(str))
 
     _validate_int_fields = field_validator(
         "dem_crs_epsg",
@@ -611,6 +629,8 @@ class TRITONSWMM_system_log(TRITONSWMM_log):
         "compilation_triton_gpu_successful",
         "compilation_swmm_successful",
         "system_datatree_consolidation_complete",
+        "triton_head_sha",
+        "triton_has_coupled_resume_fix",
         "dem_crs_epsg",
         "vertical_crs_epsg",
     )(_logfield_serializer)
@@ -622,6 +642,12 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         default_factory=LogField
     )
     consolidation_version: LogField[int] = Field(default_factory=LogField)
+    # Fingerprint of the inputs that determine the SHAPE of the consolidated tree
+    # (see processing_analysis.py::_consolidation_inputs_fingerprint). The
+    # consolidate guard treats a mismatch OR an absent stamp as stale and rebuilds,
+    # so a consolidation-affecting config change (e.g. toggle_consolidate_timeseries)
+    # invalidates an otherwise-complete tree without any operator action.
+    consolidation_inputs_fingerprint: LogField[str] = Field(default_factory=LogField)
     # Sensitivity-level DataTree consolidation (Phase 3)
     sensitivity_datatree_consolidation_complete: LogField[bool] = Field(
         default_factory=LogField
@@ -674,6 +700,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
         "workflow_cancellation_time",
         "workflow_submission_node",
         "orchestrator_slurm_jobid",
+        "consolidation_inputs_fingerprint",
         mode="before",
     )(_create_logfield_validator(str))
 
@@ -689,6 +716,7 @@ class TRITONSWMM_analysis_log(TRITONSWMM_log):
     _serialize_logfields = field_serializer(
         "datatree_consolidation_complete",
         "consolidation_version",
+        "consolidation_inputs_fingerprint",
         "sensitivity_datatree_consolidation_complete",
         "cpu_backend_available",
         "gpu_backend_available",

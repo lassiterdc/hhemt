@@ -19,6 +19,7 @@ from pathlib import Path
 # first makes the later swmmio import safe. Must precede the tests.fixtures imports.
 import rioxarray  # noqa: F401  (import-order workaround — see comment above)
 
+from hhemt.bundle._dependency import ExperimentDependency, ExperimentIdentity
 from hhemt.synthetic_experiment import write_clean_matrix_csv, write_resume_matrix_csv
 from tests.fixtures.synthetic_model.cache import SyntheticModelParams
 from tests.fixtures.test_case_builder import retrieve_synth_TRITON_SWMM_test_case  # delegate target
@@ -87,6 +88,7 @@ def _build_case(
     system_directory: str | None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Materialize the synthetic UVA case and return an object exposing ``.analysis``.
 
@@ -106,6 +108,13 @@ def _build_case(
     }
     if system_directory is not None:
         system_cfg["system_directory"] = system_directory
+    # Config-injectable TRITON pin (no hardcoded config -- CLAUDE.md style #9; mirrors the
+    # hpc_system_config_yaml estate->toolkit threading below). When set by the estate runner,
+    # this OVERRIDES the test-fixture default TRITONSWMM_branch_key (test_case_builder.py:415,
+    # "15eb18a5...") via the additional_system_configs merge at test_case_builder.py:450, so the
+    # experiment runs under the pinned TRITON while the synth test tier keeps the fixture default.
+    if tritonswmm_branch_key is not None:
+        system_cfg["TRITONSWMM_branch_key"] = tritonswmm_branch_key
 
     # Config-injectable (no hardcoded config — CLAUDE.md style #9): callers (the private-estate
     # runner) pass the git-tracked estate config carrying the real account; None preserves the
@@ -128,6 +137,16 @@ def _build_case(
         hpc_system_config_yaml=hpc_cfg,
         additional_analysis_configs={
             "multi_sim_run_method": "batch_job",
+            # Opt-in per-scenario SWMM node/link timeseries consolidation. ON for this
+            # experiment because the clean-vs-resume over-time MAX-ABSOLUTE-difference
+            # figure reads tritonswmm/swmm_{node,link}_timeseries from the consolidated
+            # master tree, and the per-config resume vlines read the durable replay_t
+            # stamped alongside it. The toolkit-wide default stays False
+            # (config/analysis.py) — this is the EXPERIMENT's value for an
+            # experiment-policy knob, expressed here beside the other policy literals
+            # rather than injected from the estate (the estate carries environment and
+            # secrets — the real account — not experiment policy).
+            "toggle_consolidate_timeseries": True,
             # batch_job REQUIRED fields (default None -> raise at load if omitted). The retired
             # hpc_account / hpc_login_node / hpc_max_simultaneous_sims / hpc_gpus_per_node keys
             # moved to hpc_system_config_synth_uva.yaml (default_account / login_node /
@@ -136,10 +155,18 @@ def _build_case(
             # base-level per-sim walltime (the sensitivity CSV overrides it per sub-analysis;
             # 30 matches the clean-experiment walltime in write_clean_matrix_csv):
             "hpc_time_min_per_sim": 30,
-            # Snakemake retries: high for resume so a walltime-killed sim auto-resumes to
-            # completion within ONE analysis.run(); 2 for clean (never killed).
-            "hpc_restart_times_simulate": 20 if resume else 2,
-            "hpc_restart_times_other": 20 if resume else 2,
+            # Snakemake retries: under the Option-D deterministic single kill the
+            # resume arm's attempt-1 is SIGKILLed after N checkpoints and attempt-2
+            # resumes-to-completion under the generous walltime, so a LOW cap (3)
+            # both completes the sweep and fails a genuinely non-converging config
+            # FAST. 2 for clean (never killed).
+            "hpc_restart_times_simulate": 3 if resume else 2,
+            "hpc_restart_times_other": 3 if resume else 2,
+            # Option-D deterministic single-kill resume-test harness: on the RESUME
+            # arm the runner SIGKILLs a fresh first-attempt sim after 3 hotstart
+            # checkpoints (forcing exactly one mid-sim kill); the retry resumes and
+            # completes under the generous walltime. None (clean arm) disables it.
+            "deterministic_kill_after_n_checkpoints": 3 if resume else None,
             # base partition selectors (the CSV overrides ensemble per-row). The master ensemble
             # is a GPU partition so the master participates in the GPU-target dedup (Gotcha 54);
             # setup/prepare/process/consolidate run on standard.
@@ -165,11 +192,28 @@ def _build_case(
     return _Case(analysis=case.analysis, system_directory=str(case.system.cfg_system.system_directory))
 
 
+def resume_depends_on(tritonswmm_sha: str = "3a832f7d") -> ExperimentDependency:
+    """The RESUME experiment's first-class dependency on the CLEAN experiment (P2+V3).
+
+    This is the unmistakeable, version-controlled declaration the reproducible ``intercomparison``
+    driver reads to verify + resolve the clean bundle. ``tritonswmm_sha`` is the pinned solver
+    (default ``3a832f7d``); ``case_name`` binds once the bundle carries ``case.yaml`` (Phase-5
+    ``_emit`` copy) — until then ``read_bundle_identity`` returns ``case_name=None`` and
+    ``ExperimentIdentity.matches`` skips it, so the sha+role check still holds. ``compute_config_identity``
+    is v1-None (both arms share the SAME 28-config matrix, so it is not a clean/resume discriminator)."""
+    return ExperimentDependency(
+        dependency_experiment_id="synth_cc_clean",
+        role="clean",
+        expected_identity=ExperimentIdentity(tritonswmm_sha=tritonswmm_sha),
+    )
+
+
 def clean_case(
     start_from_scratch: bool = False,
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Clean determinism experiment: 28-config sweep, single-allocation walltime.
 
@@ -192,6 +236,7 @@ def clean_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
 
 
@@ -201,30 +246,35 @@ def resume_case(
     cell_size_m: float = 3.5,
     runtime_min_by_sa: dict[str, float] | None = None,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
-    """Resume demo: short walltime forces a mid-sim kill; raised retry cap guarantees completion.
+    """Resume demo (Option-D deterministic single kill): the runner SIGKILLs the
+    fresh first attempt mid-sim after N hotstart checkpoints; the Snakemake retry
+    resumes-to-completion under a GENEROUS walltime.
 
     ``cell_size_m`` MUST match the value passed to ``clean_case`` (same grid → the
-    byte-identity clean-vs-resume comparison is valid). A finer resolution makes
-    sims run long enough that the 1-min SLURM walltime actually kills them, so the
-    hotstart-resume path is genuinely exercised (DoD #3).
+    byte-identity clean-vs-resume comparison is valid). Under Option D the kill is
+    DETERMINISTIC (checkpoint-count SIGKILL), NOT a walltime expiry, so no finer
+    resolution / longer runtime is needed to make the kill fire — it works even
+    for a ~1.6-min GPU sim (DoD #3 is satisfied by the deterministic kill).
 
-    ``runtime_min_by_sa``: per-``sa_id`` full-completion wallclock (minutes) measured
-    from the CLEAN sweep; sizes each backend's resume walltime to ~T/3 so the kill
-    fires and completion lands within ``hpc_restart_times_simulate`` from a single ``.run()``.
+    ``runtime_min_by_sa`` is IGNORED under Option D (the resume walltime is the
+    generous clean walltime, not a T/3 short window); it is retained only for
+    signature stability with ``build_resume_from_clean_runtimes`` and is a
+    candidate for removal in a follow-up cleanup.
 
     Pass ``system_directory`` on Rivanna to root the case under project space (Decision 4), e.g.
     ``"/project/{your-allocation}/{username}/norfolk/synth_compute_config/synth_cc_resume"``.
     """
     _GENERATED.mkdir(parents=True, exist_ok=True)
     csv = _GENERATED / "resume_matrix.csv"
-    write_resume_matrix_csv(csv, runtime_min_by_sa=runtime_min_by_sa)
-    # NOTE: resume completion is driven by REPEATED DRIVER RE-INVOCATION in Phase 3
-    # (analysis.run(from_scratch=False, ...) re-plans the v2 wait-rules and re-dispatches the
-    # walltime-killed simulation_sa_* rules from the latest config_NNNN.cfg checkpoint — Gotcha 30,
-    # master A5), NOT a config knob. hpc_max_wait_for_inflight_min already defaults to its 10080
-    # max (config/analysis.py:147) and is the v2 wait-rule poll backstop, NOT the Snakemake
-    # restart-times cap; setting it here was a no-op against the wrong knob and is removed.
+    write_resume_matrix_csv(csv)
+    # Option-D mechanism: resume completion lands within ONE analysis.run() via
+    # Snakemake retries — attempt-1 is deterministically SIGKILLed after N
+    # checkpoints (deterministic_kill_after_n_checkpoints on the resume analysis
+    # config), and attempt-2 resumes from the latest config_NNNN.cfg checkpoint and
+    # completes under the generous per-sim walltime. This supersedes the prior
+    # short-walltime + repeated-driver-re-invocation scheme (both retired).
     return _build_case(
         analysis_name="synth_cc_resume",
         sensitivity_csv=csv,
@@ -233,6 +283,7 @@ def resume_case(
         system_directory=system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
 
 
@@ -242,6 +293,7 @@ def build_resume_from_clean_runtimes(
     system_directory: str | None = None,
     cell_size_m: float = 3.5,
     hpc_system_config_yaml: Path | None = None,
+    tritonswmm_branch_key: str | None = None,
 ) -> _Case:
     """Two-pass (FQ3): read each completed clean-sweep sa_id's full-completion
     wallclock and size the resume walltimes to force a mid-sim kill (~T/3), then
@@ -258,6 +310,7 @@ def build_resume_from_clean_runtimes(
         system_directory=clean_system_directory,
         cell_size_m=cell_size_m,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
     runtime_min_by_sa = size_resume_walltimes(clean.analysis)
     return resume_case(
@@ -265,4 +318,103 @@ def build_resume_from_clean_runtimes(
         cell_size_m=cell_size_m,
         runtime_min_by_sa=runtime_min_by_sa,
         hpc_system_config_yaml=hpc_system_config_yaml,
+        tritonswmm_branch_key=tritonswmm_branch_key,
     )
+
+
+def _emit_bundle(case: _Case) -> Path:
+    """Committed emit step (supersedes the prior inline-heredoc runbook): eda + bundle a materialized
+    case, returning the bundle path. Requires df_status all-complete (batch_job runs out-of-band)."""
+    a = case.analysis
+    a.eda()  # writes eda/{plot_id}.zarr + .verdict.json + plots/eda/*.html
+    return Path(a.sensitivity.bundle_report_data())  # harvests plots/eda/*.manifest.json -> carries eda zarr+verdict
+
+
+def _cli() -> None:
+    """First-class committed CLI (FQ3, supersedes the operator inline-heredoc runbook).
+
+    ``clean`` / ``resume --eda --bundle`` emit a per-arm bundle; ``intercomparison`` is the SINGLE
+    reproducible entry that resolves+verifies the clean dependency (P2+V3), ensures the resume bundle,
+    and combines them (lineage-stamped). ``hhemt combine`` remains the one explicit compare verb; this
+    entry drives it from the resume ``depends_on`` so reproduction needs no hand-authored code."""
+    import argparse
+
+    p = argparse.ArgumentParser(
+        prog="synth_compute_config",
+        description="Synth compute-config experiment driver (emit / combine).",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("clean", "resume"):
+        sp = sub.add_parser(name)
+        sp.add_argument("--system-directory", required=True)
+        sp.add_argument("--hpc-system-config", type=Path, default=None)
+        sp.add_argument("--cell-size-m", type=float, default=3.5)
+        sp.add_argument("--tritonswmm-sha", default="3a832f7d")
+        sp.add_argument("--eda", action="store_true")
+        sp.add_argument("--bundle", action="store_true")
+    ip = sub.add_parser("intercomparison")
+    ip.add_argument("--clean-system-directory", required=True)
+    ip.add_argument("--resume-system-directory", required=True)
+    ip.add_argument(
+        "--clean-bundle-search-root",
+        type=Path,
+        action="append",
+        required=True,
+        help="Dir(s) to search for the clean bundle (repeatable).",
+    )
+    ip.add_argument("--hpc-system-config", type=Path, default=None)
+    ip.add_argument("--cell-size-m", type=float, default=3.5)
+    ip.add_argument("--tritonswmm-sha", default="3a832f7d")
+    ip.add_argument("--output", type=Path, default=None)
+    args = p.parse_args()
+
+    if args.cmd in ("clean", "resume"):
+        factory = clean_case if args.cmd == "clean" else resume_case
+        case = factory(
+            system_directory=args.system_directory,
+            cell_size_m=args.cell_size_m,
+            hpc_system_config_yaml=args.hpc_system_config,
+            tritonswmm_branch_key=args.tritonswmm_sha,
+        )
+        if args.eda or args.bundle:
+            print("BUNDLE:", _emit_bundle(case))  # eda+bundle folded in (first-class emit)
+        else:
+            print("MATERIALIZED:", case.system_directory, "-> run analysis.run() then re-invoke with --eda --bundle")
+        return
+
+    # intercomparison: the SINGLE reproducible entry (resolve+verify+combine+lineage-stamp).
+    from hhemt.bundle._combine import combine_bundle
+    from hhemt.bundle._dependency import resolve_dependency
+
+    # AR2 (FQ2): batch_job submission is async (a submission RECEIPT, not completion), so auto-running
+    # the 28-config GPU clean sweep here could not be awaited-then-combined in one process anyway; and a
+    # large shared-cluster allocation should be operator-authorized. So HALT with the exact committed
+    # command (no improvised code -- the command IS the factory entry). auto_satisfy is the opt-in seam a
+    # future synchronous local-mode driver could wire.
+    # Include --hpc-system-config in the emitted reproduction command ONLY when supplied, so the
+    # halt message is always a copy-paste-valid command (no literal "None" path).
+    hpc_flag = f"--hpc-system-config {args.hpc_system_config} " if args.hpc_system_config is not None else ""
+    clean_root = resolve_dependency(
+        resume_depends_on(tritonswmm_sha=args.tritonswmm_sha),
+        search_roots=list(args.clean_bundle_search_root),
+        auto_satisfy=None,
+        emitted_command=(
+            f"python -m scripts.experiments.synth_compute_config clean "
+            f"--system-directory {args.clean_system_directory} "
+            f"{hpc_flag}"
+            f"--tritonswmm-sha {args.tritonswmm_sha} --eda --bundle"
+        ),
+    )
+    resume_case_obj = resume_case(
+        system_directory=args.resume_system_directory,
+        cell_size_m=args.cell_size_m,
+        hpc_system_config_yaml=args.hpc_system_config,
+        tritonswmm_branch_key=args.tritonswmm_sha,
+    )
+    resume_root = _emit_bundle(resume_case_obj)  # ensure the resume bundle (df_status must be complete)
+    combined = combine_bundle([clean_root, Path(resume_root)], output_path=args.output)
+    print("COMBINED:", combined.root)  # lineage stamp lives in combined_of (FILE 3)
+
+
+if __name__ == "__main__":
+    _cli()

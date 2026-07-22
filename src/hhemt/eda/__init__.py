@@ -30,13 +30,21 @@ from hhemt.eda._report import (
     dem_resolution_error_ecdf_figure_from_root,
 )
 from hhemt.eda._result import EdaReportResult, EdaResult
+from hhemt.eda.compute_sensitivity import (
+    check_cross_hardware_magnitude,
+    check_rank_sensitivity,
+    check_resume_sensitivity,
+)
 from hhemt.eda.cross_sim_identity import check_cross_sim_identity
 
 __all__ = [
     "EdaContext",
     "EdaReportResult",
     "EdaResult",
+    "check_cross_hardware_magnitude",
     "check_cross_sim_identity",
+    "check_rank_sensitivity",
+    "check_resume_sensitivity",
     "config_diff_maps_figure_from_root",
     "dem_resolution_coupling_table_figure_from_root",
     "dem_resolution_cost_error_figure_from_root",

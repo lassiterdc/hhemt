@@ -163,6 +163,21 @@ class analysis_config(cfgBaseModel):
             "(1h) to 10080 (1 week). Lower it only to force an earlier give-up."
         ),
     )
+    deterministic_kill_after_n_checkpoints: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Synthetic resume-test harness ONLY (Option-D deterministic single "
+            "kill). When set to N >= 1, the run-simulation runner hard-kills "
+            "(SIGKILL) a FRESH first-attempt TRITON/TRITON-SWMM sim once N "
+            "complete config_NNNN.cfg hotstart checkpoints exist, forcing exactly "
+            "one mid-sim kill so the Snakemake retry resumes-to-completion under a "
+            "generous walltime. Gated on sim_start_reporting_tstep == 0, so a "
+            "resume attempt is never killed. Default None DISABLES the harness — "
+            "production and clean-arm runs MUST leave it unset (the runner path is "
+            "byte-identical to a plain proc.wait() when None)."
+        ),
+    )
     # local run constraints
     local_cpu_cores_for_workflow: int | None = Field(
         None,
@@ -279,6 +294,26 @@ class analysis_config(cfgBaseModel):
     target_processed_output_type: Literal["zarr", "nc"] = Field(
         "zarr",
         description="TRITON processed output type, zarr or nc.",
+    )
+    toggle_consolidate_timeseries: bool = Field(
+        default=False,
+        description=(
+            "When True, the per-scenario SWMM node (wlevel(t)) and SWMM link (flow(t)) "
+            "TIMESERIES are consolidated into the analysis/sensitivity DataTree under "
+            "tritonswmm/swmm_node_timeseries and tritonswmm/swmm_link_timeseries "
+            "(concatenated along event_iloc). Default False (summaries only) — enable to "
+            "unblock over-time clean-vs-resume difference figures. The TRITON gridded "
+            "timeseries is NOT consolidated: it is ~83x larger per scenario by payload "
+            "(6.6 MB vs 0.08 MB measured), would inflate a 28-scenario master tree 7.9x, "
+            "and is GB-scale per scenario on a production fine grid. It is excluded on "
+            "COST, not for lack of a consumer — the clean-vs-resume over-time figure does "
+            "read wlevel_m from the per-scenario gridded store, via a documented estate "
+            "reproduction script. What that figure consumes is a per-timestep "
+            "max-over-(y,x) reduction (144 values/scenario), not the field; consolidating "
+            "the reduction is the cheap, grid-independent extension. "
+            "LAYOUT_VERSION bump (config/analysis.py is allowlisted; the tree-node add is "
+            "additive-read-compatible)."
+        ),
     )
     process_output_target_chunksize_mb: int = Field(
         200,

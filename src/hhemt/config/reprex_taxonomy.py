@@ -140,6 +140,14 @@ _FIELD_BUCKET: dict[str, Bucket] = {
     "weather_time_series_spatial_mean_rainfall_datavar": "experiment",
     "weather_time_series_storm_tide_datavar": "experiment",
     "weather_time_series_timestep_dimension_name": "experiment",
+    # Both added per the RULE above: neither is an HPC-execution field, so both are
+    # "experiment". `deterministic_kill_after_n_checkpoints` is the Option-D
+    # checkpoint-kill harness knob; `toggle_consolidate_timeseries` gates per-scenario
+    # SWMM node/link timeseries consolidation. Their absence was caught by
+    # test_every_config_field_appears_exactly_once — the totality gate this table's
+    # docstring names — which had been red for both fields.
+    "deterministic_kill_after_n_checkpoints": "experiment",
+    "toggle_consolidate_timeseries": "experiment",
 }
 
 

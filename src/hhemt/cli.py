@@ -2021,11 +2021,24 @@ def bundle_command(
     hpc_system_config: Path | None = typer.Option(
         None,
         "--hpc-system-config",
-        help="Optional path to the per-HPC-system configuration YAML file",
+        help=(
+            "Optional per-cluster hpc_system_config YAML. When given, the bundle "
+            "carries a scrubbed hpc_system_config.identity.yaml so the combine "
+            "compatibility checker sees the compute-config surface (INFORMATIONAL)."
+        ),
         exists=True,
         file_okay=True,
         dir_okay=False,
         readable=True,
+    ),
+    case_manifest: Path = typer.Option(
+        None,
+        "--case-manifest",
+        help=(
+            "Optional case.yaml (ADR-12 CaseManifest). When given, the bundle "
+            "carries case.yaml so the combine checker sources case_name (BLOCKING: "
+            "two different case studies refuse to combine)."
+        ),
     ),
     output: Path = typer.Option(
         None,
@@ -2085,7 +2098,12 @@ def bundle_command(
     from hhemt.system import TRITONSWMM_system
 
     system = TRITONSWMM_system(system_config)
-    analysis = TRITONSWMM_analysis(analysis_config, system, hpc_system_config_yaml=hpc_system_config)
+    analysis = TRITONSWMM_analysis(
+        analysis_config,
+        system,
+        hpc_system_config_yaml=hpc_system_config,
+        case_manifest_yaml=case_manifest,
+    )
     from hhemt.bundle import emit_bundle
 
     if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):

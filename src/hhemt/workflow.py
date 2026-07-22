@@ -5179,13 +5179,74 @@ exit $snakemake_status
         except Exception:
             return None
 
+    def _status_progress_fingerprint(self) -> tuple[int, float]:
+        """Forward-progress signal for the workflow wait watchdog.
+
+        Returns ``(n_flags, max_mtime)`` over the analysis ``_status/`` subtree:
+        the count of ``_status/*.flag`` completion markers plus the newest mtime
+        of any file under ``_status/`` (which advances on every ``_submitted/`` /
+        ``_queued/`` / ``_completed/`` / ``_failed/`` sentinel write). A change in
+        either component between polls means the workflow made progress; a flat
+        fingerprint across the stall window means it is stuck.
+        """
+        status_dir = self.analysis_paths.analysis_dir / "_status"
+        if not status_dir.exists():
+            return (0, 0.0)
+        n_flags = 0
+        max_mtime = 0.0
+        for p in status_dir.rglob("*"):
+            try:
+                if p.is_file():
+                    if p.name.endswith(".flag"):
+                        n_flags += 1
+                    m = p.stat().st_mtime
+                    if m > max_mtime:
+                        max_mtime = m
+            except OSError:
+                continue
+        return (n_flags, max_mtime)
+
+    def _tmux_snakemake_exit_status(self, session_name: str) -> int | None:
+        """Best-effort read of the Snakemake exit code from the tmux workflow log.
+
+        ``_submit_tmux_workflow`` writes ``=== Snakemake completed at ... (exit: N) ===``
+        to ``tmux_session_*.log`` before killing the session. Returns ``N`` when the
+        line is present (the authoritative success/crash signal), else ``None``
+        (session died before Snakemake wrote its exit line -> treat as crash).
+        """
+        import re
+
+        log_dir = self.analysis_paths.analysis_log_directory
+        try:
+            candidates = sorted(log_dir.glob("tmux_session_*.log"), key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return None
+        if not candidates:
+            return None
+        try:
+            text = candidates[-1].read_text(errors="replace")
+        except OSError:
+            return None
+        matches = re.findall(r"Snakemake completed at .*?\(exit:\s*(\d+)\)", text)
+        return int(matches[-1]) if matches else None
+
     def _wait_for_tmux_session_completion(
         self,
         session_name: str,
         verbose: bool = True,
+        poll_interval_s: int = 5,
+        no_progress_timeout_min: float | None = None,
     ) -> dict:
         """
-        Wait for tmux session to exit.
+        Wait for the tmux workflow session, with a no-progress watchdog.
+
+        Polls tmux session liveness AND the analysis ``_status/`` forward-progress
+        fingerprint. If the session is alive but the fingerprint has not advanced
+        for ``no_progress_timeout_min``, the workflow is declared STALLED, the tmux
+        session is killed (Snakemake's SIGINT handler cancels its worker jobs), and
+        ``completed=False`` is returned. When the session exits, the Snakemake exit
+        code from the tmux log is consulted so an ABNORMAL death is reported as
+        FAILED rather than success.
 
         Parameters
         ----------
@@ -5193,6 +5254,12 @@ exit $snakemake_status
             Name of the tmux session
         verbose : bool
             Print status messages
+        poll_interval_s : int
+            Seconds between polls.
+        no_progress_timeout_min : float | None
+            Stall threshold. When None, defaults to ``max(30, 6 * per_sim_walltime)``
+            minutes, where ``per_sim_walltime`` is ``hpc_time_min_per_sim`` — generous
+            enough that a healthy but queue-backed sweep never trips it.
 
         Returns
         -------
@@ -5201,9 +5268,14 @@ exit $snakemake_status
             - message: str
         """
         module_load_prefix = self._get_module_load_prefix()
+        if no_progress_timeout_min is None:
+            per_sim = getattr(self.cfg_analysis, "hpc_time_min_per_sim", None) or 5
+            no_progress_timeout_min = max(30.0, 6.0 * float(per_sim))
+        stall_seconds = no_progress_timeout_min * 60.0
+        last_fp = self._status_progress_fingerprint()
+        last_progress_t = time.monotonic()
         try:
             while True:
-                # Check if session still exists (with module load on HPC)
                 has_session_cmd = f"{module_load_prefix}tmux has-session -t {session_name}"
                 check_result = subprocess.run(
                     ["bash", "-c", has_session_cmd],
@@ -5212,32 +5284,59 @@ exit $snakemake_status
                 )
 
                 if check_result.returncode != 0:
-                    # Session no longer exists - workflow completed
+                    # Session gone -> consult the Snakemake exit code (session-absence
+                    # is NOT proof of success; an abnormal death must read as FAILED).
+                    exit_code = self._tmux_snakemake_exit_status(session_name)
+                    if exit_code == 0:
+                        if verbose:
+                            print("[Snakemake] Tmux session exited cleanly (exit 0) - workflow complete", flush=True)
+                        return {"completed": True, "message": "Workflow completed successfully"}
                     if verbose:
                         print(
-                            "[Snakemake] Tmux session exited - workflow complete",
+                            f"[Snakemake] Tmux session ended abnormally "
+                            f"(snakemake exit: {exit_code}) - workflow FAILED",
                             flush=True,
                         )
                     return {
-                        "completed": True,
-                        "message": "Workflow completed successfully",
+                        "completed": False,
+                        "message": f"Workflow failed: tmux session ended with snakemake exit {exit_code}",
                     }
 
-                # Session still exists, wait and check again
-                time.sleep(5)
+                # Session alive: check forward progress against the stall window.
+                fp = self._status_progress_fingerprint()
+                now = time.monotonic()
+                if fp != last_fp:
+                    last_fp = fp
+                    last_progress_t = now
+                elif now - last_progress_t > stall_seconds:
+                    if verbose:
+                        print(
+                            f"[Snakemake] STALL: no _status/ progress for "
+                            f"{no_progress_timeout_min:.0f} min while the tmux session is alive; "
+                            f"killing the session and failing fast.",
+                            flush=True,
+                        )
+                    subprocess.run(
+                        ["bash", "-c", f"{module_load_prefix}tmux kill-session -t {session_name}"],
+                        capture_output=True,
+                    )
+                    return {
+                        "completed": False,
+                        "message": (
+                            f"Workflow stalled: no forward progress in _status/ for "
+                            f"{no_progress_timeout_min:.0f} min (tmux session alive but not advancing); "
+                            f"session killed."
+                        ),
+                    }
+
+                time.sleep(poll_interval_s)
 
         except KeyboardInterrupt:
             if verbose:
                 print("\n[Snakemake] Wait interrupted by user", flush=True)
-            return {
-                "completed": False,
-                "message": "Wait interrupted by user",
-            }
+            return {"completed": False, "message": "Wait interrupted by user"}
         except Exception as e:
-            return {
-                "completed": False,
-                "message": f"Error while waiting: {str(e)}",
-            }
+            return {"completed": False, "message": f"Error while waiting: {str(e)}"}
 
     def submit_workflow(
         self,
@@ -6627,6 +6726,34 @@ exit $snakemake_status
                 flush=True,
             )
 
+    # Delete-rule resources. Delete rules are CPU-only filesystem work, so under
+    # `--executor slurm` they must target the CPU processing partition — exactly
+    # like the report-tail plot rules (see the `report_tail_slurm_partition`
+    # comment at ~:359). Without an explicit slurm_partition they inherit
+    # `default-resources`' slurm_partition={hpc_ensemble_partition} (:3177),
+    # which is the GPU ensemble partition, and are submitted with ZERO GRES —
+    # rejected at sbatch on a GPU-only partition. Observed 2026-07-20: 112
+    # uniform `Error in rule delete_subanalysis_reprocess` failures on
+    # gpu-a6000. Empty partition (local mode, or an unset processing partition)
+    # emits NO slurm_partition key — byte-identical to the pre-fix literal, so
+    # local-mode Snakefiles are unchanged.
+    #
+    # NOTE this deliberately does NOT route through _build_resource_block: that
+    # helper RAISES when partition is None and multi_sim_run_method != "local",
+    # and preflight does not require hpc_setup_and_analysis_processing_partition
+    # (validation.py:932 requires only hpc_ensemble_partition), so routing here
+    # would turn a working analysis.delete() into a hard failure on configs that
+    # legitimately omit it. Converge on _build_resource_block only after that
+    # field becomes preflight-required.
+    def _delete_rule_resources(self) -> str:
+        partition = (
+            str(self.cfg_analysis.hpc_setup_and_analysis_processing_partition or "")
+            if self.cfg_analysis.multi_sim_run_method != "local"
+            else ""
+        )
+        partition_kv = f'slurm_partition="{partition}", ' if partition else ""
+        return f"    resources: {partition_kv}cpus_per_task=1, mem_mb=4096, runtime=120\n"
+
     def _build_delete_snakefile_content(self) -> str:
         """Build the non-sensitivity delete Snakefile content.
 
@@ -6655,7 +6782,7 @@ exit $snakemake_status
                 f"rule delete_scenario_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"{self._delete_rule_resources()}"
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_scenario_runner "\n'
                 f'        "--event-id {event_id} "\n'
@@ -6670,7 +6797,7 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_scenario_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+            f"{self._delete_rule_resources()}"
             f"    shell:\n"
             f'        "{python_exe} -m hhemt.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -6701,7 +6828,7 @@ exit $snakemake_status
                 f"rule delete_subanalysis_{rule_name_slug}:\n"
                 f"    output:\n"
                 f'        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f"{self._delete_rule_resources()}"
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_subanalysis_runner "\n'
                 f'        "--sa-id {sa_id} "\n'
@@ -6716,7 +6843,7 @@ exit $snakemake_status
             f"        {consolidation_inputs if per_sa_flags else ''}\n"
             f"    output:\n"
             f'        "{consolidation_flag}"\n'
-            f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+            f"{self._delete_rule_resources()}"
             f"    shell:\n"
             f'        "{python_exe} -m hhemt.delete_consolidation_runner "\n'
             f'        "--analysis-dir {analysis_dir}"\n\n'
@@ -6852,29 +6979,47 @@ exit $snakemake_status
 
         master_dir = str(self.analysis_paths.analysis_dir)
         python_exe = self.python_executable
+        # Snakemake creates `log:` parents, but the shell redirect below runs before
+        # that guarantee is reliable under every executor — create the directory here
+        # so the `> {log} 2>&1` redirect cannot fail on a missing parent.
+        (self.analysis_paths.analysis_dir / "logs" / "delete_reprocess").mkdir(parents=True, exist_ok=True)
         rules: list[str] = []
         leaf_flags: list[str] = []
 
         def _proc_rule(rule_suffix: str, event_id: str, target_analysis_dir: str, flag: str) -> str:
+            # `log:` alone does NOT capture stdout/stderr — Snakemake only declares the
+            # path and exempts it from delete-on-failure; the shell must redirect into
+            # it. Both halves are required (2026-07-20: 112 delete-runner failures were
+            # undiagnosable from the outer snakemake log, which records only "command
+            # exited with non-zero exit code"). The SLURM executor's per-job log is NOT
+            # a substitute: it lands under the isolated
+            # .snakemake_reprocess_delete/.snakemake/slurm_logs/ working subdir and does
+            # not exist at all under local --cores execution.
+            log = f"{master_dir}/logs/delete_reprocess/delete_processed_{rule_suffix}.log"
             return (
                 f"rule delete_processed_{rule_suffix}:\n"
                 f'    output:\n        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f'    log:\n        "{log}"\n'
+                f"{self._delete_rule_resources()}"
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_processed_runner "\n'
-                f'        "--event-id {event_id} --analysis-dir {target_analysis_dir}"\n\n'
+                f'        "--event-id {event_id} --analysis-dir {target_analysis_dir} "\n'
+                f'        "> {{log}} 2>&1"\n\n'
             )
 
         def _zarr_rule(rule_suffix: str, target_analysis_dir: str, flag: str, inputs: list[str]) -> str:
             inp = ",\n        ".join(f'"{f}"' for f in inputs)
+            log = f"{master_dir}/logs/delete_reprocess/delete_reprocess_zarr_{rule_suffix}.log"
             return (
                 f"rule delete_reprocess_zarr_{rule_suffix}:\n"
                 f"    input:\n        {inp if inputs else ''}\n"
                 f'    output:\n        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f'    log:\n        "{log}"\n'
+                f"{self._delete_rule_resources()}"
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_reprocess_zarr_runner "\n'
-                f'        "--analysis-dir {target_analysis_dir}"\n\n'
+                f'        "--analysis-dir {target_analysis_dir} "\n'
+                f'        "> {{log}} 2>&1"\n\n'
             )
 
         def _subanalysis_rule(rule_suffix: str, sa_id: str, sub_dir: str, flag: str, start_with: str) -> str:
@@ -6883,13 +7028,16 @@ exit $snakemake_status
             # processed/ across ALL its events (only when start_with=='process')
             # + the sub's analysis_datatree.zarr.
             proc_arg = " --delete-processed" if start_with == "process" else ""
+            log = f"{master_dir}/logs/delete_reprocess/delete_subanalysis_reprocess_{rule_suffix}.log"
             return (
                 f"rule delete_subanalysis_reprocess_{rule_suffix}:\n"
                 f'    output:\n        "{flag}"\n'
-                f"    resources: cpus_per_task=1, mem_mb=4096, runtime=120\n"
+                f'    log:\n        "{log}"\n'
+                f"{self._delete_rule_resources()}"
                 f"    shell:\n"
                 f'        "{python_exe} -m hhemt.delete_subanalysis_reprocess_runner "\n'
-                f'        "--sa-id {sa_id} --analysis-dir {sub_dir}{proc_arg}"\n\n'
+                f'        "--sa-id {sa_id} --analysis-dir {sub_dir}{proc_arg} "\n'
+                f'        "> {{log}} 2>&1"\n\n'
             )
 
         is_sensitivity = getattr(self.analysis.cfg_analysis, "toggle_sensitivity_analysis", False)

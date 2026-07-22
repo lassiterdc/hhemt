@@ -1,0 +1,1 @@
+Per-experiment validation-check roll-up across all combined experiments. Each cell is one experiment's pass/fail for one check; hover a FAIL for its summary. See the experiment's own "Errors and Warnings" section for full detail.

@@ -217,6 +217,61 @@ _TMPL_CROSS_EXPERIMENT_COMPATIBILITY = RuleSpecTemplate(
     log_path_template="_logs/plots/cross_experiment_compatibility.log",
 )
 
+# Cross-experiment INTERCOMPARISON set (Phase 5). Same INERT-on-source posture as
+# the compatibility template above: consumed ONLY by bundle/_combine.py's emit-time
+# direct-render dispatch. Projects the combined_intercomparison.json read-model
+# (clean-vs-resume per-compute-config identity, derived CROSS-BUNDLE by
+# _combine._write_combined_intercomparison).
+_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_intercomparison",
+    renderer_module="cross_experiment_intercomparison",
+    output_path_template="plots/cross_experiment/intercomparison__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_intercomparison.rst",
+        "category": "Cross-Experiment Results",
+        "labels": '{"figure": "Clean vs resume intercomparison"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=4000, time_min=10",
+    log_path_template="_logs/plots/cross_experiment_intercomparison.log",
+)
+
+# Cross-experiment INTERCOMPARISON MAPS (b3, Phase 5). Same INERT-on-source posture;
+# direct-rendered by _combine.py. Re-reads child_crates/*/sensitivity_datatree.zarr at
+# render time (Option R — no emit-time artifact, CR4-safe). Lands under the SAME
+# "Cross-Experiment Results" category as the scalar intercomparison table.
+_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON_MAPS = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_intercomparison_maps",
+    renderer_module="cross_experiment_intercomparison_maps",
+    output_path_template="plots/cross_experiment/intercomparison_maps__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_intercomparison_maps.rst",
+        "category": "Cross-Experiment Results",
+        "labels": '{"figure": "Clean vs resume spatial diff maps"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=8000, time_min=15",
+    log_path_template="_logs/plots/cross_experiment_intercomparison_maps.log",
+)
+
+# Cross-experiment ERRORS-AND-WARNINGS roll-up (Phase 5, F2). Same INERT-on-source
+# posture; direct-rendered by _combine.py. Reads each child_crates/{eid}/validation_report.json
+# at render time (Option R -- no emit-time artifact, CR4-safe). Restores a DISCOVERABLE
+# top-level E&W surface that v8/a2 removed (the per-experiment E&W stays a {eid} subcategory).
+_TMPL_CROSS_EXPERIMENT_ERRORS_AND_WARNINGS = RuleSpecTemplate(
+    rule_name="plot_cross_experiment_errors_and_warnings",
+    renderer_module="cross_experiment_errors_and_warnings",
+    output_path_template="plots/cross_experiment/errors_and_warnings__OUTPUT_EXT__",
+    report_kwargs={
+        "caption": "report/captions/cross_experiment_errors_and_warnings.rst",
+        "category": "Cross-Experiment Errors and Warnings",
+        "labels": '{"figure": "Per-experiment health roll-up"}',
+    },
+    wildcards=(),
+    resources_yaml="mem_mb=1000, time_min=5",
+    log_path_template="_logs/plots/cross_experiment_errors_and_warnings.log",
+)
+
 # eda_compute_sensitivity (R11): the in-report EDA adapter for the
 # compute-sensitivity family. Conditional (predicate has_eda_artifact — gated on
 # the master carrying an EDA artifact). Emits the config_diff_maps figure under
@@ -467,16 +522,34 @@ REPORTING_SETS: dict[str, ReportingSet] = {
     ),
     "combined": ReportingSet(
         name="combined",
+        # Option B: the per-experiment categories are DYNAMIC (one per child_crates/{eid},
+        # known only at combine time). This static tuple carries only the FIXED bookend
+        # categories; the combined generator (render_combined_report_via_snakemake) APPENDS
+        # the sorted experiment ids after these fixed bookends and threads the full list
+        # into _react_surgery. (v8/a2: the aggregate "Errors and Warnings" category was
+        # RETIRED — each experiment carries its OWN errors_and_warnings figure natively
+        # under its {eid} section via the per-experiment harvest.)
         category_order=(
             "Cross-Experiment Compatibility",
             "Cross-Experiment Results",
-            "Per Experiment Results",
-            "Errors and Warnings",
+            "Cross-Experiment Errors and Warnings",
         ),
         renderer_selection=(
             RendererSelection(
                 "cross_experiment_compatibility",
                 rule_spec_template=(_TMPL_CROSS_EXPERIMENT_COMPATIBILITY,),
+            ),
+            RendererSelection(
+                "cross_experiment_intercomparison",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON,),
+            ),
+            RendererSelection(
+                "cross_experiment_intercomparison_maps",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_INTERCOMPARISON_MAPS,),
+            ),
+            RendererSelection(
+                "cross_experiment_errors_and_warnings",
+                rule_spec_template=(_TMPL_CROSS_EXPERIMENT_ERRORS_AND_WARNINGS,),
             ),
         ),
         validator_key="none",

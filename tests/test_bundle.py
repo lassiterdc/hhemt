@@ -159,6 +159,59 @@ def test_sensitivity_master_polymorphism(
     assert bundle.manifest["analysis_id"] == "synth_sensitivity"
 
 
+def test_sensitivity_master_delegates_bundleable_identity_attrs(
+    synth_sensitivity_analysis,
+) -> None:
+    """Regression: a sensitivity master (the real experiment topology emit_bundle(self)
+    receives via bundle_report_data) must expose the FULL BundleableAnalysis surface —
+    including cfg_hpc_system / case_manifest_yaml / _case_manifest. Pre-delegation these
+    three were absent on the sensitivity wrapper (only cfg_analysis/analysis_paths were
+    delegated), so emit_bundle's reads silently DROPPED the combine-identity files:
+    case.yaml (BLOCKING case_name) and hpc_system_config.identity.yaml (INFORMATIONAL
+    compute-config). This test failed before the delegation fix."""
+    from hhemt.bundle._protocol import BundleableAnalysis
+
+    sens = synth_sensitivity_analysis.sensitivity  # the TRITONSWMM_sensitivity_analysis wrapper
+    for attr in ("cfg_hpc_system", "case_manifest_yaml", "_case_manifest"):
+        assert hasattr(sens, attr), f"sensitivity wrapper missing BundleableAnalysis attr {attr!r}"
+        assert getattr(sens, attr) is getattr(sens.master_analysis, attr), (
+            f"{attr!r} must delegate to the wrapped master analysis"
+        )
+    assert isinstance(sens, BundleableAnalysis)  # runtime_checkable — full attribute surface
+
+
+def test_emit_hpc_identity_writes_scrubbed_surface(tmp_path: Path) -> None:
+    """_emit_hpc_identity emits ONLY the scrubbed partitions + gpu_allocation_flavor when
+    the bundle input exposes a cfg_hpc_system, and no-ops when it is None (local/native).
+    Guards the combine INFORMATIONAL surface a sensitivity master silently dropped; also
+    confirms the allow-list-by-construction scrub never leaks a USER-bucket scalar."""
+    from types import SimpleNamespace
+
+    from hhemt.bundle._emit import HPC_IDENTITY_FILENAME, _emit_hpc_identity
+
+    class _Cfg:
+        def model_dump(self, mode: str = "json") -> dict:
+            return {
+                "partitions": {"standard": {"gpus_per_node": 0}},
+                "gpu_allocation_flavor": "gres",
+                "default_account": "SHOULD-NOT-LEAK",  # USER bucket — must be scrubbed out
+            }
+
+    staging = tmp_path / "with_hpc"
+    staging.mkdir()
+    _emit_hpc_identity(SimpleNamespace(cfg_hpc_system=_Cfg()), staging)
+    out = staging / HPC_IDENTITY_FILENAME
+    assert out.exists()
+    dumped = yaml.safe_load(out.read_text())
+    assert set(dumped) == {"partitions", "gpu_allocation_flavor"}
+    assert "default_account" not in dumped
+
+    staging_none = tmp_path / "no_hpc"
+    staging_none.mkdir()
+    _emit_hpc_identity(SimpleNamespace(cfg_hpc_system=None), staging_none)
+    assert not (staging_none / HPC_IDENTITY_FILENAME).exists()
+
+
 def test_all_path_fields_have_policy() -> None:
     """Every Pydantic ``Path`` / ``Optional[Path]`` field on either cfg
     model must have an entry in ``_PATH_FIELD_POLICY``. This is the
@@ -725,6 +778,7 @@ def test_copy_supporting_files_carries_rocrate_sidecar(tmp_path: Path) -> None:
     analysis = types.SimpleNamespace(
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+        case_manifest_yaml=None,  # BundleableAnalysis contract attr (emit reads it directly now)
     )
     _copy_supporting_files(analysis, staging)
     assert (staging / "ro-crate-metadata.json").exists()
@@ -742,6 +796,7 @@ def test_copy_supporting_files_no_rocrate_sidecar_is_noop(tmp_path: Path) -> Non
     analysis = types.SimpleNamespace(
         analysis_paths=types.SimpleNamespace(analysis_dir=analysis_dir),
         cfg_analysis=types.SimpleNamespace(weather_events_to_simulate=None),
+        case_manifest_yaml=None,  # BundleableAnalysis contract attr (emit reads it directly now)
     )
     _copy_supporting_files(analysis, staging)  # must not raise
     assert not (staging / "ro-crate-metadata.json").exists()

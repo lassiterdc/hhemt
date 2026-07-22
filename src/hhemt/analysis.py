@@ -198,6 +198,7 @@ class TRITONSWMM_analysis:
         verbose: bool = True,
         is_main_orchestrator: bool = True,
         hpc_system_config_yaml: Path | None = None,
+        case_manifest_yaml: Path | None = None,
     ) -> None:
         """
         Initialize a TRITON-SWMM analysis orchestrator.
@@ -224,18 +225,37 @@ class TRITONSWMM_analysis:
             ``self.cfg_hpc_system`` (None when the path is absent). Consumers
             (the SLURM emitters / preflight) wire in later phases; with the
             argument absent, behavior is byte-identical to today (default: None).
+        case_manifest_yaml : Path, optional
+            Path to the case study's ``case.yaml`` (ADR-12 CaseManifest). When
+            provided and loadable, populates ``self.case_manifest_yaml`` (copied
+            into the render bundle by ``_emit._copy_supporting_files`` so ``case_name``
+            becomes a BLOCKING combine-compatibility field) AND ``self._case_manifest``
+            (so the RO-Crate root ``name`` resolves from the real manifest instead of
+            the analysis_id stand-in). A load/parse failure degrades gracefully to
+            None (default: None).
         """
         self._system = system
         self.analysis_config_yaml = analysis_config_yaml
         cfg_analysis = load_analysis_config(analysis_config_yaml)
         self.cfg_analysis = cfg_analysis
-        # Settable CaseManifest accessor (C6/ADR-11). Default None keeps the
-        # provenance.py graceful-absent stand-in (_resolve_case_manifest); a pure
-        # no-op today. Populate wiring (experiments.py::from_case_study) is deferred to
-        # a follow-up — it flips the embedded core and needs a golden regen.
-        # Quotes are required (no `from __future__ import annotations` in this module —
-        # the instance-attr annotation is runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        # Settable CaseManifest accessor (C6/ADR-11 + Phase-5 D6). Populated from the
+        # case_manifest_yaml constructor arg (case.yaml) when provided-and-loadable, so the
+        # RO-Crate root `name` resolves from the real manifest (provenance._resolve_case_manifest)
+        # instead of degrading to the analysis_id stand-in; None keeps the graceful-absent
+        # stand-in. A load/validation failure degrades to None (never raises). Quotes are required
+        # (no `from __future__ import annotations` in this module — the instance-attr annotation is
+        # runtime-evaluated; CaseManifest is TYPE_CHECKING-only).
+        self.case_manifest_yaml = case_manifest_yaml
         self._case_manifest: "CaseManifest | None" = None  # noqa: UP037
+        if case_manifest_yaml is not None and Path(case_manifest_yaml).exists():
+            try:
+                import yaml as _yaml
+
+                from .config.case_manifest import CaseManifest as _CaseManifest
+
+                self._case_manifest = _CaseManifest(**_yaml.safe_load(Path(case_manifest_yaml).read_text()))
+            except Exception:  # noqa: BLE001 -- graceful-absent: any load/validation failure degrades to the stand-in
+                self._case_manifest = None
         # Load the per-HPC-system config ONCE (R2). Store BEFORE any
         # _get_config_args read so the direct attribute read is always safe.
         self.hpc_system_config_yaml = hpc_system_config_yaml
@@ -943,7 +963,10 @@ class TRITONSWMM_analysis:
         from hhemt.config.loaders import yaml_to_model
         from hhemt.eda import (
             EdaReportResult,
+            check_cross_hardware_magnitude,
             check_cross_sim_identity,
+            check_rank_sensitivity,
+            check_resume_sensitivity,
             render_eda_plots,
         )
         from hhemt.eda._html_export import export_eda_html
@@ -954,8 +977,24 @@ class TRITONSWMM_analysis:
             yaml_to_model(override_eda_config, eda_config) if override_eda_config is not None else self.cfg_analysis.eda
         )
         root = Path(self.analysis_paths.analysis_dir)
-        verdict_result = check_cross_sim_identity(self)
-        verdicts = [verdict_result.verdict] if verdict_result.verdict is not None else []
+        # Run all EDA calc members, accumulating verdicts + produced plot-kinds. Each
+        # member writes eda/{plot_id}.zarr on a non-skipped run; a skipped member writes
+        # nothing (artifact_path None). cross-sim's produced-signal maps to the
+        # config_diff_maps renderer key (the one non-1:1 member->kind pairing).
+        _eda_results = [
+            ("config_diff_maps", check_cross_sim_identity(self)),
+            ("eda_rank_sensitivity", check_rank_sensitivity(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)),
+            (
+                "eda_resume_sensitivity",
+                check_resume_sensitivity(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
+            ),
+            (
+                "eda_cross_hardware_magnitude",
+                check_cross_hardware_magnitude(self, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg),
+            ),
+        ]
+        verdicts = [r.verdict for _kind, r in _eda_results if r.verdict is not None]
+        _produced_kinds = {kind for kind, r in _eda_results if (not r.skipped and r.artifact_path is not None)}
         # F-B Flag 2 (hhemt-specialist review): load_eda_context reads the fixed-name
         # cfg_analysis.yaml / cfg_system.yaml at `root`; the LIVE analysis_dir does NOT
         # carry them by construction (only the bundle staging dir does, via
@@ -968,12 +1007,14 @@ class TRITONSWMM_analysis:
         (root / "cfg_system.yaml").write_text(_yaml.safe_dump(self._system.cfg_system.model_dump(mode="json")))
         # ADR-12: emit the source-independent eda_local/ package skeleton at root.
         emit_eda_local_surface(root)
-        # Non-sensitivity analyses produce no eda/<plot_id>.zarr (the cross-sim check
-        # skips), so render_eda_plots would open a non-existent zarr — skip rendering
-        # on the figureless branch. The NOTEBOOK is still emitted (ADR-14: primary
-        # artifact); its zarr-dependent seed cell is gated at execution.
-        figureless = verdict_result.skipped or verdict_result.artifact_path is None
-        plot_paths = [] if figureless else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg)
+        # Render ONLY the enabled plots whose calc member produced an artifact, so a
+        # renderer never opens a non-existent eda zarr for a skipped member, and a
+        # produced figure is never suppressed because a SIBLING member skipped.
+        plot_paths = (
+            []
+            if not _produced_kinds
+            else render_eda_plots(root, cfg_analysis=self.cfg_analysis, eda_cfg=eda_cfg, only_kinds=_produced_kinds)
+        )
         notebook_path = emit_eda_notebook(
             root,
             cfg_analysis=self.cfg_analysis,
@@ -2277,8 +2318,7 @@ class TRITONSWMM_analysis:
                 for _m in _fix_matches:
                     _action = _m.recommended_action.value if _m.recommended_action else "-"
                     print(
-                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: "
-                        f"{_action} [scope {_m.affected_scope}]",
+                        f"  - {_m.commit_id} ({_m.severity}) -> recommended: {_action} [scope {_m.affected_scope}]",
                         flush=True,
                     )
                 print(
@@ -3667,7 +3707,15 @@ class TRITONSWMM_analysis:
         # auto-resolves to slurm-offload on HPC modes (user D6 refinement 1).
         _hpc = self.cfg_analysis.multi_sim_run_method in ("batch_job", "1_job_many_srun_tasks")
         _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-        route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
+        # An explicit execution_mode="local" from the caller must not be silently
+        # overridden by the config's multi_sim_run_method — parity with the
+        # sensitivity twin (sensitivity_analysis.py:727-733, landed 2026-07-20).
+        # Both paths are reached by the SAME `hhemt reprocess` CLI invocation via
+        # the toggle_sensitivity_analysis dispatch at :3473/:3508, so a divergence
+        # here is user-visible. execution_mode="auto" preserves the prior routing.
+        route_delete_via_slurm = (
+            regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc and execution_mode != "local"
+        )
         # Divergence self-heal (FIX 2) — fires on the process path REGARDLESS of
         # regenerate_existing (D2). Reconciles d_process flag + per-model
         # processing_log against on-disk summary presence: where a flag survives
@@ -3681,10 +3729,38 @@ class TRITONSWMM_analysis:
         if route_delete_via_slurm:
             # ONE scoped reprocess-delete workflow handles BOTH the consolidated
             # zarr(s) AND (start_with=='process') the per-scenario processed/ dirs.
-            self._workflow_builder.submit_reprocess_delete_workflow(
+            # The result was previously DISCARDED, so a delete workflow that failed
+            # (or ran zero rules) was indistinguishable from success. That is not
+            # merely unreported: consolidate_to_datatree early-returns when the zarr
+            # .exists() AND log.datatree_consolidation_complete is True AND the
+            # inputs fingerprint matches (processing_analysis.py:183), and the delete
+            # runner never clears that log field — so a surviving zarr is silently
+            # re-published as if rebuilt. regenerate_existing invalidates by DELETION;
+            # if the deletion did not happen the flag is a lie. Parity with the
+            # sensitivity twin (sensitivity_analysis.py:743-770, landed 2026-07-20).
+            _del_result = self._workflow_builder.submit_reprocess_delete_workflow(
                 start_with=start_with,
                 override_in_flight=False,
             )
+            if not _del_result.get("success", False):
+                from hhemt.exceptions import WorkflowError
+
+                raise WorkflowError(
+                    phase="reprocess-delete",
+                    return_code=_del_result.get("returncode", -1),
+                    stderr=(
+                        "regenerate_existing=True requested a scoped reprocess-delete "
+                        "workflow, but it did not complete successfully. The consolidated "
+                        "tree was NOT invalidated, so continuing would silently "
+                        "re-consolidate stale artifacts. See "
+                        f"{_del_result.get('snakemake_logfile')} for the workflow-level log. "
+                        "Per-rule stderr for each failed delete job is written to "
+                        "{analysis_dir}/logs/delete_reprocess/<rule>.log — this capture is "
+                        "executor-independent and is present whether the rules ran locally "
+                        "or on SLURM. Re-run with delete_via_slurm=False to delete "
+                        "in-process instead."
+                    ),
+                )
         self._invalidate_downstream_flags(
             start_with,
             regenerate_existing=regenerate_existing,

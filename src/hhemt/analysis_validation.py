@@ -8,19 +8,22 @@ share the same validation logic.
 
 Each per-check function returns one `CheckResult` describing pass/fail plus
 optional per-scenario detail rows. The aggregator `validate_analysis()` runs
-all 7 checks and returns a `ValidationReport`. For sensitivity analyses, the
+all 9 checks and returns a `ValidationReport`. For sensitivity analyses, the
 aggregate per-scenario checks iterate sub-analyses and prefix each detail
 row with the sub-analysis id.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from hhemt.analysis import TRITONSWMM_analysis
+
+logger = logging.getLogger(__name__)
 
 
 CheckLevel = Literal["system", "aggregate", "scenario", "resource"]
@@ -440,62 +443,419 @@ def check_invalidating_fixes(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim report surface) ---
-def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
-    """Count coupled sims blocked by the interim hotstart-resume guard (run_simulation.py).
+#: The pinned TRITON coupled-resume-fix commit. Every experiment's TRITON binary is
+#: pinned here (D3 clone-gate enforcement); a consolidated tree whose
+#: ``triton_has_coupled_resume_fix`` is False was produced by PRE-FIX TRITON. Full
+#: 40-char sha (the short pin ``3a832f7d`` resolves to this). Mirrored in
+#: ``system.py::_PINNED_TRITON_COUPLED_RESUME_FIX_SHA`` (compile-time capture).
+_PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
 
-    A coupled (``tritonswmm``) sim that got walltime-killed and re-dispatched hits the
-    guard, which increments ``n_resumes`` and raises ``SimulationError`` before launch, so
-    the sim never completes. Counting coupled ``df_status`` rows with ``n_resumes >= 1`` and
-    ``run_completed`` False surfaces the population in the report with a COUNT (no renderer
-    edit — the errors_and_warnings renderer prints each check's ``summary``). Reads
-    ``analysis.df_status`` (order-independent of the export_scenario_status rule).
+#: The positive marker TRITON prints to its stderr log on every SUCCESSFUL exchange-
+#: history replay (``swmm_triton.h:672-673`` @ 3a832f7d). Its ABSENCE from a resumed
+#: coupled sim's log means the replay never engaged (rank-0-local engage guard, or a
+#: purged side-file) and SWMM re-initialized from t=0 — the pre-fix truncation,
+#: recurring silently at the fixed commit.
+_TRITON_REPLAY_MARKER = "SWMM exchange history replayed to t="
+
+#: The completion marker TRITON prints at the end of a sim that ran to t=end (Gotcha 6:
+#: completion is detected from log markers, never return codes). PRODUCER-SIDE SIBLING:
+#: ``run_simulation.py:179`` (``model_run_completed``'s raw-marker fallback) tests the
+#: IDENTICAL literal -- keep the two in sync until both TRITON marker literals are hoisted
+#: to one home. Used here as the replay arm's COMPLETION GATE: because the model log is
+#: opened ``"w"`` on every exec (``run_simulation_runner.py``) it holds ONLY the last exec,
+#: so a last exec that was walltime-killed BEFORE its replay legitimately carries neither
+#: marker. Gating on this literal -- read from the SAME log, in the SAME read, as the
+#: replay marker -- keeps both predicates derived from one artifact, so they cannot skew.
+#: (``df_status.run_completed`` was rejected for this gate: it resolves from the model-log
+#: JSON or the coupled rpt -- DIFFERENT artifacts with DIFFERENT exec granularity than the
+#: last-exec-only log -- and it couples this detector to model_run_completed's
+#: sticky-False-latch semantics.)
+_TRITON_COMPLETION_MARKER = "Simulation ends"
+
+#: The PER-EXEC RESUME DISCRIMINATOR. TRITON prints ``[..] Reading checkpoint files`` then
+#: ``[OK] Checkpoint files read`` BEFORE the replay marker, on every exec that resumed from
+#: a hotstart cfg. This is what makes the replay arm's claim exact rather than approximate:
+#: the log is last-exec-only (opened ``"w"`` per exec) while ``n_resumes`` is CUMULATIVE and
+#: is NEVER reset (``run_simulation.py``'s increment is its only writer), so
+#: ``n_resumes >= 1`` proves only that the sim resumed at SOME point. Without an in-log
+#: per-exec signal, a sim that resumed, lost its checkpoints (clear_raw / delete /
+#: force-rerun), and then ran FRESH to completion would retain ``n_resumes >= 1``, carry no
+#: replay marker, and be WARNED ON despite being VALID. Reading the discriminator from the
+#: SAME log in the SAME read makes all THREE predicates (resumed-this-exec /
+#: completed-this-exec / replayed-this-exec) statements about one artifact, so none can skew
+#: against the others; ``n_resumes`` degrades to a cheap pre-filter bounding which logs are
+#: opened (sound because TRITON reads checkpoints IFF the runner passed a hotstart cfg IFF
+#: n_resumes was incremented -- the same ``if`` branch, run_simulation.py:539-544 -- so
+#: n_resumes >= 1 is a NECESSARY condition for a checkpoint-reading exec).
+#:
+#: THE ANCHOR IS THE ``[OK]`` COMPLETION FORM, NOT THE ``[..]`` ATTEMPT FORM. The replay
+#: reads the exchange history FROM the checkpoint set, so "the replay should have engaged"
+#: is warranted only if the checkpoint read SUCCEEDED. A read that starts and fails, after
+#: which the run proceeds fresh and reaches "Simulation ends", would be a FALSE WARN under
+#: the attempt form (in scope, complete, no replay marker) and is correctly out of scope
+#: under the completion form. The attempt form is retained to separate that case out as
+#: INDETERMINATE rather than silently calling it fresh.
+#:
+#: Empirical basis (read-only against existing artifacts, 2026-07-16, synth_cc_resume at the
+#: pin): a clean-vs-resume control over 56 model_tritonswmm_*.log files gave PERFECT
+#: separation -- clean arm (n=28, never resumed): 0 checkpoint-reads, 0 replay markers;
+#: resume arm (n=28, all resumed): 28/28 both. Exactly ONE replay marker per exec. Both the
+#: attempt form and the completion form are corpus-confirmed at 28/28 on the resume arm and
+#: 0/28 on the clean arm. The INDETERMINATE branch below is retained as a fail-safe for a
+#: partially-read checkpoint set, which the corpus contains no instance of.
+_TRITON_CHECKPOINT_READ_MARKER = "Checkpoint files read"
+_TRITON_CHECKPOINT_ATTEMPT_MARKER = "Reading checkpoint files"
+
+
+def _read_triton_provenance(
+    analysis: TRITONSWMM_analysis,
+) -> tuple[str | None, bool | None]:
+    """Graceful-absent read of the consolidated-tree TRITON provenance root attrs.
+
+    Returns ``(triton_producing_sha, triton_has_coupled_resume_fix)``. Mirrors
+    ``recompute.py::_iter_scope_stamps``: a sensitivity master resolves
+    ``sensitivity_datatree.zarr``, else ``analysis_datatree.zarr``. Either element is
+    None when the attr / tree is absent or unreadable (a pre-provenance tree, or an
+    off-checkout install) -> the caller treats None as INDETERMINATE, never a false
+    pre-fix warn. NEVER raises.
+    """
+    import xarray as xr
+
+    paths = analysis.analysis_paths
+    if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False):
+        zarr_path = getattr(paths, "sensitivity_datatree_zarr", None)
+    else:
+        zarr_path = getattr(paths, "analysis_datatree_zarr", None)
+    if zarr_path is None or not zarr_path.exists():
+        return None, None
+    # NO chunking: this reader consumes ONLY root attrs, and `chunks="auto"` raises
+    # NotImplementedError ("Can not use auto rechunking with object dtype") on any
+    # tree carrying an object-dtype variable — which the bare except below then
+    # converted into a silent INDETERMINATE, permanently disabling this check's
+    # pre-fix warning on every experiment. Empirically confirmed on the
+    # synth_cc_resume sensitivity master (2026-07-15): chunks="auto" ->
+    # NotImplementedError; no-chunks -> reads triton_producing_sha=3a832f7d...,
+    # triton_has_coupled_resume_fix=True.
+    try:
+        tree = xr.open_datatree(zarr_path, engine="zarr", consolidated=False)
+    except (FileNotFoundError, OSError, KeyError, ValueError):
+        # Genuinely absent / unreadable tree (pre-provenance or off-checkout) —
+        # the documented graceful-absent path. Quiet by design.
+        return None, None
+    except Exception as e:
+        # NEVER raise (validation must not abort a run over a diagnostic), but do
+        # NOT swallow silently: an unexpected exception here means this check is
+        # INERT, which is exactly how the chunks="auto" defect stayed hidden.
+        logger.warning(
+            f"TRITON provenance read failed unexpectedly for {zarr_path} "
+            f"({type(e).__name__}: {e}); coupled-resume validity is INDETERMINATE."
+        )
+        return None, None
+    sha = tree.attrs.get("triton_producing_sha")
+    has_fix = tree.attrs.get("triton_has_coupled_resume_fix")
+    # zarr may round-trip the bool as numpy bool_/0-1; normalize to Python bool-or-None.
+    if has_fix is not None:
+        has_fix = bool(has_fix)
+    return (str(sha) if sha is not None else None), has_fix
+
+
+def check_coupled_resume_validity(analysis: TRITONSWMM_analysis) -> CheckResult:
+    """Warn when a COMPLETED coupled analysis's resumed data is invalid.
+
+    Two independent invalidity paths, both keyed on a coupled model that resumed:
+
+    (A) PRE-FIX TRITON. When ``triton_has_coupled_resume_fix`` is False the producing
+        TRITON predates 3a832f7d, so any ``tritonswmm`` sim with ``n_resumes >= 1``
+        re-inited SWMM from t=0 and its max-flow/depth summaries are systematically low.
+
+    (B) POST-FIX but the REPLAY NEVER ENGAGED. Even at the pinned fix, TRITON's exchange-
+        replay engage guard is rank-0-LOCAL (``triton.h:435``), so a rank-0 row-strip
+        owning no manhole skips the replay and the pre-fix truncation recurs SILENTLY. A
+        sha-only check would launder that as "data valid" — worse than emitting no check.
+        The sound detector is the positive replay marker TRITON prints on every successful
+        replay; its ABSENCE from a log whose exec RESUMED and RAN TO t=end is the failure.
+        The log is resolved through ``run_simulation.model_logfile_for`` — the producer's own
+        convention — never hand-built: this arm originally hand-built
+        ``{scenario_directory}/logs/run_tritonswmm.log`` (the vestigial
+        ``ScenarioPaths.log_run_*`` path nothing writes), so every read raised, every row was
+        skipped, and the arm passed VACUOUSLY on every experiment.
+
+        THREE PREDICATES, ONE READ, ONE FILE. The log is opened ``"w"`` per exec and holds
+        ONLY the last one, so every predicate must describe THAT exec or they skew:
+        resumed-this-exec (``"Checkpoint files read"``), completed-this-exec
+        (``"Simulation ends"``), replayed-this-exec (the replay marker) — all from a single
+        ``read_text()``. This is why ``df_status.run_completed`` is NOT the completion gate
+        (it resolves from the model-log JSON or the coupled rpt — different artifacts, different
+        exec granularity — and couples this check to ``model_run_completed``'s sticky-False-latch
+        semantics), and why ``n_resumes >= 1`` is only a PRE-FILTER bounding which logs are
+        opened (it is cumulative and never reset, so it cannot answer a per-exec question; it is
+        sound as a necessary condition because TRITON reads checkpoints iff the runner passed a
+        hotstart cfg iff n_resumes was incremented — the same branch). Predicates are ordered by
+        logical precedence — does the question APPLY, can I ANSWER it, what is the ANSWER — so a
+        fresh last exec is OUT OF SCOPE rather than a warn or an INDETERMINATE.
+
+        Reads per-sim LOGS (not the tree) so it stays at consolidation-time
+        ``persist_validation_report``, NOT render time (Gotcha 53 audit-safety) — the same logs
+        ``check_scenarios_run`` already opens via ``model_run_completed``, so this adds no
+        read-surface class.
+
+    Distinct from the removed interim ``check_coupled_hotstart_resume`` (which counted
+    sims BLOCKED by the interim guard, ``run_completed`` False); this warns about
+    COMPLETED-but-invalid data after the fix ships. Non-blocking (``validate_analysis``
+    never raises). Graceful-absent throughout: an unstamped tree / unreadable log ->
+    INDETERMINATE INFO (``passed=True``), NEVER a false warn. The pre/post-fix predicate
+    reads the stamped BOOLEAN, NOT sha-equality — a DESCENDANT of 3a832f7d (a routine pin
+    bump) must not be misclassified pre-fix.
     """
     import pandas as pd
 
+    if not getattr(analysis._system.cfg_system, "toggle_tritonswmm_model", False):
+        return CheckResult(
+            name="Coupled resume validity",
+            level="aggregate",
+            passed=True,
+            summary="Coupled model not enabled — coupled-resume validity N/A.",
+            details=[],
+        )
+    triton_sha, has_fix = _read_triton_provenance(analysis)
+    if has_fix is None:
+        return CheckResult(
+            name="Coupled resume validity",
+            level="aggregate",
+            passed=True,
+            summary=(
+                "Producing-TRITON coupled-resume-fix status unknown (pre-provenance tree "
+                "or off-checkout); cannot determine coupled-resume validity. Re-consolidate "
+                "to stamp it."
+            ),
+            details=[],
+        )
+
+    # Resume record needed for BOTH the pre-fix arm and the replay-marker arm.
     try:
         df = analysis.df_status
     except Exception:
+        df = None
+    if df is None or not {"model_type", "n_resumes"}.issubset(getattr(df, "columns", [])):
         return CheckResult(
-            name="Coupled hotstart resume",
+            name="Coupled resume validity",
             level="aggregate",
             passed=True,
-            summary="No coupled hotstart-resume failures detected.",
-            details=[],
-        )
-    needed = {"model_type", "n_resumes", "run_completed"}
-    if not needed.issubset(df.columns):
-        return CheckResult(
-            name="Coupled hotstart resume",
-            level="aggregate",
-            passed=True,
-            summary="No coupled hotstart-resume failures detected.",
-            details=[],
-        )
-    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
-    completed = df["run_completed"].astype("boolean").fillna(False)
-    mask = (df["model_type"] == "tritonswmm") & (n_resumes >= 1) & (~completed)
-    blocked = df[mask]
-    details = [
-        {
-            "scenario": str(row.get("scenario_directory", "")),
-            "detail": (
-                "coupled hotstart resume unsupported — known TRITON-SWMM bug "
-                "(coupled SWMM re-inits from t=0 on resume; max-flow/depth summaries "
-                "systematically low). Sim halted before launch by the interim guard."
+            summary=(
+                "Coupled-resume-fix status known but no resume record available — no coupled-resume invalidity found."
             ),
-        }
-        for _, row in blocked.iterrows()
-    ]
+            details=[],
+        )
+    # `n_resumes >= 1` is a PRE-FILTER, not a verdict: it bounds which logs we open, and
+    # it is SOUND for that because TRITON reads checkpoints IFF the runner passed a hotstart
+    # cfg IFF n_resumes was incremented (the same `if` branch, run_simulation.py:539-544), so
+    # n_resumes >= 1 is a NECESSARY condition for any checkpoint-reading exec. It is NOT
+    # sufficient: n_resumes is CUMULATIVE across execs and is never reset, while the log is
+    # last-exec-only. Whether a row's LAST exec actually resumed is decided in-loop below by
+    # _TRITON_CHECKPOINT_READ_MARKER. Named `resume_candidates`, not `resumed`, so the
+    # distinction cannot be re-collapsed by a future reader.
+    n_resumes = pd.to_numeric(df["n_resumes"], errors="coerce").fillna(0)
+    resume_candidates = df[(df["model_type"] == "tritonswmm") & (n_resumes >= 1)]
+
+    details: list[dict] = []
+    # DISCLOSED DENOMINATOR (R6 hardening). `passed = len(details) == 0` cannot, on its
+    # own, distinguish "examined N, found nothing" from "examined 0" — and THAT is the
+    # defect this repair closes: Arm B read a path nothing writes, so `except: continue`
+    # fired on all 28 rows and the check reported "No coupled-resume invalidity detected"
+    # while detecting NOTHING. A verdict is only as good as its denominator, so all three
+    # counters are surfaced in `summary` (free-text; no CheckResult schema change, so the
+    # persisted validation_report.json / eda verdict shape is untouched). A future reader —
+    # or an acceptance gate — can now see a vacuous pass in the artifact itself.
+    #
+    # The three outcomes are DISTINCT and must not be merged:
+    #   examined              — the replay question applied and was answered.
+    #   indeterminate         — the question applied (or might have) and could NOT be
+    #                           answered (unresolvable sub / unreadable log / resume did not
+    #                           take / last exec killed before t=end).
+    #   not_resumed_last_exec — the question did NOT apply: the last exec ran fresh, so
+    #                           n_resumes is a stale record of superseded execs. This is
+    #                           OUT OF SCOPE, not an error and not indeterminate. Folding it
+    #                           into `indeterminate` would report a non-problem as a
+    #                           partial failure; folding it into `examined` would report a
+    #                           row we never tested as tested.
+    examined = 0
+    indeterminate = 0
+    not_resumed_last_exec = 0
+    if not has_fix:
+        # Arm A — PRE-FIX TRITON: every resumed coupled sim is invalid. The stamped
+        # boolean alone decides, so every candidate row is examined by construction.
+        #
+        # NOTE (bounded, deliberate): Arm A carries the SAME n_resumes-staleness channel
+        # Arm B closes below — a sim that resumed pre-fix, lost its checkpoints, and re-ran
+        # FRESH to completion is valid data that this arm warns on. The same in-log
+        # discriminator would close it, but there is ZERO evidence of what a PRE-FIX binary
+        # prints (the entire observed corpus is at the pin, which `_verify_tritonswmm_pin`
+        # enforces), and this arm is dormant for the same reason: no new pre-fix tree can be
+        # produced. Fixing it on inference rather than evidence is the exact move that
+        # produced the original defect. Left as-is until pre-fix data is in hand.
+        examined = len(resume_candidates)
+        for _, row in resume_candidates.iterrows():
+            details.append(
+                {
+                    "scenario": str(row.get("scenario_directory", "")),
+                    "detail": (
+                        f"produced by PRE-FIX TRITON ({triton_sha}) with a coupled hotstart "
+                        f"resume (n_resumes={int(row.get('n_resumes') or 0)}); coupled SWMM "
+                        "re-inits from t=0 on resume so max-flow/depth summaries are "
+                        "systematically low. Re-run these sims with the pinned "
+                        "coupled-resume-fix TRITON."
+                    ),
+                }
+            )
+    else:
+        # Arm B — POST-FIX: a coupled sim whose LAST exec resumed, ran to t=end, and yet
+        # lacks the replay marker had its replay silently skipped (rank-0-local engage
+        # guard, or a purged side-file) -> truncated exactly as pre-fix.
+        #
+        # THREE PREDICATES, ONE READ, ONE FILE. resumed-this-exec / completed-this-exec /
+        # replayed-this-exec all come from a single read_text() of a single log, so none can
+        # skew against the others. That atomicity is the whole design: the log is opened "w"
+        # on every runner exec (run_simulation_runner.py) and therefore describes ONLY the
+        # last exec, so any predicate sourced from a DIFFERENT artifact (df_status.
+        # run_completed resolves from the model-log JSON or the coupled rpt; n_resumes is
+        # cumulative) is a statement about a different exec granularity and can disagree.
+        #
+        # Order is logical precedence: does the question APPLY -> can I ANSWER it -> what is
+        # the ANSWER. Scope precedes completion deliberately: a FRESH exec that was killed is
+        # both "not a resume" and "incomplete", and "not a resume" is the truthful label —
+        # the replay question never applied to it, and its incompleteness is
+        # check_scenarios_run's business, not this arm's.
+        from hhemt.run_simulation import model_logfile_for
+
+        # Resolve the log through the PRODUCER's own convention — never hand-build it.
+        # `_iter_subanalyses_or_self` yields (sa_id, sub) for a sensitivity master and
+        # (None, analysis) otherwise, which is ALREADY keyed the way `row.get("sa_id")`
+        # reads: a non-sensitivity df_status carries no sa_id column (only
+        # sensitivity_analysis.df_status adds it), so `.get` returns None and hits the
+        # None key. str-normalized per the sa_id-cast-to-string stipulation, mirroring
+        # per_analysis_summary.py's `astype(str) == str(sa_id)` precedent.
+        subs = {(str(k) if k is not None else None): v for k, v in _iter_subanalyses_or_self(analysis)}
+        # DURABLE FALLBACK (Q4): the model log is opened "w" per exec and can be purged/cleared,
+        # so when read_text() below raises we consult the per-sub replay evidence stamped onto the
+        # consolidated tree ROOT at consolidation time (_stamp_coupled_resume_evidence). Read once,
+        # best-effort; keyed identically to the log-path branch (str(sa_id) else scenario_directory).
+        import json
+
+        _tree_ev: dict = {}
+        try:
+            _p = (
+                analysis.analysis_paths.sensitivity_datatree_zarr
+                if getattr(analysis.cfg_analysis, "toggle_sensitivity_analysis", False)
+                else analysis.analysis_paths.analysis_datatree_zarr
+            )
+            if _p is not None and _p.exists():
+                import xarray as xr
+
+                _tree_ev = json.loads(
+                    xr.open_datatree(_p, engine="zarr", consolidated=False).attrs.get(
+                        "coupled_resume_replay_evidence", "{}"
+                    )
+                )
+        except Exception:  # noqa: BLE001 — durable-evidence fallback is best-effort; absence -> log-only Arm B
+            _tree_ev = {}
+        for _, row in resume_candidates.iterrows():
+            scen_dir = str(row.get("scenario_directory", ""))
+            _sa = row.get("sa_id")
+            sub = subs.get(str(_sa) if _sa is not None else None)
+            if sub is None:
+                indeterminate += 1
+                continue  # INDETERMINATE — cannot resolve the owning (sub-)analysis
+            try:
+                text = model_logfile_for(sub, int(row["event_iloc"]), "tritonswmm").read_text()
+            except Exception:
+                # Log gone (purged / cache-cleared): fall back to the durable consolidation-time
+                # stamp before conceding INDETERMINATE. A stamped resumed+completed sub is EXAMINED
+                # (positive if replayed, a real warn if not); only a sub with no log AND no stamp
+                # stays INDETERMINATE.
+                _ev = _tree_ev.get(str(_sa) if _sa is not None else scen_dir)
+                if _ev and _ev.get("resumed") and _ev.get("completed"):
+                    examined += 1
+                    if not _ev.get("replayed"):
+                        details.append(
+                            {
+                                "scenario": scen_dir,
+                                "detail": (
+                                    "resumed coupled sim; durable replay-evidence stamp shows the "
+                                    "replay did NOT engage (log purged; tree-stamped at "
+                                    "consolidation). Summaries likely truncated."
+                                ),
+                            }
+                        )
+                    continue
+                indeterminate += 1
+                continue  # INDETERMINATE — log gone and no durable stamp
+            # (1) SCOPE GATE — did THIS exec resume, and did the resume TAKE?
+            # The [OK] completion form is the anchor, not the [..] attempt form: the replay
+            # reads the exchange history FROM the checkpoint set, so "the replay should have
+            # engaged" is warranted only once the read SUCCEEDED. A read that starts and
+            # fails, after which the run proceeds fresh to t=end, would be a FALSE WARN under
+            # the attempt form and is correctly excluded here.
+            if _TRITON_CHECKPOINT_READ_MARKER not in text:
+                if _TRITON_CHECKPOINT_ATTEMPT_MARKER in text:
+                    indeterminate += 1
+                    continue  # INDETERMINATE — resume attempted; checkpoint read did not take
+                not_resumed_last_exec += 1
+                continue  # OUT OF SCOPE — last exec ran FRESH; n_resumes records superseded execs
+            # (2) COMPLETION GATE — did THIS exec reach t=end? A last exec killed at
+            # walltime BEFORE its replay legitimately carries no replay marker; warning on it
+            # would conflate a benign kill with the rank-0 silent-skip this arm exists to find.
+            if _TRITON_COMPLETION_MARKER not in text:
+                indeterminate += 1
+                continue  # INDETERMINATE — last exec did not run to t=end
+            # (3) REPLAY TEST — the question applies and is answerable; answer it.
+            examined += 1
+            if _TRITON_REPLAY_MARKER not in text:
+                details.append(
+                    {
+                        "scenario": scen_dir,
+                        "detail": (
+                            f"resumed (n_resumes={int(row.get('n_resumes') or 0)}) at the "
+                            "pinned coupled-resume-fix TRITON: this sim's last execution read "
+                            "its hotstart checkpoints and ran to t=end, but the exchange-replay "
+                            "marker is ABSENT from its TRITON log — the replay never engaged, so "
+                            "SWMM re-initialized from t=0 and this sim's max-flow/depth "
+                            "summaries are truncated exactly as under pre-fix TRITON. Cause: "
+                            "rank 0's row-strip owned no SWMM node (TRITON's engage guard is "
+                            "rank-0-local, triton.h:435), or the exchange-replay side-file was "
+                            "purged. Re-run from a clean start, or re-run at a rank count whose "
+                            "rank-0 strip contains at least one manhole."
+                        ),
+                    }
+                )
+
     n = len(details)
     passed = n == 0
-    summary = (
-        "No coupled hotstart-resume failures detected."
-        if passed
-        else f"{n} sim(s) failed: coupled hotstart resume unsupported — known TRITON-SWMM bug"
-    )
+    _parts = [f"{examined} resumed coupled sim(s) examined"]
+    if indeterminate:
+        _parts.append(
+            f"{indeterminate} INDETERMINATE (unresolvable, unreadable, resume did not take, "
+            "or last execution incomplete)"
+        )
+    if not_resumed_last_exec:
+        _parts.append(
+            f"{not_resumed_last_exec} out of scope (last execution ran fresh; n_resumes is a "
+            "cumulative record of superseded executions)"
+        )
+    _denom = "; ".join(_parts)
+    if passed:
+        summary = f"No coupled-resume invalidity detected ({_denom})."
+    elif not has_fix:
+        summary = (
+            f"{n} coupled sim(s) produced by PRE-FIX TRITON WITH a hotstart resume — "
+            f"summaries likely invalid ({_denom})."
+        )
+    else:
+        summary = (
+            f"{n} resumed coupled sim(s) at the pinned TRITON lack the exchange-replay "
+            f"marker — replay did not engage; summaries likely truncated ({_denom})."
+        )
     return CheckResult(
-        name="Coupled hotstart resume",
+        name="Coupled resume validity",
         level="aggregate",
         passed=passed,
         summary=summary,
@@ -503,7 +863,6 @@ def check_coupled_hotstart_resume(analysis: TRITONSWMM_analysis) -> CheckResult:
     )
 
 
-# --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
 def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
     """Run all core checks; return aggregated ValidationReport.
 
@@ -523,7 +882,7 @@ def validate_analysis(analysis: TRITONSWMM_analysis) -> ValidationReport:
             check_scenario_status_csv(analysis),
             check_resource_usage(analysis),
             check_invalidating_fixes(analysis),  # ADR-17 registry surface
-            check_coupled_hotstart_resume(analysis),  # REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED
+            check_coupled_resume_validity(analysis),  # post-fix retroactive coupled-resume invalidity warning
         ]
         + _read_persisted_eda_verdicts(analysis)
     )

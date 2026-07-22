@@ -53,7 +53,18 @@ class eda_config(cfgBaseModel):
         return data
 
     enabled_plots: list[str] = Field(
-        default_factory=lambda: ["config_diff_maps"],
+        default_factory=lambda: [
+            "config_diff_maps",
+            "eda_rank_sensitivity",
+            "eda_cross_hardware_magnitude",
+        ],
+        # NOTE (combine-first): eda_resume_sensitivity is a general per-master figure that
+        # requires a single master carrying BOTH clean and resume rows (check_resume_sensitivity
+        # pairs them). The synthetic compute-sensitivity experiment is run as two SEPARATE
+        # single-arm masters (clean sweep + resume sweep), so the member always SKIPS here; the
+        # clean-vs-resume comparison is produced at COMBINE level (cross_experiment_intercomparison).
+        # Kept in _EDA_RENDERERS and analysis.eda() as an opt-in capability for a future both-arms
+        # master; enable it explicitly via enabled_plots to render it there.
         description=(
             "Renderer-kind keys of the EDA plots to render into eda_report.html, "
             "in order. Default is the single shipped first member (config_diff_maps, "

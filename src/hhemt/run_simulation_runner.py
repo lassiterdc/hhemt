@@ -368,6 +368,19 @@ def main():
         import subprocess
         import time
 
+        # Option-D deterministic single-kill resume-test harness (synthetic resume
+        # arm ONLY). Armed iff the analysis config opts in via
+        # deterministic_kill_after_n_checkpoints AND this is a FRESH first attempt
+        # (sim_start_reporting_tstep == 0). A resume attempt (tstep > 0 -> a
+        # checkpoint already exists) runs to completion untouched, so exactly ONE
+        # mid-sim kill fires per sim. Production / clean-arm / non-synthetic configs
+        # never set the field (default None), so this path is byte-identical to a
+        # plain proc.wait() there (no Snakemake-emitter or CLI-flag change).
+        _kill_after_n = getattr(analysis.cfg_analysis, "deterministic_kill_after_n_checkpoints", None)
+        _arm_deterministic_kill = (
+            _kill_after_n is not None and _kill_after_n >= 1 and model_type != "swmm" and sim_start_reporting_tstep == 0
+        )
+
         start_time = time.time()
         model_logfile.parent.mkdir(parents=True, exist_ok=True)
         with open(model_logfile, "w") as lf:
@@ -376,8 +389,32 @@ def main():
                 env={**os.environ, **env},
                 stdout=lf,
                 stderr=subprocess.STDOUT,
+                # start_new_session: give the `bash -lc "... srun ... triton.exe"`
+                # wrapper its OWN process group so the Option-D deterministic-kill
+                # watcher can signal the WHOLE group (bash + the srun client) via
+                # os.killpg. A plain proc.kill() SIGKILLs only bash; the srun client
+                # dies too fast to tell slurmstepd to tear the step down, so the
+                # triton.exe STEP task ORPHANS and runs to t=end (empirically
+                # confirmed on Rivanna, proctrack/cgroup, job 17018902). Signalling
+                # the group with SIGTERM instead lets srun's handler force-terminate
+                # the step (see wait_with_deterministic_checkpoint_kill). Harmless on
+                # the non-armed production path: batch jobs have no controlling
+                # terminal, and SLURM walltime cleanup is cgroup-based (not
+                # process-group-based), so detaching the session does not leak the
+                # sim on a real walltime kill. Mirrors the start_new_session=True
+                # already used at the workflow.py Popen sites.
+                start_new_session=True,
             )
-            _rc = proc.wait()  # Return code checked via status below
+            if _arm_deterministic_kill:
+                logger.info(
+                    f"[{event_iloc}] Deterministic resume-test kill ARMED: "
+                    f"SIGKILL after {_kill_after_n} hotstart checkpoint(s)."
+                )
+                _rc = run.wait_with_deterministic_checkpoint_kill(
+                    proc, model_type=model_type, n_checkpoints=_kill_after_n
+                )
+            else:
+                _rc = proc.wait()  # Return code checked via status below
 
         # Update simulation log with results
         end_time = time.time()
@@ -390,6 +427,18 @@ def main():
 
         logger.info(f"[{event_iloc}] Simulation status: {status}")
         logger.info(f"[{event_iloc}] Elapsed time: {elapsed:.2f}s")
+
+        # Re-read the model log before the terminal write (LOST-UPDATE FIX).
+        # scenario.get_log() returns a FRESH TRITONSWMM_model_log.from_json(...)
+        # object on every call, and LogField.set() auto-writes the WHOLE log. The
+        # `model_log` bound above was loaded BEFORE prepare_simulation_command's
+        # hotstart branch did `_ml.n_resumes.set(...)` on its own (also fresh)
+        # instance — so writing the stale object here CLOBBERED n_resumes straight
+        # back to None. Empirically: all 28 sims of the synth_cc_resume arm carried
+        # n_resumes=None despite ~19 resumes each, which would have handed the
+        # resume-sensitivity EDA member (which MUST read n_resumes from df_status)
+        # a silently-empty panel.
+        model_log = scenario.get_log(model_type)
 
         # Update model log with the ACTUAL completion outcome of this run (NOT an
         # unconditional True). model_run_completed re-derives completion from the

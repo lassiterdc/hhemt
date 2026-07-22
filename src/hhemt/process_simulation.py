@@ -35,6 +35,17 @@ from hhemt.exceptions import ProcessingError
 # simply not in this allowlist. See the design-recommendation in the Phase 3
 # sidecar (sidecar_phase3_2026-05-21_2020.md) for the full Section 1-4
 # analysis that selected this shape over the original preserve-list.
+#
+# SECOND load-bearing reason `swmm/` must NEVER join this DELETE allowlist (R7):
+# `out_tritonswmm/**/swmm/{inp}_exchange_replay.bin` is TRITON's persisted
+# coupled-SWMM exchange history. Pinned TRITON 3a832f7d resumes a coupled sim by
+# REPLAYING that side-file; if a mid-workflow clear purged it, every subsequent
+# hotstart resume would find no history to replay and exit(EXIT_FAILURE) (or, worse,
+# silently re-init SWMM from t=0). Preserving `swmm/` by construction is what keeps
+# coupled resume viable. Do NOT "add swmm to a preserved set" — there is no such set;
+# adding `swmm` here would INVERT the intent and delete the side-file. The side-file
+# is reclaimed (bounded-retention) at a sanctioned point AFTER the final allocation —
+# see `_reclaim_exchange_replay_sidefiles` below.
 _CLEAR_RAW_DELETE_SUBDIRS: frozenset[str] = frozenset(
     {"H", "QX", "QY", "MH", "bin", "cfg", "performance"}
 )
@@ -1203,6 +1214,12 @@ class TRITONSWMM_sim_post_processing:
             for child in out_dir.iterdir():
                 if child.is_dir() and child.name in _CLEAR_RAW_DELETE_SUBDIRS:
                     fast_rmtree(child, analysis_dir=self._analysis.analysis_paths.analysis_dir)  # PATTERN A
+            # Reclaim the coupled-SWMM exchange-replay side-file (R7): it is dead weight
+            # once the FINAL allocation is done (this method is guarded against a
+            # mid-multi-allocation invocation above) and grows unbounded in sim length if
+            # retained. tritonswmm only — a triton-only tree has no swmm/ subtree.
+            if model_type == "tritonswmm":
+                self._reclaim_exchange_replay_sidefiles()
             # Per-model log bookkeeping: model logs carry both
             # raw_TRITON_outputs_cleared and raw_SWMM_outputs_cleared (for the
             # coupled tritonswmm case). Phase 3 semantics: the cleanup has
@@ -1221,6 +1238,42 @@ class TRITONSWMM_sim_post_processing:
                 self.log.raw_SWMM_outputs_cleared.set(True)
         else:
             raise ValueError(f"Unknown model_type for _clear_raw_outputs: {model_type!r}")
+
+    def _reclaim_exchange_replay_sidefiles(self) -> None:
+        """Reclaim TRITON's coupled-SWMM exchange-replay side-file(s) (R7 bounded retention).
+
+        ``out_tritonswmm/**/swmm/*_exchange_replay.bin`` is the persisted exchange history
+        that pinned TRITON 3a832f7d replays to resume a coupled sim. Its size grows with
+        sim length —
+
+            bytes = 8 + n_triton_steps × sizeof(value_t) × (1 + global_num_of_swmm_links)
+
+        (the log call is per-TRITON-step, ``triton.h:2408``, NOT per print interval) — so at
+        the double-precision default (``sizeof(value_t)``=8) a fine-grid 100-node 1e6-step
+        coupled sim writes ~808 MB PER SIM. Retained across every sub-analysis in an ensemble
+        and counted against the analysis-scope DU sentinels, that is unbounded permanent
+        disk. The side-file is dead weight once the sim can no longer resume: after the FINAL
+        allocation ``checkpoint_id`` never regresses, and a force-rerun restarts at
+        ``checkpoint_id=0``, which calls ``open_exchange_log_truncate()`` and rewrites the
+        file from scratch — so unlinking here never breaks a subsequent resume or force-rerun.
+        Called ONLY from the ``tritonswmm`` branch of ``_clear_raw_outputs``, which is already
+        gated (a) on the ``multi_allocation_in_progress`` guard (final allocation complete)
+        and (b) on the ``clear_raw`` config electing tritonswmm cleanup. Size-mutating, so it
+        re-stamps the DU sentinels per the ``du sentinels written at every mutation site``
+        stipulation (PATTERN B: unlink + ``restamp_parent_sentinels``) — NOT ``# EXEMPT-DU``.
+        """
+        from hhemt.du_sentinels import restamp_parent_sentinels
+
+        out_dir = self.scen_paths.out_tritonswmm
+        if out_dir is None or not out_dir.exists():
+            return
+        analysis_dir = self._analysis.analysis_paths.analysis_dir
+        for sidefile in out_dir.glob("**/swmm/*_exchange_replay.bin"):
+            try:
+                sidefile.unlink()
+            except OSError:
+                continue
+            restamp_parent_sentinels(sidefile, analysis_dir=analysis_dir)  # PATTERN B
 
     @staticmethod
     def _should_clear_raw_for_model(

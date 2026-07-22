@@ -24,6 +24,13 @@ from hhemt.plot_system import TRITONSWMM_system_plotting
 
 _ROW_BLOCK_SIZE = 1024  # row-streaming block size for _write_raster (D-PR-5 B)
 
+#: The pinned TRITON coupled-resume-fix commit. Canonical definition is mirrored in
+#: analysis_validation.py::_PINNED_TRITON_COUPLED_RESUME_FIX_SHA; duplicated here (not
+#: imported) to keep the compile path free of a validation-module dependency. Used to
+#: stamp `triton_has_coupled_resume_fix` via `git merge-base --is-ancestor` at compile
+#: time — ancestry, NOT sha-equality, so a descendant of the fix is still post-fix.
+_PINNED_TRITON_COUPLED_RESUME_FIX_SHA = "3a832f7d5eedd96aaee0dfe9181da5774adfb9f4"
+
 
 def _assert_dem_integrity(fpath_raster):
     """Verify a just-written ESRI ASCII raster has expected structure.
@@ -554,6 +561,21 @@ class TRITONSWMM_system:
         ):
             self._download_tritonswmm_source(verbose=verbose)
 
+        # Pin enforcement (D3): a pre-existing clone with a CMakeLists.txt is NEVER
+        # re-checked-out by the gate above, and its cached build is never invalidated
+        # (Gotcha 6 log-marker completion). So verify the checked-out HEAD matches the
+        # pinned sha and FAIL LOUD on mismatch, rather than silently reusing a stale
+        # binary. Gated on a set TRITONSWMM_branch_key so synth fixtures / examples that
+        # omit the pin are unaffected. Read-only w.r.t. the clone (no Gotcha-52 build
+        # collision). NOT recompute.py::_is_scope_pre_fix (that runs git against CWD).
+        self._verify_tritonswmm_pin(verbose=verbose)
+        # Provenance capture (D2): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the system log NOW, against the actual cloned tree, so the two
+        # consolidation stamp sites (a DIFFERENT process on HPC) can carry it onto the
+        # consolidated-tree root attrs. Read-only; graceful no-op when the clone has no
+        # git checkout.
+        self._capture_tritonswmm_provenance(verbose=verbose)
+
         # Compile each backend sequentially
         for backend in backends:
             if verbose:
@@ -638,6 +660,114 @@ class TRITONSWMM_system:
             shell=True,
             check=True,
         )
+
+    def _verify_tritonswmm_pin(self, verbose: bool = True):
+        """Fail loud if the TRITON clone's HEAD does not match the pinned branch_key sha.
+
+        Gated on a set TRITONSWMM_branch_key: when None/empty this is a no-op (synth
+        fixtures / example configs that do not pin). Resolves BOTH the pin and HEAD to
+        full shas via `git rev-parse --verify` (handles a short pin vs the 40-char HEAD),
+        then compares. On mismatch raises ConfigurationError instructing the operator to
+        remove the stale clone. A branch-NAME pin (not a resolvable commit-ish) that
+        cannot be rev-parsed is surfaced as a ConfigurationError too (a mistyped pin must
+        not silently pass). This is read-only — it never re-clones or rebuilds.
+        """
+        branch_key = self.cfg_system.TRITONSWMM_branch_key
+        if not branch_key:
+            return
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return  # no git checkout to verify (e.g. a reconstituted reprex bundle)
+
+        def _rev_parse(ref: str) -> str | None:
+            r = subprocess.run(
+                ["git", "-C", str(d), "rev-parse", "--verify", f"{ref}^{{commit}}"],
+                capture_output=True,
+                text=True,
+            )
+            return r.stdout.strip() if r.returncode == 0 else None
+
+        head = _rev_parse("HEAD")
+        pinned = _rev_parse(str(branch_key))
+        if pinned is None:
+            raise ConfigurationError(
+                field="TRITONSWMM_branch_key",
+                message=(
+                    f"TRITONSWMM_branch_key {branch_key!r} does not resolve to a commit in the "
+                    f"TRITON clone at {d}. Fetch the pinned commit or correct the pin, then re-run."
+                ),
+                config_path=self.system_config_yaml,
+            )
+        if head is None or head != pinned:
+            raise ConfigurationError(
+                field="TRITONSWMM_branch_key",
+                message=(
+                    f"TRITON clone at {d} is checked out at {head} but the config pins "
+                    f"{branch_key!r} ({pinned}). A pre-existing clone is never re-checked-out by "
+                    "the clone gate and its cached build is never invalidated, so this run would "
+                    f"silently use STALE TRITON numerics. Fix: remove the clone (rm -rf {d}) and "
+                    "re-run — the clone gate re-clones at the pinned commit AND runs "
+                    "`git submodule update --init --recursive`. If you instead check out by hand, "
+                    f"you MUST also (a) run `git -C {d} submodule update --init --recursive` (a bare "
+                    "`git checkout` does NOT move the Kokkos submodule, and a stale Kokkos does not "
+                    "always fail loudly at CMake configure) and (b) DELETE the build directory — "
+                    "hhemt's compile gate is log-marker-based, so a cached build with a passing "
+                    "compilation log is skipped and your re-checkout is silently defeated."
+                ),
+                config_path=self.system_config_yaml,
+            )
+        if verbose:
+            print(f"[Pin] TRITON clone verified at pinned commit {branch_key} ({head})", flush=True)
+
+    def _capture_tritonswmm_provenance(self, verbose: bool = True):
+        """Capture the producing-TRITON provenance onto the system log (D2, R5).
+
+        Records, against the ACTUAL cloned TRITON tree, the full HEAD sha and whether
+        that HEAD is at-or-after the coupled-resume-fix commit (3a832f7d…, tested via
+        `git merge-base --is-ancestor` — NOT sha-equality, so any DESCENDANT of the fix
+        commit is correctly classified post-fix; this is why R5 stamps a boolean rather
+        than an equality flag). These two values are the named carrier between this
+        compile process and the consolidation process (a DIFFERENT SLURM job on HPC): the
+        two consolidation stamp sites read them off `self.log` and stamp them onto the
+        consolidated-tree root attrs. Read-only w.r.t. the clone; a graceful no-op when
+        the clone has no git checkout, and it leaves `triton_has_coupled_resume_fix` None
+        (INDETERMINATE — never a false pre-fix warn) when the fix commit is not present in
+        the clone's object DB (e.g. a shallow or unrelated remote).
+        """
+        d = self.cfg_system.TRITONSWMM_software_directory
+        if d is None or not (d / ".git").exists():
+            return  # no git checkout to read provenance from (e.g. a reprex bundle)
+
+        head = subprocess.run(
+            ["git", "-C", str(d), "rev-parse", "--verify", "HEAD^{commit}"],
+            capture_output=True,
+            text=True,
+        )
+        if head.returncode != 0:
+            return  # git unavailable / not a repo -> leave provenance None (INDETERMINATE)
+        head_sha = head.stdout.strip()
+        self.log.triton_head_sha.set(head_sha)
+
+        ancestor = subprocess.run(
+            [
+                "git", "-C", str(d), "merge-base", "--is-ancestor",
+                _PINNED_TRITON_COUPLED_RESUME_FIX_SHA, "HEAD",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        # returncode 0 -> the fix commit IS an ancestor of HEAD (post-fix); 1 -> not an
+        # ancestor (pre-fix); anything else (128) -> the fix sha is not a known object in
+        # this clone -> leave has_fix None (INDETERMINATE), never a false pre-fix warn.
+        if ancestor.returncode in (0, 1):
+            self.log.triton_has_coupled_resume_fix.set(ancestor.returncode == 0)
+        self.log.write()
+        if verbose:
+            print(
+                f"[Provenance] TRITON producing sha {head_sha} "
+                f"(coupled_resume_fix={self.log.triton_has_coupled_resume_fix.get()})",
+                flush=True,
+            )
 
     def _emit_libstdcpp_ld_preamble_lines(self) -> list:
         # Container mode (M-7): the SIF's %post build owns its own self-consistent
@@ -1105,6 +1235,21 @@ class TRITONSWMM_system:
             or not (TRITONSWMM_software_directory / "CMakeLists.txt").exists()
         ):
             self._download_tritonswmm_source(verbose=verbose)
+
+        # Pin enforcement (D3): a pre-existing clone with a CMakeLists.txt is NEVER
+        # re-checked-out by the gate above, and its cached build is never invalidated
+        # (Gotcha 6 log-marker completion). So verify the checked-out HEAD matches the
+        # pinned sha and FAIL LOUD on mismatch, rather than silently reusing a stale
+        # binary. Gated on a set TRITONSWMM_branch_key so synth fixtures / examples that
+        # omit the pin are unaffected. Read-only w.r.t. the clone (no Gotcha-52 build
+        # collision). NOT recompute.py::_is_scope_pre_fix (that runs git against CWD).
+        self._verify_tritonswmm_pin(verbose=verbose)
+        # Provenance capture (D2): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the system log NOW, against the actual cloned tree, so the two
+        # consolidation stamp sites (a DIFFERENT process on HPC) can carry it onto the
+        # consolidated-tree root attrs. Read-only; graceful no-op when the clone has no
+        # git checkout.
+        self._capture_tritonswmm_provenance(verbose=verbose)
 
         # Compile each backend sequentially
         for backend in backends:

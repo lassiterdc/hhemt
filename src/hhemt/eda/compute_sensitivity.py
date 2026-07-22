@@ -323,7 +323,14 @@ def _emit(master: TRITONSWMM_analysis, renderer_kind: str, ds_vars: dict, source
     eda_dir.mkdir(parents=True, exist_ok=True)
     plot_id = canonical_plot_id(renderer_kind)
     artifact_path = eda_dir / f"{plot_id}.zarr"
-    xr.Dataset(ds_vars).to_zarr(artifact_path, mode="w", consolidated=False)
+    # DTYPE CONTRACT: eda/{plot_id}.zarr is a cross-phase/cross-bundle read-model (Phases
+    # 4-5). Pin every variable's on-disk dtype explicitly so an inferred dtype / implicit
+    # _FillValue round-trip cannot introduce a divergence-vs-NaN ambiguity when the store
+    # is read across a bundle boundary. _artifact_vars builds all variables as float64
+    # (identical is cast to float there); pin that so it is contractual, not incidental.
+    ds = xr.Dataset(ds_vars)
+    encoding = {v: {"dtype": "float64"} for v in ds.data_vars}
+    ds.to_zarr(artifact_path, mode="w", consolidated=False, encoding=encoding)
     # Declare each contributing sub's consolidated zarr as the provenance source
     # (a real .zarr dir that passes _validate_source_path), mirroring
     # cross_sim_identity — the artifact reads FLAT summaries but declares the

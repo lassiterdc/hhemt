@@ -154,3 +154,17 @@ def test_src_has_no_tests_or_scripts_import():
         text=True,
     )
     assert r.returncode == 1, f"src/hhemt imports tests/ or scripts/:\n{r.stdout}"
+
+
+def test_resume_matrix_uses_generous_walltime(tmp_path):
+    """Option D: every resume row gets the generous clean walltime (no short
+    T/3 sizing) — the kill is deterministic, not walltime-driven."""
+    import pandas as pd
+
+    from hhemt.synthetic_experiment import _CLEAN_WALLTIME_MIN, write_resume_matrix_csv
+
+    csv = tmp_path / "resume_matrix.csv"
+    write_resume_matrix_csv(csv)
+    df = pd.read_csv(csv)
+    assert (df["hpc_time_min_per_sim"] == _CLEAN_WALLTIME_MIN).all()
+    assert len(df) == 28  # 14 configs x 2 replicates (rank_sweep=(2,4,8))

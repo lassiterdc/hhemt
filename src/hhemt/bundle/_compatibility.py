@@ -9,23 +9,21 @@ DISTINCT from ADR-17's bug-registry ``severity`` (output-invalidation):
 share one report?). See the decision doc
 ``compatibilityseverity is orthogonal to adr17 severity``.
 
-Read surface (as-built, verified 2026-07-04). The pre-foundation skeleton assumed
-the ADR-6 embedded JSON-LD core carried the identity fields; the LANDED foundation
-does not. The RO-Crate embedded core + co-located ``ro-crate-metadata.json`` carry
-only name/analysis_id/system_id/schemaVersion/softwareVersion/variableMeasured/
-per-part sha256/hasPart — NOT the model toggles, sensitivity axes, or ``case_name``
-(``analysis._case_manifest`` is never set at emit, so the core's ``name`` degrades
-to ``analysis_id``; ``case.yaml`` is NOT copied into the bundle). HPC identity
-(gpu_hardware/partition/account) migrated off ``system_config`` to
-``hpc_system_config``, which is NOT serialized into the bundle — so no HPC field
-reaches the checker (the ``_classify`` "hpc" branch is unit-tested directly, never
-reached via a real read). Therefore the comparison surface is sourced from the
-bundle's ``cfg_system.yaml`` + ``cfg_analysis.yaml`` (written by
-``_emit._copy_configs_with_relative_paths``) plus ``schemaVersion`` from the
-RO-Crate sidecar for version-skew. Always-divergent identifiers (``analysis_id``,
-toolkit git-sha) are EXCLUDED from the divergence surface; ``analysis_id`` is kept
-only as the bundle LABEL. ``case_name`` is not bundled today, so it is not sourced
-(bundling ``case.yaml`` so ``case_name`` becomes comparable is a routed follow-up).
+Read surface (as-built, Phase 5). The pre-foundation skeleton assumed the ADR-6
+embedded JSON-LD core carried the identity fields; the LANDED foundation does not. The
+comparison surface is therefore sourced from each bundle's ``cfg_system.yaml`` (model
+toggles + ``target_dem_resolution``) + ``cfg_analysis.yaml`` (``weather_events_to_simulate``
++ ``sensitivity_analysis``, written by ``_emit._copy_configs_with_relative_paths``), plus
+``schemaVersion`` from the co-located ``ro-crate-metadata.json`` for version-skew. Phase 5
+additionally bundles ``case.yaml`` (the CaseManifest, copied by ``_emit._copy_supporting_files``
+from the analysis's ``case_manifest_yaml`` arg) so ``case_name`` is now sourced and classifies
+BLOCKING via ``_EXPERIMENT_IDENTITY_FIELDS`` (two different case studies refuse to combine), and
+a SCRUBBED ``hpc_system_config.identity.yaml`` (emitted by ``_emit._emit_hpc_identity`` carrying
+only the allow-listed ``partitions`` + ``gpu_allocation_flavor``) so the compute-config surface
+now reaches the checker over a REAL read and classifies INFORMATIONAL via the ``_classify`` "hpc"
+branch (UVA vs Frontier is expected, non-blocking). Always-divergent identifiers (``analysis_id``,
+toolkit git-sha) are EXCLUDED from the divergence surface; ``analysis_id`` is kept only as the
+bundle LABEL.
 """
 
 from __future__ import annotations
@@ -47,6 +45,17 @@ from hhemt.version_migration.constants import BUNDLE_MANIFEST_FILENAME
 _CFG_SYSTEM_FILENAME = "cfg_system.yaml"
 _CFG_ANALYSIS_FILENAME = "cfg_analysis.yaml"
 _ROCRATE_FILENAME = "ro-crate-metadata.json"
+_CASE_MANIFEST_FILENAME = "case.yaml"
+_HPC_IDENTITY_FILENAME = "hpc_system_config.identity.yaml"
+
+#: Fields sourced from the SCRUBBED hpc_system_config.identity.yaml. The first fields
+#: to reach _classify's "hpc" branch over a REAL read. A divergence is INFORMATIONAL
+#: (UVA vs Frontier), never blocking.
+_HPC_IDENTITY_COMPARISON_FIELDS: tuple[str, ...] = (
+    "partitions",
+    "gpu_allocation_flavor",
+)
+_HPC_IDENTITY_FIELDS: frozenset[str] = frozenset(_HPC_IDENTITY_COMPARISON_FIELDS)
 
 # Curated comparison surface (the bundled identity + sensitivity fields). Kept
 # small and explicit so the divergence report stays signal-rich rather than
@@ -57,6 +66,8 @@ _CFG_SYSTEM_COMPARISON_FIELDS: tuple[str, ...] = (
     "toggle_tritonswmm_model",
     "toggle_swmm_model",
     "target_dem_resolution",
+    # pinned solver: a different sha = a different experiment (BLOCKING via _EXPERIMENT_IDENTITY_FIELDS)
+    "TRITONSWMM_branch_key",
 )
 _CFG_ANALYSIS_COMPARISON_FIELDS: tuple[str, ...] = (
     "weather_events_to_simulate",
@@ -115,6 +126,11 @@ _EXPERIMENT_IDENTITY_FIELDS: frozenset[str] = frozenset(
         "toggle_tritonswmm_model",
         "toggle_triton_model",
         "toggle_swmm_model",
+        # A different pinned TRITON sha is a different solver = a different experiment: combining a
+        # fixed-TRITON clean against a stale-TRITON resume would be a silently-wrong North-Star figure,
+        # so a cross-sha combine is BLOCKING. The two arms of THIS experiment share 3a832f7d, so this
+        # never fires on the intended pair — it guards against an accidental cross-sha combine.
+        "TRITONSWMM_branch_key",
     }
 )
 
@@ -134,6 +150,8 @@ def _field_bucket(field_name: str) -> str:
     """
     from hhemt.config.reprex_taxonomy import field_bucket  # function-local: avoids the bundle.__init__ import cycle
 
+    if field_name in _HPC_IDENTITY_FIELDS:
+        return "hpc"  # compute-divergence surface (bundled hpc_system_config.identity.yaml)
     try:
         return field_bucket(field_name)  # config Path fields only
     except KeyError:
@@ -204,8 +222,9 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
     Always-divergent identifiers (``analysis_id``, toolkit git-sha) are EXCLUDED
     from the divergence surface; ``analysis_id`` is returned only under the
     reserved ``"analysis_id"`` key that ``check_bundle_compatibility`` uses for
-    labeling, never for divergence. ``case_name`` is not bundled today and is not
-    sourced (see module docstring).
+    labeling, never for divergence. Phase 5 additionally sources ``case_name`` from
+    the bundled ``case.yaml`` (BLOCKING) and the scrubbed compute-config fields from
+    ``hpc_system_config.identity.yaml`` (INFORMATIONAL); see the module docstring.
 
     A missing cfg file yields no fields from it (not an error) — the checker
     compares whatever identity surface each bundle actually carries.
@@ -220,6 +239,15 @@ def _read_jsonld_core(bundle_root: Path) -> dict:
     for fname in _CFG_ANALYSIS_COMPARISON_FIELDS:
         if fname in anad:
             core[fname] = anad[fname]
+
+    hpcd = _load_yaml(bundle_root / _HPC_IDENTITY_FILENAME)
+    for fname in _HPC_IDENTITY_COMPARISON_FIELDS:
+        if fname in hpcd:
+            core[fname] = hpcd[fname]
+
+    cased = _load_yaml(bundle_root / _CASE_MANIFEST_FILENAME)
+    if "case_name" in cased:
+        core["case_name"] = cased["case_name"]  # BLOCKING (already in _EXPERIMENT_IDENTITY_FIELDS)
 
     rocrate = bundle_root / _ROCRATE_FILENAME
     if rocrate.exists():

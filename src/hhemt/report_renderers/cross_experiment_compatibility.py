@@ -78,15 +78,18 @@ def _render_compatibility_html(source: Path) -> str:
         )
     else:
         table = "<p class='note'>All compared identity fields agree — the bundles are combine-compatible.</p>"
-    status = "compatible" if payload.get("is_compatible", True) else "BLOCKING divergence present"
+    # c2 (v9/Iteration-2): the tautological "Status: compatible" line is DROPPED — a BLOCKING
+    # divergence aborts combine_bundle before any render, so reaching this renderer already
+    # implies compatibility; only INFORMATIONAL/warning divergence rows (the table) are informative.
     placeholder = (
-        "<div class='deferred'><em>Cross-family characterized-divergence panel is "
-        "deferred for the bundle path (R6): a bundle ships the consolidated tree "
-        "only, not the flat per-scenario summaries the byte-identity check reads."
+        "<div class='deferred'><em>Strict byte-identity panel (R6): the byte-for-byte "
+        "cross-family check is deferred for the bundle path — a bundle ships the "
+        "value-preserving consolidated tree, not the flat per-scenario summaries the "
+        "byte-identity check must read. The physically meaningful clean-vs-resume "
+        "value comparison is provided in the Cross-Experiment Results section."
         "</em></div>"
     )
     return (
         "<section class='cross-experiment-compatibility'>"
-        "<h2>Cross-Experiment Compatibility</h2>"
-        "<p>Status: " + _html.escape(status) + "</p>" + table + placeholder + "</section>"
+        "<h2>Cross-Experiment Compatibility</h2>" + table + placeholder + "</section>"
     )

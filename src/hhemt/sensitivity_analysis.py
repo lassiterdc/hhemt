@@ -231,6 +231,13 @@ class TRITONSWMM_sensitivity_analysis:
         self._skip_log_update = skip_log_update
         self.analysis_paths = analysis.analysis_paths
         self.cfg_analysis = analysis.cfg_analysis
+        # BundleableAnalysis delegation (_protocol.py): emit_bundle reads these off its input, so a
+        # sensitivity master (the real experiment topology) must expose them too — else the combine
+        # identity surfaces silently drop: case.yaml (BLOCKING case_name) + hpc_system_config.identity.yaml
+        # (INFORMATIONAL compute-config). Mirrors the cfg_analysis/analysis_paths delegation above.
+        self.cfg_hpc_system = analysis.cfg_hpc_system
+        self.case_manifest_yaml = analysis.case_manifest_yaml
+        self._case_manifest = analysis._case_manifest
         self.sub_analyses_prefix = "sa_"
         self.subanalysis_dir = self.master_analysis.analysis_paths.analysis_dir / "subanalyses"
         df_setup_full = self._retrieve_df_setup()
@@ -718,12 +725,53 @@ class TRITONSWMM_sensitivity_analysis:
                 "1_job_many_srun_tasks",
             )
             _resolved_delete_via_slurm = _hpc if delete_via_slurm is None else delete_via_slurm
-            route_delete_via_slurm = regenerate_existing and _resolved_delete_via_slurm and not dry_run and _hpc
+            # An explicit execution_mode="local" from the caller must not be silently
+            # overridden by the config's multi_sim_run_method: before this guard, a
+            # caller forcing local execution still had the scoped delete offloaded to
+            # SLURM (2026-07-20). execution_mode="auto" preserves the prior routing.
+            route_delete_via_slurm = (
+                regenerate_existing
+                and _resolved_delete_via_slurm
+                and not dry_run
+                and _hpc
+                and execution_mode != "local"
+            )
             if route_delete_via_slurm:
-                self._workflow_builder._base_builder.submit_reprocess_delete_workflow(
+                # The result was previously DISCARDED, so a delete workflow that
+                # failed (or ran zero rules) was indistinguishable from success and
+                # reprocess fell through to submit the consolidate workflow against
+                # trees it believed were gone. Observed 2026-07-20: the delete
+                # workflow failed 112 times, raised, and the exception was thrown
+                # away. regenerate_existing invalidates by DELETION; if the deletion
+                # did not happen the flag is a lie, and the correct response is to
+                # fail loudly rather than consolidate stale.
+                _del_result = self._workflow_builder._base_builder.submit_reprocess_delete_workflow(
                     start_with=start_with,
                     override_in_flight=False,
                 )
+                if not _del_result.get("success", False):
+                    from hhemt.exceptions import WorkflowError
+
+                    raise WorkflowError(
+                        phase="reprocess-delete",
+                        return_code=_del_result.get("returncode", -1),
+                        stderr=(
+                            "regenerate_existing=True requested a scoped reprocess-delete "
+                            "workflow, but it did not complete successfully. The consolidated "
+                            "trees were NOT invalidated, so continuing would silently "
+                            "re-consolidate stale artifacts. See "
+                            f"{_del_result.get('snakemake_logfile')} for the workflow-level log. "
+                            "Per-rule stderr for each failed delete job is written to "
+                            "{analysis_dir}/logs/delete_reprocess/<rule>.log — this capture is "
+                            "executor-independent and is present whether the rules ran locally "
+                            "or on SLURM. If the rules DID reach SLURM, per-job logs may also "
+                            "exist under {analysis_dir}/.snakemake_reprocess_delete/.snakemake/"
+                            "slurm_logs/ (retained on failure, deleted on success); that "
+                            "directory is absent when submission itself failed and no job was "
+                            "ever created. Re-run with delete_via_slurm=False to delete "
+                            "in-process instead."
+                        ),
+                    )
             elif regenerate_existing and not dry_run:
                 # In-process path (local / delete_via_slurm=False) — per-sub +
                 # master zarr deletion, plus the Phase-3 per-sub processed-output
@@ -1388,7 +1436,34 @@ class TRITONSWMM_sensitivity_analysis:
             hasattr(self.master_analysis.log, "sensitivity_datatree_consolidation_complete")
             and self.master_analysis.log.sensitivity_datatree_consolidation_complete.get() is True
         )
-        if fname_out.exists() and _log_complete:
+        # The master tree's inputs ARE the sub trees, so its staleness is the
+        # disjunction of theirs: recompute each sub's current fingerprint and compare
+        # it to what that sub actually has stamped. Any sub that is stale (or has no
+        # stamp) makes the master stale, which is what carries a newly-added per-sub
+        # node (e.g. the timeseries nodes) up through build_sensitivity_datatree's
+        # subtree_with_keys graft. No separate master-side toggle read is needed.
+        _subs_stale = False
+        for _sa_id, _sub in self.sub_analyses.items():
+            _sub._refresh_log()
+            _cur = _sub.process._consolidation_inputs_fingerprint()
+            _stamped = (
+                _sub.log.consolidation_inputs_fingerprint.get()
+                if hasattr(_sub.log, "consolidation_inputs_fingerprint")
+                else None
+            )
+            if _stamped != _cur:
+                _subs_stale = True
+                break
+        if fname_out.exists() and _log_complete and _subs_stale:
+            from hhemt.utils import fast_rmtree
+
+            fast_rmtree(fname_out, analysis_dir=self.analysis_paths.analysis_dir)
+            if verbose:
+                print(
+                    f"Sensitivity DataTree zarr present at {fname_out} but at least one "
+                    "sub-analysis's consolidation inputs changed — rebuilding."
+                )
+        elif fname_out.exists() and _log_complete:
             if verbose:
                 print(f"Sensitivity DataTree zarr already present at {fname_out} and log complete. Not overwriting.")
             # Ensure the master analysis-scope DU sentinel exists even on the
@@ -1421,11 +1496,18 @@ class TRITONSWMM_sensitivity_analysis:
             # consolidate_to_datatree is idempotent on an already-complete sub
             # (its own _log_complete early-return), so this self-heals.
             sub_analysis._refresh_log()
-            sub_complete = (
-                hasattr(sub_analysis.log, "datatree_consolidation_complete")
-                and sub_analysis.log.datatree_consolidation_complete.get() is True
-            )
-            if not (sub_path.exists() and sub_complete):
+            # Always delegate: consolidate_to_datatree owns the single completeness
+            # AND staleness decision (its own early-return is idempotent on a healthy,
+            # current tree). The former `if not (sub_path.exists() and sub_complete)`
+            # pre-gate was a SECOND, weaker gate that skipped a present-and-complete-
+            # but-STALE sub before the real guard could notice — the exact shape that
+            # kept the timeseries nodes out of the tree.
+            #
+            # The `sub_complete` computation that fed that pre-gate is DELETED rather
+            # than retained: the log-refresh side effect belongs to the
+            # `_refresh_log()` call above (a separate statement), and nothing else
+            # read the variable, so keeping it would be dead code carrying an F841.
+            if True:
                 try:
                     sub_analysis.process.consolidate_to_datatree(
                         compression_level=compression_level,
@@ -1456,6 +1538,17 @@ class TRITONSWMM_sensitivity_analysis:
             emitted_vars=_emitted_vars,
         )
         apply_provenance_core(tree, core_json_str=_core_json)
+
+        # TRITON provenance (D2/R5): stamp the producing-TRITON sha + coupled-resume-fix
+        # ancestry onto the sensitivity-MASTER tree root as plain attrs. This is a
+        # SEPARATE wiring site from consolidate_to_datatree: check_coupled_resume_validity's
+        # reader resolves sensitivity_datatree.zarr for a sensitivity master, so omitting
+        # this site would leave the reader permanently INDETERMINATE on the primary
+        # experiment shape (the c2c3 dual-wiring seam).
+        from hhemt.processing_analysis import _stamp_coupled_resume_evidence, _stamp_triton_provenance
+
+        _stamp_triton_provenance(tree, self.master_analysis)
+        _stamp_coupled_resume_evidence(tree, self.master_analysis)
         write_datatree_zarr(tree, fname_out, compression_level=compression_level)
         write_rocrate_sidecar(self.master_analysis.analysis_paths.analysis_dir, graph_json=_graph_json)
 

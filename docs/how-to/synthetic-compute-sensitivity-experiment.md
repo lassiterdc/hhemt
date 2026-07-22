@@ -65,11 +65,28 @@ tk.analysis.eda()                                           # emit plots/eda/ fi
 tk.analysis.render_report()                                 # renders the active reporting set
 ```
 
+Running `hhemt eda` (or `analysis.eda()`) on the completed sensitivity master now
+also emits the compute-sensitivity EDA family by default:
+`plots/eda/eda_rank_sensitivity.html` (within-family mpi rank-N vs rank-1 identity +
+magnitude) and `plots/eda/eda_cross_hardware_magnitude.html` (the ADR-4
+characterized-divergence panel: 1-GPU vs 1-rank serial CPU). A third member,
+`eda_resume_sensitivity` (clean-vs-resume identity + magnitude, paired per
+compute-config), is an OPT-IN figure: it renders only for a single master carrying
+BOTH a clean and a resume arm, so the compute-sensitivity experiment — run as two
+SEPARATE single-arm masters (a clean sweep and a resume sweep) — skips it and produces
+the clean-vs-resume comparison at COMBINE level via `hhemt combine` (the
+`cross_experiment_intercomparison` figure) instead; enable it explicitly via
+`enabled_plots` for a future both-arms master. Each rendered member writes a backing
+`eda/{plot_id}.zarr` provenance artifact and an `eda/{plot_id}.verdict.json` whose
+verdict is merged into the report's Errors-and-Warnings section. A member whose
+experiment shape does not supply the required pair (for example, a matrix with no
+resume arm) skips silently and emits no figure.
+
 Select the `compute-sensitivity` reporting set via
 `report_config.reporting_set: compute-sensitivity` in your report config. The
-rendered report then carries the compute-config EDA figures (config-diff maps,
-and — as the EDA family grows — rank / resume / magnitude panels) under **Key
-Results**, alongside the benchmarking figures.
+rendered report then carries the compute-config EDA figures (config-diff maps plus
+the compute-sensitivity family described above — rank and cross-hardware by default;
+resume is opt-in) under **Key Results**, alongside the benchmarking figures.
 
 ## Running a DEM-resolution sweep instead
 

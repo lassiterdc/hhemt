@@ -29,6 +29,53 @@ _DEFAULT_EXE_NAME = {
 }
 
 
+def model_logfile_for(analysis, event_iloc: int, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
+    """The analysis-level model runtime-log path for one (analysis, event, model).
+
+    SINGLE SOURCE OF TRUTH for this naming convention. The PRODUCER
+    (``run_simulation_runner.py``, which opens this exact path in ``"w"`` mode on every
+    exec) and EVERY consumer (``TRITONSWMM_run.model_run_completed``,
+    ``_classify_model_log_failure``, ``report_renderers/per_analysis_summary.py``,
+    ``analysis_validation.check_coupled_resume_validity``) MUST resolve through this
+    function. NEVER hand-build the path.
+
+    Why this is a free function and not just a method: a hand-built duplicate is exactly
+    how ``check_coupled_resume_validity``'s replay-marker arm came to read
+    ``{sim_folder}/logs/run_tritonswmm.log`` -- the vestigial ``ScenarioPaths.log_run_*``
+    convention that NOTHING writes -- so its ``except Exception: continue`` fired on every
+    row and the check passed VACUOUSLY on every experiment (28/28 rows skipped on
+    synth_cc_resume, 2026-07-15). One expression of the convention, shared by producer and
+    detector, is what makes that class of drift impossible rather than merely unlikely.
+
+    PATH-ONLY, mirroring ``summary_paths.py``: derives from ``analysis`` + ``event_iloc``
+    only and MUST NOT instantiate ``TRITONSWMM_scenario`` (whose constructor mkdir's
+    ``processed/`` / ``swmm/`` / ``out_swmm/``). This is what lets a read-only validator
+    resolve the path without mutating the tree.
+
+    CAUTION -- the file this resolves to is opened ``"w"`` on EVERY runner exec
+    (``run_simulation_runner.py``), so it retains ONLY the LAST exec of up to
+    ``hpc_restart_times_simulate`` + 1 attempts. It is NOT a per-exec history. Callers
+    needing per-attempt history must read ``.snakemake/slurm_logs/{rule}/{jobid}.log``.
+    No toolkit-written line reaches this file either -- the runner's ``Command:`` line and
+    the ``Resuming ... from hotstart`` notice go to the RUNNER's stderr, not here; the
+    file carries only the model subprocess's own stdout/stderr.
+
+    Naming convention (empirically ``model_tritonswmm_sa_gpu_0_r1_evt0.log`` on
+    synth_cc_resume -- note the segment is the full ``analysis_id``, NOT ``sa{N}``):
+    - Sensitivity sub-analysis:
+      ``{master_analysis_dir}/logs/sims/model_{model_type}_{analysis_id}_evt{event_iloc}.log``
+    - Regular analysis:
+      ``{simlog_directory}/model_{model_type}_evt{event_iloc}.log``
+    """
+    log_dir = analysis.analysis_paths.simlog_directory
+    subanalysis_id = ""
+    if getattr(analysis.cfg_analysis, "is_subanalysis", False):
+        subanalysis_id = str(analysis.cfg_analysis.analysis_id) + "_"
+        master_analysis_yaml = analysis.cfg_analysis.master_analysis_cfg_yaml
+        log_dir = master_analysis_yaml.parent / "logs" / "sims"
+    return log_dir / f"model_{model_type}_{subanalysis_id}evt{event_iloc}.log"
+
+
 class TRITONSWMM_run:
     def __init__(self, scenario: "TRITONSWMM_scenario") -> None:
         self._scenario = scenario
@@ -53,22 +100,16 @@ class TRITONSWMM_run:
         return out_dir if out_dir is not None else fallback
 
     def _analysis_level_model_logfile(self, model_type: Literal["triton", "tritonswmm", "swmm"]) -> Path:
-        """Return analysis-level model runtime log path for this scenario.
+        """Return the analysis-level model runtime-log path for this scenario.
 
-        Naming convention:
-        - Sensitivity sub-analysis: model_{model_type}_sa{N}_evt{event_iloc}.log
-        - Regular analysis: model_{model_type}_evt{event_iloc}.log
+        Thin delegate to the module-level ``model_logfile_for`` free function, which is
+        the SINGLE SOURCE OF TRUTH for this convention (read its docstring before
+        touching either). Retained as a method because ``TRITONSWMM_run`` is the
+        producer-side call surface (``prepare_simulation_command`` writes through it,
+        ``model_run_completed`` / ``_classify_model_log_failure`` read through it) and
+        several tests patch it by name.
         """
-        log_dir = self._analysis.analysis_paths.simlog_directory
-        subanalysis_id = ""
-        if getattr(self._analysis.cfg_analysis, "is_subanalysis", False):
-            subanalysis_id = str(self._analysis.cfg_analysis.analysis_id) + "_"
-            master_analysis_yaml = self._analysis.cfg_analysis.master_analysis_cfg_yaml
-            log_dir = master_analysis_yaml.parent / "logs" / "sims"
-
-        fname = f"model_{model_type}_{subanalysis_id}evt{self._scenario.event_iloc}.log"
-
-        return log_dir / fname
+        return model_logfile_for(self._analysis, self._scenario.event_iloc, model_type)
 
     def raw_triton_output_dir(self, model_type: Literal["triton", "tritonswmm"] = "tritonswmm"):
         """Directory containing raw TRITON binary output files (H, QX, QY, MH).
@@ -137,12 +178,36 @@ class TRITONSWMM_run:
         first-run correctness for paths where the simulation has just emitted
         its log but the log-field has not yet been written.
         """
-        # Primary: read post-processing-aware log field
+        # Primary: read post-processing-aware log field.
+        #
+        # ONLY a POSITIVE (True) record is authoritative. A False/None record means
+        # "not known to be complete" and MUST fall through to the raw-marker scan.
+        #
+        # Why (the sticky-False latch): run_simulation_runner.py WRITES this field
+        # with the value this method RETURNS. The prior `if completed is not None`
+        # form therefore latched: once any attempt recorded False, `bool(False) and
+        # ...` short-circuited (never even evaluating the rpt gate) and this method
+        # returned False FOREVER — so a later hotstart-resume that genuinely ran to
+        # t=end and finalized its coupled rpt was still reported incomplete, its
+        # retry re-resumed from the t=end checkpoint, replayed to `dt: -nan`, and the
+        # rule burned every retry. Empirically confirmed on Rivanna (synth_cc_resume,
+        # job 17021807 step .1: COMPLETED 0:0, 144/144 cfgs written, hydraulics.rpt
+        # carrying "Analysis ended on" — recorded simulation_completed=False).
+        #
+        # The latch only bites when the runner SURVIVES a failed sim (a SLURM
+        # walltime kill reaps the runner before it can write False, which is why
+        # production hotstart-resume masked this). It equally broke `retries:` for
+        # any genuinely crashed (e.g. segfaulting) sim.
+        #
+        # Behavior delta is confined to the buggy branch:
+        #   True -> `bool(True) and rpt` === `rpt`   (unchanged)
+        #   None -> falls through to the raw scan     (unchanged)
+        #   False -> was: permanently False; now: re-derived from this run's markers
         try:
             model_log = self._scenario.get_log(model_type)
             completed = model_log.simulation_completed.get()
-            if completed is not None:
-                return bool(completed) and self._coupled_swmm_report_finalized(model_type)
+            if completed:
+                return self._coupled_swmm_report_finalized(model_type)
         except (AttributeError, FileNotFoundError):
             pass  # log not yet written — fall through to raw-file check
 
@@ -307,6 +372,84 @@ class TRITONSWMM_run:
             return None
 
         return Path(latest_complete.iloc[-1]["f_cfg"])
+
+    def _hotstart_cfg_dir(self, model_type: Literal["triton", "tritonswmm"]) -> Path | None:
+        """Directory of the ``config_NNNN.cfg`` hotstart checkpoints TRITON writes
+        at the ``print_interval`` (reporting) cadence, or None when the model has
+        no output dir. Mirrors the dir logic of
+        ``_retrieve_hotstart_file_for_incomplete_triton_or_tritonswmm_simulation``.
+        """
+        if model_type == "triton":
+            output_dir = self._scenario.scen_paths.out_triton
+        else:
+            output_dir = self._scenario.scen_paths.out_tritonswmm
+        if output_dir is None:
+            return None
+        return output_dir / "cfg"
+
+    def wait_with_deterministic_checkpoint_kill(
+        self,
+        proc,
+        *,
+        model_type: Literal["triton", "tritonswmm"],
+        n_checkpoints: int,
+        poll_interval_s: float = 2.0,
+    ) -> int:
+        """Wait for the sim subprocess, forcing exactly ONE mid-sim hard-kill for
+        the Option-D deterministic resume test.
+
+        Polls the hotstart cfg dir; once ``>= n_checkpoints + 1`` ``config_NNNN.cfg``
+        files exist (the newest may be mid-write, so N+1 present guarantees N are
+        complete), issues a process-group SIGTERM (``os.killpg`` on the
+        ``bash -lc "... srun ... triton.exe"`` wrapper's session) so the sim exits
+        INCOMPLETE and the Snakemake ``retries:`` re-dispatch resumes from the
+        latest complete checkpoint. If the sim COMPLETES before the threshold, no
+        kill fires (graceful degradation — the sim just finishes). Returns the
+        subprocess return code.
+
+        The kill is a process-group SIGTERM, NOT ``proc.kill()``/SIGKILL: ``proc``
+        is the bash WRAPPER, and the sim itself is a remote ``srun`` STEP under a
+        step ``slurmstepd``. A group SIGKILL reaps bash + the srun client too fast
+        for srun to tear the step down, so ``triton.exe`` ORPHANS and runs to t=end
+        (empirically confirmed on Rivanna, ``proctrack/cgroup``, job 17018902). A
+        group SIGTERM is CAUGHT by the srun client, which force-terminates the step
+        and delivers an UNCATCHABLE SIGKILL to the task (``srun: ... task 0:
+        Killed``) — so TRITON still cannot finalize-and-exit-0, but the kill is
+        routed through srun's signal handler (which SIGKILL bypasses). Requires the
+        launcher's ``Popen(..., start_new_session=True)`` so the wrapper leads its
+        own group.
+        """
+        import signal
+        import time
+
+        cfg_dir = self._hotstart_cfg_dir(model_type)
+        killed = False
+        while proc.poll() is None:
+            if not killed and cfg_dir is not None and cfg_dir.exists():
+                if len(list(cfg_dir.glob("*.cfg"))) >= n_checkpoints + 1:
+                    # Rivanna srun-step teardown (SchedMD SLURM, proctrack/cgroup):
+                    # process-group SIGTERM, NOT proc.kill()/SIGKILL. `proc` is the
+                    # `bash -lc "... srun ... triton.exe"` wrapper (launched with
+                    # start_new_session=True, so it leads its own group). A group
+                    # SIGKILL reaps bash + the srun client too fast for srun to tear
+                    # the step down -> triton.exe ORPHANS and runs to t=end
+                    # (empirically confirmed on Rivanna, job 17018902). A group
+                    # SIGTERM is CAUGHT by the srun client, which force-terminates the
+                    # step and delivers an UNCATCHABLE SIGKILL to the task ("srun:
+                    # ... task 0: Killed", job 17018943) -- so TRITON still cannot
+                    # finalize-and-exit-0, but the kill is routed through srun's
+                    # handler, which a group SIGKILL fatally bypasses. New session
+                    # isolates the group: no sibling step / batch job / orchestrator
+                    # is signalled.
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                    except (ProcessLookupError, PermissionError):
+                        # Group already gone (sim raced to completion) or perms -
+                        # fall back to a direct terminate so the watcher progresses.
+                        proc.terminate()
+                    killed = True
+            time.sleep(poll_interval_s)
+        return proc.returncode
 
     def _write_repro_script(
         self,
@@ -474,25 +617,14 @@ class TRITONSWMM_run:
                         f"Resuming {model_type} from hotstart: {hotstart_cfg}",
                         flush=True,
                     )
-                # --- REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED (interim loud-failure guard) ---
-                # Coupled TRITON-SWMM cannot correctly hotstart-resume: on a TRITON resume
-                # the coupled SWMM engine re-initializes from t=0 (swmm_start(TRUE)), so the
-                # single .out/.rpt covers only the post-checkpoint segment and every
-                # max-flow/max-depth summary is systematically LOW (empirically 29-47% low on
-                # sa_gpu_2_r1 vs the one-shot sa_gpu_1_r1). Fail LOUDLY here, BEFORE launch, so
-                # a resumed coupled sim never silently emits wrong data. n_resumes was just
-                # incremented above, so the report's check_coupled_hotstart_resume counts this
-                # sim. Delete this whole block AND the sibling check in analysis_validation.py
-                # (same marker) once upstream persist-and-replay lands. triton/swmm untouched.
-                if model_type == "tritonswmm":
-                    from hhemt.exceptions import SimulationError
-
-                    raise SimulationError(
-                        event_iloc=self._scenario.event_iloc,
-                        model_type="tritonswmm",
-                        logfile=model_logfile,
-                    )
-                # --- END REMOVE-WHEN-TRITON-SWMM-COUPLED-RESUME-FIXED ---
+                # Coupled TRITON-SWMM hotstart-resume is now supported by pinned TRITON
+                # 3a832f7d (persist-and-replay of the SWMM exchange history), so the interim
+                # loud-failure guard that raised SimulationError here — plus its sibling
+                # check_coupled_hotstart_resume in analysis_validation.py — is removed.
+                # Post-fix, a resumed coupled sim whose replay silently failed to engage is
+                # caught retroactively by check_coupled_resume_validity's replay-marker arm.
+                # n_resumes (incremented above) remains the first-class resume record that
+                # arm reads.
 
         og_env = os.environ.copy()
         env = dict()

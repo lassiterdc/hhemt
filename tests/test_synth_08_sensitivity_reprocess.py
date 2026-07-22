@@ -160,7 +160,15 @@ def test_sensitivity_reprocess_refuses_fast_with_live_orchestrator(
             builder.submit_reprocess_workflow(
                 start_with="consolidate", execution_mode="local", dry_run=False, verbose=False
             )
-        assert "live-or-indeterminate orchestration driver" in excinfo.value.stderr
+        # Assert the LIVENESS CLASSIFICATION, not the prose. The tri-state gate
+        # (Gotcha 72) emits "live-or-indeterminate orchestration driver" as a
+        # generic prefix for BOTH liveness=ALIVE and liveness=UNKNOWN/held, so
+        # asserting that prefix would pass even if a definitively-live driver were
+        # misclassified as indeterminate — deleting the discrimination this test
+        # exists to provide. `liveness=ALIVE` is the semantic tag and is what R3
+        # actually requires here (verified 2026-07-21: the emitted entry is
+        # `live-driver (mode=local, host=laptop, liveness=ALIVE)`).
+        assert "liveness=ALIVE" in excinfo.value.stderr
     finally:
         osent.remove_orchestrator_sentinel(master_dir, "live-driver")
 
@@ -323,3 +331,136 @@ def test_reprocess_conditional_emit_over_partial_state(synth_partial_state_analy
     )
     mdt = sa.master_analysis.analysis_paths.sensitivity_datatree_zarr
     assert mdt.exists(), "master sensitivity_datatree.zarr must be rebuilt after partial-state reprocess"
+
+
+# ---------------------------------------------------------------------------
+# Edit 3 (2026-07-20) — scoped-delete failure must surface, and an explicit
+# execution_mode="local" must not be overridden by multi_sim_run_method.
+#
+# Production failure this encodes: reprocess(regenerate_existing=True) routed the
+# scoped delete to SLURM, the delete workflow failed 112 times and raised, the
+# call site DISCARDED the returned dict, and reprocess fell through to consolidate
+# against trees it believed were deleted. The result was a silent no-op that took
+# a full debugging cycle to attribute. regenerate_existing invalidates by DELETION,
+# so a failed deletion makes the flag a lie.
+# ---------------------------------------------------------------------------
+
+
+def _force_hpc(sa):
+    """Make master AND every sub-analysis config a COHERENT HPC run.
+
+    Forcing the MASTER alone is not enough, and the reason is a MIXED-OBJECT
+    read worth recording. ``workflow.py::_build_resource_block`` (:1525) raises
+    ``ValueError("hpc partition must be set when generating SLURM resources")``
+    when ``partition is None and self.cfg_analysis.multi_sim_run_method !=
+    "local"`` (:1572). At the per-sub reprocess emission site
+    (``workflow.py:8062``) those two reads resolve against DIFFERENT objects:
+
+    * the guard PREDICATE reads ``self.cfg_analysis`` on the base builder,
+      which ``SnakemakeWorkflowBuilder.__init__`` ALIASES to
+      ``master_analysis.cfg_analysis`` (:767) — so forcing the master DOES
+      reach it;
+    * the partition VALUE is ``sub_analysis.cfg_analysis.
+      hpc_setup_and_analysis_processing_partition`` — a DISTINCT per-sub model
+      built by ``model_validate({**master.model_dump(), **overlay})``, which a
+      master mutation never touches (probed: all 4 subs report
+      ``proc_part=None, run_method='local'`` after forcing the master alone).
+
+    Forcing the master therefore ARMS the guard while leaving the value it
+    demands unset, and every SLURM-bound per-sub rule raises before the test's
+    own assertion. Both tiers must be forced.
+
+    If a THIRD config object ever appears on this path (a per-target
+    synthesized system YAML, or a persisted per-sub ``sa_{id}.yaml`` re-read
+    in-process), do NOT add a third tier here — rebuild the fixture from a
+    config that already carries these fields instead.
+    """
+    forced = {
+        "multi_sim_run_method": "batch_job",
+        "hpc_ensemble_partition": "standard",
+        "hpc_setup_and_analysis_processing_partition": "standard",
+    }
+    cfgs = [sa.master_analysis.cfg_analysis]
+    cfgs += [sub.cfg_analysis for sub in sa.sub_analyses.values()]
+    for cfg in cfgs:
+        for field, value in forced.items():
+            try:
+                setattr(cfg, field, value)
+            except (AttributeError, TypeError, ValueError):  # pydantic-frozen model
+                object.__setattr__(cfg, field, value)
+
+
+def _stub_delete(sa, calls, *, success):
+    """Replace the scoped-delete submission with a recording stub."""
+    builder = sa._workflow_builder._base_builder
+
+    def _fake(*args, **kwargs):
+        calls.append(kwargs)
+        return {
+            "success": success,
+            "returncode": 0 if success else 1,
+            "snakemake_logfile": "/tmp/fake_reprocess_delete.log",
+        }
+
+    builder.submit_reprocess_delete_workflow = _fake
+
+
+def test_failed_scoped_delete_raises_instead_of_consolidating_stale(
+    synthetic_sensitivity_completed_isolated,
+):
+    """A scoped reprocess-delete that reports failure must RAISE, not fall through.
+
+    Before Edit 3 the returned dict was discarded entirely, so this call completed
+    'successfully' while the consolidated trees survived untouched.
+    """
+    sa = synthetic_sensitivity_completed_isolated
+    _force_hpc(sa)
+    calls = []
+    _stub_delete(sa, calls, success=False)
+
+    with pytest.raises(WorkflowError) as excinfo:
+        sa.reprocess(
+            start_with="consolidate",
+            execution_mode="auto",
+            regenerate_existing=True,
+            verbose=False,
+        )
+
+    assert calls, "the scoped delete must have been routed before the failure check"
+    msg = str(excinfo.value)
+    # The message must point at the executor-INDEPENDENT capture Edit 4 creates.
+    assert "logs/delete_reprocess/" in msg, (
+        "the WorkflowError must name the toolkit-owned per-rule log directory; "
+        f"got: {msg!r}"
+    )
+    assert "NOT invalidated" in msg, "the message must state that the trees survived"
+
+
+def test_explicit_local_execution_mode_is_not_overridden_by_run_method(
+    synthetic_sensitivity_completed_isolated,
+):
+    """execution_mode='local' must keep the scoped delete off the SLURM route.
+
+    The config says batch_job; the caller says local. The caller wins. Before
+    Edit 3 the config won silently, so a caller forcing local execution still had
+    the deletion offloaded to SLURM.
+    """
+    sa = synthetic_sensitivity_completed_isolated
+    _force_hpc(sa)
+    calls = []
+    # success=False so that IF the SLURM route were taken, the raise would fire
+    # and fail this test loudly rather than passing for the wrong reason.
+    _stub_delete(sa, calls, success=False)
+
+    result = sa.reprocess(
+        start_with="consolidate",
+        execution_mode="local",
+        regenerate_existing=True,
+        verbose=False,
+    )
+
+    assert not calls, (
+        "execution_mode='local' must NOT route the scoped delete through the "
+        f"SLURM workflow; it was invoked {len(calls)} time(s)."
+    )
+    assert result["success"], f"local-route reprocess failed: {result.get('message')!r}"

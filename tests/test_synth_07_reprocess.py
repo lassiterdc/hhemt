@@ -226,7 +226,12 @@ def test_reprocess_refuses_fast_with_live_orchestrator(synthetic_multisim_comple
     try:
         with pytest.raises(WorkflowError) as excinfo:
             builder.submit_reprocess_workflow(start_with="render", execution_mode="local", dry_run=False, verbose=False)
-        assert "live-or-indeterminate orchestration driver" in excinfo.value.stderr
+        # Assert the LIVENESS CLASSIFICATION, not the prose — see the twin
+        # assertion in test_synth_08_sensitivity_reprocess.py. The tri-state gate
+        # (Gotcha 72) emits the same generic "live-or-indeterminate" prefix for
+        # both ALIVE and UNKNOWN/held, so only the `liveness=ALIVE` tag actually
+        # verifies R3's "refuses fast with a LIVE driver" contract.
+        assert "liveness=ALIVE" in excinfo.value.stderr
     finally:
         osent.remove_orchestrator_sentinel(analysis_dir, "live-driver")
 
